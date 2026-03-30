@@ -1,0 +1,10 @@
+apiVersion: v2
+name: dfe-engine
+description: DFE control plane — Python 3.12 FastAPI, YAML SSoT, HelmValuesCompiler
+type: application
+version: 0.1.0
+appVersion: "2.2.0"
+dependencies:
+  - name: dfe-common
+    version: "0.1.0"
+    repository: "file://../../library/dfe-common"

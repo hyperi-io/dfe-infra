@@ -1,0 +1,52 @@
+project: dfe
+component: engine
+env: local
+cloud: local
+
+image:
+  repository: ""     # set from global.registry
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8000
+
+config:
+  mountPath: /config
+  # NFS mount for local, cloud storage for others
+  nfs:
+    server: ""
+    path: ""
+
+clickhouse:
+  host: ""
+  port: 8123
+  database: dfe
+
+postgresql:
+  host: ""
+  port: 5432
+  database: dfe
+  secretName: dfe-pg-app
+
+otel:
+  endpoint: ""
+
+auth:
+  jwtSecretName: dfe-engine-jwt
+  oidcEnabled: false
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+serviceAccount:
+  create: true
+  annotations: {}   # workload identity annotations injected here
