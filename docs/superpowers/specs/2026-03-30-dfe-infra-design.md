@@ -175,9 +175,33 @@ DFE service replicas
 ```
 
 Key scaling metrics from `hyperi-rustlib`:
-- `dfe_scaling_pressure` (0.0–1.0 composite gauge) — primary KEDA trigger
+- `dfe_scaling_pressure` (0.0–1.0 composite gauge) — primary KEDA trigger for dfe-receiver, dfe-loader
 - `dfe_transport_queue_size` — Kafka consumer lag equivalent
 - `dfe_spool_bytes` — back-pressure signal
+
+**Transform scale-to-zero:** `dfe-transform-*` apps are ALWAYS associated with a SINGLE source Kafka topic. KEDA scales them to zero when no new data appears on the topic for a configurable idle period (default: 5 minutes). The KEDA Kafka trigger detects new messages on the topic and starts the pod back up. This is a standard KEDA Kafka consumer lag pattern:
+
+```
+Kafka topic (source) ──consumer lag > 0──▶ KEDA ScaledObject ──▶ dfe-transform-* (1+ pods)
+                      ──consumer lag = 0 for X──▶ KEDA ──▶ scale to 0 pods (cooldown)
+                      ──new message arrives──▶ KEDA ──▶ scale to 1 pod (activation)
+```
+
+```yaml
+# ScaledObject for dfe-transform-*
+minReplicaCount: 0           # scale to zero when idle
+maxReplicaCount: 10
+cooldownPeriod: 300          # 5 min of zero lag → scale to 0
+pollingInterval: 15
+triggers:
+  - type: kafka
+    metadata:
+      bootstrapServers: "..."
+      consumerGroup: "dfe-transform-{name}"
+      topic: "{source_topic}"
+      lagThreshold: "10"       # start scaling at 10+ messages lag
+      activationLagThreshold: "1"  # activate from zero at 1+ message
+```
 
 ### 2.7 Data and Config Flow
 

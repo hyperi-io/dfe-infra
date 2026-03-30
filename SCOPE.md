@@ -53,6 +53,9 @@ SCOPE
         - Kafka -> EKS, Confluent
     - https://github.com/hyperi-io/dfe-openvpn is an option to install for DFE Edge Steram Hub support (replaces AWS CLient VPN though tha could be retained as a swap in option though its more limited - discuss)
 - Keda auto scaling
+    - dfe-transform-* apps: scale-to-zero when no new data on source Kafka topic for configurable period X. KEDA Kafka consumer lag trigger detects new data and starts pods back up. Each transform is tied to a SINGLE source topic.
+    - dfe-receiver, dfe-loader: scale horizontally based on dfe_scaling_pressure metric (0-1.0 composite gauge)
+- Review gate: compare implementation against known-good PB-scale DFE 2.1 dfe-core deployment before each plan is marked complete
 - Designed control entry points for dfe-engine. ArgoCD is the mechanism for large dial changes by users with dfe infra or admin roles
 - Single source of truth auth. Ideally a simple local fallback auth and an external OIDC as the primary (e.g how elastic and other do it). oath2 preferred.
 - Config driven first, then a wizard to walk through or form for AWS marketplace

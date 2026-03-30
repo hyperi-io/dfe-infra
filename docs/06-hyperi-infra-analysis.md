@@ -224,3 +224,57 @@ Options:
 | `ansible/playbooks/k8s-platform.yml` | Envoy, cert-manager, ESO, ArgoCD, Rancher |
 | `ansible/playbooks/k8s-services.yml` | Operators, data services, HyperDX |
 | `config/environments/devex.yml` | SSoT environment config |
+
+---
+
+## 6. To-Be Production Deployment (Multi-Server)
+
+The current devex environment runs on a single Proxmox host. The production deployment will use the **same IaC codebase** (dfe-infra) across multiple physical servers.
+
+### 6.1 Architecture Evolution
+
+```
+devex (current)                    production (to-be)
+─────────────────                  ──────────────────
+1 Proxmox host                     N Proxmox hosts (HA cluster)
+3 K8s VMs (converged)              Dedicated control-plane + worker nodes
+Single flat network                Multi-VLAN: mgmt, data, storage, tenant
+local-path-provisioner             Ceph/Longhorn distributed storage
+NFS from storage VM                Distributed storage (Ceph RBD/CephFS)
+Single tenant                      Multi-tenant (namespace isolation)
+```
+
+### 6.2 What Stays the Same
+
+The dfe-infra IaC codebase is designed to work identically across both environments. The differences are in:
+- `terraform/environments/{env}/terraform.tfvars` — environment-specific values
+- `argocd/values/{cloud}.yaml` — cloud/environment value overrides
+- `versions.yaml` — same SSOT, same versions everywhere
+
+What does NOT change between devex and production:
+- Terraform modules (tf-naming, tf-secrets, tf-iam, tf-storage)
+- Helm charts (all charts are parameterised via values)
+- ArgoCD ApplicationSets (matrix generator reads cluster secret annotations)
+- bootstrap.sh (idempotent, reads from TF outputs via bridge.py)
+- OTel → ClickHouse → HyperDX observability stack
+- Envoy Gateway + OIDC auth model
+
+### 6.3 Production-Specific Additions
+
+| Component | DevEx | Production |
+|-----------|-------|------------|
+| K8s nodes | 3 converged | 3+ control-plane + N workers |
+| Storage | local-path + NFS | Ceph RBD (block) + CephFS (shared) |
+| Networking | Single flat 10.66.0.0/24 | Multi-VLAN with Calico/Cilium |
+| HA | Keepalived VIP | kube-vip or cloud LB |
+| Backup | MinIO (local) | S3-compatible (MinIO cluster or cloud) |
+| Tenancy sizing | dev profile | small/large profiles |
+| KEDA bounds | min=1, max=5 | min=2, max=50+ |
+| ClickHouse | 1 replica | 3+ replicas, sharded |
+
+### 6.4 IaC Strategy for Multi-Server
+
+1. **Terraform environments:** `terraform/environments/prod-{site}/` — one per physical deployment site, calling the same modules with different tfvars
+2. **Ansible (from hyperi-infra):** Provisions Proxmox VMs and RKE2 cluster — feeds into dfe-infra's Terraform + bootstrap.sh
+3. **ArgoCD multi-cluster:** Each production cluster gets its own cluster secret (annotation bridge). Same ApplicationSets deploy to all clusters. Cluster-specific values via annotations.
+4. **Config per tenant:** `argocd/values/` can have per-site overrides (e.g. `prod-sydney.yaml`, `prod-london.yaml`)
