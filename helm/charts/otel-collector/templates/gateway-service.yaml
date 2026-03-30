@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-gateway
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.gateway.service.grpcPort }}
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: {{ .Values.gateway.service.httpPort }}
+      targetPort: otlp-http
+    - name: prometheus
+      port: {{ .Values.gateway.service.prometheusPort }}
+      targetPort: prometheus
+  selector:
+    app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway

@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  gateway-config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 1536
+
+    exporters:
+      {{- if .Values.exporters.hyperdx.enabled }}
+      otlphttp/hyperdx:
+        endpoint: {{ .Values.exporters.hyperdx.endpoint }}
+        tls:
+          insecure: true
+      {{- end }}
+      prometheus:
+        endpoint: 0.0.0.0:{{ .Values.gateway.service.prometheusPort }}
+        metric_expiration: 5m
+      debug:
+        verbosity: basic
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters:
+            - debug
+            {{- if .Values.exporters.hyperdx.enabled }}
+            - otlphttp/hyperdx
+            {{- end }}
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters:
+            - prometheus
+            {{- if .Values.exporters.hyperdx.enabled }}
+            - otlphttp/hyperdx
+            {{- end }}
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters:
+            - debug
+            {{- if .Values.exporters.hyperdx.enabled }}
+            - otlphttp/hyperdx
+            {{- end }}
+
+  daemonset-config.yaml: |
+    receivers:
+      filelog:
+        include: [/var/log/pods/*/*/*.log]
+        exclude: [/var/log/pods/*/otc-container/*.log]
+        start_at: beginning
+        include_file_path: true
+        include_file_name: false
+        operators:
+          - type: container
+            id: container-parser
+      hostmetrics:
+        collection_interval: 30s
+        scrapers:
+          cpu: {}
+          memory: {}
+          disk: {}
+          filesystem: {}
+          network: {}
+
+    processors:
+      batch:
+        timeout: 5s
+      k8sattributes:
+        auth_type: serviceAccount
+        extract:
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.node.name]
+
+    exporters:
+      otlp/gateway:
+        endpoint: {{ include "dfe-common.fullname" . }}-gateway.{{ .Release.Namespace }}.svc.cluster.local:4317
+        tls:
+          insecure: true
+
+    service:
+      pipelines:
+        logs:
+          receivers: [filelog]
+          processors: [k8sattributes, batch]
+          exporters: [otlp/gateway]
+        metrics:
+          receivers: [hostmetrics]
+          processors: [k8sattributes, batch]
+          exporters: [otlp/gateway]

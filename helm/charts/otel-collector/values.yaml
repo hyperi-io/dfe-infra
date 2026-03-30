@@ -1,0 +1,43 @@
+project: dfe
+component: otel-collector
+env: local
+cloud: local
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: ""  # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+gateway:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  service:
+    grpcPort: 4317
+    httpPort: 4318
+    prometheusPort: 8889
+
+daemonset:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+exporters:
+  # Path A: Direct to HyperDX
+  hyperdx:
+    enabled: true
+    endpoint: "http://dfe-hyperdx.hyperdx.svc.cluster.local:4318"
+  # ClickHouse exporter for raw telemetry
+  clickhouse:
+    enabled: true
+    endpoint: "tcp://dfe-clickhouse.clickhouse.svc.cluster.local:9000"
+    database: dfe

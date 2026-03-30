@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-daemonset
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
+    spec:
+      serviceAccountName: {{ include "dfe-common.fullname" . }}
+      containers:
+        - name: otel-collector
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          args: ["--config=/etc/otel/daemonset-config.yaml"]
+          resources:
+            {{- toYaml .Values.daemonset.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
