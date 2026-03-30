@@ -1,7 +1,7 @@
 # SCOPE — dfe-infra
 
 **Project name:** dfe-infra
-**Repo:** github.com/hsderek/dfe-infra (will move to hyperi-io/dfe-infra when mature)
+**Repo:** github.com/catinspace-au/dfe-infra (will move to hyperi-io/dfe-infra when mature)
 **License:** OSS under https://github.com/hyperi-io/licensing
 
 - This is the TF + Helm + Argo deployed SSOT for HyperI Data Fusion Engine 2.2 and later
