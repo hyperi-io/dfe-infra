@@ -1832,7 +1832,8 @@ The Layer 2 ApplicationSets resolve `argocd/values/{{cloud}}.yaml` at sync time.
   │   ├── bootstrap.sh          # Idempotent cluster bootstrap — run once per cluster
   │   └── templates/            # envsubst templates rendered by bootstrap.sh
   │       ├── cluster-secret.yaml.tpl            # ArgoCD cluster secret (annotation bridge)
-  │       └── eso-cluster-secret-store.yaml.tpl  # ESO ClusterSecretStore
+  │       ├── eso-cluster-secret-store.yaml.tpl  # ESO ClusterSecretStore
+  │       └── regcred.yaml.tpl                   # imagePullSecret for JFrog registry
   │
   ├── docs/
   │   ├── superpowers/
@@ -1929,20 +1930,37 @@ The Layer 2 ApplicationSets resolve `argocd/values/{{cloud}}.yaml` at sync time.
           "${DFE_REGISTRY_HOST}": {
             "username": "${DFE_REGISTRY_USER}",
             "password": "${DFE_REGISTRY_TOKEN}",
-            "auth": "$(echo -n "${DFE_REGISTRY_USER}:${DFE_REGISTRY_TOKEN}" | base64)"
+            "auth": "${DFE_REGISTRY_AUTH}"
           }
         }
       }
   ```
 
-- [ ] **Step 3: Add registry vars to bootstrap.sh required_vars**
+- [ ] **Step 3: Patch `bootstrap/bootstrap.sh` — add registry vars + regcred step**
 
-  In `bootstrap/bootstrap.sh`, add to the `required_vars` array:
+  **3a.** In the `required_vars` array, replace the last two lines so the full array is:
+
   ```bash
-  DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
+  required_vars=(
+    DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_TENANCY
+    DFE_REPO_URL DFE_TARGET_REVISION
+    DFE_STORAGE_CLASS DFE_NAMESPACE
+    DFE_CLICKHOUSE_HOST DFE_KAFKA_BOOTSTRAP DFE_OTEL_ENDPOINT
+    DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
+    DFE_WORKLOAD_IDENTITY_ANNOTATIONS
+    DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
+  )
   ```
 
-  Add a new step after `[4/7]` (ESO ClusterSecretStore) to create the regcred in the ArgoCD and DFE namespaces:
+  **3b.** Immediately after the `required_vars` validation loop (after the `fi`), add the base64 auth computation:
+
+  ```bash
+  # Compute base64 auth for registry — envsubst cannot run subshells
+  export DFE_REGISTRY_AUTH
+  DFE_REGISTRY_AUTH=$(echo -n "${DFE_REGISTRY_USER}:${DFE_REGISTRY_TOKEN}" | base64)
+  ```
+
+  **3c.** Insert this new step between `[4/7]` (ESO ClusterSecretStore) and `[5/7]` (Valkey):
 
   ```bash
   echo "==> [4b/7] Creating imagePullSecret for JFrog registry"
@@ -2001,10 +2019,11 @@ The Layer 2 ApplicationSets resolve `argocd/values/{{cloud}}.yaml` at sync time.
               echo "==> Building $service"
               docker buildx build \
                 --platform linux/amd64,linux/arm64 \
+                --file "$dockerfile" \
                 --tag "${IMAGE_PREFIX}/${service}:${GITHUB_SHA::8}" \
                 --tag "${IMAGE_PREFIX}/${service}:latest" \
                 --push \
-                "$dockerfile"
+                "$(dirname "$dockerfile")"
             done
   ```
 
@@ -2034,10 +2053,6 @@ The Layer 2 ApplicationSets resolve `argocd/values/{{cloud}}.yaml` at sync time.
 ### Task 14: Final Verification
 
 - [ ] **Step 1: Verify repo state on GitHub**
-
-  ```bash
-  gh repo view catinspace-au/dfe-infra --web
-  ```
 
   ```bash
   gh repo view catinspace-au/dfe-infra --web
