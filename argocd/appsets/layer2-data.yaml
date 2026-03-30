@@ -16,7 +16,7 @@ spec:
           - list:
               elements:
                 - app: cnpg-cluster
-                  namespace: 'dfe-{{metadata.annotations.dfe\.hyperi\.io/env}}'
+                  namespace: cnpg
                   wave: "4"
                   project: data
                 - app: clickhouse-cluster
@@ -28,7 +28,7 @@ spec:
                   wave: "4"
                   project: data
                 - app: ferretdb
-                  namespace: 'dfe-{{metadata.annotations.dfe\.hyperi\.io/env}}'
+                  namespace: ferretdb
                   wave: "4"
                   project: data
                 - app: otel-collector
