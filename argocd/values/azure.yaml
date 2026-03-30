@@ -1,0 +1,13 @@
+# Azure AKS overrides — populated in Plan 07 (azure).
+global:
+  cloud: az
+
+storageClass: managed-premium
+
+envoyGateway:
+  service:
+    type: LoadBalancer
+
+configStorage:
+  type: azurefiles
+  # shareName: set from cluster secret annotation

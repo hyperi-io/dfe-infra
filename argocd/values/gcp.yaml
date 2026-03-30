@@ -1,0 +1,13 @@
+# GCP GKE overrides — populated in Plan 07 (gcp).
+global:
+  cloud: gcp
+
+storageClass: standard-rwo
+
+envoyGateway:
+  service:
+    type: LoadBalancer
+
+configStorage:
+  type: gcs
+  # bucket: set from cluster secret annotation

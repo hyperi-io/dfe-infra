@@ -1,0 +1,16 @@
+# AWS EKS overrides — populated in Plan 07 (aws-eks).
+# Stub required so Layer 2 ApplicationSet valueFiles resolution succeeds on EKS targets.
+global:
+  cloud: aws
+
+storageClass: gp3
+
+envoyGateway:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+
+configStorage:
+  type: s3
+  # bucket: set from cluster secret annotation dfe.hyperi.io/config_bucket
