@@ -1,0 +1,54 @@
+# Lints all Helm charts on every PR and push to main.
+name: Helm Lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'helm/**'
+      - 'argocd/**'
+      - '.github/workflows/helm-lint.yml'
+  pull_request:
+    paths:
+      - 'helm/**'
+      - 'argocd/**'
+      - '.github/workflows/helm-lint.yml'
+
+jobs:
+  lint:
+    name: helm lint + yaml validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.14.0"
+
+      - name: Lint library charts via test charts
+        run: |
+          set -e
+          for test_dir in helm/library/*/tests/lint-test/; do
+            echo "==> Linting via $test_dir"
+            helm dependency update "$test_dir"
+            helm lint "$test_dir"
+          done
+
+      - name: Lint application charts
+        run: |
+          set -e
+          for chart_dir in helm/charts/*/; do
+            if [[ -f "$chart_dir/Chart.yaml" ]]; then
+              echo "==> Linting $chart_dir"
+              helm dependency update "$chart_dir" 2>/dev/null || true
+              helm lint "$chart_dir"
+            fi
+          done
+
+      - name: Validate YAML syntax of ArgoCD manifests
+        run: |
+          set -e
+          for f in $(find argocd -name '*.yaml' -type f); do
+            python3 -c "import yaml,sys; list(yaml.safe_load_all(open('$f')))" && echo "OK: $f"
+          done
