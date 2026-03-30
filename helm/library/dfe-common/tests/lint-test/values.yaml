@@ -1,0 +1,4 @@
+project: dfe
+component: test
+env: dev
+cloud: local

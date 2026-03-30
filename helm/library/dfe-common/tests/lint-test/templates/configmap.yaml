@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-test
+  namespace: {{ include "dfe-common.namespace" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  fullname: {{ include "dfe-common.fullname" . }}
+  namespace: {{ include "dfe-common.namespace" . }}

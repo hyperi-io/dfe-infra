@@ -1,0 +1,9 @@
+apiVersion: v2
+name: dfe-common-lint-test
+description: Minimal chart that uses dfe-common library — used to validate helm lint passes
+version: 0.1.0
+appVersion: "0.0.1"
+dependencies:
+  - name: dfe-common
+    version: "0.1.0"
+    repository: "file://../../"
