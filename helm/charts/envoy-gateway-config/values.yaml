@@ -1,0 +1,19 @@
+project: dfe
+component: gateway
+env: local
+cloud: local
+
+gateway:
+  name: dfe-gateway
+  namespace: envoy-gateway-system
+  listenerPort: 443
+
+tls:
+  issuerName: dfe-letsencrypt
+  acme:
+    email: ""
+    server: "https://acme-v02.api.letsencrypt.org/directory"
+    cloudflareTokenSecretName: cloudflare-api-token
+    cloudflareTokenSecretKey: token
+
+domain: ""

@@ -1,0 +1,20 @@
+{{- if .Values.tls.acme.email }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.tls.issuerName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  acme:
+    email: {{ .Values.tls.acme.email }}
+    server: {{ .Values.tls.acme.server }}
+    privateKeySecretRef:
+      name: dfe-letsencrypt-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: {{ .Values.tls.acme.cloudflareTokenSecretName }}
+              key: {{ .Values.tls.acme.cloudflareTokenSecretKey }}
+{{- end }}

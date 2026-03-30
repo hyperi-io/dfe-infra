@@ -1,0 +1,31 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.tls.issuerName }}
+spec:
+  gatewayClassName: dfe-envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: {{ .Values.gateway.listenerPort }}
+      hostname: "*.{{ .Values.domain }}"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: dfe-wildcard-tls
+            kind: Secret
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "*.{{ .Values.domain }}"
+      allowedRoutes:
+        namespaces:
+          from: All
