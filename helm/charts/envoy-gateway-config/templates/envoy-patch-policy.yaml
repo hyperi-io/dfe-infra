@@ -1,0 +1,52 @@
+{{- if .Values.jwtAuthn.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: dfe-jwt-authn
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ .Values.gateway.name }}
+  type: JSONPatch
+  jsonPatches:
+    - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+      name: "{{ .Values.gateway.namespace }}/{{ .Values.gateway.name }}/https"
+      operation:
+        op: add
+        path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+        value:
+          name: "envoy.filters.http.jwt_authn"
+          typed_config:
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication"
+            providers:
+              oidc_provider:
+                issuer: {{ .Values.jwtAuthn.issuer }}
+                {{- if .Values.jwtAuthn.audiences }}
+                audiences:
+                  {{- toYaml .Values.jwtAuthn.audiences | nindent 18 }}
+                {{- end }}
+                forward: true
+                from_headers:
+                  - name: "Authorization"
+                    value_prefix: "Bearer "
+                remote_jwks:
+                  http_uri:
+                    uri: "{{ .Values.jwtAuthn.issuer }}/.well-known/jwks.json"
+                    cluster: "oidc_jwks"
+                    timeout: 5s
+                  cache_duration: 600s
+                claim_to_headers:
+                  - header_name: {{ .Values.jwtAuthn.forwardHeaders.user }}
+                    claim_name: email
+                  - header_name: {{ .Values.jwtAuthn.forwardHeaders.groups }}
+                    claim_name: groups
+            rules:
+              match:
+                prefix: "/"
+              requires:
+                provider_name: oidc_provider
+{{- end }}
