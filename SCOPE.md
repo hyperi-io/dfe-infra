@@ -62,11 +62,18 @@ SCOPE
 
 DEPLOYMENT UX (the test case)
 - Point to a blank AWS account (or on-prem Rancher for initial tests)
-- Supply a subdomain for the DFE instance (e.g. dfe.devex.hypersec.io)
+- Supply a subdomain for the DFE instance (e.g. dfe.devex.hyperi.io)
 - Optionally supply an external OIDC provider
 - Run deploy → it "just works"
 - Minimum viable inputs: cloud target + domain + optional OIDC. Everything else has sensible defaults.
 - This is the primary deployment and test case for validating dfe-infra
+
+DEPLOYMENT TIERS (three paths to DFE)
+- Tier 1: dfe-docker — Docker Compose for developers and basic tyre kickers. Existing project, minimal deps. No K8s needed.
+- Tier 2: dfe-operator — Simple self-contained K8s operator for minimal DFE (like HyperDX has). Single CRD, `kubectl apply -f dfe.yaml` → running DFE. Good for getting started without the full deployment. Discuss: should this be the first deliverable?
+- Tier 3: dfe-infra (this repo) — Full multi-cloud TF+Helm+ArgoCD deployment. Production-grade, PB-scale, multi-tenant.
+
+Synergy: dfe-docker and dfe-operator share the same DFE service images. dfe-infra's Helm charts can be consumed by the operator. The operator is a simplified wrapper that creates the same resources dfe-infra does, but with opinionated defaults and fewer knobs.
 
 
 LICENSE REVIEW
