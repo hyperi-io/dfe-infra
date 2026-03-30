@@ -1,0 +1,33 @@
+project: dfe
+component: ferretdb
+env: local
+cloud: local
+
+image:
+  repository: ghcr.io/ferretdb/ferretdb
+  tag: ""  # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+postgresql:
+  # Connection to CNPG cluster (created by cnpg-cluster chart)
+  host: dfe-pg-rw.cnpg.svc.cluster.local
+  port: 5432
+  database: ferretdb
+  # Credentials from CNPG-generated secret
+  secretName: dfe-pg-app
+  secretUserKey: username
+  secretPasswordKey: password
+
+service:
+  port: 27017
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
