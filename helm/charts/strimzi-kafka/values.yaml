@@ -1,0 +1,32 @@
+project: dfe
+component: kafka
+env: local
+cloud: local
+
+kafka:
+  name: dfe-kafka
+  version: "3.9.0"
+  replicas: 3
+  storage:
+    type: persistent-claim
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  config:
+    compressionType: zstd
+    logRetentionHours: "72"
+    numPartitions: "6"
+    defaultReplicationFactor: "3"
+    minInsyncReplicas: "2"
+
+# DFE service user (SCRAM-SHA-512)
+user:
+  name: dfe-kafka-user
+  authentication:
+    type: scram-sha-512
