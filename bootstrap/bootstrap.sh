@@ -148,6 +148,7 @@ run helm upgrade --install argocd argo/argo-cd \
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
+run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml"
 
 echo ""
 echo "=========================================="
