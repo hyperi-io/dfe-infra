@@ -87,6 +87,18 @@ See `docs/superpowers/specs/2026-03-30-dfe-infra-design.md` for the full design 
 **Rationale:** Bitnami charts have non-standard paths, custom entrypoints, image pull issues, and are prohibited by HyperI K8s standards. The Valkey Bitnami chart failure during devex deployment confirmed this.
 **How to apply:** PostgreSQL→CNPG, Kafka→Strimzi, ClickHouse→Altinity, Redis/Valkey→Spotahome Operator or existing deployment, ArgoCD→official chart. If no operator exists, deploy via Deployment manifest directly.
 
+### OIDC Group-Mapping Service (Parked)
+
+**Decision:** DFE needs a standalone auth/group-mapping service that bridges OIDC provider group names to DFE RBAC groups. dfe-engine is the consumer and its API is being shaped now — this service will be specced after dfe-engine's auth interface stabilises.
+**Targets:** Entra ID, Okta, Google Workspace, AWS IAM Identity Center, Auth0, Ping Identity, OneLogin, JumpCloud, Keycloak (self-hosted).
+**How to apply:** Parked until dfe-engine auth work completes. Will be its own project (not in dfe-infra).
+
+### Two Auth Modes
+
+**Decision:** DFE supports two auth modes: (1) Simple — no OIDC, Envoy for routing only, dfe-engine LocalAuthProvider with basic username/password/groups. (2) Normal — full Envoy Gateway OIDC SecurityPolicy + jwt_authn claim forwarding.
+**Rationale:** Simple mode enables local dev and air-gapped deployments without configuring an identity provider. Normal mode is for prod/preprod/testing.
+**How to apply:** `oidc.enabled: false` (default) = simple mode. `oidc.enabled: true` in ArgoCD values = normal mode.
+
 ### No Prometheus — ALL OTel
 
 **Decision:** No Prometheus anywhere in the stack. ALL metrics, logging, and tracing go through OTel. This includes KEDA — KEDA uses OTel-native metrics (via OTel Collector's metrics API or Kedify OTEL Scaler), not Prometheus triggers.

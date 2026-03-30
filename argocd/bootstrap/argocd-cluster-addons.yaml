@@ -4,6 +4,8 @@ metadata:
   name: dfe-cluster-addons
   namespace: argocd
 spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
     - clusters:
         selector:
@@ -14,16 +16,16 @@ spec:
               operator: Exists
   template:
     metadata:
-      name: "dfe-addons-{{name}}"
+      name: 'dfe-addons-{{ .name }}'
       namespace: argocd
     spec:
       project: infra
       source:
-        repoURL: '{{metadata.annotations.dfe\.hyperi\.io/repo_url}}'
-        targetRevision: '{{metadata.annotations.dfe\.hyperi\.io/target_revision}}'
+        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
         path: argocd/appsets
       destination:
-        server: "{{server}}"
+        server: '{{ .server }}'
         namespace: argocd
       syncPolicy:
         automated:

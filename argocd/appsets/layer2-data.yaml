@@ -6,6 +6,8 @@ metadata:
   name: dfe-layer2-data
   namespace: argocd
 spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
     - matrix:
         generators:
@@ -38,23 +40,23 @@ spec:
                   project: data
   template:
     metadata:
-      name: "{{app}}-{{name}}"
+      name: '{{ .app }}-{{ .name }}'
       namespace: argocd
       annotations:
-        argocd.argoproj.io/sync-wave: "{{wave}}"
+        argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
-      project: "{{project}}"
+      project: '{{ .project }}'
       source:
-        repoURL: '{{metadata.annotations.dfe\.hyperi\.io/repo_url}}'
-        targetRevision: '{{metadata.annotations.dfe\.hyperi\.io/target_revision}}'
-        path: "helm/charts/{{app}}"
+        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+        path: 'helm/charts/{{ .app }}'
         helm:
           valueFiles:
             - "../../argocd/values/common.yaml"
-            - '../../argocd/values/{{metadata.annotations.dfe\.hyperi\.io/cloud}}.yaml'
+            - '../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
       destination:
-        server: "{{server}}"
-        namespace: "{{namespace}}"
+        server: '{{ .server }}'
+        namespace: '{{ .namespace }}'
       syncPolicy:
         automated:
           prune: true

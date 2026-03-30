@@ -8,7 +8,7 @@ metadata:
 spec:
   project: infra
   source:
-    repoURL: https://github.com/catinspace-au/dfe-infra.git
+    repoURL: git@github.com:hyperi-io/dfe-infra.git
     targetRevision: main
     path: helm/charts/network-policies
     helm:

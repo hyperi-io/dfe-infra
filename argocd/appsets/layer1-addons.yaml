@@ -8,6 +8,8 @@ metadata:
   name: dfe-layer1-addons
   namespace: argocd
 spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
     - matrix:
         generators:
@@ -80,27 +82,25 @@ spec:
                   project: infra
   template:
     metadata:
-      name: "{{chart}}-{{name}}"
+      name: '{{ .chart }}-{{ .name }}'
       namespace: argocd
       annotations:
-        argocd.argoproj.io/sync-wave: "{{wave}}"
+        argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
-      project: "{{project}}"
+      project: '{{ .project }}'
       source:
-        repoURL: "{{repo}}"
-        chart: "{{chart}}"
-        targetRevision: "{{version}}"
+        repoURL: '{{ .repo }}'
+        chart: '{{ .chart }}'
+        targetRevision: '{{ .version }}'
         helm:
           valuesObject:
             global:
-              domain: '{{metadata.annotations.dfe\.hyperi\.io/domain}}'
-              cloud: '{{metadata.annotations.dfe\.hyperi\.io/cloud}}'
-              env: '{{metadata.annotations.dfe\.hyperi\.io/env}}'
-            # Chart-specific value files are added in Plan 02 (layer1-rancher)
-            # when each component's actual Helm values are defined.
+              domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
+              env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
       destination:
-        server: "{{server}}"
-        namespace: "{{namespace}}"
+        server: '{{ .server }}'
+        namespace: '{{ .namespace }}'
       syncPolicy:
         automated:
           prune: false
