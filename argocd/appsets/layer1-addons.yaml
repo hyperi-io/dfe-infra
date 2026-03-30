@@ -1,3 +1,5 @@
+# IMPORTANT: Chart versions in this file MUST match versions.yaml (the SSOT).
+# When updating versions, change versions.yaml first, then update this file to match.
 # Wave 2-3: cert-manager (adopted), ESO (adopted), Envoy Gateway, KEDA,
 # metrics-server, VPA, Reloader, CNPG operator, Strimzi operator, ClickHouse operator.
 apiVersion: argoproj.io/v1alpha1

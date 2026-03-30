@@ -45,6 +45,14 @@ TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 TF=$(command -v tofu || command -v terraform || { echo "ERROR: install terraform (>=1.6) or opentofu (>=1.6)" >&2; exit 1; })
 echo "Detected IaC tool: ${TF}"
 
+# Read versions from SSOT (versions.yaml)
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.cert-manager)
+EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
+ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
+VALKEY_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.valkey)
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} valkey=${VALKEY_VERSION}"
+
 # Dry-run wrapper
 run() {
   if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
@@ -96,14 +104,14 @@ fi
 echo "==> [2/7] Installing cert-manager (idempotent)"
 run helm upgrade --install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace \
-  --version v1.14.0 \
+  --version "${CERT_MANAGER_VERSION}" \
   --set installCRDs=true \
   --wait --timeout 5m
 
 echo "==> [3/7] Installing external-secrets (idempotent)"
 run helm upgrade --install external-secrets external-secrets/external-secrets \
   --namespace external-secrets --create-namespace \
-  --version 0.9.13 \
+  --version "${EXTERNAL_SECRETS_VERSION}" \
   --wait --timeout 5m
 
 echo "==> [4/7] Applying ESO ClusterSecretStore"
@@ -124,14 +132,14 @@ done
 echo "==> [5/7] Installing Valkey (ArgoCD cache, replaces Redis)"
 run helm upgrade --install dfe-valkey oci://registry-1.docker.io/bitnamicharts/valkey \
   --namespace argocd --create-namespace \
-  --version 1.0.0 \
+  --version "${VALKEY_VERSION}" \
   --set auth.enabled=false \
   --wait --timeout 5m
 
 echo "==> [6/7] Installing ArgoCD with Valkey cache (idempotent)"
 run helm upgrade --install argocd argo/argo-cd \
   --namespace argocd --create-namespace \
-  --version 7.3.0 \
+  --version "${ARGOCD_VERSION}" \
   --set redis.enabled=false \
   --set "externalRedis.host=dfe-valkey-master.argocd.svc.cluster.local" \
   --set "externalRedis.port=6379" \

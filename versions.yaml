@@ -1,0 +1,41 @@
+# versions.yaml — SINGLE SOURCE OF TRUTH for all pinned versions.
+# Every version pin in the repo reads from this file.
+# To upgrade a component: change the version here, commit, push.
+# bootstrap.sh, ArgoCD ApplicationSets, and CI all consume this.
+
+# Layer 1: Bootstrap components (installed by bootstrap.sh)
+bootstrap:
+  cert-manager: "v1.17.2"
+  external-secrets: "0.17.0"
+  argocd: "7.8.26"
+  valkey: "1.0.0"
+
+# Layer 1: Operators (deployed by ArgoCD wave 2-3)
+operators:
+  envoy-gateway: "v1.4.0"
+  external-dns: "1.14.3"
+  keda: "2.14.0"
+  metrics-server: "3.12.0"
+  stakater-reloader: "1.1.0"
+  cnpg: "0.27.1"
+  strimzi-kafka-operator: "0.50.1"
+  clickhouse-operator: "0.23.0"
+
+# Layer 2: Data platform (deployed by ArgoCD wave 4)
+# Versions added in Plan 03
+data: {}
+
+# Layer 2: DFE apps (deployed by ArgoCD wave 5)
+# Versions added in Plan 06
+apps: {}
+
+# Terraform providers
+providers:
+  hashicorp-null: "~> 3.0"
+  hashicorp-vault: "~> 4.0"
+
+# CI tools
+tools:
+  terraform: "1.9.0"
+  opentofu: "1.7.0"
+  helm: "3.14.0"
