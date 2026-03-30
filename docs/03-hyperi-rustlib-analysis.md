@@ -12,7 +12,7 @@
 
 ### 1.1 Crate Structure and Module Organisation
 
-hyperi-rustlib is a single crate with **feature-gated modules**. Each module can be enabled/disabled independently. Ships as `hyperi-rustlib` on a private JFrog Artifactory Cargo registry.
+hyperi-rustlib is a single crate with **feature-gated modules**. Each module can be enabled/disabled independently. Ships as `hyperi-rustlib` on crates.io (public). The Python counterpart `hyperi-pylib` ships on PyPI.
 
 **Default features:** `config`, `logger`, `metrics`, `runtime`, `shutdown`, `health`
 

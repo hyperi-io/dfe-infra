@@ -1,4 +1,5 @@
-# Wave 4: CNPG PostgreSQL cluster, ClickHouse cluster, Strimzi Kafka, FerretDB, OTel Collector, HyperDX.
+# Wave 4: CNPG PostgreSQL cluster, ClickHouse cluster, Strimzi Kafka, FerretDB, OTel Collector.
+# HyperDX is deployed with dfe-ui at wave 5 (integrated into dfe-ui, not standalone).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -33,10 +34,6 @@ spec:
                   project: data
                 - app: otel-collector
                   namespace: otel
-                  wave: "4"
-                  project: data
-                - app: hyperdx
-                  namespace: hyperdx
                   wave: "4"
                   project: data
   template:

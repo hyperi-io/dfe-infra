@@ -32,7 +32,7 @@ check "strimzi namespace" "kubectl get ns strimzi"
 check "clickhouse namespace" "kubectl get ns clickhouse"
 check "ferretdb namespace" "kubectl get ns ferretdb"
 check "otel namespace" "kubectl get ns otel"
-check "hyperdx namespace" "kubectl get ns hyperdx"
+# hyperdx deployed with dfe-ui (wave 5), not wave 4
 
 echo ""
 echo "--- CNPG PostgreSQL ---"
@@ -57,9 +57,8 @@ echo "--- OTel Collector ---"
 check "OTel Gateway running" "kubectl -n otel get deploy dfe-otel-collector-gateway -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 check "OTel DaemonSet running" "kubectl -n otel get daemonset dfe-otel-collector-daemonset -o jsonpath='{.status.numberReady}' | grep -qE '^[1-9]'"
 
-echo ""
-echo "--- HyperDX ---"
-check "HyperDX deployment ready" "kubectl -n hyperdx get deploy dfe-hyperdx -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
+# HyperDX is deployed with dfe-ui at wave 5, not in the data platform wave 4.
+# HyperDX health check is in the application-level smoke test.
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

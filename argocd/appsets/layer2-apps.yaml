@@ -1,4 +1,4 @@
-# Wave 5: DFE application services.
+# Wave 5: DFE application services + HyperDX (embedded in dfe-ui).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -26,6 +26,8 @@ spec:
                 - app: dfe-archiver
                   wave: "5"
                 - app: dfe-fetcher
+                  wave: "5"
+                - app: hyperdx
                   wave: "5"
   template:
     metadata:
