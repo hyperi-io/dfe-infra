@@ -1,0 +1,41 @@
+project: dfe
+component: loader
+env: local
+cloud: local
+
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+kafka:
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+
+clickhouse:
+  host: ""
+  port: 8123
+  database: dfe
+
+config:
+  mountPath: /config
+  nfs:
+    server: ""
+    path: ""
+
+otel:
+  endpoint: ""
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  annotations: {}   # workload identity annotations injected here
