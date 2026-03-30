@@ -5,6 +5,10 @@ global:
   cloud: ""
   domain: ""
   region: local
+  # Container registry — JFrog now, GHCR when OSS release is complete.
+  # All Helm charts reference: image.registry: "{{ .Values.global.registry }}"
+  # Migration to GHCR: change this one value in common.yaml.
+  registry: "<JFROG_HOST>/dfe"
 
 otel:
   endpoint: "otel-collector-gateway.otel.svc.cluster.local:4317"

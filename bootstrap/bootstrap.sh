@@ -29,6 +29,9 @@
 #   DFE_VAULT_ADDR           OpenBao/Vault address
 #   DFE_VAULT_ROLE_ID        ESO AppRole role_id
 #   DFE_WORKLOAD_IDENTITY_ANNOTATIONS  JSON map of service → cloud identity annotations
+#   DFE_REGISTRY_HOST        JFrog registry hostname
+#   DFE_REGISTRY_USER        JFrog service account username
+#   DFE_REGISTRY_TOKEN       JFrog API token
 #
 # Optional:
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
@@ -59,6 +62,7 @@ required_vars=(
   DFE_CLICKHOUSE_HOST DFE_KAFKA_BOOTSTRAP DFE_OTEL_ENDPOINT
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
+  DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 )
 missing=()
 for var in "${required_vars[@]}"; do
@@ -68,6 +72,10 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   echo "ERROR: Missing required environment variables: ${missing[*]}" >&2
   exit 1
 fi
+
+# Compute base64 auth for registry — envsubst cannot run subshells
+export DFE_REGISTRY_AUTH
+DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
 
 # Add Helm repos (idempotent)
 echo "==> [0/7] Adding Helm repositories"
@@ -104,6 +112,12 @@ if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
 else
   envsubst < "${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl" | kubectl apply -f -
 fi
+
+echo "==> [4b/7] Creating imagePullSecret for JFrog registry"
+for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx; do
+  kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
+  TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
+done
 
 # Valkey MUST be installed before ArgoCD — ArgoCD --wait will timeout
 # if the externalRedis host is unreachable on first boot.

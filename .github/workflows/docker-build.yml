@@ -1,0 +1,48 @@
+# Builds and pushes DFE service images to JFrog on merge to main.
+# This covers Dockerfiles in dfe-infra (utility images like ImperativeOperations).
+# Future: change registry to ghcr.io/hyperi-io when OSS.
+name: Docker Build + Push
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/**'
+      - '.github/workflows/docker-build.yml'
+
+env:
+  REGISTRY: ${{ secrets.JFROG_HOST }}
+  IMAGE_PREFIX: ${{ secrets.JFROG_HOST }}/dfe
+
+jobs:
+  build:
+    name: build and push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to JFrog registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.JFROG_USER }}
+          password: ${{ secrets.JFROG_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push images
+        run: |
+          set -e
+          for dockerfile in docker/*/Dockerfile; do
+            [ -f "$dockerfile" ] || continue
+            service=$(basename "$(dirname "$dockerfile")")
+            echo "==> Building $service"
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              --file "$dockerfile" \
+              --tag "${IMAGE_PREFIX}/${service}:${GITHUB_SHA::8}" \
+              --tag "${IMAGE_PREFIX}/${service}:latest" \
+              --push \
+              "$(dirname "$dockerfile")"
+          done
