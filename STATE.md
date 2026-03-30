@@ -1,7 +1,7 @@
 # Project Context
 
-**Project:** [Project Name]
-**Purpose:** [Brief description of project purpose]
+**Project:** dfe-infra
+**Purpose:** Multi-cloud Terraform + Helm + ArgoCD SSOT for DFE 2.2+ deployments (Rancher local, AWS, GCP, Azure)
 
 > **Note:** The `hyperi-ai/` submodule provides standards and configuration — not
 > code to import. Your project never imports or links to it.
@@ -28,36 +28,73 @@
 
 ### Architecture
 
-[High-level architecture description]
+Two-layer model: Layer 1 (base infra, cloud-specific) bootstrapped by `bootstrap.sh` (Build 1, static/release-pinned). Layer 2 (DFE platform, identical on any K8s) managed by ArgoCD (Build 2, dynamic/GitOps). Cluster secret annotation bridge carries Terraform outputs into the GitOps layer.
+
+See `docs/superpowers/specs/2026-03-30-dfe-infra-design.md` for the full design spec.
 
 ### Key Components
 
-1. **Component 1** - [Description]
-2. **Component 2** - [Description]
+1. **terraform/modules/** - Reusable IaC modules (tf-naming, tf-k8s-cluster, tf-iam, tf-secrets, etc.)
+2. **helm/charts/** - One Helm chart per DFE service and data component
+3. **argocd/** - ApplicationSets (matrix generator), AppProjects, cloud-specific values
+4. **bootstrap/** - Idempotent cluster bootstrap script + envsubst templates
 
 ### Tech Stack
 
-- **Language:** [Primary language]
-- **Framework:** [Framework if applicable]
-- **Database:** [Database if applicable]
-- **Deployment:** [Deployment method]
+- **IaC:** Terraform >=1.6 OR OpenTofu >=1.6 (both supported, common HCL subset)
+- **Orchestration:** ArgoCD 2.x with Valkey cache, ApplicationSet matrix generator
+- **Ingress/Auth:** Envoy Gateway + OIDC SecurityPolicy (no nginx, no oauth2-proxy)
+- **Observability:** OTel → ClickHouse → HyperDX (no Prometheus, Grafana, CloudWatch)
+- **Database:** CNPG PostgreSQL 17, ClickHouse (Altinity operator), FerretDB
+- **Messaging:** Strimzi Kafka (KRaft, SASL/SCRAM)
+- **Secrets:** ESO + OpenBao (local) / cloud SM (AWS/GCP/Azure)
+- **Autoscaling:** KEDA from OTel metrics (Kedify OTEL Scaler default)
+- **Registry:** JFrog (temporary) → GHCR when OSS cutover
 
 ---
 
 ## Key Decisions
 
-### [Decision Title]
+### Scripting Language Escalation Rule
 
-**Decision:** [What was decided]
-**Rationale:** [Why this approach was chosen]
-**Alternatives considered:** [Other options that were rejected]
+**Decision:** As soon as bash gets complex or starts processing data using tools like jq, it should be converted to Python 3 + stdlib.
+**Rationale:** Bash is fine for simple glue (kubectl, helm, envsubst). But data processing, JSON manipulation, conditional logic trees belong in Python for readability, testability, and error handling.
+**How to apply:** bootstrap.sh stays bash (simple command orchestration). Anything parsing JSON, building complex data structures, or doing conditional logic → Python 3.
+
+### No OpenSearch
+
+**Decision:** OpenSearch is removed and deprecated from DFE 2.2. Do not reference or recommend it anywhere.
+**Rationale:** Replaced entirely by OTel → ClickHouse → HyperDX stack.
+
+### Terraform/OpenTofu Dual Support
+
+**Decision:** Support both Terraform >=1.6 and OpenTofu >=1.6. Stay on the common HCL subset.
+**Rationale:** OSS project — users may prefer either. Zero maintenance cost if we avoid tool-specific features.
+
+### Container Registry Migration Path
+
+**Decision:** JFrog temporarily, GHCR (ghcr.io/hyperi-io) long-term when OSS cutover.
+**Rationale:** JFrog is current team standard. GHCR is natural for GitHub-hosted OSS. Migration is a one-line change in `argocd/values/common.yaml` (`global.registry`).
+
+### Two-CI Model
+
+**Decision:** Two separate CI pipelines: (1) self-CI validates dfe-infra code, (2) deployment CI deploys DFE clusters.
+**Rationale:** Self-CI runs on every PR (fast, safe). Deployment CI is triggered deliberately (destructive, targets real infrastructure).
 
 ---
 
 ## External Dependencies
 
-- **[Service/API]** - [What it's used for]
-- **[Library]** - [Why it's needed]
+- **ArgoCD** - GitOps controller (Layer 2 management)
+- **Envoy Gateway** - Ingress + OIDC auth
+- **HyperDX** - Observability UI over ClickHouse
+- **Strimzi** - Kafka operator (KRaft mode)
+- **CNPG** - PostgreSQL 17 operator
+- **FerretDB** - MongoDB wire protocol over CNPG PG17 (for HyperDX)
+- **KEDA** - Event-driven autoscaling from OTel metrics
+- **ESO** - External Secrets Operator (unified secrets from any backend)
+- **hyperi-ai** - AI standards submodule (read-only, auto-updates)
+- **hyperi-ci** - CI/CD framework with semantic-release enforcement
 
 ---
 
@@ -65,12 +102,16 @@
 
 **Documentation:**
 
-- [docs/README.md](docs/README.md) - Project documentation
+- [DIRECTORY.md](DIRECTORY.md) - Canonical repo structure
+- [docs/superpowers/specs/](docs/superpowers/specs/) - Design specifications
+- [docs/superpowers/plans/](docs/superpowers/plans/) - Implementation plans
+- [docs/01-07](docs/) - Research corpus (dfe-core, dfe-engine, rustlib, dfe-ui, best practices, hyperi-infra, synthesis)
+- [docs/license-review.md](docs/license-review.md) - OSS license audit
 
-**External Resources:**
+**External:**
 
-- [External documentation links]
-- [API references]
+- [hyperi-io/licensing](https://github.com/hyperi-io/licensing) - OSS license policy
+- [Spec Section 9](docs/superpowers/specs/2026-03-30-dfe-infra-design.md) - Naming & Tagging Standard
 
 ---
 
