@@ -1,0 +1,22 @@
+project: dfe
+component: network-policies
+env: local
+cloud: local
+
+# Namespaces that get DFE app policies (ingress from gateway + dfe-*)
+dfeNamespaces:
+  - dfe-local   # changes per env: dfe-dev, dfe-prod, etc.
+
+# Data platform namespaces (ingress only from dfe-* namespaces)
+dataNamespaces:
+  - cnpg
+  - strimzi
+  - clickhouse
+  - ferretdb
+
+# Envoy Gateway namespace (source of ingress traffic)
+gatewayNamespace: envoy-gateway-system
+
+# OTel Collector namespace (all pods can send telemetry here)
+otelNamespace: otel
+otelPort: 4317

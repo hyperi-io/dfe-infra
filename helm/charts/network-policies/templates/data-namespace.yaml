@@ -1,0 +1,22 @@
+{{- range .Values.dataNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: data-ingress-policy
+  namespace: {{ . }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from DFE app namespaces only
+    {{- range $.Values.dfeNamespaces }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+    {{- end }}
+{{- end }}

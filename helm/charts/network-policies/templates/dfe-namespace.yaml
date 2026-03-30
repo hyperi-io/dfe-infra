@@ -1,0 +1,27 @@
+{{- range .Values.dfeNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dfe-ingress-policy
+  namespace: {{ . }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow from Envoy Gateway
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.gatewayNamespace }}
+    # Allow from other DFE namespaces
+    {{- range $.Values.dfeNamespaces }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+    {{- end }}
+{{- end }}
