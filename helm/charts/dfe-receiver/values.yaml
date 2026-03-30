@@ -1,0 +1,44 @@
+project: dfe
+component: receiver
+env: local
+cloud: local
+
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  grpcPort: 8443
+
+receiver:
+  listenAddress: "100.64.0.1"   # CGNAT range per spec Section 2.9
+
+kafka:
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+
+config:
+  mountPath: /config
+  nfs:
+    server: ""
+    path: ""
+
+otel:
+  endpoint: ""
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  annotations: {}   # workload identity annotations injected here

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.httpPort }}
+      targetPort: http
+      name: http
+    - port: {{ .Values.service.grpcPort }}
+      targetPort: grpc
+      name: grpc
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
