@@ -35,7 +35,13 @@ data:
 
 # Layer 2: DFE apps (deployed by ArgoCD wave 5)
 # Versions added in Plan 06
-apps: {}
+apps:
+  dfe-engine: "2.2.0"
+  dfe-ui: "2.2.0"
+  dfe-receiver: "2.2.0"
+  dfe-loader: "2.2.0"
+  dfe-archiver: "2.2.0"
+  dfe-fetcher: "2.2.0"
 
 # Terraform providers
 providers:
