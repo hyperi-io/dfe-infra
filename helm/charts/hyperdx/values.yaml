@@ -1,0 +1,42 @@
+project: dfe
+component: hyperdx
+env: local
+cloud: local
+
+image:
+  repository: ghcr.io/hyperdx/hyperdx
+  tag: ""  # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# HyperDX connects to:
+clickhouse:
+  host: dfe-clickhouse.clickhouse.svc.cluster.local
+  port: 8123
+  database: dfe
+  user: admin
+  secretName: clickhouse-admin-password
+  secretKey: password
+
+# MongoDB-compatible metadata store (FerretDB over CNPG PG17)
+mongodb:
+  uri: "mongodb://dfe-ferretdb.ferretdb.svc.cluster.local:27017/hyperdx"
+
+# OTLP ingest endpoint (receives telemetry from OTel Collector Path A)
+otlp:
+  enabled: true
+  grpcPort: 4317
+  httpPort: 4318
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 2Gi

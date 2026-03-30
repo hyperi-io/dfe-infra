@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: hyperdx
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+            {{- if .Values.otlp.enabled }}
+            - name: otlp-grpc
+              containerPort: {{ .Values.otlp.grpcPort }}
+            - name: otlp-http
+              containerPort: {{ .Values.otlp.httpPort }}
+            {{- end }}
+          env:
+            - name: CLICKHOUSE_HOST
+              value: {{ .Values.clickhouse.host }}
+            - name: CLICKHOUSE_PORT
+              value: {{ .Values.clickhouse.port | quote }}
+            - name: CLICKHOUSE_DB
+              value: {{ .Values.clickhouse.database }}
+            - name: CLICKHOUSE_USER
+              value: {{ .Values.clickhouse.user }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.secretName }}
+                  key: {{ .Values.clickhouse.secretKey }}
+            - name: MONGO_URI
+              value: {{ .Values.mongodb.uri }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5

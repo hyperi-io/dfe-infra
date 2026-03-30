@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+    {{- if .Values.otlp.enabled }}
+    - name: otlp-grpc
+      port: {{ .Values.otlp.grpcPort }}
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: {{ .Values.otlp.httpPort }}
+      targetPort: otlp-http
+    {{- end }}
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
