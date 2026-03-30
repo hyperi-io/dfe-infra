@@ -32,6 +32,16 @@ spec:
     podTemplates:
       - name: dfe-clickhouse-pod
         spec:
+          {{- if .Values.nodeScheduling }}
+          {{- if .Values.nodeScheduling.nodeSelector }}
+          nodeSelector:
+            {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 12 }}
+          {{- end }}
+          {{- if .Values.nodeScheduling.tolerations }}
+          tolerations:
+            {{- toYaml .Values.nodeScheduling.tolerations | nindent 12 }}
+          {{- end }}
+          {{- end }}
           containers:
             - name: clickhouse
               image: clickhouse/clickhouse-server:{{ .Values.clickhouse.version }}

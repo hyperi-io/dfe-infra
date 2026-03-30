@@ -40,6 +40,18 @@ spec:
         {{- end }}
         {{- end }}
 
+  {{- if .Values.nodeScheduling }}
+  affinity:
+    {{- if .Values.nodeScheduling.nodeSelector }}
+    nodeSelector:
+      {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
+    {{- end }}
+    {{- if .Values.nodeScheduling.tolerations }}
+    tolerations:
+      {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
+    {{- end }}
+  {{- end }}
+
   monitoring:
     enablePodMonitor: false  # OTel handles monitoring, not Prometheus
 

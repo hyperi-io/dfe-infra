@@ -50,8 +50,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.cert-manager)
 EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
 ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
-VALKEY_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.valkey)
-echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} valkey=${VALKEY_VERSION}"
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION}"
 
 # Dry-run wrapper
 run() {
@@ -131,20 +130,15 @@ for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx; do
 done
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.
-# On fresh clusters: install Valkey. On existing clusters (devex): use existing.
+# On fresh clusters: deploy plain Valkey manifest. On existing clusters: use existing.
 VALKEY_SVC="${DFE_VALKEY_SERVICE:-valkey}"  # default: 'valkey' (hyperi-infra pattern)
 echo "==> [5/7] Checking Valkey"
 if kubectl -n argocd get svc "${VALKEY_SVC}" > /dev/null 2>&1; then
   echo "  Valkey service '${VALKEY_SVC}' already exists — skipping install"
 else
-  echo "  Installing Valkey (ArgoCD cache)"
-  run helm upgrade --install dfe-valkey oci://registry-1.docker.io/bitnamicharts/valkey \
-    --namespace argocd --create-namespace \
-    --version "${VALKEY_VERSION}" \
-    --set auth.enabled=false \
-    --set master.persistence.storageClass="${DFE_STORAGE_CLASS}" \
-    --wait --timeout 10m
-  VALKEY_SVC="dfe-valkey-master"
+  echo "  Deploying Valkey (ArgoCD cache) — plain manifest, no Bitnami"
+  run kubectl apply -f "${TEMPLATES_DIR}/valkey.yaml"
+  run kubectl -n argocd rollout status deployment/valkey --timeout=120s
 fi
 
 echo "==> [6/7] Installing ArgoCD with Valkey cache (idempotent)"

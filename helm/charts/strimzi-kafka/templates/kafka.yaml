@@ -33,6 +33,28 @@ spec:
       log.retention.hours: {{ .Values.kafka.config.logRetentionHours }}
       compression.type: {{ .Values.kafka.config.compressionType }}
 
+    {{- if .Values.nodeScheduling }}
+    template:
+      pod:
+        {{- if .Values.nodeScheduling.nodeSelector }}
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    {{- range $key, $val := .Values.nodeScheduling.nodeSelector }}
+                    - key: {{ $key }}
+                      operator: In
+                      values:
+                        - {{ $val | quote }}
+                    {{- end }}
+        {{- end }}
+        {{- if .Values.nodeScheduling.tolerations }}
+        tolerations:
+          {{- toYaml .Values.nodeScheduling.tolerations | nindent 10 }}
+        {{- end }}
+    {{- end }}
+
     storage:
       type: {{ .Values.kafka.storage.type }}
       size: {{ .Values.kafka.storage.size }}

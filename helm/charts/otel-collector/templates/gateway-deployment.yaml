@@ -14,6 +14,7 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway
     spec:
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: otel-collector
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"

@@ -15,6 +15,7 @@ spec:
         {{- include "dfe-common.labels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: fetcher
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"

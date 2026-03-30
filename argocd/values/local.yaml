@@ -5,6 +5,17 @@ global:
 
 storageClass: local-path
 
+# Target dedicated DFE worker nodes (dfe-k8s-1/2/3).
+# Matches label + tolerates taint applied during node provisioning.
+nodeScheduling:
+  nodeSelector:
+    dfe.hyperi.io/workload: dfe
+  tolerations:
+    - key: dfe.hyperi.io/workload
+      operator: Equal
+      value: dfe
+      effect: NoSchedule
+
 envoyGateway:
   service:
     type: LoadBalancer

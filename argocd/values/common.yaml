@@ -10,6 +10,10 @@ global:
   # Migration to GHCR: change this one value in common.yaml.
   registry: "<JFROG_HOST>/dfe"
 
+# Node scheduling — empty by default (no constraints).
+# Override in cloud-specific values to target dedicated DFE node pools.
+nodeScheduling: {}
+
 otel:
   endpoint: "otel-collector-gateway.otel.svc.cluster.local:4317"
   tls: false
