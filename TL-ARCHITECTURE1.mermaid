@@ -1,0 +1,35 @@
+---
+config:
+  layout: elk
+---
+flowchart TB
+    n1["dfe-loader"] --> n11["hyperi-rustlib"] & n12["clickhouse-rs"]
+    n2["dfe-receiver"] --> n11
+    n3["dfe-archiver"] --> n11
+    n9["dfe-ui"] --> n4["dfe-engine"]
+    n4 --> n10["hyperi-pylib"] & n13["dfe-schemas"]
+    n5["dfe-fetcher"] --> n11
+    n6["dfe-transform-vrl"] --> n11
+    n7["dfe-transform-waf"] --> n11
+    n8["dfe-transform-vector"] --> n11
+    n11 --> n14["dfe git config<br>(dfe-devex)"]
+    n10 --> n14
+
+    n1@{ shape: rect}
+    n11@{ shape: rect}
+    n12@{ shape: rect}
+    n2@{ shape: rect}
+    n3@{ shape: rect}
+    n9@{ shape: rect}
+    n4@{ shape: rect}
+    n10@{ shape: rect}
+    n13@{ shape: rounded}
+    n5@{ shape: rect}
+    n6@{ shape: rect}
+    n7@{ shape: rect}
+    n8@{ shape: rect}
+    n14@{ shape: rounded}
+
+
+
+
