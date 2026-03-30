@@ -1,0 +1,31 @@
+project: dfe
+component: ui
+env: local
+cloud: local
+
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 3000
+
+config:
+  nextPublicApiUrl: ""           # https://dfe.{domain}/api
+  nextPublicHyperdxUrl: ""       # https://hyperdx.{domain}
+  nextauthSecretName: dfe-ui-nextauth
+
+otel:
+  endpoint: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
