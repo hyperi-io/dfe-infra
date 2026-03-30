@@ -1,0 +1,27 @@
+# Terraform / OpenTofu
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Helm
+**/charts/*.tgz
+
+# Secrets / certs
+*.pem
+*.key
+*.p12
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
