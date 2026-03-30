@@ -1,0 +1,43 @@
+project: dfe
+component: fetcher
+env: local
+cloud: local
+
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+kafka:
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+
+# API credentials are injected via External Secrets Operator
+# ESO creates dfe-fetcher-api-creds from vault/cloud secret store
+apiCredentials:
+  secretName: dfe-fetcher-api-creds
+  apiKeyKey: api-key
+  apiSecretKey: api-secret
+
+config:
+  mountPath: /config
+  nfs:
+    server: ""
+    path: ""
+
+otel:
+  endpoint: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  annotations: {}   # workload identity annotations injected here
