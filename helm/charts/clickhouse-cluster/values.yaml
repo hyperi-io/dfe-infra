@@ -1,0 +1,33 @@
+project: dfe
+component: clickhouse
+env: local
+cloud: local
+
+clickhouse:
+  name: dfe-clickhouse
+  version: "24.8"
+  replicas: 1       # dev profile; 2-3 for production
+  shardsCount: 1
+  storage:
+    size: 50Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  users:
+    # Default admin user (password via ESO secret)
+    admin:
+      name: admin
+      secretName: clickhouse-admin-password
+    # DFE loader role (async insert, limited permissions)
+    loader:
+      name: dfe_loader_role
+      databases: ["dfe"]
+    # DFE query role (read-only for hunts)
+    query:
+      name: dfe_query_role
+      databases: ["dfe"]

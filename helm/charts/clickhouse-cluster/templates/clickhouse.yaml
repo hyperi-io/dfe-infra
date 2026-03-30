@@ -1,0 +1,63 @@
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: {{ .Values.clickhouse.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  defaults:
+    templates:
+      podTemplate: dfe-clickhouse-pod
+      dataVolumeClaimTemplate: data
+      serviceTemplate: dfe-clickhouse-svc
+  configuration:
+    clusters:
+      - name: dfe
+        layout:
+          shardsCount: {{ .Values.clickhouse.shardsCount }}
+          replicasCount: {{ .Values.clickhouse.replicas }}
+    settings:
+      # Async insert for dfe-loader (high throughput)
+      async_insert: 1
+      wait_for_async_insert: 0
+      async_insert_max_data_size: 10485760  # 10MB
+      async_insert_busy_timeout_ms: 5000
+      max_execution_time: 600
+    users:
+      {{ .Values.clickhouse.users.loader.name }}/networks/ip: "::/0"
+      {{ .Values.clickhouse.users.loader.name }}/profile: default
+      {{ .Values.clickhouse.users.query.name }}/networks/ip: "::/0"
+      {{ .Values.clickhouse.users.query.name }}/profile: readonly
+  templates:
+    podTemplates:
+      - name: dfe-clickhouse-pod
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:{{ .Values.clickhouse.version }}
+              resources:
+                requests:
+                  cpu: {{ .Values.clickhouse.resources.requests.cpu }}
+                  memory: {{ .Values.clickhouse.resources.requests.memory }}
+                limits:
+                  cpu: {{ .Values.clickhouse.resources.limits.cpu }}
+                  memory: {{ .Values.clickhouse.resources.limits.memory }}
+    volumeClaimTemplates:
+      - name: data
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: {{ .Values.clickhouse.storage.size }}
+          {{- if .Values.clickhouse.storage.storageClass }}
+          storageClassName: {{ .Values.clickhouse.storage.storageClass }}
+          {{- end }}
+    serviceTemplates:
+      - name: dfe-clickhouse-svc
+        spec:
+          ports:
+            - name: http
+              port: 8123
+            - name: native
+              port: 9000
+          type: ClusterIP

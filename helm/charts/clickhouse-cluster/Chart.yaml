@@ -1,0 +1,10 @@
+apiVersion: v2
+name: clickhouse-cluster
+description: ClickHouse cluster for DFE analytics and observability (via Altinity operator)
+type: application
+version: 0.1.0
+appVersion: "24.8"
+dependencies:
+  - name: dfe-common
+    version: "0.1.0"
+    repository: "file://../../library/dfe-common"
