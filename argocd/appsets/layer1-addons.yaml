@@ -20,19 +20,19 @@ spec:
               elements:
                 - chart: cert-manager
                   repo: https://charts.jetstack.io
-                  version: "v1.14.0"
+                  version: "v1.17.2"
                   namespace: cert-manager
                   wave: "2"
                   project: infra
                 - chart: external-secrets
                   repo: https://charts.external-secrets.io
-                  version: "0.9.13"
+                  version: "0.17.0"
                   namespace: external-secrets
                   wave: "2"
                   project: infra
                 - chart: envoy-gateway
                   repo: oci://docker.io/envoyproxy/gateway-helm
-                  version: "v1.2.0"
+                  version: "v1.4.0"
                   namespace: envoy-gateway-system
                   wave: "2"
                   project: infra
@@ -62,13 +62,13 @@ spec:
                   project: infra
                 - chart: cnpg
                   repo: https://cloudnative-pg.github.io/charts
-                  version: "0.21.0"
+                  version: "0.27.1"
                   namespace: cnpg-system
                   wave: "3"
                   project: infra
                 - chart: strimzi-kafka-operator
                   repo: https://strimzi.io/charts/
-                  version: "0.40.0"
+                  version: "0.50.1"
                   namespace: strimzi
                   wave: "3"
                   project: infra
