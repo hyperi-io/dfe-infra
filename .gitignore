@@ -25,3 +25,6 @@ override.tf.json
 .vscode/
 .idea/
 *.swp
+
+# AI agent working files (not committed)
+docs/superpowers/
