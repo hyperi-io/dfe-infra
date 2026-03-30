@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-cluster-addons
+  namespace: argocd
+spec:
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+          matchExpressions:
+            - key: dfe.hyperi.io/managed
+              operator: Exists
+  template:
+    metadata:
+      name: "dfe-addons-{{name}}"
+      namespace: argocd
+    spec:
+      project: infra
+      source:
+        repoURL: '{{metadata.annotations.dfe\.hyperi\.io/repo_url}}'
+        targetRevision: '{{metadata.annotations.dfe\.hyperi\.io/target_revision}}'
+        path: argocd/appsets
+      destination:
+        server: "{{server}}"
+        namespace: argocd
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
