@@ -14,11 +14,10 @@ spec:
   cooldownPeriod: {{ .Values.loader.cooldownPeriod }}
   pollingInterval: {{ .Values.loader.pollingInterval }}
   triggers:
-    - type: prometheus
+    # OTel-native: queries OTel Collector's metrics endpoint (NOT a Prometheus server)
+    - type: metrics-api
       metadata:
-        serverAddress: {{ .Values.prometheus.serverAddress }}
-        metricName: dfe_scaling_pressure
-        threshold: {{ .Values.loader.scalingPressureThreshold | quote }}
-        query: |
-          avg(dfe_scaling_pressure{service_name="dfe-loader"})
+        targetValue: {{ .Values.loader.scalingPressureThreshold | quote }}
+        url: "http://{{ .Values.otel.collectorEndpoint }}:{{ .Values.otel.metricsPort }}/api/v1/query?query=avg(dfe_scaling_pressure{service_name=\"dfe-loader\"})"
+        valueLocation: "data.result.0.value.1"
 {{- end }}

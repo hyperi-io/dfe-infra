@@ -3,9 +3,14 @@ component: keda-scalers
 env: local
 cloud: local
 
-# OTel Collector Gateway Prometheus endpoint (exposed at :8889)
-prometheus:
-  serverAddress: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:8889"
+# OTel Collector Gateway — metrics endpoint
+# NO Prometheus anywhere. The OTel Collector exposes an OTLP-native metrics API.
+# KEDA uses the external (Kedify OTEL Scaler) trigger to receive metrics via OTLP push.
+# Fallback: OTel Collector's Prometheus-format exporter (:8889) queried via KEDA's
+# prometheus trigger type — but this is an OTel component, NOT a Prometheus server.
+otel:
+  collectorEndpoint: "dfe-otel-collector-gateway.otel.svc.cluster.local"
+  metricsPort: 8889
 
 # Kafka connection for transform ScaledObjects
 kafka:

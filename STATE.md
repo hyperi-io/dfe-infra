@@ -81,6 +81,21 @@ See `docs/superpowers/specs/2026-03-30-dfe-infra-design.md` for the full design 
 **Decision:** Two separate CI pipelines: (1) self-CI validates dfe-infra code, (2) deployment CI deploys DFE clusters.
 **Rationale:** Self-CI runs on every PR (fast, safe). Deployment CI is triggered deliberately (destructive, targets real infrastructure).
 
+### No Prometheus — ALL OTel
+
+**Decision:** No Prometheus anywhere in the stack. ALL metrics, logging, and tracing go through OTel. This includes KEDA — KEDA uses OTel-native metrics (via OTel Collector's metrics API or Kedify OTEL Scaler), not Prometheus triggers.
+**Rationale:** OTel is the standardised pipeline. Adding Prometheus would be a second metrics stack to maintain.
+**How to apply:** Never use `type: prometheus` in KEDA ScaledObjects. Use `type: metrics-api` querying the OTel Collector, or `type: external` with Kedify OTEL Scaler. The OTel Collector does expose a Prometheus-format endpoint (:8889) but this is an OTel component, not a Prometheus server.
+
+### DevEx Infrastructure Access
+
+**Access:** This host (desktop-derek.devex.hyperi.io) has direct kubectl access to the devex RKE2 cluster.
+- **Cluster:** 3-node RKE2 at api.k8s.devex.hyperi.io:6443 (k8s-1, k8s-2, k8s-3)
+- **OpenBao:** bao.devex.hyperi.io:8200 (VAULT_ADDR set in env)
+- **Reference IaC:** /projects/hyperi-infra (FULL CRUD access — can modify)
+- **DFE service repos:** /projects/dfe-* (all available locally)
+- **Rule:** Can read devex infra for reference. Do NOT change hyperi-infra until explicitly told to.
+
 ---
 
 ## External Dependencies
