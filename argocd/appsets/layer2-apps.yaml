@@ -29,6 +29,17 @@ spec:
                   wave: "5"
                 - app: hyperdx
                   wave: "5"
+                # dfe-transform-* apps (optional, scale-to-zero via KEDA Kafka trigger)
+                - app: dfe-transform-wasm
+                  wave: "5"
+                - app: dfe-transform-vrl
+                  wave: "5"
+                - app: dfe-transform-vector
+                  wave: "5"
+                - app: dfe-transform-elastic
+                  wave: "5"
+                - app: dfe-transform-splack
+                  wave: "5"
   template:
     metadata:
       name: "{{app}}-{{name}}"
