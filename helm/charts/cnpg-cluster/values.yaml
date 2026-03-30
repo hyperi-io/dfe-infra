@@ -1,0 +1,36 @@
+project: dfe
+component: cnpg-cluster
+env: local
+cloud: local
+
+cluster:
+  name: dfe-pg
+  instances: 3
+  postgresqlVersion: "17"
+  storage:
+    size: 10Gi
+    storageClass: ""  # empty = default StorageClass
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  # Databases to create
+  databases:
+    - dfe
+    - ferretdb
+    - hyperdx
+  # Superuser secret (created by CNPG operator)
+  superuserSecretName: dfe-pg-superuser
+
+backup:
+  enabled: false  # Enable when S3/MinIO backup target is configured
+  schedule: "0 0 */6 * * *"  # Every 6 hours
+  retentionPolicy: "7d"
+  destinationType: s3
+  s3:
+    endpoint: ""
+    bucket: ""
+    path: "/dfe/pg-backups"

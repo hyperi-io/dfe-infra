@@ -1,0 +1,47 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.cluster.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.cluster.instances }}
+  imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cluster.postgresqlVersion }}
+
+  storage:
+    size: {{ .Values.cluster.storage.size }}
+    {{- if .Values.cluster.storage.storageClass }}
+    storageClassName: {{ .Values.cluster.storage.storageClass }}
+    {{- end }}
+
+  resources:
+    requests:
+      cpu: {{ .Values.cluster.resources.requests.cpu }}
+      memory: {{ .Values.cluster.resources.requests.memory }}
+    limits:
+      cpu: {{ .Values.cluster.resources.limits.cpu }}
+      memory: {{ .Values.cluster.resources.limits.memory }}
+
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "256MB"
+      effective_cache_size: "1GB"
+      work_mem: "16MB"
+
+  bootstrap:
+    initdb:
+      database: {{ index .Values.cluster.databases 0 }}
+      owner: dfe
+      postInitSQL:
+        {{- range $db := .Values.cluster.databases }}
+        {{- if ne $db (index $.Values.cluster.databases 0) }}
+        - CREATE DATABASE {{ $db }};
+        {{- end }}
+        {{- end }}
+
+  monitoring:
+    enablePodMonitor: false  # OTel handles monitoring, not Prometheus
+
+  superuserSecret:
+    name: {{ .Values.cluster.superuserSecretName }}
