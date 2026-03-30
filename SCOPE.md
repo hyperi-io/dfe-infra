@@ -75,6 +75,13 @@ DEPLOYMENT TIERS (three paths to DFE)
 
 Synergy: dfe-docker and dfe-operator share the same DFE service images. dfe-infra's Helm charts can be consumed by the operator. The operator is a simplified wrapper that creates the same resources dfe-infra does, but with opinionated defaults and fewer knobs.
 
+COMPONENT INDEPENDENCE (container-per-component)
+- Each DFE service (receiver, loader, archiver, fetcher, transform-*, engine, ui) has its own container image and Helm chart
+- Any component can be deployed in isolation — e.g. just dfe-receiver + dfe-loader for a minimal pipeline, or just dfe-receiver as a standalone ingest endpoint
+- This enables users/customers to adopt individual components without the full platform
+- Each image is independently versioned, built, and pushed to the registry
+- The full dfe-infra deployment is the composition of all components; individual components are first-class citizens
+
 
 LICENSE REVIEW
 - This project is released as OSS. Before each release, audit all dependency licenses (Terraform providers, Helm chart dependencies, container images, npm/cargo/pypi packages) against the approved license policy at https://github.com/hyperi-io/licensing
