@@ -1,0 +1,35 @@
+# Default Helm values shared across all cloud targets.
+global:
+  project: dfe
+  env: ""
+  cloud: ""
+  domain: ""
+  region: local
+
+otel:
+  endpoint: "otel-collector-gateway.otel.svc.cluster.local:4317"
+  tls: false
+
+kafka:
+  bootstrapServers: "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092"
+  sasl:
+    enabled: true
+    mechanism: SCRAM-SHA-512
+
+clickhouse:
+  host: "clickhouse.clickhouse.svc.cluster.local"
+  port: 8123
+  database: dfe
+
+postgresql:
+  host: "cnpg-cluster-rw.dfe-prod.svc.cluster.local"
+  port: 5432
+  database: dfe
+
+receiver:
+  listenCIDR: "100.64.0.0/10"
+
+keda:
+  minReplicas: 1
+  maxReplicas: 5
+  scalingPressureThreshold: "0.7"

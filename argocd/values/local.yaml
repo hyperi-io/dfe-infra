@@ -1,0 +1,19 @@
+# Rancher local (RKE2) target overrides.
+global:
+  cloud: local
+  region: local
+
+storageClass: local-path
+
+envoyGateway:
+  service:
+    type: LoadBalancer
+    externalIPs: []
+
+vault:
+  address: "https://bao.devex.hyperi.io:8200"
+
+configStorage:
+  type: nfs
+  server: "storage.devex.hyperi.io"
+  path: /data/dfe-config

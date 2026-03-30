@@ -1,0 +1,109 @@
+# Wave 2-3: cert-manager (adopted), ESO (adopted), Envoy Gateway, KEDA,
+# metrics-server, VPA, Reloader, CNPG operator, Strimzi operator, ClickHouse operator.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-layer1-addons
+  namespace: argocd
+spec:
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+          - list:
+              elements:
+                - chart: cert-manager
+                  repo: https://charts.jetstack.io
+                  version: "v1.14.0"
+                  namespace: cert-manager
+                  wave: "2"
+                  project: infra
+                - chart: external-secrets
+                  repo: https://charts.external-secrets.io
+                  version: "0.9.13"
+                  namespace: external-secrets
+                  wave: "2"
+                  project: infra
+                - chart: envoy-gateway
+                  repo: oci://docker.io/envoyproxy/gateway-helm
+                  version: "v1.2.0"
+                  namespace: envoy-gateway-system
+                  wave: "2"
+                  project: infra
+                - chart: external-dns
+                  repo: https://kubernetes-sigs.github.io/external-dns/
+                  version: "1.14.3"
+                  namespace: external-dns
+                  wave: "2"
+                  project: infra
+                - chart: keda
+                  repo: https://kedacore.github.io/charts
+                  version: "2.14.0"
+                  namespace: keda
+                  wave: "3"
+                  project: infra
+                - chart: metrics-server
+                  repo: https://kubernetes-sigs.github.io/metrics-server/
+                  version: "3.12.0"
+                  namespace: kube-system
+                  wave: "3"
+                  project: infra
+                - chart: stakater-reloader
+                  repo: https://stakater.github.io/stakater-reloader
+                  version: "1.1.0"
+                  namespace: reloader
+                  wave: "3"
+                  project: infra
+                - chart: cnpg
+                  repo: https://cloudnative-pg.github.io/charts
+                  version: "0.21.0"
+                  namespace: cnpg-system
+                  wave: "3"
+                  project: infra
+                - chart: strimzi-kafka-operator
+                  repo: https://strimzi.io/charts/
+                  version: "0.40.0"
+                  namespace: strimzi
+                  wave: "3"
+                  project: infra
+                - chart: clickhouse-operator
+                  repo: https://docs.altinity.com/clickhouse-operator/
+                  version: "0.23.0"
+                  namespace: clickhouse-operator
+                  wave: "3"
+                  project: infra
+  template:
+    metadata:
+      name: "{{chart}}-{{name}}"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "{{wave}}"
+    spec:
+      project: "{{project}}"
+      source:
+        repoURL: "{{repo}}"
+        chart: "{{chart}}"
+        targetRevision: "{{version}}"
+        helm:
+          valuesObject:
+            global:
+              domain: '{{metadata.annotations.dfe\.hyperi\.io/domain}}'
+              cloud: '{{metadata.annotations.dfe\.hyperi\.io/cloud}}'
+              env: '{{metadata.annotations.dfe\.hyperi\.io/env}}'
+            # Chart-specific value files are added in Plan 02 (layer1-rancher)
+            # when each component's actual Helm values are defined.
+      destination:
+        server: "{{server}}"
+        namespace: "{{namespace}}"
+      syncPolicy:
+        automated:
+          prune: false
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
