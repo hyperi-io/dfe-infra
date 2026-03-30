@@ -1,0 +1,23 @@
+{{- if .Values.routes.dfeEngine.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: dfe-engine
+  namespace: {{ .Values.routes.dfeEngine.backendNamespace | default .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+  hostnames:
+    - "{{ .Values.routes.dfeEngine.hostname }}.{{ .Values.domain }}"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ .Values.routes.dfeEngine.pathPrefix }}
+      backendRefs:
+        - name: {{ .Values.routes.dfeEngine.backendService }}
+          port: {{ .Values.routes.dfeEngine.backendPort }}
+{{- end }}

@@ -17,3 +17,58 @@ tls:
     cloudflareTokenSecretKey: token
 
 domain: ""
+
+# HTTPRoutes — map hostnames to backend services
+routes:
+  dfeUi:
+    enabled: true
+    hostname: "dfe"           # becomes {hostname}.{domain}
+    backendService: dfe-ui
+    backendNamespace: ""      # set via ArgoCD values overlay
+    backendPort: 3000
+    pathPrefix: /
+
+  dfeEngine:
+    enabled: true
+    hostname: "dfe"
+    backendService: dfe-engine
+    backendNamespace: ""
+    backendPort: 8000
+    pathPrefix: /api
+
+  argocd:
+    enabled: true
+    hostname: "argocd"
+    backendService: argocd-server
+    backendNamespace: argocd
+    backendPort: 443
+
+  hyperdx:
+    enabled: true
+    hostname: "hyperdx"
+    backendService: dfe-hyperdx
+    backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
+    backendPort: 8080
+
+# OIDC — disabled by default (local auth is default)
+oidc:
+  enabled: false
+  provider: ""                # google | entra | cognito | keycloak | custom
+  issuerUrl: ""               # e.g. https://accounts.google.com
+  clientId: ""
+  clientSecretName: ""        # K8s secret name (ESO-synced)
+  clientSecretKey: "client-secret"
+  scopes:
+    - openid
+    - email
+    - profile
+    - groups
+
+# jwt_authn filter — chains after OIDC to extract claims into headers
+jwtAuthn:
+  enabled: false              # only when oidc.enabled
+  issuer: ""                  # same as oidc.issuerUrl
+  audiences: []               # e.g. ["dfe-client-id"]
+  forwardHeaders:
+    user: X-Forwarded-User   # claim: email or sub
+    groups: X-Auth-Groups    # claim: groups (comma-separated)
