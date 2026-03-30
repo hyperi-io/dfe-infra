@@ -22,8 +22,16 @@ operators:
   clickhouse-operator: "0.23.0"
 
 # Layer 2: Data platform (deployed by ArgoCD wave 4)
-# Versions added in Plan 03
-data: {}
+data:
+  postgresql: "17"               # CNPG cluster PG major version
+  cnpg-cluster-instances: "3"    # Number of PG instances (HA)
+  kafka-version: "3.9.0"         # Kafka version inside Strimzi
+  kafka-replicas: "3"            # Kafka broker count
+  clickhouse-version: "24.8"     # ClickHouse server version
+  clickhouse-replicas: "1"       # ClickHouse replicas (dev profile)
+  ferretdb: "1.24.0"             # FerretDB version
+  otel-collector: "0.114.0"      # OpenTelemetry Collector version
+  hyperdx: "1.7.0"               # HyperDX version
 
 # Layer 2: DFE apps (deployed by ArgoCD wave 5)
 # Versions added in Plan 06
