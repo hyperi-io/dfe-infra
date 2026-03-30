@@ -1,0 +1,56 @@
+# Runs on every PR and push to main.
+# Validates all Terraform modules and runs tests.
+# Matrix: both terraform and opentofu to ensure compatibility.
+name: Terraform Validate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/tf-validate.yml'
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/tf-validate.yml'
+
+jobs:
+  validate:
+    name: validate + test (${{ matrix.tf }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tf: [terraform, tofu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenTofu
+        if: matrix.tf == 'tofu'
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.7.0"
+
+      - name: Install Terraform
+        if: matrix.tf == 'terraform'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Validate all modules
+        run: |
+          set -e
+          for dir in terraform/modules/*/; do
+            echo "==> Validating $dir"
+            ${{ matrix.tf }} -chdir="$dir" init -backend=false
+            ${{ matrix.tf }} -chdir="$dir" validate
+          done
+
+      - name: Run tests (modules with .tftest.hcl)
+        run: |
+          set -e
+          for dir in terraform/modules/*/; do
+            if ls "${dir}tests/"*.tftest.hcl 2>/dev/null | grep -q .; then
+              echo "==> Testing $dir"
+              ${{ matrix.tf }} -chdir="$dir" test
+            fi
+          done
