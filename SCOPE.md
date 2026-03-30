@@ -60,6 +60,14 @@ SCOPE
 - Single source of truth auth. Ideally a simple local fallback auth and an external OIDC as the primary (e.g how elastic and other do it). oath2 preferred.
 - Config driven first, then a wizard to walk through or form for AWS marketplace
 
+DEPLOYMENT UX (the test case)
+- Point to a blank AWS account (or on-prem Rancher for initial tests)
+- Supply a subdomain for the DFE instance (e.g. dfe.devex.hypersec.io)
+- Optionally supply an external OIDC provider
+- Run deploy → it "just works"
+- Minimum viable inputs: cloud target + domain + optional OIDC. Everything else has sensible defaults.
+- This is the primary deployment and test case for validating dfe-infra
+
 
 LICENSE REVIEW
 - This project is released as OSS. Before each release, audit all dependency licenses (Terraform providers, Helm chart dependencies, container images, npm/cargo/pypi packages) against the approved license policy at https://github.com/hyperi-io/licensing
