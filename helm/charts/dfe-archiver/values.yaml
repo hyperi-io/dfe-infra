@@ -1,0 +1,41 @@
+project: dfe
+component: archiver
+env: local
+cloud: local
+
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+kafka:
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+
+s3:
+  endpoint: ""
+  bucket: dfe-archive
+  secretName: dfe-archiver-s3
+
+config:
+  mountPath: /config
+  nfs:
+    server: ""
+    path: ""
+
+otel:
+  endpoint: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  annotations: {}   # workload identity annotations injected here
