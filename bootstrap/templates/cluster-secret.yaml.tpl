@@ -26,7 +26,7 @@ metadata:
     dfe.hyperi.io/kafka_bootstrap: "${DFE_KAFKA_BOOTSTRAP}"
     dfe.hyperi.io/otel_endpoint: "${DFE_OTEL_ENDPOINT}"
     # Workload identity annotations JSON (from tf-iam output)
-    dfe.hyperi.io/workload_identity_annotations: "${DFE_WORKLOAD_IDENTITY_ANNOTATIONS}"
+    dfe.hyperi.io/workload_identity_annotations: '${DFE_WORKLOAD_IDENTITY_ANNOTATIONS}'
 type: Opaque
 stringData:
   name: "dfe-${DFE_CLOUD}-${DFE_ENV}"

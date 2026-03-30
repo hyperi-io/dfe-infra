@@ -70,8 +70,9 @@ required_vars=(
   DFE_CLICKHOUSE_HOST DFE_KAFKA_BOOTSTRAP DFE_OTEL_ENDPOINT
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
-  DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 )
+# Registry vars are optional — skip regcred if not set
+# DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 missing=()
 for var in "${required_vars[@]}"; do
   [[ -z "${!var:-}" ]] && missing+=("$var")
@@ -81,9 +82,11 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
-# Compute base64 auth for registry — envsubst cannot run subshells
-export DFE_REGISTRY_AUTH
-DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
+# Compute base64 auth for registry (only if registry vars are set)
+if [[ -n "${DFE_REGISTRY_HOST:-}" ]] && [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
+  export DFE_REGISTRY_AUTH
+  DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
+fi
 
 # Add Helm repos (idempotent)
 echo "==> [0/7] Adding Helm repositories"
@@ -127,21 +130,29 @@ for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx; do
   TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
 done
 
-# Valkey MUST be installed before ArgoCD — ArgoCD --wait will timeout
-# if the externalRedis host is unreachable on first boot.
-echo "==> [5/7] Installing Valkey (ArgoCD cache, replaces Redis)"
-run helm upgrade --install dfe-valkey oci://registry-1.docker.io/bitnamicharts/valkey \
-  --namespace argocd --create-namespace \
-  --version "${VALKEY_VERSION}" \
-  --set auth.enabled=false \
-  --wait --timeout 5m
+# Valkey for ArgoCD cache — check if already running, skip install if so.
+# On fresh clusters: install Valkey. On existing clusters (devex): use existing.
+VALKEY_SVC="${DFE_VALKEY_SERVICE:-valkey}"  # default: 'valkey' (hyperi-infra pattern)
+echo "==> [5/7] Checking Valkey"
+if kubectl -n argocd get svc "${VALKEY_SVC}" > /dev/null 2>&1; then
+  echo "  Valkey service '${VALKEY_SVC}' already exists — skipping install"
+else
+  echo "  Installing Valkey (ArgoCD cache)"
+  run helm upgrade --install dfe-valkey oci://registry-1.docker.io/bitnamicharts/valkey \
+    --namespace argocd --create-namespace \
+    --version "${VALKEY_VERSION}" \
+    --set auth.enabled=false \
+    --set master.persistence.storageClass="${DFE_STORAGE_CLASS}" \
+    --wait --timeout 10m
+  VALKEY_SVC="dfe-valkey-master"
+fi
 
 echo "==> [6/7] Installing ArgoCD with Valkey cache (idempotent)"
 run helm upgrade --install argocd argo/argo-cd \
   --namespace argocd --create-namespace \
   --version "${ARGOCD_VERSION}" \
   --set redis.enabled=false \
-  --set "externalRedis.host=dfe-valkey-master.argocd.svc.cluster.local" \
+  --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
   --set "externalRedis.port=6379" \
   --wait --timeout 10m
 

@@ -81,6 +81,12 @@ See `docs/superpowers/specs/2026-03-30-dfe-infra-design.md` for the full design 
 **Decision:** Two separate CI pipelines: (1) self-CI validates dfe-infra code, (2) deployment CI deploys DFE clusters.
 **Rationale:** Self-CI runs on every PR (fast, safe). Deployment CI is triggered deliberately (destructive, targets real infrastructure).
 
+### NEVER Use Bitnami Charts
+
+**Decision:** Never use Bitnami Helm charts for anything. Use operators or official charts instead.
+**Rationale:** Bitnami charts have non-standard paths, custom entrypoints, image pull issues, and are prohibited by HyperI K8s standards. The Valkey Bitnami chart failure during devex deployment confirmed this.
+**How to apply:** PostgreSQL→CNPG, Kafka→Strimzi, ClickHouse→Altinity, Redis/Valkey→Spotahome Operator or existing deployment, ArgoCD→official chart. If no operator exists, deploy via Deployment manifest directly.
+
 ### No Prometheus — ALL OTel
 
 **Decision:** No Prometheus anywhere in the stack. ALL metrics, logging, and tracing go through OTel. This includes KEDA — KEDA uses OTel-native metrics (via OTel Collector's metrics API or Kedify OTEL Scaler), not Prometheus triggers.
@@ -92,9 +98,15 @@ See `docs/superpowers/specs/2026-03-30-dfe-infra-design.md` for the full design 
 **Access:** This host (desktop-derek.devex.hyperi.io) has direct kubectl access to the devex RKE2 cluster.
 - **Cluster:** 3-node RKE2 at api.k8s.devex.hyperi.io:6443 (k8s-1, k8s-2, k8s-3)
 - **OpenBao:** bao.devex.hyperi.io:8200 (VAULT_ADDR set in env)
-- **Reference IaC:** /projects/hyperi-infra (FULL CRUD access — can modify)
+- **Reference IaC:** /projects/hyperi-infra (FULL CRUD access)
 - **DFE service repos:** /projects/dfe-* (all available locally)
-- **Rule:** Can read devex infra for reference. Do NOT change hyperi-infra until explicitly told to.
+
+**CRITICAL DEPLOYMENT RULES:**
+- Do NOT deploy DFE to the existing k8s-1, k8s-2, k8s-3 nodes. These are the infra cluster managed by hyperi-infra.
+- Stand up 3 DEDICATED K8s worker nodes for DFE workloads (new VMs via Proxmox/Ansible)
+- The DFE deployment gets its own separate cluster or dedicated node pool — NOT shared with existing infra services
+- OpenBao and other infra services on the existing nodes must not be disrupted
+- When ready to deploy: provision new nodes first, then bootstrap DFE onto them
 
 ---
 

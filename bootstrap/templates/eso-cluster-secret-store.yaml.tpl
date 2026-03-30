@@ -1,7 +1,7 @@
 # ESO ClusterSecretStore — configures ESO to pull secrets from the target backend.
 # For local/Rancher: OpenBao (Vault-compatible) AppRole auth.
 # For cloud targets: replace provider block with aws/gcp/azure provider (per cloud.yaml values).
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
   name: dfe-secret-store
