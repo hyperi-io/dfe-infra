@@ -1,0 +1,39 @@
+project: dfe
+component: transform-vector
+env: local
+cloud: local
+
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+kafka:
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+  sourceTopic: ""        # set per deployment via ArgoCD values
+  destTopic: ""          # set per deployment
+  consumerGroup: ""      # defaults to dfe-transform-vector
+
+otel:
+  endpoint: ""
+
+config:
+  mountPath: /config
+  nfs:
+    server: ""
+    path: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  annotations: {}

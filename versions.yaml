@@ -42,6 +42,11 @@ apps:
   dfe-loader: "2.2.0"
   dfe-archiver: "2.2.0"
   dfe-fetcher: "2.2.0"
+  dfe-transform-wasm: "2.2.0"
+  dfe-transform-vrl: "2.2.0"
+  dfe-transform-vector: "2.2.0"
+  dfe-transform-elastic: "2.2.0"
+  dfe-transform-splack: "2.2.0"
 
 # Terraform providers
 providers:

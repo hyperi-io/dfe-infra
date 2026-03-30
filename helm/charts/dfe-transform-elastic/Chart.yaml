@@ -1,0 +1,10 @@
+apiVersion: v2
+name: dfe-transform-elastic
+description: "Elasticsearch format conversion transform — Kafka consumer → ES format → Kafka producer"
+type: application
+version: 0.1.0
+appVersion: "2.2.0"
+dependencies:
+  - name: dfe-common
+    version: "0.1.0"
+    repository: "file://../../library/dfe-common"
