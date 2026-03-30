@@ -1,0 +1,24 @@
+{{- if .Values.receiver.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Values.receiver.deploymentName }}-scaler
+  namespace: {{ .Values.receiver.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ .Values.receiver.deploymentName }}
+  minReplicaCount: {{ .Values.receiver.minReplicas }}
+  maxReplicaCount: {{ .Values.receiver.maxReplicas }}
+  cooldownPeriod: {{ .Values.receiver.cooldownPeriod }}
+  pollingInterval: {{ .Values.receiver.pollingInterval }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.prometheus.serverAddress }}
+        metricName: dfe_scaling_pressure
+        threshold: {{ .Values.receiver.scalingPressureThreshold | quote }}
+        query: |
+          avg(dfe_scaling_pressure{service_name="dfe-receiver"})
+{{- end }}
