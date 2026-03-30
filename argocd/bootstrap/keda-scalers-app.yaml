@@ -1,0 +1,28 @@
+# In-repo chart — standalone Application (same pattern as envoy-gateway-config)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keda-scalers
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  project: infra
+  source:
+    repoURL: https://github.com/catinspace-au/dfe-infra.git
+    targetRevision: main
+    path: helm/charts/keda-scalers
+    helm:
+      valueFiles:
+        - ../../../argocd/values/common.yaml
+        - ../../../argocd/values/local.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keda
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

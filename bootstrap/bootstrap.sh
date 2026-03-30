@@ -150,6 +150,7 @@ run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yam
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml"
+run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/keda-scalers-app.yaml"
 
 echo ""
 echo "=========================================="
