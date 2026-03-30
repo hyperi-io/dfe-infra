@@ -203,6 +203,33 @@ triggers:
       activationLagThreshold: "1"  # activate from zero at 1+ message
 ```
 
+### 2.6.1 Node Scaling (Capacity Autoscaling)
+
+KEDA handles **pod** scaling. Node scaling (adding/removing K8s nodes when pod demand exceeds cluster capacity) is a separate concern handled per target:
+
+| Target | Node scaling | Mechanism |
+|--------|-------------|-----------|
+| **Rancher local (devex)** | Fixed (overprovisioned) | 3 nodes sized for peak. No autoscaling. |
+| **Rancher local (production)** | CAPI + Proxmox provider | Cluster API `MachineDeployment` with cluster autoscaler. Proxmox CAPI provider (`ionos-cloud/cluster-api-provider-proxmox`) creates VMs via Proxmox API. cloud-init → RKE2 agent join. ~2 min scale-up. |
+| **AWS EKS** | Karpenter | Direct EC2 provisioning based on pending pod requirements. Preserved from dfe-core 2.1. |
+| **GCP GKE** | GKE node auto-provisioning | Native GKE feature. No additional components. |
+| **Azure AKS** | AKS cluster autoscaler | Native AKS feature. No additional components. |
+
+```
+KEDA scales pods → pods Pending (no node capacity)
+    │
+    ├─ On-prem: CAPI Proxmox provider → new VM → RKE2 join → pods scheduled
+    ├─ AWS: Karpenter → new EC2 → EKS node join → pods scheduled
+    └─ GCP/Azure: native autoscaler → new node → pods scheduled
+```
+
+**Phasing:**
+- DevEx (now): fixed 3 nodes, overprovisioned (72 cores, 192GB RAM)
+- Production on-prem: CAPI + Proxmox provider (new plan, after AWS validation)
+- Cloud: Karpenter (AWS) / native (GCP/Azure) in cloud-specific plans
+
+**Terraform module:** `tf-node-autoscaler` — deploys CAPI operator + provider + MachineDeployment CRD for on-prem, Karpenter for AWS. Added to Layer 1 wave 3 alongside other operators.
+
 ### 2.7 Data and Config Flow
 
 ```

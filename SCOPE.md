@@ -82,6 +82,14 @@ COMPONENT INDEPENDENCE (container-per-component)
 - Each image is independently versioned, built, and pushed to the registry
 - The full dfe-infra deployment is the composition of all components; individual components are first-class citizens
 
+NODE SCALING (capacity autoscaling)
+- KEDA = pod scaling (horizontal). Node scaling = separate concern.
+- On-prem (Proxmox): Cluster API (CAPI) + ionos-cloud/cluster-api-provider-proxmox. Autoscaler watches pending pods → provisions VMs via Proxmox API → cloud-init → RKE2 join. ~2 min.
+- AWS: Karpenter (preserved from dfe-core 2.1)
+- GCP/Azure: native node autoscalers
+- DevEx (now): fixed 3 nodes, overprovisioned (72 cores, 192GB). No autoscaling until production.
+- New TF module: tf-node-autoscaler (CAPI for on-prem, Karpenter for AWS)
+
 
 LICENSE REVIEW
 - This project is released as OSS. Before each release, audit all dependency licenses (Terraform providers, Helm chart dependencies, container images, npm/cargo/pypi packages) against the approved license policy at https://github.com/hyperi-io/licensing
