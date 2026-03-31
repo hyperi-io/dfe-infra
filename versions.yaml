@@ -25,7 +25,7 @@ operators:
 data:
   postgresql: "17"               # CNPG cluster PG major version
   cnpg-cluster-instances: "3"    # Number of PG instances (HA)
-  kafka-version: "3.9.0"         # Kafka version inside Strimzi
+  kafka-version: "4.1.1"         # Kafka version inside Strimzi (0.51+ requires 4.x)
   kafka-replicas: "3"            # Kafka broker count
   clickhouse-version: "24.8"     # ClickHouse server version
   clickhouse-replicas: "1"       # ClickHouse replicas (dev profile)

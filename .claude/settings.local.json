@@ -59,7 +59,9 @@
       "Bash(source:*)",
       "Bash(set:*)",
       "WebFetch(domain:*)",
-      "WebSearch(query:*)"
+      "Bash(rm -f /projects/dfe-engine/hyperi_pylib-2.25.1-py3-none-any.whl)",
+      "Bash(/projects/hyperi-infra/scripts/bao-admin token:*)",
+      "Bash(kubectl -n argocd get application dfe-engine-dfe-local-local -o jsonpath='{.status.resources[?\\(@.kind==\"\"Deployment\"\"\\)].health.status}')"
     ]
   }
 }
