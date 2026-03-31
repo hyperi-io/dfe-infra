@@ -1,14 +1,15 @@
 # Default Helm values shared across all cloud targets.
+# Environment-specific overrides go in local.yaml, aws.yaml, gcp.yaml, azure.yaml.
 global:
   project: dfe
   env: ""
   cloud: ""
   domain: ""
-  region: local
-  # Container registry — GHCR (ghcr.io/hyperi-io).
-  # All Helm charts reference: image: "{{ .Values.global.registry }}/dfe-{component}:{tag}"
-  # Images are pushed by CI or manually: docker push ghcr.io/hyperi-io/dfe-engine:2.2.0
-  registry: "ghcr.io/hyperi-io"
+  region: ""
+  # Container registry — MUST be set in environment-specific values file.
+  # Examples: ghcr.io/my-org, my-registry.example.com/dfe, 123456.dkr.ecr.us-east-1.amazonaws.com/dfe
+  # Charts reference: image: "{{ .Values.global.registry }}/dfe-{component}:{tag}"
+  registry: ""
 
 # Node scheduling — empty by default (no constraints).
 # Override in cloud-specific values to target dedicated DFE node pools.
@@ -30,7 +31,7 @@ clickhouse:
   database: dfe
 
 postgresql:
-  host: "cnpg-cluster-rw.dfe-prod.svc.cluster.local"
+  host: ""  # Set per-environment: cnpg-cluster-rw.{namespace}.svc.cluster.local
   port: 5432
   database: dfe
 

@@ -20,6 +20,9 @@ override.tf.json
 .env.*
 !.env.example
 
+# Scratch / temp
+.tmp/
+
 # Editor / OS
 .DS_Store
 .vscode/

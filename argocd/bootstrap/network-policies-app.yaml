@@ -1,3 +1,4 @@
+# NOTE: repoURL and valueFiles cloud overlay are templated by bootstrap.sh via envsubst.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -8,13 +9,13 @@ metadata:
 spec:
   project: infra
   source:
-    repoURL: git@github.com:hyperi-io/dfe-infra.git
-    targetRevision: main
+    repoURL: ${DFE_REPO_URL}
+    targetRevision: ${DFE_TARGET_REVISION}
     path: helm/charts/network-policies
     helm:
       valueFiles:
         - ../../../argocd/values/common.yaml
-        - ../../../argocd/values/local.yaml
+        - ../../../argocd/values/${DFE_CLOUD}.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: default

@@ -152,10 +152,12 @@ run helm upgrade --install argocd argo/argo-cd \
 
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"
+# Standalone in-repo chart apps are envsubst-templated (repoURL, cloud overlay)
+envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml" | run kubectl apply -f -
+envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run kubectl apply -f -
+envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/keda-scalers-app.yaml" | run kubectl apply -f -
+# cluster-addons ApplicationSet uses goTemplate — no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
-run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml"
-run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml"
-run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/keda-scalers-app.yaml"
 
 echo ""
 echo "=========================================="

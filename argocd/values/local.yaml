@@ -1,11 +1,15 @@
-# Rancher local (RKE2) target overrides.
+# HyperI DevEx (Rancher RKE2) — internal development and testing.
 global:
   cloud: local
   region: local
   domain: devex.hyperi.io
+  registry: "ghcr.io/hyperi-io"
 
 domain: devex.hyperi.io
 storageClass: local-path
+
+postgresql:
+  host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
 
 # Target dedicated DFE worker nodes (dfe-k8s-1/2/3).
 # Matches label + tolerates taint applied during node provisioning.
