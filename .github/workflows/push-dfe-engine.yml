@@ -17,25 +17,19 @@ jobs:
         with:
           submodules: false
 
-      - uses: actions/create-github-app-token@v2
-        id: app-token
-        with:
-          app-id: ${{ vars.CONTAINER_MGT_APP_ID }}
-          private-key: ${{ secrets.CONTAINER_MGT_APP_PRIVATE_KEY }}
-
       - name: Checkout dfe-engine
         uses: actions/checkout@v4
         with:
           repository: hyperi-io/dfe-engine
           path: dfe-engine
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GIT_TOKEN }}
 
       - name: Checkout hyperi-pylib
         uses: actions/checkout@v4
         with:
           repository: hyperi-io/hyperi-pylib
           path: hyperi-pylib
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GIT_TOKEN }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
