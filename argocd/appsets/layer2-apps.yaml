@@ -56,8 +56,8 @@ spec:
         path: 'helm/charts/{{ .app }}'
         helm:
           valueFiles:
-            - "../../argocd/values/common.yaml"
-            - '../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            - "../../../argocd/values/common.yaml"
+            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
       destination:
         server: '{{ .server }}'
         namespace: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
