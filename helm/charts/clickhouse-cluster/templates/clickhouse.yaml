@@ -26,10 +26,8 @@ spec:
     {{- if .Values.clickhouse.storage.storageClass }}
     storageClassName: {{ .Values.clickhouse.storage.storageClass }}
     {{- end }}
-  {{- if .Values.clickhouse.keeperClusterRef.name }}
   keeperClusterRef:
-    name: {{ .Values.clickhouse.keeperClusterRef.name }}
-  {{- end }}
+    name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
     extraConfig:
       users:
