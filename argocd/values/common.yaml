@@ -5,10 +5,10 @@ global:
   cloud: ""
   domain: ""
   region: local
-  # Container registry — JFrog now, GHCR when OSS release is complete.
-  # All Helm charts reference: image.registry: "{{ .Values.global.registry }}"
-  # Migration to GHCR: change this one value in common.yaml.
-  registry: "<JFROG_HOST>/dfe"
+  # Container registry — GHCR (ghcr.io/hyperi-io).
+  # All Helm charts reference: image: "{{ .Values.global.registry }}/dfe-{component}:{tag}"
+  # Images are pushed by CI or manually: docker push ghcr.io/hyperi-io/dfe-engine:2.2.0
+  registry: "ghcr.io/hyperi-io"
 
 # Node scheduling — empty by default (no constraints).
 # Override in cloud-specific values to target dedicated DFE node pools.
