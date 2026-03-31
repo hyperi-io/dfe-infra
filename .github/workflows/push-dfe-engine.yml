@@ -22,6 +22,8 @@ jobs:
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: hyperi-io
+          repositories: dfe-engine,hyperi-pylib
 
       - name: Checkout dfe-engine
         uses: actions/checkout@v4
