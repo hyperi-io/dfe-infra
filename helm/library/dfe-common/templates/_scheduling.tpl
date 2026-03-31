@@ -31,13 +31,30 @@ tolerations:
 {{- end }}
 
 {{/*
-dfe-common.scheduling — renders both nodeSelector and tolerations.
-Single include for pod specs that need full node targeting.
+dfe-common.imagePullSecrets — renders imagePullSecrets block for pod specs.
+Reads from .Values.imagePullSecrets (list of secret names).
+Usage:
+  spec:
+    {{- include "dfe-common.imagePullSecrets" . | nindent 6 }}
+*/}}
+{{- define "dfe-common.imagePullSecrets" -}}
+{{- if .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- range .Values.imagePullSecrets }}
+  - name: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+dfe-common.scheduling — renders imagePullSecrets, nodeSelector, and tolerations.
+Single include for pod specs that need full scheduling config.
 Usage:
   spec:
     {{- include "dfe-common.scheduling" . | nindent 6 }}
 */}}
 {{- define "dfe-common.scheduling" -}}
+{{- include "dfe-common.imagePullSecrets" . }}
 {{- include "dfe-common.nodeSelector" . }}
 {{- include "dfe-common.tolerations" . }}
 {{- end }}

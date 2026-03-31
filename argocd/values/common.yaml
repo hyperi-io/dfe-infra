@@ -11,6 +11,10 @@ global:
   # Charts reference: image: "{{ .Values.global.registry }}/dfe-{component}:{tag}"
   registry: ""
 
+# Image pull secrets — list of K8s secret names for private registries.
+# Override in cloud-specific values. Bootstrap creates these secrets.
+imagePullSecrets: []
+
 # Node scheduling — empty by default (no constraints).
 # Override in cloud-specific values to target dedicated DFE node pools.
 nodeScheduling: {}

@@ -123,11 +123,16 @@ else
   envsubst < "${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl" | kubectl apply -f -
 fi
 
-echo "==> [4b/7] Creating imagePullSecret for JFrog registry"
+echo "==> [4b/7] Creating imagePullSecrets"
 for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
-  TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
+  # JFrog regcred (if registry credentials provided)
+  if [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
+    TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
+  fi
 done
+# GHCR pull secret via ESO (syncs from OpenBao secret/dfe/ghcr-pull-secret)
+envsubst < "${TEMPLATES_DIR}/ghcr-pull-secret.yaml" | run kubectl apply -f -
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.
 # On fresh clusters: deploy plain Valkey manifest. On existing clusters: use existing.
