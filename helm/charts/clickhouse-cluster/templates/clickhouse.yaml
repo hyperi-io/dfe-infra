@@ -26,6 +26,10 @@ spec:
     {{- if .Values.clickhouse.storage.storageClass }}
     storageClassName: {{ .Values.clickhouse.storage.storageClass }}
     {{- end }}
+  {{- if .Values.clickhouse.keeperClusterRef.name }}
+  keeperClusterRef:
+    name: {{ .Values.clickhouse.keeperClusterRef.name }}
+  {{- end }}
   settings:
     extraConfig:
       users:

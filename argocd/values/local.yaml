@@ -31,6 +31,11 @@ envoyGateway:
     type: LoadBalancer
     externalIPs: []
 
+# ClickHouse Keeper — shared with hyperi-infra on devex
+clickhouse:
+  keeperClusterRef:
+    name: hyperi-keeper
+
 vault:
   address: "https://bao.devex.hyperi.io:8200"
 

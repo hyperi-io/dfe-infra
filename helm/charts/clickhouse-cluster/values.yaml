@@ -8,6 +8,12 @@ clickhouse:
   version: "24.8"
   replicas: 1       # dev profile; 2-3 for production
   shardsCount: 1
+  database: dfe
+  # ClickHouse Keeper reference — required by clickhouse.com operator.
+  # For devex: shared keeper (hyperi-keeper in clickhouse namespace).
+  # For standalone: deploy a dedicated KeeperCluster first.
+  keeperClusterRef:
+    name: ""         # Set in environment values (e.g. local.yaml)
   storage:
     size: 50Gi
     storageClass: ""
