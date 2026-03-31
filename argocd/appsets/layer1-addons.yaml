@@ -25,61 +25,61 @@ spec:
                   version: "v1.17.2"
                   namespace: cert-manager
                   wave: "2"
-                  project: infra
+                  appProject: infra
                 - chart: external-secrets
                   repo: https://charts.external-secrets.io
                   version: "0.17.0"
                   namespace: external-secrets
                   wave: "2"
-                  project: infra
+                  appProject: infra
                 - chart: envoy-gateway
                   repo: oci://docker.io/envoyproxy/gateway-helm
                   version: "v1.4.0"
                   namespace: envoy-gateway-system
                   wave: "2"
-                  project: infra
+                  appProject: infra
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
                   version: "1.14.3"
                   namespace: external-dns
                   wave: "2"
-                  project: infra
+                  appProject: infra
                 - chart: keda
                   repo: https://kedacore.github.io/charts
                   version: "2.14.0"
                   namespace: keda
                   wave: "3"
-                  project: infra
+                  appProject: infra
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
                   version: "3.12.0"
                   namespace: kube-system
                   wave: "3"
-                  project: infra
+                  appProject: infra
                 - chart: stakater-reloader
                   repo: https://stakater.github.io/stakater-reloader
                   version: "1.1.0"
                   namespace: reloader
                   wave: "3"
-                  project: infra
+                  appProject: infra
                 - chart: cnpg
                   repo: https://cloudnative-pg.github.io/charts
                   version: "0.27.1"
                   namespace: cnpg-system
                   wave: "3"
-                  project: infra
+                  appProject: infra
                 - chart: strimzi-kafka-operator
                   repo: https://strimzi.io/charts/
                   version: "0.50.1"
                   namespace: strimzi
                   wave: "3"
-                  project: infra
+                  appProject: infra
                 - chart: clickhouse-operator
                   repo: https://docs.altinity.com/clickhouse-operator/
                   version: "0.23.0"
                   namespace: clickhouse-operator
                   wave: "3"
-                  project: infra
+                  appProject: infra
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -87,7 +87,7 @@ spec:
       annotations:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
-      project: '{{ .project }}'
+      project: '{{ .appProject }}'
       source:
         repoURL: '{{ .repo }}'
         chart: '{{ .chart }}'

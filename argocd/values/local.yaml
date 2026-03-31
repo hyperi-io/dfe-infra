@@ -2,7 +2,9 @@
 global:
   cloud: local
   region: local
+  domain: devex.hyperi.io
 
+domain: devex.hyperi.io
 storageClass: local-path
 
 # Target dedicated DFE worker nodes (dfe-k8s-1/2/3).

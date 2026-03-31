@@ -21,23 +21,23 @@ spec:
                 - app: cnpg-cluster
                   namespace: cnpg
                   wave: "4"
-                  project: data
+                  appProject: data
                 - app: clickhouse-cluster
                   namespace: clickhouse
                   wave: "4"
-                  project: data
+                  appProject: data
                 - app: strimzi-kafka
                   namespace: strimzi
                   wave: "4"
-                  project: data
+                  appProject: data
                 - app: ferretdb
                   namespace: ferretdb
                   wave: "4"
-                  project: data
+                  appProject: data
                 - app: otel-collector
                   namespace: otel
                   wave: "4"
-                  project: data
+                  appProject: data
   template:
     metadata:
       name: '{{ .app }}-{{ .name }}'
@@ -45,7 +45,7 @@ spec:
       annotations:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
-      project: '{{ .project }}'
+      project: '{{ .appProject }}'
       source:
         repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
         targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
