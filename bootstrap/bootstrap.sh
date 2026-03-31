@@ -131,20 +131,15 @@ for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx; do
     TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
   fi
 done
-# GHCR pull secret — uses GHCR_TOKEN from env or OpenBao (secret/dfe/ghcr-pat)
-GHCR_PAT="${GHCR_TOKEN:-}"
-if [[ -z "${GHCR_PAT}" ]]; then
-  GHCR_PAT=$(/projects/hyperi-infra/scripts/bao-admin kv get -field=token secret/dfe/ghcr-pat 2>/dev/null || true)
-fi
-if [[ -n "${GHCR_PAT}" ]]; then
+# Private registry pull secret (GHCR, ECR, GCR, etc.)
+# Set DFE_PULL_SECRET_SERVER, DFE_PULL_SECRET_USER, DFE_PULL_SECRET_TOKEN in env.
+if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
   kubectl -n "${DFE_NAMESPACE}" create secret docker-registry ghcr-pull-secret \
-    --docker-server=ghcr.io \
-    --docker-username=catinspace-au \
-    --docker-password="${GHCR_PAT}" \
+    --docker-server="${DFE_PULL_SECRET_SERVER:-ghcr.io}" \
+    --docker-username="${DFE_PULL_SECRET_USER:-token}" \
+    --docker-password="${DFE_PULL_SECRET_TOKEN}" \
     --dry-run=client -o yaml | run kubectl apply -f -
-  echo "  GHCR pull secret created/updated in ${DFE_NAMESPACE}"
-else
-  echo "  WARNING: No GHCR_TOKEN in env and OpenBao unreachable — pull secret not created"
+  echo "  Pull secret created/updated in ${DFE_NAMESPACE}"
 fi
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.

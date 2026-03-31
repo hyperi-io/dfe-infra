@@ -77,6 +77,20 @@ else
     echo "==> Step 1: Terraform (skipped)"
 fi
 
+# Step 1b: Deployment-specific credential setup
+# Each cloud/deployment sources credentials differently.
+# bootstrap.sh reads generic DFE_PULL_SECRET_* env vars.
+if [[ "${CLOUD}" == "local" ]]; then
+  # DevEx: fetch GHCR PAT from OpenBao via bao-admin
+  BAO_ADMIN="/projects/hyperi-infra/scripts/bao-admin"
+  if [[ -z "${DFE_PULL_SECRET_TOKEN:-}" ]] && [[ -x "${BAO_ADMIN}" ]]; then
+    export DFE_PULL_SECRET_SERVER="ghcr.io"
+    export DFE_PULL_SECRET_USER="catinspace-au"
+    DFE_PULL_SECRET_TOKEN=$("${BAO_ADMIN}" kv get -field=token secret/dfe/ghcr-pat 2>/dev/null || true)
+    export DFE_PULL_SECRET_TOKEN
+  fi
+fi
+
 # Step 2: Bridge + Bootstrap
 echo "==> Step 2: Bootstrap"
 BRIDGE_ARGS=("--tf-dir" "${TF_DIR}")
