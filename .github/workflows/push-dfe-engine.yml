@@ -1,6 +1,6 @@
 # One-shot: bootstrap the dfe-engine GHCR package.
 # GitHub Apps can't create the FIRST org package — only GITHUB_TOKEN in Actions can.
-# After this runs once, delete this file and use hyperi-container-mgt app for pushes.
+# After this runs once, delete this file.
 name: Bootstrap dfe-engine package
 on:
   workflow_dispatch:
@@ -17,19 +17,25 @@ jobs:
         with:
           submodules: false
 
+      - uses: actions/create-github-app-token@v2
+        id: ci-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - name: Checkout dfe-engine
         uses: actions/checkout@v4
         with:
           repository: hyperi-io/dfe-engine
           path: dfe-engine
-          token: ${{ secrets.GIT_TOKEN_WORKFLOW_ACCESS }}
+          token: ${{ steps.ci-token.outputs.token }}
 
       - name: Checkout hyperi-pylib
         uses: actions/checkout@v4
         with:
           repository: hyperi-io/hyperi-pylib
           path: hyperi-pylib
-          token: ${{ secrets.GIT_TOKEN_WORKFLOW_ACCESS }}
+          token: ${{ steps.ci-token.outputs.token }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
