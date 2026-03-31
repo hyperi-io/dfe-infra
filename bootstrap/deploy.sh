@@ -33,7 +33,7 @@ usage() {
     echo "  AWS_PROFILE       AWS profile (aws)"
     echo ""
     echo "Examples:"
-    echo "  ${0} --cloud local                    # Deploy to devex Rancher"
+    echo "  ${0} --cloud local                    # Deploy to local Rancher cluster"
     echo "  ${0} --cloud aws --tf-dir envs/prod   # Deploy to AWS"
     echo "  ${0} --dry-run                        # Dry run"
 }
@@ -77,18 +77,17 @@ else
     echo "==> Step 1: Terraform (skipped)"
 fi
 
-# Step 1b: Deployment-specific credential setup
-# Each cloud/deployment sources credentials differently.
-# bootstrap.sh reads generic DFE_PULL_SECRET_* env vars.
-if [[ "${CLOUD}" == "local" ]]; then
-  # DevEx: fetch GHCR PAT from OpenBao via bao-admin
-  BAO_ADMIN="/projects/hyperi-infra/scripts/bao-admin"
-  if [[ -z "${DFE_PULL_SECRET_TOKEN:-}" ]] && [[ -x "${BAO_ADMIN}" ]]; then
-    export DFE_PULL_SECRET_SERVER="ghcr.io"
-    export DFE_PULL_SECRET_USER="catinspace-au"
-    DFE_PULL_SECRET_TOKEN=$("${BAO_ADMIN}" kv get -field=token secret/dfe/ghcr-pat 2>/dev/null || true)
-    export DFE_PULL_SECRET_TOKEN
-  fi
+# Step 1b: Pull secret credentials
+# bootstrap.sh reads generic DFE_PULL_SECRET_SERVER/USER/TOKEN env vars.
+# Set these before running deploy.sh, or source them from your secrets manager.
+# Example (GHCR):
+#   export DFE_PULL_SECRET_SERVER=ghcr.io
+#   export DFE_PULL_SECRET_USER=myuser
+#   export DFE_PULL_SECRET_TOKEN=$(vault kv get -field=token secret/ghcr-pat)
+#
+# If a .env file exists in the terraform environment dir, source it.
+if [[ -f "${TF_DIR}/.env" ]]; then
+  set -a; source "${TF_DIR}/.env"; set +a
 fi
 
 # Step 2: Bridge + Bootstrap
