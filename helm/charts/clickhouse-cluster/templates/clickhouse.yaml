@@ -39,13 +39,12 @@ spec:
             - query: "GRANT SELECT ON {{ .Values.clickhouse.database }}.*"
   {{- if .Values.nodeScheduling }}
   podTemplate:
-    spec:
-      {{- if .Values.nodeScheduling.nodeSelector }}
-      nodeSelector:
-        {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 8 }}
-      {{- end }}
-      {{- if .Values.nodeScheduling.tolerations }}
-      tolerations:
-        {{- toYaml .Values.nodeScheduling.tolerations | nindent 8 }}
-      {{- end }}
+    {{- if .Values.nodeScheduling.nodeSelector }}
+    nodeSelector:
+      {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
+    {{- end }}
+    {{- if .Values.nodeScheduling.tolerations }}
+    tolerations:
+      {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
+    {{- end }}
   {{- end }}
