@@ -5,21 +5,21 @@
 
 # Layer 1: Bootstrap components (installed by bootstrap.sh)
 bootstrap:
-  cert-manager: "v1.17.2"
-  external-secrets: "0.17.0"
+  cert-manager: "v1.20.1"
+  external-secrets: "2.2.0"
   argocd: "7.8.26"
   valkey: "1.0.0"
 
 # Layer 1: Operators (deployed by ArgoCD wave 2-3)
 operators:
-  envoy-gateway: "v1.4.0"
-  external-dns: "1.14.3"
-  keda: "2.14.0"
-  metrics-server: "3.12.0"
-  stakater-reloader: "1.1.0"
-  cnpg: "0.27.1"
-  strimzi-kafka-operator: "0.50.1"
-  clickhouse-operator: "0.23.0"
+  envoy-gateway: "v1.7.1"
+  external-dns: "1.20.0"
+  keda: "2.19.0"
+  metrics-server: "3.13.0"
+  reloader: "2.2.9"
+  cloudnative-pg: "0.27.1"
+  strimzi-kafka-operator: "0.51.0"
+  # clickhouse-operator: devex uses hyperi-infra, standalone TBD
 
 # Layer 2: Data platform (deployed by ArgoCD wave 4)
 data:
@@ -34,7 +34,6 @@ data:
   hyperdx: "1.7.0"               # HyperDX version
 
 # Layer 2: DFE apps (deployed by ArgoCD wave 5)
-# Versions added in Plan 06
 apps:
   dfe-engine: "2.2.0"
   dfe-ui: "2.2.0"

@@ -1,7 +1,6 @@
-# IMPORTANT: Chart versions in this file MUST match versions.yaml (the SSOT).
-# When updating versions, change versions.yaml first, then update this file to match.
-# Wave 2-3: cert-manager (adopted), ESO (adopted), Envoy Gateway, KEDA,
-# metrics-server, VPA, Reloader, CNPG operator, Strimzi operator, ClickHouse operator.
+# Layer 1 addons: cert-manager, ESO, KEDA, metrics-server, Reloader, operators.
+# Chart versions MUST match versions.yaml (the SSOT).
+# Envoy Gateway uses OCI and is deployed as a standalone app in bootstrap/.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -22,47 +21,41 @@ spec:
               elements:
                 - chart: cert-manager
                   repo: https://charts.jetstack.io
-                  version: "v1.17.2"
+                  version: "v1.20.1"
                   namespace: cert-manager
                   wave: "2"
                   appProject: infra
                 - chart: external-secrets
                   repo: https://charts.external-secrets.io
-                  version: "0.17.0"
+                  version: "2.2.0"
                   namespace: external-secrets
-                  wave: "2"
-                  appProject: infra
-                - chart: envoy-gateway
-                  repo: oci://docker.io/envoyproxy/gateway-helm
-                  version: "v1.4.0"
-                  namespace: envoy-gateway-system
                   wave: "2"
                   appProject: infra
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
-                  version: "1.14.3"
+                  version: "1.20.0"
                   namespace: external-dns
                   wave: "2"
                   appProject: infra
                 - chart: keda
                   repo: https://kedacore.github.io/charts
-                  version: "2.14.0"
+                  version: "2.19.0"
                   namespace: keda
                   wave: "3"
                   appProject: infra
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
-                  version: "3.12.0"
+                  version: "3.13.0"
                   namespace: kube-system
                   wave: "3"
                   appProject: infra
-                - chart: stakater-reloader
-                  repo: https://stakater.github.io/stakater-reloader
-                  version: "1.1.0"
+                - chart: reloader
+                  repo: https://stakater.github.io/stakater-charts
+                  version: "2.2.9"
                   namespace: reloader
                   wave: "3"
                   appProject: infra
-                - chart: cnpg
+                - chart: cloudnative-pg
                   repo: https://cloudnative-pg.github.io/charts
                   version: "0.27.1"
                   namespace: cnpg-system
@@ -70,19 +63,12 @@ spec:
                   appProject: infra
                 - chart: strimzi-kafka-operator
                   repo: https://strimzi.io/charts/
-                  version: "0.50.1"
+                  version: "0.51.0"
                   namespace: strimzi
                   wave: "3"
                   appProject: infra
-                # ClickHouse operator — using clickhouse.com operator (not Altinity).
-                # TODO: Find correct Helm repo for clickhouse.com/clickhouse-operator-helm.
-                # For devex: already installed by hyperi-infra.
-                # - chart: clickhouse-operator-helm
-                #   repo: TBD
-                #   version: "0.0.2"
-                #   namespace: clickhouse-operator-system
-                #   wave: "3"
-                #   appProject: infra
+                # ClickHouse operator (clickhouse.com) — for devex, already installed
+                # by hyperi-infra. TODO: find helm repo for standalone deployments.
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
