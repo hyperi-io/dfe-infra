@@ -14,6 +14,12 @@ spec:
   policyTypes:
     - Egress
   egress:
+    # Allow egress to Kubernetes API (required by operators: CNPG, Strimzi, etc.)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
     # Allow egress to OTel Collector
     - to:
         - namespaceSelector:

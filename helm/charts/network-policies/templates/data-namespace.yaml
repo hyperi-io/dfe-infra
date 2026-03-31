@@ -12,8 +12,22 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Allow from DFE app namespaces only
+    # Allow from DFE app namespaces
     {{- range $.Values.dfeNamespaces }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+    {{- end }}
+    # Allow from other data namespaces (FerretDB→CNPG, HyperDX→ClickHouse)
+    {{- range $.Values.dataNamespaces }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+    {{- end }}
+    # Allow from operator namespaces (CNPG, Strimzi, ClickHouse operators)
+    {{- range $.Values.operatorNamespaces }}
     - from:
         - namespaceSelector:
             matchLabels:

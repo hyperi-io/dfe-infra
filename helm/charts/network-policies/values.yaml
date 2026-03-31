@@ -14,6 +14,12 @@ dataNamespaces:
   - clickhouse
   - ferretdb
 
+# Operator namespaces (need access to data namespaces for reconciliation)
+operatorNamespaces:
+  - cnpg-system
+  - strimzi
+  - clickhouse-operator-system
+
 # Envoy Gateway namespace (source of ingress traffic)
 gatewayNamespace: envoy-gateway-system
 
