@@ -31,7 +31,7 @@ spec:
                   wave: "4"
                   appProject: data
                 - app: ferretdb
-                  namespace: ferretdb
+                  namespace: cnpg
                   wave: "4"
                   appProject: data
                 - app: otel-collector

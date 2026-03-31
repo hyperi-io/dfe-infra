@@ -12,7 +12,9 @@ replicaCount: 1
 
 postgresql:
   # Connection to CNPG cluster (created by cnpg-cluster chart)
-  host: dfe-pg-rw.cnpg.svc.cluster.local
+  # Short name works when FerretDB deploys in same namespace as CNPG.
+  # Use FQDN (dfe-pg-rw.cnpg.svc.cluster.local) if deployed separately.
+  host: dfe-pg-rw
   port: 5432
   database: ferretdb
   # Credentials from CNPG-generated secret

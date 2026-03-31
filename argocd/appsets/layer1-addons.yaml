@@ -74,12 +74,15 @@ spec:
                   namespace: strimzi
                   wave: "3"
                   appProject: infra
-                - chart: clickhouse-operator
-                  repo: https://docs.altinity.com/clickhouse-operator/
-                  version: "0.23.0"
-                  namespace: clickhouse-operator
-                  wave: "3"
-                  appProject: infra
+                # ClickHouse operator — using clickhouse.com operator (not Altinity).
+                # TODO: Find correct Helm repo for clickhouse.com/clickhouse-operator-helm.
+                # For devex: already installed by hyperi-infra.
+                # - chart: clickhouse-operator-helm
+                #   repo: TBD
+                #   version: "0.0.2"
+                #   namespace: clickhouse-operator-system
+                #   wave: "3"
+                #   appProject: infra
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
