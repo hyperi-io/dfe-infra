@@ -40,10 +40,12 @@ spec:
                     timeout: 5s
                   cache_duration: 600s
                 claim_to_headers:
-                  - header_name: {{ .Values.jwtAuthn.forwardHeaders.user }}
+                  - header_name: {{ .Values.jwtAuthn.forwardHeaders.subject }}
                     claim_name: email
                   - header_name: {{ .Values.jwtAuthn.forwardHeaders.groups }}
                     claim_name: groups
+                  - header_name: {{ .Values.jwtAuthn.forwardHeaders.user }}
+                    claim_name: email
             rules:
               match:
                 prefix: "/"

@@ -50,25 +50,29 @@ routes:
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
 
-# OIDC — disabled by default (local auth is default)
+# OIDC — disabled by default (local auth is default).
+# Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.
+# Provider addition/removal is a Helm values change + ArgoCD sync — NOT a
+# dfe-engine API call. dfe-infra owns this config, dfe-engine only reads headers.
 oidc:
   enabled: false
-  provider: ""                # google | entra | cognito | keycloak | custom
-  issuerUrl: ""               # e.g. https://accounts.google.com
-  clientId: ""
-  clientSecretName: ""        # K8s secret name (ESO-synced)
-  clientSecretKey: "client-secret"
-  scopes:
-    - openid
-    - email
-    - profile
-    - groups
+  providers: []
+  # Example:
+  # providers:
+  #   - name: google-workspace
+  #     issuerUrl: https://accounts.google.com
+  #     clientId: "123456.apps.googleusercontent.com"
+  #     clientSecretName: dfe-oidc-google
+  #     clientSecretKey: client-secret
+  #     scopes: [openid, email, profile]
 
-# jwt_authn filter — chains after OIDC to extract claims into headers
+# jwt_authn filter — chains after OIDC to extract claims into headers.
+# These headers are the contract between Envoy and dfe-engine.
 jwtAuthn:
-  enabled: false              # only when oidc.enabled
-  issuer: ""                  # same as oidc.issuerUrl
-  audiences: []               # e.g. ["dfe-client-id"]
+  enabled: false
+  issuer: ""
+  audiences: []
   forwardHeaders:
-    user: X-Forwarded-User   # claim: email or sub
-    groups: X-Auth-Groups    # claim: groups (comma-separated)
+    subject: X-Oidc-Subject
+    groups: X-Oidc-Groups
+    user: X-Forwarded-User    # backward compat (nginx convention)
