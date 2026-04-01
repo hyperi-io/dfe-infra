@@ -14,7 +14,11 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # Allow egress to Kubernetes API (required by operators: CNPG, Strimzi, etc.)
+    # Allow egress to Kubernetes API and external HTTPS APIs.
+    # This covers:
+    # - K8s API server (required by operators: CNPG, Strimzi, etc.)
+    # - OIDC IdP APIs (Google Admin SDK, Microsoft Graph, Okta API)
+    #   for dfe-engine group resolution when OIDC is enabled
     - ports:
         - port: 443
           protocol: TCP
