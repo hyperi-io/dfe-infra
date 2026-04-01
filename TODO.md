@@ -6,15 +6,35 @@ This is the **single source of truth** for all tasks and progress.
 
 ## Active Tasks
 
-- [ ] Build and push remaining DFE service container images `[PENDING]`
-  - Only dfe-engine:2.2.0 exists in GHCR
-  - 11 services need building: dfe-receiver, dfe-loader, dfe-archiver, dfe-fetcher, dfe-ui, dfe-transform-{wasm,vrl,vector,elastic,splack}, hyperdx
-  - Rust services take 30+ min each; Python services (dfe-engine pattern) are fast
-  - Use hypersec-ci-bot app for cross-repo checkout + GITHUB_TOKEN for GHCR push
+- [ ] IaC test framework (pytest + kubeconform + tftest) `[PENDING]`
+  - Current state: Research complete, framework decision made (pytest as single runner)
+  - Next: Design test fixtures (helm_template, terraform_plan, kubeconform_validate), write tests
+  - Existing 13 BATS tests stay, new tests go in pytest
+  - See discussion notes at end of 2026-04-01 session
+
+- [ ] Build and push remaining DFE service container images `[BLOCKED]`
+  - Blocked by: image build ownership discussion (centralised vs per-app)
+  - Decision: per-app repo builds, specs written for rustlib + hyperi-ci
+  - Specs: hyperi-rustlib deployment-contract-ci-bridge, hyperi-ci container-build-pipeline
+  - Derek is implementing the specs now
 
 ---
 
 ## Work Breakdown Structure (WBS)
+
+### OIDC Infrastructure (Complete)
+
+**Goal:** Implement dfe-infra side of OIDC requirements for dfe-engine
+
+1. [x] Multi-provider Envoy Gateway SecurityPolicy (X-Oidc-Subject/Groups headers)
+2. [x] dfe-engine OIDC secret mounting (providers[].envMappings from K8s Secrets)
+3. [x] CRITICAL independence tests (13 BATS tests — infra works without dfe-engine)
+4. [x] tf-oidc-secrets module (OpenBao seed paths)
+5. [x] tf-oidc-google module (OAuth2 client + service account)
+6. [x] tf-oidc-entra module (Entra app registration + Graph API)
+7. [x] tf-oidc-okta module (Okta OIDC app)
+8. [x] Network policy IdP egress documentation
+9. [x] Smoke test expansion (multi-provider + independence checks)
 
 ### DevEx Deployment Validation (Plan 07b)
 
@@ -33,8 +53,17 @@ This is the **single source of truth** for all tasks and progress.
 11. [x] Fix OTel DaemonSet (missing ServiceAccount)
 12. [x] Update all layer1 addons to latest versions
 13. [x] Fix Strimzi Kafka version (3.9.0→4.1.1 for Strimzi 0.51)
-14. [ ] Build remaining 11 DFE service images
+14. [ ] Build remaining 11 DFE service images (blocked by CI spec implementation)
 15. [ ] Verify full stack end-to-end (all pods Running, smoke tests pass)
+
+### Deployment Contract + CI Pipeline (Specs Written)
+
+**Goal:** Standardise container image builds across all DFE apps
+
+- [x] Research existing rustlib deployment contract (3,500 lines, production in dfe-loader)
+- [x] Write rustlib deployment-contract-ci-bridge spec
+- [x] Write hyperi-ci container-build-pipeline spec
+- [ ] Derek implementing both specs (in progress, separate repos)
 
 ### AWS EKS Deployment (Plan 07a)
 
@@ -49,30 +78,22 @@ This is the **single source of truth** for all tasks and progress.
 
 ### dfe-vpn Migration
 
-**Goal:** Upgrade dfe-openvpn to dfe-vpn (aligning with new standards)
-
 - [ ] dfe-openvpn → dfe-vpn rename/rewrite (in progress, separate project)
 
 ---
 
-## Completed (This Session)
+## Completed (This Session — 2026-04-01)
 
-- [x] Node scheduling (dfe-common.scheduling helper, all 20 charts)
-- [x] Bitnami Valkey replaced with plain Deployment manifest
-- [x] Repo migrated to hyperi-io/dfe-infra with deploy key
-- [x] ArgoCD goTemplate conversion (all 4 ApplicationSets)
-- [x] dfe-common.image helper (registry-aware image refs)
-- [x] hyperi-container-mgt GitHub App created (PEM in OpenBao)
-- [x] GHCR PAT stored in OpenBao + GH org secret (GHCR_PAT)
-- [x] Docker credential helper switched to secretservice (gnome-keyring)
-- [x] Product/devex separation (deploy.sh sources .env, bootstrap.sh generic)
-- [x] Network policies fixed (K8s API + inter-namespace egress)
-- [x] CNPG PostgreSQL 3-node HA cluster running
-- [x] FerretDB moved to cnpg namespace (PG secret sharing)
-- [x] ClickHouse CRD migrated (altinity.com → clickhouse.com)
-- [x] All layer1 deps updated to latest (cert-manager v1.20.1, ESO 2.2.0, KEDA 2.19.0, etc.)
-- [x] OTel DaemonSet + Gateway running on all DFE nodes
-- [x] dfe-engine pod running and healthy (first DFE service alive)
+- [x] OIDC infrastructure — all 10 tasks (Envoy multi-provider, dfe-engine mounting, TF modules, tests)
+- [x] Deployment contract research + specs for rustlib and hyperi-ci
+- [x] Untracked docs/superpowers/ from git (was committed before gitignore rule)
+
+## Completed (Previous Session — 2026-03-31)
+
+- [x] Node scheduling, Valkey replacement, repo migration, ArgoCD goTemplate
+- [x] dfe-common.image helper, GHCR setup, product/devex separation
+- [x] Data layer (CNPG, FerretDB, ClickHouse, OTel, Strimzi)
+- [x] All layer1 deps updated, dfe-engine running
 
 ---
 
@@ -80,15 +101,15 @@ This is the **single source of truth** for all tasks and progress.
 
 ### High Priority
 
+- [ ] IaC test framework — pytest + kubeconform + tftest (discussion concluded, ready to implement)
 - [ ] Envoy Gateway OCI chart — find ArgoCD-compatible install method (currently bootstrap-only)
-- [ ] ClickHouse operator chart repo — find helm repo for clickhouse.com operator (standalone deployments)
-- [ ] Full /deps audit — verify all chart versions are truly latest and from well-maintained sources
+- [ ] ClickHouse operator chart repo — find helm repo for clickhouse.com operator (standalone)
 
 ### Medium Priority
 
-- [ ] Add documentation comments to common.yaml and chart values (audit finding P2)
 - [ ] ArgoCD ignoreDifferences for operator-managed resources (reduce OutOfSync noise)
 - [ ] ESO ClusterSecretStore — fix vault token/approle for ESO to read from OpenBao
+- [ ] Add documentation comments to common.yaml and chart values
 
 ### Low Priority
 
@@ -100,6 +121,7 @@ This is the **single source of truth** for all tasks and progress.
 ## Blocked
 
 - [ ] 11 DFE service pods (ImagePullBackOff) **Blocked by:** Container images not built/pushed to GHCR
+- [ ] Container image builds **Blocked by:** Derek implementing rustlib + hyperi-ci specs
 
 ---
 
@@ -114,15 +136,3 @@ This file is the **single source of truth** for tasks and progress.
 - Mark tasks `[IN PROGRESS]` when starting
 - Mark tasks `[x]` when complete, move to Completed section
 - Never add tasks to STATE.md or CLAUDE.md
-
-**Status tags:**
-
-- `[PENDING]` - Not started
-- `[IN PROGRESS]` - Currently working on
-- `[BLOCKED]` - Waiting on something
-- `[x]` - Completed (checkbox checked)
-
-**WBS Format:**
-
-When breaking down complex work, use numbered steps under a feature heading.
-Each step should be independently completable and testable.
