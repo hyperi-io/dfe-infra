@@ -1,0 +1,59 @@
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: UDPRoute
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-openvpn-udp
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "dfe-common.fullname" . }}-gateway
+      sectionName: openvpn-udp
+  rules:
+    - backendRefs:
+        - name: {{ include "dfe-common.fullname" . }}
+          port: {{ .Values.openvpn.udp.port }}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: UDPRoute
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-wireguard
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "dfe-common.fullname" . }}-gateway
+      sectionName: wireguard
+  rules:
+    - backendRefs:
+        - name: {{ include "dfe-common.fullname" . }}
+          port: {{ .Values.wireguard.port }}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-openvpn-https
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "dfe-common.fullname" . }}-gateway
+      sectionName: openvpn-https
+  rules:
+    - backendRefs:
+        - name: {{ include "dfe-common.fullname" . }}
+          port: {{ .Values.openvpn.https.port }}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-wg-dpi
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "dfe-common.fullname" . }}-gateway
+      sectionName: wg-dpi
+  rules:
+    - backendRefs:
+        - name: {{ include "dfe-common.fullname" . }}
+          port: {{ .Values.wireguard.dpiBypass.port }}

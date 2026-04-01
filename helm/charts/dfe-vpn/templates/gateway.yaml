@@ -1,0 +1,25 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-gateway
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: openvpn-udp
+      protocol: UDP
+      port: {{ .Values.openvpn.udp.port }}
+    - name: wireguard
+      protocol: UDP
+      port: {{ .Values.wireguard.port }}
+    - name: openvpn-https
+      protocol: TLS
+      port: {{ .Values.openvpn.https.port }}
+      tls:
+        mode: Passthrough
+    - name: wg-dpi
+      protocol: TLS
+      port: {{ .Values.wireguard.dpiBypass.port }}
+      tls:
+        mode: Passthrough

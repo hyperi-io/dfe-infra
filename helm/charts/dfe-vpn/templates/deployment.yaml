@@ -1,0 +1,170 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: vpn
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - SYS_MODULE
+          ports:
+            - name: openvpn-udp
+              containerPort: {{ .Values.openvpn.udp.port }}
+              protocol: UDP
+            - name: openvpn-tcp
+              containerPort: {{ .Values.openvpn.tcp.port }}
+              protocol: TCP
+            - name: openvpn-https
+              containerPort: {{ .Values.openvpn.https.port }}
+              protocol: TCP
+            - name: wireguard
+              containerPort: {{ .Values.wireguard.port }}
+              protocol: UDP
+            - name: wg-dpi
+              containerPort: {{ .Values.wireguard.dpiBypass.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.vpn.healthPort }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          env:
+            - name: DFE_VPN_PROTOCOL
+              value: {{ .Values.vpn.protocol | quote }}
+            - name: DFE_VPN_SERVER_CN
+              value: {{ .Values.vpn.serverCn | quote }}
+            - name: DFE_VPN_FULL_TUNNEL
+              value: {{ .Values.vpn.fullTunnel | quote }}
+            - name: DFE_VPN_PUSH_ROUTES
+              value: {{ .Values.vpn.pushRoutes | quote }}
+            - name: DFE_VPN_NETWORK_PROFILE
+              value: {{ .Values.vpn.networkProfile | quote }}
+            - name: DFE_VPN_DNS1
+              value: {{ .Values.vpn.dns1 | quote }}
+            - name: DFE_VPN_DNS2
+              value: {{ .Values.vpn.dns2 | quote }}
+            - name: DFE_VPN_DNS_DOMAIN
+              value: {{ .Values.vpn.dnsDomain | quote }}
+            - name: DFE_VPN_MAX_CLIENTS
+              value: {{ .Values.vpn.maxClients | quote }}
+            - name: DFE_VPN_HEALTH_PORT
+              value: {{ .Values.vpn.healthPort | quote }}
+            - name: DFE_VPN_LOG_MODE
+              value: {{ .Values.vpn.logMode | quote }}
+            - name: OPENVPN_UDP_ENABLED
+              value: {{ .Values.openvpn.udp.enabled | quote }}
+            - name: OPENVPN_UDP_PORT
+              value: {{ .Values.openvpn.udp.port | quote }}
+            - name: OPENVPN_UDP_NETWORK
+              value: {{ .Values.openvpn.udp.network | quote }}
+            - name: OPENVPN_UDP_NETMASK
+              value: {{ .Values.openvpn.udp.netmask | quote }}
+            - name: OPENVPN_TCP_ENABLED
+              value: {{ .Values.openvpn.tcp.enabled | quote }}
+            - name: OPENVPN_TCP_PORT
+              value: {{ .Values.openvpn.tcp.port | quote }}
+            - name: OPENVPN_TCP_NETWORK
+              value: {{ .Values.openvpn.tcp.network | quote }}
+            - name: OPENVPN_TCP_NETMASK
+              value: {{ .Values.openvpn.tcp.netmask | quote }}
+            - name: OPENVPN_HTTPS_ENABLED
+              value: {{ .Values.openvpn.https.enabled | quote }}
+            - name: OPENVPN_HTTPS_PORT
+              value: {{ .Values.openvpn.https.port | quote }}
+            - name: OPENVPN_HTTPS_NETWORK
+              value: {{ .Values.openvpn.https.network | quote }}
+            - name: OPENVPN_HTTPS_NETMASK
+              value: {{ .Values.openvpn.https.netmask | quote }}
+            - name: WIREGUARD_PORT
+              value: {{ .Values.wireguard.port | quote }}
+            - name: WIREGUARD_NETWORK
+              value: {{ .Values.wireguard.network | quote }}
+            - name: WIREGUARD_MTU
+              value: {{ .Values.wireguard.mtu | quote }}
+            - name: WIREGUARD_PERSISTENT_KEEPALIVE
+              value: {{ .Values.wireguard.persistentKeepalive | quote }}
+            - name: WIREGUARD_DPI_BYPASS_ENABLED
+              value: {{ .Values.wireguard.dpiBypass.enabled | quote }}
+            - name: WIREGUARD_DPI_BYPASS_PORT
+              value: {{ .Values.wireguard.dpiBypass.port | quote }}
+            {{- if .Values.oidc.enabled }}
+            - name: OIDC_ENABLED
+              value: "true"
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.oidc.issuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.clientSecretName | default (printf "%s-oidc-secret" (include "dfe-common.fullname" .)) }}
+                  key: client-secret
+            {{- end }}
+            - name: VPN_METRICS_ENABLED
+              value: {{ .Values.metrics.enabled | quote }}
+            - name: VPN_METRICS_PORT
+              value: {{ .Values.metrics.port | quote }}
+            - name: VPN_OTEL_ENABLED
+              value: {{ .Values.otel.enabled | quote }}
+            {{- if .Values.otel.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: dfe-vpn
+            - name: PKI_MODE
+              value: {{ .Values.pki.mode | quote }}
+            {{- if .Values.pki.externalType }}
+            - name: PKI_EXTERNAL_TYPE
+              value: {{ .Values.pki.externalType | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: pki
+              mountPath: /etc/vpn/pki
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: health
+            failureThreshold: 30
+            periodSeconds: 2
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: pki
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-pki
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

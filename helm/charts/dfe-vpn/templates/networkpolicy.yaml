@@ -1,0 +1,41 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-ingress
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow VPN traffic from anywhere (external clients)
+    - ports:
+        - port: {{ .Values.openvpn.udp.port }}
+          protocol: UDP
+        - port: {{ .Values.wireguard.port }}
+          protocol: UDP
+        - port: {{ .Values.openvpn.https.port }}
+          protocol: TCP
+        - port: {{ .Values.wireguard.dpiBypass.port }}
+          protocol: TCP
+    # Allow metrics scraping from OTel namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: otel
+      ports:
+        - port: {{ .Values.metrics.port }}
+          protocol: TCP
+    # Allow health checks from envoy-gateway-system namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      ports:
+        - port: {{ .Values.vpn.healthPort }}
+          protocol: TCP
+{{- end }}
