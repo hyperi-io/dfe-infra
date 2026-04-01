@@ -39,6 +39,21 @@ auth:
   jwtSecretName: dfe-engine-jwt
   oidcEnabled: false
 
+# OIDC provider credentials — mounted as env vars from K8s Secrets.
+# Secrets are created by tf-oidc-secrets (ESO) or manually by operator.
+# dfe-engine reads these at startup for group resolution API calls.
+oidc:
+  enabled: false
+  providers: []
+  # Example:
+  # providers:
+  #   - name: google-workspace
+  #     secretName: dfe-oidc-google
+  #     envMappings:
+  #       DFE_OIDC_GOOGLE_CLIENT_ID: client-id
+  #       DFE_OIDC_GOOGLE_CLIENT_SECRET: client-secret
+  #       DFE_GOOGLE_SA_JSON: service-account-json
+
 resources:
   requests:
     cpu: 200m

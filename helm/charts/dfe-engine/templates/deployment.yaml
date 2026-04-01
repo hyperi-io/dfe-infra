@@ -38,6 +38,17 @@ spec:
               value: {{ .Values.otel.endpoint | quote }}
             - name: OTEL_SERVICE_NAME
               value: dfe-engine
+          {{- if .Values.oidc.enabled }}
+          {{- range $provider := .Values.oidc.providers }}
+          {{- range $envVar, $secretKey := $provider.envMappings }}
+            - name: {{ $envVar }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $provider.secretName }}
+                  key: {{ $secretKey }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
           volumeMounts:
             - name: config
               mountPath: {{ .Values.config.mountPath }}
