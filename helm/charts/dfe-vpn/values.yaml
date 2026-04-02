@@ -3,6 +3,9 @@ component: vpn
 env: local
 cloud: local
 
+global:
+  registry: ""
+
 image:
   repository: ""
   tag: ""
