@@ -33,4 +33,9 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: {{ . }}
     {{- end }}
+    # Allow from Envoy Gateway (external clients reach data services via gateway)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.gatewayNamespace }}
 {{- end }}

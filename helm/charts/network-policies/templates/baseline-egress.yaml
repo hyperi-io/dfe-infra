@@ -1,0 +1,59 @@
+# Baseline egress policy — applied to every DFE/data namespace.
+#
+# Standard 3-policy zero-trust baseline per
+# https://kubernetes.io/docs/concepts/services-networking/network-policies/
+# and https://github.com/ahmetb/kubernetes-network-policy-recipes.
+#
+# This policy expresses the default egress surface every namespace needs:
+#   1. Intra-namespace pod-to-pod (required for clustered services like
+#      ClickHouse replication, Kafka broker replication, CNPG → CNPG).
+#   2. DNS (UDP + TCP 53) to the cluster DNS service.
+#   3. Kubernetes API (TCP 443, 6443) — required by operators (CNPG, Strimzi,
+#      ClickHouse operator) and by service-account auth from application pods.
+#   4. OTel Collector (TCP 4317) in the OTel namespace, for telemetry.
+#
+# Everything else is denied by default (Kubernetes NetworkPolicy semantics).
+# Add per-service egress policies layered on top for specific cross-namespace
+# flows (e.g. DFE app egress to CNPG, ClickHouse, Kafka).
+{{- $allNamespaces := concat .Values.dfeNamespaces .Values.dataNamespaces }}
+{{- range $allNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-baseline-egress
+  namespace: {{ . }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # 1. Intra-namespace pod-to-pod
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+    # 2. DNS resolution (cluster DNS)
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # 3. Kubernetes API server (used by operators and service-account auth)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # 4. OTel Collector for telemetry
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.otelNamespace }}
+      ports:
+        - port: {{ $.Values.otelPort }}
+          protocol: TCP
+{{- end }}
