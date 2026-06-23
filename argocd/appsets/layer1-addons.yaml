@@ -61,12 +61,8 @@ spec:
                   namespace: cnpg-system
                   wave: "3"
                   appProject: infra
-                - chart: strimzi-kafka-operator
-                  repo: https://strimzi.io/charts/
-                  version: "0.51.0"
-                  namespace: strimzi
-                  wave: "3"
-                  appProject: infra
+                # strimzi-kafka-operator is Kafka substrate: deployed only in the
+                # scale profile via appsets/layer-scale.yaml (cluster-label gated).
                 # ClickHouse operator (clickhouse.com) — for devex, already installed
                 # by hyperi-infra. TODO: find helm repo for standalone deployments.
   template:

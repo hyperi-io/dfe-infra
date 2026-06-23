@@ -18,7 +18,7 @@
 #   DFE_CLOUD                aws | gcp | az | local
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. devex.hyperi.io
-#   DFE_TENANCY              dev | small | large
+#   DFE_PROFILE              standard | scale
 #   DFE_REPO_URL             Git repo URL for ArgoCD
 #   DFE_TARGET_REVISION      Git branch/tag (e.g. main)
 #   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard
@@ -63,7 +63,7 @@ run() {
 
 # Validate required variables
 required_vars=(
-  DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_TENANCY
+  DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
   DFE_REPO_URL DFE_TARGET_REVISION
   DFE_STORAGE_CLASS DFE_NAMESPACE
   DFE_CLICKHOUSE_HOST DFE_KAFKA_BOOTSTRAP DFE_OTEL_ENDPOINT

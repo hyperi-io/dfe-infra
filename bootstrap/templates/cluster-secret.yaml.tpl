@@ -9,13 +9,14 @@ metadata:
   labels:
     argocd.argoproj.io/secret-type: cluster
     dfe.hyperi.io/managed: "true"
+    dfe.hyperi.io/profile: "${DFE_PROFILE}"
   annotations:
     # Identity
     dfe.hyperi.io/env: "${DFE_ENV}"
     dfe.hyperi.io/cloud: "${DFE_CLOUD}"
     dfe.hyperi.io/region: "${DFE_REGION}"
     dfe.hyperi.io/domain: "${DFE_DOMAIN}"
-    dfe.hyperi.io/tenancy: "${DFE_TENANCY}"
+    dfe.hyperi.io/profile: "${DFE_PROFILE}"
     # GitOps source
     dfe.hyperi.io/repo_url: "${DFE_REPO_URL}"
     dfe.hyperi.io/target_revision: "${DFE_TARGET_REVISION}"

@@ -1,0 +1,31 @@
+# Profile: scale -- HA, Kafka via Strimzi, ClickHouse cluster, KEDA autoscaling.
+# Merged after common.yaml + <cloud>.yaml (third in the valueFiles cascade).
+# Keys unknown to a given chart are ignored by Helm.
+
+# DFE service deployments.
+replicaCount: 2
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+keda:
+  minReplicas: 2
+  maxReplicas: 10
+  scalingPressureThreshold: "0.7"
+
+# ClickHouse cluster -- multi-replica.
+clickhouse:
+  replicas: 3
+  shardsCount: 1
+
+# CNPG -- HA.
+cluster:
+  instances: 3
+
+# Strimzi Kafka (only deployed in scale; see appsets/layer-scale.yaml).
+kafka:
+  replicas: 3

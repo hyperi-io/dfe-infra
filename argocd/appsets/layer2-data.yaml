@@ -26,10 +26,8 @@ spec:
                   namespace: clickhouse
                   wave: "4"
                   appProject: data
-                - app: strimzi-kafka
-                  namespace: strimzi
-                  wave: "4"
-                  appProject: data
+                # strimzi-kafka is Kafka substrate: deployed only in the scale
+                # profile via appsets/layer-scale.yaml (cluster-label gated).
                 - app: ferretdb
                   namespace: cnpg
                   wave: "4"
@@ -54,6 +52,7 @@ spec:
           valueFiles:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

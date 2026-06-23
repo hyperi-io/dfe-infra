@@ -31,17 +31,8 @@ spec:
                   wave: "5"
                 - app: hyperdx
                   wave: "5"
-                # dfe-transform-* apps (optional, scale-to-zero via KEDA Kafka trigger)
-                - app: dfe-transform-wasm
-                  wave: "5"
-                - app: dfe-transform-vrl
-                  wave: "5"
-                - app: dfe-transform-vector
-                  wave: "5"
-                - app: dfe-transform-elastic
-                  wave: "5"
-                - app: dfe-transform-splack
-                  wave: "5"
+                # dfe-transform-* apps are Kafka-dependent: deployed only in the
+                # scale profile via appsets/layer-scale.yaml (cluster-label gated).
   template:
     metadata:
       name: '{{ .app }}-{{ .name }}'
@@ -58,6 +49,7 @@ spec:
           valueFiles:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
       destination:
         server: '{{ .server }}'
         namespace: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'

@@ -28,7 +28,7 @@ data:
   kafka-version: "4.1.1"         # Kafka version inside Strimzi (0.51+ requires 4.x)
   kafka-replicas: "3"            # Kafka broker count
   clickhouse-version: "24.8"     # ClickHouse server version
-  clickhouse-replicas: "1"       # ClickHouse replicas (dev profile)
+  clickhouse-replicas: "1"       # default; overridden by profile (standard=1, scale=3)
   ferretdb: "1.24.0"             # FerretDB version
   otel-collector: "0.114.0"      # OpenTelemetry Collector version
   hyperdx: "1.7.0"               # HyperDX version
