@@ -56,6 +56,18 @@ routes:
 # dfe-engine API call. dfe-infra owns this config, dfe-engine only reads headers.
 oidc:
   enabled: false
+  # Interactive HTTPRoutes the OIDC SecurityPolicy fronts. One policy is
+  # generated per route, each with its OWN redirectURL on its OWN hostname
+  # (cookies must be set on the host the user is on). Universal: add any future
+  # interactive service's route here -- {name = HTTPRoute metadata.name,
+  # hostname = its subdomain label under {domain}} -- and it is fronted with no
+  # policy-code change. NOT a blanket Gateway-level policy: dfe-engine /api
+  # machine paths use API-key/JWT and must not be redirected to OIDC login.
+  targetRoutes:
+    - name: dfe-engine
+      hostname: dfe
+    - name: hyperdx
+      hostname: hyperdx
   providers: []
   # Example:
   # providers:
