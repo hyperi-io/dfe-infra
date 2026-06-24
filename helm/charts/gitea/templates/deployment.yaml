@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate          # single SQLite-backed PVC, no concurrent writers
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        # Render app.ini from GITEA__* env, run migrations, ensure the admin user
+        # exists (idempotent: create returns non-zero if present, ignored).
+        - name: init
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 1000
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              mkdir -p "${GITEA_CUSTOM}/conf"
+              environment-to-ini --out "${GITEA_CUSTOM}/conf/app.ini"
+              gitea migrate
+              gitea admin user create \
+                --username "${GITEA_ADMIN_USER}" \
+                --password "${GITEA_ADMIN_PASSWORD}" \
+                --email "${GITEA_ADMIN_EMAIL}" \
+                --admin --must-change-password=false \
+                || echo "admin user already exists"
+          env:
+            {{- include "gitea.env" . | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: gitea
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            {{- include "gitea.env" . | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

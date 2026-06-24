@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-repo-setup
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # Runs after the Gitea Deployment is synced+healthy; idempotent so safe to rerun.
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: repo-setup
+          image: {{ .Values.setup.image | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              GITEA="http://{{ include "dfe-common.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}"
+              echo "Waiting for Gitea API..."
+              for i in $(seq 1 60); do
+                if curl -sf "$GITEA/api/healthz" >/dev/null 2>&1; then break; fi
+                sleep 5
+              done
+              echo "Ensuring deploy repo '${REPO}' exists..."
+              code=$(curl -s -o /dev/null -w "%{http_code}" -u "${GITEA_USER}:${GITEA_PASS}" \
+                -X POST -H "Content-Type: application/json" \
+                -d "{\"name\":\"${REPO}\",\"private\":${PRIVATE},\"default_branch\":\"${BRANCH}\",\"auto_init\":true}" \
+                "$GITEA/api/v1/user/repos")
+              if [ "$code" = "201" ] || [ "$code" = "409" ]; then
+                echo "deploy repo ready (HTTP $code)"
+              else
+                echo "deploy repo creation failed (HTTP $code)"; exit 1
+              fi
+          env:
+            - name: REPO
+              value: {{ .Values.deployRepo.name | quote }}
+            - name: BRANCH
+              value: {{ .Values.deployRepo.defaultBranch | quote }}
+            - name: PRIVATE
+              value: {{ .Values.deployRepo.private | quote }}
+            - name: GITEA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.admin.secretName }}
+                  key: username
+            - name: GITEA_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.admin.secretName }}
+                  key: password

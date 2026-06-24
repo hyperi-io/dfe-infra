@@ -87,6 +87,13 @@ if [[ -n "${DFE_REGISTRY_HOST:-}" ]] && [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
   DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
 fi
 
+# Deploy-specific gitops repo (dfe-engine writes, Argo watches). Defaults to the
+# in-cluster Gitea service; override DFE_CONFIG_REPO_URL to use external GitHub.
+export DFE_CONFIG_REPO_URL="${DFE_CONFIG_REPO_URL:-http://dfe-gitea.gitea.svc.cluster.local:3000/dfe/deploy.git}"
+export DFE_CONFIG_REPO_REVISION="${DFE_CONFIG_REPO_REVISION:-main}"
+# Gitea admin user that dfe-engine pushes as.
+GITEA_ADMIN_USER="${DFE_GITEA_ADMIN_USER:-dfe}"
+
 # Add Helm repos (idempotent)
 echo "==> [0/7] Adding Helm repositories"
 run helm repo add jetstack https://charts.jetstack.io 2>/dev/null || true
@@ -124,7 +131,7 @@ else
 fi
 
 echo "==> [4b/7] Creating imagePullSecrets"
-for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx; do
+for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx gitea; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
   # JFrog regcred (if registry credentials provided)
   if [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
@@ -140,6 +147,27 @@ if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
     --docker-password="${DFE_PULL_SECRET_TOKEN}" \
     --dry-run=client -o yaml | run kubectl apply -f -
   echo "  Pull secret created/updated in ${DFE_NAMESPACE}"
+fi
+
+# Gitea admin secret for the in-cluster deploy repo. Generated once (random),
+# reused on re-runs, mirrored to the dfe namespace as dfe-engine's push creds.
+# Skipped when DFE_CONFIG_REPO_URL points at an external repo (not in-cluster Gitea).
+if [[ "${DFE_CONFIG_REPO_URL}" == *"dfe-gitea"* ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  echo "==> [4c/7] Ensuring Gitea admin secret (dfe-gitea-admin)"
+  if kubectl -n gitea get secret dfe-gitea-admin >/dev/null 2>&1; then
+    GITEA_ADMIN_PASSWORD=$(kubectl -n gitea get secret dfe-gitea-admin -o jsonpath='{.data.password}' | base64 -d)
+  else
+    GITEA_ADMIN_PASSWORD=$(openssl rand -hex 24)
+  fi
+  for ns in gitea "${DFE_NAMESPACE}"; do
+    kubectl -n "$ns" create secret generic dfe-gitea-admin \
+      --from-literal=username="${GITEA_ADMIN_USER}" \
+      --from-literal=password="${GITEA_ADMIN_PASSWORD}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+  done
+  echo "  Gitea admin secret ready in gitea + ${DFE_NAMESPACE}"
+elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+  echo "[DRY-RUN] ensure Gitea admin secret dfe-gitea-admin in gitea + ${DFE_NAMESPACE}"
 fi
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.
@@ -171,6 +199,22 @@ envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run k
 envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/keda-scalers-app.yaml" | run kubectl apply -f -
 # cluster-addons ApplicationSet uses goTemplate — no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
+
+# Argo CD repo credentials for the (private) in-cluster deploy repo, so the
+# deploy-repo app-of-apps can read it. Uses the Gitea admin creds.
+if [[ "${DFE_CONFIG_REPO_URL}" == *"dfe-gitea"* ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  GITEA_PW=$(kubectl -n gitea get secret dfe-gitea-admin -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+  if [[ -n "${GITEA_PW}" ]]; then
+    kubectl -n argocd create secret generic deploy-repo-creds \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+      --from-literal=username="${GITEA_ADMIN_USER}" \
+      --from-literal=password="${GITEA_PW}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+  fi
+fi
+# Deploy-repo app-of-apps (envsubst: config repo URL + revision)
+envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/deploy-repo-app.yaml" | run kubectl apply -f -
 
 echo ""
 echo "=========================================="

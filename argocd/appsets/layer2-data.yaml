@@ -36,6 +36,10 @@ spec:
                   namespace: otel
                   wave: "4"
                   appProject: data
+                - app: gitea
+                  namespace: gitea
+                  wave: "4"
+                  appProject: data
   template:
     metadata:
       name: '{{ .app }}-{{ .name }}'

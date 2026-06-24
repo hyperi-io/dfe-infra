@@ -35,6 +35,16 @@ postgresql:
 otel:
   endpoint: ""
 
+# Gitops deploy repo -- dfe-engine renders + commits artifacts here; Argo applies.
+# Defaults to the in-cluster Gitea deploy repo; push creds = the Gitea admin
+# secret (mirrored into this namespace by bootstrap.sh).
+gitops:
+  enabled: true
+  repoUrl: "http://dfe-gitea.gitea.svc.cluster.local:3000/dfe/deploy.git"
+  branch: main
+  localPath: /var/run/dfe/deploy-repo
+  credentialsSecret: dfe-gitea-admin   # keys: username, password
+
 auth:
   jwtSecretName: dfe-engine-jwt
   oidcEnabled: false

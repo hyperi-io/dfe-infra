@@ -20,6 +20,10 @@ metadata:
     # GitOps source
     dfe.hyperi.io/repo_url: "${DFE_REPO_URL}"
     dfe.hyperi.io/target_revision: "${DFE_TARGET_REVISION}"
+    # Deploy-specific gitops repo (dfe-engine writes, Argo watches). Defaults to
+    # the in-cluster Gitea service; may point at external GitHub instead.
+    dfe.hyperi.io/config_repo_url: "${DFE_CONFIG_REPO_URL}"
+    dfe.hyperi.io/config_repo_revision: "${DFE_CONFIG_REPO_REVISION}"
     # Infrastructure outputs (from Terraform)
     dfe.hyperi.io/storage_class: "${DFE_STORAGE_CLASS}"
     dfe.hyperi.io/dfe_namespace: "${DFE_NAMESPACE}"

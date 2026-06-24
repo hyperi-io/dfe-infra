@@ -1,0 +1,31 @@
+# App-of-apps watching the deploy-specific gitops repo (Gitea by default).
+# dfe-engine renders + commits Argo Application/AppProject manifests under argocd/
+# there; this Application syncs whatever is present (empty until the engine
+# publishes). repoURL/targetRevision are templated by bootstrap.sh via envsubst.
+# Argo repo credentials for the (private) deploy repo are created by bootstrap.sh.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: deploy-repo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  project: infra
+  source:
+    repoURL: ${DFE_CONFIG_REPO_URL}
+    targetRevision: ${DFE_CONFIG_REPO_REVISION}
+    path: argocd
+    directory:
+      recurse: true
+      include: "{appproject-*.yaml,applications/*.yaml}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -38,6 +38,26 @@ spec:
               value: {{ .Values.otel.endpoint | quote }}
             - name: OTEL_SERVICE_NAME
               value: dfe-engine
+          {{- if .Values.gitops.enabled }}
+            - name: DFE_GITOPS_ENABLED
+              value: "true"
+            - name: DFE_GITOPS_REPO_URL
+              value: {{ .Values.gitops.repoUrl | quote }}
+            - name: DFE_GITOPS_BRANCH
+              value: {{ .Values.gitops.branch | quote }}
+            - name: DFE_GITOPS_LOCAL_PATH
+              value: {{ .Values.gitops.localPath | quote }}
+            - name: DFE_GITOPS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitops.credentialsSecret }}
+                  key: username
+            - name: DFE_GITOPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitops.credentialsSecret }}
+                  key: password
+          {{- end }}
           {{- if .Values.oidc.enabled }}
           {{- range $provider := .Values.oidc.providers }}
           {{- range $envVar, $secretKey := $provider.envMappings }}
@@ -53,6 +73,10 @@ spec:
             - name: config
               mountPath: {{ .Values.config.mountPath }}
               readOnly: true
+            {{- if .Values.gitops.enabled }}
+            - name: deploy-repo
+              mountPath: {{ dir .Values.gitops.localPath }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
@@ -77,3 +101,7 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.gitops.enabled }}
+        - name: deploy-repo
+          emptyDir: {}
+        {{- end }}

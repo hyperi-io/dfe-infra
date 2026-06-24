@@ -1,0 +1,50 @@
+project: dfe
+component: gitea
+env: local
+cloud: local
+
+# Gitea image (Docker Hub). Tag defaults to Chart.appVersion.
+image:
+  repository: gitea/gitea
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# Admin credentials -- consumed from a K8s Secret created by bootstrap.sh
+# (random password, replicated to the dfe namespace for dfe-engine's push creds).
+admin:
+  secretName: dfe-gitea-admin   # keys: username, password
+  email: gitea-admin@dfe.local
+
+# The deploy repo the setup Job creates (owner = admin user).
+deployRepo:
+  name: deploy
+  defaultBranch: main
+  private: true
+
+# Image for the PostSync repo-creation Job (needs curl).
+setup:
+  image: curlimages/curl:8.11.1
+
+persistence:
+  enabled: true
+  storageClass: ""          # from values overlay (local-path, gp3, ...)
+  size: 5Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+serviceAccount:
+  create: true
+  annotations: {}

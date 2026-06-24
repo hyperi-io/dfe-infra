@@ -31,7 +31,8 @@ data:
   clickhouse-replicas: "1"       # default; overridden by profile (standard=1, scale=3)
   ferretdb: "1.24.0"             # FerretDB version
   otel-collector: "0.114.0"      # OpenTelemetry Collector version
-  hyperdx: "1.7.0"               # HyperDX version
+  hyperdx: "2.16.0"             # HyperDX (hyperi-hyperdx fork) app version
+  gitea: "1.26.4"                # In-cluster deploy-repo git host
 
 # Layer 2: DFE apps (deployed by ArgoCD wave 5)
 apps:

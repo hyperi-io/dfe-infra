@@ -50,12 +50,22 @@ routes:
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
 
+  gitea:
+    enabled: true
+    hostname: "gitea"         # deploy-repo git host (admin access)
+    backendService: dfe-gitea
+    backendNamespace: gitea
+    backendPort: 3000
+
 # OIDC — disabled by default (local auth is default).
 # Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.
 # Provider addition/removal is a Helm values change + ArgoCD sync — NOT a
 # dfe-engine API call. dfe-infra owns this config, dfe-engine only reads headers.
 oidc:
   enabled: false
+  # ESO ClusterSecretStore used to pull each provider's client secret from Vault
+  # into a dfe-oidc-<name> K8s Secret (key: client-secret) the SecurityPolicy refs.
+  secretStoreName: dfe-secret-store
   # Interactive HTTPRoutes the OIDC SecurityPolicy fronts. One policy is
   # generated per route, each with its OWN redirectURL on its OWN hostname
   # (cookies must be set on the host the user is on). Universal: add any future
