@@ -12,8 +12,16 @@ clickhouse:
   mode: cluster
   name: dfe-clickhouse
   version: "24.8"
-  replicas: 1       # dev profile; 2-3 for production
+  # Cluster-mode node count. Defaults to 3; set higher for more nodes.
+  # (single mode ignores this -- it is always 1 standalone pod.)
+  replicas: 3
   shardsCount: 1
+  # Spread cluster pods evenly across k8s workers (best-effort: ScheduleAnyway,
+  # so it never blocks scheduling when workers < replicas).
+  podSpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: kubernetes.io/hostname
   database: dfe
   # Keeper reference for cluster mode -- DFE deploys its OWN keeper (below),
   # self-contained. Do NOT point at another product's keeper.
