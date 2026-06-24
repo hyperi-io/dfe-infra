@@ -31,8 +31,11 @@ envoyGateway:
     type: LoadBalancer
     externalIPs: []
 
-# ClickHouse Keeper — shared with hyperi-infra on devex
+# devex uses hyperi-infra's shared hyperi-clickhouse, so DFE does NOT deploy its
+# own dedicated ClickHouseCluster here (the dfe-clickhouse instance was redundant
+# and crash-looping). Argo prunes it. Keeper ref kept for if it is re-enabled.
 clickhouse:
+  enabled: false
   keeperClusterRef:
     name: hyperi-keeper
 

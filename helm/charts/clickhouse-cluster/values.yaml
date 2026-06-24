@@ -4,6 +4,9 @@ env: local
 cloud: local
 
 clickhouse:
+  # Deploy a dedicated DFE ClickHouseCluster. Set false where a shared CH is used
+  # (e.g. devex uses hyperi-infra's hyperi-clickhouse) -- Argo then prunes the CR.
+  enabled: true
   name: dfe-clickhouse
   version: "24.8"
   replicas: 1       # dev profile; 2-3 for production
