@@ -1,0 +1,67 @@
+{{- if and (eq .Values.kafka.provider "strimzi") (or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster")) }}
+{{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
+# Node pool for the Kafka cluster. Combined controller+broker roles (KRaft).
+# replicas: single -> 1, cluster -> kafka.replicas (default 3, set higher).
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: {{ .Values.kafka.name }}-pool
+  labels:
+    strimzi.io/cluster: {{ .Values.kafka.name }}
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $replicas }}
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: {{ .Values.kafka.storage.size }}
+        kraftMetadata: shared
+        deleteClaim: false
+        {{- if .Values.kafka.storage.storageClass }}
+        class: {{ .Values.kafka.storage.storageClass }}
+        {{- end }}
+  resources:
+    requests:
+      cpu: {{ .Values.kafka.resources.requests.cpu }}
+      memory: {{ .Values.kafka.resources.requests.memory }}
+    limits:
+      cpu: {{ .Values.kafka.resources.limits.cpu }}
+      memory: {{ .Values.kafka.resources.limits.memory }}
+  {{- if or .Values.nodeScheduling .Values.kafka.podSpread.enabled }}
+  template:
+    pod:
+      {{- if .Values.nodeScheduling }}
+      {{- if .Values.nodeScheduling.nodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  {{- range $key, $val := .Values.nodeScheduling.nodeSelector }}
+                  - key: {{ $key }}
+                    operator: In
+                    values:
+                      - {{ $val | quote }}
+                  {{- end }}
+      {{- end }}
+      {{- if .Values.nodeScheduling.tolerations }}
+      tolerations:
+        {{- toYaml .Values.nodeScheduling.tolerations | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- if .Values.kafka.podSpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.kafka.podSpread.maxSkew }}
+          topologyKey: {{ .Values.kafka.podSpread.topologyKey }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              strimzi.io/cluster: {{ .Values.kafka.name }}
+  {{- end }}
+  {{- end }}
+{{- end }}

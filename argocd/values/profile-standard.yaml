@@ -27,6 +27,10 @@ clickhouse:
   replicas: 1
   shardsCount: 1
 
+# Kafka -- disabled (standard uses gRPC transport, no broker).
+kafka:
+  mode: disabled
+
 # CNPG -- single instance is enough for standard (no HA).
 cluster:
   instances: 1

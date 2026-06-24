@@ -76,10 +76,9 @@ spec:
                   dfe.hyperi.io/profile: scale
           - list:
               elements:
-                - app: strimzi-kafka
-                  namespace: strimzi
-                  wave: "4"
-                  appProject: data
+                # Kafka itself moved to layer2-data (mode-driven, all profiles).
+                # layer-scale keeps the Strimzi operator (dfe-scale-operators) +
+                # the Kafka-dependent transforms.
                 - app: dfe-transform-wasm
                   namespace: ""
                   wave: "5"

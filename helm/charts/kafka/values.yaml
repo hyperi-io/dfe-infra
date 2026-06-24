@@ -1,0 +1,64 @@
+project: dfe
+component: kafka
+env: local
+cloud: local
+
+kafka:
+  # Deployment mode (DFE owns its substrate; deploy unless external given):
+  #   disabled -> no broker (standard profile uses gRPC transport)
+  #   single   -> 1 broker (small/test)
+  #   cluster  -> multi-broker (scale); replicas below (default 3, set higher)
+  #   external -> deploy nothing; connect to a supplied bootstrap (BYO/Confluent/MSK)
+  # Profile sets the default (standard->disabled, scale->cluster); deployer overrides.
+  mode: disabled
+  # Broker provider when deployed: strimzi (default, Apache-2.0) or redpanda
+  # (opt-in, BSL -- see docs/REDPANDA-LIMITATIONS.md; requires redpanda.acceptLicense).
+  provider: strimzi
+  name: dfe-kafka
+  version: "4.1.1"
+  # cluster node count. Defaults to 3; set higher for more brokers.
+  # (single mode forces 1.)
+  replicas: 3
+  # Spread brokers across k8s workers (best-effort; never blocks scheduling).
+  podSpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+  # Redpanda provider opts (BSL gate).
+  redpanda:
+    acceptLicense: false
+    image:
+      repository: docker.redpanda.com/redpandadata/redpanda
+      tag: "v24.3.1"
+  # External Kafka (mode=external): connect to a supplied bootstrap endpoint.
+  # auth.type: scram | tls | msk_iam. scram/tls use a Vault-backed secret; msk_iam
+  # uses AWS IAM (IRSA/workload-identity, SASL OAUTHBEARER) -- no static secret.
+  external:
+    bootstrap: ""
+    auth:
+      type: scram
+      secretName: dfe-kafka-external
+      secretStoreName: dfe-secret-store
+  storage:
+    type: persistent-claim
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  config:
+    compressionType: zstd
+    logRetentionHours: "72"
+    numPartitions: "6"
+    defaultReplicationFactor: "3"
+    minInsyncReplicas: "2"
+
+# DFE service user (SCRAM-SHA-512)
+user:
+  name: dfe-kafka-user
+  authentication:
+    type: scram-sha-512

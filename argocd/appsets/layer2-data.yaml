@@ -40,6 +40,13 @@ spec:
                   namespace: gitea
                   wave: "4"
                   appProject: data
+                # Kafka substrate -- mode-driven (disabled on standard -> nothing;
+                # cluster on scale). Provider strimzi (default) needs the Strimzi
+                # operator (installed scale-only via layer-scale).
+                - app: kafka
+                  namespace: strimzi
+                  wave: "4"
+                  appProject: data
   template:
     metadata:
       name: '{{ .app }}-{{ .name }}'

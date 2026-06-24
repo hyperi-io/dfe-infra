@@ -1,0 +1,98 @@
+{{- if eq .Values.kafka.provider "redpanda" }}
+{{- if not .Values.kafka.redpanda.acceptLicense }}
+{{- fail "Redpanda is BSL-licensed (source-available, not OSS): set kafka.redpanda.acceptLicense=true to proceed. A HyperI-hosted multi-tenant SaaS bundling Redpanda may breach the BSL Streaming/Queuing clause -- see docs/REDPANDA-LIMITATIONS.md." }}
+{{- end }}
+{{- if or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster") }}
+{{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
+# Redpanda broker(s). single -> 1 pod. cluster -> N replicas; NOTE multi-node
+# Redpanda clustering (seed_servers/Raft bootstrap) is NOT yet cluster-validated
+# on DFE -- see docs/REDPANDA-LIMITATIONS.md before using at scale.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.kafka.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+    - name: admin
+      port: 9644
+      targetPort: admin
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.kafka.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Values.kafka.name }}
+  replicas: {{ $replicas }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- if .Values.kafka.podSpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.kafka.podSpread.maxSkew }}
+          topologyKey: {{ .Values.kafka.podSpread.topologyKey }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "dfe-common.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: redpanda
+          image: "{{ .Values.kafka.redpanda.image.repository }}:{{ .Values.kafka.redpanda.image.tag }}"
+          args:
+            - redpanda
+            - start
+            - --kafka-addr=0.0.0.0:9092
+            - --advertise-kafka-addr=$(POD_NAME).{{ .Values.kafka.name }}.$(NAMESPACE).svc.cluster.local:9092
+            {{- if eq .Values.kafka.mode "single" }}
+            - --smp=1
+            - --mode=dev-container
+            {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: admin
+              containerPort: 9644
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+          resources:
+            {{- toYaml .Values.kafka.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.kafka.storage.storageClass }}
+        storageClassName: {{ .Values.kafka.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.kafka.storage.size }}
+{{- end }}
+{{- end }}

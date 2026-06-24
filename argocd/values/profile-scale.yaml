@@ -27,6 +27,8 @@ clickhouse:
 cluster:
   instances: 3
 
-# Strimzi Kafka (only deployed in scale; see appsets/layer-scale.yaml).
+# Kafka -- cluster mode via Strimzi (default provider). replicas default 3.
 kafka:
+  mode: cluster
+  provider: strimzi
   replicas: 3

@@ -1,6 +1,6 @@
 apiVersion: v2
-name: strimzi-kafka
-description: Strimzi Kafka cluster for DFE pipeline (KRaft, SASL/SCRAM, zstd)
+name: kafka
+description: DFE Kafka substrate -- mode (disabled/single/cluster/external) x provider (strimzi/redpanda)
 type: application
 version: 0.1.0
 appVersion: "3.9.0"
