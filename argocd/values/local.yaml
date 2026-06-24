@@ -31,10 +31,14 @@ envoyGateway:
     type: LoadBalancer
     externalIPs: []
 
-# ClickHouse Keeper — shared with hyperi-infra on devex
+# devex runs DFE's OWN ClickHouse (single/keeperless interim -- stops the
+# exit-231 crashloop from the prior cluster-mode instance that shared
+# hyperi-keeper). Flip to cluster (with DFE-owned dfe-keeper) or external to
+# test those paths. devex does NOT reuse hyperi-infra's hyperi-clickhouse.
 clickhouse:
+  mode: single
   keeperClusterRef:
-    name: hyperi-keeper
+    name: hyperi-keeper   # only used in cluster mode; moot for single
 
 vault:
   address: "https://bao.devex.hyperi.io:8200"

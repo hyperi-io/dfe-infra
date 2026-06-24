@@ -1,3 +1,4 @@
+{{- if eq .Values.clickhouse.mode "cluster" }}
 apiVersion: clickhouse.com/v1alpha1
 kind: ClickHouseCluster
 metadata:
@@ -50,3 +51,4 @@ spec:
       {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
     {{- end }}
   {{- end }}
+{{- end }}

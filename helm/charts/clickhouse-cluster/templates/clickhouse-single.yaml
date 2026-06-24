@@ -1,0 +1,91 @@
+{{- if eq .Values.clickhouse.mode "single" }}
+# Standalone single-node ClickHouse (no operator, no Keeper). For small/test.
+# Tables are MergeTree (non-replicated) -- the engine emits topology=single DDL.
+# Admin user/db created on first start via the official image's entrypoint env.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.clickhouse.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+    - name: native
+      port: 9000
+      targetPort: native
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.clickhouse.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Values.clickhouse.name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      securityContext:
+        fsGroup: 101            # clickhouse uid/gid in the official image
+      containers:
+        - name: clickhouse
+          image: "clickhouse/clickhouse-server:{{ .Values.clickhouse.version }}"
+          ports:
+            - name: http
+              containerPort: 8123
+            - name: native
+              containerPort: 9000
+          env:
+            - name: CLICKHOUSE_USER
+              value: {{ .Values.clickhouse.users.admin.name | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.users.admin.secretName }}
+                  key: password
+            - name: CLICKHOUSE_DB
+              value: {{ .Values.clickhouse.database | quote }}
+            - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+              value: "1"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+          resources:
+            {{- toYaml .Values.clickhouse.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.clickhouse.storage.storageClass }}
+        storageClassName: {{ .Values.clickhouse.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.clickhouse.storage.size }}
+{{- end }}

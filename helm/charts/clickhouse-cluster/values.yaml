@@ -4,6 +4,12 @@ env: local
 cloud: local
 
 clickhouse:
+  # Deployment mode (DFE owns its data layer; deploy unless external given):
+  #   cluster  -> ClickHouseCluster (operator) + DFE-owned Keeper, ReplicatedMergeTree
+  #   single   -> standalone clickhouse-server, no Keeper, MergeTree (small/test)
+  #   external -> deploy nothing; connect to a supplied CH (BYO / ClickHouse Cloud)
+  # Profile sets the default (scale->cluster, standard->single); deployer overrides.
+  mode: cluster
   name: dfe-clickhouse
   version: "24.8"
   replicas: 1       # dev profile; 2-3 for production
