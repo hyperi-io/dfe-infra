@@ -116,7 +116,7 @@ spec:
           valueFiles:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+            - '../../../argocd/values/profile-{{ dig "dfe.hyperi.io/profile" "standard" .metadata.annotations }}.yaml'
       destination:
         server: '{{ .server }}'
         namespace: '{{ if .namespace }}{{ .namespace }}{{ else }}{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}{{ end }}'
