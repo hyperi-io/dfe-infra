@@ -29,8 +29,12 @@ kafka:
     enabled: true
     mechanism: SCRAM-SHA-512
 
+# Consumer-facing ClickHouse endpoint. Default = DFE's own single-mode service.
+# cluster mode: override host with the operator's service (confirm name at deploy);
+# external mode: override host with the supplied endpoint. (Seam: per-deploy this
+# should come from the dfe.hyperi.io/clickhouse_host annotation.)
 clickhouse:
-  host: "clickhouse.clickhouse.svc.cluster.local"
+  host: "dfe-clickhouse.clickhouse.svc.cluster.local"
   port: 8123
   database: dfe
 

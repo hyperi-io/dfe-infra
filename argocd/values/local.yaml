@@ -37,8 +37,8 @@ envoyGateway:
 # test those paths. devex does NOT reuse hyperi-infra's hyperi-clickhouse.
 clickhouse:
   mode: single
-  keeperClusterRef:
-    name: hyperi-keeper   # only used in cluster mode; moot for single
+  # cluster mode here uses DFE's own dfe-keeper (chart default) -- self-contained,
+  # NOT hyperi-infra's hyperi-keeper.
 
 vault:
   address: "https://bao.devex.hyperi.io:8200"

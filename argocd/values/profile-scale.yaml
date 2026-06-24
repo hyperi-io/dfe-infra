@@ -17,8 +17,9 @@ keda:
   maxReplicas: 10
   scalingPressureThreshold: "0.7"
 
-# ClickHouse cluster -- multi-replica.
+# ClickHouse -- operator cluster (own Keeper, ReplicatedMergeTree).
 clickhouse:
+  mode: cluster
   replicas: 3
   shardsCount: 1
 

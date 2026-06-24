@@ -21,8 +21,9 @@ keda:
   maxReplicas: 3
   scalingPressureThreshold: "0.7"
 
-# ClickHouse cluster chart -- single node.
+# ClickHouse -- single standalone node (keeperless, MergeTree).
 clickhouse:
+  mode: single
   replicas: 1
   shardsCount: 1
 

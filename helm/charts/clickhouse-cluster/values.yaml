@@ -15,11 +15,35 @@ clickhouse:
   replicas: 1       # dev profile; 2-3 for production
   shardsCount: 1
   database: dfe
-  # ClickHouse Keeper reference — required by clickhouse.com operator.
-  # For devex: shared keeper (hyperi-keeper in clickhouse namespace).
-  # For standalone: deploy a dedicated KeeperCluster first.
+  # Keeper reference for cluster mode -- DFE deploys its OWN keeper (below),
+  # self-contained. Do NOT point at another product's keeper.
   keeperClusterRef:
-    name: ""         # Set in environment values (e.g. local.yaml)
+    name: dfe-keeper
+  # DFE-owned Keeper (cluster mode only).
+  keeper:
+    name: dfe-keeper
+    replicas: 3
+    image:
+      repository: docker.io/clickhouse/clickhouse-keeper
+      tag: "24.8"
+    storage:
+      size: 10Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  # External CH (mode=external): connect to a supplied endpoint; deploy nothing.
+  # Password materialised by ESO from Vault <project>/<env>/clickhouse/external.
+  external:
+    host: ""
+    port: 8123
+    user: default
+    secretName: dfe-clickhouse-external
+    secretStoreName: dfe-secret-store
   storage:
     size: 50Gi
     storageClass: ""
