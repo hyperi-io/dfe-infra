@@ -24,7 +24,7 @@ spec:
       issuer: {{ $provider.issuerUrl }}
     clientID: {{ $provider.clientId }}
     clientSecret:
-      name: {{ $provider.clientSecretName }}
+      name: {{ $provider.clientSecretName | default (printf "dfe-oidc-%s" $provider.name) }}
       namespace: {{ $.Values.gateway.namespace }}
     scopes:
       {{- toYaml ($provider.scopes | default (list "openid" "email" "profile")) | nindent 6 }}
