@@ -132,6 +132,13 @@ CHECKS: list[tuple[str, str, "callable"]] = [
             Path("argocd/appsets/layer-scale.yaml"), "strimzi-kafka-operator"
         ),
     ),
+    (
+        "clickhouse-operator appset (scale)",
+        "operators.clickhouse-operator",
+        lambda: find_appset_chart_version(
+            Path("argocd/appsets/layer-scale.yaml"), "clickhouse-operator-helm"
+        ),
+    ),
     # ClickHouse chart values: server version + keeper tag
     (
         "clickhouse server version",

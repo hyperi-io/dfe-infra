@@ -27,6 +27,16 @@ spec:
                   namespace: strimzi
                   wave: "3"
                   appProject: infra
+                # Official ClickHouse operator (clickhouse.com CRDs) -- cluster
+                # mode only. Single mode uses a plain StatefulSet (no operator).
+                # OCI chart; wave 3 so CRDs exist before the ClickHouseCluster CR
+                # (layer2-data, wave 4). Pinned 0.0.5 @sha256:bbdaf6f... .
+                - chart: clickhouse-operator-helm
+                  repo: ghcr.io/clickhouse
+                  version: "0.0.5"
+                  namespace: clickhouse-operator
+                  wave: "3"
+                  appProject: infra
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
