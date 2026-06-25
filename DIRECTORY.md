@@ -37,11 +37,10 @@ dfe-infra/
 │   ├── bootstrap/            # Applied once by bootstrap.sh before ArgoCD self-manages
 │   │   ├── appproject-bootstrap.yaml
 │   │   └── argocd-cluster-addons.yaml
-│   ├── appsets/              # PLATFORM ApplicationSets only (payload is engine-authored
-│   │   │                     # into the deploy-repo, applied via bootstrap/deploy-repo-app.yaml)
-│   │   ├── layer1-addons.yaml            # Wave 2-3: operators (all clusters)
-│   │   ├── layer1-scale-operators.yaml   # Wave 3: strimzi + clickhouse operators (scale profile)
-│   │   └── layer1-deploy-repo.yaml       # Wave 3: Gitea deploy-repo host
+│   ├── appsets/              # Layer ApplicationSets (matrix generator pattern)
+│   │   ├── layer1-addons.yaml    # Wave 2-3: operators
+│   │   ├── layer2-data.yaml      # Wave 4: data platform
+│   │   └── layer2-apps.yaml      # Wave 5: DFE services
 │   └── values/               # Helm value overrides per cloud target
 │       ├── common.yaml       # Defaults (all clouds inherit)
 │       ├── local.yaml        # Rancher local (RKE2)

@@ -1,0 +1,76 @@
+# Wave 4: CNPG PostgreSQL cluster, ClickHouse cluster, Strimzi Kafka, FerretDB, OTel Collector.
+# HyperDX is deployed with dfe-ui at wave 5 (integrated into dfe-ui, not standalone).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-layer2-data
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+          - list:
+              elements:
+                - app: cnpg-cluster
+                  namespace: cnpg
+                  wave: "4"
+                  appProject: data
+                - app: clickhouse-cluster
+                  namespace: clickhouse
+                  wave: "4"
+                  appProject: data
+                # strimzi-kafka is Kafka substrate: deployed only in the scale
+                # profile via appsets/layer-scale.yaml (cluster-label gated).
+                - app: ferretdb
+                  namespace: cnpg
+                  wave: "4"
+                  appProject: data
+                - app: otel-collector
+                  namespace: otel
+                  wave: "4"
+                  appProject: data
+                - app: gitea
+                  namespace: gitea
+                  wave: "4"
+                  appProject: data
+                # Kafka substrate -- mode-driven (disabled on standard -> nothing;
+                # cluster on scale). Provider strimzi (default) needs the Strimzi
+                # operator (installed scale-only via layer-scale).
+                - app: kafka
+                  namespace: strimzi
+                  wave: "4"
+                  appProject: data
+  template:
+    metadata:
+      name: '{{ .app }}-{{ .name }}'
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .wave }}'
+    spec:
+      project: '{{ .appProject }}'
+      source:
+        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+        path: 'helm/charts/{{ .app }}'
+        helm:
+          valueFiles:
+            - "../../../argocd/values/common.yaml"
+            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            - '../../../argocd/values/profile-{{ dig "dfe.hyperi.io/profile" "standard" .metadata.annotations }}.yaml'
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
