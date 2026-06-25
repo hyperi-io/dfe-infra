@@ -2,7 +2,7 @@
 # Merged after common.yaml + <cloud>.yaml (third in the valueFiles cascade).
 # Keys unknown to a given chart are ignored by Helm, so one file safely carries
 # keys for multiple charts. Kafka-dependent apps (strimzi, transforms) are NOT
-# deployed in this profile (gated by cluster label in appsets/layer-scale.yaml),
+# deployed in this profile (gated by cluster label in appsets/layer1-scale-operators.yaml),
 # so no kafka keys are needed here.
 
 # DFE service deployments (dfe-engine, dfe-receiver, dfe-loader, ...).

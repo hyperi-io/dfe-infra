@@ -63,7 +63,7 @@ spec:
                   appProject: infra
                 # strimzi-kafka-operator (Kafka substrate) and clickhouse-operator
                 # (clickhouse.com CRDs) are cluster-only operators: deployed in the
-                # scale profile via appsets/layer-scale.yaml (cluster-label gated).
+                # scale profile via appsets/layer1-scale-operators.yaml (gated).
                 # Single/standard CH uses a plain StatefulSet -- no operator.
   template:
     metadata:
