@@ -3,7 +3,7 @@ name: otel-collector
 description: OpenTelemetry Collector — DaemonSet + Gateway topology for DFE observability
 type: application
 version: 0.1.0
-appVersion: "0.114.0"
+appVersion: "0.154.0"
 dependencies:
   - name: dfe-common
     version: "0.1.0"

@@ -21,43 +21,43 @@ spec:
               elements:
                 - chart: cert-manager
                   repo: https://charts.jetstack.io
-                  version: "v1.20.1"
+                  version: "v1.20.2"
                   namespace: cert-manager
                   wave: "2"
                   appProject: infra
                 - chart: external-secrets
                   repo: https://charts.external-secrets.io
-                  version: "2.2.0"
+                  version: "2.6.0"
                   namespace: external-secrets
                   wave: "2"
                   appProject: infra
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
-                  version: "1.20.0"
+                  version: "1.21.1"
                   namespace: external-dns
                   wave: "2"
                   appProject: infra
                 - chart: keda
                   repo: https://kedacore.github.io/charts
-                  version: "2.19.0"
+                  version: "2.20.1"
                   namespace: keda
                   wave: "3"
                   appProject: infra
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
-                  version: "3.13.0"
+                  version: "3.13.1"
                   namespace: kube-system
                   wave: "3"
                   appProject: infra
                 - chart: reloader
                   repo: https://stakater.github.io/stakater-charts
-                  version: "2.2.9"
+                  version: "2.2.12"
                   namespace: reloader
                   wave: "3"
                   appProject: infra
                 - chart: cloudnative-pg
                   repo: https://cloudnative-pg.github.io/charts
-                  version: "0.27.1"
+                  version: "0.28.3"
                   namespace: cnpg-system
                   wave: "3"
                   appProject: infra

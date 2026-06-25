@@ -11,7 +11,7 @@ clickhouse:
   # Profile sets the default (scale->cluster, standard->single); deployer overrides.
   mode: cluster
   name: dfe-clickhouse
-  version: "24.8"
+  version: "26.3.13.31-lts"
   # Cluster-mode node count. Defaults to 3; set higher for more nodes.
   # (single mode ignores this -- it is always 1 standalone pod.)
   replicas: 3
@@ -33,7 +33,7 @@ clickhouse:
     replicas: 3
     image:
       repository: docker.io/clickhouse/clickhouse-keeper
-      tag: "24.8"
+      tag: "26.3.13.31-lts"
     storage:
       size: 10Gi
       storageClass: ""
