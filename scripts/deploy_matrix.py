@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import os
 import subprocess
 import sys
 import time
@@ -529,7 +530,20 @@ def main() -> int:
         action="store_true",
         help="MUTATING: install/test/teardown on the cluster (KUBECONFIG required)",
     )
+    p.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="run the whole matrix N times (repeat-deploy solidity / flake hunt)",
+    )
     args = p.parse_args()
+
+    # Allow a bare invocation: fall back to the gitignored local kubeconfig so the
+    # command matches the python3 allow-list (no KUBECONFIG= env prefix needed).
+    if not os.environ.get("KUBECONFIG"):
+        local_kubeconfig = REPO_ROOT / ".tmp" / "kubeconfig"
+        if local_kubeconfig.is_file():
+            os.environ["KUBECONFIG"] = str(local_kubeconfig)
 
     cells = devex_matrix()
     if args.chart:
@@ -543,20 +557,25 @@ def main() -> int:
         return 2
 
     mode_label = "APPLY (live)" if args.apply else "dry-run (render only)"
-    print(f"Deployment matrix [{args.cloud}] -- {mode_label} -- {len(cells)} cell(s)\n")
+    rounds = max(1, args.repeat)
+    overall_failures = 0
+    for i in range(rounds):
+        tag = f" round {i + 1}/{rounds}" if rounds > 1 else ""
+        print(
+            f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n"
+        )
+        results = [run_cell(c, do_apply=args.apply) for c in cells]
+        failures = [r for r in results if not r.ok]
+        overall_failures += len(failures)
+        for r in results:
+            mark = "ok  " if r.ok else "FAIL"
+            timing = " ".join(f"{k}={v}s" for k, v in r.timings.items())
+            print(f"  [{mark}] {r.cell_id:<42} {timing}")
+            if r.error:
+                print(f"         -> {r.error}")
+        print(f"\n{len(results) - len(failures)}/{len(results)} cells ok{tag}.\n")
 
-    results = [run_cell(c, do_apply=args.apply) for c in cells]
-
-    failures = [r for r in results if not r.ok]
-    for r in results:
-        mark = "ok  " if r.ok else "FAIL"
-        timing = " ".join(f"{k}={v}s" for k, v in r.timings.items())
-        print(f"  [{mark}] {r.cell_id:<42} {timing}")
-        if r.error:
-            print(f"         -> {r.error}")
-
-    print(f"\n{len(results) - len(failures)}/{len(results)} cells ok.")
-    return 1 if failures else 0
+    return 1 if overall_failures else 0
 
 
 if __name__ == "__main__":

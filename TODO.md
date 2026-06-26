@@ -6,18 +6,24 @@ This is the **single source of truth** for all tasks and progress.
 
 ## Active Tasks
 
-- [ ] Deployment-architecture live build (devex/Rancher) `[NEXT -- focused live session]`
+- [ ] Deployment-architecture live build (devex/Rancher) `[IN PROGRESS]`
   - Per canonical doc `dfe-docs/deployment/state-and-repos.md` + boundary memory.
-  - Prereqs (code, then live-validate on devex; do NOT render-only -- Phase 1 was
-    reverted for that): (a) engine `dfe-api gitops publish --env --channel`
-    (per-env/channel authoring to the deploy instance); (b) appset multi-source
-    wiring -- pinned base chart (dfe-infra) + per-env overlay `$values` from the
-    deploy instance (in-cluster Gitea); (c) `scripts/deploy_matrix.py` harness:
-    per cell `publish -> wait-ready -> acceptance -> destroy -> assert-clean`.
-  - Goal: **repeat create-test-teardown matrix solid on devex** (CH
-    single/cluster/external x kafka disabled/single/cluster/external x
-    standard/scale). This GATES the multi-cloud rollout below.
-  - Live: validate via merge to a branch devex Argo tracks (watch sync), iterate.
+  - [x] (c) `scripts/deploy_matrix.py` create-test-teardown harness -- **substrate
+    matrix SOLID on devex (16/16, function-verified)**. Each deploying cell does a
+    real data round-trip (CH MergeTree/ReplicatedMergeTree insert+read-back; kafka
+    SCRAM produce->consume for strimzi, rpk for redpanda), not a health check.
+    wait_ready is topology-aware; teardown always runs (crash-safe); assert-clean
+    waits for namespace deletion. Modes covered: CH single/cluster/external x
+    kafka disabled/single(strimzi+redpanda)/cluster/external x standard/scale.
+    Bugs found+fixed live: CH image -lts tag, CH cluster wait false-positive,
+    kafka authorization missing, kafka group-ACL prefix, redpanda no readiness
+    probe. SCRAM-512 set as the kafka auth standard (values.yaml).
+  - [ ] (a) engine `dfe-api gitops publish --env --channel` (per-env/channel
+    authoring to the deploy instance); (b) appset multi-source wiring -- pinned
+    base chart (dfe-infra) + per-env overlay `$values` from the deploy instance
+    (in-cluster Gitea). These are the gitops PRODUCTION path (distinct from the
+    chart-matrix above); live-validate via a branch devex Argo tracks.
+  - KNOWN GAP: redpanda listener is plaintext, not SCRAM-512 -- bring to standard.
 
 - [ ] IaC test framework (pytest + kubeconform + tftest) `[PENDING]`
   - Current state: Research complete, framework decision made (pytest as single runner)
