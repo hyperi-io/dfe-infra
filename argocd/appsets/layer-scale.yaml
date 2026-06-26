@@ -70,6 +70,58 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
+  # Redpanda operator -- installed ONLY when a deployer runs the scale profile
+  # AND has explicitly chosen the redpanda kafka provider (cluster label
+  # dfe.hyperi.io/kafka-provider: redpanda). Strimzi (default, Apache-2.0) is in
+  # dfe-scale-operators above and lands on every scale cluster; redpanda is BSL,
+  # so its operator only appears on an explicit opt-in (the same choice the kafka
+  # chart's acceptLicense gate enforces). Serves the Redpanda + User CRDs that the
+  # kafka chart's redpanda path uses. Wave 3 so CRDs exist before layer2-data
+  # (wave 4) creates the Redpanda CR.
+  name: dfe-redpanda-operator
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+            dfe.hyperi.io/managed: "true"
+            dfe.hyperi.io/profile: scale
+            dfe.hyperi.io/kafka-provider: redpanda
+  template:
+    metadata:
+      name: 'redpanda-operator-{{ .name }}'
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: "3"
+    spec:
+      project: infra
+      source:
+        repoURL: https://charts.redpanda.com
+        chart: operator
+        targetRevision: "26.1.6"
+        helm:
+          valuesObject:
+            crds:
+              enabled: true
+      destination:
+        server: '{{ .server }}'
+        namespace: redpanda-operator
+      syncPolicy:
+        automated:
+          prune: false
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
   name: dfe-scale-apps
   namespace: argocd
 spec:

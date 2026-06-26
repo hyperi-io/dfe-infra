@@ -356,19 +356,15 @@ def _accept_kafka(cell: Cell) -> tuple[bool, str]:
     return _accept_kafka_strimzi(cell, pod)
 
 
-def _accept_kafka_strimzi(cell: Cell, pod: str) -> tuple[bool, str]:
-    """SCRAM produce->consume via the Strimzi KafkaUser.
+def _wait_kafka_user_password(cell: Cell) -> str:
+    """Poll for the operator-generated dfe-kafka-user secret; return its password.
 
-    The chart's listeners require scram-sha-512, so this reads the SCRAM password
-    the User Operator generates for the chart's KafkaUser, then creates a topic,
-    produces a message and consumes it back (consumer group 'dfe-*' per the
-    user's ACL). A real data round-trip, not pod presence.
+    Both providers' operators (Strimzi User Operator, Redpanda operator) mint a
+    `dfe-kafka-user` Secret with a `password` key -- same shape -- so clients (and
+    this check) read SCRAM creds identically regardless of provider.
     """
     user = "dfe-kafka-user"
-    # wait_ready already gates on entity-operator readiness; the secret follows
-    # within a few reconcile cycles -- poll briefly for it.
-    password = ""
-    for _ in range(30):
+    for _ in range(45):
         sec = _run(
             [
                 "kubectl",
@@ -382,14 +378,26 @@ def _accept_kafka_strimzi(cell: Cell, pod: str) -> tuple[bool, str]:
             ],
         )
         if sec.returncode == 0 and sec.stdout.strip():
-            password = base64.b64decode(sec.stdout.strip()).decode("utf-8", "replace")
-            break
+            return base64.b64decode(sec.stdout.strip()).decode("utf-8", "replace")
         time.sleep(2)
+    return ""
+
+
+def _accept_kafka_strimzi(cell: Cell, pod: str) -> tuple[bool, str]:
+    """SCRAM produce->consume via the Strimzi KafkaUser (kafka-*.sh tools).
+
+    Creates a topic, produces a message and consumes it back (consumer group
+    'dfe-*' per the user's ACL). A real data round-trip, not pod presence.
+    """
+    password = _wait_kafka_user_password(cell)
     if not password:
-        return False, f"KafkaUser secret '{user}' not populated (no SCRAM password)"
+        return (
+            False,
+            "KafkaUser secret 'dfe-kafka-user' not populated (no SCRAM password)",
+        )
     jaas = (
         "org.apache.kafka.common.security.scram.ScramLoginModule required "
-        f'username="{user}" password="{password}";'
+        f'username="dfe-kafka-user" password="{password}";'
     )
     topic = "dfe-acceptance"
     script = (
@@ -420,13 +428,26 @@ def _accept_kafka_strimzi(cell: Cell, pod: str) -> tuple[bool, str]:
 
 
 def _accept_kafka_redpanda(cell: Cell, pod: str) -> tuple[bool, str]:
-    """rpk produce->consume (redpanda StatefulSet, no SASL on the kafka listener)."""
+    """SCRAM produce->consume via the Redpanda operator's User (rpk + SASL).
+
+    Redpanda is now operator-managed with SASL/SCRAM-512 on (the DFE standard),
+    so this authenticates as dfe-kafka-user -- same creds shape as Strimzi, just
+    rpk instead of kafka-*.sh.
+    """
+    password = _wait_kafka_user_password(cell)
+    if not password:
+        return False, "User secret 'dfe-kafka-user' not populated (no SCRAM password)"
     topic = "dfe-acceptance"
+    creds = (
+        f"-X user=dfe-kafka-user -X pass='{password}' "
+        # operator-deployed redpanda exposes the (TLS-off) kafka listener on 9093.
+        "-X sasl.mechanism=SCRAM-SHA-512 -X brokers=localhost:9093"
+    )
     script = (
         "set -e; "
-        f"rpk topic create {topic} || true; "
-        f"echo mtx-msg | rpk topic produce {topic}; "
-        f"rpk topic consume {topic} --num 1 --offset start"
+        f"rpk topic create {topic} {creds} || true; "
+        f"echo mtx-msg | rpk topic produce {topic} {creds}; "
+        f"rpk topic consume {topic} --num 1 --offset start {creds}"
     )
     proc = _run(
         ["kubectl", "exec", "-n", cell.namespace, pod, "--", "sh", "-c", script],
@@ -561,9 +582,7 @@ def main() -> int:
     overall_failures = 0
     for i in range(rounds):
         tag = f" round {i + 1}/{rounds}" if rounds > 1 else ""
-        print(
-            f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n"
-        )
+        print(f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n")
         results = [run_cell(c, do_apply=args.apply) for c in cells]
         failures = [r for r in results if not r.ok]
         overall_failures += len(failures)

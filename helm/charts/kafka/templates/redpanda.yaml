@@ -1,116 +1,73 @@
 {{- if eq .Values.kafka.provider "redpanda" }}
 {{- if not .Values.kafka.redpanda.acceptLicense }}
-{{- fail "Redpanda is BSL-licensed (source-available, not OSS): set kafka.redpanda.acceptLicense=true to proceed. A HyperI-hosted multi-tenant SaaS bundling Redpanda may breach the BSL Streaming/Queuing clause -- see docs/REDPANDA-LIMITATIONS.md." }}
+{{- fail "Redpanda is BSL-licensed (source-available, not OSS): set kafka.redpanda.acceptLicense=true to proceed. Running DFE+redpanda as a service needs a commercial licence from BOTH HyperI (DFE) and Redpanda Data (redpanda) -- see docs/REDPANDA-LIMITATIONS.md." }}
 {{- end }}
 {{- if or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster") }}
 {{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
-# Redpanda broker(s). single -> 1 pod. cluster -> N replicas; NOTE multi-node
-# Redpanda clustering (seed_servers/Raft bootstrap) is NOT yet cluster-validated
-# on DFE -- see docs/REDPANDA-LIMITATIONS.md before using at scale.
-apiVersion: v1
-kind: Service
+# Redpanda cluster, managed by the Redpanda operator (cluster.redpanda.com/v1alpha2).
+# First-class provider alongside Strimzi, run the SAME way: operator + thin CR.
+# SASL/SCRAM-512 on, TLS off (SCRAM over plaintext internal -- matches Strimzi's
+# plain listener and the DFE kafka auth standard). The operator generates+manages
+# the bootstrap superuser secret; the dfe service account is a separate User CR
+# (redpanda-user.yaml), whose secret shape matches the Strimzi KafkaUser secret so
+# clients are identical across providers.
+apiVersion: cluster.redpanda.com/v1alpha2
+kind: Redpanda
 metadata:
   name: {{ .Values.kafka.name }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  clusterIP: None
-  selector:
-    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
-  ports:
-    - name: kafka
-      port: 9092
-      targetPort: kafka
-    - name: admin
-      port: 9644
-      targetPort: admin
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: {{ .Values.kafka.name }}
-  labels:
-    {{- include "dfe-common.labels" . | nindent 4 }}
-spec:
-  serviceName: {{ .Values.kafka.name }}
-  replicas: {{ $replicas }}
-  selector:
-    matchLabels:
-      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
-  template:
-    metadata:
-      labels:
-        {{- include "dfe-common.labels" . | nindent 8 }}
-    spec:
-      {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- if .Values.kafka.podSpread.enabled }}
-      topologySpreadConstraints:
-        - maxSkew: {{ .Values.kafka.podSpread.maxSkew }}
-          topologyKey: {{ .Values.kafka.podSpread.topologyKey }}
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              {{- include "dfe-common.selectorLabels" . | nindent 14 }}
-      {{- end }}
-      containers:
-        - name: redpanda
-          image: "{{ .Values.kafka.redpanda.image.repository }}:{{ .Values.kafka.redpanda.image.tag }}"
-          args:
-            - redpanda
-            - start
-            - --kafka-addr=0.0.0.0:9092
-            - --advertise-kafka-addr=$(POD_NAME).{{ .Values.kafka.name }}.$(NAMESPACE).svc.cluster.local:9092
-            {{- if eq .Values.kafka.mode "single" }}
-            - --smp=1
-            - --mode=dev-container
-            {{- end }}
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-          ports:
-            - name: kafka
-              containerPort: 9092
-            - name: admin
-              containerPort: 9644
-          # Gate Ready on redpanda actually serving -- without this the pod is
-          # Ready the instant the container starts, before the kafka listener
-          # accepts connections (clients then get 'connection refused' on 9092).
-          readinessProbe:
-            httpGet:
-              path: /v1/status/ready
-              port: admin
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 24
-          livenessProbe:
-            tcpSocket:
-              port: kafka
-            initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 4
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/redpanda/data
-          resources:
-            {{- toYaml .Values.kafka.resources | nindent 12 }}
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
+  clusterSpec:
+    # DFE runs redpanda headless -- no Console UI (extra pod + its own config/secret).
+    console:
+      enabled: false
+    statefulset:
+      replicas: {{ $replicas }}
+    image:
+      repository: {{ .Values.kafka.redpanda.image.repository }}
+      tag: {{ .Values.kafka.redpanda.image.tag }}
+    storage:
+      persistentVolume:
+        enabled: true
+        size: {{ .Values.kafka.storage.size }}
         {{- if .Values.kafka.storage.storageClass }}
-        storageClassName: {{ .Values.kafka.storage.storageClass | quote }}
+        storageClass: {{ .Values.kafka.storage.storageClass | quote }}
         {{- end }}
-        resources:
-          requests:
-            storage: {{ .Values.kafka.storage.size }}
+    resources:
+      requests:
+        cpu: {{ .Values.kafka.resources.requests.cpu | quote }}
+        memory: {{ .Values.kafka.resources.requests.memory | quote }}
+      limits:
+        cpu: {{ .Values.kafka.resources.limits.cpu | quote }}
+        memory: {{ .Values.kafka.resources.limits.memory | quote }}
+    tls:
+      enabled: false
+    auth:
+      sasl:
+        enabled: true
+        mechanism: SCRAM-SHA-512
+        # The operator auto-generates the bootstrap superuser secret
+        # (<name>-bootstrap-user/password) and PREPENDS this user to the cluster
+        # superusers list, then authenticates as it to reconcile the User CR --
+        # so no secret for us to provide and no static users needed.
+        bootstrapUser:
+          name: {{ .Values.kafka.redpanda.auth.superuserName }}
+          mechanism: SCRAM-SHA-512
+        # secretRef must be set AND the Secret must pre-exist (the chart only
+        # creates it when users[] is non-empty, which we keep empty). It would
+        # carry extra static SASL users; we need none, so it is an empty
+        # placeholder (redpanda-superusers-secret.yaml).
+        secretRef: {{ .Values.kafka.name }}-superusers
+    {{- if .Values.nodeScheduling }}
+    {{- if .Values.nodeScheduling.nodeSelector }}
+    nodeSelector:
+      {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
+    {{- end }}
+    {{- if .Values.nodeScheduling.tolerations }}
+    tolerations:
+      {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
+    {{- end }}
+    {{- end }}
 {{- end }}
 {{- end }}

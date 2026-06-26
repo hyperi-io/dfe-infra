@@ -48,12 +48,31 @@ and simpler than Strimzi for single/small deployments.
 
 ## 3. Deployment status in DFE charts
 
-- **single** (small/test): Redpanda runs as a one-pod StatefulSet — straightforward.
-- **cluster**: multi-node Redpanda needs correct `seed_servers`/Raft bootstrap.
-  The DFE `redpanda` chart renders a multi-replica StatefulSet, but **multi-node
-  Redpanda clustering on DFE has not yet been cluster-validated** — validate
-  seed/bootstrap before relying on it at scale, or use Strimzi for scale until
-  then. (Tracked as a follow-up.)
+Redpanda is deployed via the **Redpanda operator** (`Redpanda` + `User` CRDs,
+`cluster.redpanda.com/v1alpha2`) — the same operator+thin-CR model DFE uses for
+Strimzi. The operator is installed only on an explicit opt-in: the
+`dfe-redpanda-operator` ApplicationSet keys on the cluster label
+`dfe.hyperi.io/kafka-provider: redpanda` (BSL stays off any cluster that has not
+chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.1.6, broker
+`redpanda-version` v26.1.8).
+
+- **Auth: SASL/SCRAM-SHA-512, on from first boot** (the DFE kafka standard), TLS
+  off on the internal listener — matching Strimzi's plain SCRAM listener. The
+  operator generates+manages the bootstrap superuser; the `dfe-kafka-user` service
+  account is a `User` CR whose operator-generated Secret has the **same shape as
+  the Strimzi-minted secret**, so clients authenticate identically across
+  providers. Kafka API is on **9093** (TLS-off internal listener).
+- **single** (small/test): one-broker `Redpanda` CR. Live-validated end to end on
+  devex (SCRAM produce->consume via the matrix harness).
+- **cluster**: multi-broker `Redpanda` CR (`statefulset.replicas`); the operator
+  owns Raft/seed bootstrap (no hand-rolled `seed_servers`). Validate at the target
+  scale before relying on it.
+- **Known operator bug (workaround in place):** the `User` controller's
+  `clusterRef` SRV discovery fails when SASL is enabled (redpanda-operator #1130,
+  "Operator fails to load credentials from clusterRef when SASL is enabled"). The
+  `User` CR therefore uses `spec.cluster.staticConfiguration` (explicit kafka +
+  admin endpoints, authenticating as the bootstrap superuser) instead of
+  `clusterRef`. Revert to `clusterRef` once the upstream bug is fixed.
 - **MSK / external**: not applicable to Redpanda — use `kafka.mode=external` with
   a Redpanda Cloud endpoint, or MSK with the Strimzi/external path.
 

@@ -27,6 +27,7 @@ operators:
   cloudnative-pg: "0.28.3"       # 2026-06-10 (chart; operator app 1.29.x; needs K8s >=1.29)
   strimzi-kafka-operator: "0.51.0"  # KEEP -- latest 0.x. 1.0 drops v1alpha1/v1beta1/v1beta2 CRDs we use.
   clickhouse-operator: "0.0.5"   # OCI helm CHART tag (appVersion v0.0.5; 2026-05-18). OFFICIAL ClickHouse Inc operator (serves ClickHouseCluster + KeeperCluster CRDs). v0.0.6 (06-19) too fresh. DECISION: official over Altinity (greenfield + 1-shard topology fits + we own DDL + safe Keeper consensus + CH partner support). Scale-profile only (cluster mode); single mode needs no operator. OCI ghcr.io/clickhouse/clickhouse-operator-helm@sha256:bbdaf6fcf1837c59f71076e0b92feb42fa6356dd37369756f7e4dd7c5c3eb181. Altinity is the documented unbuilt fallback.
+  redpanda-operator: "26.1.6"    # redpanda/operator chart+app (2026-06-17, 9d old; clears cooldown). Serves Redpanda + User + Topic CRDs (cluster.redpanda.com/v1alpha2). ONLY installed when a deployer picks provider=redpanda AND acceptLicense=true (BSL gate -- see kafka chart). redpanda is a FIRST-CLASS provider choice alongside strimzi; the operator gives it the same operator+thin-CR model strimzi has (User CR mirrors KafkaUser). No distinct LTS line (date-based trains); 26.1.x is current.
 
 # Layer 2: Data platform (deployed by ArgoCD wave 4)
 data:
@@ -34,6 +35,7 @@ data:
   cnpg-cluster-instances: "3"    # Number of PG instances (HA)
   kafka-version: "4.1.1"         # Kafka inside Strimzi (0.51 supports 4.1.x/4.2.0). VERIFY against strimzi kafka-versions.yaml before bump to 4.2.0.
   kafka-replicas: "3"            # Kafka broker count (cluster mode default; settable higher)
+  redpanda-version: "v26.1.8"    # redpanda broker image tag the operator chart 26.1.6 pairs with (tested pairing). Used in the Redpanda CR spec.clusterSpec.image.tag when provider=redpanda.
   clickhouse-version: "26.3.13.31"  # DOCKER tag (NOT the v..-lts release tag -- Docker drops -lts; verified pullable). LTS release v26.3.13.31-lts 2026-06-08. 24.8 was past-EOL; 26.3.14/15 (06-22/23) too fresh.
   clickhouse-replicas: "1"       # default; overridden by profile (standard=1, scale=3)
   ferretdb: "2.7.0"              # 2025-11-10. 2.x requires DocumentDB PG ext; NOT in-place upgradable from 1.x (dump/restore). Pair with postgres-documentdb:17-0.107.0-ferretdb-2.7.0

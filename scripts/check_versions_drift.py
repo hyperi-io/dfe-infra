@@ -139,6 +139,23 @@ CHECKS: list[tuple[str, str, "callable"]] = [
             Path("argocd/appsets/layer-scale.yaml"), "clickhouse-operator-helm"
         ),
     ),
+    (
+        # opt-in redpanda operator: source.chart/targetRevision, not a list element
+        "redpanda-operator appset (scale, opt-in)",
+        "operators.redpanda-operator",
+        lambda: find_regex(
+            Path("argocd/appsets/layer-scale.yaml"),
+            r"charts\.redpanda\.com\n\s*chart: operator\n\s*targetRevision:\s*\"([^\"]+)\"",
+        ),
+    ),
+    (
+        "redpanda broker tag (kafka values)",
+        "data.redpanda-version",
+        lambda: find_regex(
+            Path("helm/charts/kafka/values.yaml"),
+            r"redpandadata/redpanda\n\s*#[^\n]*\n\s*tag:\s*\"([^\"]+)\"",
+        ),
+    ),
     # ClickHouse chart values: server version + keeper tag
     (
         "clickhouse server version",
