@@ -147,10 +147,14 @@ def _run(cmd: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[s
 
 
 def _mode_flag(cell: Cell) -> list[str]:
+    """Helm value args: the profile valueFile (so profiles differ) + mode --sets."""
     key = "clickhouse.mode" if cell.chart == "clickhouse-cluster" else "kafka.mode"
-    sets = [f"{key}={cell.mode}", *cell.extra_sets]
     flags: list[str] = []
-    for s in sets:
+    profile_file = REPO_ROOT / "argocd" / "values" / f"profile-{cell.profile}.yaml"
+    if profile_file.exists():
+        flags += ["-f", str(profile_file)]
+    # --set wins over the profile file, so the cell's mode is authoritative.
+    for s in [f"{key}={cell.mode}", *cell.extra_sets]:
         flags += ["--set", s]
     return flags
 
@@ -217,18 +221,43 @@ def apply(cell: Cell) -> tuple[bool, str]:
     return True, ""
 
 
+def _expected_workloads(cell: Cell) -> list[str]:
+    """Pod-name substrings that MUST be present-and-ready for this cell.
+
+    Defends against operator wave-reconcile false positives: in cluster mode the
+    ClickHouse operator creates Keeper pods before ClickHouse pods, so a naive
+    'all existing pods ready' check passes during the keeper-only window before
+    ClickHouse even exists. Requiring each expected workload by name closes that.
+    external/disabled deploy nothing -> empty list -> nothing to wait for.
+    """
+    if cell.chart == "clickhouse-cluster":
+        if cell.mode == "cluster":
+            return ["clickhouse", "keeper"]
+        if cell.mode == "single":
+            return ["clickhouse"]
+        return []
+    if cell.chart == "kafka":
+        return ["kafka"] if cell.mode in {"single", "cluster"} else []
+    return []
+
+
 def wait_ready(cell: Cell) -> tuple[bool, str]:
-    """Poll until all pods in the namespace are Ready within the budget."""
+    """Poll until every EXPECTED workload pod is present and Ready in budget."""
+    required = _expected_workloads(cell)
+    if not required:
+        return True, ""  # external/disabled: no workloads to deploy
     deadline = WAIT_BUDGET_SECONDS
     waited = 0
     while waited < deadline:
         proc = _run(["kubectl", "get", "pods", "-n", cell.namespace, "--no-headers"])
         lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
-        if lines and all(_pod_ready(ln) for ln in lines):
+        names = " ".join(ln.split()[0] for ln in lines)
+        present = all(w in names for w in required)
+        if lines and present and all(_pod_ready(ln) for ln in lines):
             return True, ""
         time.sleep(POLL_SECONDS)
         waited += POLL_SECONDS
-    return False, f"pods not Ready within {deadline}s"
+    return False, f"expected workloads not Ready within {deadline}s (need {required})"
 
 
 def _pod_ready(line: str) -> bool:
@@ -284,14 +313,65 @@ def _accept_clickhouse(cell: Cell) -> tuple[bool, str]:
     )
     if proc.returncode != 0:
         return False, f"CH DDL round-trip failed: {proc.stderr.strip()[:300]}"
+    # Function, not health: the inserted row must read back as count()==1.
+    if "1" not in proc.stdout.split():
+        return (
+            False,
+            f"CH insert not read back (count!=1): stdout={proc.stdout.strip()[:200]!r}",
+        )
     return True, ""
 
 
 def _accept_kafka(cell: Cell) -> tuple[bool, str]:
-    """Confirm a broker pod is up and the bootstrap port answers."""
+    """Functional check: the broker serves the Kafka API (topic create + list).
+
+    Exercises the actual protocol, not just pod presence. NOTE: not yet
+    live-validated -- kafka needs the Strimzi operator, which is scale-profile
+    only and not present on a standard devex cluster; and the chart's listeners
+    use SCRAM, so produce/consume needs a command-config with the test user's
+    creds (next depth). Topic create+list is the first functional rung.
+    """
     pod = _first_pod(cell.namespace, "kafka")
     if not pod:
         return False, "no kafka broker pod found"
+    topic = "mtx-acceptance"
+    create = _run(
+        [
+            "kubectl",
+            "exec",
+            "-n",
+            cell.namespace,
+            pod,
+            "--",
+            "bin/kafka-topics.sh",
+            "--bootstrap-server",
+            "localhost:9092",
+            "--create",
+            "--if-not-exists",
+            "--topic",
+            topic,
+        ],
+        timeout=60,
+    )
+    if create.returncode != 0:
+        return False, f"kafka topic create failed: {create.stderr.strip()[:300]}"
+    listing = _run(
+        [
+            "kubectl",
+            "exec",
+            "-n",
+            cell.namespace,
+            pod,
+            "--",
+            "bin/kafka-topics.sh",
+            "--bootstrap-server",
+            "localhost:9092",
+            "--list",
+        ],
+        timeout=60,
+    )
+    if topic not in listing.stdout:
+        return False, "kafka topic not visible after create (broker not serving)"
     return True, ""
 
 
