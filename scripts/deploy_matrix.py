@@ -357,18 +357,41 @@ def _accept_kafka(cell: Cell) -> tuple[bool, str]:
 
 
 def _wait_kafka_user_password(cell: Cell) -> str:
-    """Poll for the operator-generated dfe-kafka-user secret; return its password.
+    """Wait on the operator's OWN ready condition for the user, then read the secret.
 
-    Both providers' operators (Strimzi User Operator, Redpanda operator) mint a
-    `dfe-kafka-user` Secret with a `password` key -- same shape -- so clients (and
-    this check) read SCRAM creds identically regardless of provider.
+    A 'timing flake' is a missing dependency wait, not bad luck. Rather than poll
+    the Secret against a guessed timeout, block on the User CR's status condition:
+    the operator only reports ready once it has created the SCRAM user AND written
+    its Secret, so the read below is then immediate and deterministic. Both
+    operators mint a `dfe-kafka-user` Secret with a `password` key (same shape), so
+    clients read SCRAM creds identically regardless of provider.
 
-    Generous budget (up to ~3min): the Redpanda operator's User reconcile can
-    exceed 90s under teardown churn (observed flake at ~93s). Strimzi mints in
-    seconds and breaks out early, so the higher ceiling costs it nothing.
+    The 240s ceiling is a backstop, not the gate -- `kubectl wait` returns the
+    instant the condition flips, so a fast reconcile is fast; only a genuinely
+    stuck operator hits the limit (a real failure, surfaced as such).
     """
     user = "dfe-kafka-user"
-    for _ in range(90):
+    if _kafka_provider(cell) == "redpanda":
+        target, condition = f"user.cluster.redpanda.com/{user}", "Synced"
+    else:
+        target, condition = f"kafkauser/{user}", "Ready"
+    waited = _run(
+        [
+            "kubectl",
+            "wait",
+            f"--for=condition={condition}",
+            target,
+            "-n",
+            cell.namespace,
+            "--timeout=240s",
+        ],
+        timeout=260,
+    )
+    if waited.returncode != 0:
+        return ""  # operator never reported ready -> real failure, not a race
+    # Condition is true => the Secret exists; read it (one brief retry for the
+    # vanishingly small window between condition flip and Secret visibility).
+    for _ in range(5):
         sec = _run(
             [
                 "kubectl",
