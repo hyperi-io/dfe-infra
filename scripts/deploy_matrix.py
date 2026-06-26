@@ -102,11 +102,28 @@ def devex_matrix() -> list[Cell]:
                 variant="strimzi",
             )
         )
-        cells.append(Cell("kafka", "cluster", profile, ("kafka.provider=strimzi",)))
+        cells.append(
+            Cell(
+                "kafka",
+                "cluster",
+                profile,
+                ("kafka.provider=strimzi",),
+                variant="strimzi",
+            )
+        )
         cells.append(
             Cell(
                 "kafka",
                 "single",
+                profile,
+                ("kafka.provider=redpanda", "kafka.redpanda.acceptLicense=true"),
+                variant="redpanda",
+            )
+        )
+        cells.append(
+            Cell(
+                "kafka",
+                "cluster",
                 profile,
                 ("kafka.provider=redpanda", "kafka.redpanda.acceptLicense=true"),
                 variant="redpanda",
@@ -266,7 +283,32 @@ def _kafka_provider(cell: Cell) -> str:
 
 
 def wait_ready(cell: Cell) -> tuple[bool, str]:
-    """Poll until every EXPECTED workload pod is present and Ready in budget."""
+    """Wait until the cell's workloads are ready in budget.
+
+    Redpanda is operator-managed, so gate on the Redpanda CR's own Ready condition
+    rather than counting pods: with a 3-broker cluster a pod-presence check races
+    the operator creating brokers one by one. `kubectl wait` returns the instant
+    the operator reports the whole cluster ready (deterministic, no race); the
+    300s ceiling is a backstop for a genuinely stuck cluster. Everything else uses
+    the topology-aware pod check below.
+    """
+    if cell.chart == "kafka" and _kafka_provider(cell) == "redpanda":
+        waited = _run(
+            [
+                "kubectl",
+                "wait",
+                "--for=condition=Ready",
+                "redpanda.cluster.redpanda.com/dfe-kafka",
+                "-n",
+                cell.namespace,
+                "--timeout=300s",
+            ],
+            timeout=320,
+        )
+        if waited.returncode != 0:
+            return False, f"Redpanda CR not Ready: {waited.stderr.strip()[:200]}"
+        return True, ""
+
     required = _expected_workloads(cell)
     if not required:
         return True, ""  # external/disabled: no workloads to deploy
