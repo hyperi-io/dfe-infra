@@ -155,6 +155,33 @@ def _mode_flag(cell: Cell) -> list[str]:
     return flags
 
 
+def provision_test_secrets(cell: Cell) -> tuple[bool, str]:
+    """Create throwaway namespace + secrets the chart expects, so pods can start.
+
+    Real deployments get these from ESO/Vault; a matrix test stands up dummies so
+    the create-test-teardown can exercise the chart without the secrets backend.
+    Idempotent (ignores already-exists). Cleaned up by namespace delete at teardown.
+    """
+    _run(["kubectl", "create", "namespace", cell.namespace], timeout=30)  # ok if exists
+    if cell.chart == "clickhouse-cluster":
+        proc = _run(
+            [
+                "kubectl",
+                "create",
+                "secret",
+                "generic",
+                "clickhouse-admin-password",
+                "--from-literal=password=matrixtest",
+                "-n",
+                cell.namespace,
+            ],
+            timeout=30,
+        )
+        if proc.returncode != 0 and "already exists" not in proc.stderr.lower():
+            return False, f"test secret failed: {proc.stderr.strip()[:300]}"
+    return True, ""
+
+
 def render(cell: Cell) -> tuple[bool, str]:
     """helm template the cell. Returns (ok, error)."""
     chart_dir = CHARTS / cell.chart
@@ -284,17 +311,22 @@ def teardown(cell: Cell) -> tuple[bool, str]:
     )
     if proc.returncode != 0 and "not found" not in proc.stderr.lower():
         return False, f"teardown failed: {proc.stderr.strip()[:300]}"
-    _run(["kubectl", "delete", "namespace", cell.namespace, "--wait=false"])
+    # Delete the namespace -- this reaps StatefulSet PVCs (which helm uninstall
+    # leaves behind) and everything else. Async; assert_clean waits for it.
+    _run(["kubectl", "delete", "namespace", cell.namespace, "--ignore-not-found"])
     return True, ""
 
 
 def assert_clean(cell: Cell) -> tuple[bool, str]:
-    pods = _run(["kubectl", "get", "pods", "-n", cell.namespace, "--no-headers"])
-    pvcs = _run(["kubectl", "get", "pvc", "-n", cell.namespace, "--no-headers"])
-    leftover = [ln for ln in (pods.stdout + pvcs.stdout).splitlines() if ln.strip()]
-    if leftover:
-        return False, f"{len(leftover)} leftover resource(s) after teardown"
-    return True, ""
+    """Clean = the namespace is fully gone (reaps pods + StatefulSet PVCs)."""
+    waited = 0
+    while waited < 180:
+        proc = _run(["kubectl", "get", "namespace", cell.namespace])
+        if proc.returncode != 0 and "notfound" in proc.stderr.lower().replace(" ", ""):
+            return True, ""
+        time.sleep(POLL_SECONDS)
+        waited += POLL_SECONDS
+    return False, f"namespace {cell.namespace} not deleted within 180s"
 
 
 def run_cell(cell: Cell, *, do_apply: bool) -> CellResult:
@@ -314,6 +346,7 @@ def run_cell(cell: Cell, *, do_apply: bool) -> CellResult:
         return res
 
     for step, fn, flag in (
+        ("secrets", provision_test_secrets, "applied"),
         ("apply", apply, "applied"),
         ("wait", wait_ready, "ready"),
         ("acceptance", acceptance, "acceptance"),
