@@ -362,9 +362,13 @@ def _wait_kafka_user_password(cell: Cell) -> str:
     Both providers' operators (Strimzi User Operator, Redpanda operator) mint a
     `dfe-kafka-user` Secret with a `password` key -- same shape -- so clients (and
     this check) read SCRAM creds identically regardless of provider.
+
+    Generous budget (up to ~3min): the Redpanda operator's User reconcile can
+    exceed 90s under teardown churn (observed flake at ~93s). Strimzi mints in
+    seconds and breaks out early, so the higher ceiling costs it nothing.
     """
     user = "dfe-kafka-user"
-    for _ in range(45):
+    for _ in range(90):
         sec = _run(
             [
                 "kubectl",
