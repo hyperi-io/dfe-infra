@@ -3,6 +3,15 @@ component: kafka
 env: local
 cloud: local
 
+# DFE KAFKA AUTH STANDARD: SASL/SCRAM-SHA-512, everywhere, the same way.
+# SCRAM-512 is the ONE auth mechanism that works reliably and identically across
+# every option -- Strimzi (local/k8s), Redpanda, and every cloud-managed Kafka
+# (Confluent, MSK SASL/SCRAM). It is the DFE standard for all deployed brokers.
+# (mode=external may use msk_iam where the supplied broker mandates IAM, but the
+# DFE-owned brokers are always SCRAM-512.) The strimzi listeners + KafkaUser
+# below are SCRAM-512. NOTE: the redpanda provider path does NOT yet configure
+# SCRAM-512 (its listener is plaintext) -- that is a known gap to close so
+# redpanda matches the standard; see docs/REDPANDA-LIMITATIONS.md.
 kafka:
   # Deployment mode (DFE owns its substrate; deploy unless external given):
   #   disabled -> no broker (standard profile uses gRPC transport)

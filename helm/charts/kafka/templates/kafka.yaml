@@ -17,6 +17,12 @@ metadata:
 spec:
   kafka:
     version: {{ .Values.kafka.version }}
+    # Simple (ACL) authorization -- required for the KafkaUser's simple ACLs to
+    # apply. Without it the User Operator rejects the user ("Simple authorization
+    # ACL rules are configured but not supported") and never mints its secret.
+    # Strimzi auto-adds its cluster + entity operators to super.users.
+    authorization:
+      type: simple
     listeners:
       - name: plain
         port: 9092

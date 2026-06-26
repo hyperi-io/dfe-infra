@@ -20,7 +20,10 @@ spec:
         operations: ["Read", "Write", "Create", "Describe"]
       - resource:
           type: group
-          name: "dfe-*"
+          # patternType: prefix means the name IS the literal prefix -- do NOT
+          # include a '*' glob (that would match groups starting "dfe-*", not
+          # "dfe-"). All DFE consumer groups are "dfe-"-prefixed.
+          name: "dfe-"
           patternType: prefix
         operations: ["Read", "Describe"]
 {{- end }}

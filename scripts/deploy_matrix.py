@@ -39,6 +39,7 @@ anyway). One subprocess per call; output captured UTF-8 with replacement.
 from __future__ import annotations
 
 import argparse
+import base64
 import subprocess
 import sys
 import time
@@ -135,15 +136,26 @@ class CellResult:
 
 
 def _run(cmd: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
-    """Run a command, captured, UTF-8 with replacement (never raises on decode)."""
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-    )
+    """Run a command, captured, UTF-8 with replacement.
+
+    Never raises: a decode issue is replaced, and a timeout is converted to a
+    non-zero CompletedProcess so a hung step (e.g. an auth-blocked kubectl exec)
+    becomes a normal cell failure -- it must NOT crash the run and skip teardown.
+    """
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout if isinstance(exc.stdout, str) else ""
+        return subprocess.CompletedProcess(
+            cmd, returncode=124, stdout=out, stderr=f"timed out after {timeout}s"
+        )
 
 
 def _mode_flag(cell: Cell) -> list[str]:
@@ -237,8 +249,19 @@ def _expected_workloads(cell: Cell) -> list[str]:
             return ["clickhouse"]
         return []
     if cell.chart == "kafka":
-        return ["kafka"] if cell.mode in {"single", "cluster"} else []
+        if cell.mode not in {"single", "cluster"}:
+            return []
+        if _kafka_provider(cell) == "redpanda":
+            return ["kafka"]  # redpanda StatefulSet pod (named after kafka.name)
+        # strimzi: broker nodepool + entity-operator (the User Operator that
+        # mints the SCRAM secret acceptance needs) must both be up before test.
+        return ["pool", "entity-operator"]
     return []
+
+
+def _kafka_provider(cell: Cell) -> str:
+    """strimzi (default) or redpanda, read from the cell's --set overrides."""
+    return "redpanda" if any("redpanda" in s for s in cell.extra_sets) else "strimzi"
 
 
 def wait_ready(cell: Cell) -> tuple[bool, str]:
@@ -323,55 +346,98 @@ def _accept_clickhouse(cell: Cell) -> tuple[bool, str]:
 
 
 def _accept_kafka(cell: Cell) -> tuple[bool, str]:
-    """Functional check: the broker serves the Kafka API (topic create + list).
-
-    Exercises the actual protocol, not just pod presence. NOTE: not yet
-    live-validated -- kafka needs the Strimzi operator, which is scale-profile
-    only and not present on a standard devex cluster; and the chart's listeners
-    use SCRAM, so produce/consume needs a command-config with the test user's
-    creds (next depth). Topic create+list is the first functional rung.
-    """
+    """Functional kafka produce->consume round-trip, dispatched by provider."""
     pod = _first_pod(cell.namespace, "kafka")
     if not pod:
         return False, "no kafka broker pod found"
-    topic = "mtx-acceptance"
-    create = _run(
-        [
-            "kubectl",
-            "exec",
-            "-n",
-            cell.namespace,
-            pod,
-            "--",
-            "bin/kafka-topics.sh",
-            "--bootstrap-server",
-            "localhost:9092",
-            "--create",
-            "--if-not-exists",
-            "--topic",
-            topic,
-        ],
-        timeout=60,
+    if _kafka_provider(cell) == "redpanda":
+        return _accept_kafka_redpanda(cell, pod)
+    return _accept_kafka_strimzi(cell, pod)
+
+
+def _accept_kafka_strimzi(cell: Cell, pod: str) -> tuple[bool, str]:
+    """SCRAM produce->consume via the Strimzi KafkaUser.
+
+    The chart's listeners require scram-sha-512, so this reads the SCRAM password
+    the User Operator generates for the chart's KafkaUser, then creates a topic,
+    produces a message and consumes it back (consumer group 'dfe-*' per the
+    user's ACL). A real data round-trip, not pod presence.
+    """
+    user = "dfe-kafka-user"
+    # wait_ready already gates on entity-operator readiness; the secret follows
+    # within a few reconcile cycles -- poll briefly for it.
+    password = ""
+    for _ in range(30):
+        sec = _run(
+            [
+                "kubectl",
+                "get",
+                "secret",
+                user,
+                "-n",
+                cell.namespace,
+                "-o",
+                "jsonpath={.data.password}",
+            ],
+        )
+        if sec.returncode == 0 and sec.stdout.strip():
+            password = base64.b64decode(sec.stdout.strip()).decode("utf-8", "replace")
+            break
+        time.sleep(2)
+    if not password:
+        return False, f"KafkaUser secret '{user}' not populated (no SCRAM password)"
+    jaas = (
+        "org.apache.kafka.common.security.scram.ScramLoginModule required "
+        f'username="{user}" password="{password}";'
     )
-    if create.returncode != 0:
-        return False, f"kafka topic create failed: {create.stderr.strip()[:300]}"
-    listing = _run(
-        [
-            "kubectl",
-            "exec",
-            "-n",
-            cell.namespace,
-            pod,
-            "--",
-            "bin/kafka-topics.sh",
-            "--bootstrap-server",
-            "localhost:9092",
-            "--list",
-        ],
-        timeout=60,
+    topic = "dfe-acceptance"
+    script = (
+        "set -e; P=/tmp/mtx.props; "
+        "{ echo 'security.protocol=SASL_PLAINTEXT'; "
+        "echo 'sasl.mechanism=SCRAM-SHA-512'; "
+        f"echo 'sasl.jaas.config={jaas}'; }} > $P; "
+        "bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config $P "
+        f"--create --if-not-exists --topic {topic}; "
+        "echo mtx-msg | bin/kafka-console-producer.sh --bootstrap-server localhost:9092 "
+        f"--producer.config $P --topic {topic}; "
+        "bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 "
+        f"--consumer.config $P --topic {topic} --group dfe-mtx --from-beginning "
+        "--max-messages 1 --timeout-ms 30000"
     )
-    if topic not in listing.stdout:
-        return False, "kafka topic not visible after create (broker not serving)"
+    proc = _run(
+        ["kubectl", "exec", "-n", cell.namespace, pod, "--", "sh", "-c", script],
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        return False, f"kafka produce/consume failed: {proc.stderr.strip()[:300]}"
+    if "mtx-msg" not in proc.stdout:
+        return (
+            False,
+            f"kafka message not read back: stdout={proc.stdout.strip()[:200]!r}",
+        )
+    return True, ""
+
+
+def _accept_kafka_redpanda(cell: Cell, pod: str) -> tuple[bool, str]:
+    """rpk produce->consume (redpanda StatefulSet, no SASL on the kafka listener)."""
+    topic = "dfe-acceptance"
+    script = (
+        "set -e; "
+        f"rpk topic create {topic} || true; "
+        f"echo mtx-msg | rpk topic produce {topic}; "
+        f"rpk topic consume {topic} --num 1 --offset start"
+    )
+    proc = _run(
+        ["kubectl", "exec", "-n", cell.namespace, pod, "--", "sh", "-c", script],
+        timeout=90,
+    )
+    if proc.returncode != 0:
+        return False, f"redpanda produce/consume failed: {proc.stderr.strip()[:300]}"
+    if "mtx-msg" not in proc.stdout:
+        return (
+            False,
+            f"redpanda message not read back: stdout={proc.stdout.strip()[:200]!r}",
+        )
     return True, ""
 
 
@@ -432,7 +498,10 @@ def run_cell(cell: Cell, *, do_apply: bool) -> CellResult:
         ("acceptance", acceptance, "acceptance"),
     ):
         t0 = time.monotonic()
-        ok, err = fn(cell)
+        try:
+            ok, err = fn(cell)
+        except Exception as exc:  # noqa: BLE001 -- any phase failure must still teardown
+            ok, err = False, f"{step} raised: {exc!r}"
         res.timings[step] = round(time.monotonic() - t0, 2)
         setattr(res, flag, ok)
         if not ok:
