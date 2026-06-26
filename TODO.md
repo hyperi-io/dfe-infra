@@ -6,6 +6,19 @@ This is the **single source of truth** for all tasks and progress.
 
 ## Active Tasks
 
+- [ ] Deployment-architecture live build (devex/Rancher) `[NEXT -- focused live session]`
+  - Per canonical doc `dfe-docs/deployment/state-and-repos.md` + boundary memory.
+  - Prereqs (code, then live-validate on devex; do NOT render-only -- Phase 1 was
+    reverted for that): (a) engine `dfe-api gitops publish --env --channel`
+    (per-env/channel authoring to the deploy instance); (b) appset multi-source
+    wiring -- pinned base chart (dfe-infra) + per-env overlay `$values` from the
+    deploy instance (in-cluster Gitea); (c) `scripts/deploy_matrix.py` harness:
+    per cell `publish -> wait-ready -> acceptance -> destroy -> assert-clean`.
+  - Goal: **repeat create-test-teardown matrix solid on devex** (CH
+    single/cluster/external x kafka disabled/single/cluster/external x
+    standard/scale). This GATES the multi-cloud rollout below.
+  - Live: validate via merge to a branch devex Argo tracks (watch sync), iterate.
+
 - [ ] IaC test framework (pytest + kubeconform + tftest) `[PENDING]`
   - Current state: Research complete, framework decision made (pytest as single runner)
   - Next: Design test fixtures (helm_template, terraform_plan, kubeconform_validate), write tests
@@ -65,7 +78,15 @@ This is the **single source of truth** for all tasks and progress.
 - [x] Write hyperi-ci container-build-pipeline spec
 - [ ] Derek implementing both specs (in progress, separate repos)
 
-### AWS EKS Deployment (Plan 07a)
+### Multi-cloud rollout (AWS first) -- GATED
+
+**Gate:** Do NOT start until the Rancher/devex **repeat create-test-teardown
+matrix** (CH single/cluster/external x kafka modes x profiles) is solid (see
+"Deployment-architecture live build" above). AWS first, then GCP, then Azure --
+same overlay model, new `cloud-<cloud>.yaml` per cloud. Multi-cloud needs the
+EKS/GKE/AKS clusters provisioned (they do not exist yet). Decision 2026-06-26.
+
+### AWS EKS Deployment (Plan 07a) -- gated on devex matrix solid
 
 **Goal:** Validate same IaC deploys to AWS EKS
 
