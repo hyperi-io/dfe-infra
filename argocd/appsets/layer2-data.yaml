@@ -55,15 +55,27 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
-      source:
-        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
-        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-        path: 'helm/charts/{{ .app }}'
-        helm:
-          valueFiles:
-            - "../../../argocd/values/common.yaml"
-            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-            - '../../../argocd/values/profile-{{ dig "dfe.hyperi.io/profile" "standard" .metadata.annotations }}.yaml'
+      sources:
+        # Source 1: pinned dfe-infra base chart (the RO core: substrate machinery
+        # + defaults). The deploy-repo overlay is layered LAST so the deployer's /
+        # engine's substrate scaling (pod size, node/broker count) in
+        # dfe-deploy/infra/ wins -- base defaults <- overlay. ignoreMissingValueFiles
+        # so substrate runs on base defaults until the overlay is published.
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+          path: 'helm/charts/{{ .app }}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - "../../../argocd/values/common.yaml"
+              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+              - '../../../argocd/values/profile-{{ dig "dfe.hyperi.io/profile" "standard" .metadata.annotations }}.yaml'
+              - '$values/infra/values.yaml'
+              - '$values/infra/{{ .app }}-values.yaml'
+        # Source 2: the per-env deploy-repo instance (overlay values only).
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+          ref: values
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

@@ -214,8 +214,10 @@ if [[ "${DFE_CONFIG_REPO_URL}" == *"dfe-gitea"* ]] && [[ "${DFE_DRY_RUN:-false}"
       --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
   fi
 fi
-# Deploy-repo app-of-apps (envsubst: config repo URL + revision)
-envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/deploy-repo-app.yaml" | run kubectl apply -f -
+# NOTE: the deploy-repo app-of-apps is retired. The engine no longer authors Argo
+# Application/AppProject manifests -- the dfe-layer2-apps ApplicationSet fans out
+# one Application per deploy-repo values file (git-files generator). The deploy
+# repo's config_repo_url/revision (on the cluster secret) is consumed there.
 
 echo ""
 echo "=========================================="
