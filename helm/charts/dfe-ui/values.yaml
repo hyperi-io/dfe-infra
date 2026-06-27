@@ -29,3 +29,6 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
+
+# Node placement dial (overlay-settable; dfe-common.scheduling reads this).
+nodeScheduling: {}

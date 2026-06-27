@@ -41,3 +41,6 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+
+# Node placement dial (overlay-settable; dfe-common.scheduling reads this).
+nodeScheduling: {}

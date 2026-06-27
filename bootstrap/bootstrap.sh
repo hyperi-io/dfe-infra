@@ -196,7 +196,8 @@ run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yam
 # Standalone in-repo chart apps are envsubst-templated (repoURL, cloud overlay)
 envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml" | run kubectl apply -f -
 envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run kubectl apply -f -
-envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/keda-scalers-app.yaml" | run kubectl apply -f -
+# NOTE: keda-scalers chart retired -- KEDA is now folded into each app chart
+# (dfe-common.scaledobject helper), driven by the per-instance overlay.
 # cluster-addons ApplicationSet uses goTemplate — no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
 
