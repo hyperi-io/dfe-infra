@@ -16,6 +16,7 @@ bootstrap:
   external-secrets: "2.6.0"      # 2026-06-07 (chart series is 2.x; app v2.6.x)
   argocd: "9.5.21"               # 2026-06-11 chart -> Argo CD app v3.x. 9.7.0 (06-22) too fresh. MAJOR jump from 7.8.x; gated apply.
   valkey: "8.1.8-alpine"         # image tag for bootstrap/templates/valkey.yaml (plain manifest, not a chart). 2026-06-02
+  local-path-provisioner: "v0.0.36"  # storage detect-or-install fallback when the cluster has NO default StorageClass (bare RKE2/EKS). Includes the HelperPod template-injection security fix. 2026-01
 
 # Layer 1: Operators (deployed by ArgoCD wave 2-3 via appsets/layer1-addons.yaml)
 operators:

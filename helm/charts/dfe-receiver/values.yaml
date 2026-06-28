@@ -15,6 +15,29 @@ service:
   httpPort: 8080
   grpcPort: 8443
 
+# Ingress exposure SEAM (design 2026-06-28). The receiver is a single-homed
+# airlock: it ingests externally and produces to LOCAL Kafka, which stays private
+# regardless. This reserves the PUBLIC ingress path so a richer deploy is a values
+# flip, NOT a chart change. The overlay (198.18/15) + Kafka never face the public.
+#
+# mode:
+#   internal (default) -- ClusterIP only. Reach it via the cluster Gateway/LB on
+#     the owned domain; the DEPLOYER applies whatever ingress-path security they
+#     prefer in front (their cloud LB / WAF / mTLS / API gateway). DFE ships a
+#     sensible default public posture LATER; today the choice is the deployer's.
+#   public -- also render a public Service (Phase 4 builds the AWS VPC public
+#     subnet + IGW behind it). serviceType/annotations/loadBalancerSourceRanges
+#     are deployer-supplied so they bring their own edge security.
+#
+# A VPN INBOUND path (agents dialling in via the hyperi-vpn server, OpenVPN/
+# WireGuard) is a SEPARATE future addition -- intentionally NOT modelled here yet.
+exposure:
+  mode: internal              # internal | public
+  public:
+    serviceType: LoadBalancer
+    annotations: {}           # deployer's LB/WAF/security annotations
+    loadBalancerSourceRanges: []   # deployer's CIDR allow-list (empty = all)
+
 receiver:
   listenAddress: "100.64.0.1"   # CGNAT range per spec Section 2.9
 

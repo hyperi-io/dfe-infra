@@ -51,7 +51,7 @@ spec:
             valueFiles:
               - "../../../argocd/values/common.yaml"
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-              - '../../../argocd/values/profile-{{ dig "dfe.hyperi.io/profile" "standard" .metadata.annotations }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               - '$values/{{ .path.path }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'

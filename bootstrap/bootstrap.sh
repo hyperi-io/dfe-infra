@@ -50,7 +50,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.cert-manager)
 EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
 ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
-echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION}"
+LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION}"
 
 # Dry-run wrapper
 run() {
@@ -61,15 +62,47 @@ run() {
   fi
 }
 
+# Detect-or-install helpers. DFE assumes only a bare cluster and brings what it
+# needs -- but a destination may already run a cluster-singleton operator
+# (cert-manager, ESO, Argo) whose cluster-scoped CRDs cannot be owned twice. So
+# each install is gated: CRD already present -> ADOPT the existing operator (skip
+# install, reuse its CRDs); absent -> INSTALL DFE-owned. Logs the decision (never
+# a silent skip). DFE_FORCE_INSTALL=true overrides (always install).
+# NOTE: the Argo-managed operators in argocd/appsets (external-dns, keda,
+# metrics-server, reloader, cnpg) are NOT yet guarded -- per-operator appset
+# adopt is a later iteration that needs a rich cluster to validate. On a bare
+# cluster they install correctly.
+dfe_have_crd() { kubectl get crd "$1" >/dev/null 2>&1; }
+
+# dfe_should_install <name> <crd>  -> rc 0 = INSTALL, rc 1 = ADOPT (skip).
+dfe_should_install() {
+  local name="$1" crd="$2"
+  if [[ "${DFE_FORCE_INSTALL:-false}" == "true" ]]; then
+    echo "  [${name}] DFE_FORCE_INSTALL -> INSTALL DFE-owned"
+    return 0
+  fi
+  if dfe_have_crd "${crd}"; then
+    echo "  [${name}] detected (CRD ${crd}) -> ADOPT existing, skip install"
+    return 1
+  fi
+  echo "  [${name}] not detected -> INSTALL DFE-owned"
+  return 0
+}
+
 # Validate required variables
 required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
   DFE_REPO_URL DFE_TARGET_REVISION
   DFE_STORAGE_CLASS DFE_NAMESPACE
-  DFE_CLICKHOUSE_HOST DFE_KAFKA_BOOTSTRAP DFE_OTEL_ENDPOINT
+  DFE_CLICKHOUSE_HOST DFE_OTEL_ENDPOINT
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
+# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the standard profile is gRPC (kafka disabled),
+# so it is empty there; only set when kafka.mode != disabled. Defaulted empty so
+# the cluster-secret annotation renders blank (kafka-dependent apps are gated off
+# in standard anyway).
+export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
 # Registry vars are optional — skip regcred if not set
 # DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 missing=()
@@ -110,18 +143,39 @@ else
   envsubst < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" | kubectl apply -f -
 fi
 
-echo "==> [2/7] Installing cert-manager (idempotent)"
-run helm upgrade --install cert-manager jetstack/cert-manager \
-  --namespace cert-manager --create-namespace \
-  --version "${CERT_MANAGER_VERSION}" \
-  --set installCRDs=true \
-  --wait --timeout 5m
+echo "==> [1b/7] StorageClass (detect-or-install)"
+# DFE assumes only a bare cluster. If a default StorageClass exists -> ADOPT it.
+# If StorageClasses exist but none is default -> use DFE_STORAGE_CLASS as-is. If
+# NONE exist (bare RKE2/EKS) -> INSTALL local-path-provisioner (pinned) and mark
+# it default, so the substrate's PVCs (CH/Gitea/CNPG) can bind with no deployer
+# input. This is the onboarding-contract storage derive.
+if kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null | grep -q true; then
+  echo "  default StorageClass present -> ADOPT"
+elif [[ -n "$(kubectl get storageclass -o name 2>/dev/null)" ]]; then
+  echo "  StorageClass(es) present, none default -> using DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS}"
+else
+  echo "  no StorageClass -> INSTALL local-path-provisioner ${LOCAL_PATH_VERSION}"
+  run kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
+  run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
+  run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+fi
 
-echo "==> [3/7] Installing external-secrets (idempotent)"
-run helm upgrade --install external-secrets external-secrets/external-secrets \
-  --namespace external-secrets --create-namespace \
-  --version "${EXTERNAL_SECRETS_VERSION}" \
-  --wait --timeout 5m
+echo "==> [2/7] cert-manager (detect-or-install)"
+if dfe_should_install cert-manager certificates.cert-manager.io; then
+  run helm upgrade --install cert-manager jetstack/cert-manager \
+    --namespace cert-manager --create-namespace \
+    --version "${CERT_MANAGER_VERSION}" \
+    --set installCRDs=true \
+    --wait --timeout 5m
+fi
+
+echo "==> [3/7] external-secrets (detect-or-install)"
+if dfe_should_install external-secrets clustersecretstores.external-secrets.io; then
+  run helm upgrade --install external-secrets external-secrets/external-secrets \
+    --namespace external-secrets --create-namespace \
+    --version "${EXTERNAL_SECRETS_VERSION}" \
+    --wait --timeout 5m
+fi
 
 echo "==> [4/7] Applying ESO ClusterSecretStore"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
@@ -182,14 +236,24 @@ else
   run kubectl -n argocd rollout status deployment/valkey --timeout=120s
 fi
 
-echo "==> [6/7] Installing ArgoCD with Valkey cache (idempotent)"
-run helm upgrade --install argocd argo/argo-cd \
-  --namespace argocd --create-namespace \
-  --version "${ARGOCD_VERSION}" \
-  --set redis.enabled=false \
-  --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
-  --set "externalRedis.port=6379" \
-  --wait --timeout 10m
+echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install)"
+# If the destination already runs Argo (its Application CRD + a server deploy are
+# present) we ADOPT it -- our AppProjects/ApplicationSets below register into the
+# existing Argo. Otherwise install DFE-owned Argo. (Full isolation -- a dedicated
+# dfe-system Argo scoped to dfe-* namespaces so it never couples to a host Argo --
+# is the Phase 0d adopt-path refinement.)
+if dfe_should_install argocd applications.argoproj.io; then
+  run helm upgrade --install argocd argo/argo-cd \
+    --namespace argocd --create-namespace \
+    --version "${ARGOCD_VERSION}" \
+    --set redis.enabled=false \
+    --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
+    --set "externalRedis.port=6379" \
+    --set-string 'configs.params.reposerver\.disable\.git\.modules=true' \
+    --wait --timeout 10m
+else
+  echo "  Using existing ArgoCD; registering DFE AppProjects + ApplicationSets into it."
+fi
 
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"

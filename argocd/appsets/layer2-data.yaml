@@ -69,7 +69,7 @@ spec:
             valueFiles:
               - "../../../argocd/values/common.yaml"
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-              - '../../../argocd/values/profile-{{ dig "dfe.hyperi.io/profile" "standard" .metadata.annotations }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               - '$values/infra/values.yaml'
               - '$values/infra/{{ .app }}-values.yaml'
         # Source 2: the per-env deploy-repo instance (overlay values only).

@@ -1,3 +1,5 @@
+# Internal Service (always). ClusterIP -- reachable in-cluster + via the cluster
+# Gateway/LB on the owned domain. The exposure seam adds a public Service below.
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,3 +17,36 @@ spec:
       name: grpc
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+{{- if eq (.Values.exposure.mode | default "internal") "public" }}
+---
+# Public Service (exposure.mode=public). Deployer-supplied edge security:
+# serviceType + annotations (their cloud LB/WAF) + loadBalancerSourceRanges
+# allow-list. Phase 4 builds the AWS VPC public subnet + IGW behind this; Kafka
+# and the data plane stay private. DFE supplies a default posture later.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-public
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    dfe.hyperi.io/exposure: public
+  {{- with .Values.exposure.public.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.exposure.public.serviceType | default "LoadBalancer" }}
+  {{- with .Values.exposure.public.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.service.httpPort }}
+      targetPort: http
+      name: http
+    - port: {{ .Values.service.grpcPort }}
+      targetPort: grpc
+      name: grpc
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+{{- end }}
