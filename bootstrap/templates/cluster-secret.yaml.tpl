@@ -10,6 +10,10 @@ metadata:
     argocd.argoproj.io/secret-type: cluster
     dfe.hyperi.io/managed: "true"
     dfe.hyperi.io/profile: "${DFE_PROFILE}"
+    # "true" only when no external git was supplied -> deploy the bundled Forgejo
+    # fallback (gated in appsets/layer2-deploy-repo.yaml). External GitHub/GitLab
+    # deploys set "false" and no in-cluster git server is created.
+    dfe.hyperi.io/bundled-deploy-repo: "${DFE_BUNDLED_DEPLOY_REPO}"
   annotations:
     # Identity
     dfe.hyperi.io/env: "${DFE_ENV}"

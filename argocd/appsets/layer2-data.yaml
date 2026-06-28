@@ -36,10 +36,11 @@ spec:
                   namespace: otel
                   wave: "4"
                   appProject: data
-                - app: gitea
-                  namespace: gitea
-                  wave: "4"
-                  appProject: data
+                # NOTE: the in-cluster git server (gitea/forgejo) is NOT substrate.
+                # It is the deploy-repo FALLBACK, deployed ONLY when no external git
+                # (GitHub/GitLab) is supplied -- see appsets/layer2-deploy-repo.yaml,
+                # gated on the dfe.hyperi.io/bundled-deploy-repo cluster label. The
+                # deploy repo is a seam (external git PRIMARY); never a hard dep.
                 # Kafka substrate -- mode-driven (disabled on standard -> nothing;
                 # cluster on scale). Provider strimzi (default) needs the Strimzi
                 # operator (installed scale-only via layer-scale).
@@ -55,27 +56,24 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
-      sources:
-        # Source 1: pinned dfe-infra base chart (the RO core: substrate machinery
-        # + defaults). The deploy-repo overlay is layered LAST so the deployer's /
-        # engine's substrate scaling (pod size, node/broker count) in
-        # dfe-deploy/infra/ wins -- base defaults <- overlay. ignoreMissingValueFiles
-        # so substrate runs on base defaults until the overlay is published.
-        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
-          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-          path: 'helm/charts/{{ .app }}'
-          helm:
-            ignoreMissingValueFiles: true
-            valueFiles:
-              - "../../../argocd/values/common.yaml"
-              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-              - '$values/infra/values.yaml'
-              - '$values/infra/{{ .app }}-values.yaml'
-        # Source 2: the per-env deploy-repo instance (overlay values only).
-        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
-          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
-          ref: values
+      # SINGLE source: the pinned dfe-infra base chart + profile/cloud values.
+      # Substrate is dfe-infra-STATIC at GA (per the engine<->infra boundary), so it
+      # does NOT depend on the deploy repo. This is deliberate: making substrate
+      # multi-source on the in-cluster Gitea config repo created a self-dependency
+      # deadlock (Gitea is itself substrate -> could not render before Gitea was up)
+      # and coupled substrate to a specific git provider. Engine-authored substrate
+      # scaling ($values/infra overlay) is a v+0.1 addition, re-added then gated on
+      # the deploy repo being ready.
+      source:
+        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+        path: 'helm/charts/{{ .app }}'
+        helm:
+          ignoreMissingValueFiles: true
+          valueFiles:
+            - "../../../argocd/values/common.yaml"
+            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

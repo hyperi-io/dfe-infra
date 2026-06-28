@@ -1,11 +1,13 @@
 project: dfe
-component: gitea
+component: forgejo
 env: local
 cloud: local
 
-# Gitea image (Docker Hub). Tag defaults to Chart.appVersion.
+# Forgejo image (codeberg.org). Tag defaults to Chart.appVersion (15.0.3 LTS).
+# Forgejo is a drop-in Gitea fork -- same REST API (the setup Job is unchanged)
+# and same app.ini/env (accepts FORGEJO__ and GITEA__ prefixes).
 image:
-  repository: gitea/gitea
+  repository: codeberg.org/forgejo/forgejo
   tag: ""
   pullPolicy: IfNotPresent
 
@@ -29,7 +31,7 @@ deployRepo:
 
 # Image for the PostSync repo-creation Job (needs curl).
 setup:
-  image: curlimages/curl:8.11.1
+  image: curlimages/curl:8.20.0   # 2026-05 (clears 7-day cooldown); was stale 8.11.1
 
 persistence:
   enabled: true

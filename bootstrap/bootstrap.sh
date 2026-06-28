@@ -120,12 +120,21 @@ if [[ -n "${DFE_REGISTRY_HOST:-}" ]] && [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
   DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
 fi
 
-# Deploy-specific gitops repo (dfe-engine writes, Argo watches). Defaults to the
-# in-cluster Gitea service; override DFE_CONFIG_REPO_URL to use external GitHub.
-export DFE_CONFIG_REPO_URL="${DFE_CONFIG_REPO_URL:-http://dfe-gitea.gitea.svc.cluster.local:3000/dfe/deploy.git}"
+# Deploy repo (dfe-engine writes config, Argo watches). PROVIDER-AGNOSTIC seam:
+# external git (GitHub ~85% / GitLab ~10%) is PRIMARY; the in-cluster Forgejo
+# fallback (~5%, tyre-kicking/air-gapped) is used ONLY when no external URL is
+# given. If DFE_CONFIG_REPO_URL is set -> external mode (deployer also supplies
+# creds, see [4d] below); unset -> bundled Forgejo fallback.
 export DFE_CONFIG_REPO_REVISION="${DFE_CONFIG_REPO_REVISION:-main}"
-# Gitea admin user that dfe-engine pushes as.
-GITEA_ADMIN_USER="${DFE_GITEA_ADMIN_USER:-dfe}"
+FORGEJO_ADMIN_USER="${DFE_FORGEJO_ADMIN_USER:-dfe}"
+if [[ -n "${DFE_CONFIG_REPO_URL:-}" ]]; then
+  export DFE_BUNDLED_DEPLOY_REPO="false"
+  echo "Deploy repo: EXTERNAL git (${DFE_CONFIG_REPO_URL}) -- no in-cluster server."
+else
+  export DFE_CONFIG_REPO_URL="http://dfe-forgejo.forgejo.svc.cluster.local:3000/dfe/deploy.git"
+  export DFE_BUNDLED_DEPLOY_REPO="true"
+  echo "Deploy repo: FALLBACK in-cluster Forgejo (no external git supplied)."
+fi
 
 # Add Helm repos (idempotent)
 echo "==> [0/7] Adding Helm repositories"
@@ -185,7 +194,7 @@ else
 fi
 
 echo "==> [4b/7] Creating imagePullSecrets"
-for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx gitea; do
+for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
   # JFrog regcred (if registry credentials provided)
   if [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
@@ -203,25 +212,49 @@ if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
   echo "  Pull secret created/updated in ${DFE_NAMESPACE}"
 fi
 
-# Gitea admin secret for the in-cluster deploy repo. Generated once (random),
-# reused on re-runs, mirrored to the dfe namespace as dfe-engine's push creds.
-# Skipped when DFE_CONFIG_REPO_URL points at an external repo (not in-cluster Gitea).
-if [[ "${DFE_CONFIG_REPO_URL}" == *"dfe-gitea"* ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
-  echo "==> [4c/7] Ensuring Gitea admin secret (dfe-gitea-admin)"
-  if kubectl -n gitea get secret dfe-gitea-admin >/dev/null 2>&1; then
-    GITEA_ADMIN_PASSWORD=$(kubectl -n gitea get secret dfe-gitea-admin -o jsonpath='{.data.password}' | base64 -d)
+# [4c/7] Deploy-repo credentials -- two paths by provider mode.
+if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  # FALLBACK: in-cluster Forgejo. Generate (once) a random admin password, reuse
+  # on re-runs, mirror to the dfe namespace as dfe-engine's push creds.
+  echo "==> [4c/7] Ensuring Forgejo admin secret (dfe-forgejo-admin)"
+  if kubectl -n forgejo get secret dfe-forgejo-admin >/dev/null 2>&1; then
+    FORGEJO_ADMIN_PASSWORD=$(kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' | base64 -d)
   else
-    GITEA_ADMIN_PASSWORD=$(openssl rand -hex 24)
+    FORGEJO_ADMIN_PASSWORD=$(openssl rand -hex 24)
   fi
-  for ns in gitea "${DFE_NAMESPACE}"; do
-    kubectl -n "$ns" create secret generic dfe-gitea-admin \
-      --from-literal=username="${GITEA_ADMIN_USER}" \
-      --from-literal=password="${GITEA_ADMIN_PASSWORD}" \
+  for ns in forgejo "${DFE_NAMESPACE}"; do
+    kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl -n "$ns" create secret generic dfe-forgejo-admin \
+      --from-literal=username="${FORGEJO_ADMIN_USER}" \
+      --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
       --dry-run=client -o yaml | kubectl apply -f -
   done
-  echo "  Gitea admin secret ready in gitea + ${DFE_NAMESPACE}"
-elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-  echo "[DRY-RUN] ensure Gitea admin secret dfe-gitea-admin in gitea + ${DFE_NAMESPACE}"
+  echo "  Forgejo admin secret ready in forgejo + ${DFE_NAMESPACE}"
+elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  # EXTERNAL git (GitHub/GitLab): register an Argo repository credential so Argo
+  # can pull the deploy repo. Deployer supplies EITHER HTTPS+token
+  # (DFE_CONFIG_REPO_USER + DFE_CONFIG_REPO_TOKEN) OR an SSH key
+  # (DFE_CONFIG_REPO_SSH_KEY = path to a private key). The engine's WRITE cred is
+  # separate (engine gitops settings), not created here.
+  echo "==> [4c/7] Registering Argo repo cred for external deploy repo"
+  if [[ -n "${DFE_CONFIG_REPO_SSH_KEY:-}" ]]; then
+    kubectl -n argocd create secret generic repo-deploy \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+      --from-file=sshPrivateKey="${DFE_CONFIG_REPO_SSH_KEY}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+    echo "  Argo repo cred (SSH) registered for ${DFE_CONFIG_REPO_URL}"
+  elif [[ -n "${DFE_CONFIG_REPO_TOKEN:-}" ]]; then
+    kubectl -n argocd create secret generic repo-deploy \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+      --from-literal=username="${DFE_CONFIG_REPO_USER:-oauth2}" \
+      --from-literal=password="${DFE_CONFIG_REPO_TOKEN}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+    echo "  Argo repo cred (HTTPS+token) registered for ${DFE_CONFIG_REPO_URL}"
+  else
+    echo "  WARNING: external deploy repo but no DFE_CONFIG_REPO_TOKEN/SSH_KEY -- Argo may not be able to pull it."
+  fi
 fi
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.
@@ -265,16 +298,17 @@ envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run k
 # cluster-addons ApplicationSet uses goTemplate — no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
 
-# Argo CD repo credentials for the (private) in-cluster deploy repo, so the
-# deploy-repo app-of-apps can read it. Uses the Gitea admin creds.
-if [[ "${DFE_CONFIG_REPO_URL}" == *"dfe-gitea"* ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
-  GITEA_PW=$(kubectl -n gitea get secret dfe-gitea-admin -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
-  if [[ -n "${GITEA_PW}" ]]; then
-    kubectl -n argocd create secret generic deploy-repo-creds \
+# Argo CD repo credential for the bundled in-cluster Forgejo deploy repo, so Argo
+# can pull it. Uses the Forgejo admin creds. External git repo creds are handled
+# in [4c/7] above; this block is the FALLBACK (bundled) path only.
+if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  FORGEJO_PW=$(kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+  if [[ -n "${FORGEJO_PW}" ]]; then
+    kubectl -n argocd create secret generic repo-deploy \
       --from-literal=type=git \
       --from-literal=url="${DFE_CONFIG_REPO_URL}" \
-      --from-literal=username="${GITEA_ADMIN_USER}" \
-      --from-literal=password="${GITEA_PW}" \
+      --from-literal=username="${FORGEJO_ADMIN_USER}" \
+      --from-literal=password="${FORGEJO_PW}" \
       --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
   fi
 fi
