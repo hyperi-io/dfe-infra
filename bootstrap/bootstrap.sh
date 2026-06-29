@@ -327,12 +327,29 @@ echo ""
 echo "=========================================="
 echo "  Bootstrap complete (Build 1: static)    "
 echo "=========================================="
-echo "  ArgoCD will now sync Layer 2 (Build 2)  "
-echo "  Watch sync: kubectl -n argocd get app -w "
+echo "  ArgoCD now syncs Layer 2 (Build 2);     "
+echo "  the readiness gate waits for it.        "
 echo "=========================================="
 
+# READINESS GATE (default ON) -- the authoritative end-of-deploy health check.
+# Waits for Argo to converge Layer 2, then FAILS the deploy if anything is not
+# genuinely Ready (crashloops, 0/N, unmet replicas). This is what lets us TRUST a
+# successful deploy -- "Argo Healthy"/"pod Running" alone are not enough. Bypass
+# only with DFE_SKIP_READINESS_GATE=true (NOT recommended).
+echo ""
+if [ "${DFE_SKIP_READINESS_GATE:-false}" != "true" ]; then
+  if ! "${SCRIPT_DIR}/smoke-test-readiness.sh" "${KUBECONFIG:-}"; then
+    echo ""
+    echo "  DEPLOY NOT HEALTHY -- see the readiness failures above."
+    echo "  Fix them and re-run, or DFE_SKIP_READINESS_GATE=true to bypass (not recommended)."
+    exit 1
+  fi
+else
+  echo "  Readiness gate BYPASSED (DFE_SKIP_READINESS_GATE=true) -- deploy health NOT verified."
+fi
+
 # Post-deploy ACCESS SUMMARY -- endpoints + how to log in + how to fetch creds.
-# Printed here AND written to a file (the "now where do I go" landing info).
+# Only reached on a verified-healthy deploy. Printed here AND written to a file.
 echo ""
 "${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${DFE_ACCESS_OUT:-dfe-access.md}" || \
   echo "  (access-summary skipped -- run bootstrap/access-summary.sh manually)"
