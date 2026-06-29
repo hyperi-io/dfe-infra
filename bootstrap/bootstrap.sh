@@ -348,6 +348,24 @@ else
   echo "  Readiness gate BYPASSED (DFE_SKIP_READINESS_GATE=true) -- deploy health NOT verified."
 fi
 
+# CORE E2E INTEGRATION GATE (default ON) -- readiness proves pods are Ready;
+# THIS proves the two DEFAULT ingest pipelines are actually STREAMING DATA end to
+# end: (1) infra self-telemetry OTel -> HyperDX -> ClickHouse, (2) receiver ->
+# [kafka default_land ->] loader -> dfe.default. "The service is up so it must be
+# working" is exactly the trap this closes. Bypass only with
+# DFE_SKIP_INTEGRATION_TESTS=true (NOT recommended for a real deploy).
+echo ""
+if [ "${DFE_SKIP_INTEGRATION_TESTS:-false}" != "true" ]; then
+  if ! "${SCRIPT_DIR}/smoke-test-integration.sh" "${KUBECONFIG:-}"; then
+    echo ""
+    echo "  DEPLOY PODS HEALTHY but a CORE PIPELINE is NOT flowing -- see failures above."
+    echo "  Fix them and re-run, or DFE_SKIP_INTEGRATION_TESTS=true to bypass (not recommended)."
+    exit 1
+  fi
+else
+  echo "  Integration tests BYPASSED (DFE_SKIP_INTEGRATION_TESTS=true) -- data flow NOT verified."
+fi
+
 # Post-deploy ACCESS SUMMARY -- endpoints + how to log in + how to fetch creds.
 # Only reached on a verified-healthy deploy. Printed here AND written to a file.
 echo ""
