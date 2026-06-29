@@ -46,19 +46,23 @@ data:
   hyperdx: "2.16.0"              # TODO reconcile: this is the UPSTREAM HyperDX app version; our hyperi-hyperdx fork is v1.0.0. Pin the fork's published image tag. Tied to fork-update workstream.
   kafbat: "v1.5.0"               # ghcr.io/kafbat/kafka-ui -- Kafka web UI, bundled by default with the kafka substrate. v1.5.0 2026-04-20 (clears 7-day cooldown; no LTS line, latest stable). Follows the DFE integrated-app auth pattern (OIDC + ro/rw/admin RBAC + break-glass in secret store). Image on GHCR (public).
 
-# Layer 2: DFE apps (deployed by ArgoCD wave 5)
+# Layer 2: DFE apps (deployed by ArgoCD wave 5).
+# These are INTERNAL hyperi-io packages (no supply-chain cooldown) but each Rust
+# app has its OWN independent release line on GHCR -- they are NOT all "2.2.0".
+# Tags VERIFIED against ghcr.io/hyperi-io/<app> 2026-06-29. (Was incorrectly a
+# blanket 2.2.0, which would ImagePullBackOff on the real images.)
 apps:
-  dfe-engine: "2.2.0"
-  dfe-ui: "2.2.0"
-  dfe-receiver: "2.2.0"
-  dfe-loader: "2.2.0"
-  dfe-archiver: "2.2.0"
-  dfe-fetcher: "2.2.0"
-  dfe-transform-wasm: "2.2.0"
-  dfe-transform-vrl: "2.2.0"
-  dfe-transform-vector: "2.2.0"
-  dfe-transform-elastic: "2.2.0"
-  dfe-transform-splack: "2.2.0"
+  dfe-engine: "2.2.0"            # ghcr.io/hyperi-io/dfe-engine (Python, on 2.2.0)
+  dfe-ui: "2.2.0"               # NOT YET PUBLISHED to GHCR -- cannot deploy until built/pushed
+  dfe-receiver: "v1.15.15"      # independent release line
+  dfe-loader: "v1.18.7"
+  dfe-archiver: "v1.7.8"
+  dfe-fetcher: "v1.4.3"
+  dfe-transform-vrl: "v1.1.9"
+  dfe-transform-vector: "v1.0.22"
+  dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR
+  dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR
+  dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR
 
 # Terraform providers
 providers:
