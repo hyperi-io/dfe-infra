@@ -1,0 +1,43 @@
+{{- if eq .Values.kafka.mode "single" }}
+# Non-operator single broker has no User Operator to mint the SCRAM secret, so we
+# generate dfe-kafka-user/password IN-CLUSTER (ESO Password generator) -- same
+# secret SHAPE the operator paths produce, so clients authenticate identically
+# (SASL/SCRAM-SHA-512) regardless of tier. The broker bootstraps THIS user at
+# kafka-storage format time (--add-scram); see kafka-single.yaml.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ .Values.user.name }}-gen
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  length: 32
+  digits: 6
+  symbols: 0          # alphanumeric -- avoids JAAS / shell escaping in the broker config
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.user.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  refreshInterval: "0"
+  target:
+    name: {{ .Values.user.name }}
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        username: {{ .Values.user.name | quote }}
+        password: "{{ `{{ .password }}` }}"
+        sasl.mechanism: "SCRAM-SHA-512"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ .Values.user.name }}-gen
+{{- end }}

@@ -1,4 +1,4 @@
-{{- if and (eq .Values.kafka.provider "strimzi") (or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster")) }}
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
 {{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
 {{- $rf := min (int .Values.kafka.config.defaultReplicationFactor) $replicas }}
 {{- $isr := min (int .Values.kafka.config.minInsyncReplicas) $replicas }}

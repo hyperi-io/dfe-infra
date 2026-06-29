@@ -2,8 +2,8 @@
 {{- if not .Values.kafka.redpanda.acceptLicense }}
 {{- fail "Redpanda is BSL-licensed (source-available, not OSS): set kafka.redpanda.acceptLicense=true to proceed. Running DFE+redpanda as a service needs a commercial licence from BOTH HyperI (DFE) and Redpanda Data (redpanda) -- see docs/REDPANDA-LIMITATIONS.md." }}
 {{- end }}
-{{- if or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster") }}
-{{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
+{{- if eq .Values.kafka.mode "cluster" }}
+{{- $replicas := int .Values.kafka.replicas }}
 # Redpanda cluster, managed by the Redpanda operator (cluster.redpanda.com/v1alpha2).
 # First-class provider alongside Strimzi, run the SAME way: operator + thin CR.
 # SASL/SCRAM-512 on, TLS off (SCRAM over plaintext internal -- matches Strimzi's

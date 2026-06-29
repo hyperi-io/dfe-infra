@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 #  Project:      dfe-infra
 #  File:         smoke-test-data.sh
-#  Purpose:      Verify Layer 2 data platform components are healthy
+#  Purpose:      Verify Layer 2 data platform components are PRESENT/Ready.
+#                NOTE: these are LIVENESS checks ("pod Running / status Ready") --
+#                they do NOT prove the dependency chains work. For real chain/seam
+#                verification (ferretdb->PG, hyperdx->ferretdb, receiver->...->
+#                ClickHouse) run smoke-test-integration.sh.
+#                (Also stale: refs the Altinity CH label + dfe-pg/cnpg names from
+#                the pre-topology layout -- refresh for the official operator +
+#                slim/single/scale tiers.)
 #  Language:     Bash
 #
 #  License:      FSL-1.1-ALv2

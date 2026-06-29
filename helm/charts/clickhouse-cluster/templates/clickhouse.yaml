@@ -1,4 +1,13 @@
 {{- if eq .Values.clickhouse.mode "cluster" }}
+# ZOMBIE-PROBE NOTE (dfe-infra#4.2): the official ClickHouse operator's DEFAULT
+# readiness probe is `exec: bash -c "wget -qO- :8123 | grep -o Ok."` at
+# periodSeconds=1 -- a shell pipe whose children are NOT reaped by clickhouse-
+# server (PID 1), so every probe cycle leaks 2 zombies. The v0.0.5 CRD exposes NO
+# probe override (no containerTemplate.*Probe, no podTemplate.spec.containers), so
+# we CANNOT fix it from this CR. single mode (clickhouse-single.yaml) already uses
+# httpGet /ping and is zombie-free -- that is the slim/single default. For cluster
+# mode the fix is an OPERATOR bump to a version that defaults to httpGet (or runs a
+# reaping init); tracked as a flagged follow-up, not fixable here.
 apiVersion: clickhouse.com/v1alpha1
 kind: ClickHouseCluster
 metadata:

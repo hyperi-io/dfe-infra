@@ -13,6 +13,8 @@ spec:
     metadata:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
@@ -29,8 +31,10 @@ spec:
               value: {{ .Values.clickhouse.port | quote }}
             - name: CLICKHOUSE_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.otel.endpoint | quote }}
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-loader
           volumeMounts:

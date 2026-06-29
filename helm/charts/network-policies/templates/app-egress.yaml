@@ -1,0 +1,44 @@
+{{- if .Values.internetEgress.enabled }}
+{{- /*
+  Internet egress for apps that must INITIATE outbound (fetcher -> external APIs,
+  archiver -> object storage). NetworkPolicies are additive: the baseline policy
+  already grants DNS + intra-namespace + OTel to every pod; this layers internet
+  egress on top for ONLY the named apps. The ipBlock allows the configured CIDRs
+  (default 0.0.0.0/0) MINUS the cluster-internal ranges, so a compromised fetcher
+  cannot reach pod/service space. DNS is NOT repeated here (baseline covers it).
+*/}}
+{{- $eg := .Values.internetEgress }}
+{{- range $ns := .Values.dfeNamespaces }}
+{{- range $app := $eg.apps }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-internet-egress-{{ $app }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $app }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- range $cidr := $eg.allowCIDRs }}
+    - to:
+        - ipBlock:
+            cidr: {{ $cidr }}
+            {{- with $eg.exceptCIDRs }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        {{- range $eg.ports }}
+        - port: {{ .port }}
+          protocol: {{ .protocol | default "TCP" }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

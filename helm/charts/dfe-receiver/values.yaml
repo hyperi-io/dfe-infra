@@ -12,8 +12,28 @@ replicaCount: 1
 
 service:
   type: ClusterIP
-  httpPort: 8080
-  grpcPort: 8443
+
+# Receiver ingest listeners -- the SINGLE SOURCE OF TRUTH for ports. The engine
+# populates this from the receiver's enabled protocols (it configures the
+# receiver), and the chart renders the container ports, the internal Service, AND
+# the public LoadBalancer(s) from it. Enable a protocol in the engine overlay ->
+# its port is opened end to end (container + Service + LB), no chart edit.
+#   name     -- k8s port name (<=15 chars, lowercase alnum + '-')
+#   port     -- listen port
+#   protocol -- TCP | UDP  (netflow/syslog are UDP; grpc/https/lumberjack are TCP)
+#   exposed  -- include on the PUBLIC LoadBalancer when exposure.mode=public.
+#               health/admin stay false; data-ingest protocols are true.
+# NOTE: mixed TCP+UDP in one Service is not portable across cloud LBs, so the
+# public path renders ONE LoadBalancer per protocol family that has exposed
+# listeners (see templates/service.yaml).
+listeners:
+  - { name: http, port: 8080, protocol: TCP, exposed: false }   # health probes + OTLP/HTTP
+  - { name: grpc, port: 8443, protocol: TCP, exposed: true }     # OTLP/gRPC ingest
+  # Enable per the source's protocols via the engine overlay, e.g.:
+  # - { name: lumberjack, port: 5044, protocol: TCP, exposed: true }  # Beats/Elastic
+  # - { name: netflow,    port: 2055, protocol: UDP, exposed: true }  # NetFlow/IPFIX
+  # - { name: syslog-udp, port: 514,  protocol: UDP, exposed: true }  # RFC3164/5424
+  # - { name: syslog-tcp, port: 601,  protocol: TCP, exposed: true }  # RFC6587
 
 # Ingress exposure SEAM (design 2026-06-28). The receiver is a single-homed
 # airlock: it ingests externally and produces to LOCAL Kafka, which stays private
@@ -35,11 +55,22 @@ exposure:
   mode: internal              # internal | public
   public:
     serviceType: LoadBalancer
-    annotations: {}           # deployer's LB/WAF/security annotations
+    # SWAPPABLE LB implementation. loadBalancerClass selects WHO fulfils the
+    # Service: leave "" for the cluster default (cloud CCM -- AWS NLB / GCP / Azure
+    # via annotations), or set a class to target a specific provider, e.g.
+    # "service.k8s.aws/nlb" (AWS Load Balancer Controller) or a k8s-native
+    # MetalLB/kube-vip class on bare metal. Same chart, different overlay -> swap
+    # cloud LB <-> k8s LB with one value, no template change.
+    loadBalancerClass: ""
+    annotations: {}           # provider-specific LB config (AWS NLB scheme, etc.)
     loadBalancerSourceRanges: []   # deployer's CIDR allow-list (empty = all)
 
 receiver:
-  listenAddress: "100.64.0.1"   # CGNAT range per spec Section 2.9
+  # Bind on all pod interfaces. (Was 100.64.0.1 -- a CGNAT address that both
+  # contradicts the "100.64/10 is hyperi-vpn only" rule and cannot bind in a
+  # normal pod. The pod's network identity / exposure is handled by the Services
+  # + LBs above, not by binding a specific address.)
+  listenAddress: "0.0.0.0"
 
 kafka:
   bootstrapServers: ""

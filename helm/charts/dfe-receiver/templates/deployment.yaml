@@ -13,6 +13,8 @@ spec:
     metadata:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
@@ -20,18 +22,25 @@ spec:
         - name: receiver
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Container ports come from the SAME .Values.listeners list that drives
+          # the Services. When the engine's deployment-contracted overlay sets
+          # listeners (the receiver's actually-enabled protocols), these follow
+          # automatically; otherwise the chart default (http+grpc) applies.
           ports:
-            - name: http
-              containerPort: 8080
-            - name: grpc
-              containerPort: 8443
+            {{- range .Values.listeners }}
+            - name: {{ .name }}
+              containerPort: {{ .port }}
+              protocol: {{ .protocol | default "TCP" }}
+            {{- end }}
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             - name: DFE_RECEIVER_LISTEN_ADDRESS
               value: {{ .Values.receiver.listenAddress | quote }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.otel.endpoint | quote }}
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-receiver
           volumeMounts:

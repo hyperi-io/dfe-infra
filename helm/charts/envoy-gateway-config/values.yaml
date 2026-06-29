@@ -7,6 +7,19 @@ gateway:
   name: dfe-gateway
   namespace: envoy-gateway-system
   listenerPort: 443
+  # SWAPPABLE front-door LB for the whole HTTP plane (UI, HyperDX, engine API).
+  # Realised via an EnvoyProxy CR referenced by the GatewayClass (parametersRef).
+  # Swap cloud LB <-> k8s LB with the same values the receiver uses:
+  #   type            -- LoadBalancer (cloud/MetalLB) | NodePort (front a HW LB)
+  #   loadBalancerClass -- "" = cluster default CCM; "service.k8s.aws/nlb" for AWS;
+  #                      a MetalLB/kube-vip class on bare metal
+  #   annotations     -- provider LB config (NLB scheme, etc.)
+  #   loadBalancerSourceRanges -- optional CIDR allow-list at the edge
+  service:
+    type: LoadBalancer
+    loadBalancerClass: ""
+    annotations: {}
+    loadBalancerSourceRanges: []
 
 tls:
   issuerName: dfe-letsencrypt
@@ -50,12 +63,25 @@ routes:
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
 
-  gitea:
-    enabled: true
-    hostname: "gitea"         # deploy-repo git host (admin access)
-    backendService: dfe-gitea
-    backendNamespace: gitea
+  # Forgejo (in-cluster deploy-repo FALLBACK git host). Infra UI -> default
+  # internal; flip enabled:true to expose. Only deployed when no external git is
+  # supplied (see layer2-deploy-repo appset).
+  forgejo:
+    enabled: false
+    hostname: "forgejo"
+    backendService: dfe-forgejo
+    backendNamespace: forgejo
     backendPort: 3000
+
+  # Kafbat (Kafka UI). Infra UI -> default internal; flip enabled:true to expose
+  # (DFE test deployments do). Does its OWN OIDC (not an oidc.targetRoutes edge
+  # policy), so do NOT add it there -- see the integrated-app auth pattern.
+  kafbat:
+    enabled: false
+    hostname: "kafbat"
+    backendService: dfe-kafbat
+    backendNamespace: kafka
+    backendPort: 8080
 
 # OIDC — disabled by default (local auth is default).
 # Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.

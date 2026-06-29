@@ -1,4 +1,4 @@
-{{- if and (eq .Values.kafka.provider "strimzi") (or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster")) }}
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:

@@ -1,0 +1,95 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  # Kafbat config (Spring). Mounted and loaded via SPRING_CONFIG_ADDITIONAL_LOCATION.
+  # Secrets (OIDC client secret, break-glass password) come from env, not here.
+  application-local.yml: |
+    kafka:
+      clusters:
+        {{- range .Values.kafka.clusters }}
+        - name: {{ .name }}
+          bootstrapServers: {{ .bootstrapServers | quote }}
+          {{- with .properties }}
+          properties:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+    auth:
+      type: {{ .Values.auth.type }}
+    {{- if and (eq .Values.auth.type "OAUTH2") .Values.oidc.enabled }}
+    spring:
+      security:
+        oauth2:
+          client:
+            registration:
+              dfe:
+                provider: dfe
+                client-id: {{ .Values.oidc.clientId | quote }}
+                client-secret: ${OAUTH_CLIENT_SECRET}
+                scope: openid,profile,email,{{ .Values.oidc.rolesField }}
+                authorization-grant-type: authorization_code
+            provider:
+              dfe:
+                issuer-uri: {{ .Values.oidc.issuerUri | quote }}
+                user-name-attribute: email
+                custom-params:
+                  type: oauth
+                  roles-field: {{ .Values.oidc.rolesField }}
+    {{- end }}
+    {{- if .Values.rbac.enabled }}
+    rbac:
+      roles:
+        # admin -- full control (maps OIDC admin groups + the break-glass account).
+        - name: admin
+          clusters: [{{ range $i, $c := .Values.kafka.clusters }}{{ if $i }}, {{ end }}{{ $c.name }}{{ end }}]
+          subjects:
+            {{- range .Values.rbac.roles.admin.subjects }}
+            - { provider: oauth, type: role, value: {{ . | quote }} }
+            {{- end }}
+            {{- if .Values.breakGlass.enabled }}
+            - { provider: oauth, type: user, value: {{ .Values.breakGlass.username | quote }} }
+            {{- end }}
+          permissions:
+            - { resource: applicationconfig, actions: all }
+            - { resource: clusterconfig,     actions: all }
+            - { resource: topic,    value: ".*", actions: all }
+            - { resource: consumer, value: ".*", actions: all }
+            - { resource: schema,   value: ".*", actions: all }
+            - { resource: connect,  value: ".*", actions: all }
+            - { resource: ksql,                  actions: all }
+            - { resource: acl,                   actions: all }
+            - { resource: audit,                 actions: [view] }
+        # rw -- read + operate (produce, edit topics/schemas, reset consumers).
+        - name: rw
+          clusters: [{{ range $i, $c := .Values.kafka.clusters }}{{ if $i }}, {{ end }}{{ $c.name }}{{ end }}]
+          subjects:
+            {{- range .Values.rbac.roles.rw.subjects }}
+            - { provider: oauth, type: role, value: {{ . | quote }} }
+            {{- end }}
+          permissions:
+            - { resource: topic,    value: ".*", actions: [view, create, edit, messages_read, messages_produce] }
+            - { resource: consumer, value: ".*", actions: [view, reset_offsets] }
+            - { resource: schema,   value: ".*", actions: [view, create, edit] }
+            - { resource: connect,  value: ".*", actions: [view, edit, create] }
+            - { resource: clusterconfig,         actions: [view] }
+            - { resource: ksql,                  actions: all }
+        # ro -- read-only / observe.
+        - name: ro
+          clusters: [{{ range $i, $c := .Values.kafka.clusters }}{{ if $i }}, {{ end }}{{ $c.name }}{{ end }}]
+          subjects:
+            {{- range .Values.rbac.roles.ro.subjects }}
+            - { provider: oauth, type: role, value: {{ . | quote }} }
+            {{- end }}
+          permissions:
+            - { resource: topic,    value: ".*", actions: [view, messages_read] }
+            - { resource: consumer, value: ".*", actions: [view] }
+            - { resource: schema,   value: ".*", actions: [view] }
+            - { resource: connect,  value: ".*", actions: [view] }
+            - { resource: clusterconfig,         actions: [view] }
+    {{- end }}
+{{- end }}

@@ -275,6 +275,9 @@ echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install)"
 # existing Argo. Otherwise install DFE-owned Argo. (Full isolation -- a dedicated
 # dfe-system Argo scoped to dfe-* namespaces so it never couples to a host Argo --
 # is the Phase 0d adopt-path refinement.)
+# Argo HARDENING (dfe-infra#4): back off the controller timers so a degraded app
+# can never monopolise the control plane (self-heal 5s->30s, reconciliation
+# 180s->300s) and bound the repo-server timeout. Mirrors the devex platform guard.
 if dfe_should_install argocd applications.argoproj.io; then
   run helm upgrade --install argocd argo/argo-cd \
     --namespace argocd --create-namespace \
@@ -283,6 +286,9 @@ if dfe_should_install argocd applications.argoproj.io; then
     --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
     --set "externalRedis.port=6379" \
     --set-string 'configs.params.reposerver\.disable\.git\.modules=true' \
+    --set-string 'configs.cm.timeout\.reconciliation=300s' \
+    --set-string 'configs.params.controller\.self\.heal\.timeout\.seconds=30' \
+    --set-string 'configs.params.controller\.repo\.server\.timeout\.seconds=60' \
     --wait --timeout 10m
 else
   echo "  Using existing ArgoCD; registering DFE AppProjects + ApplicationSets into it."
@@ -322,6 +328,11 @@ echo "=========================================="
 echo "  Bootstrap complete (Build 1: static)    "
 echo "=========================================="
 echo "  ArgoCD will now sync Layer 2 (Build 2)  "
-echo "  ArgoCD UI: https://argocd.${DFE_DOMAIN} "
 echo "  Watch sync: kubectl -n argocd get app -w "
 echo "=========================================="
+
+# Post-deploy ACCESS SUMMARY -- endpoints + how to log in + how to fetch creds.
+# Printed here AND written to a file (the "now where do I go" landing info).
+echo ""
+"${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${DFE_ACCESS_OUT:-dfe-access.md}" || \
+  echo "  (access-summary skipped -- run bootstrap/access-summary.sh manually)"

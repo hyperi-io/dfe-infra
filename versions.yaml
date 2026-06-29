@@ -41,10 +41,10 @@ data:
   clickhouse-replicas: "1"       # default; overridden by profile (standard=1, scale=3)
   ferretdb: "2.7.0"              # 2025-11-10. 2.x requires DocumentDB PG ext; NOT in-place upgradable from 1.x (dump/restore). Pair with postgres-documentdb:17-0.107.0-ferretdb-2.7.0
   documentdb-pg: "17-0.107.0-ferretdb-2.7.0"  # FerretDB 2.x PG backend image tag
-  forgejo: "15.0.3"              # codeberg.org/forgejo/forgejo -- bundled deploy-repo FALLBACK (used only when no external GitHub/GitLab supplied). 15.0.3 LTS 2026-06-10 (18d old, clears cooldown; LTS line, supported to 2027-07). GPLv3+ run-unmodified -- fine for bundle-and-run (see plan). Chosen over Gitea (MIT) for community governance + maintenance; Gitea-API-compatible.
+  forgejo: "15.0.3"              # code.forgejo.org/forgejo/forgejo -- bundled deploy-repo FALLBACK (used only when no external GitHub/GitLab supplied). 15.0.3 LTS 2026-06-10 (18d old, clears cooldown; LTS line, supported to 2027-07). REGISTRY: code.forgejo.org (canonical), NOT codeberg.org -- codeberg's registry 503s under load (proven on bare-cluster test); code.forgejo.org served tag 200 (digest sha256:55bb42bec9abef5223744804f164e37d37b20df7e8b8b4807ba213ad4f071d6d). GPLv3+ run-unmodified -- fine for bundle-and-run (see plan). Chosen over Gitea (MIT) for community governance + maintenance; Gitea-API-compatible.
   otel-collector: "0.154.0"      # 2026-06-09. v0.155.0 (06-24) too fresh. Large jump from 0.114 -- review removed components.
   hyperdx: "2.16.0"              # TODO reconcile: this is the UPSTREAM HyperDX app version; our hyperi-hyperdx fork is v1.0.0. Pin the fork's published image tag. Tied to fork-update workstream.
-  gitea: "1.26.4"                # In-cluster deploy-repo git host
+  kafbat: "v1.5.0"               # ghcr.io/kafbat/kafka-ui -- Kafka web UI, bundled by default with the kafka substrate. v1.5.0 2026-04-20 (clears 7-day cooldown; no LTS line, latest stable). Follows the DFE integrated-app auth pattern (OIDC + ro/rw/admin RBAC + break-glass in secret store). Image on GHCR (public).
 
 # Layer 2: DFE apps (deployed by ArgoCD wave 5)
 apps:

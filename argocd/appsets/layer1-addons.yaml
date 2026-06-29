@@ -1,6 +1,14 @@
-# Layer 1 addons: cert-manager, ESO, KEDA, metrics-server, Reloader, operators.
+# Layer 1 addons: external-dns, KEDA, metrics-server, Reloader, CNPG operator.
 # Chart versions MUST match versions.yaml (the SSOT).
 # Envoy Gateway uses OCI and is deployed as a standalone app in bootstrap/.
+#
+# OWNERSHIP (dedup fix, dfe-infra#4): cert-manager + external-secrets are
+# detect-or-installed by bootstrap.sh -- they are needed BEFORE Argo (ESO backs
+# the ClusterSecretStore + repo creds; cert-manager backs the gateway certs). They
+# are deliberately NOT listed here, else Argo installs a SECOND copy alongside the
+# bootstrap one (two ESO cert-controllers + two cert-manager cainjectors churning
+# ~0.8 core, and double-reconciling every CR). bootstrap owns cert-manager+ESO;
+# Argo owns the rest.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -19,18 +27,8 @@ spec:
                   dfe.hyperi.io/managed: "true"
           - list:
               elements:
-                - chart: cert-manager
-                  repo: https://charts.jetstack.io
-                  version: "v1.20.2"
-                  namespace: cert-manager
-                  wave: "2"
-                  appProject: infra
-                - chart: external-secrets
-                  repo: https://charts.external-secrets.io
-                  version: "2.6.0"
-                  namespace: external-secrets
-                  wave: "2"
-                  appProject: infra
+                # cert-manager + external-secrets intentionally absent -- bootstrap
+                # owns them (see header). Adding them here re-introduces the dup.
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
                   version: "1.21.1"

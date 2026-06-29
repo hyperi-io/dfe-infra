@@ -1,5 +1,6 @@
-# Internal Service (always). ClusterIP -- reachable in-cluster + via the cluster
-# Gateway/LB on the owned domain. The exposure seam adds a public Service below.
+# Internal Service (always). ClusterIP -- reachable in-cluster. Carries EVERY
+# configured listener (.Values.listeners) so east-west producers and the health
+# probes hit the same ports the container listens on.
 apiVersion: v1
 kind: Service
 metadata:
@@ -9,20 +10,38 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    - port: {{ .Values.service.httpPort }}
-      targetPort: http
-      name: http
-    - port: {{ .Values.service.grpcPort }}
-      targetPort: grpc
-      name: grpc
+    {{- range .Values.listeners }}
+    - port: {{ .port }}
+      targetPort: {{ .name }}
+      protocol: {{ .protocol | default "TCP" }}
+      name: {{ .name }}
+    {{- end }}
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
 {{- if eq (.Values.exposure.mode | default "internal") "public" }}
+{{- /*
+  Public exposure: the receiver is a single-homed airlock -- it ingests
+  externally and produces to LOCAL Kafka, which stays private. EVERY listener
+  marked `exposed: true` is opened on a public LoadBalancer. Because mixed TCP+UDP
+  in one Service is not portable across cloud LBs, we render ONE LB per protocol
+  family that has exposed listeners (e.g. gRPC/lumberjack on the TCP LB,
+  netflow/syslog on the UDP LB). The LB implementation is SWAPPABLE via
+  exposure.public.loadBalancerClass + annotations (cloud NLB <-> k8s MetalLB).
+*/}}
+{{- $exposedTCP := list }}
+{{- $exposedUDP := list }}
+{{- range .Values.listeners }}
+  {{- if .exposed }}
+    {{- if eq (.protocol | default "TCP") "UDP" }}
+      {{- $exposedUDP = append $exposedUDP . }}
+    {{- else }}
+      {{- $exposedTCP = append $exposedTCP . }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $pub := .Values.exposure.public }}
+{{- if gt (len $exposedTCP) 0 }}
 ---
-# Public Service (exposure.mode=public). Deployer-supplied edge security:
-# serviceType + annotations (their cloud LB/WAF) + loadBalancerSourceRanges
-# allow-list. Phase 4 builds the AWS VPC public subnet + IGW behind this; Kafka
-# and the data plane stay private. DFE supplies a default posture later.
 apiVersion: v1
 kind: Service
 metadata:
@@ -30,23 +49,61 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
     dfe.hyperi.io/exposure: public
-  {{- with .Values.exposure.public.annotations }}
+  {{- with $pub.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.exposure.public.serviceType | default "LoadBalancer" }}
-  {{- with .Values.exposure.public.loadBalancerSourceRanges }}
+  type: {{ $pub.serviceType | default "LoadBalancer" }}
+  {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
+  loadBalancerClass: {{ $pub.loadBalancerClass }}
+  {{- end }}
+  {{- with $pub.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   ports:
-    - port: {{ .Values.service.httpPort }}
-      targetPort: http
-      name: http
-    - port: {{ .Values.service.grpcPort }}
-      targetPort: grpc
-      name: grpc
+    {{- range $exposedTCP }}
+    - port: {{ .port }}
+      targetPort: {{ .name }}
+      protocol: TCP
+      name: {{ .name }}
+    {{- end }}
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+{{- end }}
+{{- if gt (len $exposedUDP) 0 }}
+---
+# Separate UDP LoadBalancer (netflow / syslog-udp) -- mixed TCP+UDP in one
+# Service is not portable across cloud LB controllers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-public-udp
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    dfe.hyperi.io/exposure: public
+  {{- with $pub.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $pub.serviceType | default "LoadBalancer" }}
+  {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
+  loadBalancerClass: {{ $pub.loadBalancerClass }}
+  {{- end }}
+  {{- with $pub.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  ports:
+    {{- range $exposedUDP }}
+    - port: {{ .port }}
+      targetPort: {{ .name }}
+      protocol: UDP
+      name: {{ .name }}
+    {{- end }}
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+{{- end }}
 {{- end }}

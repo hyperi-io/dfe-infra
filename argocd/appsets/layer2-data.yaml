@@ -36,7 +36,7 @@ spec:
                   namespace: otel
                   wave: "4"
                   appProject: data
-                # NOTE: the in-cluster git server (gitea/forgejo) is NOT substrate.
+                # NOTE: the in-cluster git server (forgejo) is NOT substrate.
                 # It is the deploy-repo FALLBACK, deployed ONLY when no external git
                 # (GitHub/GitLab) is supplied -- see appsets/layer2-deploy-repo.yaml,
                 # gated on the dfe.hyperi.io/bundled-deploy-repo cluster label. The
@@ -47,6 +47,12 @@ spec:
                 - app: kafka
                   namespace: strimzi
                   wave: "4"
+                  appProject: data
+                # Kafbat (Kafka web UI) -- bundled by DEFAULT with the kafka
+                # substrate (single + scale). Wave 5 so it starts after the broker.
+                - app: kafbat
+                  namespace: kafka
+                  wave: "5"
                   appProject: data
   template:
     metadata:
@@ -59,8 +65,8 @@ spec:
       # SINGLE source: the pinned dfe-infra base chart + profile/cloud values.
       # Substrate is dfe-infra-STATIC at GA (per the engine<->infra boundary), so it
       # does NOT depend on the deploy repo. This is deliberate: making substrate
-      # multi-source on the in-cluster Gitea config repo created a self-dependency
-      # deadlock (Gitea is itself substrate -> could not render before Gitea was up)
+      # multi-source on the in-cluster Forgejo config repo created a self-dependency
+      # deadlock (Forgejo is itself substrate -> could not render before it was up)
       # and coupled substrate to a specific git provider. Engine-authored substrate
       # scaling ($values/infra overlay) is a v+0.1 addition, re-added then gated on
       # the deploy repo being ready.

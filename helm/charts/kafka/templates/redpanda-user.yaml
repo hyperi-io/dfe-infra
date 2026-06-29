@@ -1,5 +1,5 @@
 {{- if eq .Values.kafka.provider "redpanda" }}
-{{- if or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster") }}
+{{- if eq .Values.kafka.mode "cluster" }}
 # DFE service account on redpanda -- the operator's User CR, the direct analogue
 # of the Strimzi KafkaUser (kafka-user.yaml). Same SCRAM-512 mechanism, same ACLs
 # (topic '*': Read/Write/Create/Describe; consumer groups prefixed 'dfe-':
