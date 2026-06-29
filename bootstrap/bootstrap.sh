@@ -126,12 +126,16 @@ fi
 # given. If DFE_CONFIG_REPO_URL is set -> external mode (deployer also supplies
 # creds, see [4d] below); unset -> bundled Forgejo fallback.
 export DFE_CONFIG_REPO_REVISION="${DFE_CONFIG_REPO_REVISION:-main}"
-FORGEJO_ADMIN_USER="${DFE_FORGEJO_ADMIN_USER:-dfe}"
+# Admin user owns the bundled deploy repo. MUST match the dfe-engine chart's
+# DFE_GITOPS_REPO_URL owner (dfe-admin) -- the engine writes the repo, Argo (via
+# the cluster-secret config_repo_url annotation) reads it; if the owners differ
+# the appset resolves a non-existent repo and fans out zero apps.
+FORGEJO_ADMIN_USER="${DFE_FORGEJO_ADMIN_USER:-dfe-admin}"
 if [[ -n "${DFE_CONFIG_REPO_URL:-}" ]]; then
   export DFE_BUNDLED_DEPLOY_REPO="false"
   echo "Deploy repo: EXTERNAL git (${DFE_CONFIG_REPO_URL}) -- no in-cluster server."
 else
-  export DFE_CONFIG_REPO_URL="http://dfe-forgejo.forgejo.svc.cluster.local:3000/dfe/deploy.git"
+  export DFE_CONFIG_REPO_URL="http://dfe-forgejo.forgejo.svc.cluster.local:3000/${FORGEJO_ADMIN_USER}/deploy.git"
   export DFE_BUNDLED_DEPLOY_REPO="true"
   echo "Deploy repo: FALLBACK in-cluster Forgejo (no external git supplied)."
 fi
