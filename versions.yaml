@@ -13,7 +13,12 @@
 # Layer 1: Bootstrap components (installed by bootstrap.sh via read_versions.py)
 bootstrap:
   cert-manager: "v1.20.2"        # 2026-04-11
-  external-secrets: "2.6.0"      # 2026-06-07 (chart series is 2.x; app v2.6.x)
+  external-secrets: "2.5.0"      # 2026-05-15. Pinned back from chart 2.6.0: its
+  #                                cert-controller takes a blanket 401 Unauthorized
+  #                                on every watch (CRD/webhook/EndpointSlice) on
+  #                                RKE2 -> never Ready. 2.5.0 is the prior stable
+  #                                line and clears the 7-day cooldown; 2.7.0 too
+  #                                fresh (2026-06-26). Revisit when 2.7.x matures.
   argocd: "9.5.21"               # 2026-06-11 chart -> Argo CD app v3.x. 9.7.0 (06-22) too fresh. MAJOR jump from 7.8.x; gated apply.
   valkey: "8.1.8-alpine"         # image tag for bootstrap/templates/valkey.yaml (plain manifest, not a chart). 2026-06-02
   local-path-provisioner: "v0.0.36"  # storage detect-or-install fallback when the cluster has NO default StorageClass (bare RKE2/EKS). Includes the HelperPod template-injection security fix. 2026-01
