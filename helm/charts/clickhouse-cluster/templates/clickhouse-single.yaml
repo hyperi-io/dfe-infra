@@ -63,6 +63,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
+            # Server config.d overlay: allow the SQL_ custom-settings prefix so
+            # DFE tenant-isolation row policies can read
+            # getSetting('SQL_current_tenant_id'). See the ConfigMap below.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-custom.xml
+              subPath: dfe-custom.xml
           resources:
             {{- toYaml .Values.clickhouse.resources | nindent 12 }}
           readinessProbe:
@@ -77,6 +83,10 @@ spec:
               port: http
             initialDelaySeconds: 30
             periodSeconds: 15
+      volumes:
+        - name: custom-config
+          configMap:
+            name: {{ .Values.clickhouse.name }}-custom-config
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -88,4 +98,20 @@ spec:
         resources:
           requests:
             storage: {{ .Values.clickhouse.storage.size }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.clickhouse.name }}-custom-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  # Allow the SQL_ custom-settings prefix (server config) so DFE tenant isolation
+  # enforces. SQL_ is ClickHouse Cloud's built-in prefix; this self-hosted
+  # single-node CH must allow it here so the per-_org_id row policy can read
+  # getSetting('SQL_current_tenant_id'). Mounted into config.d by the StatefulSet.
+  dfe-custom.xml: |
+    <clickhouse>
+      <custom_settings_prefixes>SQL_</custom_settings_prefixes>
+    </clickhouse>
 {{- end }}

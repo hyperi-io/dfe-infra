@@ -40,6 +40,13 @@ spec:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
     extraConfig:
+      # Allow the SQL_ custom-settings prefix (server config) so DFE tenant
+      # isolation enforces: the per-_org_id RESTRICTIVE row policy reads
+      # getSetting('SQL_current_tenant_id') and the engine injects it per query.
+      # SQL_ is ClickHouse Cloud's built-in prefix; this self-hosted cluster must
+      # allow it here, else CH rejects every SQL_* setting and tenant scoping
+      # silently cannot apply. See dfe-engine governance/ch/models.py TENANT_SETTING.
+      custom_settings_prefixes: SQL_
       users:
         {{ .Values.clickhouse.users.loader.name }}:
           profile: default
