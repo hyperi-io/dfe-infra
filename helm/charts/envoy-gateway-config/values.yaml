@@ -10,6 +10,50 @@ gateway:
 
 tls:
   issuerName: dfe-letsencrypt
+
+  # CNSA 2.0: the wildcard leaf cert is ECDSA P-384 / SHA-384 (192-bit),
+  # not cert-manager's RSA-2048/SHA-256 default. Applied via the
+  # cert-manager private-key annotations on the Gateway (gateway-shim
+  # reads them), so the shim-issued dfe-wildcard-tls cert uses this key.
+  privateKey:
+    algorithm: ECDSA        # ECDSA | RSA
+    size: 384               # P-384 for ECDSA; 3072+ if RSA is ever forced
+    rotationPolicy: Always  # fresh key each renewal (algorithm agility)
+
+  # Edge TLS posture (Envoy Gateway ClientTrafficPolicy). Track 3 owns
+  # this; Track 1 owns the jwt_authn filter (templates/envoy-patch-policy.yaml).
+  edge:
+    enabled: true
+    # TLS 1.3 only. Envoy Gateway otherwise defaults to a TLS 1.2 floor,
+    # which admits AES-128 / CBC suites and P-256 ECDHE. Values MUST be
+    # quoted strings ("1.3"): an unquoted 1.3 parses as a float.
+    minVersion: "1.3"
+    maxVersion: "1.3"
+    # Key-exchange curves, in preference order. P-384 is the CNSA curve;
+    # X25519 stays for broad client compat and is the seam for the hybrid
+    # ML-KEM upgrade (X25519MLKEM768) once Envoy/BoringSSL ship it.
+    # (ciphers are not listed: TLS 1.3 fixes its AEAD suite set in
+    # BoringSSL, so a cipher list has no effect at minVersion 1.3.)
+    ecdhCurves:
+      - P-384
+      - X25519
+
+  # Internal mesh CA (Track 3 keystone). A self-signed root mints an
+  # ECDSA P-384 CA exposed as the `dfe-internal-ca` ClusterIssuer;
+  # backing-service certs (ClickHouse, Kafka, Mongo/FerretDB, CNPG, OTLP)
+  # chain to it so in-cluster TLS shares one trust root. Inert until a
+  # Certificate references the issuer -- adding it changes no running
+  # workload, so it is safe to land ahead of the per-service rollout.
+  internalCA:
+    enabled: true
+    issuerName: dfe-internal-ca
+    # A ClusterIssuer reads its CA secret from cert-manager's
+    # cluster-resource-namespace, so the CA cert + bootstrap Issuer live
+    # there (default: cert-manager).
+    namespace: cert-manager
+    duration: "87600h"     # 10y root (SHA-384 signature follows P-384)
+    renewBefore: "720h"    # 30d
+
   acme:
     email: ""
     server: "https://acme-v02.api.letsencrypt.org/directory"

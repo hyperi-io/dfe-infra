@@ -7,6 +7,11 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.tls.issuerName }}
+    # CNSA 2.0 leaf-cert key: ECDSA P-384 (cert-manager gateway-shim reads
+    # these to shape the auto-issued dfe-wildcard-tls Secret).
+    cert-manager.io/private-key-algorithm: {{ .Values.tls.privateKey.algorithm }}
+    cert-manager.io/private-key-size: {{ .Values.tls.privateKey.size | quote }}
+    cert-manager.io/private-key-rotation-policy: {{ .Values.tls.privateKey.rotationPolicy }}
 spec:
   gatewayClassName: dfe-envoy
   listeners:
