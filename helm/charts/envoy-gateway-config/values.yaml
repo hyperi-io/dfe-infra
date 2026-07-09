@@ -24,19 +24,39 @@ tls:
   # this; Track 1 owns the jwt_authn filter (templates/envoy-patch-policy.yaml).
   edge:
     enabled: true
-    # TLS 1.3 only. Envoy Gateway otherwise defaults to a TLS 1.2 floor,
-    # which admits AES-128 / CBC suites and P-256 ECDHE. Values MUST be
-    # quoted strings ("1.3"): an unquoted 1.3 parses as a float.
-    minVersion: "1.3"
+    # TLS floor. Default 1.2 = the commercial-safe `prod` posture (TLS 1.2
+    # minimum, 1.3 preferred) - broad client + enterprise-middlebox compat.
+    # Still removes SSLv3/TLS 1.0/1.1, and at 1.2 the cipher list below
+    # holds the line at AES-256-GCM. CNSA `highsec` deployments set
+    # minVersion "1.3" via a values overlay. Values MUST be quoted strings
+    # ("1.2"): an unquoted 1.2 parses as a float and is rejected.
+    minVersion: "1.2"
     maxVersion: "1.3"
-    # Key-exchange curves, in preference order. P-384 is the CNSA curve;
-    # X25519 stays for broad client compat and is the seam for the hybrid
-    # ML-KEM upgrade (X25519MLKEM768) once Envoy/BoringSSL ship it.
-    # (ciphers are not listed: TLS 1.3 fixes its AEAD suite set in
-    # BoringSSL, so a cipher list has no effect at minVersion 1.3.)
+    # Key-exchange groups, preference order:
+    # - X25519MLKEM768: hybrid post-quantum group giving real harvest-now-
+    #   decrypt-later protection on the wire today (TLS 1.3 group, IANA
+    #   0x11EC; mainstream in 2026: Chrome/Firefox/OpenSSL 3.5/Go 1.24/
+    #   BoringSSL). HONEST caveats: its PQC half is ML-KEM-768 (below CNSA
+    #   2.0's ML-KEM-1024) and its classical half is X25519 (not a NIST
+    #   curve). The CNSA-pure hybrid is SecP384r1MLKEM1024 (P-384 + ML-KEM-
+    #   1024) - specified but thin deployment; add it here (preferred) once
+    #   BoringSSL/Envoy accept the name. We enable the interoperable group
+    #   now for actual PQC protection over CNSA-purity.
+    # - P-384: CNSA 1.0 classical curve.  - X25519: broad client compat.
+    #   Non-PQC clients fall back to these, so offering the hybrid is a safe
+    #   strict upgrade, not a compatibility break.
+    # NB the accepted name is BoringSSL/Envoy-version-specific (older Envoy
+    # used X25519Kyber768Draft00); this cluster runs envoy v1.37.
     ecdhCurves:
+      - X25519MLKEM768
       - P-384
       - X25519
+    # AEAD suites offered at TLS 1.2 (ignored at 1.3, where BoringSSL fixes
+    # the suite set). AES-256-GCM first so a 1.2 fallback still lands on the
+    # CNSA symmetric target; no AES-128, no CBC.
+    ciphers:
+      - ECDHE-ECDSA-AES256-GCM-SHA384
+      - ECDHE-RSA-AES256-GCM-SHA384
 
   # Internal mesh CA (Track 3 keystone). A self-signed root mints an
   # ECDSA P-384 CA exposed as the `dfe-internal-ca` ClusterIssuer;

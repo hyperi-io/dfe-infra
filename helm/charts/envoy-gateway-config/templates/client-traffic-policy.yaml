@@ -1,7 +1,11 @@
 {{- if .Values.tls.edge.enabled }}
-# CNSA 2.0 edge TLS posture (Track 3). Pins the downstream (client ->
-# Envoy) handshake to TLS 1.3 with P-384 ECDHE, replacing Envoy Gateway's
-# default TLS 1.2 floor (which admits AES-128 / CBC suites and P-256).
+# Edge TLS posture (Track 3). Sets the downstream (client -> Envoy)
+# handshake to the selected profile floor (prod: TLS 1.2 min + AES-256-GCM
+# cipher list; highsec: TLS 1.3 only), P-384 ECDHE, and offers the hybrid
+# post-quantum group. Replaces Envoy Gateway's default (which admits
+# AES-128 / CBC and P-256). Classical suite is CNSA 1.0; symmetric is
+# CNSA 2.0; hybrid ML-KEM is the on-the-wire post-quantum step. See
+# docs/CNSA-STANDARD.md.
 #
 # Track boundary: this policy owns TLS termination parameters only. The
 # jwt_authn HTTP filter is Track 1's and lives in
@@ -23,4 +27,9 @@ spec:
     maxVersion: {{ .Values.tls.edge.maxVersion | quote }}
     ecdhCurves:
       {{- toYaml .Values.tls.edge.ecdhCurves | nindent 6 }}
+    {{- with .Values.tls.edge.ciphers }}
+    # Applied at TLS 1.2 only; ignored at 1.3 (BoringSSL fixes the suite).
+    ciphers:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
 {{- end }}
