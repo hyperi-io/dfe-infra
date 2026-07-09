@@ -63,10 +63,9 @@ dfe-infra/
 │   ├── tf-validate.yml       # Terraform/OpenTofu validate + test (matrix: both)
 │   └── helm-lint.yml         # Helm lint + ArgoCD YAML validation
 │
-├── hyperi-ai/                # AI standards submodule (read-only, auto-updates)
+├── CLAUDE.md                 # Project context for AI agents
 ├── DIRECTORY.md              # ← this file
 ├── SCOPE.md                  # Project scope and constraints
-├── STATE.md                  # Project state for AI context
 └── TODO.md                   # Task tracking
 ```
 
