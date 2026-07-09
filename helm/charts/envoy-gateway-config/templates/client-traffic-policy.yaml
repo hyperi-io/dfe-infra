@@ -1,0 +1,26 @@
+{{- if .Values.tls.edge.enabled }}
+# CNSA 2.0 edge TLS posture (Track 3). Pins the downstream (client ->
+# Envoy) handshake to TLS 1.3 with P-384 ECDHE, replacing Envoy Gateway's
+# default TLS 1.2 floor (which admits AES-128 / CBC suites and P-256).
+#
+# Track boundary: this policy owns TLS termination parameters only. The
+# jwt_authn HTTP filter is Track 1's and lives in
+# templates/envoy-patch-policy.yaml -- do not add JWT config here.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: dfe-edge-tls
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.name }}
+  tls:
+    minVersion: {{ .Values.tls.edge.minVersion | quote }}
+    maxVersion: {{ .Values.tls.edge.maxVersion | quote }}
+    ecdhCurves:
+      {{- toYaml .Values.tls.edge.ecdhCurves | nindent 6 }}
+{{- end }}

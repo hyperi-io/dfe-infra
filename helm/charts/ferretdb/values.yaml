@@ -21,6 +21,10 @@ postgresql:
   secretName: dfe-pg-app
   secretUserKey: username
   secretPasswordKey: password
+  # TLS to Postgres. require = encrypt always (CNSA now-step, no silent
+  # plaintext fallback). verify-full + sslrootcert = the CA-backed target.
+  sslmode: require
+  sslrootcert: ""   # e.g. /etc/pg-ca/ca.crt (mount the CNPG CA) for verify-full
 
 service:
   port: 27017
