@@ -14,6 +14,16 @@ variable "domain" {
   type        = string
 }
 
+variable "profile" {
+  description = "Deployment profile: standard (single-node) or scale (HA)"
+  type        = string
+  default     = "standard"
+  validation {
+    condition     = contains(["standard", "scale"], var.profile)
+    error_message = "profile must be 'standard' or 'scale'."
+  }
+}
+
 variable "nfs_server" {
   description = "NFS server hostname"
   type        = string

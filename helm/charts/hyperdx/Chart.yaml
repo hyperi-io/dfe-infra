@@ -1,9 +1,9 @@
 apiVersion: v2
 name: hyperdx
-description: HyperDX observability UI — Kibana-like search + dashboards over ClickHouse
+description: HyperDX observability UI (dfe-hyperdx fork) — header-SSO over ClickHouse
 type: application
-version: 0.1.0
-appVersion: "1.7.0"
+version: 0.2.0
+appVersion: "2.16.0"
 dependencies:
   - name: dfe-common
     version: "0.1.0"

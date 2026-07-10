@@ -14,8 +14,8 @@ output "DFE_DOMAIN" {
   value = var.domain
 }
 
-output "DFE_TENANCY" {
-  value = local.tenancy
+output "DFE_PROFILE" {
+  value = var.profile
 }
 
 output "DFE_REPO_URL" {

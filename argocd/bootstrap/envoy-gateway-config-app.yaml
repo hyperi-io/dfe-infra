@@ -1,7 +1,11 @@
-# Standalone Application for the in-repo envoy-gateway-config chart.
-# Cannot use the layer1-addons ApplicationSet because it templates
-# source.chart (external repos), while this needs source.path (git repo).
-# NOTE: repoURL and valueFiles cloud overlay are templated by bootstrap.sh via envsubst.
+# Standalone (multi-source) Application for the in-repo envoy-gateway-config chart.
+# Cannot use the layer1-addons ApplicationSet because it templates source.chart
+# (external repos), while this needs source.path (git repo).
+# NOTE: repoURL/cloud overlay/config-repo URL are templated by bootstrap.sh via envsubst.
+#
+# OIDC is engine-driven: dfe-engine renders envoy/oidc-values.yaml into the deploy
+# repo (domain + oidc providers + jwtAuthn). It is pulled here via the $values ref
+# with ignoreMissingValueFiles, so OIDC stays dormant until the engine publishes it.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -11,14 +15,19 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: infra
-  source:
-    repoURL: ${DFE_REPO_URL}
-    targetRevision: ${DFE_TARGET_REVISION}
-    path: helm/charts/envoy-gateway-config
-    helm:
-      valueFiles:
-        - ../../../argocd/values/common.yaml
-        - ../../../argocd/values/${DFE_CLOUD}.yaml
+  sources:
+    - repoURL: ${DFE_REPO_URL}
+      targetRevision: ${DFE_TARGET_REVISION}
+      path: helm/charts/envoy-gateway-config
+      helm:
+        ignoreMissingValueFiles: true
+        valueFiles:
+          - ../../../argocd/values/common.yaml
+          - ../../../argocd/values/${DFE_CLOUD}.yaml
+          - $values/envoy/oidc-values.yaml
+    - repoURL: ${DFE_CONFIG_REPO_URL}
+      targetRevision: ${DFE_CONFIG_REPO_REVISION}
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: envoy-gateway-system

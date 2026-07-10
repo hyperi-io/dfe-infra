@@ -1,0 +1,29 @@
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: {{ .Values.user.name }}
+  labels:
+    strimzi.io/cluster: {{ .Values.kafka.name }}
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  authentication:
+    type: {{ .Values.user.authentication.type }}
+  authorization:
+    type: simple
+    acls:
+      # Allow DFE services to produce/consume on all dfe topics
+      - resource:
+          type: topic
+          name: "*"
+          patternType: literal
+        operations: ["Read", "Write", "Create", "Describe"]
+      - resource:
+          type: group
+          # patternType: prefix means the name IS the literal prefix -- do NOT
+          # include a '*' glob (that would match groups starting "dfe-*", not
+          # "dfe-"). All DFE consumer groups are "dfe-"-prefixed.
+          name: "dfe-"
+          patternType: prefix
+        operations: ["Read", "Describe"]
+{{- end }}

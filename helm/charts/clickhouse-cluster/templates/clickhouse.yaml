@@ -1,3 +1,13 @@
+{{- if eq .Values.clickhouse.mode "cluster" }}
+# ZOMBIE-PROBE NOTE (dfe-infra#4.2): the official ClickHouse operator's DEFAULT
+# readiness probe is `exec: bash -c "wget -qO- :8123 | grep -o Ok."` at
+# periodSeconds=1 -- a shell pipe whose children are NOT reaped by clickhouse-
+# server (PID 1), so every probe cycle leaks 2 zombies. The v0.0.5 CRD exposes NO
+# probe override (no containerTemplate.*Probe, no podTemplate.spec.containers), so
+# we CANNOT fix it from this CR. single mode (clickhouse-single.yaml) already uses
+# httpGet /ping and is zombie-free -- that is the slim/single default. For cluster
+# mode the fix is an OPERATOR bump to a version that defaults to httpGet (or runs a
+# reaping init); tracked as a flagged follow-up, not fixable here.
 apiVersion: clickhouse.com/v1alpha1
 kind: ClickHouseCluster
 metadata:
@@ -30,6 +40,13 @@ spec:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
     extraConfig:
+      # Allow the SQL_ custom-settings prefix (server config) so DFE tenant
+      # isolation enforces: the per-_org_id RESTRICTIVE row policy reads
+      # getSetting('SQL_current_tenant_id') and the engine injects it per query.
+      # SQL_ is ClickHouse Cloud's built-in prefix; this self-hosted cluster must
+      # allow it here, else CH rejects every SQL_* setting and tenant scoping
+      # silently cannot apply. See dfe-engine governance/ch/models.py TENANT_SETTING.
+      custom_settings_prefixes: SQL_
       users:
         {{ .Values.clickhouse.users.loader.name }}:
           profile: default
@@ -39,8 +56,9 @@ spec:
           profile: readonly
           grants:
             - query: "GRANT SELECT ON {{ .Values.clickhouse.database }}.*"
-  {{- if .Values.nodeScheduling }}
+  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled }}
   podTemplate:
+    {{- if .Values.nodeScheduling }}
     {{- if .Values.nodeScheduling.nodeSelector }}
     nodeSelector:
       {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
@@ -49,4 +67,15 @@ spec:
     tolerations:
       {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
     {{- end }}
+    {{- end }}
+    {{- if .Values.clickhouse.podSpread.enabled }}
+    topologySpreadConstraints:
+      - maxSkew: {{ .Values.clickhouse.podSpread.maxSkew }}
+        topologyKey: {{ .Values.clickhouse.podSpread.topologyKey }}
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            {{- include "dfe-common.selectorLabels" . | nindent 12 }}
+    {{- end }}
   {{- end }}
+{{- end }}

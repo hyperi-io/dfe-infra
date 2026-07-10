@@ -25,6 +25,10 @@ override.tf.json
 # Scratch / temp
 .tmp/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Editor / OS
 .DS_Store
 .vscode/
@@ -64,8 +68,11 @@ docs/plans/*
 # Real files in project tree (Claude Code / Codex / Gemini / Cursor
 # all load these from project root natively). Local-only, never
 # committed -- mirrored in .git/info/exclude.
+CLAUDE.md
+TODO.md
 AGENTS.md
 GEMINI.md
+.claude/
 .codex/
 .cursor/
 .gemini/

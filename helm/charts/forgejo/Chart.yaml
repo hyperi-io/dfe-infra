@@ -1,0 +1,10 @@
+apiVersion: v2
+name: forgejo
+description: In-cluster Forgejo (FALLBACK deploy-repo host) -- used only when no external git (GitHub/GitLab) is supplied. dfe-engine writes config here and Argo CD watches it. Forgejo over Gitea -- community-governed, maintained, Gitea-API-compatible.
+type: application
+version: 0.1.0
+appVersion: "15.0.3"
+dependencies:
+  - name: dfe-common
+    version: "0.1.0"
+    repository: "file://../../library/dfe-common"

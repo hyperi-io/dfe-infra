@@ -12,7 +12,7 @@
 
 ### 1.1 Overall Application Architecture
 
-DFE Engine is a **dual-purpose Python package**: both a pip-installable library containing all DFE business logic, and a standalone **FastAPI API server** (entry point: `dfe-api`). It sits at the centre of the DFE architecture as the "big dials" management layer -- the component through which users and the UI configure data streams, deploy services, manage schemas, run hunts, and orchestrate Kubernetes deployments via Argo CD.
+DFE Engine is a **dual-purpose Python package**: both a pip-installable library containing all DFE business logic, and a standalone **FastAPI API server** (entry point: `dfe-engine`). It sits at the centre of the DFE architecture as the "big dials" management layer -- the component through which users and the UI configure data streams, deploy services, manage schemas, run hunts, and orchestrate Kubernetes deployments via Argo CD.
 
 **Architecture position:**
 

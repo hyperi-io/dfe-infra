@@ -19,8 +19,29 @@ imagePullSecrets: []
 # Override in cloud-specific values to target dedicated DFE node pools.
 nodeScheduling: {}
 
+# Self-monitoring telemetry (OTel) for the WHOLE stack -- selectable destination
+# so monitoring need not depend on the data pipeline working. Every app resolves
+# its OTLP endpoint via the dfe-common.otelEndpoint helper from telemetry.mode:
+#   hyperdx   (DEFAULT) -- push OTLP straight to HyperDX's own collector, so
+#             monitoring does NOT rely on receiver/loader/ClickHouse being up.
+#   receiver  -- push through the dfe-receiver ingest path (reuses the scalable
+#             pipeline; for truly large scale).
+#   external  -- push to a deployer-supplied OTLP endpoint (their own backend).
+#   prometheus -- no OTLP push; expose /metrics + scrape annotations for an
+#             external Prometheus to scrape.
+telemetry:
+  mode: hyperdx
+  hyperdxEndpoint: "dfe-hyperdx-otel.hyperdx.svc.cluster.local:4317"
+  receiverEndpoint: "dfe-receiver.dfe.svc.cluster.local:8443"
+  externalEndpoint: ""
+  prometheus:
+    port: 9090
+    path: /metrics
+
 otel:
-  endpoint: "otel-collector-gateway.otel.svc.cluster.local:4317"
+  # Explicit OVERRIDE of the resolved telemetry endpoint (empty -> use the
+  # telemetry.mode resolution above). Kept for per-deploy escape hatches.
+  endpoint: ""
   tls: false
 
 kafka:
@@ -29,8 +50,12 @@ kafka:
     enabled: true
     mechanism: SCRAM-SHA-512
 
+# Consumer-facing ClickHouse endpoint. Default = DFE's own single-mode service.
+# cluster mode: override host with the operator's service (confirm name at deploy);
+# external mode: override host with the supplied endpoint. (Seam: per-deploy this
+# should come from the dfe.hyperi.io/clickhouse_host annotation.)
 clickhouse:
-  host: "clickhouse.clickhouse.svc.cluster.local"
+  host: "dfe-clickhouse.clickhouse.svc.cluster.local"
   port: 8123
   database: dfe
 

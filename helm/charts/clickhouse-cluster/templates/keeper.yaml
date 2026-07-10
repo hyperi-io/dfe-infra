@@ -1,0 +1,53 @@
+{{- if eq .Values.clickhouse.mode "cluster" }}
+# DFE-owned ClickHouse Keeper for cluster mode (self-contained -- not shared with
+# any other product's keeper). Backs the ReplicatedMergeTree coordination.
+apiVersion: clickhouse.com/v1alpha1
+kind: KeeperCluster
+metadata:
+  name: {{ .Values.clickhouse.keeper.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.clickhouse.keeper.replicas }}
+  containerTemplate:
+    image:
+      repository: {{ .Values.clickhouse.keeper.image.repository }}
+      tag: {{ .Values.clickhouse.keeper.image.tag | quote }}
+    resources:
+      requests:
+        cpu: {{ .Values.clickhouse.keeper.resources.requests.cpu }}
+        memory: {{ .Values.clickhouse.keeper.resources.requests.memory }}
+      limits:
+        cpu: {{ .Values.clickhouse.keeper.resources.limits.cpu }}
+        memory: {{ .Values.clickhouse.keeper.resources.limits.memory }}
+  dataVolumeClaimSpec:
+    accessModes: ["ReadWriteOnce"]
+    resources:
+      requests:
+        storage: {{ .Values.clickhouse.keeper.storage.size }}
+    {{- if .Values.clickhouse.keeper.storage.storageClass }}
+    storageClassName: {{ .Values.clickhouse.keeper.storage.storageClass }}
+    {{- end }}
+  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled }}
+  podTemplate:
+    {{- if .Values.nodeScheduling }}
+    {{- if .Values.nodeScheduling.nodeSelector }}
+    nodeSelector:
+      {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
+    {{- end }}
+    {{- if .Values.nodeScheduling.tolerations }}
+    tolerations:
+      {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
+    {{- end }}
+    {{- end }}
+    {{- if .Values.clickhouse.podSpread.enabled }}
+    topologySpreadConstraints:
+      - maxSkew: {{ .Values.clickhouse.podSpread.maxSkew }}
+        topologyKey: {{ .Values.clickhouse.podSpread.topologyKey }}
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            {{- include "dfe-common.selectorLabels" . | nindent 12 }}
+    {{- end }}
+  {{- end }}
+{{- end }}

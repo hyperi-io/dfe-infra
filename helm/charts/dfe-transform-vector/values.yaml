@@ -37,3 +37,26 @@ resources:
 serviceAccount:
   create: true
   annotations: {}
+
+# KEDA autoscaling -- folded into the chart. ALL DFE pipeline apps scale on the
+# scalo ScalingPressure composite (dfe_scaling_pressure, 0-100), NOT raw Kafka CG
+# lag. The score already fuses CG lag + container-contract metrics (buffer, memory)
+# AND hard-gates to 0 when the downstream sink is unreachable (circuit-breaker
+# open) -- so we never scale out pods that would not help when the real bottleneck
+# is downstream. Transforms are multi-instance; the engine refines service_name
+# per instance. minReplicaCount stays 1 (scale-to-zero is 2.2 backlog).
+keda:
+  enabled: true
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  cooldownPeriod: 300
+  pollingInterval: 15
+  triggers:
+    - type: metrics-api
+      metadata:
+        targetValue: "70"   # scale out when avg pressure (0-100) exceeds this
+        url: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:8889/api/v1/query?query=avg(dfe_scaling_pressure{service_name=\"dfe-transform-vector\"})"
+        valueLocation: "data.result.0.value.1"
+
+# Node placement dial (overlay-settable; dfe-common.scheduling reads this).
+nodeScheduling: {}

@@ -13,6 +13,8 @@ spec:
     metadata:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
@@ -27,8 +29,10 @@ spec:
               value: {{ .Values.config.nextPublicApiUrl | quote }}
             - name: NEXT_PUBLIC_HYPERDX_URL
               value: {{ .Values.config.nextPublicHyperdxUrl | quote }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.otel.endpoint | quote }}
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-ui
           resources:

@@ -31,6 +31,8 @@ run_test() {
 echo "=== DFE Full Deployment Validation ==="
 echo "Running all smoke tests..."
 
+run_test "Readiness gate (pods Ready)" "smoke-test-readiness.sh"
+run_test "CORE e2e (pipelines streaming)" "smoke-test-integration.sh"
 run_test "Layer 1 (Bootstrap)" "smoke-test.sh"
 run_test "Layer 2 (Data Platform)" "smoke-test-data.sh"
 run_test "Auth & Ingress" "smoke-test-auth.sh"

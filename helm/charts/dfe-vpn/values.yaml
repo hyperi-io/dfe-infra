@@ -57,6 +57,8 @@ oidc:
   issuerUrl: ""
   clientId: ""
   clientSecretName: ""
+  secretStoreName: dfe-secret-store   # ESO ClusterSecretStore
+  providerName: vpn                    # Vault path: <project>/<env>/oidc/<providerName>
 
 otel:
   enabled: true

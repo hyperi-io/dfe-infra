@@ -1,0 +1,88 @@
+project: dfe
+component: kafbat
+env: local
+cloud: local
+
+# Deployed with the Kafka substrate in the single + scale tiers; gated OFF in the
+# slim tier (gRPC, no Kafka). profile-slim.yaml sets enabled:false.
+enabled: true
+
+# Kafbat UI (maintained Kafka UI fork). Pinned to v1.5.0 (2026-04-20, clears the
+# 7-day cooldown; no LTS line). Image on GHCR.
+image:
+  repository: ghcr.io/kafbat/kafka-ui
+  tag: ""              # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Kafka cluster(s) Kafbat manages. The engine/overlay points this at the deployed
+# Kafka (Strimzi/Redpanda) bootstrap + SASL/SCRAM creds. Empty by default.
+kafka:
+  clusters:
+    - name: dfe
+      bootstrapServers: ""        # e.g. dfe-kafka-bootstrap.kafka.svc:9092
+      # SASL/SCRAM-SHA-512 is the DFE standard; creds come from a mounted secret.
+      properties: {}
+
+# AUTH -- DFE default integrated-app pattern (see docs/ARCHITECTURE.md).
+#   primary  = OIDC (auth.type OAUTH2) against the SAME IdP as the rest of the
+#              stack; RBAC maps an OIDC group/claim to ro|rw|admin.
+#   recovery = a local break-glass admin in the secret store; flip auth.type to
+#              LOGIN_FORM with it when the IdP is unavailable.
+# Kafbat does its OWN OIDC (it cannot derive RBAC subjects from Envoy's X-Oidc-*
+# headers), but uses the same IdP + groups, so identity + roles stay stack-aligned.
+auth:
+  type: OAUTH2        # OAUTH2 (OIDC, default) | LOGIN_FORM (break-glass) | DISABLED
+
+oidc:
+  enabled: false      # set true + fill these via the deploy overlay (DFE OIDC SSoT)
+  issuerUri: ""
+  clientId: ""
+  clientSecretName: ""   # ESO-materialised Secret, key: client-secret
+  rolesField: groups     # OIDC token claim carrying the user's groups
+
+# Three stack-aligned RBAC roles. Subjects (the OIDC groups that map to each) are
+# set per-deployment in the overlay. Permissions below are the ro/rw/admin
+# semantics; tune resource scope in the overlay if needed.
+rbac:
+  enabled: true
+  roles:
+    ro:
+      subjects: []     # e.g. ["dfe-kafka-ro"] -- OIDC groups granted read-only
+    rw:
+      subjects: []     # OIDC groups granted read + operate
+    admin:
+      subjects: []     # OIDC groups granted full control
+
+# Local break-glass admin -- the ONLY non-OIDC path, for IdP-down / bootstrap.
+# Credentials live in the secret store (ESO from Vault, or an ESO-generated
+# password on a bare cluster). Maps to the admin role. NEVER a baked-in default.
+breakGlass:
+  enabled: true
+  username: dfe-breakglass
+  secretName: dfe-kafbat-breakglass   # keys: username, password
+  # Generate the password in-cluster when no external backend exists (bare
+  # cluster). Set false when ESO pulls it from Vault instead.
+  generate: true
+
+persistence:
+  enabled: false        # Kafbat is stateless when DYNAMIC_CONFIG is off
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+nodeScheduling: {}

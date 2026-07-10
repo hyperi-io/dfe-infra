@@ -1,0 +1,40 @@
+# Profile: slim -- the smallest k8s tier (below this -> dfe-docker compose).
+# gRPC transport, NO Kafka, pods sized to MINIMUM VIABLE + safety. Bare-minimum
+# footprint: engine + ui + the receiver/loader ingest path ONLY. archiver,
+# fetcher and the transform workers are NOT deployed by default (the slim deploy
+# repo simply omits their values/<svc>-<inst>-values.yaml files; add them later).
+# No web infra UIs unless cheap (Kafbat off -- no Kafka anyway; Argo CD runs
+# headless; Forgejo only as the deploy-repo fallback). Merged after common.yaml +
+# <cloud>.yaml. Keys unknown to a chart are ignored by Helm.
+
+# DFE service deployments -- minimum viable + a little safety headroom.
+replicaCount: 1
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 500m
+    memory: 384Mi
+
+keda:
+  minReplicas: 1
+  maxReplicas: 2
+  scalingPressureThreshold: "0.75"
+
+# ClickHouse -- single standalone node (keeperless, MergeTree).
+clickhouse:
+  mode: single
+  replicas: 1
+  shardsCount: 1
+
+# Kafka -- DISABLED. slim uses gRPC transport (receiver -> loader direct).
+kafka:
+  mode: disabled
+
+# Kafbat -- not deployed (no Kafka to manage in slim).
+enabled: false
+
+# CNPG -- single instance (no HA).
+cluster:
+  instances: 1

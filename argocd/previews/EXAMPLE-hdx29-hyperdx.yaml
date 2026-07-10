@@ -1,0 +1,36 @@
+# DRAFT EXAMPLE 2026-07-08 -- one preview-app spec (appset git-generator input).
+#
+# This is the EXACT field shape the preview ApplicationSet consumes
+# (argocd/appsets/preview-apps.yaml, git-files generator). ONE file = ONE Argo
+# Application = one (preview, service) pair. Copy to `<name>-<service>.yaml`
+# (drop the EXAMPLE- prefix) under argocd/previews/ to declare a preview, and
+# delete the file to tear it down (Argo prunes). The appset runs with
+# missingkey=error, so EVERY field below is REQUIRED -- an omitted key fails
+# rendering. The EXAMPLE- prefix is excluded by the appset glob, so this file
+# never renders an app itself.
+#
+# This example = the HyperDX 2.29 eyeball, built from the dfe-hyperdx fork
+# branch chore/upstream-sync-2.29 and pushed to the Harbor dfe-preview project.
+#
+# Design + open decisions: docs/plans/2026-07-08-branch-preview-cycle.md
+# NEEDS-OK to apply: applying the appset mutates the shared cluster.
+
+name: hdx29                                  # -> namespace dfe-preview-hdx29 (derived),
+                                             #    app preview-hdx29-hyperdx
+service: hyperdx                             # selects the image-override branch in the appset
+chart: hyperdx                               # helm/charts/<chart> deployed for this app
+infra_revision: main                         # dfe-infra ref supplying the CHART source
+registry: inhyperi.io/dfe-preview            # global.registry (Harbor preview project)
+image: inhyperi.io/dfe-preview/hyperdx:hdx29-abc1234   # built preview image (repo:tag)
+
+# CONTEXT (not consumed by the appset -- operator intent, for humans):
+#   owner    derek         -- who to ping, GC owner on the shared cluster.
+#   profile  preview-slim  -- single CH, Kafka off, no fetcher/transforms (light).
+#   The `image` tag is built + pushed by preview.sh (dfe-hyperdx @ the branch
+#   above). Rust apps (receiver/loader) stay :latest from Harbor `dfe`, and
+#   fetcher/transforms are out of preview-slim, so there are no other builds.
+#
+# A MULTI-SERVICE preview = more files sharing the same <name>: add
+# hdx29-engine.yaml (service: engine, chart: dfe-engine, its own image) and both
+# land in namespace dfe-preview-hdx29. CONCURRENT previews = more <name>s:
+# dev-*.yaml (shared, tracks main), kaz-*.yaml, derek-*.yaml -- each its own ns.

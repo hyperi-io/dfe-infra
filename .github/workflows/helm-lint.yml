@@ -7,11 +7,17 @@ on:
     paths:
       - 'helm/**'
       - 'argocd/**'
+      - 'bootstrap/**'
+      - 'versions.yaml'
+      - 'scripts/check_versions_drift.py'
       - '.github/workflows/helm-lint.yml'
   pull_request:
     paths:
       - 'helm/**'
       - 'argocd/**'
+      - 'bootstrap/**'
+      - 'versions.yaml'
+      - 'scripts/check_versions_drift.py'
       - '.github/workflows/helm-lint.yml'
 
 jobs:
@@ -20,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Version drift check (versions.yaml is SSoT)
+        run: python3 scripts/check_versions_drift.py
 
       - name: Install Helm
         uses: azure/setup-helm@v4

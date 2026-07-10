@@ -1,10 +1,16 @@
 {{- if .Values.oidc.enabled }}
-{{- range .Values.oidc.providers }}
+{{- range $provider := .Values.oidc.providers }}
+{{- range $route := $.Values.oidc.targetRoutes }}
 ---
+# One SecurityPolicy per (provider x interactive route). Each route gets its
+# OWN redirectURL on its OWN hostname so the OIDC session cookie is set on the
+# host the user is actually on (a single shared redirectURL would break OIDC on
+# every subdomain except the callback host). Universal: add a route to
+# oidc.targetRoutes and it is fronted automatically -- no policy-code change.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
-  name: dfe-oidc-{{ .name }}
+  name: dfe-oidc-{{ $provider.name }}-{{ $route.name }}
   namespace: {{ $.Values.gateway.namespace }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
@@ -12,17 +18,18 @@ spec:
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      name: dfe-engine
+      name: {{ $route.name }}
   oidc:
     provider:
-      issuer: {{ .issuerUrl }}
-    clientID: {{ .clientId }}
+      issuer: {{ $provider.issuerUrl }}
+    clientID: {{ $provider.clientId }}
     clientSecret:
-      name: {{ .clientSecretName }}
+      name: {{ $provider.clientSecretName | default (printf "dfe-oidc-%s" $provider.name) }}
       namespace: {{ $.Values.gateway.namespace }}
     scopes:
-      {{- toYaml (.scopes | default (list "openid" "email" "profile")) | nindent 6 }}
-    redirectURL: "https://dfe.{{ $.Values.domain }}/oauth2/callback"
+      {{- toYaml ($provider.scopes | default (list "openid" "email" "profile")) | nindent 6 }}
+    redirectURL: "https://{{ $route.hostname }}.{{ $.Values.domain }}/oauth2/callback"
     logoutPath: "/oauth2/logout"
+{{- end }}
 {{- end }}
 {{- end }}

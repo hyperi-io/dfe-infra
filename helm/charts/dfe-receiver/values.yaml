@@ -12,11 +12,65 @@ replicaCount: 1
 
 service:
   type: ClusterIP
-  httpPort: 8080
-  grpcPort: 8443
+
+# Receiver ingest listeners -- the SINGLE SOURCE OF TRUTH for ports. The engine
+# populates this from the receiver's enabled protocols (it configures the
+# receiver), and the chart renders the container ports, the internal Service, AND
+# the public LoadBalancer(s) from it. Enable a protocol in the engine overlay ->
+# its port is opened end to end (container + Service + LB), no chart edit.
+#   name     -- k8s port name (<=15 chars, lowercase alnum + '-')
+#   port     -- listen port
+#   protocol -- TCP | UDP  (netflow/syslog are UDP; grpc/https/lumberjack are TCP)
+#   exposed  -- include on the PUBLIC LoadBalancer when exposure.mode=public.
+#               health/admin stay false; data-ingest protocols are true.
+# NOTE: mixed TCP+UDP in one Service is not portable across cloud LBs, so the
+# public path renders ONE LoadBalancer per protocol family that has exposed
+# listeners (see templates/service.yaml).
+listeners:
+  - { name: http, port: 8080, protocol: TCP, exposed: false }   # health probes + OTLP/HTTP
+  - { name: grpc, port: 8443, protocol: TCP, exposed: true }     # OTLP/gRPC ingest
+  # Enable per the source's protocols via the engine overlay, e.g.:
+  # - { name: lumberjack, port: 5044, protocol: TCP, exposed: true }  # Beats/Elastic
+  # - { name: netflow,    port: 2055, protocol: UDP, exposed: true }  # NetFlow/IPFIX
+  # - { name: syslog-udp, port: 514,  protocol: UDP, exposed: true }  # RFC3164/5424
+  # - { name: syslog-tcp, port: 601,  protocol: TCP, exposed: true }  # RFC6587
+
+# Ingress exposure SEAM (design 2026-06-28). The receiver is a single-homed
+# airlock: it ingests externally and produces to LOCAL Kafka, which stays private
+# regardless. This reserves the PUBLIC ingress path so a richer deploy is a values
+# flip, NOT a chart change. The overlay (198.18/15) + Kafka never face the public.
+#
+# mode:
+#   internal (default) -- ClusterIP only. Reach it via the cluster Gateway/LB on
+#     the owned domain; the DEPLOYER applies whatever ingress-path security they
+#     prefer in front (their cloud LB / WAF / mTLS / API gateway). DFE ships a
+#     sensible default public posture LATER; today the choice is the deployer's.
+#   public -- also render a public Service (Phase 4 builds the AWS VPC public
+#     subnet + IGW behind it). serviceType/annotations/loadBalancerSourceRanges
+#     are deployer-supplied so they bring their own edge security.
+#
+# A VPN INBOUND path (agents dialling in via the hyperi-vpn server, OpenVPN/
+# WireGuard) is a SEPARATE future addition -- intentionally NOT modelled here yet.
+exposure:
+  mode: internal              # internal | public
+  public:
+    serviceType: LoadBalancer
+    # SWAPPABLE LB implementation. loadBalancerClass selects WHO fulfils the
+    # Service: leave "" for the cluster default (cloud CCM -- AWS NLB / GCP / Azure
+    # via annotations), or set a class to target a specific provider, e.g.
+    # "service.k8s.aws/nlb" (AWS Load Balancer Controller) or a k8s-native
+    # MetalLB/kube-vip class on bare metal. Same chart, different overlay -> swap
+    # cloud LB <-> k8s LB with one value, no template change.
+    loadBalancerClass: ""
+    annotations: {}           # provider-specific LB config (AWS NLB scheme, etc.)
+    loadBalancerSourceRanges: []   # deployer's CIDR allow-list (empty = all)
 
 receiver:
-  listenAddress: "100.64.0.1"   # CGNAT range per spec Section 2.9
+  # Bind on all pod interfaces. (Was 100.64.0.1 -- a CGNAT address that both
+  # contradicts the "100.64/10 is hyperi-vpn only" rule and cannot bind in a
+  # normal pod. The pod's network identity / exposure is handled by the Services
+  # + LBs above, not by binding a specific address.)
+  listenAddress: "0.0.0.0"
 
 kafka:
   bootstrapServers: ""
@@ -42,3 +96,24 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+
+# KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
+# The engine/overlay drives these via the per-instance values file. Default
+# trigger is the OTel-native scaling-pressure metric (NO Prometheus server).
+# minReplicaCount stays 1 -- scale-to-zero is 2.2 backlog; set min/idle to 0 via
+# the overlay to opt this pipeline app in later.
+keda:
+  enabled: true
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  cooldownPeriod: 120
+  pollingInterval: 15
+  triggers:
+    - type: metrics-api
+      metadata:
+        targetValue: "70"
+        url: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:8889/api/v1/query?query=avg(dfe_scaling_pressure{service_name=\"dfe-receiver\"})"
+        valueLocation: "data.result.0.value.1"
+
+# Node placement dial (overlay-settable; dfe-common.scheduling reads this).
+nodeScheduling: {}

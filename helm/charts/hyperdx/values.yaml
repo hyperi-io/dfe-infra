@@ -3,14 +3,16 @@ component: hyperdx
 env: local
 cloud: local
 
+# dfe-hyperdx fork image (combined API + App). CONFIRM the published image
+# name/tag from the fork's CI before first deploy.
 image:
-  repository: ghcr.io/hyperdx/hyperdx
-  tag: ""  # defaults to Chart.appVersion
+  repository: ghcr.io/hyperi-io/dfe-hyperdx
+  tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
-# HyperDX connects to:
+# Telemetry ClickHouse (external -- the cluster's clickhouse).
 clickhouse:
   host: dfe-clickhouse.clickhouse.svc.cluster.local
   port: 8123
@@ -19,11 +21,36 @@ clickhouse:
   secretName: clickhouse-admin-password
   secretKey: password
 
-# MongoDB-compatible metadata store (FerretDB over CNPG PG17)
+# Mongo-protocol metadata store (FerretDB, deployed separately).
+# NOTE: the fork targets FerretDB 2.7 (DocumentDB Postgres extension). The
+# existing dfe-infra ferretdb app is 1.24 on vanilla CNPG PG17 -- confirm/upgrade
+# before deploy. Creds come from the ferretdb secret.
 mongodb:
-  uri: "mongodb://dfe-ferretdb.ferretdb.svc.cluster.local:27017/hyperdx"
+  uri: "mongodb://hyperdx:hyperdx@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authMechanism=PLAIN"
 
-# OTLP ingest endpoint (receives telemetry from OTel Collector Path A)
+# DFE auth: trust Envoy/oauth2-proxy identity headers (no HyperDX login).
+# Header names map the UNIVERSAL DFE contract (X-Oidc-Subject / X-Oidc-Groups)
+# onto the fork's DFE_AUTH_HEADER_* config.
+dfeAuth:
+  enabled: true
+  mode: oidc-proxy
+  headerEmail: x-oidc-subject
+  headerGroups: x-oidc-groups
+  defaultTeam: dfe
+
+# Casbin dropped (DFE authz standard, Cut A): dfe-engine is the ONE PDP and
+# CH GRANTs are the authoritative data control, so hyperdx needs IDENTITY only
+# (the dfeAuth header seam above) -- no per-route policy engine, no Postgres
+# policy store. See project_dfe_authz_standard / project_hyperdx_embed.
+
+# DEFAULT_CONNECTIONS bootstrap (JSON array). dfe-engine renders this from its
+# ConnectionConfig (generate_default_connections_json); secret-backed.
+defaultConnections:
+  enabled: false
+  secretName: dfe-hyperdx-connections   # key: DEFAULT_CONNECTIONS
+
+# OTLP ingest (Path A: HyperDX collector). Path B replaces this with the DFE
+# receiver/loader; toggle off when using DFE ingestion.
 otlp:
   enabled: true
   grpcPort: 4317
@@ -32,6 +59,7 @@ otlp:
 service:
   type: ClusterIP
   port: 8080
+  apiPort: 8000
 
 resources:
   requests:

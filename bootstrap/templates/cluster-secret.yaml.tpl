@@ -9,16 +9,26 @@ metadata:
   labels:
     argocd.argoproj.io/secret-type: cluster
     dfe.hyperi.io/managed: "true"
+    dfe.hyperi.io/profile: "${DFE_PROFILE}"
+    # "true" only when no external git was supplied -> deploy the bundled Forgejo
+    # fallback (gated in appsets/layer2-deploy-repo.yaml). External GitHub/GitLab
+    # deploys set "false" and no in-cluster git server is created.
+    dfe.hyperi.io/bundled-deploy-repo: "${DFE_BUNDLED_DEPLOY_REPO}"
   annotations:
     # Identity
     dfe.hyperi.io/env: "${DFE_ENV}"
     dfe.hyperi.io/cloud: "${DFE_CLOUD}"
     dfe.hyperi.io/region: "${DFE_REGION}"
     dfe.hyperi.io/domain: "${DFE_DOMAIN}"
-    dfe.hyperi.io/tenancy: "${DFE_TENANCY}"
+    dfe.hyperi.io/profile: "${DFE_PROFILE}"
     # GitOps source
     dfe.hyperi.io/repo_url: "${DFE_REPO_URL}"
     dfe.hyperi.io/target_revision: "${DFE_TARGET_REVISION}"
+    # Deploy-specific gitops repo (dfe-engine writes, Argo watches). Defaults to
+    # the in-cluster Forgejo service (owner dfe-admin); may point at external
+    # GitHub/GitLab instead. MUST match the engine's DFE_GITOPS_REPO_URL.
+    dfe.hyperi.io/config_repo_url: "${DFE_CONFIG_REPO_URL}"
+    dfe.hyperi.io/config_repo_revision: "${DFE_CONFIG_REPO_REVISION}"
     # Infrastructure outputs (from Terraform)
     dfe.hyperi.io/storage_class: "${DFE_STORAGE_CLASS}"
     dfe.hyperi.io/dfe_namespace: "${DFE_NAMESPACE}"

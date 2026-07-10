@@ -1,6 +1,14 @@
-# Layer 1 addons: cert-manager, ESO, KEDA, metrics-server, Reloader, operators.
+# Layer 1 addons: external-dns, KEDA, metrics-server, Reloader, CNPG operator.
 # Chart versions MUST match versions.yaml (the SSOT).
 # Envoy Gateway uses OCI and is deployed as a standalone app in bootstrap/.
+#
+# OWNERSHIP (dedup fix, dfe-infra#4): cert-manager + external-secrets are
+# detect-or-installed by bootstrap.sh -- they are needed BEFORE Argo (ESO backs
+# the ClusterSecretStore + repo creds; cert-manager backs the gateway certs). They
+# are deliberately NOT listed here, else Argo installs a SECOND copy alongside the
+# bootstrap one (two ESO cert-controllers + two cert-manager cainjectors churning
+# ~0.8 core, and double-reconciling every CR). bootstrap owns cert-manager+ESO;
+# Argo owns the rest.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -19,56 +27,42 @@ spec:
                   dfe.hyperi.io/managed: "true"
           - list:
               elements:
-                - chart: cert-manager
-                  repo: https://charts.jetstack.io
-                  version: "v1.20.1"
-                  namespace: cert-manager
-                  wave: "2"
-                  appProject: infra
-                - chart: external-secrets
-                  repo: https://charts.external-secrets.io
-                  version: "2.2.0"
-                  namespace: external-secrets
-                  wave: "2"
-                  appProject: infra
+                # cert-manager + external-secrets intentionally absent -- bootstrap
+                # owns them (see header). Adding them here re-introduces the dup.
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
-                  version: "1.20.0"
+                  version: "1.21.1"
                   namespace: external-dns
                   wave: "2"
                   appProject: infra
                 - chart: keda
                   repo: https://kedacore.github.io/charts
-                  version: "2.19.0"
+                  version: "2.20.1"
                   namespace: keda
                   wave: "3"
                   appProject: infra
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
-                  version: "3.13.0"
+                  version: "3.13.1"
                   namespace: kube-system
                   wave: "3"
                   appProject: infra
                 - chart: reloader
                   repo: https://stakater.github.io/stakater-charts
-                  version: "2.2.9"
+                  version: "2.2.12"
                   namespace: reloader
                   wave: "3"
                   appProject: infra
                 - chart: cloudnative-pg
                   repo: https://cloudnative-pg.github.io/charts
-                  version: "0.27.1"
+                  version: "0.28.3"
                   namespace: cnpg-system
                   wave: "3"
                   appProject: infra
-                - chart: strimzi-kafka-operator
-                  repo: https://strimzi.io/charts/
-                  version: "0.51.0"
-                  namespace: strimzi
-                  wave: "3"
-                  appProject: infra
-                # ClickHouse operator (clickhouse.com) — for devex, already installed
-                # by hyperi-infra. TODO: find helm repo for standalone deployments.
+                # strimzi-kafka-operator (Kafka substrate) and clickhouse-operator
+                # (clickhouse.com CRDs) are cluster-only operators: deployed in the
+                # scale profile via appsets/layer-scale.yaml (cluster-label gated).
+                # Single/standard CH uses a plain StatefulSet -- no operator.
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'

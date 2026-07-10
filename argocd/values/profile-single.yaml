@@ -1,0 +1,40 @@
+# Profile: single -- single node of EVERYTHING, but WITH Kafka (the difference
+# from slim). All components run one replica; pods are sized for RELIABILITY (more
+# headroom than slim's minimum-viable). Merged after common.yaml + <cloud>.yaml.
+# Keys unknown to a chart are ignored by Helm.
+
+# DFE service deployments -- 1 pod each, reliability-sized.
+replicaCount: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+keda:
+  minReplicas: 1
+  maxReplicas: 3
+  scalingPressureThreshold: "0.7"
+
+# ClickHouse -- single standalone node (keeperless, MergeTree).
+clickhouse:
+  mode: single
+  replicas: 1
+  shardsCount: 1
+
+# Kafka -- ENABLED, single broker. (This is what makes `single` != `slim`.)
+# NOTE: the kafka chart is operator-only (Strimzi/Redpanda CR), so single-broker
+# Kafka needs the Strimzi operator present in the single tier too -- currently it
+# is installed scale-only (layer-scale.yaml). See the DESIGN flag: gate the
+# operator install on (single|scale), or add a non-operator single-broker path.
+kafka:
+  mode: single
+
+# Kafbat (Kafka UI) -- deployed with Kafka.
+enabled: true
+
+# CNPG -- single instance (no HA at this tier).
+cluster:
+  instances: 1

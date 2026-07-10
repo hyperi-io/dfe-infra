@@ -1,0 +1,51 @@
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
+{{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
+{{- $rf := min (int .Values.kafka.config.defaultReplicationFactor) $replicas }}
+{{- $isr := min (int .Values.kafka.config.minInsyncReplicas) $replicas }}
+# Strimzi KRaft + KafkaNodePool model (current API). replicas/storage/resources
+# live in the KafkaNodePool (see kafka-nodepool.yaml); the Kafka CR holds the
+# cluster-wide config only.
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: {{ .Values.kafka.name }}
+  annotations:
+    strimzi.io/kraft: enabled
+    strimzi.io/node-pools: enabled
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  kafka:
+    version: {{ .Values.kafka.version }}
+    # Simple (ACL) authorization -- required for the KafkaUser's simple ACLs to
+    # apply. Without it the User Operator rejects the user ("Simple authorization
+    # ACL rules are configured but not supported") and never mints its secret.
+    # Strimzi auto-adds its cluster + entity operators to super.users.
+    authorization:
+      type: simple
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+        authentication:
+          type: scram-sha-512
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        authentication:
+          type: scram-sha-512
+    config:
+      offsets.topic.replication.factor: {{ $rf }}
+      transaction.state.log.replication.factor: {{ $rf }}
+      transaction.state.log.min.isr: {{ $isr }}
+      default.replication.factor: {{ $rf }}
+      min.insync.replicas: {{ $isr }}
+      num.partitions: {{ .Values.kafka.config.numPartitions }}
+      log.retention.hours: {{ .Values.kafka.config.logRetentionHours }}
+      compression.type: {{ .Values.kafka.config.compressionType }}
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+{{- end }}

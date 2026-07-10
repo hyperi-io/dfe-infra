@@ -35,13 +35,25 @@ postgresql:
 otel:
   endpoint: ""
 
+# Gitops deploy repo -- dfe-engine renders + commits artifacts here; Argo applies.
+# Defaults to the in-cluster Forgejo FALLBACK repo; push creds = the Forgejo admin
+# secret (mirrored into this namespace by bootstrap.sh). When an external git
+# (GitHub/GitLab) is supplied, the deploy overlay repoints repoUrl + credentials.
+gitops:
+  enabled: true
+  repoUrl: "http://dfe-forgejo.forgejo.svc.cluster.local:3000/dfe-admin/deploy.git"
+  branch: main
+  localPath: /var/run/dfe/deploy-repo
+  credentialsSecret: dfe-forgejo-admin   # keys: username, password
+
 auth:
   jwtSecretName: dfe-engine-jwt
   oidcEnabled: false
 
 # OIDC provider credentials — mounted as env vars from K8s Secrets.
-# Secrets are created by tf-oidc-secrets (ESO) or manually by operator.
-# dfe-engine reads these at startup for group resolution API calls.
+# dfe-engine is the SSoT: it writes provider secrets to Vault and renders this
+# oidc config into the gitops repo; ESO materialises the K8s Secrets. Deploy is
+# local-auth-only; external OIDC is added later via dfe-engine + gitops.
 oidc:
   enabled: false
   providers: []
@@ -65,3 +77,6 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+
+# Node placement dial (overlay-settable; dfe-common.scheduling reads this).
+nodeScheduling: {}

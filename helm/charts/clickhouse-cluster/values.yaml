@@ -4,16 +4,54 @@ env: local
 cloud: local
 
 clickhouse:
+  # Deployment mode (DFE owns its data layer; deploy unless external given):
+  #   cluster  -> ClickHouseCluster (operator) + DFE-owned Keeper, ReplicatedMergeTree
+  #   single   -> standalone clickhouse-server, no Keeper, MergeTree (small/test)
+  #   external -> deploy nothing; connect to a supplied CH (BYO / ClickHouse Cloud)
+  # Profile sets the default (scale->cluster, standard->single); deployer overrides.
+  mode: cluster
   name: dfe-clickhouse
-  version: "24.8"
-  replicas: 1       # dev profile; 2-3 for production
+  version: "26.3.13.31"
+  # Cluster-mode node count. Defaults to 3; set higher for more nodes.
+  # (single mode ignores this -- it is always 1 standalone pod.)
+  replicas: 3
   shardsCount: 1
+  # Spread cluster pods evenly across k8s workers (best-effort: ScheduleAnyway,
+  # so it never blocks scheduling when workers < replicas).
+  podSpread:
+    enabled: true
+    maxSkew: 1
+    topologyKey: kubernetes.io/hostname
   database: dfe
-  # ClickHouse Keeper reference — required by clickhouse.com operator.
-  # For devex: shared keeper (hyperi-keeper in clickhouse namespace).
-  # For standalone: deploy a dedicated KeeperCluster first.
+  # Keeper reference for cluster mode -- DFE deploys its OWN keeper (below),
+  # self-contained. Do NOT point at another product's keeper.
   keeperClusterRef:
-    name: ""         # Set in environment values (e.g. local.yaml)
+    name: dfe-keeper
+  # DFE-owned Keeper (cluster mode only).
+  keeper:
+    name: dfe-keeper
+    replicas: 3
+    image:
+      repository: docker.io/clickhouse/clickhouse-keeper
+      tag: "26.3.13.31"
+    storage:
+      size: 10Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  # External CH (mode=external): connect to a supplied endpoint; deploy nothing.
+  # Password materialised by ESO from Vault <project>/<env>/clickhouse/external.
+  external:
+    host: ""
+    port: 8123
+    user: default
+    secretName: dfe-clickhouse-external
+    secretStoreName: dfe-secret-store
   storage:
     size: 50Gi
     storageClass: ""

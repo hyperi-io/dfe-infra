@@ -64,7 +64,10 @@ def get_tf_outputs(tf_dir: str) -> dict[str, str]:
                 text=True,
             )
             if raw_result.returncode != 0:
-                print(f"WARNING: could not read sensitive output '{k}': {raw_result.stderr}", file=sys.stderr)
+                print(
+                    f"WARNING: could not read sensitive output '{k}': {raw_result.stderr}",
+                    file=sys.stderr,
+                )
                 outputs[k] = ""
             else:
                 outputs[k] = raw_result.stdout.strip()
@@ -114,11 +117,20 @@ def main() -> None:
 
     # Validate required vars
     required = {
-        "DFE_ENV", "DFE_CLOUD", "DFE_REGION", "DFE_DOMAIN", "DFE_TENANCY",
-        "DFE_REPO_URL", "DFE_TARGET_REVISION",
-        "DFE_STORAGE_CLASS", "DFE_NAMESPACE",
-        "DFE_CLICKHOUSE_HOST", "DFE_KAFKA_BOOTSTRAP", "DFE_OTEL_ENDPOINT",
-        "DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID",
+        "DFE_ENV",
+        "DFE_CLOUD",
+        "DFE_REGION",
+        "DFE_DOMAIN",
+        "DFE_PROFILE",
+        "DFE_REPO_URL",
+        "DFE_TARGET_REVISION",
+        "DFE_STORAGE_CLASS",
+        "DFE_NAMESPACE",
+        "DFE_CLICKHOUSE_HOST",
+        "DFE_KAFKA_BOOTSTRAP",
+        "DFE_OTEL_ENDPOINT",
+        "DFE_VAULT_ADDR",
+        "DFE_VAULT_ROLE_ID",
         "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
     }
     missing = required - set(env_vars.keys())

@@ -1,0 +1,39 @@
+# EnvoyProxy -- customises the managed Envoy proxy's front-door Service so the
+# HTTP plane's LB is SWAPPABLE (cloud LB <-> k8s LB) the same way the receiver's
+# L4 LBs are. Referenced by the GatewayClass via parametersRef (see
+# gateway-class.yaml). type + annotations are set directly; loadBalancerClass and
+# loadBalancerSourceRanges go through a StrategicMerge patch so it works across
+# Envoy Gateway versions regardless of dedicated-field availability.
+{{- $svc := .Values.gateway.service }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: dfe-envoy-proxy
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: {{ $svc.type | default "LoadBalancer" }}
+        {{- with $svc.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if eq ($svc.type | default "LoadBalancer") "LoadBalancer" }}
+        {{- if or $svc.loadBalancerClass $svc.loadBalancerSourceRanges }}
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              {{- if $svc.loadBalancerClass }}
+              loadBalancerClass: {{ $svc.loadBalancerClass }}
+              {{- end }}
+              {{- with $svc.loadBalancerSourceRanges }}
+              loadBalancerSourceRanges:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+        {{- end }}
+        {{- end }}

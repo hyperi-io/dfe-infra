@@ -1,0 +1,200 @@
+{{- if eq .Values.kafka.mode "single" }}
+{{- $name := .Values.kafka.name }}
+{{- $fqdn := printf "%s.%s.svc.cluster.local" $name .Release.Namespace }}
+# NON-OPERATOR single broker (the `single` tier). No Strimzi/Redpanda operator --
+# a plain StatefulSet of the chosen provider, mirroring the ClickHouse-single
+# pattern, so the `single` tier needs no operator install. SASL/SCRAM-SHA-512 with
+# the dfe-kafka-user (see kafka-single-user.yaml) keeps client auth identical to
+# the operator (cluster) tiers. The cluster tier still uses the operators.
+#
+# NOTE (live-validation pending): the SCRAM-at-format bootstrap + single-node KRaft
+# listener config below follow the Apache Kafka docs but have NOT been run against
+# a live broker yet -- finalise on first deploy.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: sasl
+      port: 9092
+      targetPort: 9092
+{{- if eq .Values.kafka.provider "redpanda" }}
+{{- if not .Values.kafka.redpanda.acceptLicense }}
+{{- fail "Redpanda is BSL (source-available): set kafka.redpanda.acceptLicense=true. Single-broker Redpanda still needs commercial licences from HyperI + Redpanda Data for service use -- see docs/REDPANDA-LIMITATIONS.md." }}
+{{- end }}
+---
+# Redpanda standalone (provider=redpanda). Single node, SASL/SCRAM-SHA-512.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: redpanda
+          image: "{{ .Values.kafka.redpanda.image.repository }}:{{ .Values.kafka.redpanda.image.tag }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              # Bootstrap SASL/SCRAM superuser from the generated secret, then run.
+              cat >/etc/redpanda/.bootstrap.yaml <<CFG
+              superusers: ["${KAFKA_USER}"]
+              enable_sasl: true
+              kafka_enable_authorization: true
+              CFG
+              redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
+                --node-id 0 --check=false \
+                --kafka-addr SASL_PLAINTEXT://0.0.0.0:9092 \
+                --advertise-kafka-addr SASL_PLAINTEXT://{{ $fqdn }}:9092 &
+              RP_PID=$!
+              # Create the SCRAM user once the admin API is up.
+              until rpk cluster health >/dev/null 2>&1; do sleep 2; done
+              rpk security user create "${KAFKA_USER}" -p "${KAFKA_PASSWORD}" --mechanism SCRAM-SHA-512 || true
+              wait $RP_PID
+          env:
+            - name: KAFKA_USER
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.user.name }}, key: username }
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.user.name }}, key: password }
+          ports:
+            - containerPort: 9092
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+          resources:
+            {{- toYaml .Values.kafka.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.kafka.storage.storageClass }}
+        storageClassName: {{ .Values.kafka.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.kafka.storage.size }}
+{{- else }}
+---
+# Apache Kafka KRaft standalone (provider=strimzi/kafka -- the Apache Kafka broker
+# Strimzi manages, run WITHOUT the operator). Combined broker+controller, single
+# node. The init container formats storage and bootstraps the SCRAM user
+# (--add-scram); the broker then serves SASL_PLAINTEXT/SCRAM-SHA-512 on 9092.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  server.properties.template: |
+    process.roles=broker,controller
+    node.id=1
+    controller.quorum.voters=1@localhost:9093
+    listeners=SASL_PLAINTEXT://:9092,CONTROLLER://:9093
+    advertised.listeners=SASL_PLAINTEXT://{{ $fqdn }}:9092
+    listener.security.protocol.map=CONTROLLER:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT
+    controller.listener.names=CONTROLLER
+    inter.broker.listener.name=SASL_PLAINTEXT
+    sasl.enabled.mechanisms=SCRAM-SHA-512
+    sasl.mechanism.inter.broker.protocol=SCRAM-SHA-512
+    listener.name.sasl_plaintext.scram-sha-512.sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="__USER__" password="__PASSWORD__";
+    log.dirs=/var/lib/kafka/data
+    offsets.topic.replication.factor=1
+    transaction.state.log.replication.factor=1
+    transaction.state.log.min.isr=1
+    default.replication.factor=1
+    min.insync.replicas=1
+    num.partitions={{ .Values.kafka.config.numPartitions }}
+    log.retention.hours={{ .Values.kafka.config.logRetentionHours }}
+    compression.type={{ .Values.kafka.config.compressionType }}
+    auto.create.topics.enable=true
+  entrypoint.sh: |
+    #!/bin/sh
+    set -e
+    DATA=/var/lib/kafka/data
+    CONF=/tmp/server.properties
+    sed -e "s|__USER__|${KAFKA_USER}|g" -e "s|__PASSWORD__|${KAFKA_PASSWORD}|g" \
+      /mnt/config/server.properties.template > "$CONF"
+    if [ ! -f "$DATA/meta.properties" ]; then
+      CID=$(/opt/kafka/bin/kafka-storage.sh random-uuid)
+      /opt/kafka/bin/kafka-storage.sh format -t "$CID" -c "$CONF" \
+        --add-scram "SCRAM-SHA-512=[name=${KAFKA_USER},password=${KAFKA_PASSWORD}]"
+    fi
+    exec /opt/kafka/bin/kafka-server-start.sh "$CONF"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: kafka
+          image: "apache/kafka:{{ .Values.kafka.version }}"
+          command: ["/bin/sh", "/mnt/config/entrypoint.sh"]
+          env:
+            - name: KAFKA_USER
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.user.name }}, key: username }
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.user.name }}, key: password }
+          ports:
+            - containerPort: 9092
+              name: sasl
+          volumeMounts:
+            - name: config
+              mountPath: /mnt/config
+            - name: data
+              mountPath: /var/lib/kafka/data
+          resources:
+            {{- toYaml .Values.kafka.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}-config
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.kafka.storage.storageClass }}
+        storageClassName: {{ .Values.kafka.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.kafka.storage.size }}
+{{- end }}
+{{- end }}

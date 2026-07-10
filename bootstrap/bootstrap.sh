@@ -18,7 +18,7 @@
 #   DFE_CLOUD                aws | gcp | az | local
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. devex.hyperi.io
-#   DFE_TENANCY              dev | small | large
+#   DFE_PROFILE              standard | scale
 #   DFE_REPO_URL             Git repo URL for ArgoCD
 #   DFE_TARGET_REVISION      Git branch/tag (e.g. main)
 #   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard
@@ -50,7 +50,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.cert-manager)
 EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
 ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
-echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION}"
+LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION}"
 
 # Dry-run wrapper
 run() {
@@ -61,15 +62,47 @@ run() {
   fi
 }
 
+# Detect-or-install helpers. DFE assumes only a bare cluster and brings what it
+# needs -- but a destination may already run a cluster-singleton operator
+# (cert-manager, ESO, Argo) whose cluster-scoped CRDs cannot be owned twice. So
+# each install is gated: CRD already present -> ADOPT the existing operator (skip
+# install, reuse its CRDs); absent -> INSTALL DFE-owned. Logs the decision (never
+# a silent skip). DFE_FORCE_INSTALL=true overrides (always install).
+# NOTE: the Argo-managed operators in argocd/appsets (external-dns, keda,
+# metrics-server, reloader, cnpg) are NOT yet guarded -- per-operator appset
+# adopt is a later iteration that needs a rich cluster to validate. On a bare
+# cluster they install correctly.
+dfe_have_crd() { kubectl get crd "$1" >/dev/null 2>&1; }
+
+# dfe_should_install <name> <crd>  -> rc 0 = INSTALL, rc 1 = ADOPT (skip).
+dfe_should_install() {
+  local name="$1" crd="$2"
+  if [[ "${DFE_FORCE_INSTALL:-false}" == "true" ]]; then
+    echo "  [${name}] DFE_FORCE_INSTALL -> INSTALL DFE-owned"
+    return 0
+  fi
+  if dfe_have_crd "${crd}"; then
+    echo "  [${name}] detected (CRD ${crd}) -> ADOPT existing, skip install"
+    return 1
+  fi
+  echo "  [${name}] not detected -> INSTALL DFE-owned"
+  return 0
+}
+
 # Validate required variables
 required_vars=(
-  DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_TENANCY
+  DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
   DFE_REPO_URL DFE_TARGET_REVISION
   DFE_STORAGE_CLASS DFE_NAMESPACE
-  DFE_CLICKHOUSE_HOST DFE_KAFKA_BOOTSTRAP DFE_OTEL_ENDPOINT
+  DFE_CLICKHOUSE_HOST DFE_OTEL_ENDPOINT
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
+# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the standard profile is gRPC (kafka disabled),
+# so it is empty there; only set when kafka.mode != disabled. Defaulted empty so
+# the cluster-secret annotation renders blank (kafka-dependent apps are gated off
+# in standard anyway).
+export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
 # Registry vars are optional — skip regcred if not set
 # DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 missing=()
@@ -85,6 +118,26 @@ fi
 if [[ -n "${DFE_REGISTRY_HOST:-}" ]] && [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
   export DFE_REGISTRY_AUTH
   DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
+fi
+
+# Deploy repo (dfe-engine writes config, Argo watches). PROVIDER-AGNOSTIC seam:
+# external git (GitHub ~85% / GitLab ~10%) is PRIMARY; the in-cluster Forgejo
+# fallback (~5%, tyre-kicking/air-gapped) is used ONLY when no external URL is
+# given. If DFE_CONFIG_REPO_URL is set -> external mode (deployer also supplies
+# creds, see [4d] below); unset -> bundled Forgejo fallback.
+export DFE_CONFIG_REPO_REVISION="${DFE_CONFIG_REPO_REVISION:-main}"
+# Admin user owns the bundled deploy repo. MUST match the dfe-engine chart's
+# DFE_GITOPS_REPO_URL owner (dfe-admin) -- the engine writes the repo, Argo (via
+# the cluster-secret config_repo_url annotation) reads it; if the owners differ
+# the appset resolves a non-existent repo and fans out zero apps.
+FORGEJO_ADMIN_USER="${DFE_FORGEJO_ADMIN_USER:-dfe-admin}"
+if [[ -n "${DFE_CONFIG_REPO_URL:-}" ]]; then
+  export DFE_BUNDLED_DEPLOY_REPO="false"
+  echo "Deploy repo: EXTERNAL git (${DFE_CONFIG_REPO_URL}) -- no in-cluster server."
+else
+  export DFE_CONFIG_REPO_URL="http://dfe-forgejo.forgejo.svc.cluster.local:3000/${FORGEJO_ADMIN_USER}/deploy.git"
+  export DFE_BUNDLED_DEPLOY_REPO="true"
+  echo "Deploy repo: FALLBACK in-cluster Forgejo (no external git supplied)."
 fi
 
 # Add Helm repos (idempotent)
@@ -103,18 +156,39 @@ else
   envsubst < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" | kubectl apply -f -
 fi
 
-echo "==> [2/7] Installing cert-manager (idempotent)"
-run helm upgrade --install cert-manager jetstack/cert-manager \
-  --namespace cert-manager --create-namespace \
-  --version "${CERT_MANAGER_VERSION}" \
-  --set installCRDs=true \
-  --wait --timeout 5m
+echo "==> [1b/7] StorageClass (detect-or-install)"
+# DFE assumes only a bare cluster. If a default StorageClass exists -> ADOPT it.
+# If StorageClasses exist but none is default -> use DFE_STORAGE_CLASS as-is. If
+# NONE exist (bare RKE2/EKS) -> INSTALL local-path-provisioner (pinned) and mark
+# it default, so the substrate's PVCs (CH/Gitea/CNPG) can bind with no deployer
+# input. This is the onboarding-contract storage derive.
+if kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null | grep -q true; then
+  echo "  default StorageClass present -> ADOPT"
+elif [[ -n "$(kubectl get storageclass -o name 2>/dev/null)" ]]; then
+  echo "  StorageClass(es) present, none default -> using DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS}"
+else
+  echo "  no StorageClass -> INSTALL local-path-provisioner ${LOCAL_PATH_VERSION}"
+  run kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
+  run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
+  run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+fi
 
-echo "==> [3/7] Installing external-secrets (idempotent)"
-run helm upgrade --install external-secrets external-secrets/external-secrets \
-  --namespace external-secrets --create-namespace \
-  --version "${EXTERNAL_SECRETS_VERSION}" \
-  --wait --timeout 5m
+echo "==> [2/7] cert-manager (detect-or-install)"
+if dfe_should_install cert-manager certificates.cert-manager.io; then
+  run helm upgrade --install cert-manager jetstack/cert-manager \
+    --namespace cert-manager --create-namespace \
+    --version "${CERT_MANAGER_VERSION}" \
+    --set installCRDs=true \
+    --wait --timeout 5m
+fi
+
+echo "==> [3/7] external-secrets (detect-or-install)"
+if dfe_should_install external-secrets clustersecretstores.external-secrets.io; then
+  run helm upgrade --install external-secrets external-secrets/external-secrets \
+    --namespace external-secrets --create-namespace \
+    --version "${EXTERNAL_SECRETS_VERSION}" \
+    --wait --timeout 5m
+fi
 
 echo "==> [4/7] Applying ESO ClusterSecretStore"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
@@ -124,7 +198,7 @@ else
 fi
 
 echo "==> [4b/7] Creating imagePullSecrets"
-for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx; do
+for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
   # JFrog regcred (if registry credentials provided)
   if [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
@@ -142,6 +216,51 @@ if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
   echo "  Pull secret created/updated in ${DFE_NAMESPACE}"
 fi
 
+# [4c/7] Deploy-repo credentials -- two paths by provider mode.
+if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  # FALLBACK: in-cluster Forgejo. Generate (once) a random admin password, reuse
+  # on re-runs, mirror to the dfe namespace as dfe-engine's push creds.
+  echo "==> [4c/7] Ensuring Forgejo admin secret (dfe-forgejo-admin)"
+  if kubectl -n forgejo get secret dfe-forgejo-admin >/dev/null 2>&1; then
+    FORGEJO_ADMIN_PASSWORD=$(kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' | base64 -d)
+  else
+    FORGEJO_ADMIN_PASSWORD=$(openssl rand -hex 24)
+  fi
+  for ns in forgejo "${DFE_NAMESPACE}"; do
+    kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl -n "$ns" create secret generic dfe-forgejo-admin \
+      --from-literal=username="${FORGEJO_ADMIN_USER}" \
+      --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+  done
+  echo "  Forgejo admin secret ready in forgejo + ${DFE_NAMESPACE}"
+elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  # EXTERNAL git (GitHub/GitLab): register an Argo repository credential so Argo
+  # can pull the deploy repo. Deployer supplies EITHER HTTPS+token
+  # (DFE_CONFIG_REPO_USER + DFE_CONFIG_REPO_TOKEN) OR an SSH key
+  # (DFE_CONFIG_REPO_SSH_KEY = path to a private key). The engine's WRITE cred is
+  # separate (engine gitops settings), not created here.
+  echo "==> [4c/7] Registering Argo repo cred for external deploy repo"
+  if [[ -n "${DFE_CONFIG_REPO_SSH_KEY:-}" ]]; then
+    kubectl -n argocd create secret generic repo-deploy \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+      --from-file=sshPrivateKey="${DFE_CONFIG_REPO_SSH_KEY}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+    echo "  Argo repo cred (SSH) registered for ${DFE_CONFIG_REPO_URL}"
+  elif [[ -n "${DFE_CONFIG_REPO_TOKEN:-}" ]]; then
+    kubectl -n argocd create secret generic repo-deploy \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+      --from-literal=username="${DFE_CONFIG_REPO_USER:-oauth2}" \
+      --from-literal=password="${DFE_CONFIG_REPO_TOKEN}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+    echo "  Argo repo cred (HTTPS+token) registered for ${DFE_CONFIG_REPO_URL}"
+  else
+    echo "  WARNING: external deploy repo but no DFE_CONFIG_REPO_TOKEN/SSH_KEY -- Argo may not be able to pull it."
+  fi
+fi
+
 # Valkey for ArgoCD cache — check if already running, skip install if so.
 # On fresh clusters: deploy plain Valkey manifest. On existing clusters: use existing.
 VALKEY_SVC="${DFE_VALKEY_SERVICE:-valkey}"  # default: 'valkey' (hyperi-infra pattern)
@@ -154,29 +273,105 @@ else
   run kubectl -n argocd rollout status deployment/valkey --timeout=120s
 fi
 
-echo "==> [6/7] Installing ArgoCD with Valkey cache (idempotent)"
-run helm upgrade --install argocd argo/argo-cd \
-  --namespace argocd --create-namespace \
-  --version "${ARGOCD_VERSION}" \
-  --set redis.enabled=false \
-  --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
-  --set "externalRedis.port=6379" \
-  --wait --timeout 10m
+echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install)"
+# If the destination already runs Argo (its Application CRD + a server deploy are
+# present) we ADOPT it -- our AppProjects/ApplicationSets below register into the
+# existing Argo. Otherwise install DFE-owned Argo. (Full isolation -- a dedicated
+# dfe-system Argo scoped to dfe-* namespaces so it never couples to a host Argo --
+# is the Phase 0d adopt-path refinement.)
+# Argo HARDENING (dfe-infra#4): back off the controller timers so a degraded app
+# can never monopolise the control plane (self-heal 5s->30s, reconciliation
+# 180s->300s) and bound the repo-server timeout. Mirrors the devex platform guard.
+if dfe_should_install argocd applications.argoproj.io; then
+  run helm upgrade --install argocd argo/argo-cd \
+    --namespace argocd --create-namespace \
+    --version "${ARGOCD_VERSION}" \
+    --set redis.enabled=false \
+    --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
+    --set "externalRedis.port=6379" \
+    --set-string 'configs.params.reposerver\.disable\.git\.modules=true' \
+    --set-string 'configs.cm.timeout\.reconciliation=300s' \
+    --set-string 'configs.params.controller\.self\.heal\.timeout\.seconds=30' \
+    --set-string 'configs.params.controller\.repo\.server\.timeout\.seconds=60' \
+    --wait --timeout 10m
+else
+  echo "  Using existing ArgoCD; registering DFE AppProjects + ApplicationSets into it."
+fi
 
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"
 # Standalone in-repo chart apps are envsubst-templated (repoURL, cloud overlay)
 envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml" | run kubectl apply -f -
 envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run kubectl apply -f -
-envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/keda-scalers-app.yaml" | run kubectl apply -f -
+# NOTE: keda-scalers chart retired -- KEDA is now folded into each app chart
+# (dfe-common.scaledobject helper), driven by the per-instance overlay.
 # cluster-addons ApplicationSet uses goTemplate — no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
+
+# Argo CD repo credential for the bundled in-cluster Forgejo deploy repo, so Argo
+# can pull it. Uses the Forgejo admin creds. External git repo creds are handled
+# in [4c/7] above; this block is the FALLBACK (bundled) path only.
+if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  FORGEJO_PW=$(kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+  if [[ -n "${FORGEJO_PW}" ]]; then
+    kubectl -n argocd create secret generic repo-deploy \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+      --from-literal=username="${FORGEJO_ADMIN_USER}" \
+      --from-literal=password="${FORGEJO_PW}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+  fi
+fi
+# NOTE: the deploy-repo app-of-apps is retired. The engine no longer authors Argo
+# Application/AppProject manifests -- the dfe-layer2-apps ApplicationSet fans out
+# one Application per deploy-repo values file (git-files generator). The deploy
+# repo's config_repo_url/revision (on the cluster secret) is consumed there.
 
 echo ""
 echo "=========================================="
 echo "  Bootstrap complete (Build 1: static)    "
 echo "=========================================="
-echo "  ArgoCD will now sync Layer 2 (Build 2)  "
-echo "  ArgoCD UI: https://argocd.${DFE_DOMAIN} "
-echo "  Watch sync: kubectl -n argocd get app -w "
+echo "  ArgoCD now syncs Layer 2 (Build 2);     "
+echo "  the readiness gate waits for it.        "
 echo "=========================================="
+
+# READINESS GATE (default ON) -- the authoritative end-of-deploy health check.
+# Waits for Argo to converge Layer 2, then FAILS the deploy if anything is not
+# genuinely Ready (crashloops, 0/N, unmet replicas). This is what lets us TRUST a
+# successful deploy -- "Argo Healthy"/"pod Running" alone are not enough. Bypass
+# only with DFE_SKIP_READINESS_GATE=true (NOT recommended).
+echo ""
+if [ "${DFE_SKIP_READINESS_GATE:-false}" != "true" ]; then
+  if ! "${SCRIPT_DIR}/smoke-test-readiness.sh" "${KUBECONFIG:-}"; then
+    echo ""
+    echo "  DEPLOY NOT HEALTHY -- see the readiness failures above."
+    echo "  Fix them and re-run, or DFE_SKIP_READINESS_GATE=true to bypass (not recommended)."
+    exit 1
+  fi
+else
+  echo "  Readiness gate BYPASSED (DFE_SKIP_READINESS_GATE=true) -- deploy health NOT verified."
+fi
+
+# CORE E2E INTEGRATION GATE (default ON) -- readiness proves pods are Ready;
+# THIS proves the two DEFAULT ingest pipelines are actually STREAMING DATA end to
+# end: (1) infra self-telemetry OTel -> HyperDX -> ClickHouse, (2) receiver ->
+# [kafka default_land ->] loader -> dfe.default. "The service is up so it must be
+# working" is exactly the trap this closes. Bypass only with
+# DFE_SKIP_INTEGRATION_TESTS=true (NOT recommended for a real deploy).
+echo ""
+if [ "${DFE_SKIP_INTEGRATION_TESTS:-false}" != "true" ]; then
+  if ! "${SCRIPT_DIR}/smoke-test-integration.sh" "${KUBECONFIG:-}"; then
+    echo ""
+    echo "  DEPLOY PODS HEALTHY but a CORE PIPELINE is NOT flowing -- see failures above."
+    echo "  Fix them and re-run, or DFE_SKIP_INTEGRATION_TESTS=true to bypass (not recommended)."
+    exit 1
+  fi
+else
+  echo "  Integration tests BYPASSED (DFE_SKIP_INTEGRATION_TESTS=true) -- data flow NOT verified."
+fi
+
+# Post-deploy ACCESS SUMMARY -- endpoints + how to log in + how to fetch creds.
+# Only reached on a verified-healthy deploy. Printed here AND written to a file.
+echo ""
+"${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${DFE_ACCESS_OUT:-dfe-access.md}" || \
+  echo "  (access-summary skipped -- run bootstrap/access-summary.sh manually)"

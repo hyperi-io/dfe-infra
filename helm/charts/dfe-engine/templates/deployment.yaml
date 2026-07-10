@@ -13,6 +13,8 @@ spec:
     metadata:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
@@ -34,11 +36,59 @@ spec:
               value: {{ .Values.postgresql.host | quote }}
             - name: DFE_ENGINE_PG_PORT
               value: {{ .Values.postgresql.port | quote }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.otel.endpoint | quote }}
+            # Config-registry directories. WITHOUT these the engine leaves every
+            # registry uninitialised and the config API returns 503 not_configured.
+            # All live under the (writable) config mount; the engine seeds defaults
+            # + does git-native CRUD here.
+            - name: DFE_SOURCES_DIR
+              value: {{ .Values.config.mountPath }}/sources
+            - name: DFE_SERVICES_CONFIG_YAML_DIR
+              value: {{ .Values.config.mountPath }}/services
+            - name: DFE_DEPLOYMENT_CONFIG_DIR
+              value: {{ .Values.config.mountPath }}/deployments
+            - name: DFE_SCHEMAS_DIR
+              value: {{ .Values.config.mountPath }}/schemas
+            - name: DFE_FIELDMAPS_DIR
+              value: {{ .Values.config.mountPath }}/fieldmaps
+            - name: DFE_HUNTS_DIR
+              value: {{ .Values.config.mountPath }}/hunts
+            - name: DFE_HUNTS_RULES_DIR
+              value: {{ .Values.config.mountPath }}/rules
+            - name: DFE_HUNTS_ALERT_DESTINATIONS_DIR
+              value: {{ .Values.config.mountPath }}/alerts
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-engine
+          {{- if .Values.gitops.enabled }}
+            - name: DFE_GITOPS_ENABLED
+              value: "true"
+            - name: DFE_GITOPS_REPO_URL
+              value: {{ .Values.gitops.repoUrl | quote }}
+            - name: DFE_GITOPS_BRANCH
+              value: {{ .Values.gitops.branch | quote }}
+            - name: DFE_GITOPS_LOCAL_PATH
+              value: {{ .Values.gitops.localPath | quote }}
+            - name: DFE_GITOPS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitops.credentialsSecret }}
+                  key: username
+            - name: DFE_GITOPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitops.credentialsSecret }}
+                  key: password
+          {{- end }}
           {{- if .Values.oidc.enabled }}
+            # OIDC = Envoy-fronted: the gateway authenticates the user and
+            # injects the X-Oidc-* identity headers, so the engine must trust
+            # them (auth Path 1). Coupled to oidc.enabled -- fail closed when
+            # OIDC is off (local-auth deployments ignore these spoofable headers).
+            - name: DFE_AUTH_TRUST_PROXY_AUTH_HEADERS
+              value: "true"
           {{- range $provider := .Values.oidc.providers }}
           {{- range $envVar, $secretKey := $provider.envMappings }}
             - name: {{ $envVar }}
@@ -50,9 +100,16 @@ spec:
           {{- end }}
           {{- end }}
           volumeMounts:
+            # Config is WRITABLE: the engine is a git-native config control plane
+            # -- it seeds defaults + commits CRUD here (DirectoryConfigStore).
+            # readOnly broke registry init. (emptyDir is ephemeral; a real deploy
+            # backs this with a PVC or the git config repo -- follow-up.)
             - name: config
               mountPath: {{ .Values.config.mountPath }}
-              readOnly: true
+            {{- if .Values.gitops.enabled }}
+            - name: deploy-repo
+              mountPath: {{ dir .Values.gitops.localPath }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
@@ -77,3 +134,7 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.gitops.enabled }}
+        - name: deploy-repo
+          emptyDir: {}
+        {{- end }}

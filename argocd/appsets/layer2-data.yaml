@@ -26,10 +26,8 @@ spec:
                   namespace: clickhouse
                   wave: "4"
                   appProject: data
-                - app: strimzi-kafka
-                  namespace: strimzi
-                  wave: "4"
-                  appProject: data
+                # strimzi-kafka is Kafka substrate: deployed only in the scale
+                # profile via appsets/layer-scale.yaml (cluster-label gated).
                 - app: ferretdb
                   namespace: cnpg
                   wave: "4"
@@ -37,6 +35,24 @@ spec:
                 - app: otel-collector
                   namespace: otel
                   wave: "4"
+                  appProject: data
+                # NOTE: the in-cluster git server (forgejo) is NOT substrate.
+                # It is the deploy-repo FALLBACK, deployed ONLY when no external git
+                # (GitHub/GitLab) is supplied -- see appsets/layer2-deploy-repo.yaml,
+                # gated on the dfe.hyperi.io/bundled-deploy-repo cluster label. The
+                # deploy repo is a seam (external git PRIMARY); never a hard dep.
+                # Kafka substrate -- mode-driven (disabled on standard -> nothing;
+                # cluster on scale). Provider strimzi (default) needs the Strimzi
+                # operator (installed scale-only via layer-scale).
+                - app: kafka
+                  namespace: strimzi
+                  wave: "4"
+                  appProject: data
+                # Kafbat (Kafka web UI) -- bundled by DEFAULT with the kafka
+                # substrate (single + scale). Wave 5 so it starts after the broker.
+                - app: kafbat
+                  namespace: kafka
+                  wave: "5"
                   appProject: data
   template:
     metadata:
@@ -46,14 +62,24 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
+      # SINGLE source: the pinned dfe-infra base chart + profile/cloud values.
+      # Substrate is dfe-infra-STATIC at GA (per the engine<->infra boundary), so it
+      # does NOT depend on the deploy repo. This is deliberate: making substrate
+      # multi-source on the in-cluster Forgejo config repo created a self-dependency
+      # deadlock (Forgejo is itself substrate -> could not render before it was up)
+      # and coupled substrate to a specific git provider. Engine-authored substrate
+      # scaling ($values/infra overlay) is a v+0.1 addition, re-added then gated on
+      # the deploy repo being ready.
       source:
         repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
         targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
         path: 'helm/charts/{{ .app }}'
         helm:
+          ignoreMissingValueFiles: true
           valueFiles:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

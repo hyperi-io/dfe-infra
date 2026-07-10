@@ -19,7 +19,6 @@ locals {
   env     = "local"
   cloud   = "local"
   region  = "local"
-  tenancy = "dev"
 }
 
 module "naming" {

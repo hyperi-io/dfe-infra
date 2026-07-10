@@ -22,6 +22,8 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            - name: api
+              containerPort: {{ .Values.service.apiPort }}
             {{- if .Values.otlp.enabled }}
             - name: otlp-grpc
               containerPort: {{ .Values.otlp.grpcPort }}
@@ -43,20 +45,39 @@ spec:
                   name: {{ .Values.clickhouse.secretName }}
                   key: {{ .Values.clickhouse.secretKey }}
             - name: MONGO_URI
-              value: {{ .Values.mongodb.uri }}
+              value: {{ .Values.mongodb.uri | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
+            {{- if .Values.dfeAuth.enabled }}
+            # Trust Envoy/oauth2-proxy identity headers (no HyperDX login).
+            # Maps the universal DFE contract onto the fork's DFE_AUTH_HEADER_*.
+            - name: DFE_AUTH_MODE
+              value: {{ .Values.dfeAuth.mode | quote }}
+            - name: DFE_AUTH_HEADER_EMAIL
+              value: {{ .Values.dfeAuth.headerEmail | quote }}
+            - name: DFE_AUTH_HEADER_GROUPS
+              value: {{ .Values.dfeAuth.headerGroups | quote }}
+            - name: DFE_AUTH_DEFAULT_TEAM
+              value: {{ .Values.dfeAuth.defaultTeam | quote }}
+            {{- end }}
+            {{- if .Values.defaultConnections.enabled }}
+            - name: DEFAULT_CONNECTIONS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.defaultConnections.secretName }}
+                  key: DEFAULT_CONNECTIONS
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
             httpGet:
-              path: /health/live
+              path: /api/health
               port: http
-            initialDelaySeconds: 15
+            initialDelaySeconds: 20
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health/ready
+              path: /api/health
               port: http
             initialDelaySeconds: 10
             periodSeconds: 5

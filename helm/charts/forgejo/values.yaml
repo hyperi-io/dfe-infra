@@ -1,0 +1,56 @@
+project: dfe
+component: forgejo
+env: local
+cloud: local
+
+# Forgejo image. Tag defaults to Chart.appVersion (15.0.3 LTS). Pulled from the
+# CANONICAL Forgejo registry code.forgejo.org -- NOT codeberg.org/forgejo, whose
+# container registry returns 503s under load (proven on the bare-cluster test:
+# kubelet got "503 Service Unavailable" from codeberg.org, while code.forgejo.org
+# served the same tag 200 OK). Forgejo is a drop-in Gitea fork -- same REST API
+# (the setup Job is unchanged) and same app.ini/env (accepts FORGEJO__ and GITEA__
+# prefixes). Digest-pin follow-up: dfe-common.image is tag-only today.
+image:
+  repository: code.forgejo.org/forgejo/forgejo
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# Admin credentials -- consumed from a K8s Secret created by bootstrap.sh
+# (random password, replicated to the dfe namespace for dfe-engine's push creds).
+admin:
+  secretName: dfe-forgejo-admin   # keys: username, password (created by bootstrap.sh)
+  email: forgejo-admin@dfe.local
+
+# The deploy repo the setup Job creates (owner = admin user).
+deployRepo:
+  name: deploy
+  defaultBranch: main
+  private: true
+
+# Image for the PostSync repo-creation Job (needs curl).
+setup:
+  image: curlimages/curl:8.20.0   # 2026-05 (clears 7-day cooldown); was stale 8.11.1
+
+persistence:
+  enabled: true
+  storageClass: ""          # from values overlay (local-path, gp3, ...)
+  size: 5Gi
+  accessMode: ReadWriteOnce
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+serviceAccount:
+  create: true
+  annotations: {}

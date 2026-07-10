@@ -1,0 +1,76 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: kafbat
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Load the mounted config (clusters + auth + RBAC roles).
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+              value: /etc/kafbat/application-local.yml
+            - name: DYNAMIC_CONFIG_ENABLED
+              value: "false"
+            {{- if and (eq .Values.auth.type "OAUTH2") .Values.oidc.enabled }}
+            - name: OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.clientSecretName }}
+                  key: client-secret
+            {{- end }}
+            {{- if .Values.breakGlass.enabled }}
+            # Break-glass local admin -- wired so flipping auth.type to LOGIN_FORM
+            # immediately enables it (the recovery door). Inert while type=OAUTH2.
+            - name: SPRING_SECURITY_USER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.breakGlass.secretName }}
+                  key: username
+            - name: SPRING_SECURITY_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.breakGlass.secretName }}
+                  key: password
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kafbat
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config
+{{- end }}

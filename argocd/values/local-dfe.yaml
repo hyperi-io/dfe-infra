@@ -1,0 +1,39 @@
+# DFE clean cluster (Cluster B) overlay -- the install-from-bare target.
+#
+# This is the SAMPLE overlay for a cluster where DFE owns every node (no shared
+# pets to fence off), exactly like a customer Rancher/EKS cluster. It is selected
+# by the cluster secret's dfe.hyperi.io/cloud value (= "local-dfe"). Contrast with
+# local.yaml (devex Cluster A) which pins workloads to tainted dfe-k8s nodes; here
+# there is NOTHING to avoid, so nodeScheduling is EMPTY -- pods schedule anywhere.
+#
+# Nothing here is product code -- it is one deploy's values, like aws.yaml would
+# be a customer's. The charts/appsets hardcode none of it.
+global:
+  cloud: local-dfe
+  region: local
+  domain: dfe.devex.hyperi.io
+  registry: "ghcr.io/hyperi-io"
+
+domain: dfe.devex.hyperi.io
+storageClass: local-path
+
+# DFE owns the whole cluster -> generic nodes, no pinning/tolerations.
+nodeScheduling: {}
+
+# Pull secret for GHCR private images (created by bootstrap.sh from
+# DFE_PULL_SECRET_* env). If DFE ships public images this can be dropped.
+imagePullSecrets:
+  - ghcr-pull-secret
+
+postgresql:
+  host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
+
+envoyGateway:
+  service:
+    type: LoadBalancer
+    externalIPs: []
+
+# Standard profile substrate: DFE's own single-node ClickHouse (keeperless,
+# MergeTree), no Kafka (gRPC transport). Flip to cluster/external to test those.
+clickhouse:
+  mode: single
