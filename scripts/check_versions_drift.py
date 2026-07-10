@@ -76,20 +76,12 @@ def find_regex(file_path: Path, pattern: str) -> str | None:
 # Each check: (label, versions.yaml dotted key, actual-value extractor).
 CHECKS: list[tuple[str, str, "callable"]] = [
     # layer1 operator addons (appset hardcodes; must equal versions.yaml)
-    (
-        "cert-manager appset",
-        "bootstrap.cert-manager",
-        lambda: find_appset_chart_version(
-            Path("argocd/appsets/layer1-addons.yaml"), "cert-manager"
-        ),
-    ),
-    (
-        "external-secrets appset",
-        "bootstrap.external-secrets",
-        lambda: find_appset_chart_version(
-            Path("argocd/appsets/layer1-addons.yaml"), "external-secrets"
-        ),
-    ),
+    #
+    # cert-manager + external-secrets are intentionally NOT drift-checked here:
+    # they moved out of the Argo appset to bootstrap.sh (dedup fix, dfe-infra#4 --
+    # bootstrap owns them so Argo does not install a second copy). bootstrap.sh
+    # reads their versions straight from versions.yaml at runtime (read_versions.py),
+    # so there is no hardcoded pin that can drift -- nothing to check.
     (
         "external-dns appset",
         "operators.external-dns",
