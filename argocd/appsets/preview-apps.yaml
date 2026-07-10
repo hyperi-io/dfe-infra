@@ -23,14 +23,18 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    # One element per preview spec file. Each file supplies: name, service, chart,
-    # infra_revision (dfe-infra chart branch), image (Harbor preview tag), namespace.
+    # One element per preview spec file. Each file supplies (all REQUIRED under
+    # missingkey=error): name, service, chart, infra_revision (dfe-infra chart
+    # ref), registry (global.registry), image (Harbor preview repo:tag). The
+    # namespace is DERIVED as dfe-preview-<name>, not a field. See the example.
     - git:
         repoURL: git@github.com:hyperi-io/dfe-infra.git
         revision: main            # the appset + specs live on main; the DEPLOYED
                                   # chart uses each spec's own infra_revision below
         files:
           - path: "argocd/previews/*.yaml"
+          - path: "argocd/previews/EXAMPLE-*.yaml"   # keep the example out
+            exclude: true
   template:
     metadata:
       name: 'preview-{{ .name }}-{{ .service }}'
@@ -54,10 +58,11 @@ spec:
               global:
                 registry: {{ .registry }}
               {{- if eq .service "hyperdx" }}
-              hyperdx:
-                image:
-                  repository: {{ (splitn ":" 2 .image)._0 }}
-                  tag: {{ (splitn ":" 2 .image)._1 }}
+              # hyperdx chart reads root image.* (dfe-common.image) and defaults
+              # to ghcr, so point it at the Harbor preview repo:tag directly.
+              image:
+                repository: {{ (splitn ":" 2 .image)._0 }}
+                tag: {{ (splitn ":" 2 .image)._1 }}
               {{- end }}
       destination:
         server: https://kubernetes.default.svc

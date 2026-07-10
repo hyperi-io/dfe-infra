@@ -79,12 +79,11 @@ write_overrides() {   # <preview-name> <svc=tag> ...
     echo "  registry: ${HARBOR_HOST}/${PREVIEW_PROJECT}"
     for kv in "$@"; do
       local svc="${kv%%=*}" tag="${kv#*=}"
-      # hyperdx chart hardcodes ghcr -> must override repository+tag explicitly
+      # hyperdx chart reads root image.* and defaults to ghcr -> override repo+tag
       if [[ "$svc" == "hyperdx" ]]; then
-        echo "hyperdx:"
-        echo "  image:"
-        echo "    repository: ${tag%:*}"
-        echo "    tag: ${tag##*:}"
+        echo "image:"
+        echo "  repository: ${tag%:*}"
+        echo "  tag: ${tag##*:}"
       fi
     done
   } > "$f"
