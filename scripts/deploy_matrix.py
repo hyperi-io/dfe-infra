@@ -51,6 +51,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 WAIT_BUDGET_SECONDS = 600
 POLL_SECONDS = 10
+# Optional label for CONCURRENT matrix runs. Each run is its own process with its
+# own INSTANCE, so `--instance a` and `--instance b` get disjoint ns/release
+# prefixes (mtx-a-* vs mtx-b-*) and never collide -- the isolation test for
+# "multiple concurrent deploys". Empty = the default single-run prefix (mtx-*).
+INSTANCE = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,11 +81,13 @@ class Cell:
 
     @property
     def release(self) -> str:
-        return f"mtx-{self.chart}-{self.mode}{self._suffix}".replace("_", "-")
+        pre = f"-{INSTANCE}" if INSTANCE else ""
+        return f"mtx{pre}-{self.chart}-{self.mode}{self._suffix}".replace("_", "-")
 
     @property
     def namespace(self) -> str:
-        return f"mtx-{self.chart}"
+        pre = f"-{INSTANCE}" if INSTANCE else ""
+        return f"mtx{pre}-{self.chart}"
 
 
 # Curated matrix for a Rancher/devex target. Cluster modes are heavier (operator
@@ -269,10 +276,13 @@ def _expected_workloads(cell: Cell) -> list[str]:
     if cell.chart == "kafka":
         if cell.mode not in {"single", "cluster"}:
             return []
-        if _kafka_provider(cell) == "redpanda":
-            return ["kafka"]  # redpanda StatefulSet pod (named after kafka.name)
-        # strimzi: broker nodepool + entity-operator (the User Operator that
-        # mints the SCRAM secret acceptance needs) must both be up before test.
+        # single = a plain StatefulSet of the chosen provider (mirrors CH-single,
+        # per kafka-single.yaml) -- NO operator, so no nodepool/entity-operator
+        # pods ever appear. Only cluster+strimzi is operator-managed with a broker
+        # nodepool (*-pool-*) + the entity-operator (User Operator that mints the
+        # SCRAM secret). cluster+redpanda is one StatefulSet named after the CR.
+        if cell.mode == "single" or _kafka_provider(cell) == "redpanda":
+            return ["kafka"]  # StatefulSet broker pod (named after kafka.name)
         return ["pool", "entity-operator"]
     return []
 
@@ -292,7 +302,13 @@ def wait_ready(cell: Cell) -> tuple[bool, str]:
     300s ceiling is a backstop for a genuinely stuck cluster. Everything else uses
     the topology-aware pod check below.
     """
-    if cell.chart == "kafka" and _kafka_provider(cell) == "redpanda":
+    # Only cluster+redpanda is operator-managed (a Redpanda CR to wait on). single
+    # redpanda is a plain StatefulSet (no CR) -> fall through to the pod check.
+    if (
+        cell.chart == "kafka"
+        and _kafka_provider(cell) == "redpanda"
+        and cell.mode == "cluster"
+    ):
         waited = _run(
             [
                 "kubectl",
@@ -413,6 +429,28 @@ def _wait_kafka_user_password(cell: Cell) -> str:
     stuck operator hits the limit (a real failure, surfaced as such).
     """
     user = "dfe-kafka-user"
+    # single mode has no User Operator/CR: the SCRAM secret is generated IN-CLUSTER
+    # by the chart's ESO Password generator (kafka-single-user.yaml). There is no
+    # condition to wait on, so block on the artifact itself -- poll the Secret until
+    # ESO populates it (a bounded dependency wait, not a raced timeout).
+    if cell.mode == "single":
+        for _ in range(30):  # ~60s backstop for ESO to mint the secret
+            sec = _run(
+                [
+                    "kubectl",
+                    "get",
+                    "secret",
+                    user,
+                    "-n",
+                    cell.namespace,
+                    "-o",
+                    "jsonpath={.data.password}",
+                ],
+            )
+            if sec.returncode == 0 and sec.stdout.strip():
+                return base64.b64decode(sec.stdout.strip()).decode("utf-8", "replace")
+            time.sleep(2)
+        return ""
     if _kafka_provider(cell) == "redpanda":
         target, condition = f"user.cluster.redpanda.com/{user}", "Synced"
     else:
@@ -474,11 +512,15 @@ def _accept_kafka_strimzi(cell: Cell, pod: str) -> tuple[bool, str]:
         "{ echo 'security.protocol=SASL_PLAINTEXT'; "
         "echo 'sasl.mechanism=SCRAM-SHA-512'; "
         f"echo 'sasl.jaas.config={jaas}'; }} > $P; "
-        "bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config $P "
+        # Absolute /opt/kafka/bin path works for BOTH the single-tier apache/kafka
+        # image (cwd is not /opt/kafka -> a relative bin/ fails) AND the Strimzi
+        # cluster broker (also /opt/kafka). Was `bin/...` which only worked in the
+        # Strimzi pod (F5).
+        "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config $P "
         f"--create --if-not-exists --topic {topic}; "
-        "echo mtx-msg | bin/kafka-console-producer.sh --bootstrap-server localhost:9092 "
+        "echo mtx-msg | /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 "
         f"--producer.config $P --topic {topic}; "
-        "bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 "
+        "/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 "
         f"--consumer.config $P --topic {topic} --group dfe-mtx --from-beginning "
         "--max-messages 1 --timeout-ms 30000"
     )
@@ -507,10 +549,13 @@ def _accept_kafka_redpanda(cell: Cell, pod: str) -> tuple[bool, str]:
     if not password:
         return False, "User secret 'dfe-kafka-user' not populated (no SCRAM password)"
     topic = "dfe-acceptance"
+    # Broker port is mode-dependent (F6): the single-tier standalone StatefulSet
+    # serves SASL on 9092 (kafka-single.yaml --kafka-addr ...:9092); the operator
+    # (cluster) redpanda exposes its TLS-off kafka listener on 9093.
+    port = "9092" if cell.mode == "single" else "9093"
     creds = (
         f"-X user=dfe-kafka-user -X pass='{password}' "
-        # operator-deployed redpanda exposes the (TLS-off) kafka listener on 9093.
-        "-X sasl.mechanism=SCRAM-SHA-512 -X brokers=localhost:9093"
+        f"-X sasl.mechanism=SCRAM-SHA-512 -X brokers=localhost:{port}"
     )
     script = (
         "set -e; "
@@ -626,7 +671,15 @@ def main() -> int:
         default=1,
         help="run the whole matrix N times (repeat-deploy solidity / flake hunt)",
     )
+    p.add_argument(
+        "--instance",
+        default="",
+        help="label for a CONCURRENT run -> ns/release prefix mtx-<instance>-* "
+        "(run two with different --instance to prove concurrent deploys don't collide)",
+    )
     args = p.parse_args()
+    global INSTANCE
+    INSTANCE = args.instance
 
     # Allow a bare invocation: fall back to the gitignored local kubeconfig so the
     # command matches the python3 allow-list (no KUBECONFIG= env prefix needed).
@@ -651,7 +704,9 @@ def main() -> int:
     overall_failures = 0
     for i in range(rounds):
         tag = f" round {i + 1}/{rounds}" if rounds > 1 else ""
-        print(f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n")
+        print(
+            f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n"
+        )
         results = [run_cell(c, do_apply=args.apply) for c in cells]
         failures = [r for r in results if not r.ok]
         overall_failures += len(failures)

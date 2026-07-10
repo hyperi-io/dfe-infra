@@ -48,7 +48,7 @@ data:
   documentdb-pg: "17-0.107.0-ferretdb-2.7.0"  # FerretDB 2.x PG backend image tag
   forgejo: "15.0.3"              # code.forgejo.org/forgejo/forgejo -- bundled deploy-repo FALLBACK (used only when no external GitHub/GitLab supplied). 15.0.3 LTS 2026-06-10 (18d old, clears cooldown; LTS line, supported to 2027-07). REGISTRY: code.forgejo.org (canonical), NOT codeberg.org -- codeberg's registry 503s under load (proven on bare-cluster test); code.forgejo.org served tag 200 (digest sha256:55bb42bec9abef5223744804f164e37d37b20df7e8b8b4807ba213ad4f071d6d). GPLv3+ run-unmodified -- fine for bundle-and-run (see plan). Chosen over Gitea (MIT) for community governance + maintenance; Gitea-API-compatible.
   otel-collector: "0.154.0"      # 2026-06-09. v0.155.0 (06-24) too fresh. Large jump from 0.114 -- review removed components.
-  hyperdx: "2.16.0"              # TODO reconcile: this is the UPSTREAM HyperDX app version; our hyperi-hyperdx fork is v1.0.0. Pin the fork's published image tag. Tied to fork-update workstream.
+  hyperdx: "2.16.0"              # TODO reconcile: this is the UPSTREAM HyperDX app version; our dfe-hyperdx fork is v1.0.0. Pin the fork's published image tag. Tied to fork-update workstream.
   kafbat: "v1.5.0"               # ghcr.io/kafbat/kafka-ui -- Kafka web UI, bundled by default with the kafka substrate. v1.5.0 2026-04-20 (clears 7-day cooldown; no LTS line, latest stable). Follows the DFE integrated-app auth pattern (OIDC + ro/rw/admin RBAC + break-glass in secret store). Image on GHCR (public).
 
 # Layer 2: DFE apps (deployed by ArgoCD wave 5).
@@ -75,10 +75,11 @@ providers:
   hashicorp-vault: "~> 4.0"
 
 # CI tools
-# NOTE: terraform/opentofu/helm bumps deferred to the TF/Tofu dual-CI workstream
-# (OpenTofu to be canonical; terraform kept for dual-CI compat). Do not bump here
-# in isolation -- they move together with that change.
+# NOTE: OpenTofu is being made canonical and terraform retired -- tracked in
+# hyperi-io/hyperi-developer#11. opentofu bumped 1.7.0 -> 1.12.3 (modern, settled:
+# latest 1.12 line, >20 days old, well past the cooldown). Align local + CI via
+# tenv so the state format never drifts. terraform pin stays only until #11 lands.
 tools:
-  terraform: "1.9.0"
-  opentofu: "1.7.0"
+  terraform: "1.9.0"   # RETIRING -- see hyperi-io/hyperi-developer#11
+  opentofu: "1.12.3"
   helm: "3.14.0"

@@ -60,13 +60,6 @@ spec:
             - name: DFE_AUTH_DEFAULT_TEAM
               value: {{ .Values.dfeAuth.defaultTeam | quote }}
             {{- end }}
-            {{- if .Values.casbin.enabled }}
-            - name: CASBIN_PG_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.casbin.urlSecretName }}
-                  key: url
-            {{- end }}
             {{- if .Values.defaultConnections.enabled }}
             - name: DEFAULT_CONNECTIONS
               valueFrom:

@@ -3,10 +3,10 @@ component: hyperdx
 env: local
 cloud: local
 
-# hyperi-hyperdx fork image (combined API + App). CONFIRM the published image
+# dfe-hyperdx fork image (combined API + App). CONFIRM the published image
 # name/tag from the fork's CI before first deploy.
 image:
-  repository: ghcr.io/hyperi-io/hyperi-hyperdx
+  repository: ghcr.io/hyperi-io/dfe-hyperdx
   tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
   pullPolicy: IfNotPresent
 
@@ -38,11 +38,10 @@ dfeAuth:
   headerGroups: x-oidc-groups
   defaultTeam: dfe
 
-# Casbin RBAC policy store (CNPG Postgres). dfe-engine is the SSoT and writes
-# policies here. URL supplied via secret (contains credentials).
-casbin:
-  enabled: true
-  urlSecretName: dfe-hyperdx-casbin   # key: url
+# Casbin dropped (DFE authz standard, Cut A): dfe-engine is the ONE PDP and
+# CH GRANTs are the authoritative data control, so hyperdx needs IDENTITY only
+# (the dfeAuth header seam above) -- no per-route policy engine, no Postgres
+# policy store. See project_dfe_authz_standard / project_hyperdx_embed.
 
 # DEFAULT_CONNECTIONS bootstrap (JSON array). dfe-engine renders this from its
 # ConnectionConfig (generate_default_connections_json); secret-backed.

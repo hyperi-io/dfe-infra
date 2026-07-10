@@ -1,0 +1,71 @@
+# DRAFT 2026-07-07 -- preview ApplicationSet (Group 2, declarative path).
+#
+# Deploys BRANCH previews into isolated `dfe-preview-*` namespaces from Harbor
+# `dfe-preview` images, WITHOUT touching main or ghcr. One Application per preview
+# spec file: drop `argocd/previews/<name>-<svc>.yaml` (see the example) and this
+# fans out an app for it; delete the file to tear it down (prune).
+#
+# Design + open decisions: docs/plans/2026-07-08-branch-preview-cycle.md
+#
+# WHY a distinct appset (not the layer2 cluster generator): the prod layer2 appset
+# selects clusters `dfe.hyperi.io/managed=true` and Argo de-dupes the in-cluster
+# server, so a 2nd cluster-secret is fiddly. A dedicated preview appset with a
+# git-files generator keeps previews fully separate from prod with zero risk of the
+# prod appset also firing. (See open Q2 -- this is the recommended option.)
+#
+# NEEDS-OK to apply: mutates the shared cluster. Author now, apply attended.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-preview-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    # One element per preview spec file. Each file supplies: name, service, chart,
+    # infra_revision (dfe-infra chart branch), image (Harbor preview tag), namespace.
+    - git:
+        repoURL: git@github.com:hyperi-io/dfe-infra.git
+        revision: main            # the appset + specs live on main; the DEPLOYED
+                                  # chart uses each spec's own infra_revision below
+        files:
+          - path: "argocd/previews/*.yaml"
+  template:
+    metadata:
+      name: 'preview-{{ .name }}-{{ .service }}'
+      namespace: argocd
+      labels:
+        dfe.hyperi.io/preview: '{{ .name }}'
+    spec:
+      project: dfe-apps          # DECIDE: a dedicated `dfe-preview` AppProject may be
+                                 # cleaner (own RBAC + namespace allow-list).
+      sources:
+        - repoURL: git@github.com:hyperi-io/dfe-infra.git
+          targetRevision: '{{ .infra_revision }}'
+          path: 'helm/charts/{{ .chart }}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - "../../../argocd/values/common.yaml"
+            # image override -> Harbor preview (inline; the chart's global.registry +
+            # per-chart image). hyperdx hardcodes ghcr, so set repository+tag directly.
+            values: |
+              global:
+                registry: {{ .registry }}
+              {{- if eq .service "hyperdx" }}
+              hyperdx:
+                image:
+                  repository: {{ (splitn ":" 2 .image)._0 }}
+                  tag: {{ (splitn ":" 2 .image)._1 }}
+              {{- end }}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'dfe-preview-{{ .name }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

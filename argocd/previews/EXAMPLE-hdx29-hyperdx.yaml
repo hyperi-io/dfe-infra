@@ -1,0 +1,28 @@
+# DRAFT EXAMPLE 2026-07-08 -- a PER-PREVIEW manifest (the SSoT for one preview).
+#
+# Copy to `<name>.yaml` (drop the EXAMPLE- prefix) to declare a preview; delete the
+# file to tear it down (Argo prunes). `preview.sh up` generates/updates this from CLI
+# flags and expands it into per-service Argo apps + Harbor builds.
+#
+# This example = the HyperDX 2.29 eyeball on a light (preview-slim) footprint.
+
+name: hdx29                # -> namespace dfe-preview-hdx29, Harbor tag prefix hdx29-
+owner: derek
+profile: preview-slim      # single CH, Kafka off, no fetcher/transforms (light)
+
+branches:                  # any repo omitted -> main
+  dfe-hyperdx: chore/upstream-sync-2.29      # BUILT from branch -> Harbor dfe-preview
+  dfe-infra:      main                        # chart source (Argo targetRevision)
+  dfe-deploy:     main                        # config overlay (config_repo_revision)
+  dfe-engine:     main                        # BUILT (python) - main here
+  dfe-ui:         main                        # BUILT (node) - main here
+  dfe-schemas:    main                        # DDL applied from this branch
+# Rust apps (dfe-receiver, dfe-loader) are PINNED to :latest from Harbor `dfe`;
+# dfe-fetcher + dfe-transform-* are SKIPPED (not in preview-slim). No Rust rebuilds.
+
+resources:                 # capacity ceiling -> per-preview ResourceQuota + LimitRange
+  max_cpu: "8"
+  max_mem: "16Gi"
+
+# Concurrent previews = more of these files: `dev.yaml` (shared, tracks main/an
+# integration branch), `kaz.yaml`, `kay.yaml`, `derek.yaml` - each its own ns + quota.

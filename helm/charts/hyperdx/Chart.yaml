@@ -1,6 +1,6 @@
 apiVersion: v2
 name: hyperdx
-description: HyperDX observability UI (hyperi-hyperdx fork) — header-SSO over ClickHouse
+description: HyperDX observability UI (dfe-hyperdx fork) — header-SSO over ClickHouse
 type: application
 version: 0.2.0
 appVersion: "2.16.0"

@@ -31,7 +31,7 @@
 #  Contract names (env-overridable) default to the SSoT:
 #    dfe.default        -- dfe-schemas/argocd/ddl/dfe.default.sql + loader default
 #    default_land       -- receiver default_source `default` + topic_suffix `_land`
-#    default.otel_logs  -- hyperi-hyperdx fork source default (DEFAULT_DATABASE)
+#    default.otel_logs  -- dfe-hyperdx fork source default (DEFAULT_DATABASE)
 #  NOTE: chain commands (curl/CLI paths) are first-cut and may need tuning to the
 #  exact image tooling on first live run -- the PRINCIPLE is fixed: assert the
 #  chain + freshness, never just the pod.

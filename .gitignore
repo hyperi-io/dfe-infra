@@ -25,6 +25,10 @@ override.tf.json
 # Scratch / temp
 .tmp/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Editor / OS
 .DS_Store
 .vscode/
