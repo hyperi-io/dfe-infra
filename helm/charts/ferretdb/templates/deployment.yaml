@@ -23,8 +23,13 @@ spec:
             - name: mongodb
               containerPort: 27017
           env:
+            # sslmode=require forces TLS to CNPG (which serves TLS by
+            # default), closing the sslmode=prefer silent-plaintext
+            # fallback. sslmode=verify-full + sslrootcert (the CNPG CA) is
+            # the CA-backed CNSA end-state; set postgresql.sslrootcert to
+            # a mounted ca.crt to enable it.
             - name: FERRETDB_POSTGRESQL_URL
-              value: "postgres://$(PGUSER):$(PGPASSWORD)@{{ .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode=prefer"
+              value: "postgres://$(PGUSER):$(PGPASSWORD)@{{ .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode={{ .Values.postgresql.sslmode }}{{ with .Values.postgresql.sslrootcert }}&sslrootcert={{ . }}{{ end }}"
             - name: PGUSER
               valueFrom:
                 secretKeyRef:

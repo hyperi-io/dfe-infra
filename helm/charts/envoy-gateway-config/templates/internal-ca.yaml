@@ -1,0 +1,48 @@
+{{- if .Values.tls.internalCA.enabled }}
+# CNSA 2.0 internal mesh CA (Track 3). Self-signed bootstrap Issuer ->
+# ECDSA P-384 CA Certificate -> cluster-scoped CA ClusterIssuer. Backing
+# services issue their in-cluster TLS certs from `dfe-internal-ca` so the
+# whole data plane chains to one P-384 trust root. These are just
+# cert-manager resources: inert until a Certificate references the issuer.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: dfe-selfsigned-bootstrap
+  namespace: {{ .Values.tls.internalCA.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dfe-internal-ca
+  namespace: {{ .Values.tls.internalCA.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: dfe-internal-ca
+  secretName: dfe-internal-ca-tls
+  duration: {{ .Values.tls.internalCA.duration | quote }}
+  renewBefore: {{ .Values.tls.internalCA.renewBefore | quote }}
+  # ECDSA P-384; cert-manager signs with SHA-384 for a P-384 key.
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+    rotationPolicy: Always
+  issuerRef:
+    name: dfe-selfsigned-bootstrap
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.tls.internalCA.issuerName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: dfe-internal-ca-tls
+{{- end }}
