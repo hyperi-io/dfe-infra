@@ -83,6 +83,12 @@ spec:
                   key: password
           {{- end }}
           {{- if .Values.oidc.enabled }}
+            # OIDC = Envoy-fronted: the gateway authenticates the user and
+            # injects the X-Oidc-* identity headers, so the engine must trust
+            # them (auth Path 1). Coupled to oidc.enabled -- fail closed when
+            # OIDC is off (local-auth deployments ignore these spoofable headers).
+            - name: DFE_AUTH_TRUST_PROXY_AUTH_HEADERS
+              value: "true"
           {{- range $provider := .Values.oidc.providers }}
           {{- range $envVar, $secretKey := $provider.envMappings }}
             - name: {{ $envVar }}
