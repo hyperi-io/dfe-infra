@@ -62,6 +62,12 @@ spec:
               value: {{ .Values.config.mountPath }}/rules
             - name: DFE_HUNTS_ALERT_DESTINATIONS_DIR
               value: {{ .Values.config.mountPath }}/alerts
+            # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
+            # the WRITABLE config mount. The default ./.secrets resolves to
+            # /app/.secrets on the root-owned WORKDIR (non-writable) -> the engine
+            # crashes minting the JWT signing key at startup. (Same fix as dfe-docker.)
+            - name: DFE_SECRETS_PATH
+              value: {{ .Values.config.mountPath }}/.secrets
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
