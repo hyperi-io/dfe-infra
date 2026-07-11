@@ -52,13 +52,15 @@ data:
   kafbat: "v1.5.0"               # ghcr.io/kafbat/kafka-ui -- Kafka web UI, bundled by default with the kafka substrate. v1.5.0 2026-04-20 (clears 7-day cooldown; no LTS line, latest stable). Follows the DFE integrated-app auth pattern (OIDC + ro/rw/admin RBAC + break-glass in secret store). Image on GHCR (public).
 
 # Layer 2: DFE apps (deployed by ArgoCD wave 5).
-# These are INTERNAL hyperi-io packages (no supply-chain cooldown) but each Rust
-# app has its OWN independent release line on GHCR -- they are NOT all "2.2.0".
-# Tags VERIFIED against ghcr.io/hyperi-io/<app> 2026-06-29. (Was incorrectly a
-# blanket 2.2.0, which would ImagePullBackOff on the real images.)
+# These are INTERNAL hyperi-io packages (no supply-chain cooldown) but each app
+# has its OWN independent release line on GHCR -- they are NOT all "2.2.0" (engine
+# is Python, the transforms/receiver/loader/... Rust, ui Next.js). Tags VERIFIED
+# against ghcr.io/hyperi-io/<app> 2026-07-11. (Was a blanket 2.2.0, which
+# ImagePullBackOffs on the real images.) check_versions_drift.py now enforces each
+# chart's appVersion == the pin here, so the two cannot silently diverge again.
 apps:
-  dfe-engine: "2.2.0"            # ghcr.io/hyperi-io/dfe-engine (Python, on 2.2.0)
-  dfe-ui: "2.2.0"               # NOT YET PUBLISHED to GHCR -- cannot deploy until built/pushed
+  dfe-engine: "v1.10.3"         # ghcr.io/hyperi-io/dfe-engine (Python; own line, admin-pw fix)
+  dfe-ui: "v1.0.8"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
   dfe-receiver: "v1.15.15"      # independent release line
   dfe-loader: "v1.18.7"
   dfe-archiver: "v1.7.8"

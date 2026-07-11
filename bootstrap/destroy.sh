@@ -49,7 +49,12 @@ if [[ "${DRY_RUN}" != "true" ]]; then
 fi
 
 echo "==> [4/7] Deleting DFE namespaces"
-for ns in strimzi clickhouse cnpg ferretdb otel hyperdx keda reloader; do
+# Data-plane + operator + bundled deploy-repo (Forgejo) namespaces. The operator
+# namespaces (clickhouse-operator/redpanda-operator) and kafka exist only in some
+# profiles; --ignore-not-found makes listing them harmless when a profile did not
+# create them. Missing any here strands the namespace (+ its finalizers) after a
+# teardown, which then blocks a clean redeploy.
+for ns in strimzi kafka clickhouse clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx keda reloader external-dns redpanda-operator forgejo; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
 # Delete any dfe-* namespaces

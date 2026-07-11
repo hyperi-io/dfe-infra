@@ -4,6 +4,10 @@
 *.tfstate
 *.tfstate.backup
 *.tfplan
+# bare `terraform plan -out=tfplan` output -- the *.tfplan glob misses it, and a
+# plan can embed secret values (.gitignore has no inline comments, so keep this
+# on its own line above the bare pattern)
+tfplan
 override.tf
 override.tf.json
 *_override.tf

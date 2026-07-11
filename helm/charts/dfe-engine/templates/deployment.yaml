@@ -26,16 +26,22 @@ spec:
             - name: http
               containerPort: 8000
           env:
-            - name: DFE_ENGINE_CLICKHOUSE_HOST
+            # The engine settings loader reads DFE_CLICKHOUSE_* (or legacy
+            # CLICKHOUSE_*), NOT a DFE_ENGINE_ prefix -- the old DFE_ENGINE_* names
+            # were silently ignored, leaving CH at the localhost:9000 default. The
+            # connection authenticates against the always-present `default` db;
+            # the startup bootstrap CREATEs the DFE data database (clickhouse.database).
+            # secure=false: in-cluster CH is plaintext HTTP on :8123 (the engine
+            # default secure=true would fail the TLS handshake). The engine has NO
+            # PostgreSQL (YAML/git SSoT) -- the old DFE_ENGINE_PG_* env was dead.
+            - name: DFE_CLICKHOUSE_HOST
               value: {{ .Values.clickhouse.host | quote }}
-            - name: DFE_ENGINE_CLICKHOUSE_PORT
+            - name: DFE_CLICKHOUSE_PORT
               value: {{ .Values.clickhouse.port | quote }}
-            - name: DFE_ENGINE_CLICKHOUSE_DATABASE
+            - name: DFE_CLICKHOUSE_DATA_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
-            - name: DFE_ENGINE_PG_HOST
-              value: {{ .Values.postgresql.host | quote }}
-            - name: DFE_ENGINE_PG_PORT
-              value: {{ .Values.postgresql.port | quote }}
+            - name: DFE_CLICKHOUSE_SECURE
+              value: "false"
             # Config-registry directories. WITHOUT these the engine leaves every
             # registry uninitialised and the config API returns 503 not_configured.
             # All live under the (writable) config mount; the engine seeds defaults
