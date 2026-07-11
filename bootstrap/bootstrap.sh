@@ -74,15 +74,24 @@ run() {
 # cluster they install correctly.
 dfe_have_crd() { kubectl get crd "$1" >/dev/null 2>&1; }
 
-# dfe_should_install <name> <crd>  -> rc 0 = INSTALL, rc 1 = ADOPT (skip).
+# dfe_should_install <name> <crd> [<ns> <deploy>]  -> rc 0 = INSTALL, rc 1 = ADOPT.
+# ADOPT only when BOTH the CRD and a running operator deployment are present. A
+# LINGERING CRD with no deployment (e.g. left behind by destroy.sh's resource-policy
+# keep) must NOT fool us into skipping the install -- that stranded argocd +
+# cert-manager (uninstalled but CRDs kept) on a clean-slate redeploy. So: CRD +
+# deployment -> ADOPT; CRD but no deployment -> INSTALL (re-adopts the CRD).
 dfe_should_install() {
-  local name="$1" crd="$2"
+  local name="$1" crd="$2" ns="${3:-}" deploy="${4:-}"
   if [[ "${DFE_FORCE_INSTALL:-false}" == "true" ]]; then
     echo "  [${name}] DFE_FORCE_INSTALL -> INSTALL DFE-owned"
     return 0
   fi
   if dfe_have_crd "${crd}"; then
-    echo "  [${name}] detected (CRD ${crd}) -> ADOPT existing, skip install"
+    if [[ -n "${ns}" && -n "${deploy}" ]] && ! kubectl -n "${ns}" get deploy "${deploy}" >/dev/null 2>&1; then
+      echo "  [${name}] CRD ${crd} present but ${ns}/${deploy} not running (lingering CRD) -> INSTALL"
+      return 0
+    fi
+    echo "  [${name}] detected (CRD ${crd} + running operator) -> ADOPT existing, skip install"
     return 1
   fi
   echo "  [${name}] not detected -> INSTALL DFE-owned"
@@ -103,6 +112,10 @@ required_vars=(
 # the cluster-secret annotation renders blank (kafka-dependent apps are gated off
 # in standard anyway).
 export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
+# devex/local enforces DFE onto its dedicated workers via a HARD nodeSelector
+# (argocd/values/local.yaml). Label the nodes by default there so the selector is
+# satisfiable; a shared/customer cluster labels its own nodes at provisioning.
+DFE_LABEL_WORKLOAD_NODES="${DFE_LABEL_WORKLOAD_NODES:-$([[ "${DFE_CLOUD:-}" == "local" ]] && echo true || echo false)}"
 # Registry vars are optional — skip regcred if not set
 # DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 missing=()
@@ -173,8 +186,19 @@ else
   run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 fi
 
+echo "==> [1c/7] Node labels (dedicated-worker placement)"
+# When a HARD nodeSelector is in play (devex/local) the target nodes MUST carry the
+# dfe.hyperi.io/workload=dfe label or the data pods sit Pending forever. Label here
+# as Layer-0 node-prep. Opt-in via DFE_LABEL_WORKLOAD_NODES (default on for local).
+if [[ "${DFE_LABEL_WORKLOAD_NODES}" == "true" ]]; then
+  run kubectl label nodes --all dfe.hyperi.io/workload=dfe --overwrite
+  echo "  Labelled all nodes dfe.hyperi.io/workload=dfe"
+else
+  echo "  Node labelling skipped (DFE_LABEL_WORKLOAD_NODES=false) -- soft/no placement"
+fi
+
 echo "==> [2/7] cert-manager (detect-or-install)"
-if dfe_should_install cert-manager certificates.cert-manager.io; then
+if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cert-manager; then
   run helm upgrade --install cert-manager jetstack/cert-manager \
     --namespace cert-manager --create-namespace \
     --version "${CERT_MANAGER_VERSION}" \
@@ -183,18 +207,39 @@ if dfe_should_install cert-manager certificates.cert-manager.io; then
 fi
 
 echo "==> [3/7] external-secrets (detect-or-install)"
-if dfe_should_install external-secrets clustersecretstores.external-secrets.io; then
+if dfe_should_install external-secrets clustersecretstores.external-secrets.io external-secrets external-secrets; then
   run helm upgrade --install external-secrets external-secrets/external-secrets \
     --namespace external-secrets --create-namespace \
     --version "${EXTERNAL_SECRETS_VERSION}" \
     --wait --timeout 5m
 fi
 
-echo "==> [4/7] Applying ESO ClusterSecretStore"
+echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-  echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl | kubectl apply -f -"
+  echo "[DRY-RUN] seed dfe-vault-approle-secret + envsubst store + patch caBundle"
 else
+  # Seed the AppRole SecretID the store references. Nothing else creates it, so ESO
+  # could never authenticate to OpenBao (store stuck InvalidProviderConfig). Vault
+  # provider path only; on cloud (AWS SM + IRSA) there is no SecretID.
+  if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then
+    kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f -
+    kubectl -n external-secrets create secret generic dfe-vault-approle-secret \
+      --from-literal=roleSecretID="${DFE_VAULT_SECRET_ID}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    echo "  Seeded ESO AppRole SecretID (dfe-vault-approle-secret)"
+  fi
   envsubst < "${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl" | kubectl apply -f -
+  # ESO's vault provider cannot skip TLS verify (the env's VAULT_SKIP_VERIFY is for
+  # terraform, which ESO ignores). Fetch OpenBao's issuing CA from its TLS handshake
+  # and patch it into the store so it can verify the cert. No-op if none is found.
+  if [[ -z "${DFE_VAULT_CA_BUNDLE:-}" ]] && [[ -n "${DFE_VAULT_ADDR:-}" ]]; then
+    DFE_VAULT_CA_BUNDLE=$(echo | openssl s_client -connect "${DFE_VAULT_ADDR#*://}" -showcerts 2>/dev/null | python3 -c "import sys,re,base64; c=re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', sys.stdin.read(), re.S); sys.stdout.write(base64.b64encode(chr(10).join(c[1:]).encode()).decode() if len(c)>1 else '')" || true)
+  fi
+  if [[ -n "${DFE_VAULT_CA_BUNDLE:-}" ]]; then
+    kubectl patch clustersecretstore dfe-secret-store --type merge \
+      -p "{\"spec\":{\"provider\":{\"vault\":{\"caBundle\":\"${DFE_VAULT_CA_BUNDLE}\"}}}}"
+    echo "  Patched OpenBao CA into the ESO store"
+  fi
 fi
 
 echo "==> [4b/7] Creating imagePullSecrets"
@@ -282,7 +327,7 @@ echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install)"
 # Argo HARDENING (dfe-infra#4): back off the controller timers so a degraded app
 # can never monopolise the control plane (self-heal 5s->30s, reconciliation
 # 180s->300s) and bound the repo-server timeout. Mirrors the devex platform guard.
-if dfe_should_install argocd applications.argoproj.io; then
+if dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
   run helm upgrade --install argocd argo/argo-cd \
     --namespace argocd --create-namespace \
     --version "${ARGOCD_VERSION}" \
