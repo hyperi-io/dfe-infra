@@ -92,9 +92,7 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     (
         "keda appset",
         "operators.keda",
-        lambda: find_appset_chart_version(
-            Path("argocd/appsets/layer1-addons.yaml"), "keda"
-        ),
+        lambda: find_appset_chart_version(Path("argocd/appsets/layer1-addons.yaml"), "keda"),
     ),
     (
         "metrics-server appset",
@@ -106,9 +104,7 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     (
         "reloader appset",
         "operators.reloader",
-        lambda: find_appset_chart_version(
-            Path("argocd/appsets/layer1-addons.yaml"), "reloader"
-        ),
+        lambda: find_appset_chart_version(Path("argocd/appsets/layer1-addons.yaml"), "reloader"),
     ),
     (
         "cloudnative-pg appset",
@@ -185,11 +181,41 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     (
         "valkey manifest image",
         "bootstrap.valkey",
-        lambda: find_regex(
-            Path("bootstrap/templates/valkey.yaml"), r"valkey/valkey:([^\s\"]+)"
-        ),
+        lambda: find_regex(Path("bootstrap/templates/valkey.yaml"), r"valkey/valkey:([^\s\"]+)"),
     ),
 ]
+
+# DFE app charts: each chart's appVersion MUST equal versions.yaml apps.<name>.
+# This is the pin that actually drives the deployed image tag -- dfe-common.image
+# falls back to .Chart.AppVersion when image.tag is empty (the deploy default), so
+# drift here is a silent ImagePullBackOff on a real cluster. (This is exactly the
+# blanket-"2.2.0" bug the apps section warns about.) Generated from one list so a
+# new app chart is covered the moment its versions.yaml pin + chart exist.
+_APP_CHARTS = [
+    "dfe-engine",
+    "dfe-ui",
+    "dfe-receiver",
+    "dfe-loader",
+    "dfe-archiver",
+    "dfe-fetcher",
+    "dfe-transform-vrl",
+    "dfe-transform-vector",
+    "dfe-transform-wasm",
+    "dfe-transform-elastic",
+    "dfe-transform-splack",
+]
+for _app in _APP_CHARTS:
+    CHECKS.append(
+        (
+            f"{_app} chart appVersion",
+            f"apps.{_app}",
+            # bind _app per-iteration (default-arg closure) so each lambda checks
+            # its own chart, not the last loop value.
+            lambda app=_app: find_regex(
+                Path(f"helm/charts/{app}/Chart.yaml"), r'appVersion:\s*"([^"]+)"'
+            ),
+        )
+    )
 
 
 def main() -> int:
@@ -204,9 +230,7 @@ def main() -> int:
             continue
         actual = extractor()
         if actual is None:
-            failures.append(
-                f"  [missing] {label}: could not locate the pin in its file"
-            )
+            failures.append(f"  [missing] {label}: could not locate the pin in its file")
             continue
         checked += 1
         if actual != expected:
@@ -220,9 +244,7 @@ def main() -> int:
             file=sys.stderr,
         )
         print("\n".join(failures), file=sys.stderr)
-        print(
-            f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr
-        )
+        print(f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr)
         return 1
 
     print(f"OK -- all {checked} version pins match versions.yaml.")
