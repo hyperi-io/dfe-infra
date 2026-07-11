@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         dfe-ops
+#  Purpose:      One CLI for DFE cluster operations -- kubeconfig fetch, HTTP
+#                probe, and the deploy/teardown/verify lifecycle. Consolidates
+#                the scattered ops helpers into a single dfe-cli-style command
+#                with subcommands. GENERIC: every environment-specific value
+#                (Vault path, node, cloud, server, ...) is a flag, so it serves
+#                ANY cluster (pet, dfe, a customer's), not just one. Runs under
+#                the python3 allow-list; stdlib only, no third-party deps.
+#  Language:     Python
+#
+#  License:      FSL-1.1-ALv2
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""dfe-ops -- one command for DFE cluster operations.
+
+    python3 scripts/dfe-ops <subcommand> [options]      # or ./scripts/dfe-ops ...
+
+Subcommands:
+  kubeconfig  Fetch a node's kubeconfig via a Vault/OpenBao-stored SSH key,
+              rewriting the loopback API server to a reachable address.
+  probe       Minimal curl-equivalent HTTP client (stdlib urllib) for smoke
+              tests + health checks where curl is unavailable or blocked.
+  deploy      Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
+              terraform -> bridge -> bootstrap -> Argo).
+  teardown    Tear the deployment down (wraps bootstrap/destroy.sh); optionally
+              also destroy terraform state.
+  verify      Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
+              or just the readiness gate.
+
+Examples:
+    # Pull the DFE cluster kubeconfig (server node dfe-k8s-1) to a local file:
+    python3 scripts/dfe-ops kubeconfig --node 10.66.0.204 --out .tmp/dfe.kubeconfig
+
+    # Probe an endpoint (prints the status line then the body):
+    python3 scripts/dfe-ops probe GET http://localhost:8000/health/ready
+
+    # Deploy to the local Rancher/RKE2 cluster, then verify:
+    python3 scripts/dfe-ops deploy --cloud local
+    python3 scripts/dfe-ops verify
+
+    # Preview a teardown, then run it (also destroying terraform state):
+    python3 scripts/dfe-ops teardown --dry-run
+    python3 scripts/dfe-ops teardown --force --with-terraform
+
+kubeconfig + probe need only python3. deploy/teardown/verify shell out to the
+repo's bootstrap/*.sh (found relative to this file), so they need whatever those
+scripts need (terraform/tofu, kubectl, helm, VAULT_* env, ...).
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import os
+import ssl
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BOOTSTRAP = REPO_ROOT / "bootstrap"
+
+# --- kubeconfig defaults -----------------------------------------------------
+DEFAULT_USER = "ubuntu"
+DEFAULT_VAULT_PATH = "kv/infrastructure/ssh"
+DEFAULT_VAULT_FIELD = "private_key_b64"
+DEFAULT_REMOTE_PATH = "/etc/rancher/rke2/rke2.yaml"
+DEFAULT_VAULT_CMD = "bao"
+# rke2/k3s write the loopback server here; rewrite it to a reachable address.
+_LOOPBACK_SERVERS = ("https://127.0.0.1:6443", "https://[::1]:6443")
+
+
+# --- shared shell helpers ----------------------------------------------------
+def _run_capture(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Run a subprocess, capturing output; raise CalledProcessError on failure."""
+    return subprocess.run(  # noqa: S603 - args are built from validated flags
+        cmd, capture_output=True, check=True
+    )
+
+
+def _run_streaming(cmd: list[str], *, env: dict | None = None) -> int:
+    """Run a subprocess inheriting stdio (live output); return its exit code."""
+    print(f"==> {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.run(cmd, env=env).returncode  # noqa: S603
+
+
+# --- kubeconfig subcommand ---------------------------------------------------
+def _read_ssh_key(vault_cmd: str, path: str, field: str) -> bytes:
+    """Read the base64 SSH private key from Vault/OpenBao and decode it."""
+    proc = _run_capture([vault_cmd, "kv", "get", f"-field={field}", path])
+    return base64.b64decode(proc.stdout)
+
+
+def _fetch_remote(user: str, node: str, remote_path: str, key_file: str) -> str:
+    """SSH to the node and return the remote kubeconfig text."""
+    proc = _run_capture(
+        [
+            "ssh",
+            "-i",
+            key_file,
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=15",
+            f"{user}@{node}",
+            f"cat {remote_path} 2>/dev/null || sudo cat {remote_path}",
+        ]
+    )
+    return proc.stdout.decode("utf-8")
+
+
+def _rewrite_server(kubeconfig: str, server: str) -> str:
+    """Replace the loopback API-server URL with a reachable one."""
+    out = kubeconfig
+    for loopback in _LOOPBACK_SERVERS:
+        out = out.replace(loopback, server)
+    return out
+
+
+def cmd_kubeconfig(args: argparse.Namespace) -> int:
+    if not os.environ.get("VAULT_ADDR"):
+        print("VAULT_ADDR is not set (export it, or source your env)", file=sys.stderr)
+        return 2
+
+    server = args.server or f"https://{args.node}:6443"
+
+    key_bytes = _read_ssh_key(args.vault_cmd, args.vault_path, args.vault_field)
+    key_fd, key_file = tempfile.mkstemp(prefix="kc-ssh-", suffix=".key")
+    try:
+        os.write(key_fd, key_bytes)
+        os.close(key_fd)
+        os.chmod(key_file, 0o600)
+        raw = _fetch_remote(args.user, args.node, args.remote_path, key_file)
+    finally:
+        os.unlink(key_file)  # the private key never persists
+
+    kubeconfig = _rewrite_server(raw, server)
+
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(kubeconfig)
+    os.chmod(args.out, 0o600)
+
+    print(f"wrote {args.out} (server {server})")
+    return 0
+
+
+# --- probe subcommand --------------------------------------------------------
+def cmd_probe(args: argparse.Namespace) -> int:
+    headers: dict[str, str] = {}
+    for h in args.header:
+        if ":" not in h:
+            print(f"bad header (expected 'K: V'): {h!r}", file=sys.stderr)
+            return 2
+        k, v = h.split(":", 1)
+        headers[k.strip()] = v.strip()
+
+    body: bytes | None = None
+    if args.json is not None:
+        body = args.json.encode("utf-8")
+        headers.setdefault("Content-Type", "application/json")
+    elif args.data is not None:
+        body = args.data.encode("utf-8")
+
+    ctx = None
+    if args.insecure:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(
+        args.url, data=body, headers=headers, method=args.method.upper()
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - explicit URL from flags
+            req, timeout=args.timeout, context=ctx
+        ) as resp:
+            status = resp.status
+            resp_headers = resp.headers
+            payload = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:  # a response WITH an error status
+        status = exc.code
+        resp_headers = exc.headers
+        payload = exc.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:  # no response
+        print(f"request failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"HTTP {status}")
+    if args.head:
+        for k, v in resp_headers.items():
+            print(f"{k}: {v}")
+        print()
+    print(payload)
+
+    if args.fail and status >= 400:
+        return 22  # mirror curl -f's exit code
+    return 0
+
+
+# --- deploy / teardown / verify subcommands (wrap bootstrap/*.sh) ------------
+def _require_script(name: str) -> Path | None:
+    path = BOOTSTRAP / name
+    if not path.exists():
+        print(f"bootstrap script not found: {path}", file=sys.stderr)
+        return None
+    return path
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    script = _require_script("deploy.sh")
+    if script is None:
+        return 1
+    cmd = ["bash", str(script), "--cloud", args.cloud]
+    if args.tf_dir:
+        cmd += ["--tf-dir", args.tf_dir]
+    if args.dry_run:
+        cmd.append("--dry-run")
+    if args.skip_terraform:
+        cmd.append("--skip-terraform")
+    return _run_streaming(cmd)
+
+
+def cmd_teardown(args: argparse.Namespace) -> int:
+    script = _require_script("destroy.sh")
+    if script is None:
+        return 1
+    env = dict(os.environ)
+    cmd = ["bash", str(script)]
+    if args.dry_run:
+        env["DFE_DRY_RUN"] = "true"
+    elif args.force:
+        cmd.append("--force")
+    rc = _run_streaming(cmd, env=env)
+    if rc != 0 or not args.with_terraform:
+        return rc
+    # Optionally also destroy terraform state (OpenBao KV mounts + AppRoles).
+    tf_dir = args.tf_dir or str(REPO_ROOT / "terraform" / "environments" / args.cloud)
+    tf_cmd = [args.tf_bin, f"-chdir={tf_dir}", "destroy"]
+    if args.dry_run:
+        print(f"[dry-run] would run: {' '.join(tf_cmd)}", file=sys.stderr)
+        return rc
+    if args.force:
+        tf_cmd.append("-auto-approve")  # non-interactive teardown when --force
+    return _run_streaming(tf_cmd, env=env)
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    name = "smoke-test-readiness.sh" if args.readiness_only else "run-all-smoke-tests.sh"
+    script = _require_script(name)
+    if script is None:
+        return 1
+    return _run_streaming(["bash", str(script)])
+
+
+# --- parser ------------------------------------------------------------------
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="dfe-ops",
+        description="One CLI for DFE cluster operations (generic, any cluster).",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    sub = ap.add_subparsers(dest="command", required=True, metavar="<subcommand>")
+
+    # kubeconfig
+    kc = sub.add_parser(
+        "kubeconfig",
+        help="fetch a node's kubeconfig via a Vault/OpenBao-stored SSH key",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    kc.add_argument("--node", required=True, help="node host/IP to SSH to (the API server node)")
+    kc.add_argument("--user", default=DEFAULT_USER, help="SSH user")
+    kc.add_argument("--vault-path", default=DEFAULT_VAULT_PATH, help="Vault/OpenBao kv path of the SSH key")
+    kc.add_argument("--vault-field", default=DEFAULT_VAULT_FIELD, help="field holding the base64 private key")
+    kc.add_argument("--vault-cmd", default=DEFAULT_VAULT_CMD, help="secrets CLI: bao or vault")
+    kc.add_argument("--remote-path", default=DEFAULT_REMOTE_PATH, help="kubeconfig path on the node")
+    kc.add_argument("--server", default=None, help="rewrite the API server to this URL (default: https://<node>:6443)")
+    kc.add_argument("--out", default="kubeconfig", help="local output kubeconfig path")
+    kc.set_defaults(func=cmd_kubeconfig)
+
+    # probe
+    pr = sub.add_parser(
+        "probe",
+        help="minimal curl-equivalent HTTP client (stdlib only)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    pr.add_argument("method", help="HTTP method (GET, POST, PUT, DELETE, ...)")
+    pr.add_argument("url", help="request URL")
+    pr.add_argument("-H", "--header", action="append", default=[], metavar="'K: V'", help="request header (repeatable)")
+    pr.add_argument("-d", "--data", default=None, help="raw request body")
+    pr.add_argument("--json", default=None, help="JSON request body (also sets Content-Type: application/json)")
+    pr.add_argument("-k", "--insecure", action="store_true", help="skip TLS certificate verification")
+    pr.add_argument("--timeout", type=float, default=15.0, help="timeout (seconds)")
+    pr.add_argument("--head", action="store_true", help="print response headers too")
+    pr.add_argument("--fail", action="store_true", help="exit non-zero on HTTP status >= 400")
+    pr.set_defaults(func=cmd_probe)
+
+    # deploy
+    dp = sub.add_parser(
+        "deploy",
+        help="deploy DFE to a target cloud (wraps bootstrap/deploy.sh)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    dp.add_argument("--cloud", default="local", help="target cloud: local, aws, gcp, az")
+    dp.add_argument("--tf-dir", default=None, help="terraform env dir (default: auto from --cloud)")
+    dp.add_argument("--dry-run", action="store_true", help="show what would happen without executing")
+    dp.add_argument("--skip-terraform", action="store_true", help="skip terraform apply (use existing state)")
+    dp.set_defaults(func=cmd_deploy)
+
+    # teardown
+    td = sub.add_parser(
+        "teardown",
+        help="tear the deployment down (wraps bootstrap/destroy.sh)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    td.add_argument("--force", action="store_true", help="skip the confirmation prompt")
+    td.add_argument("--dry-run", action="store_true", help="show what would be deleted without deleting")
+    td.add_argument("--with-terraform", action="store_true", help="also destroy terraform state (OpenBao KV + AppRoles)")
+    td.add_argument("--cloud", default="local", help="terraform env for --with-terraform")
+    td.add_argument("--tf-dir", default=None, help="terraform env dir for --with-terraform (default: auto from --cloud)")
+    td.add_argument("--tf-bin", default="terraform", help="terraform binary (terraform or tofu)")
+    td.set_defaults(func=cmd_teardown)
+
+    # verify
+    vf = sub.add_parser(
+        "verify",
+        help="run the smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    vf.add_argument("--readiness-only", action="store_true", help="run only the readiness gate (pods Ready)")
+    vf.set_defaults(func=cmd_verify)
+
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        print(f"command failed: {' '.join(exc.cmd)}\n{stderr}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
