@@ -66,12 +66,48 @@ kafka:
     limits:
       cpu: "2"
       memory: 4Gi
+  # Broker/topic defaults -- DFE's opinionated, minimal, scale-safe baseline.
+  # Applied by the Strimzi Kafka CR (cluster) + the non-operator single-broker
+  # server.properties; the Redpanda paths map the equivalents (redpanda.yaml
+  # clusterSpec.config.cluster). Full rationale + 2026 sources: docs/kafka/README.md.
   config:
-    compressionType: zstd
+    # compression.type=producer: the broker stores exactly the codec the client
+    # sent, so it never decompress-recompresses on the ingest hot path. scalo's
+    # client sizing profile OWNS the codec (lz4 default; zstd opt-in for
+    # storage-bound topics). A fixed broker codec (e.g. zstd) that differs from the
+    # producer's (lz4) forces broker-side re-compression on every produce -- avoid.
+    compressionType: producer
+    # Time-based retention only (log.retention.bytes left unset = -1). 72h exceeds
+    # the max expected consumer downtime and DFE also archives to object storage via
+    # dfe-archiver, so time-retention is the durable, portable default. Size-based
+    # retention is PVC-specific -- set log.retention.bytes to match storage.size per
+    # deploy; never bake a universal size (it can delete un-consumed forensic data).
     logRetentionHours: "72"
-    numPartitions: "6"
+    # 512 MiB segments: finer retention granularity than the 1 GiB default (a
+    # segment is only deletable once closed) while keeping open-file counts sane.
+    # Raise toward 1 GiB on very-high-partition-density brokers.
+    logSegmentBytes: "536870912"
+    # 12 partitions: highly divisible (2/3/4/6/12) for balanced leadership as the
+    # broker count grows, plus headroom for consumer-group parallelism. Keyed topics
+    # cannot be repartitioned later without breaking key->partition mapping, so a
+    # modest over-provision is deliberate. KRaft removes the old partition ceilings.
+    numPartitions: "12"
+    # Durability triad: RF3 + minISR2 + client acks=all (scalo enables idempotence
+    # by default -> acks=all). Tolerates one broker loss with no data loss. RF is
+    # clamped to the broker count for the single/small tiers (min(RF, replicas)).
     defaultReplicationFactor: "3"
     minInsyncReplicas: "2"
+    # Never elect an out-of-sync replica as leader -- a data-forensics engine favours
+    # consistency over availability. Kafka 4.x already defaults this false; pinned
+    # here so the durability contract is explicit and auditable.
+    uncleanLeaderElection: "false"
+    # message.max.bytes is intentionally LEFT at the Kafka default (~1 MiB). It is
+    # aligned with the scalo client contract: producer batch.size (128 KiB) <
+    # broker message.max.bytes (1 MiB) <= the SMALLEST client per-partition fetch
+    # budget (low_latency max.partition.fetch.bytes = 1 MiB). Raising it on one layer
+    # without the others causes producer rejects or consumer stalls -- raise all
+    # three together (broker + topic max.message.bytes + client fetch) only if you
+    # genuinely need larger messages; prefer reference-based messaging for blobs.
 
 # DFE service user (SCRAM-SHA-512)
 user:

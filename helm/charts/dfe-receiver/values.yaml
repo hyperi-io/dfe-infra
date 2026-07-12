@@ -75,6 +75,12 @@ receiver:
 kafka:
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
+  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
+  # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
+  # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
+  # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
+  # DFE Kafka credential contract (dfe-engine#98).
+  provider: ""
 
 config:
   mountPath: /config

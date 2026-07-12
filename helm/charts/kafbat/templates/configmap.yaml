@@ -11,12 +11,29 @@ data:
   application-local.yml: |
     kafka:
       clusters:
-        {{- range .Values.kafka.clusters }}
-        - name: {{ .name }}
-          bootstrapServers: {{ .bootstrapServers | quote }}
-          {{- with .properties }}
+        {{- range $i, $c := .Values.kafka.clusters }}
+        - name: {{ $c.name }}
+          bootstrapServers: {{ $c.bootstrapServers | quote }}
+          {{- $mechanism := "" }}
+          {{- if $c.provider }}
+          {{- $mechanism = include "kafbat.saslMechanism" $c.provider }}
+          {{- end }}
+          {{- if or $mechanism $c.properties }}
           properties:
+            {{- if $mechanism }}
+            security.protocol: {{ include "kafbat.securityProtocol" $c.provider }}
+            sasl.mechanism: {{ $mechanism | quote }}
+            {{- $envPrefix := include "kafbat.clusterEnvPrefix" $i }}
+            sasl.jaas.config: {{ printf "%s required username=\"${%s_USERNAME}\" password=\"${%s_PASSWORD}\";" (include "kafbat.jaasModule" $mechanism) $envPrefix $envPrefix | quote }}
+            {{- end }}
+            {{- with $c.properties }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- else }}
+          properties: {}
+          {{- end }}
+          {{- if and $c.schemaRegistryUrl $c.provider (include "kafbat.hasSchemaRegistry" $c.provider) }}
+          schemaRegistry: {{ $c.schemaRegistryUrl | quote }}
           {{- end }}
         {{- end }}
     auth:

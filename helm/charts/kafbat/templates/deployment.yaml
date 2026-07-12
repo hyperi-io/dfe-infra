@@ -37,6 +37,24 @@ spec:
                   name: {{ .Values.oidc.clientSecretName }}
                   key: client-secret
             {{- end }}
+            {{- range $i, $c := .Values.kafka.clusters }}
+            {{- if $c.credentialsSecretName }}
+            {{- $envPrefix := include "kafbat.clusterEnvPrefix" $i }}
+            # Per-cluster SASL/API-key credentials -- referenced from the mounted
+            # application-local.yml as a Spring ${VAR} placeholder (see configmap.yaml
+            # sasl.jaas.config), never written into the ConfigMap in plaintext.
+            - name: {{ printf "%s_USERNAME" $envPrefix }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $c.credentialsSecretName }}
+                  key: username
+            - name: {{ printf "%s_PASSWORD" $envPrefix }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $c.credentialsSecretName }}
+                  key: password
+            {{- end }}
+            {{- end }}
             {{- if .Values.breakGlass.enabled }}
             # Break-glass local admin -- wired so flipping auth.type to LOGIN_FORM
             # immediately enables it (the recovery door). Inert while type=OAUTH2.

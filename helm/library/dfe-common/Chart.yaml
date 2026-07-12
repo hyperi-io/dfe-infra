@@ -2,4 +2,4 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
-version: 0.1.0
+version: 0.1.1

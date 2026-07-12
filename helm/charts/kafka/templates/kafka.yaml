@@ -44,7 +44,12 @@ spec:
       min.insync.replicas: {{ $isr }}
       num.partitions: {{ .Values.kafka.config.numPartitions }}
       log.retention.hours: {{ .Values.kafka.config.logRetentionHours }}
+      log.segment.bytes: {{ .Values.kafka.config.logSegmentBytes }}
+      # producer -> broker stores the client's codec as-is (no re-compression);
+      # scalo's sizing profile owns the codec (lz4 default, zstd opt-in).
       compression.type: {{ .Values.kafka.config.compressionType }}
+      # Durability over availability -- never elect an out-of-sync leader.
+      unclean.leader.election.enable: {{ .Values.kafka.config.uncleanLeaderElection }}
   entityOperator:
     topicOperator: {}
     userOperator: {}
