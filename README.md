@@ -26,7 +26,9 @@ So this repo stays GENERIC:
 
 A two-layer model, identical on any Kubernetes:
 
-- **Layer 1** - base infra (cloud-specific), bootstrapped once by OpenTofu.
+- **Layer 1** - base infra (cloud-specific): `bootstrap/bootstrap.sh` lays the
+  cluster baseline (detect-or-install), with OpenTofu handling the
+  cloud-side prep (secrets/IAM) where a cloud needs it.
 - **Layer 2** - the DFE platform (identical everywhere), managed by ArgoCD.
 
 A cluster-secret annotation bridge carries Layer-1 outputs into the GitOps layer.
@@ -54,10 +56,14 @@ carries those inputs is specified in
 
 ## Layout
 
-See [DIRECTORY.md](DIRECTORY.md) for the full tree and [SCOPE.md](SCOPE.md) for
-the boundary between this repo and dfe-engine.
+See [docs/architecture.md](docs/architecture.md) for where this repo sits in
+the suite (and the hard dfe-engine boundary), and
+[docs/deployment/index.md](docs/deployment/index.md) for layers, tiers, and
+the values cascade.
 
 - `terraform/` - reusable HCL modules (OpenTofu).
-- `helm/charts/` - one chart per DFE service and data component.
-- `argocd/` - ApplicationSets, AppProjects, cloud-specific values.
+- `helm/charts/` - one chart per DFE service and data component
+  (+ `helm/library/dfe-common` shared templates).
+- `argocd/` - ApplicationSets, AppProjects, tier + cloud values.
 - `bootstrap/` - idempotent cluster bootstrap.
+- `versions.yaml` - single source for chart/operator/image pins.

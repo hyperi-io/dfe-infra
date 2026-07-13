@@ -37,6 +37,12 @@ run_test "Layer 1 (Bootstrap)" "smoke-test.sh"
 run_test "Layer 2 (Data Platform)" "smoke-test-data.sh"
 run_test "Auth & Ingress" "smoke-test-auth.sh"
 run_test "KEDA Autoscaling" "smoke-test-keda.sh"
+# The deep scale PROOF (artificial +1 pod via the fail-safe shim) mutates the cluster +
+# takes ~2-3 min, so it is gated. Defaults ON for full validation; set
+# DFE_KEDA_SCALE_TEST=0 to skip it for a fast smoke run.
+if [ "${DFE_KEDA_SCALE_TEST:-1}" = "1" ]; then
+    run_test "KEDA scale proof (artificial +1 pod)" "keda-scale-test.sh"
+fi
 
 echo ""
 echo "========================================"

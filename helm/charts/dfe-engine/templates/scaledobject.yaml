@@ -1,0 +1,8 @@
+{{- /* KEDA autoscaling, folded into the app chart -- driven by .Values.keda
+       (engine/overlay sets it). Renders nothing when keda.enabled is false -- which
+       is the ENGINE DEFAULT (control-plane singleton; overlay-enable for HA). */}}
+{{- include "dfe-common.triggerauthentication" . }}
+{{- if and .Values.keda .Values.keda.enabled .Values.keda.triggerAuthentication }}
+---
+{{- end }}
+{{- include "dfe-common.scaledobject" . }}

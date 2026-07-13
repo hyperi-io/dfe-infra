@@ -60,6 +60,10 @@ spec:
               superusers: ["${KAFKA_USER}"]
               enable_sasl: true
               kafka_enable_authorization: true
+              # DFE broker/topic defaults (Redpanda property names). Single broker
+              # is RF1 so default_topic_replications stays 1 (its default).
+              default_topic_partitions: {{ int .Values.kafka.config.numPartitions }}
+              log_segment_size: {{ int .Values.kafka.config.logSegmentBytes }}
               CFG
               redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
                 --node-id 0 --check=false \
@@ -127,7 +131,11 @@ data:
     min.insync.replicas=1
     num.partitions={{ .Values.kafka.config.numPartitions }}
     log.retention.hours={{ .Values.kafka.config.logRetentionHours }}
+    log.segment.bytes={{ .Values.kafka.config.logSegmentBytes }}
+    # producer -> broker stores the client's codec as-is (no re-compression).
     compression.type={{ .Values.kafka.config.compressionType }}
+    # single broker is RF1 so unclean election cannot occur; pinned for parity.
+    unclean.leader.election.enable={{ .Values.kafka.config.uncleanLeaderElection }}
     auto.create.topics.enable=true
   entrypoint.sh: |
     #!/bin/sh

@@ -7,11 +7,15 @@ cloud: local
 # slim tier (gRPC, no Kafka). profile-slim.yaml sets enabled:false.
 enabled: true
 
-# Kafbat UI (maintained Kafka UI fork). Pinned to v1.5.0 (2026-04-20, clears the
-# 7-day cooldown; no LTS line). Image on GHCR.
+# Kafbat UI (maintained Kafka UI fork). v1.5.0 (2026-04-20, clears the 7-day
+# cooldown; no LTS line; still latest stable as of 2026-07-12 per `gh api
+# repos/kafbat/kafka-ui/releases/latest`). Image on GHCR (public), SHA-pinned
+# per the dfe-engine dependency rules -- digest verified via
+# `gh api /orgs/kafbat/packages/container/kafka-ui/versions` (multi-arch
+# manifest list tagged v1.5.0+latest, published 2026-04-20T18:17:18Z).
 image:
   repository: ghcr.io/kafbat/kafka-ui
-  tag: ""              # defaults to Chart.appVersion
+  tag: "v1.5.0@sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -20,14 +24,42 @@ service:
   type: ClusterIP
   port: 8080
 
-# Kafka cluster(s) Kafbat manages. The engine/overlay points this at the deployed
-# Kafka (Strimzi/Redpanda) bootstrap + SASL/SCRAM creds. Empty by default.
+# Kafka cluster(s) Kafbat manages. The engine/overlay (or later, the dfe CLI)
+# points this at the deployed Kafka target(s) -- one entry per cluster. Empty
+# by default (no cluster configured until an overlay supplies one).
+#
+# `provider` is the SAME provider identity scalo's KafkaConfig.provider uses
+# (strimzi | redpanda | msk | redpanda-cloud | confluent-cloud | plaintext).
+# The chart DERIVES security.protocol + sasl.mechanism + the sasl.jaas.config
+# module from it -- mirrors the DFE Kafka credential contract (dfe-engine#98)
+# and scalo-py's emit_kafbat_cluster() output shape exactly. Never hand-set
+# the mechanism here. msk_iam is NOT supported by this chart yet (OAUTHBEARER
+# has no JAAS module -- see templates/_helpers.tpl kafbat.jaasModule).
+#
+# `credentialsSecretName` names a K8s Secret with keys `username`/`password`
+# (the SASL user or the Confluent Cloud API key/secret pair). Omit for
+# provider: plaintext. The chart injects these as per-cluster env vars
+# (KAFKA_CLUSTER_<i>_USERNAME/PASSWORD) and references them from the mounted
+# config via a Spring ${VAR} placeholder -- credentials never land in the
+# rendered ConfigMap in plaintext.
+#
+# `schemaRegistryUrl` is optional; only wired into the cluster's
+# `schemaRegistry` key when the provider ships a registry (confluent-cloud,
+# redpanda, redpanda-cloud) AND this is set.
+#
+# `properties` is an optional escape hatch: extra raw kafbat cluster
+# properties merged in on top of the provider-derived ones (provider-derived
+# keys always win -- see templates/configmap.yaml).
 kafka:
-  clusters:
-    - name: dfe
-      bootstrapServers: ""        # e.g. dfe-kafka-bootstrap.kafka.svc:9092
-      # SASL/SCRAM-SHA-512 is the DFE standard; creds come from a mounted secret.
-      properties: {}
+  clusters: []
+  # Example (filled in per deployment via the ArgoCD overlay):
+  # clusters:
+  #   - name: dfe
+  #     provider: strimzi
+  #     bootstrapServers: dfe-kafka-bootstrap.kafka.svc:9092
+  #     credentialsSecretName: dfe-kafka-user
+  #     schemaRegistryUrl: ""
+  #     properties: {}
 
 # AUTH -- DFE default integrated-app pattern (see docs/ARCHITECTURE.md).
 #   primary  = OIDC (auth.type OAUTH2) against the SAME IdP as the rest of the

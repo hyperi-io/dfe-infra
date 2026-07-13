@@ -4,6 +4,7 @@
 {{- end }}
 {{- if eq .Values.kafka.mode "cluster" }}
 {{- $replicas := int .Values.kafka.replicas }}
+{{- $rf := min (int .Values.kafka.config.defaultReplicationFactor) $replicas }}
 # Redpanda cluster, managed by the Redpanda operator (cluster.redpanda.com/v1alpha2).
 # First-class provider alongside Strimzi, run the SAME way: operator + thin CR.
 # SASL/SCRAM-512 on, TLS off (SCRAM over plaintext internal -- matches Strimzi's
@@ -19,6 +20,21 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   clusterSpec:
+    # DFE broker/topic defaults mapped to Redpanda cluster properties (Kafka's
+    # server.properties names differ on Redpanda). NOT yet live-validated: verify
+    # the config.cluster path against the pinned operator (26.1.6) on first deploy.
+    # compression is intentionally omitted -- Redpanda topics default compression to
+    # `producer`, matching the Strimzi default (the client sizing profile owns the
+    # codec). min.insync.replicas has no direct cluster property: Redpanda's Raft
+    # consensus needs a write quorum (majority) for acks=all, giving the RF3
+    # durability equivalent; set min.insync.replicas per-topic for a stricter floor.
+    # unclean leader election does not apply -- Raft never elects a non-quorum leader.
+    config:
+      cluster:
+        default_topic_partitions: {{ int .Values.kafka.config.numPartitions }}
+        default_topic_replications: {{ $rf }}
+        log_segment_size: {{ int .Values.kafka.config.logSegmentBytes }}
+        log_retention_ms: {{ mul (int .Values.kafka.config.logRetentionHours) 3600000 }}
     # DFE runs redpanda headless -- no Console UI (extra pod + its own config/secret).
     console:
       enabled: false

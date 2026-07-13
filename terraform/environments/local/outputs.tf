@@ -35,7 +35,10 @@ output "DFE_NAMESPACE" {
 }
 
 output "DFE_CLICKHOUSE_HOST" {
-  value = "clickhouse.clickhouse.svc.cluster.local"
+  # The clickhouse-operator names the service dfe-clickhouse (release dfe), NOT
+  # clickhouse -- the old value did not resolve, so the engine's CH client failed
+  # NameResolutionError. Matches argocd/values/common.yaml + hyperdx/otel values.
+  value = "dfe-clickhouse.clickhouse.svc.cluster.local"
 }
 
 output "DFE_KAFKA_BOOTSTRAP" {
@@ -52,6 +55,13 @@ output "DFE_VAULT_ADDR" {
 
 output "DFE_VAULT_ROLE_ID" {
   value     = module.secrets.eso_role_id
+  sensitive = true
+}
+
+output "DFE_VAULT_SECRET_ID" {
+  # Surfaced so bootstrap can seed the ESO AppRole secret (dfe-vault-approle-secret).
+  # Nothing else created that k8s secret, so ESO could never authenticate to OpenBao.
+  value     = module.secrets.eso_secret_id
   sensitive = true
 }
 

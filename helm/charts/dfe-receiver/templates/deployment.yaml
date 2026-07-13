@@ -35,6 +35,7 @@ spec:
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             - name: DFE_RECEIVER_LISTEN_ADDRESS
               value: {{ .Values.receiver.listenAddress | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
