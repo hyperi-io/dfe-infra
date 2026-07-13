@@ -1,6 +1,6 @@
 <!--
-Project:   DFE (Data Forensics Engine) - product suite
-File:      docs/kafka/aws-msk.md
+Project:   DFE (Data Fusion Engine) - product suite
+File:      docs/deployment/kafka/aws-msk.md
 Purpose:   Config guide for running DFE against AWS MSK -- provisioned
            (SASL/SCRAM) and serverless (IAM). States DFE's defaults, which
            the platform lets you set vs locks down, and a working OpenTofu /

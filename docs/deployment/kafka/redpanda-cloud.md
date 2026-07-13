@@ -1,6 +1,6 @@
 <!--
-Project:   DFE (Data Forensics Engine) - product suite
-File:      docs/kafka/redpanda-cloud.md
+Project:   DFE (Data Fusion Engine) - product suite
+File:      docs/deployment/kafka/redpanda-cloud.md
 Purpose:   Config guide for running DFE against Redpanda Cloud (Serverless /
            Dedicated / BYOC, SCRAM-SHA-512). States DFE's defaults, what the
            tier lets you set vs manages, and a working OpenTofu / Terraform

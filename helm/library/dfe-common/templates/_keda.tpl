@@ -4,9 +4,14 @@ dfe-common.scaledobject — renders a KEDA ScaledObject for a dfe-* app from its
 the engine's per-instance overlay drives scaling directly: the overlay sets
 .Values.keda and this renders the matching ScaledObject.
 
-scaleTargetRef is the app's own Deployment (dfe-common.fullname). Triggers are
-passed through verbatim from .Values.keda.triggers (any KEDA scaler type), so the
-engine's HelmKedaConfig output maps 1:1.
+scaleTargetRef is the app's own Deployment (dfe-common.fullname). The DEFAULT
+trigger is CPU utilisation (native KEDA cpu scaler - zero code, zero upstream risk,
+the safe fleet baseline; metrics-server is installed and the pods declare CPU
+requests). scalo ScalingPressure is OPT-IN per app (.Values.keda.pressure.enabled)
+and routes through the fail-safe dfe-keda-shim so a metric outage FREEZES scaling
+rather than running replicas up. An app may still set .Values.keda.triggers to
+override VERBATIM (any KEDA scaler type, e.g. Kafka lag), so the engine's
+HelmKedaConfig output still maps 1:1 when it emits explicit triggers.
 
 NOTE: minReplicaCount defaults to 1 -- scale-to-zero (min/idle 0) is 2.2 backlog
 (kafka-pipeline-only idle shutdown; the 2.2 pipeline is efficient enough that one
@@ -35,7 +40,29 @@ spec:
   cooldownPeriod: {{ .Values.keda.cooldownPeriod | default 300 }}
   pollingInterval: {{ .Values.keda.pollingInterval | default 30 }}
   triggers:
+    {{- if .Values.keda.triggers }}
+    {{- /* Verbatim override: any KEDA scaler, passed straight through (e.g. Kafka lag). */}}
     {{- toYaml .Values.keda.triggers | nindent 4 }}
+    {{- else }}
+    {{- /* DEFAULT: CPU utilisation - native KEDA cpu scaler, the safe fleet baseline. */}}
+    {{- $cpu := .Values.keda.cpu | default dict }}
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: {{ $cpu.targetUtilization | default 70 | quote }}
+    {{- /* OPT-IN: scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim - a
+           metric outage FREEZES scaling, never runs replicas up. metricType Value:
+           the intensive 0-100 gauge, NOT AverageValue (which would mis-scale). */}}
+    {{- $p := .Values.keda.pressure | default dict }}
+    {{- if $p.enabled }}
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: {{ $p.targetValue | default 70 | quote }}
+        url: {{ printf "http://%s/keda/pressure?service=%s" ($p.shimAddress | default "dfe-keda-shim.dfe.svc.cluster.local:8080") ($p.service | default (include "dfe-common.fullname" .)) | quote }}
+        valueLocation: "value"
+    {{- end }}
+    {{- end }}
 {{- end -}}
 {{- end -}}
 

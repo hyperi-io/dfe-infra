@@ -30,5 +30,16 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+# KEDA autoscaling -- CPU only (the UI is a stateless web frontend; the scalo
+# ScalingPressure pipeline signal does not apply). Scales on request-driven CPU.
+keda:
+  enabled: true
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 300
+  pollingInterval: 15
+  cpu:
+    targetUtilization: 70     # native KEDA cpu scaler (no shim needed)
+
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

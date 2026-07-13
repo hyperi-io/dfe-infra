@@ -1,0 +1,112 @@
+{{- /*
+dfe-hunt-runner -- the pull-based hunt executor, folded into the engine chart as its
+OWN pod (engine image, `dfe-hunt-runner run`). DISTINCT labels (app.kubernetes.io/name:
+dfe-hunt-runner) so the engine Service selector never routes to it. DEFAULT 1 pod;
+autoscaling is BETA + opt-in (huntRunner.autoscaling.enabled) on the due-hunt backlog
+via the fail-safe dfe-keda-shim.
+*/ -}}
+{{- if .Values.huntRunner.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dfe-hunt-runner
+  labels: &hrLabels
+    app.kubernetes.io/name: dfe-hunt-runner
+    app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/version: {{ .Chart.AppVersion | default "0.0.0" | quote }}
+    app.kubernetes.io/component: hunt-runner
+    dfe.hyperi.io/env: {{ .Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
+spec:
+  # DEFAULT 1 pod. When autoscaling is enabled the ScaledObject below owns the replica
+  # count instead (leases divvy work; KEDA picks N) -- so we omit replicas then.
+  {{- if not .Values.huntRunner.autoscaling.enabled }}
+  replicas: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dfe-hunt-runner
+  template:
+    metadata:
+      labels: *hrLabels
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: hunt-runner
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["dfe-hunt-runner"]
+          args: ["run", "--poll", {{ .Values.huntRunner.poll | quote }}, "--cap", {{ .Values.huntRunner.cap | quote }}]
+          env:
+            # Same in-cluster ClickHouse the engine uses (plaintext HTTP :8123). The
+            # runner coordinates leases/watermarks and runs hunt queries here.
+            - name: DFE_CLICKHOUSE_HOST
+              value: {{ .Values.clickhouse.host | quote }}
+            - name: DFE_CLICKHOUSE_PORT
+              value: {{ .Values.clickhouse.port | quote }}
+            - name: DFE_CLICKHOUSE_DATA_DATABASE
+              value: {{ .Values.clickhouse.database | quote }}
+            - name: DFE_CLICKHOUSE_SECURE
+              value: "false"
+            # Hunt configs + rules + schemas live under the shared config mount.
+            - name: DFE_HUNTS_DIR
+              value: {{ .Values.config.mountPath }}/hunts
+            - name: DFE_HUNTS_RULES_DIR
+              value: {{ .Values.config.mountPath }}/rules
+            - name: DFE_SCHEMAS_DIR
+              value: {{ .Values.config.mountPath }}/schemas
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: dfe-hunt-runner
+          volumeMounts:
+            - name: config
+              mountPath: {{ .Values.config.mountPath }}
+          resources:
+            {{- toYaml .Values.huntRunner.resources | nindent 12 }}
+      volumes:
+        - name: config
+          {{- if .Values.config.nfs.server }}
+          nfs:
+            server: {{ .Values.config.nfs.server }}
+            path: {{ .Values.config.nfs.path }}
+            readOnly: true
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.huntRunner.autoscaling.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: dfe-hunt-runner-scaler
+  labels:
+    app.kubernetes.io/name: dfe-hunt-runner
+    app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/component: hunt-runner
+    dfe.hyperi.io/env: {{ .Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
+spec:
+  scaleTargetRef:
+    name: dfe-hunt-runner
+  minReplicaCount: {{ .Values.huntRunner.autoscaling.minReplicaCount | default 1 }}
+  maxReplicaCount: {{ .Values.huntRunner.autoscaling.maxReplicaCount | default 5 }}
+  cooldownPeriod: {{ .Values.huntRunner.autoscaling.cooldownPeriod | default 300 }}
+  pollingInterval: {{ .Values.huntRunner.autoscaling.pollingInterval | default 30 }}
+  triggers:
+    {{- /* BETA: scale on the due-hunt backlog via the fail-safe dfe-keda-shim. Extensive
+           backlog -> AverageValue (ceil(due / targetBacklog)). A shim/CH outage holds
+           current (the shim returns last-good), never runs replicas up. */}}
+    - type: metrics-api
+      metricType: AverageValue
+      metadata:
+        targetValue: {{ .Values.huntRunner.autoscaling.targetBacklog | default 10 | quote }}
+        url: {{ printf "http://%s/keda/hunt-backlog" (.Values.huntRunner.autoscaling.shimAddress | default "dfe-keda-shim.dfe.svc.cluster.local:8080") | quote }}
+        valueLocation: "value"
+{{- end }}
+{{- end }}

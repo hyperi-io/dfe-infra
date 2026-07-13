@@ -1,6 +1,6 @@
 <!--
-Project:   DFE (Data Forensics Engine) - product suite
-File:      docs/kafka/README.md
+Project:   DFE (Data Fusion Engine) - product suite
+File:      docs/deployment/kafka/README.md
 Purpose:   Index for the DFE Kafka platform guides. States DFE's opinionated
            broker/cluster/topic defaults ONCE, and the settable-vs-locked
            matrix across the managed clouds DFE does NOT auto-deploy.

@@ -42,5 +42,18 @@ serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
 
+# KEDA -- fetchers are DIFFERENT from the pipeline apps. A fetcher app is 1:1 with a
+# DFE source's fetcher CONFIG (the engine writes the overlay; Argo deploys it per
+# config). A fetcher is a PRODUCER bound to a specific external source (its own creds +
+# poll), NOT a competing consumer of a shared topic -- so N replicas of ONE config =
+# N DUPLICATE polls. You scale COVERAGE by adding fetcher CONFIGS (e.g. one per AWS
+# account), NOT by adding replicas. So the DEFAULT is 1 pod, autoscaling OFF.
+# A config whose fetch mechanism supports COMPETING CONSUMERS (e.g. SQS / S3-notify
+# queue) may opt in via its overlay: keda.enabled=true + keda.triggers set to the
+# SOURCE-appropriate scaler (e.g. aws-sqs-queue on the source backlog), NOT CPU. Same
+# 1-pod-default / opt-in posture as the hunt-runner.
+keda:
+  enabled: false
+
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

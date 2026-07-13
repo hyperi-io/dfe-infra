@@ -78,5 +78,64 @@ serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
 
+# KEDA autoscaling -- AVAILABLE but DEFAULT-OFF. The engine is a gitops control plane
+# (effective singleton: it mints secrets + owns the deploy-repo working copy), so
+# multi-replica safety is unverified. Set keda.enabled=true in the overlay to CPU-
+# autoscale it for read-heavy HA once leader-safety is confirmed.
+keda:
+  enabled: false
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  cooldownPeriod: 300
+  pollingInterval: 15
+  cpu:
+    targetUtilization: 70     # native KEDA cpu scaler (no shim needed)
+
+# dfe-keda-shim -- the KEDA metrics-api -> ClickHouse query adapter, folded into the
+# engine chart as its OWN small pod (same engine image, `dfe-keda-shim run`, DISTINCT
+# labels so it is NOT selected by the engine Service). KEDA's pressure + hunt-backlog
+# triggers poll its Service (dfe-keda-shim:8080). Fail-safe: a metric outage returns
+# last-good, freezing scaling (never runs replicas up). NB CPU-default autoscaling
+# needs neither this pod nor the pressure opt-in -- the shim only serves the opt-in
+# ScalingPressure signal + the hunt due-count. Set enabled:false to drop it.
+kedaShim:
+  enabled: true
+  port: 8080
+  otelDatabase: dfe   # ClickHouse db holding HyperDX's otel_metrics_gauge (pressure)
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# dfe-hunt-runner -- the pull-based hunt executor, folded into the engine chart as its
+# OWN pod (engine image, `dfe-hunt-runner run`, DISTINCT labels). It coordinates every
+# decision through ClickHouse (leases + watermarks), so adding pods just adds claimants;
+# a dead pod's lease expires and its work is reclaimed. DEFAULT 1 pod -- most deployments
+# need only one. Autoscaling is BETA + OPT-IN: set huntRunner.autoscaling.enabled to scale
+# on the due-hunt backlog via the fail-safe dfe-keda-shim (AverageValue). A backlog/CH
+# outage HOLDS current (the shim's fail-safe), never runs replicas up.
+huntRunner:
+  enabled: true
+  poll: 15          # seconds between runner ticks
+  cap: 8            # global cap on concurrent hunt runs (protects ClickHouse)
+  autoscaling:
+    enabled: false          # BETA opt-in; default 1 pod
+    minReplicaCount: 1
+    maxReplicaCount: 5
+    targetBacklog: 10       # due-hunts per pod (AverageValue -> ceil(due / targetBacklog))
+    cooldownPeriod: 300
+    pollingInterval: 30
+    shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}
