@@ -7,7 +7,11 @@ Usage:
   image: {{ include "dfe-common.image" . }}
 */}}
 {{- define "dfe-common.image" -}}
-{{- $registry := .Values.global.registry | default "" -}}
+{{- /* global is nil (not just its .registry) when a chart carries no global:
+       block, e.g. bare `helm lint`; `with` guards that so the else-branch below
+       yields a registry-less ref rather than a nil-pointer panic. */ -}}
+{{- $registry := "" -}}
+{{- with .Values.global }}{{- $registry = .registry | default "" -}}{{- end -}}
 {{- $repo := .Values.image.repository | default "" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
 {{- if $repo -}}
