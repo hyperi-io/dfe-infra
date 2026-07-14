@@ -1,0 +1,76 @@
+# Publishes the certified stack manifest on every stack release tag.
+#
+# "DFE X.Y.Z" = versions.yaml @ tag X.Y.Z (see dfe-docs/deployment/
+# stack-versioning.md). This workflow renders that manifest + the flat
+# air-gap image list (scripts/dfe-stack), attaches both to the GitHub
+# release, pushes them as an OCI artifact next to the images, and
+# cosign-signs the artifact KEYLESS (GitHub OIDC -- no signing secrets),
+# so air-gapped deployments can verify the set offline.
+name: Stack Manifest
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+      - "[0-9]*"
+
+permissions:
+  contents: write   # attach manifest to the GitHub release
+  packages: write   # push the OCI artifact to GHCR
+  id-token: write   # cosign keyless signing via GitHub OIDC
+
+jobs:
+  publish:
+    name: render, publish + sign the stack manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # full history: dfe-stack graph walks all tags
+
+      - name: Render manifest + image list
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          python3 scripts/check_versions_drift.py
+          python3 scripts/dfe-stack render --tag "$TAG" --out "dfe-manifest-${TAG}.yaml"
+          python3 scripts/dfe-stack images --tag "$TAG" > "dfe-images-${TAG}.txt"
+          python3 scripts/dfe-stack graph > "dfe-upgrade-graph.json"
+          sha256sum "dfe-manifest-${TAG}.yaml" "dfe-images-${TAG}.txt" > SHA256SUMS
+
+      - name: Attach to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" --verify-tag --title "DFE $TAG" --generate-notes || true
+          gh release upload "$TAG" --clobber \
+            "dfe-manifest-${TAG}.yaml" "dfe-images-${TAG}.txt" \
+            dfe-upgrade-graph.json SHA256SUMS
+
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
+
+      - name: Push manifest as an OCI artifact
+        id: oras_push
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          echo "${{ github.token }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          REF="ghcr.io/${{ github.repository_owner }}/dfe-stack-manifest:${TAG}"
+          DIGEST=$(oras push "$REF" \
+            --artifact-type application/vnd.hyperi.dfe.stack-manifest.v1+yaml \
+            "dfe-manifest-${TAG}.yaml:application/yaml" \
+            "dfe-images-${TAG}.txt:text/plain" \
+            "dfe-upgrade-graph.json:application/json" \
+            --format go-template --template '{{.digest}}')
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Cosign sign the artifact (keyless, GitHub OIDC)
+        run: |
+          set -euo pipefail
+          cosign sign --yes \
+            "ghcr.io/${{ github.repository_owner }}/dfe-stack-manifest@${{ steps.oras_push.outputs.digest }}"

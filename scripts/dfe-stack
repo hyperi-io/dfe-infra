@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         dfe-stack
+#  Purpose:      Stack-release tooling over versions.yaml (the certified
+#                manifest): render the release manifest, emit the air-gap
+#                image list, derive the upgrade graph from git tags
+#                (cincinnati-lite, auto-managed), check upgrade paths, verify
+#                registry digests, and resolve a customer pins.yaml into an
+#                effective component set with SUPPORT-DRIFT notices.
+#                GENERIC: repo/registry/paths are flags; stdlib only.
+#  Language:     Python
+#
+#  License:      FSL-1.1-ALv2
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""dfe-stack -- one command for DFE stack-release operations.
+
+    python3 scripts/dfe-stack <subcommand> [options]     # or ./scripts/dfe-stack ...
+
+The model (dfe-docs/deployment/stack-versioning.md): "DFE X.Y.Z" is ONE
+certified manifest = versions.yaml frozen at dfe-infra git tag X.Y.Z. The
+upgrade graph is DERIVED: each release's versions.yaml carries
+``stack.previous`` and this tool walks the git tags to build the DAG --
+auto-managed, no hand-curated graph file.
+
+Subcommands:
+  render         Render the release manifest (component set with tag@sha256
+                 image pins) for the working tree or a given git tag.
+  images         Flat image list for air-gap mirroring (DFE-owned images;
+                 third-party chart images are pulled by chart ref and listed
+                 by the chart render in CI, not here -- stated, not silent).
+  graph          Derive the stack upgrade graph from git tags (JSON).
+  check-upgrade  Verdict on FROM -> TO: sequential minors, free z-hops,
+                 honouring each release's declared stack.previous.
+  resolve        Merge a customer pins.yaml overrides block over the
+                 manifest; print the effective set + SUPPORT-DRIFT notices.
+  verify         Re-fetch GHCR digests (gh api) and compare to versions.yaml.
+
+Examples:
+    python3 scripts/dfe-stack render
+    python3 scripts/dfe-stack render --tag 2.2.0 --out dfe-manifest-2.2.0.yaml
+    python3 scripts/dfe-stack images
+    python3 scripts/dfe-stack graph
+    python3 scripts/dfe-stack check-upgrade --from 2.1.3 --to 2.2.0
+    python3 scripts/dfe-stack resolve --pins ../dfe-deploy/pins.yaml
+    python3 scripts/dfe-stack verify
+
+render/images/graph/check-upgrade/resolve need only python3 + git.
+verify shells out to `gh api` (needs an authenticated gh).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
+
+_SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+
+
+# ---------------------------------------------------------------------------
+# versions.yaml reading (tiny indent-aware reader; stdlib only, like
+# check_versions_drift.py -- values are simple quoted/plain scalars)
+# ---------------------------------------------------------------------------
+
+
+def parse_simple_yaml(text: str) -> dict:
+    """Parse a restricted YAML subset: nested maps of scalar leaves.
+
+    Handles exactly the shape versions.yaml / pins.yaml use -- indentation-
+    nested ``key: "value"`` lines with comments. Lists and multiline values
+    are out of scope by design (the manifest deliberately stays this simple).
+    """
+    root: dict = {}
+    stack: list[tuple[int, dict]] = [(-1, root)]
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        m = re.match(r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip())
+        if not m:
+            continue
+        key = m.group(1)
+        quoted = m.group(2)
+        value = quoted if quoted is not None else (m.group(3) or "").strip()
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        # An UNQUOTED empty value opens a nested map; a quoted "" is a scalar.
+        if value == "" and quoted is None:
+            child: dict = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = value
+    return root
+
+
+def versions_at(tag: str | None) -> dict:
+    """versions.yaml parsed from the working tree, or from a git tag."""
+    if tag is None:
+        return parse_simple_yaml((REPO_ROOT / "versions.yaml").read_text())
+    out = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "show", f"{tag}:versions.yaml"],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"error: cannot read versions.yaml at tag {tag!r}: {out.stderr.strip()}")
+    return parse_simple_yaml(out.stdout)
+
+
+def semver(v: str) -> tuple[int, int, int] | None:
+    m = _SEMVER.match(v.strip())
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def stack_tags() -> list[str]:
+    """Semver git tags on this repo, ascending (the stack release history)."""
+    out = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "tag", "--list"], capture_output=True, text=True
+    )
+    tags = [t.strip() for t in out.stdout.splitlines() if semver(t.strip())]
+    return sorted(tags, key=semver)
+
+
+def app_images(v: dict, registry: str) -> dict[str, str]:
+    """Published DFE-owned images as name -> ref (tag@sha256 where digest known).
+
+    Apps with no digest entry are NOT YET PUBLISHED and are excluded --
+    loudly, via the caller (no silent truncation).
+    """
+    apps = v.get("apps", {})
+    digests = v.get("digests", {})
+    refs: dict[str, str] = {}
+    for name, tag in apps.items():
+        digest = digests.get(name, "")
+        if digest:
+            refs[name] = f"{registry}/{name}:{tag}@{digest}"
+    return refs
+
+
+def unpublished_apps(v: dict) -> list[str]:
+    return sorted(set(v.get("apps", {})) - set(v.get("digests", {})))
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_render(args: argparse.Namespace) -> int:
+    v = versions_at(args.tag)
+    version = args.tag or "WORKING-TREE"
+    prev = [p.strip() for p in v.get("stack", {}).get("previous", "").split(",") if p.strip()]
+    lines: list[str] = []
+    lines.append("# DFE stack manifest -- rendered by scripts/dfe-stack render")
+    lines.append(f"# Source: dfe-infra versions.yaml @ {version}")
+    lines.append(f"stack_version: \"{version}\"")
+    lines.append(f"previous: [{', '.join(repr(p) for p in prev)}]")
+    lines.append(
+        f"upgrade_order: \"{v.get('stack', {}).get('upgrade-order', '')}\""
+    )
+    lines.append("images:")
+    for name, ref in sorted(app_images(v, args.registry).items()):
+        lines.append(f"  {name}: \"{ref}\"")
+    missing = unpublished_apps(v)
+    if missing:
+        lines.append("# NOT YET PUBLISHED (in apps: but no digest -- excluded above):")
+        for name in missing:
+            lines.append(f"#   {name}: {v['apps'][name]}")
+    lines.append("content:")
+    for name, tag in sorted(v.get("content", {}).items()):
+        lines.append(f"  {name}: \"{tag}\"")
+    for section in ("bootstrap", "operators", "data", "tools"):
+        lines.append(f"{section}:")
+        for name, val in sorted(v.get(section, {}).items()):
+            lines.append(f"  {name}: \"{val}\"")
+    text = "\n".join(lines) + "\n"
+    if args.out:
+        Path(args.out).write_text(text)
+        print(f"manifest written to {args.out}")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def cmd_images(args: argparse.Namespace) -> int:
+    v = versions_at(args.tag)
+    refs = app_images(v, args.registry)
+    for ref in sorted(refs.values()):
+        print(ref)
+    missing = unpublished_apps(v)
+    if missing:
+        print(
+            f"# WARNING: {len(missing)} app(s) unpublished, excluded: {', '.join(missing)}",
+            file=sys.stderr,
+        )
+    print(
+        "# NOTE: third-party images (operators/data charts) are pulled by chart "
+        "ref; the complete mirror list comes from the CI chart render, not this "
+        "command.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def cmd_graph(args: argparse.Namespace) -> int:
+    tags = stack_tags()
+    nodes: list[str] = []
+    edges: list[dict[str, str]] = []
+    for tag in tags:
+        nodes.append(tag)
+        try:
+            v = versions_at(tag)
+        except SystemExit:
+            continue
+        prev = v.get("stack", {}).get("previous", "")
+        for p in [x.strip() for x in prev.split(",") if x.strip()]:
+            edges.append({"from": p, "to": tag})
+    graph = {"nodes": nodes, "edges": edges}
+    if not nodes:
+        graph["note"] = (
+            "no stack release tags yet -- the graph populates as releases are "
+            "cut with stack.previous set"
+        )
+    print(json.dumps(graph, indent=2))
+    return 0
+
+
+def _sequential_ok(frm: tuple[int, int, int], to: tuple[int, int, int]) -> tuple[bool, str]:
+    if frm >= to:
+        return False, "target is not newer than source"
+    if frm[0] != to[0]:
+        return False, "major jumps are not a verified path"
+    if to[1] == frm[1]:
+        return True, "z-hop within a minor (free)"
+    if to[1] == frm[1] + 1:
+        return True, "sequential minor hop"
+    return False, (
+        f"non-contiguous minors ({frm[0]}.{frm[1]} -> {to[0]}.{to[1]}): step through "
+        "each minor sequentially"
+    )
+
+
+def cmd_check_upgrade(args: argparse.Namespace) -> int:
+    frm, to = semver(args.frm), semver(args.to)
+    if not frm or not to:
+        raise SystemExit("error: --from/--to must be semver (x.y.z)")
+    # A release that DECLARES previous is authoritative for itself.
+    declared: list[str] = []
+    try:
+        v = versions_at(args.to)
+        declared = [
+            p.strip()
+            for p in v.get("stack", {}).get("previous", "").split(",")
+            if p.strip()
+        ]
+    except SystemExit:
+        pass  # tag absent locally -> fall back to the sequential rule
+    if declared:
+        ok = any(semver(p) == frm for p in declared)
+        reason = (
+            f"declared stack.previous of {args.to}: {', '.join(declared)}"
+            if ok
+            else f"{args.frm} is not in {args.to}'s declared stack.previous ({', '.join(declared)})"
+        )
+    else:
+        ok, reason = _sequential_ok(frm, to)
+    verdict = "SUPPORTED" if ok else "NOT A VERIFIED PATH"
+    print(f"{args.frm} -> {args.to}: {verdict} ({reason})")
+    return 0 if ok else 1
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    v = versions_at(args.tag)
+    pins = parse_simple_yaml(Path(args.pins).read_text())
+    effective = dict(app_images(v, args.registry))
+    drift: list[str] = []
+    overrides = pins.get("overrides", {}).get("apps", {})
+    for name, ref in overrides.items():
+        certified = effective.get(name, "(not in certified set)")
+        if "@sha256:" not in ref:
+            print(
+                f"ERROR: override for {name} is not digest-pinned ({ref!r}) -- "
+                "overrides MUST use tag@sha256",
+                file=sys.stderr,
+            )
+            return 1
+        effective[name] = f"{args.registry}/{name}:{ref}"
+        drift.append(f"  {name}: {ref}  (certified: {certified})")
+
+    if args.emit_values:
+        # Helm values fragment for the deploy repo's infra/ overlay. The
+        # dfe-common.image helper renders `repo:<image.tag>`, and a
+        # `tag@sha256:...` value is a valid pull spec -- so per-app override
+        # plumbing is exactly one values key per app, no chart changes.
+        lines = [
+            "# Generated by dfe-stack resolve --emit-values -- per-app image",
+            "# overrides for the infra/ overlay. SUPPORT-DRIFT: each entry is",
+            "# off the certified set (untested combination, operator-owned risk).",
+        ]
+        for name, ref in sorted(overrides.items()):
+            lines.append(f"{name}:")
+            lines.append("  image:")
+            lines.append(f'    tag: "{ref}"')
+        Path(args.emit_values).write_text("\n".join(lines) + "\n")
+        print(f"values fragment written to {args.emit_values}", file=sys.stderr)
+
+    print(f"# effective component set (base dfe-infra: {pins.get('base', {}).get('dfe-infra', '?')})")
+    for name, ref in sorted(effective.items()):
+        print(f"{name}: {ref}")
+    if drift:
+        print("\nSUPPORT-DRIFT: this environment runs an UNTESTED combination.")
+        print("The following components are off the certified set (operator-owned risk):")
+        for line in drift:
+            print(line)
+        return 2
+    print("\nno overrides -- environment is on the certified set")
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    v = versions_at(None)
+    apps, digests = v.get("apps", {}), v.get("digests", {})
+    org = args.registry.split("/", 1)[1] if "/" in args.registry else args.registry
+    bad = 0
+    for name, digest in sorted(digests.items()):
+        tag = apps.get(name)
+        out = subprocess.run(
+            [
+                "gh", "api",
+                f"orgs/{org}/packages/container/{name}/versions?per_page=100",
+                "--jq",
+                f'.[] | select(.metadata.container.tags | index("{tag}")) | .name',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        actual = out.stdout.strip()
+        if out.returncode != 0:
+            print(f"ERROR {name}: gh api failed: {out.stderr.strip()}")
+            bad += 1
+        elif actual != digest:
+            print(f"DRIFT {name}: versions.yaml {digest} != registry {actual or '(tag not found)'}")
+            bad += 1
+        else:
+            print(f"ok    {name}: {tag}@{digest[:19]}...")
+    if bad:
+        print(f"\n{bad} digest(s) drifted from the registry")
+        return 1
+    print("\nall digests match the registry")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="dfe-stack", description=__doc__.split("\n")[0])
+    parser.add_argument(
+        "--registry",
+        default=DEFAULT_REGISTRY,
+        help=f"image registry prefix (default {DEFAULT_REGISTRY})",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("render", help="render the release manifest")
+    p.add_argument("--tag", help="git tag to render (default: working tree)")
+    p.add_argument("--out", help="write to a file instead of stdout")
+    p.set_defaults(func=cmd_render)
+
+    p = sub.add_parser("images", help="flat DFE-owned image list (air-gap mirror)")
+    p.add_argument("--tag", help="git tag (default: working tree)")
+    p.set_defaults(func=cmd_images)
+
+    p = sub.add_parser("graph", help="derive the upgrade graph from git tags")
+    p.set_defaults(func=cmd_graph)
+
+    p = sub.add_parser("check-upgrade", help="verdict on an upgrade path")
+    p.add_argument("--from", dest="frm", required=True, help="source stack version")
+    p.add_argument("--to", required=True, help="target stack version")
+    p.set_defaults(func=cmd_check_upgrade)
+
+    p = sub.add_parser("resolve", help="effective set for a customer pins.yaml")
+    p.add_argument("--pins", required=True, help="path to the deploy repo's pins.yaml")
+    p.add_argument("--tag", help="manifest git tag (default: working tree)")
+    p.add_argument(
+        "--emit-values",
+        help="also write a helm values fragment (per-app image.tag overrides) to this path",
+    )
+    p.set_defaults(func=cmd_resolve)
+
+    p = sub.add_parser("verify", help="compare versions.yaml digests to GHCR")
+    p.set_defaults(func=cmd_verify)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

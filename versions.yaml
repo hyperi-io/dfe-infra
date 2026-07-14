@@ -71,6 +71,49 @@ apps:
   dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR
   dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR
 
+# Image DIGESTS for the published DFE-owned apps -- the immutable half of the
+# tag@sha256 pin (the tag lives in apps: above so chart appVersion checks keep
+# working; scripts/dfe-stack renders the combined tag@sha256 form). Fetched from
+# GHCR via the gh API and re-verified by `dfe-stack verify`. An app with no
+# digest here is NOT YET PUBLISHED and is excluded from rendered manifests.
+digests:
+  dfe-engine: "sha256:511aefae16392d849c6ed1399d0163a8d4d96f81aec483d202c43b4cd61a271f"
+  dfe-ui: "sha256:f30760b99f28a3120356b838056dc8274999095138bfcdd985bf07531015552d"
+  dfe-receiver: "sha256:3ea760b4a1aa0aab88bbca33a31fe396f00d4ed74dc42e299e539ca1a5ad4da1"
+  dfe-loader: "sha256:c4f0d47adf8e99e2c5db9780d06b2f6cc23e3c1157a6abb6000b0ce4c6273da7"
+  dfe-archiver: "sha256:360fd336efd7951f6cefa6316025f5ef198b411f8d30be1e12376ce0390fe3cf"
+  dfe-fetcher: "sha256:6f099b98c8c184f028025b4e706f046206b4785bbaefca0e3eb755fc9ede3827"
+  dfe-transform-vrl: "sha256:77938867268c96632b09644479d432eccedb16485b40eef4f0381f5cfa40f1ad"
+  dfe-transform-vector: "sha256:fa004cb2a4096cf573ce34d9a9f1956b307a12dc8bf5b0ce7fad8f7abd0e2294"
+
+# Content repos -- tagged in LOCKSTEP with each stack release (a stack release
+# tags these alongside dfe-infra so the whole set is one name). PENDING entries
+# have no release tag / published image yet -- the first stack release cut
+# after this lands stamps them.
+content:
+  dfe-schemas: "PENDING-FIRST-TAG"   # baseline DDL; repo has no release tags yet
+  dfe-deploy: "PENDING-FIRST-TAG"    # the deploy-repo template (seeded at this tag)
+  dfe-hyperdx: "PENDING-FIRST-IMAGE" # fork image not on GHCR yet; resolves data.hyperdx TODO
+
+# Stack release metadata -- the "DFE X.Y.Z" layer over this manifest.
+# The stack VERSION is the dfe-infra git tag (semantic-release owns it; never
+# hand-written here). The upgrade GRAPH is derived by walking the git tags and
+# reading each tag's stack.previous -- auto-managed, no curated graph file
+# (cincinnati-lite; see dfe-docs/deployment/stack-versioning.md).
+stack:
+  # Versions an environment may upgrade to THIS release from (verified paths).
+  # Rule of thumb encoded by `dfe-stack check-upgrade`: sequential minors,
+  # free z-hops within a minor. Empty = first release under the graph model.
+  previous: ""
+  # Rollout order between component groups on a stack upgrade (lockstep does
+  # not remove ordering -- schemas land before the engine that expects them,
+  # data plane before the UI that surfaces it).
+  upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
+  # Support stance: latest z of the two most recent minors. Within a minor,
+  # z-releases are cumulative and must not change configs, deprecate APIs,
+  # change schemas, or break backward compatibility. EUS/LTS lines are a
+  # future commercial decision, deliberately NOT built yet.
+
 # Terraform providers
 providers:
   hashicorp-null: "~> 3.0"
