@@ -66,4 +66,18 @@ the values cascade.
   (+ `helm/library/dfe-common` shared templates).
 - `argocd/` - ApplicationSets, AppProjects, tier + cloud values.
 - `bootstrap/` - idempotent cluster bootstrap.
-- `versions.yaml` - single source for chart/operator/image pins.
+- `versions.yaml` - single source for chart/operator/image pins, plus the
+  image `digests:`, lockstep `content:` repo tags, and `stack:` release
+  metadata (upgrade order, previous-version pointer).
+
+## Stack releases
+
+A dfe-infra release tag IS a certified DFE stack version: `versions.yaml` at
+that tag names every component, and `scripts/dfe-stack` operates on it
+(render the manifest, list images for air-gap mirroring, derive the upgrade
+graph from git tags, check an upgrade path, resolve a customer `pins.yaml` -
+optionally emitting a helm values fragment - and verify digests against
+GHCR). On each release tag the `stack-manifest` workflow renders the
+manifest + image list + upgrade graph, attaches them to the GitHub release,
+pushes them as an OCI artifact, and cosign-signs it keyless. Full model:
+dfe-docs `deployment/stack-versioning.md`.

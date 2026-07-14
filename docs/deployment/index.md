@@ -46,8 +46,12 @@ only on `scale` clusters (`layer-scale.yaml`).
 
 `versions.yaml` is the single source for chart, operator, and image
 versions, checked by `scripts/check_versions_drift.py`. Pin rule for
-images: `name:tag@sha256` digests (the 2nd-pass review lists current
-violations and update candidates).
+images: `name:tag@sha256` digests - tags live in `apps:`, the immutable
+digest half in `digests:` (`scripts/dfe-stack` renders the combined form
+and `dfe-stack verify` re-checks digests against GHCR). A dfe-infra release
+tag certifies the whole set as one stack version (`stack:` metadata +
+lockstep `content:` repo tags); the full release model is in dfe-docs
+`deployment/stack-versioning.md`.
 
 ## Related
 
