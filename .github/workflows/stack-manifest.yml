@@ -36,7 +36,8 @@ jobs:
           python3 scripts/dfe-stack render --tag "$TAG" --out "dfe-manifest-${TAG}.yaml"
           python3 scripts/dfe-stack images --tag "$TAG" > "dfe-images-${TAG}.txt"
           python3 scripts/dfe-stack graph > "dfe-upgrade-graph.json"
-          sha256sum "dfe-manifest-${TAG}.yaml" "dfe-images-${TAG}.txt" > SHA256SUMS
+          sha256sum "dfe-manifest-${TAG}.yaml" "dfe-images-${TAG}.txt" \
+            dfe-upgrade-graph.json > SHA256SUMS
 
       - name: Attach to the GitHub release
         env:

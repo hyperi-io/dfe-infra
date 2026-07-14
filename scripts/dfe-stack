@@ -63,6 +63,18 @@ DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 _SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
+def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Run a tool capturing text output.
+
+    Explicit utf-8 with replacement: text=True alone uses the locale encoding,
+    so one non-ASCII byte in git/gh output under LC_ALL=C would raise
+    UnicodeDecodeError instead of degrading gracefully.
+    """
+    return subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
+
+
 # ---------------------------------------------------------------------------
 # versions.yaml reading (tiny indent-aware reader; stdlib only, like
 # check_versions_drift.py -- values are simple quoted/plain scalars)
@@ -105,11 +117,7 @@ def versions_at(tag: str | None) -> dict:
     """versions.yaml parsed from the working tree, or from a git tag."""
     if tag is None:
         return parse_simple_yaml((REPO_ROOT / "versions.yaml").read_text())
-    out = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "show", f"{tag}:versions.yaml"],
-        capture_output=True,
-        text=True,
-    )
+    out = _run(["git", "-C", str(REPO_ROOT), "show", f"{tag}:versions.yaml"])
     if out.returncode != 0:
         raise SystemExit(f"error: cannot read versions.yaml at tag {tag!r}: {out.stderr.strip()}")
     return parse_simple_yaml(out.stdout)
@@ -122,11 +130,28 @@ def semver(v: str) -> tuple[int, int, int] | None:
 
 def stack_tags() -> list[str]:
     """Semver git tags on this repo, ascending (the stack release history)."""
-    out = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "tag", "--list"], capture_output=True, text=True
-    )
+    out = _run(["git", "-C", str(REPO_ROOT), "tag", "--list"])
+    if out.returncode != 0:
+        # A failed listing must not masquerade as "no releases yet" - the
+        # graph and upgrade verdicts would silently degrade.
+        raise SystemExit(f"error: git tag --list failed: {out.stderr.strip()}")
     tags = [t.strip() for t in out.stdout.splitlines() if semver(t.strip())]
     return sorted(tags, key=semver)
+
+
+def tag_for_version(version: str) -> str | None:
+    """The REAL tag name matching a semver string (tolerates the v prefix).
+
+    Users type "2.2.0" while releases may be tagged "v2.2.0" (or vice
+    versa); comparing raw strings would silently miss the declared release.
+    """
+    want = semver(version)
+    if want is None:
+        return None
+    for tag in stack_tags():
+        if semver(tag) == want:
+            return tag
+    return None
 
 
 def app_images(v: dict, registry: str) -> dict[str, str]:
@@ -212,6 +237,9 @@ def cmd_images(args: argparse.Namespace) -> int:
 
 def cmd_graph(args: argparse.Namespace) -> int:
     tags = stack_tags()
+    # semver -> real tag name, so declared previous entries ("2.1.0") join
+    # node names even when releases are tagged "v2.1.0".
+    by_semver = {semver(t): t for t in tags}
     nodes: list[str] = []
     edges: list[dict[str, str]] = []
     for tag in tags:
@@ -222,7 +250,7 @@ def cmd_graph(args: argparse.Namespace) -> int:
             continue
         prev = v.get("stack", {}).get("previous", "")
         for p in [x.strip() for x in prev.split(",") if x.strip()]:
-            edges.append({"from": p, "to": tag})
+            edges.append({"from": by_semver.get(semver(p), p), "to": tag})
     graph = {"nodes": nodes, "edges": edges}
     if not nodes:
         graph["note"] = (
@@ -252,17 +280,19 @@ def cmd_check_upgrade(args: argparse.Namespace) -> int:
     frm, to = semver(args.frm), semver(args.to)
     if not frm or not to:
         raise SystemExit("error: --from/--to must be semver (x.y.z)")
-    # A release that DECLARES previous is authoritative for itself.
+    # A release that DECLARES previous is authoritative for itself. Resolve
+    # the user's version string to the REAL tag first ("2.2.0" vs "v2.2.0"),
+    # else a tag-format mismatch silently skips the declared list and the
+    # permissive sequential rule could approve an undeclared path.
     declared: list[str] = []
-    try:
-        v = versions_at(args.to)
+    target_tag = tag_for_version(args.to)
+    if target_tag is not None:
+        v = versions_at(target_tag)
         declared = [
             p.strip()
             for p in v.get("stack", {}).get("previous", "").split(",")
             if p.strip()
         ]
-    except SystemExit:
-        pass  # tag absent locally -> fall back to the sequential rule
     if declared:
         ok = any(semver(p) == frm for p in declared)
         reason = (
@@ -332,15 +362,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
     bad = 0
     for name, digest in sorted(digests.items()):
         tag = apps.get(name)
-        out = subprocess.run(
+        out = _run(
             [
-                "gh", "api",
+                "gh", "api", "--paginate",
                 f"orgs/{org}/packages/container/{name}/versions?per_page=100",
                 "--jq",
                 f'.[] | select(.metadata.container.tags | index("{tag}")) | .name',
-            ],
-            capture_output=True,
-            text=True,
+            ]
         )
         actual = out.stdout.strip()
         if out.returncode != 0:
