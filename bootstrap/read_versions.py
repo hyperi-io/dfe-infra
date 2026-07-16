@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -46,34 +47,34 @@ def load_versions(versions_file: Path) -> dict:
 
 
 def _parse_simple_yaml(text: str) -> dict:
-    """Parse the simple 2-level YAML we use (no nested objects beyond depth 2)."""
-    result = {}
-    current_section = None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+    """Indent-aware parse of the versions.yaml subset (nested maps of scalars).
+
+    Handles the nested `stacks:` shape to arbitrary depth WITHOUT PyYAML (for a
+    bare cluster image). Same reader as scripts/dfe-stack.
+    """
+    root: dict = {}
+    stack: list = [(-1, root)]
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
             continue
-        # Top-level key (no leading whitespace)
-        if not line[0].isspace() and stripped.endswith(":"):
-            current_section = stripped.rstrip(":").strip()
-            result[current_section] = {}
-        elif not line[0].isspace() and ": " in stripped:
-            # Top-level key with inline value
-            key, val = stripped.split(": ", 1)
-            val = val.strip().strip('"').strip("'")
-            if val == "{}":
-                result[key.strip()] = {}
-            else:
-                result[key.strip()] = val
-        elif current_section and ":" in stripped:
-            key, val = stripped.split(":", 1)
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            if val == "{}":
-                pass  # empty dict value, section already initialized
-            else:
-                result[current_section][key] = val
-    return result
+        indent = len(raw) - len(raw.lstrip())
+        m = re.match(
+            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
+        )
+        if not m:
+            continue
+        key, quoted = m.group(1), m.group(2)
+        value = quoted if quoted is not None else (m.group(3) or "").strip()
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        if value == "" and quoted is None:
+            child: dict = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = value
+    return root
 
 
 def get_dotpath(data: dict, path: str) -> str:
@@ -90,11 +91,24 @@ def get_dotpath(data: dict, path: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Read versions from versions.yaml")
-    parser.add_argument("dotpath", nargs="?", help="Dot-separated path (e.g. bootstrap.cert-manager)")
+    parser.add_argument(
+        "dotpath", nargs="?", help="Dot-separated path (e.g. bootstrap.cert-manager)"
+    )
     parser.add_argument("--section", help="Output all keys in a section")
-    parser.add_argument("--shell", action="store_true", help="Output as UPPER_SNAKE=value for shell eval")
+    parser.add_argument(
+        "--shell",
+        action="store_true",
+        help="Output as UPPER_SNAKE=value for shell eval",
+    )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--file", default=None, help="Path to versions.yaml (default: auto-detect)")
+    parser.add_argument(
+        "--file", default=None, help="Path to versions.yaml (default: auto-detect)"
+    )
+    parser.add_argument(
+        "--stack",
+        default=None,
+        help="Stack version to read (default: the `current` pointer)",
+    )
     args = parser.parse_args()
 
     # Find versions.yaml
@@ -113,6 +127,20 @@ def main() -> None:
             sys.exit(1)
 
     data = load_versions(versions_file)
+
+    # versions.yaml is NESTED (stacks: -> <version> -> sections). Descend into
+    # the requested stack (default: the `current` pointer) so callers keep asking
+    # for section-relative paths like bootstrap.cert-manager.
+    if isinstance(data, dict) and "stacks" in data:
+        name = args.stack or data.get("current")
+        stacks = data.get("stacks", {}) or {}
+        if name not in stacks:
+            print(
+                f"ERROR: stack '{name}' not found in versions.yaml stacks",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        data = stacks[name]
 
     if args.dotpath:
         print(get_dotpath(data, args.dotpath))

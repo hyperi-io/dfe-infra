@@ -4,8 +4,13 @@ env: local
 cloud: local
 
 # Deployed with the Kafka substrate in the single + scale tiers; gated OFF in the
-# slim tier (gRPC, no Kafka). profile-slim.yaml sets enabled:false.
-enabled: true
+# slim tier (gRPC, no Kafka). Namespaced under `kafbat:` so the shared profile
+# cascade (common + <cloud> + profile-<tier>.yaml, applied to EVERY chart) can
+# toggle it WITHOUT the switch leaking to other charts -- a bare top-level
+# `enabled` would gate any chart that reads `.Values.enabled`. profile-slim.yaml
+# sets kafbat.enabled: false.
+kafbat:
+  enabled: true
 
 # Kafbat UI (maintained Kafka UI fork). v1.5.0 (2026-04-20, clears the 7-day
 # cooldown; no LTS line; still latest stable as of 2026-07-12 per `gh api

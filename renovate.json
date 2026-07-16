@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigestsToSemver"
+  ],
+  "labels": ["dependencies"],
+  "commitMessagePrefix": "fix(deps):",
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "dependencyDashboard": true,
+  "_comment_ssot": "versions.yaml is the third-party SSoT for the DFE stack. Renovate lives HERE (relocated from dfe-docker, which now derives its pins via `make stack`). OPERATOR-COUPLED service versions -- services.clickhouse-version (clickhouse-operator), services.kafka-version (strimzi 0.51 ceiling 4.2.0), services.redpanda-version (redpanda-operator) -- are HARD-GATED: NO Renovate manager touches them, they are bumped BY HAND in lockstep with their operator and verified against the operator support matrix + `dfe-stack compat-check`. FOLLOW-UP: the plain-image third-party (kafbat, ferretdb, documentdb-pg, nginx-proxy) will get a Renovate custom regex manager once a `dfe-stack refresh-digests` helper exists to keep services-digests in sync after a version bump (the SSoT splits version and sha256 across services/services-digests, so a version-only bump would strand the digest).",
+  "packageRules": [
+    {
+      "description": "Group all GitHub Actions digest updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "automerge": true
+    }
+  ]
+}

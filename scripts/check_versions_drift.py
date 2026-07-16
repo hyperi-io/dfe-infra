@@ -33,24 +33,59 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 
 
+def _parse_nested(text: str) -> dict:
+    """Indent-aware parse of the versions.yaml subset (nested maps of scalars).
+
+    Same reader as scripts/dfe-stack -- handles the nested `stacks:` shape to
+    arbitrary depth. No PyYAML (runs on a bare CI image).
+    """
+    root: dict = {}
+    stack: list[tuple[int, dict]] = [(-1, root)]
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        m = re.match(
+            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
+        )
+        if not m:
+            continue
+        key, quoted = m.group(1), m.group(2)
+        value = quoted if quoted is not None else (m.group(3) or "").strip()
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        if value == "" and quoted is None:
+            child: dict = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = value
+    return root
+
+
 def load_versions() -> dict[str, str]:
-    """Flatten versions.yaml into dotted keys -> value (e.g. operators.keda)."""
+    """Flatten the CURRENT stack's sections into dotted keys -> value.
+
+    versions.yaml is NESTED (stacks: -> <version> -> <section> -> key). Read the
+    `current` pointer, descend into stacks[current], and flatten THAT stack's
+    sections (e.g. operators.keda, services.clickhouse-version). The drift-check
+    always validates the stack under development.
+    """
+    root = _parse_nested(VERSIONS_FILE.read_text())
+    current = root.get("current")
+    stacks = root.get("stacks", {})
+    if not current or current not in stacks:
+        raise SystemExit(
+            f"versions.yaml: `current` ({current!r}) not found in stacks: "
+            f"({', '.join(stacks) or 'none'})"
+        )
     flat: dict[str, str] = {}
-    section: str | None = None
-    for raw in VERSIONS_FILE.read_text().splitlines():
-        line = raw.rstrip()
-        if not line or line.lstrip().startswith("#"):
-            continue
-        # Strip inline comments outside quotes.
-        if not line.startswith(" "):  # top-level section header e.g. "operators:"
-            m = re.match(r"^([a-zA-Z0-9_-]+):\s*$", line)
-            if m:
-                section = m.group(1)
-            continue
-        m = re.match(r'^\s+([a-zA-Z0-9_.-]+):\s*"?([^"#]+?)"?\s*(?:#.*)?$', line)
-        if m and section:
-            key, value = m.group(1), m.group(2).strip()
-            flat[f"{section}.{key}"] = value
+    for section, body in stacks[current].items():
+        if isinstance(body, dict):
+            for key, value in body.items():
+                if isinstance(value, str):
+                    flat[f"{section}.{key}"] = value
     return flat
 
 
@@ -92,7 +127,9 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     (
         "keda appset",
         "operators.keda",
-        lambda: find_appset_chart_version(Path("argocd/appsets/layer1-addons.yaml"), "keda"),
+        lambda: find_appset_chart_version(
+            Path("argocd/appsets/layer1-addons.yaml"), "keda"
+        ),
     ),
     (
         "metrics-server appset",
@@ -104,7 +141,9 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     (
         "reloader appset",
         "operators.reloader",
-        lambda: find_appset_chart_version(Path("argocd/appsets/layer1-addons.yaml"), "reloader"),
+        lambda: find_appset_chart_version(
+            Path("argocd/appsets/layer1-addons.yaml"), "reloader"
+        ),
     ),
     (
         "cloudnative-pg appset",
@@ -138,16 +177,39 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     ),
     (
         "redpanda broker tag (kafka values)",
-        "data.redpanda-version",
+        "services.redpanda-version",
         lambda: find_regex(
             Path("helm/charts/kafka/values.yaml"),
             r"redpandadata/redpanda\n\s*#[^\n]*\n\s*tag:\s*\"([^\"]+)\"",
         ),
     ),
+    # Kafka logical version (our kafka chart -> strimzi Kafka CR spec.kafka.version)
+    (
+        "kafka version (kafka values)",
+        "services.kafka-version",
+        lambda: find_regex(
+            Path("helm/charts/kafka/values.yaml"),
+            r"name: dfe-kafka\n\s*version:\s*\"([^\"]+)\"",
+        ),
+    ),
+    # kafbat (class D): chart value is tag@digest -- compare the TAG part to SSoT
+    (
+        "kafbat image tag",
+        "services.kafbat",
+        lambda: find_regex(
+            Path("helm/charts/kafbat/values.yaml"),
+            r"kafka-ui\n\s*tag:\s*\"([^\"@]+)",
+        ),
+    ),
+    # ferretdb: EXCLUDED from the loop-closer -- the k8s ferretdb chart is still
+    # appVersion 1.24.0 while SSoT services.ferretdb is 2.7.0 (the 1.x->2.x
+    # DocumentDB migration is out of scope; see docs/stack-components.md). A check
+    # now would either fail CI or force that migration. Re-add when k8s ferretdb
+    # moves to 2.x.
     # ClickHouse chart values: server version + keeper tag
     (
         "clickhouse server version",
-        "data.clickhouse-version",
+        "services.clickhouse-version",
         lambda: find_regex(
             Path("helm/charts/clickhouse-cluster/values.yaml"),
             r"\n  version:\s*\"([^\"]+)\"",
@@ -155,7 +217,7 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     ),
     (
         "clickhouse keeper tag",
-        "data.clickhouse-version",
+        "services.clickhouse-version",
         lambda: find_regex(
             Path("helm/charts/clickhouse-cluster/values.yaml"),
             r"clickhouse-keeper\n\s*tag:\s*\"([^\"]+)\"",
@@ -164,7 +226,7 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     # otel-collector: explicit image tag + chart appVersion
     (
         "otel image tag",
-        "data.otel-collector",
+        "services.otel-collector",
         lambda: find_regex(
             Path("helm/charts/otel-collector/values.yaml"),
             r"opentelemetry-collector-contrib\n\s*tag:\s*\"([^\"]+)\"",
@@ -172,7 +234,7 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     ),
     (
         "otel chart appVersion",
-        "data.otel-collector",
+        "services.otel-collector",
         lambda: find_regex(
             Path("helm/charts/otel-collector/Chart.yaml"), r"appVersion:\s*\"([^\"]+)\""
         ),
@@ -181,7 +243,9 @@ CHECKS: list[tuple[str, str, "callable"]] = [
     (
         "valkey manifest image",
         "bootstrap.valkey",
-        lambda: find_regex(Path("bootstrap/templates/valkey.yaml"), r"valkey/valkey:([^\s\"]+)"),
+        lambda: find_regex(
+            Path("bootstrap/templates/valkey.yaml"), r"valkey/valkey:([^\s\"]+)"
+        ),
     ),
 ]
 
@@ -230,7 +294,9 @@ def main() -> int:
             continue
         actual = extractor()
         if actual is None:
-            failures.append(f"  [missing] {label}: could not locate the pin in its file")
+            failures.append(
+                f"  [missing] {label}: could not locate the pin in its file"
+            )
             continue
         checked += 1
         if actual != expected:
@@ -244,7 +310,9 @@ def main() -> int:
             file=sys.stderr,
         )
         print("\n".join(failures), file=sys.stderr)
-        print(f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr)
+        print(
+            f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr
+        )
         return 1
 
     print(f"OK -- all {checked} version pins match versions.yaml.")

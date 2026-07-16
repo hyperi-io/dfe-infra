@@ -32,8 +32,11 @@ clickhouse:
 kafka:
   mode: disabled
 
-# Kafbat -- not deployed (no Kafka to manage in slim).
-enabled: false
+# Kafbat -- not deployed (no Kafka to manage in slim). Scoped under `kafbat:` so it
+# gates ONLY the kafbat chart; a bare top-level `enabled` would apply to every chart
+# in this cascade (this file is merged into every chart's values).
+kafbat:
+  enabled: false
 
 # CNPG -- single instance (no HA).
 cluster:

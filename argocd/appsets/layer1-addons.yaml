@@ -62,7 +62,7 @@ spec:
                 # strimzi-kafka-operator (Kafka substrate) and clickhouse-operator
                 # (clickhouse.com CRDs) are cluster-only operators: deployed in the
                 # scale profile via appsets/layer-scale.yaml (cluster-label gated).
-                # Single/standard CH uses a plain StatefulSet -- no operator.
+                # slim + single CH use a plain StatefulSet -- no operator.
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'

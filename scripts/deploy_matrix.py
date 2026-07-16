@@ -95,7 +95,7 @@ class Cell:
 # only renders (it deploys nothing -- it connects to a supplied instance).
 def devex_matrix() -> list[Cell]:
     cells: list[Cell] = []
-    for profile in ("standard", "scale"):
+    for profile in ("slim", "scale"):
         cells.append(Cell("clickhouse-cluster", "single", profile))
         cells.append(Cell("clickhouse-cluster", "cluster", profile))
         cells.append(Cell("clickhouse-cluster", "external", profile, deploys=False))
@@ -304,11 +304,7 @@ def wait_ready(cell: Cell) -> tuple[bool, str]:
     """
     # Only cluster+redpanda is operator-managed (a Redpanda CR to wait on). single
     # redpanda is a plain StatefulSet (no CR) -> fall through to the pod check.
-    if (
-        cell.chart == "kafka"
-        and _kafka_provider(cell) == "redpanda"
-        and cell.mode == "cluster"
-    ):
+    if cell.chart == "kafka" and _kafka_provider(cell) == "redpanda" and cell.mode == "cluster":
         waited = _run(
             [
                 "kubectl",
@@ -704,9 +700,7 @@ def main() -> int:
     overall_failures = 0
     for i in range(rounds):
         tag = f" round {i + 1}/{rounds}" if rounds > 1 else ""
-        print(
-            f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n"
-        )
+        print(f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n")
         results = [run_cell(c, do_apply=args.apply) for c in cells]
         failures = [r for r in results if not r.ok]
         overall_failures += len(failures)

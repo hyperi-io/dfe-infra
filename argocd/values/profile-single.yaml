@@ -25,15 +25,17 @@ clickhouse:
   shardsCount: 1
 
 # Kafka -- ENABLED, single broker. (This is what makes `single` != `slim`.)
-# NOTE: the kafka chart is operator-only (Strimzi/Redpanda CR), so single-broker
-# Kafka needs the Strimzi operator present in the single tier too -- currently it
-# is installed scale-only (layer-scale.yaml). See the DESIGN flag: gate the
-# operator install on (single|scale), or add a non-operator single-broker path.
+# The kafka chart renders a NON-operator StatefulSet in this mode
+# (templates/kafka-single.yaml) -- a plain broker of the chosen provider, mirroring
+# ClickHouse-single. So the single tier needs NO Kafka operator; the Strimzi CR path
+# (and its operator, installed scale-only via layer-scale.yaml) is used ONLY at scale.
 kafka:
   mode: single
 
-# Kafbat (Kafka UI) -- deployed with Kafka.
-enabled: true
+# Kafbat (Kafka UI) -- deployed with Kafka. Scoped under `kafbat:` (see profile-slim)
+# so the toggle never leaks to other charts in the cascade.
+kafbat:
+  enabled: true
 
 # CNPG -- single instance (no HA at this tier).
 cluster:

@@ -10,7 +10,8 @@
 # Requirements:
 #   - kubectl configured and pointing at the target cluster
 #   - helm 3.x installed
-#   - terraform >=1.6 or opentofu >=1.6 (detected automatically)
+#   - terraform >=1.6 or opentofu >=1.6 -- OPTIONAL here (used earlier for the
+#     apply; bootstrap.sh only consumes its outputs via env, never invokes it)
 #   - envsubst (gettext package)
 #
 # Required environment variables (export from Terraform outputs):
@@ -18,7 +19,7 @@
 #   DFE_CLOUD                aws | gcp | az | local
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. devex.hyperi.io
-#   DFE_PROFILE              standard | scale
+#   DFE_PROFILE              slim | single | scale
 #   DFE_REPO_URL             Git repo URL for ArgoCD
 #   DFE_TARGET_REVISION      Git branch/tag (e.g. main)
 #   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard
@@ -41,9 +42,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 
-# Detect Terraform or OpenTofu (support both)
-TF=$(command -v tofu || command -v terraform || { echo "ERROR: install terraform (>=1.6) or opentofu (>=1.6)" >&2; exit 1; })
-echo "Detected IaC tool: ${TF}"
+# Detect Terraform or OpenTofu (informational only). bootstrap.sh itself never
+# invokes the IaC tool -- terraform/tofu runs EARLIER (the apply), and its outputs
+# reach us as DFE_* env vars via bridge.py. So a missing binary is not fatal here:
+# a deployer driving bootstrap from a pre-computed .env need not have it on PATH.
+TF="$(command -v tofu || command -v terraform || true)"
+if [[ -n "${TF}" ]]; then
+  echo "Detected IaC tool: ${TF}"
+else
+  echo "No terraform/opentofu on PATH -- continuing (bootstrap.sh does not invoke it)."
+fi
 
 # Read versions from SSOT (versions.yaml)
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -107,10 +115,10 @@ required_vars=(
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
-# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the standard profile is gRPC (kafka disabled),
+# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim profile is gRPC (kafka disabled),
 # so it is empty there; only set when kafka.mode != disabled. Defaulted empty so
 # the cluster-secret annotation renders blank (kafka-dependent apps are gated off
-# in standard anyway).
+# in slim anyway).
 export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
 # devex/local enforces DFE onto its dedicated workers via a HARD nodeSelector
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is

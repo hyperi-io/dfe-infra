@@ -1,7 +1,8 @@
 # Scale-profile-only apps: Kafka operator + Strimzi Kafka + transform services.
 # These deploy ONLY on clusters labelled dfe.hyperi.io/profile: scale.
-# Standard-profile clusters lack the label, so nothing here is generated --
-# that is how "standard = no Kafka" is enforced (no goTemplate skipping needed).
+# slim + single clusters lack the label, so nothing here is generated (no
+# goTemplate skipping needed): slim has no Kafka at all, and single runs a
+# NON-operator single broker (kafka-single.yaml) that needs no operator.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

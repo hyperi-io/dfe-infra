@@ -41,9 +41,10 @@ spec:
                 # (GitHub/GitLab) is supplied -- see appsets/layer2-deploy-repo.yaml,
                 # gated on the dfe.hyperi.io/bundled-deploy-repo cluster label. The
                 # deploy repo is a seam (external git PRIMARY); never a hard dep.
-                # Kafka substrate -- mode-driven (disabled on standard -> nothing;
-                # cluster on scale). Provider strimzi (default) needs the Strimzi
-                # operator (installed scale-only via layer-scale).
+                # Kafka substrate -- mode-driven: disabled on slim -> nothing;
+                # non-operator single broker on single; cluster on scale. The
+                # cluster (scale) path with provider strimzi (default) needs the
+                # Strimzi operator (installed scale-only via layer-scale).
                 - app: kafka
                   namespace: strimzi
                   wave: "4"

@@ -1,0 +1,153 @@
+# Explicit-version stack tagger + manifest publisher.
+#
+# The stack version is versions.yaml `current` (a CURATED manifest decision, not
+# commit-derived). On push to main this:
+#   1. GATES the stack: drift-check + compat-check --strict + digest verify.
+#   2. reads `current`; if its tag already exists -> nothing to cut (idempotent,
+#      so editing pins WITHOUT bumping `current` just re-runs the gate).
+#   3. else cuts the `current` tag, then renders + signs + publishes the manifest
+#      INLINE (folded from the old stack-manifest.yml -- a GITHUB_TOKEN-pushed tag
+#      does NOT re-trigger a separate workflow, so publishing must live here).
+#   4. on a release-maturity tag, auto-advances the `latest` pointer.
+#
+# NEVER hand-tag: humans curate `current` + the stacks entry; this cuts the tag.
+name: Stack Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'versions.yaml'
+      - 'constraints/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # push the tag + latest-advance commit + the GH release
+  packages: write   # push (and read, for verify) the OCI artifact
+  id-token: write   # cosign keyless via GitHub OIDC
+
+# Serialise release runs so two quick pushes to versions.yaml cannot cut/publish
+# or advance `latest` concurrently (the tag + manifest are already immutable by
+# the time latest advances). Do NOT cancel-in-progress -- a mid-flight publish
+# must finish.
+concurrency:
+  group: stack-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: gate, tag `current`, publish + sign the manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0   # full history: dfe-stack + tag existence checks
+
+      - name: Gate -- drift + compatibility + digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/check_versions_drift.py
+          python3 scripts/dfe-stack compat-check --strict
+          python3 scripts/dfe-stack release-gate
+          python3 scripts/dfe-stack verify
+
+      - name: Resolve `current` + decide whether to cut
+        id: ver
+        run: |
+          set -euo pipefail
+          CURRENT=$(python3 scripts/dfe-stack current)
+          if [ -z "$CURRENT" ]; then echo "error: no current pointer" >&2; exit 1; fi
+          echo "current=${CURRENT}" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/${CURRENT}" >/dev/null; then
+            echo "cut=false" >> "$GITHUB_OUTPUT"
+            echo "tag ${CURRENT} already exists -- nothing to cut"
+          else
+            echo "cut=true" >> "$GITHUB_OUTPUT"
+            echo "will cut ${CURRENT}"
+          fi
+
+      - name: Cut the tag
+        if: steps.ver.outputs.cut == 'true'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.current }}"
+          git config user.name "hyperi-ci"
+          git config user.email "ci@hyperi.io"
+          git tag -a "$TAG" -m "DFE stack $TAG"
+          git push origin "$TAG"
+
+      - name: Render manifest + docker env + image list + graph
+        if: steps.ver.outputs.cut == 'true'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.current }}"
+          python3 scripts/dfe-stack render --stack "$TAG" --out "dfe-manifest-${TAG}.yaml"
+          python3 scripts/dfe-stack render --target docker --stack "$TAG" --out "dfe-env-${TAG}.txt"
+          python3 scripts/dfe-stack images --stack "$TAG" > "dfe-images-${TAG}.txt"
+          python3 scripts/dfe-stack graph > "dfe-upgrade-graph.json"
+          FILES="dfe-manifest-${TAG}.yaml dfe-env-${TAG}.txt dfe-images-${TAG}.txt dfe-upgrade-graph.json"
+          if [ -f "constraints/${TAG}.yaml" ]; then
+            cp "constraints/${TAG}.yaml" "dfe-constraints-${TAG}.yaml"
+            FILES="$FILES dfe-constraints-${TAG}.yaml"
+          fi
+          sha256sum $FILES > SHA256SUMS
+          echo "FILES=$FILES" >> "$GITHUB_ENV"
+
+      - name: Attach to the GitHub release
+        if: steps.ver.outputs.cut == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.current }}"
+          gh release create "$TAG" --verify-tag --title "DFE $TAG" --generate-notes || true
+          gh release upload "$TAG" --clobber $FILES SHA256SUMS
+
+      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
+        if: steps.ver.outputs.cut == 'true'
+
+      - name: Push manifest as an OCI artifact
+        if: steps.ver.outputs.cut == 'true'
+        id: oras_push
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.current }}"
+          echo "${{ github.token }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          REF="ghcr.io/${{ github.repository_owner }}/dfe-stack-manifest:${TAG}"
+          ARGS="dfe-manifest-${TAG}.yaml:application/yaml dfe-env-${TAG}.txt:text/plain dfe-images-${TAG}.txt:text/plain dfe-upgrade-graph.json:application/json"
+          if [ -f "dfe-constraints-${TAG}.yaml" ]; then ARGS="$ARGS dfe-constraints-${TAG}.yaml:application/yaml"; fi
+          DIGEST=$(oras push "$REF" \
+            --artifact-type application/vnd.hyperi.dfe.stack-manifest.v1+yaml \
+            $ARGS \
+            --format go-template --template '{{.digest}}')
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: steps.ver.outputs.cut == 'true'
+
+      - name: Cosign sign the artifact (keyless, GitHub OIDC)
+        if: steps.ver.outputs.cut == 'true'
+        run: |
+          set -euo pipefail
+          cosign sign --yes \
+            "ghcr.io/${{ github.repository_owner }}/dfe-stack-manifest@${{ steps.oras_push.outputs.digest }}"
+
+      - name: Auto-advance `latest` on a release-maturity tag
+        if: steps.ver.outputs.cut == 'true'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.current }}"
+          MATURITY=$(python3 scripts/dfe-stack maturity --stack "$TAG")
+          if [ "$MATURITY" = "release" ]; then
+            git config user.name "hyperi-ci"
+            git config user.email "ci@hyperi.io"
+            git pull --rebase origin main   # avoid a non-fast-forward if main moved
+            python3 scripts/dfe-stack set-latest "$TAG"
+            git add versions.yaml
+            git commit -m "chore: advance latest -> ${TAG} [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "maturity ${MATURITY} -- latest pointer unchanged (prerelease)"
+          fi

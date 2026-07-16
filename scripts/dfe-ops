@@ -17,16 +17,24 @@
     python3 scripts/dfe-ops <subcommand> [options]      # or ./scripts/dfe-ops ...
 
 Subcommands:
-  kubeconfig  Fetch a node's kubeconfig via a Vault/OpenBao-stored SSH key,
-              rewriting the loopback API server to a reachable address.
-  probe       Minimal curl-equivalent HTTP client (stdlib urllib) for smoke
-              tests + health checks where curl is unavailable or blocked.
-  deploy      Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
-              terraform -> bridge -> bootstrap -> Argo).
-  teardown    Tear the deployment down (wraps bootstrap/destroy.sh); optionally
-              also destroy terraform state.
-  verify      Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
-              or just the readiness gate.
+  kubeconfig   Fetch a node's kubeconfig via a Vault/OpenBao-stored SSH key,
+               rewriting the loopback API server to a reachable address.
+  probe        Minimal curl-equivalent HTTP client (stdlib urllib) for smoke
+               tests + health checks where curl is unavailable or blocked.
+  deploy       Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
+               terraform -> bridge -> bootstrap -> Argo).
+  stack-deploy Drive one END-TO-END deploy of a PINNED stack version in a chosen
+               MODE (slim|single|scale) onto an EXISTING cluster: offline
+               pre-flight (pins resolve, no drift, mode charts render) ->
+               bootstrap (Layer 0/1 + Argo sync of the mode's profile at the
+               SSoT-pinned versions) -> bounded readiness gate -> the two default
+               E2E tests -> access summary. Provisions NOTHING (deploy ONTO, not
+               create). The stack + mode + kubeconfig are flags; secrets come from
+               --env-file / --from-terraform, never hardcoded.
+  teardown     Tear the deployment down (wraps bootstrap/destroy.sh); optionally
+               also destroy terraform state.
+  verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
+               or just the readiness gate.
 
 Examples:
     # Pull the DFE cluster kubeconfig (server node dfe-k8s-1) to a local file:
@@ -39,13 +47,26 @@ Examples:
     python3 scripts/dfe-ops deploy --cloud local
     python3 scripts/dfe-ops verify
 
+    # Offline-only: validate stack + mode render before touching a cluster:
+    python3 scripts/dfe-ops stack-deploy --stack 2.2.0-rc.1 --mode single --check-only
+
+    # Deploy stack 2.2.0-rc.1 in single mode onto the existing dfe-k8s cluster,
+    # secrets from a terraform env dir, then run the two default E2E tests:
+    python3 scripts/dfe-ops stack-deploy --stack 2.2.0-rc.1 --mode single \
+        --kubeconfig .tmp/dfe.kubeconfig --from-terraform terraform/environments/local
+
+    # Same, secrets from an env file (no terraform), scale mode:
+    python3 scripts/dfe-ops stack-deploy --mode scale --kubeconfig .tmp/dfe.kubeconfig \
+        --env-file bootstrap/local.env
+
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
     python3 scripts/dfe-ops teardown --force --with-terraform
 
-kubeconfig + probe need only python3. deploy/teardown/verify shell out to the
-repo's bootstrap/*.sh (found relative to this file), so they need whatever those
-scripts need (terraform/tofu, kubectl, helm, VAULT_* env, ...).
+kubeconfig + probe need only python3. deploy/stack-deploy/teardown/verify shell
+out to the repo's bootstrap/*.sh + scripts/dfe-stack (found relative to this
+file), so they need whatever those need (kubectl, helm, terraform/tofu on PATH,
+VAULT_* env, ...). stack-deploy's pre-flight needs only python3 + helm.
 """
 
 from __future__ import annotations
@@ -53,6 +74,7 @@ from __future__ import annotations
 import argparse
 import base64
 import os
+import shutil
 import ssl
 import subprocess
 import sys
@@ -63,6 +85,53 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap"
+SCRIPTS = REPO_ROOT / "scripts"
+HELM_CHARTS = REPO_ROOT / "helm" / "charts"
+ARGO_VALUES = REPO_ROOT / "argocd" / "values"
+DFE_STACK = SCRIPTS / "dfe-stack"
+DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
+
+# The deploy MODES (== the appset profile value each selects). One lever --
+# DFE_PROFILE -- drives the whole stack: the cluster secret's label (which gates
+# the scale-only operator appsets) AND its annotation (which selects
+# argocd/values/profile-<mode>.yaml). slim = gRPC, no Kafka, single-node CH;
+# single = one node of everything WITH Kafka (non-operator broker); scale = HA,
+# operator ClickHouse cluster + Strimzi Kafka.
+MODES = ("slim", "single", "scale")
+DEFAULT_STACK = "2.2.0-rc.1"
+DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
+
+# bootstrap.sh's required env (validated up-front so a missing var fails the
+# driver before it touches the cluster, not mid-run). DFE_KAFKA_BOOTSTRAP is
+# intentionally omitted -- it is empty in slim (gRPC transport).
+BOOTSTRAP_REQUIRED = (
+    "DFE_ENV",
+    "DFE_CLOUD",
+    "DFE_REGION",
+    "DFE_DOMAIN",
+    "DFE_PROFILE",
+    "DFE_REPO_URL",
+    "DFE_TARGET_REVISION",
+    "DFE_STORAGE_CLASS",
+    "DFE_NAMESPACE",
+    "DFE_CLICKHOUSE_HOST",
+    "DFE_OTEL_ENDPOINT",
+    "DFE_VAULT_ADDR",
+    "DFE_VAULT_ROLE_ID",
+    "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
+)
+
+# Substrate charts each mode actually deploys -- drives the offline helm-render
+# pre-flight. slim: single-node ClickHouse only (no Kafka). single/scale: also
+# Kafka (single renders a non-operator StatefulSet; scale renders the Strimzi CR,
+# whose operator layer-scale.yaml installs). A representative set of app charts is
+# always rendered too, so an app-side profile break is caught before deploy.
+_MODE_SUBSTRATE = {
+    "slim": ("clickhouse-cluster",),
+    "single": ("clickhouse-cluster", "kafka"),
+    "scale": ("clickhouse-cluster", "kafka"),
+}
+_PREFLIGHT_APPS = ("dfe-receiver", "dfe-loader", "dfe-engine")
 
 # --- kubeconfig defaults -----------------------------------------------------
 DEFAULT_USER = "ubuntu"
@@ -256,6 +325,261 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return _run_streaming(["bash", str(script)])
 
 
+# --- stack-deploy subcommand (the pinned-stack + mode k8s deploy driver) ------
+def _run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
+    """Run a command capturing text output; return (rc, stdout, stderr).
+
+    Never raises on a non-zero exit -- the caller decides. Explicit utf-8 with
+    replacement so a stray non-ASCII byte under LC_ALL=C degrades instead of
+    raising UnicodeDecodeError.
+    """
+    proc = subprocess.run(  # noqa: S603 - argv is built from validated flags
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _last_line(text: str) -> str:
+    """Last non-empty line of some command output (for a one-line verdict)."""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return lines[-1] if lines else ""
+
+
+def _current_stack() -> str:
+    """The versions.yaml `current` pointer (empty if dfe-stack cannot read it)."""
+    rc, out, _ = _run_text(["python3", str(DFE_STACK), "current"])
+    return out.strip() if rc == 0 else ""
+
+
+def _parse_env_file(path: str) -> dict[str, str]:
+    """Parse a flat KEY=VALUE env file into a dict.
+
+    Handles the ``KEY="value"`` shape of bootstrap/local.env.example (optional
+    ``export`` prefix, ``#`` comments, surrounding single/double quotes stripped).
+    Deliberately NOT a shell interpreter: no ``$VAR`` expansion or command
+    substitution -- it is a pin file, not a script.
+
+    Args:
+        path: Path to the env file.
+
+    Returns:
+        Mapping of variable name to value.
+    """
+    out: dict[str, str] = {}
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        key, val = key.strip(), val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        out[key] = val
+    return out
+
+
+def _preflight(args: argparse.Namespace) -> int:
+    """Offline, cluster-free gate before any deploy.
+
+    Proves the four things that can be checked without a cluster: the stack pins
+    resolve, the working tree has not drifted from the SSoT, the interdependency
+    constraints hold, and the mode's charts actually render at the pinned
+    versions. Returns 0 on pass, 1 on a hard failure.
+    """
+    print(
+        "=== stack-deploy PRE-FLIGHT (offline; no cluster contacted) ===",
+        file=sys.stderr,
+    )
+    hard_fail = 0
+
+    # 1. Stack pins resolve (and are the real, published set).
+    rc, out, err = _run_text(
+        ["python3", str(DFE_STACK), "--registry", args.registry, "render", "--stack", args.stack]
+    )
+    if rc != 0:
+        print(f"  [FAIL] stack {args.stack!r} does not resolve: {err.strip() or _last_line(out)}", file=sys.stderr)
+        return 1
+    published = [ln for ln in out.splitlines() if ln.strip().startswith("dfe-") and "@sha256:" in ln]
+    print(f"  [ok]   stack {args.stack}: pins resolve ({len(published)} published app image(s))", file=sys.stderr)
+
+    # 2. Drift-check -- working-tree pins == versions.yaml. Validates `current`
+    #    only, so warn (do not fail) when a non-current stack is requested.
+    rc, out, err = _run_text(["python3", str(DRIFT_CHECK)])
+    if rc != 0:
+        print("  [FAIL] version drift vs versions.yaml (SSoT):", file=sys.stderr)
+        print((out or err).rstrip(), file=sys.stderr)
+        hard_fail += 1
+    else:
+        print(f"  [ok]   {_last_line(out) or 'no version drift'}", file=sys.stderr)
+    current = _current_stack()
+    if current and args.stack != current:
+        print(
+            f"  [warn] --stack {args.stack} != versions.yaml current ({current}); the "
+            "drift-check validates `current` only -- deploy from the matching git revision.",
+            file=sys.stderr,
+        )
+
+    # 3. Compat-check -- the stack's interdependency locks.
+    compat_cmd = ["python3", str(DFE_STACK), "compat-check", "--stack", args.stack]
+    if args.strict_compat:
+        compat_cmd.append("--strict")
+    rc, out, err = _run_text(compat_cmd)
+    tag = "ok" if rc == 0 else "FAIL"
+    print(f"  [{tag}]   compat-check: {_last_line(out) or _last_line(err)}", file=sys.stderr)
+    if rc != 0 and args.strict_compat:
+        hard_fail += 1
+
+    # 4. Render the mode's charts at the pinned versions (catch a broken profile
+    #    offline). helm optional -- a missing binary warns, it does not fail.
+    if shutil.which("helm") is None:
+        print("  [warn] helm not on PATH -- skipping the chart-render pre-flight.", file=sys.stderr)
+    else:
+        common = ARGO_VALUES / "common.yaml"
+        profile = ARGO_VALUES / f"profile-{args.mode}.yaml"
+        for chart in (*_MODE_SUBSTRATE[args.mode], *_PREFLIGHT_APPS):
+            tmp = tempfile.mkdtemp(prefix=f"dfe-render-{chart}-")
+            try:
+                rc, _out, err = _run_text(
+                    [
+                        "helm", "template", chart, str(HELM_CHARTS / chart),
+                        "-f", str(common), "-f", str(profile),
+                        "--output-dir", tmp,
+                    ]
+                )
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            if rc != 0:
+                print(f"  [FAIL] helm render {chart} ({args.mode}): {_last_line(err)}", file=sys.stderr)
+                hard_fail += 1
+            else:
+                print(f"  [ok]   helm render {chart} ({args.mode})", file=sys.stderr)
+
+    if hard_fail:
+        print(f"=== PRE-FLIGHT FAILED ({hard_fail} issue(s)) -- fix before deploying ===", file=sys.stderr)
+        return 1
+    print("=== PRE-FLIGHT PASSED ===", file=sys.stderr)
+    return 0
+
+
+def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
+    """Build the bootstrap environment: os.environ < terraform < env-file < forced.
+
+    The forced overrides are the whole point of the driver: DFE_PROFILE = the
+    chosen mode (the single lever that selects the deploy profile end to end) and,
+    optionally, the Argo git ref for the pinned charts. Later sources win, so a
+    terraform-supplied DFE_PROFILE (one of slim|single|scale) is always replaced
+    by the requested mode.
+    """
+    env = dict(os.environ)
+
+    if args.from_terraform:
+        # Reuse bridge.py's tested terraform-output reader (handles sensitive
+        # outputs) rather than re-implementing it.
+        sys.path.insert(0, str(BOOTSTRAP))
+        from bridge import get_tf_outputs
+
+        tf = get_tf_outputs(args.from_terraform)
+        dfe = {k: v for k, v in tf.items() if k.startswith("DFE_")}
+        env.update(dfe)
+        print(f"  loaded {len(dfe)} DFE_* var(s) from terraform {args.from_terraform}", file=sys.stderr)
+
+    for env_file in args.env_file:
+        loaded = _parse_env_file(env_file)
+        env.update(loaded)
+        print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
+
+    env["DFE_PROFILE"] = args.mode
+    if args.target_revision:
+        env["DFE_TARGET_REVISION"] = args.target_revision
+    if args.kubeconfig:
+        env["KUBECONFIG"] = args.kubeconfig
+    env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
+    env["DFE_ACCESS_OUT"] = args.access_out
+    if args.skip_e2e:
+        env["DFE_SKIP_INTEGRATION_TESTS"] = "true"
+    if args.dry_run:
+        env["DFE_DRY_RUN"] = "true"
+    return env
+
+
+def cmd_stack_deploy(args: argparse.Namespace) -> int:
+    """Drive a pinned-stack, mode-selected deploy + the two default E2E tests."""
+    if args.mode not in MODES:
+        print(f"--mode must be one of {', '.join(MODES)}", file=sys.stderr)
+        return 2
+
+    if _preflight(args) != 0:
+        return 1
+    if args.check_only:
+        print("check-only: pre-flight passed; no cluster changes made.", file=sys.stderr)
+        return 0
+
+    env = _assemble_env(args)
+
+    # Fail early on incomplete env -- clearer than a mid-bootstrap abort.
+    missing = [v for v in BOOTSTRAP_REQUIRED if not env.get(v)]
+    if missing:
+        print(f"ERROR: missing required deploy env: {', '.join(missing)}", file=sys.stderr)
+        print(
+            "Supply them via --from-terraform <dir> or --env-file <file> "
+            "(see bootstrap/local.env.example).",
+            file=sys.stderr,
+        )
+        return 1
+    if args.kubeconfig and not Path(args.kubeconfig).is_file():
+        print(
+            f"ERROR: --kubeconfig {args.kubeconfig} not found "
+            "(fetch it first: dfe-ops kubeconfig ...).",
+            file=sys.stderr,
+        )
+        return 1
+
+    script = _require_script("bootstrap.sh")
+    if script is None:
+        return 1
+
+    print("", file=sys.stderr)
+    print("=== stack-deploy ===", file=sys.stderr)
+    print(f"  Stack:      {args.stack}", file=sys.stderr)
+    print(f"  Mode:       {args.mode} (DFE_PROFILE={env['DFE_PROFILE']})", file=sys.stderr)
+    print(f"  Namespace:  {env.get('DFE_NAMESPACE')}", file=sys.stderr)
+    print(f"  Cloud/env:  {env.get('DFE_CLOUD')}/{env.get('DFE_ENV')}", file=sys.stderr)
+    print(f"  Git ref:    {env.get('DFE_TARGET_REVISION')}", file=sys.stderr)
+    print(f"  Kubeconfig: {env.get('KUBECONFIG', '(current context)')}", file=sys.stderr)
+    print(f"  Readiness:  bounded at {env['READINESS_TIMEOUT']}s", file=sys.stderr)
+    print(f"  E2E tests:  {'SKIPPED' if args.skip_e2e else 'ON (data path + self-monitoring)'}", file=sys.stderr)
+    print(f"  Dry run:    {'yes (no cluster changes)' if args.dry_run else 'no'}", file=sys.stderr)
+    print("", file=sys.stderr)
+
+    rc = _run_streaming(["bash", str(script)], env=env)
+    if rc != 0:
+        print(
+            "\n=== stack-deploy FAILED -- bootstrap / readiness gate / E2E did not "
+            "pass (see the failures above). ===",
+            file=sys.stderr,
+        )
+        return rc
+    print("\n=== stack-deploy OK ===", file=sys.stderr)
+    print(
+        "  Layer 0/1 up, Argo synced the mode profile at the pinned versions, "
+        "readiness gate passed.",
+        file=sys.stderr,
+    )
+    if not args.skip_e2e:
+        print("  Two default E2E tests passed (receiver->CH data path + self-monitoring OTel).", file=sys.stderr)
+    print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    return 0
+
+
 # --- parser ------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
@@ -309,6 +633,56 @@ def build_parser() -> argparse.ArgumentParser:
     dp.add_argument("--dry-run", action="store_true", help="show what would happen without executing")
     dp.add_argument("--skip-terraform", action="store_true", help="skip terraform apply (use existing state)")
     dp.set_defaults(func=cmd_deploy)
+
+    # stack-deploy
+    sd = sub.add_parser(
+        "stack-deploy",
+        help="deploy a pinned stack version in a mode (slim|single|scale) + run the 2 default E2E tests",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    sd.add_argument("--stack", default=DEFAULT_STACK, help="versions.yaml stack version to deploy/validate")
+    sd.add_argument(
+        "--mode",
+        required=True,
+        choices=list(MODES),
+        help="deploy profile: slim (gRPC, no Kafka), single (1 node + Kafka), scale (HA + operators)",
+    )
+    sd.add_argument(
+        "--kubeconfig",
+        default=os.environ.get("KUBECONFIG"),
+        help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)",
+    )
+    sd.add_argument(
+        "--env-file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="DFE_* env file for secrets/endpoints (repeatable; later wins). See bootstrap/local.env.example",
+    )
+    sd.add_argument(
+        "--from-terraform",
+        default=None,
+        metavar="DIR",
+        help="read DFE_* outputs from a terraform env dir (terraform apply is a prereq)",
+    )
+    sd.add_argument(
+        "--target-revision",
+        default=None,
+        help="Argo git ref for the pinned charts (overrides DFE_TARGET_REVISION)",
+    )
+    sd.add_argument(
+        "--readiness-timeout",
+        type=int,
+        default=900,
+        help="bounded readiness wait in seconds (never wait-forever; sets READINESS_TIMEOUT)",
+    )
+    sd.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix (passthrough to dfe-stack)")
+    sd.add_argument("--access-out", default="dfe-access.md", help="where the post-deploy access summary is written")
+    sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
+    sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
+    sd.add_argument("--check-only", action="store_true", help="run only the offline pre-flight, then stop (no cluster changes)")
+    sd.add_argument("--dry-run", action="store_true", help="pre-flight + bootstrap in DFE_DRY_RUN mode (prints commands, no apply)")
+    sd.set_defaults(func=cmd_stack_deploy)
 
     # teardown
     td = sub.add_parser(

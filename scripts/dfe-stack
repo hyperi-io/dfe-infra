@@ -2,11 +2,12 @@
 #  Project:      dfe-infra
 #  File:         dfe-stack
 #  Purpose:      Stack-release tooling over versions.yaml (the certified
-#                manifest): render the release manifest, emit the air-gap
-#                image list, derive the upgrade graph from git tags
-#                (cincinnati-lite, auto-managed), check upgrade paths, verify
-#                registry digests, and resolve a customer pins.yaml into an
-#                effective component set with SUPPORT-DRIFT notices.
+#                manifest, NESTED stacks model): render the release manifest
+#                (k8s) or the dfe-docker .env pin fragment, emit the air-gap
+#                image list, derive the upgrade graph from the in-file stacks,
+#                check upgrade paths, verify registry digests, and resolve a
+#                customer pins.yaml into an effective component set with
+#                SUPPORT-DRIFT notices.
 #                GENERIC: repo/registry/paths are flags; stdlib only.
 #  Language:     Python
 #
@@ -16,31 +17,35 @@
 
     python3 scripts/dfe-stack <subcommand> [options]     # or ./scripts/dfe-stack ...
 
-The model (dfe-docs/deployment/stack-versioning.md): "DFE X.Y.Z" is ONE
-certified manifest = versions.yaml frozen at dfe-infra git tag X.Y.Z. The
-upgrade graph is DERIVED: each release's versions.yaml carries
-``stack.previous`` and this tool walks the git tags to build the DAG --
-auto-managed, no hand-curated graph file.
+The model (dfe-docs/deployment/stack-versioning.md): "DFE X.Y.Z[-pre]" is one
+certified pin set = a KEY under `stacks:` in versions.yaml. versions.yaml is
+NESTED: every stack version carries its complete pin set, so history + authority
+live in one file (no `git show <tag>:versions.yaml`). `current` points at the
+stack being built; readers resolve against it unless `--stack` overrides. The
+upgrade graph is DERIVED from the in-file stacks (each carries ``stack.previous``).
 
 Subcommands:
-  render         Render the release manifest (component set with tag@sha256
-                 image pins) for the working tree or a given git tag.
-  images         Flat image list for air-gap mirroring (DFE-owned images;
-                 third-party chart images are pulled by chart ref and listed
-                 by the chart render in CI, not here -- stated, not silent).
-  graph          Derive the stack upgrade graph from git tags (JSON).
-  check-upgrade  Verdict on FROM -> TO: sequential minors, free z-hops,
-                 honouring each release's declared stack.previous.
-  resolve        Merge a customer pins.yaml overrides block over the
-                 manifest; print the effective set + SUPPORT-DRIFT notices.
+  render         Render the pin set for a stack. --target k8s (default) = the
+                 certified manifest; --target docker = the dfe-docker .env
+                 fragment (tag@digest per compose var). --stack X.Y.Z[-rc.N]
+                 selects a version (default: `current`).
+  images         Flat DFE-owned image list for air-gap mirroring (third-party
+                 chart images are pulled by chart ref and listed by the CI chart
+                 render, not here -- stated, not silent).
+  graph          Derive the stack upgrade graph from the in-file stacks (JSON).
+  check-upgrade  Verdict on FROM -> TO: honour each stack's declared
+                 stack.previous, else sequential minors + free z-hops.
+  resolve        Merge a customer pins.yaml overrides block over a stack;
+                 print the effective set + SUPPORT-DRIFT notices.
   verify         Re-fetch GHCR digests (gh api) and compare to versions.yaml.
 
 Examples:
     python3 scripts/dfe-stack render
-    python3 scripts/dfe-stack render --tag 2.2.0 --out dfe-manifest-2.2.0.yaml
+    python3 scripts/dfe-stack render --target docker
+    python3 scripts/dfe-stack render --stack 2.2.0-rc.1 --out dfe-manifest.yaml
     python3 scripts/dfe-stack images
     python3 scripts/dfe-stack graph
-    python3 scripts/dfe-stack check-upgrade --from 2.1.3 --to 2.2.0
+    python3 scripts/dfe-stack check-upgrade --from 2.2.0-rc.1 --to 2.2.0
     python3 scripts/dfe-stack resolve --pins ../dfe-deploy/pins.yaml
     python3 scripts/dfe-stack verify
 
@@ -51,6 +56,7 @@ verify shells out to `gh api` (needs an authenticated gh).
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -59,8 +65,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
-
-_SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -77,16 +81,16 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
 
 # ---------------------------------------------------------------------------
 # versions.yaml reading (tiny indent-aware reader; stdlib only, like
-# check_versions_drift.py -- values are simple quoted/plain scalars)
+# check_versions_drift.py). Handles the nested `stacks:` shape -- nested maps of
+# scalar leaves. Lists / multiline values are out of scope by design.
 # ---------------------------------------------------------------------------
 
 
 def parse_simple_yaml(text: str) -> dict:
-    """Parse a restricted YAML subset: nested maps of scalar leaves.
+    """Parse a restricted YAML subset: indentation-nested maps of scalar leaves.
 
     Handles exactly the shape versions.yaml / pins.yaml use -- indentation-
-    nested ``key: "value"`` lines with comments. Lists and multiline values
-    are out of scope by design (the manifest deliberately stays this simple).
+    nested ``key: "value"`` lines with comments, to arbitrary depth.
     """
     root: dict = {}
     stack: list[tuple[int, dict]] = [(-1, root)]
@@ -113,8 +117,9 @@ def parse_simple_yaml(text: str) -> dict:
     return root
 
 
-def versions_at(tag: str | None) -> dict:
-    """versions.yaml parsed from the working tree, or from a git tag."""
+def load_root(tag: str | None = None) -> dict:
+    """Full versions.yaml (top-level pointers + `stacks:`) from the working tree
+    or a git tag."""
     if tag is None:
         return parse_simple_yaml((REPO_ROOT / "versions.yaml").read_text())
     out = _run(["git", "-C", str(REPO_ROOT), "show", f"{tag}:versions.yaml"])
@@ -123,42 +128,71 @@ def versions_at(tag: str | None) -> dict:
     return parse_simple_yaml(out.stdout)
 
 
-def semver(v: str) -> tuple[int, int, int] | None:
-    m = _SEMVER.match(v.strip())
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+# ---------------------------------------------------------------------------
+# Stack-version helpers (prerelease-aware: 2.2.0 AND 2.2.0-rc.1)
+# ---------------------------------------------------------------------------
+
+_SEMVER_PRE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
 
 
-def stack_tags() -> list[str]:
-    """Semver git tags on this repo, ascending (the stack release history)."""
-    out = _run(["git", "-C", str(REPO_ROOT), "tag", "--list"])
-    if out.returncode != 0:
-        # A failed listing must not masquerade as "no releases yet" - the
-        # graph and upgrade verdicts would silently degrade.
-        raise SystemExit(f"error: git tag --list failed: {out.stderr.strip()}")
-    tags = [t.strip() for t in out.stdout.splitlines() if semver(t.strip())]
-    return sorted(tags, key=semver)
+def _norm_version(v: str) -> str:
+    """Normalise a stack version/tag for equality: strip a single leading v."""
+    v = v.strip()
+    return v[1:] if v.startswith("v") else v
 
 
-def tag_for_version(version: str) -> str | None:
-    """The REAL tag name matching a semver string (tolerates the v prefix).
+def semver_key(v: str):
+    """SemVer-precedence sort key, prerelease-aware. None if not semver-shaped.
 
-    Users type "2.2.0" while releases may be tagged "v2.2.0" (or vice
-    versa); comparing raw strings would silently miss the declared release.
+    Release (no prerelease) sorts ABOVE any prerelease of the same X.Y.Z; a
+    numeric prerelease identifier sorts below an alphanumeric one; identifiers
+    compare left-to-right (numeric numerically, else lexically) -- the SemVer 2.0
+    precedence rules, enough for our alpha/beta/rc.N tags.
     """
-    want = semver(version)
-    if want is None:
+    m = _SEMVER_PRE.match(v.strip())
+    if not m:
         return None
-    for tag in stack_tags():
-        if semver(tag) == want:
-            return tag
-    return None
+    major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    pre = m.group(4)
+    if pre is None:
+        return (major, minor, patch, 1, ())  # release ranks after any prerelease
+    ids = tuple((0, int(x)) if x.isdigit() else (1, x) for x in pre.split("."))
+    return (major, minor, patch, 0, ids)
+
+
+def stack_names(root: dict) -> list[str]:
+    """The stack version keys, ascending by SemVer precedence."""
+    names = list(root.get("stacks", {}).keys())
+    return sorted(names, key=lambda s: (semver_key(s) or (0, 0, 0, 0, ())))
+
+
+def stack_pins(root: dict, stack: str | None = None) -> tuple[str, dict]:
+    """Resolve (name, pin-set) for a stack version (default: `current`)."""
+    stacks = root.get("stacks", {})
+    name = stack or root.get("current")
+    if not name:
+        raise SystemExit("error: no `current` pointer in versions.yaml and no --stack given")
+    if name not in stacks:
+        # tolerate a v-prefix mismatch on an explicit --stack
+        match = next((n for n in stacks if _norm_version(n) == _norm_version(name)), None)
+        if match is None:
+            have = ", ".join(stack_names(root)) or "none"
+            raise SystemExit(f"error: stack {name!r} not in versions.yaml stacks: (have: {have})")
+        name = match
+    return name, stacks[name]
+
+
+def versions_at(tag: str | None = None, stack: str | None = None) -> dict:
+    """The pin set for a stack (working tree or git tag)."""
+    _, pins = stack_pins(load_root(tag), stack)
+    return pins
 
 
 def app_images(v: dict, registry: str) -> dict[str, str]:
     """Published DFE-owned images as name -> ref (tag@sha256 where digest known).
 
-    Apps with no digest entry are NOT YET PUBLISHED and are excluded --
-    loudly, via the caller (no silent truncation).
+    Apps with no digest entry are NOT YET PUBLISHED and are excluded -- loudly,
+    via the caller (no silent truncation).
     """
     apps = v.get("apps", {})
     digests = v.get("digests", {})
@@ -175,25 +209,90 @@ def unpublished_apps(v: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Subcommands
+# Docker-path rendering (the .env pin fragment dfe-docker consumes)
 # ---------------------------------------------------------------------------
 
+# Third-party services rendered into dfe-docker's .env. Each row maps a
+# versions.yaml logical name (services.<name> for the version, services-digests.<name>
+# for the sha256) to dfe-docker's EXACT compose var name + the image ref (comment
+# only). The var names are NOT derivable by rule -- they are dfe-docker's
+# contract -- so this table is the source of truth for the docker cascade of
+# class-B/D/E services (see docs/stack-components.md).
+_DOCKER_THIRDPARTY = [
+    ("clickhouse-version", "CLICKHOUSE_VERSION", "clickhouse/clickhouse-server"),
+    ("kafka-version", "APACHE_KAFKA_VERSION", "apache/kafka"),
+    ("redpanda-version", "REDPANDA_VERSION", "docker.redpanda.com/redpandadata/redpanda"),
+    ("kafbat", "KAFBAT_VERSION", "ghcr.io/kafbat/kafka-ui"),
+    ("ferretdb", "HYPERDX_FERRETDB_VERSION", "ghcr.io/ferretdb/ferretdb"),
+    ("documentdb-pg", "HYPERDX_POSTGRES_VERSION", "ghcr.io/ferretdb/postgres-documentdb"),
+    ("nginx-proxy", "DFE_PROXY_VERSION", "nginx"),
+]
 
-def cmd_render(args: argparse.Namespace) -> int:
-    v = versions_at(args.tag)
-    version = args.tag or "WORKING-TREE"
+
+def _docker_app_var(name: str) -> str:
+    """dfe-* app name -> dfe-docker compose var (dfe-engine -> DFE_ENGINE_VERSION)."""
+    stem = name[4:] if name.startswith("dfe-") else name
+    return "DFE_" + stem.upper().replace("-", "_") + "_VERSION"
+
+
+def render_docker(v: dict, registry: str, label: str) -> str:
+    """The dfe-docker .env pin fragment for a stack: every *_VERSION=tag@digest."""
+    apps = v.get("apps", {})
+    digests = v.get("digests", {})
+    services = v.get("services", {})
+    edig = v.get("services-digests", {})
+    lines = [
+        "# DFE stack .env pins -- rendered by scripts/dfe-stack render --target docker",
+        f"# Source: dfe-infra versions.yaml @ {label}",
+        "# Merge into dfe-docker .env: sets each *_VERSION to the certified",
+        "# tag@digest. Non-version keys (ports, hosts, creds) are untouched.",
+        "",
+        "# ---- DFE-owned apps (class A) ----",
+    ]
+    for name in sorted(apps):
+        digest = digests.get(name, "")
+        if not digest:
+            continue  # unpublished -- noted below
+        lines.append(f"{_docker_app_var(name)}={apps[name]}@{digest}")
+
+    lines.append("")
+    lines.append("# ---- third-party services (class B/D/E) ----")
+    for logical, var, image in _DOCKER_THIRDPARTY:
+        ver = services.get(logical)
+        digest = edig.get(logical)
+        if not ver:
+            lines.append(f"# {var} -- versions.yaml services.{logical} missing; NOT rendered")
+            continue
+        if not digest:
+            lines.append(f"# {var} -- services-digests.{logical} missing; NOT rendered (would run unpinned)")
+            continue
+        lines.append(f"{var}={ver}@{digest}  # {image}")
+
+    lines.append("")
+    unp = unpublished_apps(v)
+    if unp:
+        lines.append(f"# NOT YET PUBLISHED (excluded): {', '.join(_docker_app_var(n) for n in unp)}")
+    hx = v.get("content", {}).get("dfe-hyperdx", "")
+    if not hx or hx.startswith("PENDING"):
+        lines.append(
+            "# DFE_HYPERDX_VERSION -- fork image not yet published "
+            "(content.dfe-hyperdx PENDING); set manually or wait for first image."
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_manifest(v: dict, registry: str, label: str) -> str:
+    """The certified k8s manifest for a stack (the readable pin set)."""
     prev = [p.strip() for p in v.get("stack", {}).get("previous", "").split(",") if p.strip()]
     lines: list[str] = []
     lines.append("# DFE stack manifest -- rendered by scripts/dfe-stack render")
-    lines.append(f"# Source: dfe-infra versions.yaml @ {version}")
-    lines.append(f"stack_version: \"{version}\"")
+    lines.append(f"# Source: dfe-infra versions.yaml @ {label}")
+    lines.append(f'stack_version: "{label}"')
     lines.append(f"previous: [{', '.join(repr(p) for p in prev)}]")
-    lines.append(
-        f"upgrade_order: \"{v.get('stack', {}).get('upgrade-order', '')}\""
-    )
+    lines.append(f'upgrade_order: "{v.get("stack", {}).get("upgrade-order", "")}"')
     lines.append("images:")
-    for name, ref in sorted(app_images(v, args.registry).items()):
-        lines.append(f"  {name}: \"{ref}\"")
+    for name, ref in sorted(app_images(v, registry).items()):
+        lines.append(f'  {name}: "{ref}"')
     missing = unpublished_apps(v)
     if missing:
         lines.append("# NOT YET PUBLISHED (in apps: but no digest -- excluded above):")
@@ -201,22 +300,38 @@ def cmd_render(args: argparse.Namespace) -> int:
             lines.append(f"#   {name}: {v['apps'][name]}")
     lines.append("content:")
     for name, tag in sorted(v.get("content", {}).items()):
-        lines.append(f"  {name}: \"{tag}\"")
-    for section in ("bootstrap", "operators", "data", "tools"):
+        lines.append(f'  {name}: "{tag}"')
+    for section in ("bootstrap", "operators", "services", "providers", "tools"):
         lines.append(f"{section}:")
         for name, val in sorted(v.get(section, {}).items()):
-            lines.append(f"  {name}: \"{val}\"")
-    text = "\n".join(lines) + "\n"
+            lines.append(f'  {name}: "{val}"')
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_render(args: argparse.Namespace) -> int:
+    if args.tag and args.stack:
+        raise SystemExit("error: pass either --tag or --stack, not both")
+    root = load_root(args.tag)
+    name, v = stack_pins(root, args.stack)
+    label = args.tag or name
+    target = args.target or "k8s"
+    text = render_docker(v, args.registry, label) if target == "docker" else render_manifest(v, args.registry, label)
     if args.out:
         Path(args.out).write_text(text)
-        print(f"manifest written to {args.out}")
+        print(f"{target} pin set written to {args.out}")
     else:
         sys.stdout.write(text)
     return 0
 
 
 def cmd_images(args: argparse.Namespace) -> int:
-    v = versions_at(args.tag)
+    root = load_root(args.tag)
+    _, v = stack_pins(root, args.stack)
     refs = app_images(v, args.registry)
     for ref in sorted(refs.values()):
         print(ref)
@@ -227,7 +342,7 @@ def cmd_images(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     print(
-        "# NOTE: third-party images (operators/data charts) are pulled by chart "
+        "# NOTE: third-party images (operators/services charts) are pulled by chart "
         "ref; the complete mirror list comes from the CI chart render, not this "
         "command.",
         file=sys.stderr,
@@ -236,104 +351,100 @@ def cmd_images(args: argparse.Namespace) -> int:
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
-    tags = stack_tags()
-    # semver -> real tag name, so declared previous entries ("2.1.0") join
-    # node names even when releases are tagged "v2.1.0".
-    by_semver = {semver(t): t for t in tags}
-    nodes: list[str] = []
+    """Upgrade graph derived from the in-file stacks (each carries stack.previous)."""
+    root = load_root()
+    names = stack_names(root)
+    by_norm = {_norm_version(n): n for n in names}
+    nodes: list[str] = list(names)
     edges: list[dict[str, str]] = []
-    for tag in tags:
-        nodes.append(tag)
-        try:
-            v = versions_at(tag)
-        except SystemExit:
-            continue
-        prev = v.get("stack", {}).get("previous", "")
+    for name in names:
+        prev = root["stacks"][name].get("stack", {}).get("previous", "")
         for p in [x.strip() for x in prev.split(",") if x.strip()]:
-            edges.append({"from": by_semver.get(semver(p), p), "to": tag})
+            edges.append({"from": by_norm.get(_norm_version(p), p), "to": name})
     graph = {"nodes": nodes, "edges": edges}
     if not nodes:
         graph["note"] = (
-            "no stack release tags yet -- the graph populates as releases are "
-            "cut with stack.previous set"
+            "no stacks defined yet -- add versions under `stacks:` with "
+            "stack.previous set and the graph populates"
         )
     print(json.dumps(graph, indent=2))
     return 0
 
 
-def _sequential_ok(frm: tuple[int, int, int], to: tuple[int, int, int]) -> tuple[bool, str]:
-    if frm >= to:
+def _sequential_ok(kf, kt) -> tuple[bool, str]:
+    """Sequential-minor + free-z-hop verdict on two semver_key tuples."""
+    if kf >= kt:
         return False, "target is not newer than source"
-    if frm[0] != to[0]:
+    if kf[0] != kt[0]:
         return False, "major jumps are not a verified path"
-    if to[1] == frm[1]:
+    if kt[1] == kf[1]:
         return True, "z-hop within a minor (free)"
-    if to[1] == frm[1] + 1:
+    if kt[1] == kf[1] + 1:
         return True, "sequential minor hop"
     return False, (
-        f"non-contiguous minors ({frm[0]}.{frm[1]} -> {to[0]}.{to[1]}): step through "
+        f"non-contiguous minors ({kf[0]}.{kf[1]} -> {kt[0]}.{kt[1]}): step through "
         "each minor sequentially"
     )
 
 
 def cmd_check_upgrade(args: argparse.Namespace) -> int:
-    frm, to = semver(args.frm), semver(args.to)
-    if not frm or not to:
-        raise SystemExit("error: --from/--to must be semver (x.y.z)")
-    # A release that DECLARES previous is authoritative for itself. Resolve
-    # the user's version string to the REAL tag first ("2.2.0" vs "v2.2.0"),
-    # else a tag-format mismatch silently skips the declared list and the
-    # permissive sequential rule could approve an undeclared path.
+    kf, kt = semver_key(args.frm), semver_key(args.to)
+    if not kf or not kt:
+        raise SystemExit("error: --from/--to must be semver (x.y.z[-pre])")
+    # A stack that DECLARES previous is authoritative for itself. Read it from
+    # the in-file stacks (v-prefix tolerant), so a declared rc path wins over the
+    # permissive sequential rule.
+    root = load_root()
+    stacks = root.get("stacks", {})
+    to_name = next((n for n in stacks if _norm_version(n) == _norm_version(args.to)), None)
     declared: list[str] = []
-    target_tag = tag_for_version(args.to)
-    if target_tag is not None:
-        v = versions_at(target_tag)
+    if to_name:
         declared = [
             p.strip()
-            for p in v.get("stack", {}).get("previous", "").split(",")
+            for p in stacks[to_name].get("stack", {}).get("previous", "").split(",")
             if p.strip()
         ]
     if declared:
-        ok = any(semver(p) == frm for p in declared)
+        ok = any(_norm_version(p) == _norm_version(args.frm) for p in declared)
         reason = (
             f"declared stack.previous of {args.to}: {', '.join(declared)}"
             if ok
             else f"{args.frm} is not in {args.to}'s declared stack.previous ({', '.join(declared)})"
         )
     else:
-        ok, reason = _sequential_ok(frm, to)
+        ok, reason = _sequential_ok(kf, kt)
     verdict = "SUPPORTED" if ok else "NOT A VERIFIED PATH"
     print(f"{args.frm} -> {args.to}: {verdict} ({reason})")
     return 0 if ok else 1
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
-    v = versions_at(args.tag)
+    root = load_root(args.tag)
+    name, v = stack_pins(root, args.stack)
     pins = parse_simple_yaml(Path(args.pins).read_text())
     effective = dict(app_images(v, args.registry))
     drift: list[str] = []
     overrides = pins.get("overrides", {}).get("apps", {})
-    for name, ref in overrides.items():
-        certified = effective.get(name, "(not in certified set)")
+    for oname, ref in overrides.items():
+        certified = effective.get(oname, "(not in certified set)")
         if "@sha256:" not in ref:
             print(
-                f"ERROR: override for {name} is not digest-pinned ({ref!r}) -- "
+                f"ERROR: override for {oname} is not digest-pinned ({ref!r}) -- "
                 "overrides MUST use tag@sha256",
                 file=sys.stderr,
             )
             return 1
-        effective[name] = f"{args.registry}/{name}:{ref}"
-        drift.append(f"  {name}: {ref}  (certified: {certified})")
+        effective[oname] = f"{args.registry}/{oname}:{ref}"
+        drift.append(f"  {oname}: {ref}  (certified: {certified})")
 
     if args.emit_values:
         # Per-service helm values fragments for the deploy repo's values/
-        # directory (the HARD STANDARD single helm-values home: one
-        # {service}-{instance}-values.yaml per app instance). Fragments are
-        # UNKEYED chart values meant to be MERGED into the service's EXISTING
-        # file - never saved as a new file, because the Argo files generator
-        # turns every values/*-values.yaml into an application. The
-        # dfe-common.image helper renders `repo:<image.tag>` and a
-        # `tag@sha256:...` value is a valid pull spec, so one key suffices.
+        # directory (one {service}-{instance}-values.yaml per app instance).
+        # Fragments are UNKEYED chart values meant to be MERGED into the
+        # service's EXISTING file -- never saved as a new file, because the Argo
+        # files generator turns every values/*-values.yaml into an application.
+        # dfe-common.image renders `repo:<image.tag>` and a `tag@sha256` value is
+        # a valid pull spec, so one key suffices.
         lines = [
             "# Generated by dfe-stack resolve --emit-values.",
             "# MERGE each section into the named file in your deploy repo's",
@@ -342,9 +453,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
             "# SUPPORT-DRIFT: each entry is off the certified set (untested",
             "# combination, operator-owned risk).",
         ]
-        for name, ref in sorted(overrides.items()):
+        for oname, ref in sorted(overrides.items()):
             lines.append("")
-            lines.append(f"# ---- merge into: values/{name}-<instance>-values.yaml ----")
+            lines.append(f"# ---- merge into: values/{oname}-<instance>-values.yaml ----")
             lines.append("image:")
             lines.append(f'  tag: "{ref}"')
         text = "\n".join(lines) + "\n"
@@ -354,9 +465,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
             Path(args.emit_values).write_text(text)
             print(f"values fragments written to {args.emit_values}", file=sys.stderr)
 
-    print(f"# effective component set (base dfe-infra: {pins.get('base', {}).get('dfe-infra', '?')})")
-    for name, ref in sorted(effective.items()):
-        print(f"{name}: {ref}")
+    print(f"# effective component set (stack {name}; base dfe-infra: {pins.get('base', {}).get('dfe-infra', '?')})")
+    for oname, ref in sorted(effective.items()):
+        print(f"{oname}: {ref}")
     if drift:
         print("\nSUPPORT-DRIFT: this environment runs an UNTESTED combination.")
         print("The following components are off the certified set (operator-owned risk):")
@@ -368,7 +479,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    v = versions_at(None)
+    _, v = stack_pins(load_root(), args.stack)
     apps, digests = v.get("apps", {}), v.get("digests", {})
     org = args.registry.split("/", 1)[1] if "/" in args.registry else args.registry
     bad = 0
@@ -398,6 +509,199 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Compatibility constraints (dfe-stack compat-check) -- validate the inter-
+# component locks declared in the stack's constraints file (guard + requirement).
+# ---------------------------------------------------------------------------
+
+_OPS = {
+    ">=": lambda a, b: a >= b,
+    "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b,
+    "<": lambda a, b: a < b,
+    "==": lambda a, b: a == b,
+}
+
+
+def _ver_tuple(s: str) -> tuple[int, ...]:
+    """Tolerant version -> tuple of ints (strip a leading v, take leading-numeric
+    dotted segments). 26.3.13.31 -> (26,3,13,31); v26.1.8 -> (26,1,8)."""
+    s = s.strip()
+    if s.startswith("v"):
+        s = s[1:]
+    parts: list[int] = []
+    for seg in s.split("."):
+        m = re.match(r"\d+", seg)
+        if not m:
+            break
+        parts.append(int(m.group(0)))
+    return tuple(parts)
+
+
+def _satisfies_range(version: str, spec: str) -> bool:
+    """ALL whitespace-separated comparators (>= <= > < ==) must hold."""
+    av = _ver_tuple(version)
+    for token in spec.split():
+        m = re.match(r"(>=|<=|==|>|<)\s*(.+)", token)
+        if not m:
+            return False
+        if not _OPS[m.group(1)](av, _ver_tuple(m.group(2))):
+            return False
+    return True
+
+
+def flatten_pins(v: dict) -> dict[str, str]:
+    """Pin sections -> dotted keys (operators.keda, services.kafka-version)."""
+    flat: dict[str, str] = {}
+    for section, body in v.items():
+        if isinstance(body, dict):
+            for k, val in body.items():
+                if isinstance(val, str):
+                    flat[f"{section}.{k}"] = val
+    return flat
+
+
+def _guard_holds(rule: dict, pins: dict) -> bool:
+    key = rule.get("when-key")
+    if key is None:
+        return True  # unconditional
+    val = pins.get(key)
+    if val is None:
+        return False
+    if "when-equals" in rule:
+        return val == rule["when-equals"]
+    if "when-range" in rule:
+        return _satisfies_range(val, rule["when-range"])
+    return True
+
+
+def _requirement_ok(rule: dict, pins: dict) -> tuple[bool, str | None]:
+    val = pins.get(rule.get("require-key"))
+    if "require-present" in rule:
+        return val is not None, val
+    if val is None:
+        return False, val
+    if "require-equals" in rule:
+        return val == rule["require-equals"], val
+    if "require-range" in rule:
+        return _satisfies_range(val, rule["require-range"]), val
+    if "require-matches" in rule:
+        return rule["require-matches"] in val, val
+    return True, val
+
+
+def _waiver_expired(w: dict) -> bool:
+    """A waiver past its `expires:` date no longer suppresses -- the rule
+    re-activates. An absent or unparseable expiry never expires (stays a waiver).
+    """
+    exp = w.get("expires")
+    if not exp:
+        return False
+    try:
+        return datetime.date.fromisoformat(exp.strip()) < datetime.date.today()
+    except ValueError:
+        return False
+
+
+def cmd_compat_check(args: argparse.Namespace) -> int:
+    root = load_root()
+    name, v = stack_pins(root, args.stack)
+    cpath = v.get("constraints")
+    if not cpath:
+        print(f"{name}: no constraints declared -- nothing to check")
+        return 0
+    cfile = REPO_ROOT / cpath
+    if not cfile.exists():
+        raise SystemExit(f"error: constraints file {cpath} not found (referenced by stack {name})")
+    con = parse_simple_yaml(cfile.read_text())
+    if con.get("stack") and con["stack"] != name:
+        raise SystemExit(f"error: {cpath} declares stack {con['stack']!r} != referencing stack {name!r}")
+    pins = flatten_pins(v)
+    rules = con.get("rules", {})
+    waivers = con.get("waivers", {})
+    failures = 0
+    for rid, rule in rules.items():
+        if rid in waivers and not _waiver_expired(waivers[rid]):
+            print(f"waived {rid}: {waivers[rid].get('reason', '')}")
+            continue
+        if rid in waivers:  # waiver present but EXPIRED -> rule re-activates
+            print(f"WAIVER EXPIRED {rid}: {waivers[rid].get('expires')} -- rule re-activated")
+        if not _guard_holds(rule, pins):
+            print(f"n/a    {rid}: guard not met (skipped)")
+            continue
+        ok, actual = _requirement_ok(rule, pins)
+        sev = rule.get("severity", "error")
+        if ok:
+            print(f"ok     {rid}: {rule.get('require-key')} = {actual}")
+            continue
+        bound = rule.get("require-range") or rule.get("require-equals") or rule.get("require-matches") or "present"
+        print(f"{'FAIL ' if sev == 'error' else 'WARN '} {rid}: {rule.get('require-key')} = {actual} violates {bound}")
+        print(f"       reason: {rule.get('reason', '')}")
+        print(f"       source: {rule.get('source', '')}")
+        if sev == "error":
+            failures += 1
+    for wid, w in sorted(waivers.items()):
+        if w.get("expires"):
+            print(f"waiver {wid}: expires {w['expires']} ({w.get('scope', w.get('reason', ''))})")
+    if failures and args.strict:
+        print(f"\n{failures} error-severity constraint(s) violated ({name})")
+        return 1
+    tail = " (strict: no error violations)" if args.strict else " (advisory)"
+    print(f"\ncompat-check {name}: {len(rules)} rule(s) checked{tail}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Small pointer helpers (used by the release workflow -- the explicit-version
+# tagger reads `current`, the tag maturity, and advances `latest`).
+# ---------------------------------------------------------------------------
+
+
+def cmd_current(args: argparse.Namespace) -> int:
+    print(load_root().get("current", ""))
+    return 0
+
+
+def cmd_maturity(args: argparse.Namespace) -> int:
+    _, v = stack_pins(load_root(), args.stack)
+    print(v.get("maturity", ""))
+    return 0
+
+
+def cmd_set_latest(args: argparse.Namespace) -> int:
+    """Rewrite the top-level `latest:` scalar (release-advance on a release tag)."""
+    path = REPO_ROOT / "versions.yaml"
+    text = path.read_text()
+    new, n = re.subn(r'(?m)^(latest:\s*)"[^"]*"\s*$', rf'\1"{args.version}"', text)
+    if n != 1:
+        raise SystemExit(f"error: expected one top-level `latest:` scalar, matched {n}")
+    path.write_text(new)
+    print(f"latest -> {args.version}")
+    return 0
+
+
+def cmd_release_gate(args: argparse.Namespace) -> int:
+    """Fail if a release-maturity stack has any unpublished app (no digest).
+
+    A release must pin EVERY app; render silently comments out an app with no
+    digest, so without this a release could cut a manifest MISSING a component
+    and auto-advance `latest` to it. rc/alpha/beta may carry unpublished apps.
+    """
+    root = load_root()
+    name, v = stack_pins(root, args.stack)
+    maturity = v.get("maturity", "")
+    unp = unpublished_apps(v)
+    if maturity == "release" and unp:
+        print(
+            f"release-gate FAIL: {name} is maturity=release but these apps are "
+            f"unpublished (no digest): {', '.join(unp)}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"release-gate {name}: maturity={maturity}, {len(unp)} unpublished (allowed unless release)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="dfe-stack", description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -407,16 +711,20 @@ def main() -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("render", help="render the release manifest")
-    p.add_argument("--tag", help="git tag to render (default: working tree)")
+    p = sub.add_parser("render", help="render the k8s manifest or the docker .env pin set")
+    p.add_argument("--target", choices=["k8s", "docker"], default="k8s",
+                   help="k8s = certified manifest (default); docker = dfe-docker .env fragment")
+    p.add_argument("--stack", help="stack version to render (default: `current`)")
+    p.add_argument("--tag", help="git tag to render from (git show versions.yaml@tag)")
     p.add_argument("--out", help="write to a file instead of stdout")
     p.set_defaults(func=cmd_render)
 
     p = sub.add_parser("images", help="flat DFE-owned image list (air-gap mirror)")
-    p.add_argument("--tag", help="git tag (default: working tree)")
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument("--tag", help="git tag (git show versions.yaml@tag)")
     p.set_defaults(func=cmd_images)
 
-    p = sub.add_parser("graph", help="derive the upgrade graph from git tags")
+    p = sub.add_parser("graph", help="derive the upgrade graph from the in-file stacks")
     p.set_defaults(func=cmd_graph)
 
     p = sub.add_parser("check-upgrade", help="verdict on an upgrade path")
@@ -426,7 +734,8 @@ def main() -> int:
 
     p = sub.add_parser("resolve", help="effective set for a customer pins.yaml")
     p.add_argument("--pins", required=True, help="path to the deploy repo's pins.yaml")
-    p.add_argument("--tag", help="manifest git tag (default: working tree)")
+    p.add_argument("--stack", help="manifest stack version (default: `current`)")
+    p.add_argument("--tag", help="manifest git tag (git show versions.yaml@tag)")
     p.add_argument(
         "--emit-values",
         help=(
@@ -438,7 +747,28 @@ def main() -> int:
     p.set_defaults(func=cmd_resolve)
 
     p = sub.add_parser("verify", help="compare versions.yaml digests to GHCR")
+    p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("compat-check", help="validate the stack's interdependency constraints")
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument("--strict", action="store_true", help="exit 1 on any error-severity violation")
+    p.set_defaults(func=cmd_compat_check)
+
+    p = sub.add_parser("current", help="print the `current` stack version pointer")
+    p.set_defaults(func=cmd_current)
+
+    p = sub.add_parser("maturity", help="print a stack's maturity (alpha|beta|rc|release)")
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.set_defaults(func=cmd_maturity)
+
+    p = sub.add_parser("set-latest", help="set the top-level `latest:` pointer to a version")
+    p.add_argument("version")
+    p.set_defaults(func=cmd_set_latest)
+
+    p = sub.add_parser("release-gate", help="fail if a release-maturity stack has unpublished apps")
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.set_defaults(func=cmd_release_gate)
 
     args = parser.parse_args()
     return args.func(args)
