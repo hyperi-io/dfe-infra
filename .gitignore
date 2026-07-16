@@ -25,6 +25,9 @@ override.tf.json
 .env
 .env.*
 !.env.example
+# bootstrap secret env (holds AppRole secret-id, GHCR PAT) -- the bare `.env`
+# pattern misses this named file, so ignore it explicitly. Never commit.
+bootstrap/local.env
 
 # Scratch / temp
 .tmp/
