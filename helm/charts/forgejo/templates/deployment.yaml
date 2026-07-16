@@ -5,7 +5,13 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  # HARDCODED 1 -- Forgejo is single-writer (leveldb queue + SQLite on ONE RWO
+  # PVC): a 2nd replica cannot lock /data/data/queues/common and CrashLoopBackOffs,
+  # so the app never goes Healthy and its PostSync repo-setup Job never runs. It
+  # must therefore NEVER honor the shared profile-scale `replicaCount: 2` that
+  # bleeds in via the common/profile valueFiles cascade. HA is not a Forgejo story
+  # here (it is the ~5% fallback deploy-repo, not substrate).
+  replicas: 1
   strategy:
     type: Recreate          # single SQLite-backed PVC, no concurrent writers
   selector:

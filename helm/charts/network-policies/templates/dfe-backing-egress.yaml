@@ -1,0 +1,61 @@
+# DFE app egress to backing services -- the cross-namespace flows the baseline
+# egress policy intentionally omits (see baseline-egress.yaml header, "Add
+# per-service egress policies ... to CNPG, ClickHouse, Kafka"). WITHOUT this the
+# data plane (engine/receiver/loader/ui) cannot reach ClickHouse, Kafka, the
+# bundled Forgejo deploy repo, or HyperDX -- every pod that tries CrashLoopBackOffs
+# (proven live 2026-07-16: engine CH connect timed out, loader/receiver could not
+# reach their backing services). Applied to the DFE app namespaces only.
+{{- range .Values.dfeNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dfe-backing-egress
+  namespace: {{ . }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # ClickHouse (HTTP 8123 + native 9000)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: clickhouse
+      ports:
+        - { port: 8123, protocol: TCP }
+        - { port: 9000, protocol: TCP }
+    # Kafka -- Strimzi brokers (plaintext 9092 + TLS 9093 listeners)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: strimzi
+      ports:
+        - { port: 9092, protocol: TCP }
+        - { port: 9093, protocol: TCP }
+    # CNPG PostgreSQL
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg
+      ports:
+        - { port: 5432, protocol: TCP }
+    # Bundled Forgejo deploy repo (dfe-engine gitops writes here)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: forgejo
+      ports:
+        - { port: 3000, protocol: TCP }
+    # HyperDX -- OTLP self-monitoring + UI backend
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: hyperdx
+      ports:
+        - { port: 4317, protocol: TCP }
+        - { port: 4318, protocol: TCP }
+        - { port: 8000, protocol: TCP }
+{{- end }}
