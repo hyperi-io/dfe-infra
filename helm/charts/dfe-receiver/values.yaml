@@ -82,11 +82,19 @@ kafka:
   # DFE Kafka credential contract (dfe-engine#98).
   provider: ""
 
-config:
-  mountPath: /config
-  nfs:
-    server: ""
-    path: ""
+# The app's scalo config, mounted VERBATIM at /etc/dfe-receiver/config.yaml (the
+# image's CMD path -- dfe-receiver Dockerfile:43). This is an OPAQUE passthrough
+# blob: the engine is the config authority and publishes it as the per-instance
+# Argo multi-source $values overlay (values/dfe-receiver-<instance>-values.yaml),
+# so the chart never needs to know the per-app keys. Empty here on purpose --
+# baking defaults in would put deployment-specific addresses in a product chart,
+# and Helm's map merge would silently leave stale keys behind when the engine's
+# overlay does not overwrite them.
+#
+# NOTE: the receiver's own listen ports live in .Values.listeners (above), which
+# drives the container ports + Services. Keep config.server.bind_address's port
+# consistent with the matching listener.
+config: {}
 
 otel:
   endpoint: ""

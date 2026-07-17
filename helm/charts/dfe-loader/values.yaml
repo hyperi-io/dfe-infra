@@ -25,11 +25,25 @@ clickhouse:
   port: 8123
   database: dfe
 
-config:
-  mountPath: /config
-  nfs:
-    server: ""
-    path: ""
+# Internal Service. grpcPort carries the receiver -> loader direct-gRPC path (the
+# no-Kafka transport). 6000 is the DFE gRPC convention: the receiver listens on
+# 6000 (dfe-receiver config default bind_address 0.0.0.0:6000) and names the
+# loader target as grpc://loader.internal:6000 (dfe-receiver src/error.rs:257);
+# the loader's own GrpcConfig documents "0.0.0.0:6000" (dfe-loader
+# src/config/kafka.rs:80). The config blob's grpc.listen port MUST match this.
+service:
+  type: ClusterIP
+  grpcPort: 6000
+
+# The app's scalo config, mounted VERBATIM at /etc/dfe/loader.yaml (the image's
+# CMD path -- dfe-loader Dockerfile:43). This is an OPAQUE passthrough blob: the
+# engine is the config authority and publishes it as the per-instance Argo
+# multi-source $values overlay (values/dfe-loader-<instance>-values.yaml), so the
+# chart never needs to know the per-app keys. Empty here on purpose -- baking
+# defaults in would put deployment-specific addresses in a product chart, and
+# Helm's map merge would silently leave stale keys behind when the engine's
+# overlay does not overwrite them.
+config: {}
 
 otel:
   endpoint: ""

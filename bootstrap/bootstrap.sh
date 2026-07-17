@@ -413,7 +413,12 @@ fi
 # DFE_SKIP_INTEGRATION_TESTS=true (NOT recommended for a real deploy).
 echo ""
 if [ "${DFE_SKIP_INTEGRATION_TESTS:-false}" != "true" ]; then
-  if ! "${SCRIPT_DIR}/smoke-test-integration.sh" "${KUBECONFIG:-}"; then
+  # Hand the suite the namespaces + tier THIS deploy actually used. Without them it
+  # falls back to its own defaults, which silently point at namespaces the deploy
+  # never created (DFE_NAMESPACE is deployer-chosen), and the checks assert nothing.
+  if ! DFE_NS="${DFE_NAMESPACE}" \
+       DFE_PROFILE="${DFE_PROFILE:-}" \
+       "${SCRIPT_DIR}/smoke-test-integration.sh" "${KUBECONFIG:-}"; then
     echo ""
     echo "  DEPLOY PODS HEALTHY but a CORE PIPELINE is NOT flowing -- see failures above."
     echo "  Fix them and re-run, or DFE_SKIP_INTEGRATION_TESTS=true to bypass (not recommended)."

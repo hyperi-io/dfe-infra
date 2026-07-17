@@ -21,11 +21,18 @@ apiCredentials:
   apiKeyKey: api-key
   apiSecretKey: api-secret
 
-config:
-  mountPath: /config
-  nfs:
-    server: ""
-    path: ""
+# The app's scalo config, mounted VERBATIM at /etc/dfe/fetcher.yaml (the image's
+# CMD path -- dfe-fetcher Dockerfile:43). This is an OPAQUE passthrough blob: the
+# engine is the config authority and publishes it as the per-instance Argo
+# multi-source $values overlay (values/dfe-fetcher-<instance>-values.yaml), so the
+# chart never needs to know the per-app keys. Empty here on purpose -- baking
+# defaults in would put deployment-specific addresses in a product chart, and
+# Helm's map merge would silently leave stale keys behind when the engine's
+# overlay does not overwrite them.
+#
+# A fetcher instance is 1:1 with a DFE source's fetcher config, so this blob is
+# what makes two fetcher Applications different from each other.
+config: {}
 
 otel:
   endpoint: ""

@@ -39,11 +39,21 @@ set -uo pipefail
 
 [ -n "${1:-}" ] && export KUBECONFIG="$1"
 
+# Namespace defaults MUST match the layout bootstrap.sh actually creates (see its
+# namespace loop: argocd ${DFE_NAMESPACE} strimzi clickhouse otel hyperdx forgejo).
+# A default that names a namespace the deploy never creates does not fail loudly --
+# the checks below just find nothing, and the kafka seam SKIPS itself as "no broker"
+# (live-proven 2026-07-16: NS_KAFKA defaulted to `kafka` while the broker was in
+# `strimzi`, so CORE 3 reported a reassuring SKIP and the seam went untested).
 NS_FERRET="${DFE_FERRET_NS:-cnpg}"
 NS_HYPERDX="${DFE_HYPERDX_NS:-hyperdx}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
-NS_APP="${DFE_NS:-dfe}"
-NS_KAFKA="${DFE_KAFKA_NS:-kafka}"
+NS_APP="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
+NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
+
+# Which tier is this? A tier that runs a broker MUST prove the kafka seam; only a
+# brokerless tier may skip it. Empty = unknown -> fall back to probing for a broker.
+PROFILE="${DFE_PROFILE:-}"
 
 # Contract names (SSoT defaults; override per deployment if reconfigured).
 CH_DATA_TABLE="${DFE_CH_DATA_TABLE:-dfe.default}"
@@ -113,17 +123,38 @@ if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
       "kubectl -n $NS_KAFKA exec $KPOD -- rpk group list 2>/dev/null | grep -q ."
   else
-    # apache/kafka KRaft or Strimzi: kafka-*.sh in the image.
+    # apache/kafka KRaft or Strimzi. Two things the first cut got wrong, both
+    # live-proven broken on Strimzi 2026-07-17 (see scripts/deploy_matrix.py
+    # _accept_kafka_strimzi, which already had this right):
+    #   1. the kafka-*.sh tools are NOT on PATH -- they live in /opt/kafka/bin
+    #      (bare `kafka-topics.sh` -> "not found"; an absolute path works for the
+    #      apache/kafka single-tier image too).
+    #   2. DFE brokers require SASL/SCRAM-SHA-512 on EVERY listener, so an
+    #      unauthenticated client just hangs until "Timed out waiting for a node
+    #      assignment" -- every check would fail for the wrong reason.
     BS="localhost:9092"
+    BIN=/opt/kafka/bin
+    # SCRAM creds: the operator mints them into the broker's own namespace. Build
+    # the client config INSIDE the pod so the password never lands in a host-side
+    # process arg. Empty password -> the checks below fail loudly (correct: no
+    # credential means the seam genuinely cannot be proven).
+    KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
+    JAAS="org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${DFE_KAFKA_USER:-dfe-kafka-user}\" password=\"${KPW}\";"
+    MKPROPS="P=/tmp/dfe-smoke.props; { echo 'security.protocol=SASL_PLAINTEXT'; echo 'sasl.mechanism=SCRAM-SHA-512'; echo 'sasl.jaas.config=${JAAS}'; } > \$P;"
     check "topic ${KAFKA_TOPIC} exists (created)" \
-      "kubectl -n $NS_KAFKA exec $KPOD -- sh -c 'kafka-topics.sh --bootstrap-server ${BS} --list 2>/dev/null' | grep -qw '${KAFKA_TOPIC}'"
+      "kubectl -n $NS_KAFKA exec $KPOD -- sh -c \"${MKPROPS} ${BIN}/kafka-topics.sh --bootstrap-server ${BS} --command-config \\\$P --list 2>/dev/null\" | grep -qw '${KAFKA_TOPIC}'"
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
-      "test \"\$(kubectl -n $NS_KAFKA exec $KPOD -- sh -c 'kafka-run-class.sh kafka.tools.GetOffsetShell --bootstrap-server ${BS} --topic ${KAFKA_TOPIC} 2>/dev/null' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
+      "test \"\$(kubectl -n $NS_KAFKA exec $KPOD -- sh -c \"${MKPROPS} ${BIN}/kafka-run-class.sh kafka.tools.GetOffsetShell --bootstrap-server ${BS} --command-config \\\$P --topic ${KAFKA_TOPIC} 2>/dev/null\" | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "kubectl -n $NS_KAFKA exec $KPOD -- sh -c 'kafka-consumer-groups.sh --bootstrap-server ${BS} --list 2>/dev/null' | grep -q ."
+      "kubectl -n $NS_KAFKA exec $KPOD -- sh -c \"${MKPROPS} ${BIN}/kafka-consumer-groups.sh --bootstrap-server ${BS} --command-config \\\$P --list 2>/dev/null\" | grep -q ."
   fi
+elif [ "$PROFILE" = "single" ] || [ "$PROFILE" = "scale" ]; then
+  # The tier runs a broker, so a missing one is a REAL failure. Skipping here would
+  # report the brokerless-tier story for a broken kafka deploy -- the exact false
+  # reassurance this gate exists to prevent.
+  check "kafka broker present in ns/$NS_KAFKA (required by the $PROFILE tier)" "false"
 else
-  skip "kafka seam -- no broker in ns/$NS_KAFKA (slim tier: receiver feeds loader directly)"
+  skip "kafka seam -- no broker in ns/$NS_KAFKA (brokerless tier: receiver feeds loader directly)"
 fi
 
 # ---------------------------------------------------------------------------

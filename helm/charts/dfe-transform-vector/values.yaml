@@ -26,11 +26,17 @@ kafka:
 otel:
   endpoint: ""
 
-config:
-  mountPath: /config
-  nfs:
-    server: ""
-    path: ""
+# The app's scalo config, mounted VERBATIM at
+# /etc/dfe-transform-vector/config.yaml (the image's CMD path --
+# dfe-transform-vector Dockerfile:60). This is an OPAQUE passthrough blob: the
+# engine is the config authority and publishes it as the per-instance Argo
+# multi-source $values overlay
+# (values/dfe-transform-vector-<instance>-values.yaml), so the chart never needs
+# to know the per-app keys. Empty here on purpose -- baking defaults in would put
+# deployment-specific addresses in a product chart, and Helm's map merge would
+# silently leave stale keys behind when the engine's overlay does not overwrite
+# them.
+config: {}
 
 resources:
   requests:

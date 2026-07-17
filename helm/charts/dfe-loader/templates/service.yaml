@@ -1,0 +1,23 @@
+# Internal Service for the direct-gRPC ingest path (receiver -> loader), the
+# transport used when Kafka is not in the deploy (the leaner dev/test + docker
+# profiles). Without this the receiver has no stable name to dial: the loader is
+# a Deployment, so pod IPs churn on every roll.
+#
+# ClusterIP only -- the loader is east-west only and never faces a client. It
+# terminates the pipeline into ClickHouse; the receiver is the airlock that owns
+# the public ingest edge.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.grpcPort }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,15 @@
+# The app's scalo config file, rendered VERBATIM from the .Values.config blob.
+# Layer B of the engine's values contract (dfe-engine helm/models.py): the engine
+# is the config authority and emits `config` as an OPAQUE passthrough -- this
+# chart never interprets the per-app keys, it only writes them to the path the
+# image's CMD reads (/etc/dfe-transform-vrl/config.yaml -- dfe-transform-vrl
+# Dockerfile:43).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}
