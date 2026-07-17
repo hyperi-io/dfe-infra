@@ -64,6 +64,16 @@ OTEL_LOGS_TABLE="${DFE_OTEL_LOGS_TABLE:-otel_logs}"
 # stale rows from a previous run cannot mask a dead pipeline. Default 10 min.
 FRESH_WINDOW="${DFE_FRESH_WINDOW:-600}"
 
+# How to find the marker row. TWO live-proven traps here:
+#   1. NOT _raw: the loader only fills _raw from `raw_source_fields` (logoriginal),
+#      so a plain JSON POST lands with _raw = NULL and the old `_raw LIKE` matched
+#      nothing -- a real, working pipeline would have reported FAIL.
+#   2. toString() is REQUIRED: _json is a ClickHouse JSON column, and LIKE on it
+#      errors "Illegal type JSON of argument of function like" (code 43) -- the check
+#      would have failed on a query error, not on the data.
+# __MARK__ is substituted by the caller.
+MARK_PREDICATE="${DFE_MARK_PREDICATE:-toString(_json) LIKE '%__MARK__%'}"
+
 PASS=0; FAIL=0; SKIP=0
 check() {
   local name="$1" cmd="$2"
@@ -71,12 +81,92 @@ check() {
 }
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 
-# Helper: run a ClickHouse query as admin, echo the result.
+# Every ClickHouse pod, in operator naming (<chi>-<cluster>-<shard>-<replica>-0).
+# NOT hardcoded `dfe-clickhouse-0`, which exists in no layout the operator produces --
+# every chq() call would have failed on exec, and the checks below would have read as
+# a broken pipeline instead of a broken test.
+ch_pods() {
+  kubectl -n "$NS_CH" get pods --no-headers -o custom-columns=N:.metadata.name 2>/dev/null \
+    | grep -E '^.*-clickhouse-[0-9]+-[0-9]+-[0-9]+$'
+}
+
+# ClickHouse auth, RESOLVED once against the live cluster rather than assumed.
+#
+# This used to hardcode `--user admin --password $(clickhouse-admin-password)`, and on
+# a deploy where that user does not exist EVERY ClickHouse check failed with
+# "admin: Authentication failed ... or there is no user with such name" (code 516) --
+# so the gate reported a dead pipeline against a perfectly healthy one, which is the
+# exact false signal it exists to prevent. Live-proven 2026-07-17.
+#
+# Order: an explicit DFE_CH_USER/DFE_CH_PASSWORD wins; else the admin secret IF it
+# actually authenticates; else the default user (how dfe-loader itself connects here).
+CH_AUTH_ARGS=""
+CH_AUTH_RESOLVED=0
+resolve_ch_auth() {
+  [ "$CH_AUTH_RESOLVED" -eq 1 ] && return 0
+  CH_AUTH_RESOLVED=1
+  local pod pw
+  pod="$(ch_pods | head -n1)"
+  [ -z "$pod" ] && return 1
+
+  if [ -n "${DFE_CH_USER:-}" ]; then
+    CH_AUTH_ARGS="--user ${DFE_CH_USER} --password ${DFE_CH_PASSWORD:-}"
+    return 0
+  fi
+
+  pw="$(kubectl -n "$NS_CH" get secret "${DFE_CH_ADMIN_SECRET:-clickhouse-admin-password}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
+  if [ -n "$pw" ] && kubectl -n "$NS_CH" exec "$pod" -- \
+       clickhouse-client --user admin --password "$pw" --query "SELECT 1" >/dev/null 2>&1; then
+    CH_AUTH_ARGS="--user admin --password $pw"
+    return 0
+  fi
+
+  # Default user, no password -- prove it works rather than silently degrading.
+  if kubectl -n "$NS_CH" exec "$pod" -- clickhouse-client --query "SELECT 1" >/dev/null 2>&1; then
+    CH_AUTH_ARGS=""
+    return 0
+  fi
+  echo "  [WARN] no working ClickHouse credential found -- CH checks below will fail" >&2
+  return 1
+}
+
+# Run a query on ONE named CH pod, echo the result.
+chq_on() {
+  local pod="$1" q="$2"
+  resolve_ch_auth
+  # shellcheck disable=SC2086  # CH_AUTH_ARGS is deliberately word-split.
+  kubectl -n "$NS_CH" exec "$pod" -- clickhouse-client $CH_AUTH_ARGS --query "$q" 2>/dev/null
+}
+
+# Run a query on the FIRST CH pod -- for questions that are not about replication.
 chq() {
-  local q="$1"
-  local pw
-  pw="$(kubectl -n "$NS_CH" get secret clickhouse-admin-password -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)"
-  kubectl -n "$NS_CH" exec dfe-clickhouse-0 -- clickhouse-client --user admin --password "$pw" --query "$q" 2>/dev/null
+  local pod
+  pod="$(ch_pods | head -n1)"
+  [ -z "$pod" ] && return 1
+  chq_on "$pod" "$1"
+}
+
+# Assert a marker row is present on EVERY ClickHouse node.
+#
+# This is the check the 2026-07-16 "green" did not do, and it is the whole point of
+# the scale tier. Querying ONE node cannot tell a replicated cluster from a
+# split-brained one: with unreplicated MergeTree tables behind the round-robin
+# headless service, rows scatter -- live-proven 2026-07-17, the same SELECT returned
+# 2 / 2 / 3 across the three nodes. A single-node count would have passed and called
+# it green. Per-node counts make a split brain impossible to miss.
+marker_on_all_nodes() {
+  local mark="$1" pods node_count=0 hit=0 n c
+  pods="$(ch_pods)"
+  [ -z "$pods" ] && { echo "    no ClickHouse pods found in ns/$NS_CH"; return 1; }
+  for n in $pods; do
+    node_count=$((node_count+1))
+    c="$(chq_on "$n" "SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$mark}")"
+    c="${c:-0}"
+    echo "    ${n}: ${c}"
+    [ "$c" -gt 0 ] 2>/dev/null && hit=$((hit+1))
+  done
+  # Every node must hold it. Some-but-not-all IS the split brain.
+  [ "$node_count" -gt 0 ] && [ "$hit" -eq "$node_count" ]
 }
 
 echo "=== DFE VERTICAL-INTEGRATION smoke test (chains + freshness, not liveness) ==="
@@ -97,14 +187,27 @@ echo "=== CORE 2: data path (receiver -> [kafka ->] loader -> ClickHouse) ==="
 # Post a unique event to the receiver, then poll the CH default table for it.
 # Covers gRPC-direct (slim) and kafka (single/scale): same two endpoints either
 # way -- event IN at the receiver, row OUT in dfe.default.
+# _source `default` (not `smoke`): the receiver derives the topic as
+# <default_source><topic_suffix> = default_land, which is the topic the loader
+# auto-discovers and the broker ships. A _source the deploy does not know about
+# would route to smoke_land -- a topic nobody consumes -- and the row would never
+# arrive, failing the CORE data path for a reason that is purely the test's.
 MARK="smoke-$(tr -dc a-f0-9 </dev/urandom | head -c8)"
-check "event posted to receiver lands in ${CH_DATA_TABLE}" \
-  "kubectl -n $NS_APP exec deploy/dfe-receiver -- sh -c 'curl -fsS -X POST -H \"Content-Type: application/json\" -d \"{\\\"_source\\\":\\\"smoke\\\",\\\"msg\\\":\\\"$MARK\\\"}\" http://localhost:8080/ingest' && \
-   for i in \$(seq 1 30); do \
-     if chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE _raw LIKE '%$MARK%'\" | grep -qE '^[1-9]'; then break; fi; \
-     sleep 3; \
-   done; \
-   chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE _raw LIKE '%$MARK%'\" | grep -qE '^[1-9]'"
+posted=0
+if kubectl -n "$NS_APP" exec deploy/dfe-receiver -- sh -c \
+     "curl -fsS -X POST -H 'Content-Type: application/json' -d '{\"_source\":\"default\",\"msg\":\"$MARK\"}' http://localhost:8080/ingest" >/dev/null 2>&1; then
+  posted=1
+fi
+# Poll until it lands (flush interval + replication), then assert on EVERY node.
+if [ "$posted" -eq 1 ]; then
+  for _ in $(seq 1 30); do
+    marker_on_all_nodes "$MARK" >/dev/null 2>&1 && break
+    sleep 3
+  done
+fi
+echo "  marker ${MARK} per-node counts:"
+check "event posted to receiver lands in ${CH_DATA_TABLE} on EVERY ClickHouse node" \
+  "test $posted -eq 1 && marker_on_all_nodes '$MARK'"
 
 # ---------------------------------------------------------------------------
 echo ""
@@ -132,21 +235,34 @@ if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods
     #   2. DFE brokers require SASL/SCRAM-SHA-512 on EVERY listener, so an
     #      unauthenticated client just hangs until "Timed out waiting for a node
     #      assignment" -- every check would fail for the wrong reason.
-    BS="localhost:9092"
-    BIN=/opt/kafka/bin
-    # SCRAM creds: the operator mints them into the broker's own namespace. Build
-    # the client config INSIDE the pod so the password never lands in a host-side
-    # process arg. Empty password -> the checks below fail loudly (correct: no
-    # credential means the seam genuinely cannot be proven).
+    # SCRAM creds: the operator mints them into the broker's own namespace. The props
+    # file is written INSIDE the pod so the password never lands in a host-side
+    # process arg. Empty password -> the checks fail loudly (correct: no credential
+    # means the seam genuinely cannot be proven).
+    #
+    # kafka_cli() exists because the previous form inlined the JAAS string -- which
+    # itself contains double quotes -- through `check`'s eval and a nested sh -c. The
+    # quoting did not survive, so every CORE 3 check failed on mangled args while the
+    # seam underneath was fine (live-proven 2026-07-17: the same commands run by hand
+    # listed default_land immediately). One layer of quoting, one place to get right.
     KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
-    JAAS="org.apache.kafka.common.security.scram.ScramLoginModule required username=\"${DFE_KAFKA_USER:-dfe-kafka-user}\" password=\"${KPW}\";"
-    MKPROPS="P=/tmp/dfe-smoke.props; { echo 'security.protocol=SASL_PLAINTEXT'; echo 'sasl.mechanism=SCRAM-SHA-512'; echo 'sasl.jaas.config=${JAAS}'; } > \$P;"
+    kafka_cli() {
+      kubectl -n "$NS_KAFKA" exec -i "$KPOD" -- sh -s <<KSH 2>/dev/null
+P=/tmp/dfe-smoke.props
+{
+  echo 'security.protocol=SASL_PLAINTEXT'
+  echo 'sasl.mechanism=SCRAM-SHA-512'
+  printf 'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="%s" password="%s";\n' '${DFE_KAFKA_USER:-dfe-kafka-user}' '${KPW}'
+} > \$P
+$1
+KSH
+    }
     check "topic ${KAFKA_TOPIC} exists (created)" \
-      "kubectl -n $NS_KAFKA exec $KPOD -- sh -c \"${MKPROPS} ${BIN}/kafka-topics.sh --bootstrap-server ${BS} --command-config \\\$P --list 2>/dev/null\" | grep -qw '${KAFKA_TOPIC}'"
+      "kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -qw '${KAFKA_TOPIC}'"
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
-      "test \"\$(kubectl -n $NS_KAFKA exec $KPOD -- sh -c \"${MKPROPS} ${BIN}/kafka-run-class.sh kafka.tools.GetOffsetShell --bootstrap-server ${BS} --command-config \\\$P --topic ${KAFKA_TOPIC} 2>/dev/null\" | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
+      "test \"\$(kafka_cli '/opt/kafka/bin/kafka-run-class.sh kafka.tools.GetOffsetShell --bootstrap-server localhost:9092 --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "kubectl -n $NS_KAFKA exec $KPOD -- sh -c \"${MKPROPS} ${BIN}/kafka-consumer-groups.sh --bootstrap-server ${BS} --command-config \\\$P --list 2>/dev/null\" | grep -q ."
+      "kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -q ."
   fi
 elif [ "$PROFILE" = "single" ] || [ "$PROFILE" = "scale" ]; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would

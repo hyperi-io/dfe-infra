@@ -32,6 +32,15 @@ spec:
       labels: *hrLabels
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Same collision, same fix as deployment.yaml -- and the reason this is here at
+      # all is that the fix there claimed to kill "the whole CLASS" while being applied
+      # to one Deployment in a chart that ships three. hunt-runner loads the SAME
+      # settings module, so k8s injecting DFE_KEDA_SHIM_PORT="tcp://198.19.253.104:8080"
+      # (from svc/dfe-keda-shim, in this namespace) killed it too:
+      #   ValueError: invalid literal for int() with base 10: 'tcp://198.19.253.104:8080'
+      # at settings.py:1292, before it ever reached ClickHouse. A class-wide fix has to
+      # be applied to every pod in the class.
+      enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: hunt-runner

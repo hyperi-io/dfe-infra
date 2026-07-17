@@ -28,13 +28,28 @@ spec:
       labels: *shimLabels
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Third pod in this chart, same class as deployment.yaml + hunt-runner: k8s
+      # injects DFE_KEDA_SHIM_PORT="tcp://IP:8080" from svc/dfe-keda-shim into every
+      # pod here, and this one reads DFE_KEDA_SHIM_PORT as its own int setting. It
+      # sets that env explicitly below, so the injected value is not proven to win --
+      # which is exactly why it should not be left to chance.
+      enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: keda-shim
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # NO args. dfe-keda-shim's Typer app registers exactly ONE command
+          # (keda_shim/cli.py @app.command("run")), and Typer collapses a
+          # single-command app into a no-subcommand CLI -- so the entrypoint IS the
+          # command and passing "run" is an unexpected positional:
+          #   Error: Got unexpected extra argument(s) (run)   [exit 2]
+          # It then never bound :8080, so the probes failed and it restarted forever.
+          # Broken since the CLI and this chart were authored the same day -- it has
+          # NEVER worked. Contrast dfe-hunt-runner, which registers TWO commands
+          # (materialise + run), so its args: ["run", ...] is genuinely correct: do
+          # not "make them consistent" by copying args here.
           command: ["dfe-keda-shim"]
-          args: ["run"]
           ports:
             - name: http
               containerPort: {{ .Values.kedaShim.port }}
