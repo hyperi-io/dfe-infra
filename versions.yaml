@@ -111,7 +111,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.10.3"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
+      dfe-engine: "v1.10.6"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
       dfe-ui: "v1.0.8"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
       dfe-receiver: "v1.15.15"      # independent release line
       dfe-loader: "v1.18.7"

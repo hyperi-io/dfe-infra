@@ -680,6 +680,56 @@ def cmd_set_latest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bump_app(args: argparse.Namespace) -> int:
+    """Pin an app to a new image version, in BOTH places that must agree.
+
+    versions.yaml `apps.<name>` and helm/charts/<name>/Chart.yaml `appVersion` are
+    drift-checked against each other (check_versions_drift.py), so bumping one by
+    hand and forgetting the other turns the drift check red. This does both, or
+    neither: each rewrite asserts it matched EXACTLY once, so a renamed key or a
+    reformatted line fails loudly rather than silently no-op'ing and leaving a stale
+    pin that looks bumped.
+
+    Idempotent -- re-running with the same version is a no-op that still reports.
+    """
+    version = args.version
+    name = args.app
+
+    vpath = REPO_ROOT / "versions.yaml"
+    vtext = vpath.read_text()
+    vnew, vn = re.subn(
+        rf'(?m)^(\s+{re.escape(name)}:\s*)"[^"]*"',
+        rf'\1"{version}"',
+        vtext,
+        count=1,
+    )
+    if vn != 1:
+        raise SystemExit(
+            f"error: versions.yaml has no `apps.{name}` pin to rewrite (matched {vn}). "
+            f"Check the key name; this refuses rather than guess."
+        )
+
+    cpath = REPO_ROOT / "helm" / "charts" / name / "Chart.yaml"
+    if not cpath.exists():
+        raise SystemExit(f"error: {cpath} not found -- no chart to keep in step with versions.yaml")
+    ctext = cpath.read_text()
+    cnew, cn = re.subn(r'(?m)^(appVersion:\s*)"[^"]*"', rf'\1"{version}"', ctext, count=1)
+    if cn != 1:
+        raise SystemExit(f"error: {cpath} has no appVersion scalar to rewrite (matched {cn})")
+
+    if args.dry_run:
+        print(f"dry-run: {name} -> {version} (versions.yaml + {cpath.name})")
+        return 0
+
+    # Write both only after BOTH matched, so a failure never leaves them disagreeing.
+    vpath.write_text(vnew)
+    cpath.write_text(cnew)
+    print(f"{name} -> {version}")
+    print(f"  versions.yaml apps.{name}")
+    print(f"  helm/charts/{name}/Chart.yaml appVersion")
+    return 0
+
+
 def cmd_release_gate(args: argparse.Namespace) -> int:
     """Fail if a release-maturity stack has any unpublished app (no digest).
 
@@ -765,6 +815,15 @@ def main() -> int:
     p = sub.add_parser("set-latest", help="set the top-level `latest:` pointer to a version")
     p.add_argument("version")
     p.set_defaults(func=cmd_set_latest)
+
+    p = sub.add_parser(
+        "bump-app",
+        help="pin an app to a new image version in versions.yaml AND its Chart.yaml",
+    )
+    p.add_argument("app", help="app name, e.g. dfe-engine (the versions.yaml apps.<name> key)")
+    p.add_argument("version", help='image version, e.g. v1.10.6')
+    p.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
+    p.set_defaults(func=cmd_bump_app)
 
     p = sub.add_parser("release-gate", help="fail if a release-maturity stack has unpublished apps")
     p.add_argument("--stack", help="stack version (default: `current`)")
