@@ -40,28 +40,6 @@ spec:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
     extraConfig:
-      {{- if .Values.clickhouse.prometheus.enabled }}
-      # ClickHouse's NATIVE Prometheus exposition -- the datastore holds itself to the
-      # same rule as the DFE services: expose /metrics for scrape AND let the OTel
-      # destination take a copy (the deployed otel-collector scrapes this and forwards
-      # to whatever telemetry.mode resolves). No exporter sidecar, no upstream hack --
-      # ClickHouse has shipped this for years and it was simply never turned on, so the
-      # busiest component in the stack reported nothing.
-      #
-      # Both halves, deliberately: the observability world is still split, and DFE is a
-      # product other orgs deploy -- one wants CloudWatch, one runs Prometheus, ours
-      # uses HyperDX. See helm/library/dfe-common/templates/_telemetry.tpl.
-      prometheus:
-        endpoint: {{ .Values.clickhouse.prometheus.path | quote }}
-        port: {{ .Values.clickhouse.prometheus.port }}
-        # The three families worth having: counters, event deltas, and the async
-        # gauges (parts, replication lag, memory) -- replication lag being the one
-        # that would have SHOUTED about the split brain we found by hand.
-        metrics: true
-        events: true
-        asynchronous_metrics: true
-        errors: true
-      {{- end }}
       # Allow the SQL_ custom-settings prefix (server config) so DFE tenant
       # isolation enforces: the per-_org_id RESTRICTIVE row policy reads
       # getSetting('SQL_current_tenant_id') and the engine injects it per query.
