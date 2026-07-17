@@ -259,8 +259,12 @@ KSH
     }
     check "topic ${KAFKA_TOPIC} exists (created)" \
       "kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -qw '${KAFKA_TOPIC}'"
+    # kafka-get-offsets.sh, NOT `kafka-run-class.sh kafka.tools.GetOffsetShell`: that
+    # class is GONE in Kafka 4.x (the DFE broker line), so the old check errored and
+    # summed to 0 -- reporting "receiver never produced" while the topic was in fact
+    # being written to and drained. Output is topic:partition:offset.
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
-      "test \"\$(kafka_cli '/opt/kafka/bin/kafka-run-class.sh kafka.tools.GetOffsetShell --bootstrap-server localhost:9092 --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
+      "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:9092 --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
       "kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -q ."
   fi

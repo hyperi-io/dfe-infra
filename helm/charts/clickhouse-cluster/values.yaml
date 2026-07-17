@@ -27,6 +27,15 @@ clickhouse:
   # self-contained. Do NOT point at another product's keeper.
   keeperClusterRef:
     name: dfe-keeper
+  # ClickHouse's own Prometheus exposition. On by default: the datastore is held to
+  # the same rule as every DFE service -- expose /metrics for scrape, and let the
+  # otel-collector forward a copy to whatever telemetry.mode resolves. 9363 is
+  # ClickHouse's conventional metrics port (its default in every upstream example);
+  # it does not collide with 8123/9000/9009.
+  prometheus:
+    enabled: true
+    port: 9363
+    path: /metrics
   # DFE-owned Keeper (cluster mode only).
   keeper:
     name: dfe-keeper
