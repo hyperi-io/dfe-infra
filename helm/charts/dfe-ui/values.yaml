@@ -14,10 +14,22 @@ service:
   type: ClusterIP
   port: 3000
 
+# Prometheus scrapes /metrics HERE, not on the stack's usual 9090. Next.js has exactly
+# one listener, so unlike the scalo services there is no separate metrics server to
+# host it on -- the path and metric names match the rest of the stack, the port cannot.
+# Read by dfe-common.prometheusAnnotations, which prefers this over the deploy-wide
+# telemetry.prometheus.port.
+metricsPort: 3000
+
 config:
   nextPublicApiUrl: ""           # https://dfe.{domain}/api
   nextPublicHyperdxUrl: ""       # https://hyperdx.{domain}
   nextauthSecretName: dfe-ui-nextauth
+  # NextAuth builds its callback URLs from this; empty falls back to https://<domain>.
+  nextauthUrl: ""
+  # ClusterSecretStore holding the NextAuth signing secret (seeded by the deploy
+  # layer -- terraform/modules/tf-secrets seed_ui_nextauth).
+  secretStoreName: dfe-secret-store
 
 otel:
   endpoint: ""

@@ -95,8 +95,9 @@ spec:
               readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          # The loader is a Kafka consumer, not an HTTP service: its only listener is
-          # the scalo metrics server, so that IS the liveness signal.
+          # The scalo probe contract (scalo-rs docs/core-pillars/HEALTH.md): the metrics
+          # server hosts health too, so both ride the metrics port. No separate health
+          # listener. All live-verified against the running pod 2026-07-17.
           #
           # This WAS `exec: pgrep dfe-loader`, a probe that could never pass -- pgrep
           # is not in the image ("/bin/sh: 1: pgrep: not found" in the pod events), so
@@ -106,13 +107,26 @@ spec:
           # up long enough to consume. A liveness probe that cannot pass is worse than
           # none -- it turns a healthy process into a crashloop.
           #
-          # Live-proven 2026-07-17: GET :9090/metrics -> 200 from a sibling pod.
+          # NO startupProbe, deliberately, and do NOT add one from the contract doc:
+          # dfe-loader never calls scalo's mark_started(), so :9090/startupz answers a
+          # permanent 503 (verified live). The canonical startupProbe would fail every
+          # time and brick the pod -- the same shape of trap as the pgrep probe. Fix
+          # belongs upstream in dfe-loader (call mark_started once Kafka is subscribed
+          # and the schema cache is warm), THEN add the probe here.
           livenessProbe:
             httpGet:
-              path: /metrics
+              path: /healthz          # always 200 while the process can answer
               port: metrics
             initialDelaySeconds: 10
             periodSeconds: 30
+          # The loader had NO readiness probe at all, so k8s could not tell a warming
+          # pod from a serving one. /readyz is the real signal.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
       volumes:
         - name: config
           configMap:

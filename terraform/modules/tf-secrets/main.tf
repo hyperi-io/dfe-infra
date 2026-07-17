@@ -92,3 +92,34 @@ resource "vault_kv_secret_v2" "seed_kafka_user" {
     ignore_changes = [data_json]
   }
 }
+
+# dfe-ui's NextAuth signing secret. next-auth REFUSES to start in production without
+# it ("[next-auth][error][NO_SECRET]"), which is half of why dfe-ui crashlooped.
+#
+# Seeded here, in the deploy layer, for the same reason as seed_kafka_user: the store
+# is the source of truth and ESO's AppRole is read-only by design, so nothing
+# in-cluster can mint it. Same swap story -- on EKS this becomes an
+# aws_secretsmanager_secret_version and the readers are unchanged.
+#
+# `special = false`: the value is carried as an env var through a container runtime
+# and a JWT signing path; punctuation buys no entropy at 32 chars and only invites
+# quoting bugs.
+resource "random_password" "ui_nextauth" {
+  length  = 32
+  special = false
+}
+
+resource "vault_kv_secret_v2" "seed_ui_nextauth" {
+  mount = vault_mount.dfe_kv.path
+  # Read back by the dfe-ui chart's ExternalSecret. RELATIVE to the `secret` mount.
+  name = "${var.project}/${var.env}/ui/nextauth"
+  data_json = jsonencode({
+    secret = random_password.ui_nextauth.result
+  })
+
+  # NEVER rotate on re-apply: this key signs live session JWTs, so regenerating it
+  # silently logs every user out. Rotation is a deliberate, separate operation.
+  lifecycle {
+    ignore_changes = [data_json]
+  }
+}

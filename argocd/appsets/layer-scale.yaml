@@ -142,26 +142,34 @@ spec:
                 # Kafka itself moved to layer2-data (mode-driven, all profiles).
                 # layer-scale keeps the Strimzi operator (dfe-scale-operators) +
                 # the Kafka-dependent transforms.
-                - app: dfe-transform-wasm
-                  namespace: ""
-                  wave: "5"
-                  appProject: dfe-apps
-                - app: dfe-transform-vrl
-                  namespace: ""
-                  wave: "5"
-                  appProject: dfe-apps
-                - app: dfe-transform-vector
-                  namespace: ""
-                  wave: "5"
-                  appProject: dfe-apps
-                - app: dfe-transform-elastic
-                  namespace: ""
-                  wave: "5"
-                  appProject: dfe-apps
-                - app: dfe-transform-splack
-                  namespace: ""
-                  wave: "5"
-                  appProject: dfe-apps
+                #
+                # NO transforms are deployed by default, and that is deliberate.
+                #
+                # A transform is PER-SOURCE and opt-in (the Source-Definition SSoT):
+                # it moves one topic to another, so it is meaningless until a Source
+                # says which. The default data path -- receiver -> Kafka -> loader ->
+                # ClickHouse -- has no transform hop at all.
+                #
+                # Every transform listed here was broken in deploy, two different ways:
+                #   - wasm / elastic / splack are built-FOR, not built-WITH -- nowhere
+                #     near GA. elastic and splack have no Dockerfile at all (library
+                #     crates: there is no image to pull, ever), wasm is unpublished
+                #     alpha. All three sat in ImagePullBackOff for the life of the
+                #     cluster. This restores the contract versions.yaml ALREADY states:
+                #     "An app with no digest here is NOT YET PUBLISHED and is excluded
+                #     from rendered manifests."
+                #   - vrl / vector ARE published, but their sourceTopic/destTopic are
+                #     empty ("set per deployment") and nothing set them, so they died
+                #     on "sink.topic must not be empty" and crashlooped.
+                #
+                # Between them they jammed `dfe-ops verify`, whose gate is
+                # all-pods-Ready -- so unconfigured, unshippable transforms were
+                # blocking the default E2E acceptance for the whole deploy.
+                #
+                # To deploy one: give it a Source-driven config (sourceTopic +
+                # destTopic) and add it back here. For wasm/elastic/splack, GA and a
+                # digest in versions.yaml come first.
+                []
   template:
     metadata:
       name: '{{ .app }}-{{ .name }}'

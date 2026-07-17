@@ -6,5 +6,7 @@ version: 0.1.0
 appVersion: "v1.0.8"   # == versions.yaml apps.dfe-ui (drift-checked)
 dependencies:
   - name: dfe-common
-    version: "0.1.1"
+    # 0.1.2: prometheusAnnotations honours .Values.metricsPort -- dfe-ui scrapes on
+    # 3000 (Next has one listener), not the stack's 9090.
+    version: "0.1.2"
     repository: "file://../../library/dfe-common"

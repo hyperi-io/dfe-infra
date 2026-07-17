@@ -29,6 +29,23 @@ spec:
               value: {{ .Values.config.nextPublicApiUrl | quote }}
             - name: NEXT_PUBLIC_HYPERDX_URL
               value: {{ .Values.config.nextPublicHyperdxUrl | quote }}
+            {{- if .Values.config.nextauthSecretName }}
+            # next-auth REFUSES to start in production without a secret
+            # ("[next-auth][error][NO_SECRET]"), which is why dfe-ui crashlooped.
+            # values.yaml has declared nextauthSecretName since the chart was written
+            # but nothing read it and nothing created the Secret -- the same inert-value
+            # trap saslSecretName sat in on dfe-loader/dfe-receiver. The Secret is
+            # projected out of the secrets store by externalsecret-nextauth.yaml.
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.config.nextauthSecretName }}
+                  key: secret
+            {{- end }}
+            # next-auth builds its callback URLs from this. Wrong or unset behind a
+            # proxy and the login round-trip bounces to the wrong origin.
+            - name: NEXTAUTH_URL
+              value: {{ .Values.config.nextauthUrl | default (printf "https://%s" .Values.domain) | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
@@ -37,15 +54,37 @@ spec:
               value: dfe-ui
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # The same probe trinity + shape the Rust services use (scalo-rs
+          # docs/core-pillars/HEALTH.md): startup owns the boot budget, liveness only
+          # asks "is the process deadlocked", readiness owns traffic. dfe-ui now
+          # serves the canonical paths with the canonical bodies.
+          #
+          # These probed /health/live + /health/ready against an app that had NO health
+          # routes at all -- every probe 404'd, so readiness never passed and liveness
+          # restarted the pod forever (392 restarts). Beware the near-miss that
+          # replaced it: once the routes existed they were still behind the auth
+          # middleware and answered 307 -> /login, and k8s counts 3xx as SUCCESS, so
+          # the probe would have gone green on the login redirect while the app was
+          # face down. Both live-proven 2026-07-17.
+          #
+          # Port is http (3000), not a metrics port: Next.js has ONE listener, so
+          # unlike the Rust services there is no second server to host these on. Paths
+          # and bodies are identical, which is what the probes actually read.
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: http
+            # 30 * 2s = 1 min boot budget, then restart. Next cold start is slow;
+            # this is what stops a slow boot reading as a dead process.
+            failureThreshold: 30
+            periodSeconds: 2
           livenessProbe:
             httpGet:
-              path: /health/live
+              path: /healthz
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health/ready
+              path: /readyz
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 5

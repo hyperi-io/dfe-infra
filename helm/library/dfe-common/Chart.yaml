@@ -2,4 +2,9 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
-version: 0.1.1
+# 0.1.2: prometheusAnnotations honours a chart-declared .Values.metricsPort.
+# NOTE for anyone editing templates/ here: charts VENDOR this library as a
+# committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
+# dependent chart re-runs `helm dependency update`. Bump this version, point the
+# chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
+version: 0.1.2
