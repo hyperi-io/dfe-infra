@@ -40,6 +40,19 @@ kafka:
     enabled: true
     maxSkew: 1
     topologyKey: kubernetes.io/hostname
+  # The default data path's landing topic, created up-front so a BARE deploy can
+  # come up: dfe-loader auto-discovers *_land topics and treats "none found" as
+  # FATAL, so with no topic it crashloops until someone publishes -- which nothing
+  # can do through a loader that is down. See kafka-default-topic.yaml for the
+  # full reasoning + the name's derivation (receiver default_source + topic_suffix).
+  # Turn off only for a deploy that provisions its topics some other way.
+  defaultTopic:
+    create: true
+    name: default_land
+    partitions: 3
+    # Clamped to kafka.replicas at render -- asking for more replicas than brokers
+    # leaves the topic un-Ready forever.
+    replicationFactor: 3
   # Redpanda provider opts (BSL gate). Deployed via the Redpanda OPERATOR
   # (Redpanda + User CRDs), the same operator+thin-CR model as Strimzi.
   redpanda:

@@ -17,6 +17,21 @@ spec:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Kubernetes injects a legacy Docker-link env var per Service in the namespace:
+      # svc/dfe-keda-shim -> DFE_KEDA_SHIM_PORT="tcp://198.19.253.104:8080". That
+      # SHADOWS the engine's own DFE_KEDA_SHIM_PORT setting (settings.py), which
+      # expects an int, and the pod dies at startup with
+      # "invalid literal for int() with base 10: 'tcp://...:8080'".
+      #
+      # DFE resolves services by DNS and reads none of these, so switch them off.
+      # This kills the whole CLASS, not just keda-shim: any future Service whose name
+      # uppercases onto a DFE_* setting would do the same thing. The alternative --
+      # renaming the setting -- just moves the collision somewhere else.
+      #
+      # Live-proven: engine v1.10.4/v1.10.5/v1.10.6 all crashloop without this the
+      # moment a dfe-keda-shim Service exists. It went unnoticed for 4 days because
+      # the deploy was pinned to v1.10.3, BEHIND the setting that collides.
+      enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: engine
@@ -26,6 +41,17 @@ spec:
             - name: http
               containerPort: 8000
           env:
+            # Declare the deployment's posture to the engine. WITHOUT this the
+            # engine's `env` defaults to "production" (settings.py), so a dev
+            # cluster silently self-identifies as prod: every gitcrud write is
+            # routed to a review PR (commit_policy.resolve_mode -> "pr" for any
+            # non-dev posture) instead of committing to the deploy repo. The
+            # deployment already declares its posture -- pass the SAME value the
+            # dfe.hyperi.io/env label carries, so the two cannot drift.
+            # Generic, not a dev shortcut: a customer's env: production still
+            # gets the PR flow, which is the point.
+            - name: DFE_ENV
+              value: {{ .Values.env | quote }}
             # The engine settings loader reads DFE_CLICKHOUSE_* (or legacy
             # CLICKHOUSE_*), NOT a DFE_ENGINE_ prefix -- the old DFE_ENGINE_* names
             # were silently ignored, leaving CH at the localhost:9000 default. The

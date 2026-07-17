@@ -1,0 +1,40 @@
+{{- if eq .Values.kafka.provider "strimzi" }}
+{{- if .Values.kafka.defaultTopic.create }}
+{{/*
+The DEFAULT data path's landing topic.
+
+Why this exists as a CR rather than being left to auto-creation: dfe-loader
+resolves its topics by AUTO-DISCOVERY (kafka.topics empty = discover every
+*_land / *_load topic -- dfe-loader config/kafka.rs:20-22), and discovering
+NOTHING is FATAL: "Auto-discovery found no matching topics" and the process
+exits. On a clean install nobody has published yet, so no *_land topic exists,
+so the loader crashloops until the first event arrives -- but the first event
+cannot be loaded by a loader that is down. Live-proven 2026-07-17: creating this
+topic took the loader straight from that fatal to "Resolved Kafka topics:
+[default_land]" and a running pipeline.
+
+The name is NOT arbitrary: dfe-receiver derives it as
+`{routing.default_source}{routing.topic_suffix}` = default + _land
+(src/routing/mod.rs:79), and it is dfe-loader's own GrpcConfig.default_topic
+(config/kafka.rs:109). Both sides already agree on `default_land`; this makes
+the broker agree too, before either starts.
+
+Per-source topics beyond the default stay dynamic -- the receiver creates
+`{source}_land` as sources are defined. This is only the floor that lets a
+bare deploy come up.
+*/}}
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: {{ .Values.kafka.defaultTopic.name | replace "_" "-" }}
+  labels:
+    strimzi.io/cluster: {{ .Values.kafka.name }}
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  topicName: {{ .Values.kafka.defaultTopic.name }}
+  partitions: {{ .Values.kafka.defaultTopic.partitions }}
+  # Never ask for more replicas than there are brokers -- Strimzi accepts the CR
+  # and the topic then sits un-Ready forever.
+  replicas: {{ min .Values.kafka.defaultTopic.replicationFactor (.Values.kafka.replicas | int) }}
+{{- end }}
+{{- end }}

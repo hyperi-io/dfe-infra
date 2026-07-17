@@ -20,6 +20,11 @@ spec:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Same class as dfe-engine and dfe-loader: k8s injects DFE_RECEIVER_PORT=
+      # "tcp://IP:8080" from svc/dfe-receiver, into a pod that reads DFE_RECEIVER_*
+      # as its own config (config/mod.rs ENV_PREFIX). DFE resolves by DNS and reads
+      # none of these -- switch them off before the collision finds us.
+      enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: receiver
@@ -54,13 +59,22 @@ spec:
             # It spells it USER where dfe-loader spells it USERNAME -- an upstream
             # inconsistency, not a typo here.
             #
-            # INCOMPLETE: these two are NOT sufficient for the receiver. normalize()
-            # (mod.rs:369-376) sets only sasl.enabled -- it never sets mechanism, and
-            # the receiver's SaslConfig derives Default -> mechanism "" (mod.rs:1251).
-            # That empty string reaches librdkafka as sasl.mechanism="" and is
-            # rejected at runtime. dfe-loader does NOT share this: it has an explicit
-            # impl Default with mechanism scram_sha_512 (kafka.rs:220-228). The
-            # receiver needs the mechanism supplied -- unresolved, see dfe-engine#105.
+            # The mechanism MUST be supplied too (dfe-engine#105): normalize()
+            # (mod.rs:369-376) sets only sasl.enabled, and the receiver's SaslConfig
+            # derives Default -> mechanism "" (mod.rs:1251), which librdkafka rejects.
+            # dfe-loader does NOT share this: it has an explicit impl Default with
+            # mechanism scram_sha_512 (kafka.rs:220-228).
+            #
+            # It rides the SAME secret as the credential (the store projects
+            # sasl.mechanism alongside username/password), so the mechanism can never
+            # drift from the password it belongs to.
+            #
+            # SPELLING TRAP, live-proven 2026-07-17: this value is a RAW PASSTHROUGH
+            # to librdkafka -- mod.rs:1146 only uppercases it (`SCRAM-SHA-512`), where
+            # dfe-loader parses an enum from `scram_sha_512`. The SAME logical value is
+            # spelled DIFFERENTLY per service. Feeding the loader's spelling here dies
+            # with "Unsupported SASL mechanism: SCRAM_SHA_512". The secret carries the
+            # librdkafka spelling; do not "normalise" the two to look alike.
             - name: DFE_RECEIVER_KAFKA_SASL_USER
               valueFrom:
                 secretKeyRef:
@@ -71,6 +85,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: password
+            - name: DFE_RECEIVER_KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
             {{- end }}
             - name: DFE_RECEIVER_LISTEN_ADDRESS
               value: {{ .Values.receiver.listenAddress | quote }}

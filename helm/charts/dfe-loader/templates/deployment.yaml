@@ -20,6 +20,14 @@ spec:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # k8s injects a legacy Docker-link env var per Service in the namespace, and
+      # this chart now ADDS svc/dfe-loader -> DFE_LOADER_PORT="tcp://IP:6000". The
+      # loader layers `Env::prefixed("DFE_LOADER_")` over its config (config/loader.rs),
+      # so that lands as config key `port` -- a key it does not have, injected by the
+      # platform rather than by us. The engine hits the identical class and DIES on it
+      # (svc/dfe-keda-shim vs its DFE_KEDA_SHIM_PORT setting). DFE resolves by DNS and
+      # reads none of these: switch them off rather than wait for the collision.
+      enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: loader
@@ -33,6 +41,12 @@ spec:
           ports:
             - name: grpc
               containerPort: {{ .Values.service.grpcPort }}
+              protocol: TCP
+            # scalo's metrics server (metrics.enabled defaults true on 0.0.0.0:9090
+            # -- dfe-loader config/pipeline.rs:496-502). Named so the liveness probe
+            # and the prometheus scrape annotation agree on one port.
+            - name: metrics
+              containerPort: 9090
               protocol: TCP
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
@@ -81,9 +95,22 @@ spec:
               readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # The loader is a Kafka consumer, not an HTTP service: its only listener is
+          # the scalo metrics server, so that IS the liveness signal.
+          #
+          # This WAS `exec: pgrep dfe-loader`, a probe that could never pass -- pgrep
+          # is not in the image ("/bin/sh: 1: pgrep: not found" in the pod events), so
+          # every probe failed and kubelet killed the loader every ~100s (10s delay +
+          # 3 x 30s) for the whole life of the deployment. That is the 64- and
+          # 281-restart pods, and why rows_inserted never left 0: the loader was never
+          # up long enough to consume. A liveness probe that cannot pass is worse than
+          # none -- it turns a healthy process into a crashloop.
+          #
+          # Live-proven 2026-07-17: GET :9090/metrics -> 200 from a sibling pod.
           livenessProbe:
-            exec:
-              command: ["/bin/sh", "-c", "pgrep dfe-loader"]
+            httpGet:
+              path: /metrics
+              port: metrics
             initialDelaySeconds: 10
             periodSeconds: 30
       volumes:
