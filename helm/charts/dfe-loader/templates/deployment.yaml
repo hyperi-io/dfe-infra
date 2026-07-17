@@ -14,6 +14,9 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
+        # Roll the pods when the config blob changes -- the app reads the file at
+        # startup only, so a ConfigMap update alone would not take effect.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -22,10 +25,44 @@ spec:
         - name: loader
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Mirrors the image CMD (dfe-loader Dockerfile:43). Explicit so the
+          # config path is visible here rather than buried in the image.
+          args:
+            - "--config"
+            - "/etc/dfe/loader.yaml"
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.service.grpcPort }}
+              protocol: TCP
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if .Values.kafka.saslSecretName }}
+            # The SASL credential MUST arrive by env, not in the config blob: the
+            # engine's model_dump masks the pydantic SecretStr, so the authored
+            # loader.yaml carries password "**********". That is deliberate (the real
+            # password can never leak into the ConfigMap or the gitops repo) and it
+            # works because env BEATS the config file in dfe-loader's cascade
+            # (src/config/loader.rs:6-12). Without these two vars the loader would
+            # try to authenticate with literal asterisks.
+            #
+            # Names are the loader's own flat-env contract (loader.rs:210-217),
+            # prefix DFE_LOADER (loader.rs:183). NOT the bare KAFKA_* above, which no
+            # prefix matches and which are therefore inert. NOTE: dfe-receiver spells
+            # the same field KAFKA_SASL_USER, not USERNAME -- do not copy this block
+            # verbatim.
+            - name: DFE_LOADER_KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_LOADER_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            {{- end }}
             - name: CLICKHOUSE_HOST
               value: {{ .Values.clickhouse.host | quote }}
             - name: CLICKHOUSE_PORT
@@ -40,7 +77,7 @@ spec:
               value: dfe-loader
           volumeMounts:
             - name: config
-              mountPath: {{ .Values.config.mountPath }}
+              mountPath: /etc/dfe
               readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -51,11 +88,5 @@ spec:
             periodSeconds: 30
       volumes:
         - name: config
-          {{- if .Values.config.nfs.server }}
-          nfs:
-            server: {{ .Values.config.nfs.server }}
-            path: {{ .Values.config.nfs.path }}
-            readOnly: true
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config

@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/vault"
       version = "~> 4.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -26,4 +30,15 @@ variable "env" {
 variable "cloud" {
   description = "Target cloud (local/aws/gcp/az)"
   type        = string
+}
+
+variable "kafka_provider" {
+  description = <<-EOT
+    Broker provider whose service-user credential gets seeded, and the last path
+    segment of its store key (<project>/<env>/kafka/<provider>). Must match the
+    kafka chart's kafka.provider, which is what reads the key back -- they are the
+    two halves of one contract.
+  EOT
+  type        = string
+  default     = "strimzi"
 }

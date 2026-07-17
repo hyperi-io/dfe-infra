@@ -3,6 +3,12 @@ component: kafka
 env: local
 cloud: local
 
+# Namespace the DFE apps run in. Supplied by the appset from the cluster's
+# dfe.hyperi.io/dfe_namespace annotation (the SAME annotation layer2-apps uses to
+# place the apps), so the two can never drift. Empty -> the app-namespace credential
+# projection is skipped entirely.
+appNamespace: ""
+
 # DFE KAFKA AUTH STANDARD: SASL/SCRAM-SHA-512, everywhere, the same way.
 # SCRAM-512 is the ONE auth mechanism that works reliably and identically across
 # every option -- Strimzi (local/k8s), Redpanda, and every cloud-managed Kafka
@@ -114,3 +120,24 @@ user:
   name: dfe-kafka-user
   authentication:
     type: scram-sha-512
+  password:
+    # Route the SCRAM password through the secrets store instead of letting Strimzi's
+    # User Operator generate one it keeps to itself. The DEPLOY layer seeds the store
+    # (terraform/modules/tf-secrets `seed_kafka_user`); ESO only reads it, into both
+    # this namespace and the app namespace. See kafka-user-credential.yaml.
+    #
+    # WHY the store rather than an in-cluster generator: it is the one seam that swaps
+    # for a public-cloud deploy (ClusterSecretStore provider -> aws/gcp/azure on EKS).
+    # Generating straight into a Secret would leave cloud needing a different
+    # mechanism and the store path unexercised on-prem.
+    #
+    # REQUIRES the store to be seeded first -- `tofu apply` on tf-secrets. Without
+    # the seed the ExternalSecret cannot resolve, the KafkaUser never gets a
+    # password, and Kafka auth does not come up. Set false to fall back to the User
+    # Operator generating into the broker namespace only, which is the CURRENT
+    # behaviour and leaves the app namespace with no credential
+    # (dfe-local/dfe-kafka-user NotFound, transforms in CreateContainerConfigError).
+    fromSecretsStore: true
+    secretStoreName: dfe-secret-store
+    # Extra namespaces to project the credential into, beyond appNamespace.
+    extraAppNamespaces: []

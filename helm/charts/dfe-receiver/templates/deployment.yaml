@@ -14,6 +14,9 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
+        # Roll the pods when the config blob changes -- the app reads the file at
+        # startup only, so a ConfigMap update alone would not take effect.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -22,6 +25,11 @@ spec:
         - name: receiver
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Mirrors the image CMD (dfe-receiver Dockerfile:43). Explicit so the
+          # config path is visible here rather than buried in the image.
+          args:
+            - "--config"
+            - "/etc/dfe-receiver/config.yaml"
           # Container ports come from the SAME .Values.listeners list that drives
           # the Services. When the engine's deployment-contracted overlay sets
           # listeners (the receiver's actually-enabled protocols), these follow
@@ -36,6 +44,34 @@ spec:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if .Values.kafka.saslSecretName }}
+            # SASL credential by env, not in the config blob -- see the same block in
+            # dfe-loader. Env beats the config file, and the engine-authored YAML
+            # carries a MASKED password, so these are load-bearing, not belt-and-braces.
+            #
+            # Names are the receiver's own flat-env contract
+            # (dfe-receiver/src/config/mod.rs:274-281, prefix DFE_RECEIVER at :35).
+            # It spells it USER where dfe-loader spells it USERNAME -- an upstream
+            # inconsistency, not a typo here.
+            #
+            # INCOMPLETE: these two are NOT sufficient for the receiver. normalize()
+            # (mod.rs:369-376) sets only sasl.enabled -- it never sets mechanism, and
+            # the receiver's SaslConfig derives Default -> mechanism "" (mod.rs:1251).
+            # That empty string reaches librdkafka as sasl.mechanism="" and is
+            # rejected at runtime. dfe-loader does NOT share this: it has an explicit
+            # impl Default with mechanism scram_sha_512 (kafka.rs:220-228). The
+            # receiver needs the mechanism supplied -- unresolved, see dfe-engine#105.
+            - name: DFE_RECEIVER_KAFKA_SASL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_RECEIVER_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            {{- end }}
             - name: DFE_RECEIVER_LISTEN_ADDRESS
               value: {{ .Values.receiver.listenAddress | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
@@ -46,7 +82,7 @@ spec:
               value: dfe-receiver
           volumeMounts:
             - name: config
-              mountPath: {{ .Values.config.mountPath }}
+              mountPath: /etc/dfe-receiver
               readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -64,11 +100,5 @@ spec:
             periodSeconds: 5
       volumes:
         - name: config
-          {{- if .Values.config.nfs.server }}
-          nfs:
-            server: {{ .Values.config.nfs.server }}
-            path: {{ .Values.config.nfs.path }}
-            readOnly: true
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config

@@ -81,6 +81,14 @@ spec:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
             - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+          parameters:
+            # Where the DFE apps run -- the SAME annotation layer2-apps places them
+            # with, so substrate and apps cannot disagree about the namespace. Only
+            # the kafka chart reads it (to project the broker credential into the app
+            # namespace); Helm ignores an unused value, so passing it to every data
+            # chart is harmless.
+            - name: appNamespace
+              value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
