@@ -287,12 +287,40 @@ check "ClickHouse answers a query (dfe DB present)" \
 
 # hyperdx -> ferretdb (app state). If CORE 1 fails, this tells you whether the
 # break is hyperdx<->ferretdb vs gateway<->hyperdx vs hyperdx<->clickhouse.
-check "hyperdx API reaches its ferretdb backend" \
-  "kubectl -n $NS_HYPERDX exec deploy/dfe-hyperdx -- sh -c 'curl -fsS localhost:8080/api/health || wget -qO- localhost:8080/api/health' | grep -qiE 'ok|healthy|true'"
+#
+# Distinguish "HyperDX is broken" from "HyperDX is not here", because right now it is
+# the latter and the two need very different actions. Live 2026-07-17: the hyperdx
+# namespace is EMPTY and no Argo Application deploys it -- the chart appears only in
+# preview-apps.yaml, never in a layer appset -- while telemetry.mode defaults to
+# hyperdx and points every service at dfe-hyperdx-otel:4317. So the whole stack has
+# been pushing OTLP at a backend the default deploy never installs, and CORE 1 above
+# cannot pass. That is a deploy-composition decision, not a smoke-test failure.
+if kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then
+  check "hyperdx API reaches its ferretdb backend" \
+    "kubectl -n $NS_HYPERDX exec deploy/dfe-hyperdx -- sh -c 'curl -fsS localhost:8080/api/health || wget -qO- localhost:8080/api/health' | grep -qiE 'ok|healthy|true'"
+else
+  skip "hyperdx->ferretdb -- HyperDX is NOT DEPLOYED (empty ns/$NS_HYPERDX, no Application). telemetry.mode=hyperdx names it as the DEFAULT OTLP destination, so CORE 1 self-telemetry cannot pass until it ships or the default changes."
+fi
 
 # ferretdb -> PostgreSQL (DocumentDB backend) -- the layer under hyperdx state.
-check "ferretdb write+read round-trips to PG" \
-  "kubectl -n $NS_FERRET exec deploy/dfe-ferretdb -- sh -c 'mongosh mongodb://localhost:27017/smoke --quiet --eval \"db.s.insertOne({k:1}); printjson(db.s.findOne({k:1}))\"' | grep -q 'k'"
+#
+# This check CANNOT run as written, and said FAIL for it: the ferretdb image is
+# distroless -- it has no mongosh and no shell at all ("exec: sh: executable file
+# not found in $PATH"), so the exec dies before mongosh is even reached. FAIL claimed
+# the ferretdb->PG chain was broken while ferretdb sat 1/1 Ready and Healthy; the
+# same shape of lie as the pgrep probes (assume tooling the image does not ship).
+#
+# SKIP, not FAIL, and LOUDLY -- an unrunnable check must never read as a broken
+# chain, and must never read as a pass either (the 2026-07-16 kafka seam went
+# untested behind a reassuring SKIP, which is why this prints WHY).
+# To make it real, run mongosh from a client pod that has it, or assert on the PG
+# side (dfe-pg-* ships psql) that ferretdb's DocumentDB schema is being written.
+if kubectl -n "$NS_FERRET" exec deploy/dfe-ferretdb -- mongosh --version >/dev/null 2>&1; then
+  check "ferretdb write+read round-trips to PG" \
+    "kubectl -n $NS_FERRET exec deploy/dfe-ferretdb -- mongosh mongodb://localhost:27017/smoke --quiet --eval 'db.s.insertOne({k:1}); printjson(db.s.findOne({k:1}))' | grep -q 'k'"
+else
+  skip "ferretdb->PG round-trip -- no mongosh/shell in the ferretdb image (distroless); needs a client pod or a PG-side assert. NOT evidence the chain works."
+fi
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed, ${SKIP} skipped ==="
