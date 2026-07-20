@@ -7,12 +7,16 @@ cloud: local
 dfeNamespaces:
   - dfe-local   # changes per env: dfe-dev, dfe-prod, etc.
 
-# Data platform namespaces (ingress only from dfe-* namespaces)
+# Data platform namespaces (ingress only from dfe-* namespaces).
+# NOT a ferretdb entry: FerretDB deploys INTO cnpg (appsets/layer2-data.yaml
+# pins it there, and it shares that namespace with its PostgreSQL backend), so
+# no ferretdb namespace exists. Naming one here does not merely do nothing -- a
+# NetworkPolicy aimed at an absent namespace is rejected, which fails the whole
+# Application sync and leaves the cluster with NO policies applied at all.
 dataNamespaces:
   - cnpg
   - strimzi
   - clickhouse
-  - ferretdb
 
 # Operator namespaces (need access to data namespaces for reconciliation)
 operatorNamespaces:

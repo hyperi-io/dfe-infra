@@ -21,8 +21,13 @@ spec:
 
   storage:
     size: {{ .Values.cluster.storage.size }}
+    # CNPG's field is storageClass, NOT the core-PVC spelling storageClassName.
+    # The CR is schema-checked strictly, so the wrong spelling does not degrade to
+    # the default class -- the API server REJECTS the whole Cluster, and the
+    # database never gets created. Only bites when a class is actually set, which
+    # is why it survived: it is omitted entirely when the value is empty.
     {{- with (.Values.cluster.storage.storageClass | default .Values.storageClass) }}
-    storageClassName: {{ . | quote }}
+    storageClass: {{ . | quote }}
     {{- end }}
 
   resources:
