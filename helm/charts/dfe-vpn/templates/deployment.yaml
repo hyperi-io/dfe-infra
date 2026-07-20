@@ -21,10 +21,18 @@ spec:
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
+            # RECORDED DEVIATION from the hardening baseline (containers.md:144-147):
+            # a VPN legitimately needs NET_ADMIN (tun devices, routing, iptables) and
+            # runs as root; it also writes its runtime dir, so runAsNonRoot /
+            # readOnlyRootFilesystem / drop-ALL are deliberately NOT applied here.
+            # SYS_MODULE (load kernel modules = effectively host-level privilege) is
+            # REMOVED -- the wireguard/tun modules must be present on the node (RKE2
+            # loads them), not modprobe'd from the pod. allowPrivilegeEscalation is
+            # pinned false as the one hardening that does not break the VPN.
+            allowPrivilegeEscalation: false
             capabilities:
               add:
                 - NET_ADMIN
-                - SYS_MODULE
           ports:
             - name: openvpn-udp
               containerPort: {{ .Values.openvpn.udp.port }}
@@ -152,9 +160,12 @@ spec:
               port: health
             initialDelaySeconds: 5
             periodSeconds: 5
+          # startup reuses the LIVENESS path (k8s.md:582, containers.md:722-735):
+          # there is no separate /health/startup route -- the long boot budget comes
+          # from failureThreshold x periodSeconds, not a second endpoint.
           startupProbe:
             httpGet:
-              path: /health/startup
+              path: /health/live
               port: health
             failureThreshold: 30
             periodSeconds: 2

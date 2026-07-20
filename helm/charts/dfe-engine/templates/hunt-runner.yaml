@@ -31,6 +31,7 @@ spec:
     metadata:
       labels: *hrLabels
     spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       # Same collision, same fix as deployment.yaml -- and the reason this is here at
       # all is that the fix there claimed to kill "the whole CLASS" while being applied
@@ -46,6 +47,7 @@ spec:
         - name: hunt-runner
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           command: ["dfe-hunt-runner"]
           args: ["run", "--poll", {{ .Values.huntRunner.poll | quote }}, "--cap", {{ .Values.huntRunner.cap | quote }}]
           env:
@@ -75,6 +77,11 @@ spec:
           volumeMounts:
             - name: config
               mountPath: {{ .Values.config.mountPath }}
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.huntRunner.resources | nindent 12 }}
       volumes:
@@ -87,6 +94,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: tmp
+          emptyDir: {}
 {{- if .Values.huntRunner.autoscaling.enabled }}
 ---
 apiVersion: keda.sh/v1alpha1

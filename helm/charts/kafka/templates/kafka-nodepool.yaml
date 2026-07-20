@@ -22,8 +22,8 @@ spec:
         size: {{ .Values.kafka.storage.size }}
         kraftMetadata: shared
         deleteClaim: false
-        {{- if .Values.kafka.storage.storageClass }}
-        class: {{ .Values.kafka.storage.storageClass }}
+        {{- with (.Values.kafka.storage.storageClass | default .Values.storageClass) }}
+        class: {{ . }}
         {{- end }}
   resources:
     requests:

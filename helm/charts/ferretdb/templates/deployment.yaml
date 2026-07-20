@@ -14,11 +14,16 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
     spec:
+      # The image declares USER "ferretdb" (a name); the helper emits a NUMERIC
+      # runAsUser (1000, the ferretdb uid -- verified from the image passwd), which
+      # is what the kubelet needs to satisfy runAsNonRoot.
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: ferretdb
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           ports:
             - name: mongodb
               containerPort: 27017
@@ -42,6 +47,14 @@ spec:
                   key: {{ .Values.postgresql.secretPasswordKey }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # readOnlyRootFilesystem is on; FerretDB writes its state dir (/state,
+            # the image's FERRETDB_STATE_DIR) and may use /tmp. Data itself lives in
+            # PostgreSQL, so these are scratch.
+            - name: state
+              mountPath: /state
+            - name: tmp
+              mountPath: /tmp
           livenessProbe:
             tcpSocket:
               port: mongodb
@@ -52,3 +65,8 @@ spec:
               port: mongodb
             initialDelaySeconds: 5
             periodSeconds: 5
+      volumes:
+        - name: state
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

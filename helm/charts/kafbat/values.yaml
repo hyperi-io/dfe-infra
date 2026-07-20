@@ -23,6 +23,13 @@ image:
   tag: "v1.5.0@sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"
   pullPolicy: IfNotPresent
 
+# The image runs as USER "kafkaui" = uid 100 (verified from the image passwd),
+# NOT the DFE default 1000. runAsNonRoot needs a NUMERIC uid, so pin 100 here.
+podSecurityContext:
+  runAsUser: 100
+  runAsGroup: 101
+  fsGroup: 101
+
 replicaCount: 1
 
 service:

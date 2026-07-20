@@ -8,6 +8,14 @@ image:
   tag: "0.154.0"  # 2026-06-09 (7-day-compliant; v0.155.0 too fresh). Pinned explicitly, not via appVersion.
   pullPolicy: IfNotPresent
 
+# The contrib image ships USER 10001 (numeric, verified via crane), so
+# runAsNonRoot is satisfiable. The daemonset already runs as 10001 today and
+# reads /var/log/pods fine at that uid; this just makes it explicit + hardened.
+podSecurityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
 gateway:
   replicas: 1
   resources:

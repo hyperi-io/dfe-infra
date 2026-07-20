@@ -92,8 +92,8 @@ spec:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
-        {{- if .Values.clickhouse.storage.storageClass }}
-        storageClassName: {{ .Values.clickhouse.storage.storageClass | quote }}
+        {{- with (.Values.clickhouse.storage.storageClass | default .Values.storageClass) }}
+        storageClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:

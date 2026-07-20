@@ -10,6 +10,15 @@ image:
 
 replicaCount: 1
 
+# Next.js writes to its own rootfs at runtime (the .next cache), so the stack
+# default readOnlyRootFilesystem:true would break it -- relax that one bit while
+# keeping allowPrivilegeEscalation:false and cap drop ALL. podSecurityContext is
+# left empty on purpose: the dfe-common defaults (runAsNonRoot, uid/gid 1000,
+# RuntimeDefault seccomp) apply unchanged.
+containerSecurityContext:
+  readOnlyRootFilesystem: false
+podSecurityContext: {}
+
 service:
   type: ClusterIP
   port: 3000

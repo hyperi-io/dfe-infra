@@ -16,6 +16,7 @@ spec:
       annotations:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       # Kubernetes injects a legacy Docker-link env var per Service in the namespace:
       # svc/dfe-keda-shim -> DFE_KEDA_SHIM_PORT="tcp://198.19.253.104:8080". That
@@ -37,6 +38,7 @@ spec:
         - name: engine
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           ports:
             - name: http
               containerPort: 8000
@@ -144,6 +146,11 @@ spec:
             # backs this with a PVC or the git config repo -- follow-up.)
             - name: config
               mountPath: {{ .Values.config.mountPath }}
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.gitops.enabled }}
             - name: deploy-repo
               mountPath: {{ dir .Values.gitops.localPath }}
@@ -172,6 +179,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.gitops.enabled }}
         - name: deploy-repo
           emptyDir: {}

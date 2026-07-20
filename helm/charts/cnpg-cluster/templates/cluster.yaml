@@ -10,8 +10,8 @@ spec:
 
   storage:
     size: {{ .Values.cluster.storage.size }}
-    {{- if .Values.cluster.storage.storageClass }}
-    storageClassName: {{ .Values.cluster.storage.storageClass }}
+    {{- with (.Values.cluster.storage.storageClass | default .Values.storageClass) }}
+    storageClassName: {{ . | quote }}
     {{- end }}
 
   resources:

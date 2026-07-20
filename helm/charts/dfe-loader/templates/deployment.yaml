@@ -19,6 +19,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       # k8s injects a legacy Docker-link env var per Service in the namespace, and
       # this chart now ADDS svc/dfe-loader -> DFE_LOADER_PORT="tcp://IP:6000". The
@@ -33,6 +34,7 @@ spec:
         - name: loader
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           # Mirrors the image CMD (dfe-loader Dockerfile:43). Explicit so the
           # config path is visible here rather than buried in the image.
           args:
@@ -93,6 +95,11 @@ spec:
             - name: config
               mountPath: /etc/dfe
               readOnly: true
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           # The scalo probe contract (scalo-rs docs/core-pillars/HEALTH.md): the metrics
@@ -131,3 +138,5 @@ spec:
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}

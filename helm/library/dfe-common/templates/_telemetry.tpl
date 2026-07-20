@@ -39,15 +39,25 @@ prometheus mode (no OTLP push) -- callers should guard the OTEL env on non-empty
 {{- end -}}
 
 {{/*
-Pod annotations for Prometheus scrape -- emitted only when telemetry.mode is
-"prometheus" (the external-scrape path). Usage in a pod template:
+Pod annotations for Prometheus scrape. Emitted WHENEVER the app serves metrics --
+independent of telemetry.mode. telemetry.mode selects the OTLP push destination
+only; it must not gate scrape, or the two observability pathways become mutually
+exclusive and the "both, always" rule above is broken (a Prometheus-estate deployer
+running telemetry.mode=hyperdx would get no scrape annotation at all). Every
+DFE-owned service exposes /metrics, so scrape is on by default; a deployer that
+genuinely wants push-only sets telemetry.prometheus.scrape=false.
+
+Usage in a pod template:
   metadata:
     annotations:
       {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
 */}}
 {{- define "dfe-common.prometheusAnnotations" -}}
 {{- $t := .Values.telemetry | default dict -}}
-{{- if eq ($t.mode | default "hyperdx") "prometheus" -}}
+{{- $prom := $t.prometheus | default dict -}}
+{{- $scrape := true -}}
+{{- if hasKey $prom "scrape" -}}{{- $scrape = $prom.scrape -}}{{- end -}}
+{{- if $scrape -}}
 prometheus.io/scrape: "true"
 {{/*
 A chart-declared .Values.metricsPort WINS over the deploy-wide telemetry.prometheus
@@ -58,7 +68,7 @@ and it cannot be fixed in dfe-ui's values.yaml either -- the argocd cascade
 (common.yaml) is merged AFTER the chart's own values and would just overwrite it.
 Hence the override lives here, where the chart can state its own truth.
 */}}
-prometheus.io/port: {{ .Values.metricsPort | default ($t.prometheus).port | default 9090 | quote }}
-prometheus.io/path: {{ ($t.prometheus).path | default "/metrics" | quote }}
+prometheus.io/port: {{ .Values.metricsPort | default $prom.port | default 9090 | quote }}
+prometheus.io/path: {{ $prom.path | default "/metrics" | quote }}
 {{- end -}}
 {{- end -}}

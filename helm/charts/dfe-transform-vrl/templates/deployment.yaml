@@ -21,19 +21,24 @@ spec:
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       containers:
         - name: transform
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           # Mirrors the image CMD (dfe-transform-vrl Dockerfile:43). Explicit so
           # the config path is visible here rather than buried in the image.
           args:
             - "--config"
             - "/etc/dfe-transform-vrl/config.yaml"
+          ports:
+            # scalo's metrics server (defaults on 0.0.0.0:9090) hosts /metrics and
+            # the /healthz + /readyz health endpoints -- one port for the scrape
+            # annotation and the probes to agree on. Same scalo contract as dfe-fetcher.
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
@@ -64,18 +69,33 @@ spec:
             - name: config
               mountPath: /etc/dfe-transform-vrl
               readOnly: true
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # WAS `exec: pgrep -x transform` -- a process-existence check keyed to the
+          # exact binary name that stays green on a wedged-but-alive process, exactly
+          # the state liveness must catch. Moved to the scalo HTTP health endpoints,
+          # matching dfe-fetcher. NO startupProbe: scalo's /startupz stays 503 until the
+          # app calls mark_started(), so a startup probe would brick the pod.
           livenessProbe:
-            exec:
-              command:
-                - pgrep
-                - -x
-                - transform
+            httpGet:
+              path: /healthz
+              port: metrics
             initialDelaySeconds: 10
-            periodSeconds: 15
-            failureThreshold: 3
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
       volumes:
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}

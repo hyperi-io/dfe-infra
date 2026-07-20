@@ -16,11 +16,13 @@ spec:
       annotations:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: ui
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           ports:
             - name: http
               containerPort: 3000
@@ -52,6 +54,12 @@ spec:
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-ui
+          volumeMounts:
+            # Writable scratch for /tmp. Next.js also writes its .next cache to the
+            # rootfs, which is why this chart sets readOnlyRootFilesystem:false rather
+            # than relying on the rootfs being read-only (values.yaml).
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           # The same probe trinity + shape the Rust services use (scalo-rs
@@ -88,3 +96,6 @@ spec:
               path: /readyz
               port: http
             periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
