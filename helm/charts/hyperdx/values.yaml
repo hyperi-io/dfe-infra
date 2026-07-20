@@ -10,6 +10,14 @@ image:
   tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
   pullPolicy: IfNotPresent
 
+# TODO(verify-on-publish): the fork image is NOT published yet (ghcr returns
+# MANIFEST_UNKNOWN), so its runtime UID could not be verified. This falls back to
+# the DFE default 1000. When the fork's CI ships the image, confirm its USER and
+# set podSecurityContext.runAsUser here if it is not 1000, or runAsNonRoot will
+# reject the pod. readOnlyRootFilesystem is off because the App is Next.js-based.
+containerSecurityContext:
+  readOnlyRootFilesystem: false
+
 replicaCount: 1
 
 # Upstream's usage-stats phone-home. OFF by default -- see the reasoning on the

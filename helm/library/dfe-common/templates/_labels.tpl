@@ -7,6 +7,7 @@ Usage:
 */}}
 {{- define "dfe-common.labels" -}}
 app.kubernetes.io/name: {{ printf "%s-%s" .Values.project .Values.component | quote }}
+app.kubernetes.io/instance: {{ .Release.Name | quote }}
 app.kubernetes.io/part-of: {{ .Values.project | quote }}
 app.kubernetes.io/managed-by: "helm"
 app.kubernetes.io/version: {{ .Chart.AppVersion | default "0.0.0" | quote }}

@@ -25,8 +25,8 @@ spec:
     resources:
       requests:
         storage: {{ .Values.clickhouse.keeper.storage.size }}
-    {{- if .Values.clickhouse.keeper.storage.storageClass }}
-    storageClassName: {{ .Values.clickhouse.keeper.storage.storageClass }}
+    {{- with (.Values.clickhouse.keeper.storage.storageClass | default .Values.storageClass) }}
+    storageClassName: {{ . | quote }}
     {{- end }}
   {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled }}
   podTemplate:

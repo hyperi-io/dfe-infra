@@ -8,8 +8,8 @@ metadata:
 spec:
   accessModes:
     - {{ .Values.persistence.accessMode }}
-  {{- if .Values.persistence.storageClass }}
-  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- with (.Values.persistence.storageClass | default .Values.storageClass) }}
+  storageClassName: {{ . | quote }}
   {{- end }}
   resources:
     requests:

@@ -27,6 +27,24 @@ spec:
       securityContext:
         fsGroup: 1000
       initContainers:
+        # Rancher's local-path provisioner (and some CSI drivers) do NOT honour the
+        # pod fsGroup, so a freshly-provisioned PVC stays root-owned and the uid-1000
+        # init below fails at `mkdir` on /data. Chown it first, as root. Same root
+        # cause and same fix as scripts/fix-harbor-trivy.sh; do NOT "fix" it by
+        # running Forgejo as root instead. Reuses the (pinned) Forgejo image so no
+        # extra image is introduced.
+        - name: fix-data-perms
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          resources:
+            {{- toYaml .Values.initResources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
         # Render app.ini from GITEA__* env, run migrations, ensure the admin user
         # exists (idempotent: create returns non-zero if present, ignored).
         - name: init
@@ -34,6 +52,8 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             runAsUser: 1000
+          resources:
+            {{- toYaml .Values.initResources | nindent 12 }}
           command:
             - /bin/sh
             - -c

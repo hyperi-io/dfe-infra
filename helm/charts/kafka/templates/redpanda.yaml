@@ -47,8 +47,8 @@ spec:
       persistentVolume:
         enabled: true
         size: {{ .Values.kafka.storage.size }}
-        {{- if .Values.kafka.storage.storageClass }}
-        storageClass: {{ .Values.kafka.storage.storageClass | quote }}
+        {{- with (.Values.kafka.storage.storageClass | default .Values.storageClass) }}
+        storageClass: {{ . | quote }}
         {{- end }}
     resources:
       requests:

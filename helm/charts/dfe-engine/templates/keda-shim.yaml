@@ -27,6 +27,7 @@ spec:
     metadata:
       labels: *shimLabels
     spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       # Third pod in this chart, same class as deployment.yaml + hunt-runner: k8s
       # injects DFE_KEDA_SHIM_PORT="tcp://IP:8080" from svc/dfe-keda-shim into every
@@ -49,6 +50,7 @@ spec:
           # NEVER worked. Contrast dfe-hunt-runner, which registers TWO commands
           # (materialise + run), so its args: ["run", ...] is genuinely correct: do
           # not "make them consistent" by copying args here.
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           command: ["dfe-keda-shim"]
           ports:
             - name: http
@@ -74,6 +76,12 @@ spec:
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-keda-shim
+          volumeMounts:
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.kedaShim.resources | nindent 12 }}
           livenessProbe:
@@ -88,6 +96,9 @@ spec:
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

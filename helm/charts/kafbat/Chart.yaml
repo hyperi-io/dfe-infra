@@ -6,5 +6,5 @@ version: 0.1.1
 appVersion: "v1.5.0"
 dependencies:
   - name: dfe-common
-    version: "0.1.1"
+    version: "0.1.3"
     repository: "file://../../library/dfe-common"

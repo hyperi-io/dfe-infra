@@ -21,6 +21,8 @@ spec:
       containers:
         - name: repo-setup
           image: {{ .Values.setup.image | quote }}
+          resources:
+            {{- toYaml .Values.setup.resources | nindent 12 }}
           command:
             - /bin/sh
             - -c

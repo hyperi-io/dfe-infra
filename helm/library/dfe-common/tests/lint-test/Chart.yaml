@@ -5,5 +5,10 @@ version: 0.1.0
 appVersion: "0.0.1"
 dependencies:
   - name: dfe-common
-    version: "0.1.1"
+    # Range, NOT an exact pin. This harness exists only to prove the CURRENT
+    # library templates render, so it must track dfe-common rather than be
+    # bumped alongside it -- an exact pin silently breaks `helm dependency
+    # update` (and so the helm-lint workflow) on every library version bump,
+    # which is how it came to be pinned at 0.1.1 against a 0.1.2 library.
+    version: "^0.1.0"
     repository: "file://../../"
