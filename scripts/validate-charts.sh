@@ -101,8 +101,9 @@ echo "    values:    ${VALUES_FILES}"
 echo "    namespace: ${RENDER_NS}"
 echo ""
 
-PASS=0; FAIL=0
+PASS=0; FAIL=0; SKIPPED=0
 FAILED=""
+UNVALIDATED=""
 
 for chart in ${CHARTS}; do
   dir="helm/charts/${chart}"
@@ -145,6 +146,15 @@ for chart in ${CHARTS}; do
        -f "${OUT}/${chart}.yaml" --request-timeout=60s >"${OUT}/${chart}.apply" 2>&1; then
     echo "  [PASS] ${chart} (accepted by the API server)"
     PASS=$((PASS+1))
+  elif grep -qE "no matches for kind|resource mapping not found" "${OUT}/${chart}.apply"; then
+    # The CRD this chart needs is not installed on THIS cluster. That is a gap in
+    # the cluster, not a defect in the chart -- but it does mean the chart went
+    # UNVALIDATED, so it must not be reported as a pass. Counted separately and
+    # called out, never silently folded into either column.
+    echo "  [NOT VALIDATED] ${chart} -- cluster is missing the CRD it needs:"
+    grep -oE 'no matches for kind "[^"]+" in version "[^"]+"' "${OUT}/${chart}.apply" \
+      | sort -u | head -5 | sed 's/^/      /'
+    SKIPPED=$((SKIPPED+1)); UNVALIDATED="${UNVALIDATED} ${chart}"
   else
     echo "  [DRYRUN-FAIL] ${chart}"
     grep -iE "error|invalid|forbidden|denied|not found" "${OUT}/${chart}.apply" \
@@ -154,7 +164,12 @@ for chart in ${CHARTS}; do
 done
 
 echo ""
-echo "=== ${PASS} passed, ${FAIL} failed ==="
+echo "=== ${PASS} passed, ${FAIL} failed, ${SKIPPED} not validated ==="
+if [ "${SKIPPED}" -gt 0 ]; then
+  echo "    NOT VALIDATED (cluster missing CRDs):${UNVALIDATED}"
+  echo "    Those charts were neither proven good nor bad here. Install the"
+  echo "    operators they need, or validate them against a cluster that has them."
+fi
 if [ "${FAIL}" -gt 0 ]; then
   echo "    failed:${FAILED}"
   exit 1

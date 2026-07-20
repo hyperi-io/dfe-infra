@@ -36,9 +36,10 @@ Subcommands:
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
                or just the readiness gate.
 
-Examples:
-    # Pull the DFE cluster kubeconfig (server node dfe-k8s-1) to a local file:
-    python3 scripts/dfe-ops kubeconfig --node 10.66.0.204 --out .tmp/dfe.kubeconfig
+Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
+this file is committed publicly, so substitute your own node):
+    # Pull a cluster's kubeconfig from one of its server nodes to a local file:
+    python3 scripts/dfe-ops kubeconfig --node 192.0.2.10 --out .tmp/dfe.kubeconfig
 
     # Probe an endpoint (prints the status line then the body):
     python3 scripts/dfe-ops probe GET http://localhost:8000/health/ready
