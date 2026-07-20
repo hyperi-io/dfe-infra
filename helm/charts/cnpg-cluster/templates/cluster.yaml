@@ -6,7 +6,18 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   instances: {{ .Values.cluster.instances }}
-  imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cluster.postgresqlVersion }}
+  # The PG image is a VALUE, not a hardcoded repo, and it is digest-pinned.
+  #
+  # It defaults to FerretDB's postgres-documentdb build -- PostgreSQL 17 WITH the
+  # DocumentDB extension. That is a strict superset of vanilla PG17, so `dfe` and
+  # every other database on this cluster are unaffected, and it is REQUIRED by
+  # FerretDB 2.x, which HyperDX 2.x requires in turn. Without it FerretDB can only
+  # run 1.x, HyperDX cannot run at all, and the stack has no telemetry backend --
+  # which is exactly the state this cluster was in.
+  #
+  # A deployer who wants plain PG (no FerretDB/HyperDX) sets image.repository back to
+  # ghcr.io/cloudnative-pg/postgresql. Nothing here is estate-specific.
+  imageName: {{ printf "%s:%s" .Values.cluster.image.repository .Values.cluster.image.tag }}{{ with .Values.cluster.image.digest }}@{{ . }}{{ end }}
 
   storage:
     size: {{ .Values.cluster.storage.size }}

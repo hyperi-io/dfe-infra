@@ -31,19 +31,37 @@ spec:
               containerPort: {{ .Values.otlp.httpPort }}
             {{- end }}
           env:
+            # OFF unless a deployer opts in. HyperDX's usage-stats task defaults to
+            # ON (its config.ts reads `env.USAGE_STATS_ENABLED !== 'false'`) and ships
+            # upstream's own ingest key, so an unset value means this pod reports team
+            # /user/source counts and hostnames to https://in-otel.hyperdx.io -- a
+            # THIRD PARTY. DFE is a product other organisations deploy into their own
+            # estates; their telemetry is theirs, and nobody opted into that by
+            # installing DFE. The stack already self-monitors into the deployer's own
+            # ClickHouse via the telemetry seam, so this buys them nothing.
+            # Deployers who WANT to support upstream can set usageStats.enabled: true.
+            - name: USAGE_STATS_ENABLED
+              value: {{ .Values.usageStats.enabled | default false | quote }}
             - name: CLICKHOUSE_HOST
               value: {{ .Values.clickhouse.host }}
             - name: CLICKHOUSE_PORT
               value: {{ .Values.clickhouse.port | quote }}
             - name: CLICKHOUSE_DB
               value: {{ .Values.clickhouse.database }}
+            {{- if .Values.clickhouse.user }}
             - name: CLICKHOUSE_USER
               value: {{ .Values.clickhouse.user }}
+            {{- end }}
+            {{- if .Values.clickhouse.secretName }}
+            # Only reference a secret that the deploy actually creates. Referencing an
+            # absent secret leaves the pod in CreateContainerConfigError forever, which
+            # reads as "hyperdx is broken" rather than "this deploy has no CH user".
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.clickhouse.secretName }}
                   key: {{ .Values.clickhouse.secretKey }}
+            {{- end }}
             - name: MONGO_URI
               value: {{ .Values.mongodb.uri | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

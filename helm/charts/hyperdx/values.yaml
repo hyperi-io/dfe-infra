@@ -12,13 +12,30 @@ image:
 
 replicaCount: 1
 
+# Upstream's usage-stats phone-home. OFF by default -- see the reasoning on the
+# USAGE_STATS_ENABLED env in templates/deployment.yaml. Set true only if a deployer
+# actively chooses to report their usage to HyperDX upstream.
+usageStats:
+  enabled: false
+
 # Telemetry ClickHouse (external -- the cluster's clickhouse).
+#
+# host: the OPERATOR-emitted service. In cluster mode the ClickHouse operator emits
+# ONLY a headless service (<name>-clickhouse-headless) -- there is no plain
+# `dfe-clickhouse` service on any layout it produces, so the old default resolved to
+# nothing and hyperdx would have failed its first connection. Same trap the loader hit.
+# Override per deploy (external/managed ClickHouse just points elsewhere).
 clickhouse:
-  host: dfe-clickhouse.clickhouse.svc.cluster.local
+  host: dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local
   port: 8123
   database: dfe
-  user: admin
-  secretName: clickhouse-admin-password
+  # user/secret: EMPTY means connect as the operator's default user with no password,
+  # which is how dfe-loader and the engine already connect to this cluster. The old
+  # default was `admin` + the clickhouse-admin-password secret, and that user DOES NOT
+  # EXIST here -- proven live: "code 516: admin: Authentication failed ... or there is
+  # no user with such name". A deploy that provisions a real CH user sets these.
+  user: ""
+  secretName: ""
   secretKey: password
 
 # Mongo-protocol metadata store (FerretDB, deployed separately).
