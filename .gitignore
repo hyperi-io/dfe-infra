@@ -85,6 +85,11 @@ GEMINI.md
 .gemini/
 .cursorrules
 
+# hyperi-ai per-project workspace (plans, sessions, scratch). NEVER
+# committed -- it holds working notes, not project content. Mirrored
+# in .git/info/exclude, which is the authoritative copy.
+.hyperi-ai/
+
 # Git worktrees (local dev convenience)
 .worktrees/
 
