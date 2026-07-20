@@ -36,6 +36,17 @@
 #
 # Optional:
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
+#   DFE_POST=full            Power-on self test run after the deploy converges:
+#                              full       readiness gate + CORE e2e (default)
+#                              readiness  readiness gate only (fast, read-only)
+#                              off        neither -- deploy health NOT verified
+#                            A production deploy should run 'full'. 'readiness'
+#                            and 'off' suit previews, or a stand-up that runs the
+#                            POST separately (bootstrap/run-all-smoke-tests.sh).
+#                            Anything not run is reported as NOT verified.
+#                            Legacy per-gate vars are still honoured and override
+#                            DFE_POST for that gate:
+#                            DFE_SKIP_READINESS_GATE / DFE_SKIP_INTEGRATION_TESTS
 
 set -euo pipefail
 
@@ -385,34 +396,53 @@ echo "=========================================="
 echo "  Bootstrap complete (Build 1: static)    "
 echo "=========================================="
 echo "  ArgoCD now syncs Layer 2 (Build 2);     "
-echo "  the readiness gate waits for it.        "
+echo "  the POST waits for it (DFE_POST).       "
 echo "=========================================="
 
-# READINESS GATE (default ON) -- the authoritative end-of-deploy health check.
-# Waits for Argo to converge Layer 2, then FAILS the deploy if anything is not
-# genuinely Ready (crashloops, 0/N, unmet replicas). This is what lets us TRUST a
-# successful deploy -- "Argo Healthy"/"pod Running" alone are not enough. Bypass
-# only with DFE_SKIP_READINESS_GATE=true (NOT recommended).
+# POWER-ON SELF TEST (POST) -- the authoritative end-of-deploy verification, and a
+# deployment PARAMETER rather than a bypass (DFE_POST; see the header). Two gates:
+#   readiness   -- waits for Argo to converge Layer 2, then FAILS the deploy if
+#                  anything is not genuinely Ready (crashloops, 0/N, unmet
+#                  replicas). "Argo Healthy"/"pod Running" alone are not enough.
+#   integration -- readiness proves pods are Ready; THIS proves the two DEFAULT
+#                  ingest pipelines are actually STREAMING DATA end to end:
+#                  (1) infra self-telemetry OTel -> HyperDX -> ClickHouse,
+#                  (2) receiver -> [kafka default_land ->] loader -> dfe.default.
+#                  "The service is up so it must be working" is the trap this closes.
+# Choosing a lighter POST is legitimate (a preview, or a stand-up that runs the
+# POST separately) -- but whatever we do not run we say we did NOT verify, so a
+# green deploy never overstates what was actually proven.
+DFE_POST="${DFE_POST:-full}"
+case "${DFE_POST}" in
+  full)      POST_READINESS=true;  POST_INTEGRATION=true  ;;
+  readiness) POST_READINESS=true;  POST_INTEGRATION=false ;;
+  off)       POST_READINESS=false; POST_INTEGRATION=false ;;
+  *)
+    echo "ERROR: DFE_POST must be one of: full | readiness | off (got '${DFE_POST}')" >&2
+    exit 1
+    ;;
+esac
+# Legacy per-gate vars win where explicitly set, so existing callers keep working.
+if [ "${DFE_SKIP_READINESS_GATE:-false}" = "true" ]; then POST_READINESS=false; fi
+if [ "${DFE_SKIP_INTEGRATION_TESTS:-false}" = "true" ]; then POST_INTEGRATION=false; fi
+
 echo ""
-if [ "${DFE_SKIP_READINESS_GATE:-false}" != "true" ]; then
+echo "  POST: DFE_POST=${DFE_POST} (readiness=${POST_READINESS}, integration=${POST_INTEGRATION})"
+
+echo ""
+if [ "${POST_READINESS}" = "true" ]; then
   if ! "${SCRIPT_DIR}/smoke-test-readiness.sh" "${KUBECONFIG:-}"; then
     echo ""
     echo "  DEPLOY NOT HEALTHY -- see the readiness failures above."
-    echo "  Fix them and re-run, or DFE_SKIP_READINESS_GATE=true to bypass (not recommended)."
+    echo "  Fix them and re-run, or set DFE_POST=off to stand up without verifying."
     exit 1
   fi
 else
-  echo "  Readiness gate BYPASSED (DFE_SKIP_READINESS_GATE=true) -- deploy health NOT verified."
+  echo "  POST readiness gate NOT RUN -- deploy health NOT verified."
 fi
 
-# CORE E2E INTEGRATION GATE (default ON) -- readiness proves pods are Ready;
-# THIS proves the two DEFAULT ingest pipelines are actually STREAMING DATA end to
-# end: (1) infra self-telemetry OTel -> HyperDX -> ClickHouse, (2) receiver ->
-# [kafka default_land ->] loader -> dfe.default. "The service is up so it must be
-# working" is exactly the trap this closes. Bypass only with
-# DFE_SKIP_INTEGRATION_TESTS=true (NOT recommended for a real deploy).
 echo ""
-if [ "${DFE_SKIP_INTEGRATION_TESTS:-false}" != "true" ]; then
+if [ "${POST_INTEGRATION}" = "true" ]; then
   # Hand the suite the namespaces + tier THIS deploy actually used. Without them it
   # falls back to its own defaults, which silently point at namespaces the deploy
   # never created (DFE_NAMESPACE is deployer-chosen), and the checks assert nothing.
@@ -421,15 +451,17 @@ if [ "${DFE_SKIP_INTEGRATION_TESTS:-false}" != "true" ]; then
        "${SCRIPT_DIR}/smoke-test-integration.sh" "${KUBECONFIG:-}"; then
     echo ""
     echo "  DEPLOY PODS HEALTHY but a CORE PIPELINE is NOT flowing -- see failures above."
-    echo "  Fix them and re-run, or DFE_SKIP_INTEGRATION_TESTS=true to bypass (not recommended)."
+    echo "  Fix them and re-run, or set DFE_POST=readiness to stand up without the e2e proof."
     exit 1
   fi
 else
-  echo "  Integration tests BYPASSED (DFE_SKIP_INTEGRATION_TESTS=true) -- data flow NOT verified."
+  echo "  POST integration gate NOT RUN -- data flow NOT verified."
 fi
 
 # Post-deploy ACCESS SUMMARY -- endpoints + how to log in + how to fetch creds.
-# Only reached on a verified-healthy deploy. Printed here AND written to a file.
+# Reached once every POST gate that was ENABLED has passed -- so under
+# DFE_POST=readiness the pipelines are unproven, and under DFE_POST=off nothing
+# was verified at all. Printed here AND written to a file.
 echo ""
 "${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${DFE_ACCESS_OUT:-dfe-access.md}" || \
   echo "  (access-summary skipped -- run bootstrap/access-summary.sh manually)"
