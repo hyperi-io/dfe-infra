@@ -20,8 +20,8 @@ name: hdx29                                  # -> namespace dfe-preview-hdx29 (d
 service: hyperdx                             # selects the image-override branch in the appset
 chart: hyperdx                               # helm/charts/<chart> deployed for this app
 infra_revision: main                         # dfe-infra ref supplying the CHART source
-registry: inhyperi.io/dfe-preview            # global.registry (Harbor preview project)
-image: inhyperi.io/dfe-preview/hyperdx:hdx29-abc1234   # built preview image (repo:tag)
+registry: harbor.example.com/dfe-preview            # global.registry (Harbor preview project)
+image: harbor.example.com/dfe-preview/hyperdx:hdx29-abc1234   # built preview image (repo:tag)
 
 # CONTEXT (not consumed by the appset -- operator intent, for humans):
 #   owner    derek         -- who to ping, GC owner on the shared cluster.

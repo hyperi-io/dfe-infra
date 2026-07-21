@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill with YOUR cluster's values. The real file is
+# gitignored -- it holds environment-specific endpoints that must not land in
+# this (publicly shipping) repo. Every host below is a placeholder: RFC 2606
+# (example.com) for domains. vault_token is NEVER put here -- pass it via the
+# TF_VAR_vault_token env var.
+vault_addr      = "https://bao.example.com:8200"
+domain          = "dfe.example.com"
+profile         = "slim"
+nfs_server      = "storage.example.com"
+minio_endpoint  = "https://minio.example.com"
+repo_url        = "git@github.com:your-org/dfe-infra.git"
+target_revision = "main"

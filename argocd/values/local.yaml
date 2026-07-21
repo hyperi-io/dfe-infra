@@ -1,11 +1,16 @@
-# HyperI DevEx (Rancher RKE2) — internal development and testing.
+# Sample "local" cloud overlay (Rancher RKE2), one deploy's values -- the charts
+# and appsets hardcode none of it. Hostnames here are PLACEHOLDERS (RFC 2606
+# example.com), never a real estate: this repo ships publicly. A real deployment
+# supplies its own domain/vault/storage via the cluster-secret annotations that
+# bootstrap.sh sets from the private .env (dfe.hyperi.io/domain <- DFE_DOMAIN,
+# etc.) or its private deploy-repo overlay, which is layered last and wins.
 global:
   cloud: local
   region: local
-  domain: devex.hyperi.io
+  domain: dfe.example.com
   registry: "ghcr.io/hyperi-io"
 
-domain: devex.hyperi.io
+domain: dfe.example.com
 storageClass: local-path
 
 # Pull secret for GHCR private images (created by bootstrap.sh)
@@ -41,9 +46,9 @@ clickhouse:
   # NOT hyperi-infra's hyperi-keeper.
 
 vault:
-  address: "https://bao.devex.hyperi.io:8200"
+  address: "https://bao.example.com:8200"
 
 configStorage:
   type: nfs
-  server: "storage.devex.hyperi.io"
+  server: "storage.example.com"
   path: /data/dfe-config

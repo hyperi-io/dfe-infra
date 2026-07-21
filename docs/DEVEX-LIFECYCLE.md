@@ -24,7 +24,7 @@ All component versions come from `versions.yaml` (the SSoT).
 ## Prerequisites
 
 - A kubeconfig for the devex RKE2 cluster -- `kubectl get nodes` works.
-- An OpenBao token for `bao.devex.hyperi.io` (Terraform uses it).
+- An OpenBao token for your Vault/OpenBao (e.g. `bao.example.com`; Terraform uses it).
 - Registry pull credentials: copy `bootstrap/local.env.example` to
   `bootstrap/local.env` and fill it in.
 - Tooling at the versions pinned in `versions.yaml` (terraform/opentofu, helm).
@@ -97,7 +97,7 @@ namespace today -- smoke tests validate the running deployment.
 
 ```mermaid
 flowchart LR
-  C["client"] --> D["CoreDNS<br/>*.apps.devex.hyperi.io"]
+  C["client"] --> D["CoreDNS<br/>*.apps.&lt;your-domain&gt;"]
   D --> VIP["K8s ingress VIP"]
   VIP --> GW["Envoy Gateway"]
   GW --> R["HTTPRoute (per service)"]
@@ -105,7 +105,7 @@ flowchart LR
 ```
 
 Service hostnames are served by HTTPRoutes (Envoy Gateway,
-`helm/charts/envoy-gateway-config/`) under the devex `*.apps.devex.hyperi.io`
+`helm/charts/envoy-gateway-config/`) under the deployment's `*.apps.<your-domain>`
 wildcard; cert-manager issues the TLS. A service needing a name outside the
 wildcard requires a CoreDNS record added in hyperi-infra
 (`hyperi-io/hyperi-infra:infra/coredns/zones/`).

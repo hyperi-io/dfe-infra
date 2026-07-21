@@ -12,7 +12,7 @@ terraform {
 }
 
 variable "vault_addr" {
-  description = "OpenBao/Vault server address (e.g. https://bao.devex.hyperi.io:8200)"
+  description = "OpenBao/Vault server address (e.g. https://bao.example.com:8200)"
   type        = string
 }
 

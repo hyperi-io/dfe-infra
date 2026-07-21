@@ -10,7 +10,7 @@ variable "vault_token" {
 }
 
 variable "domain" {
-  description = "Base domain for services (e.g. devex.hyperi.io)"
+  description = "Base domain for services (e.g. dfe.example.com)"
   type        = string
 }
 

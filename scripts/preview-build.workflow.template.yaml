@@ -11,7 +11,7 @@
 # Secrets (from OpenBao kv/services/harbor -> repo/org secrets):
 #   HARBOR_ROBOT_USER / HARBOR_ROBOT_TOKEN  (the dfe-preview robot)
 # Vars:
-#   HARBOR_HOST=inhyperi.io   PREVIEW_PROJECT=dfe-preview
+#   HARBOR_HOST=harbor.example.com   PREVIEW_PROJECT=dfe-preview
 
 name: preview-build
 on:

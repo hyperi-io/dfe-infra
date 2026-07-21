@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # ---- config (DECIDE: confirm host + project in the morning) -----------------
-HARBOR_HOST="${HARBOR_HOST:-inhyperi.io}"          # confirm exact global.registry
+HARBOR_HOST="${HARBOR_HOST:-harbor.example.com}"   # set to your Harbor host (global.registry)
 PREVIEW_PROJECT="${PREVIEW_PROJECT:-dfe-preview}"  # Harbor project (create w/ admin)
 KUBE_CONTEXT="${KUBE_CONTEXT:-devex}"
 INFRA_REPO="${INFRA_REPO:-/Volumes/projects/dfe-infra}"

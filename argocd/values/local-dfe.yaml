@@ -11,10 +11,10 @@
 global:
   cloud: local-dfe
   region: local
-  domain: dfe.devex.hyperi.io
+  domain: dfe.example.com
   registry: "ghcr.io/hyperi-io"
 
-domain: dfe.devex.hyperi.io
+domain: dfe.example.com
 storageClass: local-path
 
 # DFE owns the whole cluster -> generic nodes, no pinning/tolerations.

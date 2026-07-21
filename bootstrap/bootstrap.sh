@@ -18,7 +18,7 @@
 #   DFE_ENV                  dev | stg | prod | local
 #   DFE_CLOUD                aws | gcp | az | local
 #   DFE_REGION               e.g. us-east-1, local
-#   DFE_DOMAIN               e.g. devex.hyperi.io
+#   DFE_DOMAIN               e.g. dfe.example.com
 #   DFE_PROFILE              slim | single | scale
 #   DFE_REPO_URL             Git repo URL for ArgoCD
 #   DFE_TARGET_REVISION      Git branch/tag (e.g. main)

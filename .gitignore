@@ -4,6 +4,11 @@
 *.tfstate
 *.tfstate.backup
 *.tfplan
+# Real per-environment tfvars hold cluster-specific endpoints -- keep them out of
+# this publicly shipping repo. Commit terraform.tfvars.example (placeholders)
+# instead; each operator copies it to terraform.tfvars locally.
+**/terraform.tfvars
+!**/terraform.tfvars.example
 # bare `terraform plan -out=tfplan` output -- the *.tfplan glob misses it, and a
 # plan can embed secret values (.gitignore has no inline comments, so keep this
 # on its own line above the bare pattern)

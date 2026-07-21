@@ -1,7 +1,7 @@
 # Pure unit test — no providers needed.
 variables {
   cloud          = "local"
-  nfs_server     = "storage.devex.hyperi.io"
+  nfs_server     = "storage.example.com"
   nfs_config_path = "/data/dfe-config"
 }
 
@@ -14,7 +14,7 @@ run "local_config_storage" {
   }
 
   assert {
-    condition     = output.config_storage_server == "storage.devex.hyperi.io"
+    condition     = output.config_storage_server == "storage.example.com"
     error_message = "config_storage_server should match nfs_server input"
   }
 }
