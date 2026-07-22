@@ -58,4 +58,5 @@ lockstep `content:` repo tags); the full release model is in dfe-docs
 - [architecture.md](../architecture.md) - where this repo sits in the suite
 - [rke2.md](rke2.md) - the default distribution
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
+- [clickhouse.md](clickhouse.md) - CH target matrix (official operator / ClickHouse Cloud / private-cloud swap; Altinity untested) + operator history
 - [deployment-logs/](deployment-logs/TEMPLATE.md) - record every deploy

@@ -62,6 +62,7 @@ a chart value).
 | [deployment/index.md](deployment/index.md) | layers, tiers, values cascade, bootstrap contract |
 | [deployment/rke2.md](deployment/rke2.md) | RKE2, the hardened default distribution |
 | [deployment/kafka/](deployment/kafka/README.md) | managed-Kafka guides + Redpanda licence gate |
+| [deployment/clickhouse.md](deployment/clickhouse.md) | CH target matrix + operator history (official operator / ClickHouse Cloud; private-cloud swap; Altinity untested) |
 | [deployment/deployment-logs/](deployment/deployment-logs/TEMPLATE.md) | per-deploy log template |
 | [TESTING-CYCLE.md](TESTING-CYCLE.md) | THE validation loop (preflight -> deploy+E2E -> smoke -> destroy), the env-file contract, the vanilla-cluster contract |
 | [AUTOSCALING.md](AUTOSCALING.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |

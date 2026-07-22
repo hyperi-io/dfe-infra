@@ -32,6 +32,10 @@ spec:
                 # mode only. Single mode uses a plain StatefulSet (no operator).
                 # OCI chart; wave 3 so CRDs exist before the ClickHouseCluster CR
                 # (layer2-data, wave 4). Pinned 0.0.5 @sha256:bbdaf6f... .
+                # Swappable: the HyperI private cloud may replace this with the
+                # internal n-tier cached operator + CH fork (docs/deployment/
+                # clickhouse.md). The Altinity operator is NOT tested with this
+                # stack -- do not substitute it and expect the CRs to hold.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.5"

@@ -9,6 +9,13 @@ clickhouse:
   #   single   -> standalone clickhouse-server, no Keeper, MergeTree (small/test)
   #   external -> deploy nothing; connect to a supplied CH (BYO / ClickHouse Cloud)
   # Profile sets the default (scale->cluster, standard->single); deployer overrides.
+  #
+  # OPERATOR TARGETS (full matrix + history: docs/deployment/clickhouse.md):
+  # cluster mode targets the OFFICIAL ClickHouse operator; external covers
+  # ClickHouse Cloud/BYO -- the two main public targets. The HyperI private
+  # cloud can swap this chart + operator for the internal n-tier cached
+  # operator + CH fork (SSD cache over spinning disk; not referenced by name
+  # here -- public repo). The Altinity operator is NOT tested with this stack.
   mode: cluster
   name: dfe-clickhouse
   version: "26.3.13.31"
