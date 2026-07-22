@@ -3,6 +3,13 @@ component: hyperdx
 env: local
 cloud: local
 
+# OWNERSHIP: the dfe-engine repo is the controller and SSoT for the HyperDX
+# integration (it integrates most closely). Anything HyperDX needs doing --
+# fork, image, this chart's behaviour -- routes through a GitHub issue on
+# dfe-engine first. EXCEPTION: time-critical, security-urgent, or a small
+# change that clearly cannot impact dfe-engine may land directly here; then
+# raise a dfe-engine issue noting it was done, for politeness.
+
 # dfe-hyperdx fork image (combined API + App). CONFIRM the published image
 # name/tag from the fork's CI before first deploy.
 image:

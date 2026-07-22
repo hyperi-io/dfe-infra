@@ -22,6 +22,14 @@ Applications; this repo never reads or writes engine config. The
 whole-suite map lives in the dfe-engine repo (`docs/architecture.md`
 there) - this page covers only the infra side.
 
+One named exception to "this repo owns its charts": **HyperDX is
+controlled by the dfe-engine repo** (SSoT - it integrates most closely).
+Anything HyperDX needs doing - the fork, the image, this repo's hyperdx
+chart - goes through a GitHub issue on dfe-engine first. If it is
+time-critical, security-urgent, or a small change that clearly cannot
+impact dfe-engine, make it here directly and raise a dfe-engine issue
+noting it was done, for politeness.
+
 ## What this repo owns
 
 | Area | Where | What it does |
