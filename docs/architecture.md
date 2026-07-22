@@ -55,6 +55,8 @@ a chart value).
 | [deployment/rke2.md](deployment/rke2.md) | RKE2, the hardened default distribution |
 | [deployment/kafka/](deployment/kafka/README.md) | managed-Kafka guides + Redpanda licence gate |
 | [deployment/deployment-logs/](deployment/deployment-logs/TEMPLATE.md) | per-deploy log template |
+| [TESTING-CYCLE.md](TESTING-CYCLE.md) | THE validation loop (preflight -> deploy+E2E -> smoke -> destroy), the env-file contract, the vanilla-cluster contract |
+| [AUTOSCALING.md](AUTOSCALING.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |
 | [archive/](archive/) | the 2026-03 research corpus + superseded material (decision trail) |
 
 DEVEX-LIFECYCLE.md and DEVEX-OPERATIONS.md remain at docs/ root pending

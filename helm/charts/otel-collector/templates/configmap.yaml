@@ -6,6 +6,10 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 data:
   gateway-config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:{{ .Values.healthCheckPort }}
+
     receivers:
       otlp:
         protocols:
@@ -36,6 +40,7 @@ data:
         verbosity: basic
 
     service:
+      extensions: [health_check]
       pipelines:
         traces:
           receivers: [otlp]
@@ -63,6 +68,10 @@ data:
             {{- end }}
 
   daemonset-config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:{{ .Values.healthCheckPort }}
+
     receivers:
       filelog:
         include: [/var/log/pods/*/*/*.log]
@@ -97,6 +106,7 @@ data:
           insecure: true
 
     service:
+      extensions: [health_check]
       pipelines:
         logs:
           receivers: [filelog]

@@ -1,0 +1,4 @@
+{{- /* Replica-gated: renders only at replicaCount >= 2 (scale profile). */ -}}
+{{- if .Values.kafbat.enabled }}
+{{- include "dfe-common.pdb" . }}
+{{- end }}

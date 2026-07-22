@@ -10,6 +10,12 @@ image:
 
 replicaCount: 1
 
+# PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2
+# (the scale profile), so single-replica deployments never get a PDB that
+# blocks node drains. The budget is maxUnavailable: 1 (autoscaler-safe: a KEDA scale-to-one pod can still evict).
+pdb:
+  enabled: true
+
 postgresql:
   # Connection to CNPG cluster (created by cnpg-cluster chart)
   # Short name works when FerretDB deploys in same namespace as CNPG.

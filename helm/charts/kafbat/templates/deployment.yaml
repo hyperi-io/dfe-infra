@@ -32,7 +32,7 @@ spec:
               value: /etc/kafbat/application-local.yml
             - name: DYNAMIC_CONFIG_ENABLED
               value: "false"
-            {{- if and (eq .Values.auth.type "OAUTH2") .Values.oidc.enabled }}
+            {{- if eq (include "kafbat.effectiveAuthType" .) "OAUTH2" }}
             - name: OAUTH_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -58,8 +58,9 @@ spec:
             {{- end }}
             {{- end }}
             {{- if .Values.breakGlass.enabled }}
-            # Break-glass local admin -- wired so flipping auth.type to LOGIN_FORM
-            # immediately enables it (the recovery door). Inert while type=OAUTH2.
+            # Break-glass local admin -- the ACTIVE door whenever the effective
+            # auth type is LOGIN_FORM (explicitly set, or the OAUTH2-without-oidc
+            # degrade). Inert while effective type is OAUTH2.
             - name: SPRING_SECURITY_USER_NAME
               valueFrom:
                 secretKeyRef:

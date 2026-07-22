@@ -22,6 +22,11 @@ image:
   repository: ghcr.io/kafbat/kafka-ui
   tag: "v1.5.0@sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"
   pullPolicy: IfNotPresent
+  # Public GHCR image: suppress the fleet-wide imagePullSecrets from the
+  # deployment overlay. Kafbat runs in the kafka namespace where bootstrap
+  # never materialises the ghcr pull secret, so referencing it there only
+  # produces kubelet FailedToRetrieveImagePullSecret noise on every pull.
+  public: true
 
 # The image runs as USER "kafkaui" = uid 100 (verified from the image passwd),
 # NOT the DFE default 1000. runAsNonRoot needs a NUMERIC uid, so pin 100 here.
@@ -80,6 +85,13 @@ kafka:
 #              LOGIN_FORM with it when the IdP is unavailable.
 # Kafbat does its OWN OIDC (it cannot derive RBAC subjects from Envoy's X-Oidc-*
 # headers), but uses the same IdP + groups, so identity + roles stay stack-aligned.
+#
+# OAUTH2 is only rendered when oidc.enabled=true. Until the overlay fills the
+# oidc block, the chart degrades to LOGIN_FORM (break-glass) -- kafbat refuses
+# to boot if OAuth2 is enabled with no providers, and a vanilla deployment must
+# come up. RBAC renders only under effective OAUTH2 (kafbat RBAC subjects bind
+# to oauth/ldap providers; under LOGIN_FORM the break-glass admin gets full
+# access via rbac absence). See kafbat.effectiveAuthType in _helpers.tpl.
 auth:
   type: OAUTH2        # OAUTH2 (OIDC, default) | LOGIN_FORM (break-glass) | DISABLED
 
@@ -116,6 +128,12 @@ breakGlass:
 
 persistence:
   enabled: false        # Kafbat is stateless when DYNAMIC_CONFIG is off
+
+# PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2
+# (the scale profile), so single-replica deployments never get a PDB that
+# blocks node drains. The budget is maxUnavailable: 1 (autoscaler-safe: a KEDA scale-to-one pod can still evict).
+pdb:
+  enabled: true
 
 resources:
   requests:

@@ -21,6 +21,24 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["--config=/etc/otel/daemonset-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.healthCheckPort }}
+          # Backed by the health_check extension enabled in daemonset-config.yaml
+          # (service.extensions) -- the probe is only safe because the extension
+          # serves this port.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.daemonset.resources | nindent 12 }}
           volumeMounts:

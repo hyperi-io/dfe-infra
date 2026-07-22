@@ -37,8 +37,8 @@ data:
           {{- end }}
         {{- end }}
     auth:
-      type: {{ .Values.auth.type }}
-    {{- if and (eq .Values.auth.type "OAUTH2") .Values.oidc.enabled }}
+      type: {{ include "kafbat.effectiveAuthType" . }}
+    {{- if eq (include "kafbat.effectiveAuthType" .) "OAUTH2" }}
     spring:
       security:
         oauth2:
@@ -58,7 +58,12 @@ data:
                   type: oauth
                   roles-field: {{ .Values.oidc.rolesField }}
     {{- end }}
-    {{- if .Values.rbac.enabled }}
+    {{- /* RBAC only under OAUTH2: kafbat RBAC subjects bind to oauth/ldap
+    identity providers -- there is no login_form provider, so under the
+    break-glass LOGIN_FORM path an rbac block would leave every user (incl.
+    the break-glass admin) permissionless. Omitting rbac makes kafbat grant
+    authenticated users full access, which IS the break-glass semantic. */}}
+    {{- if and .Values.rbac.enabled (eq (include "kafbat.effectiveAuthType" .) "OAUTH2") }}
     rbac:
       roles:
         # admin -- full control (maps OIDC admin groups + the break-glass account).

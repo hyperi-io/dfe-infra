@@ -10,6 +10,12 @@ image:
 
 replicaCount: 1
 
+# PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2
+# (the scale profile), so single-replica deployments never get a PDB that
+# blocks node drains. The budget is maxUnavailable: 1 (autoscaler-safe: a KEDA scale-to-one pod can still evict).
+pdb:
+  enabled: true
+
 # Next.js writes to its own rootfs at runtime (the .next cache), so the stack
 # default readOnlyRootFilesystem:true would break it -- relax that one bit while
 # keeping allowPrivilegeEscalation:false and cap drop ALL. podSecurityContext is
@@ -33,6 +39,9 @@ metricsPort: 3000
 config:
   nextPublicApiUrl: ""           # https://dfe.{domain}/api
   nextPublicHyperdxUrl: ""       # https://hyperdx.{domain}
+  # Node heap cap. Default tracks the pod memory limit via the cgroup-aware
+  # percentage flag (Node 24+); override only for a non-standard runtime.
+  nodeOptions: "--max-old-space-size-percentage=70"
   nextauthSecretName: dfe-ui-nextauth
   # NextAuth builds its callback URLs from this; empty falls back to https://<domain>.
   nextauthUrl: ""

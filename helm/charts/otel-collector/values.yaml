@@ -16,8 +16,18 @@ podSecurityContext:
   runAsGroup: 10001
   fsGroup: 10001
 
+# health_check extension port, served by BOTH collector configs (gateway +
+# daemonset) and probed by their workloads. The probes are only valid because
+# configmap.yaml enables the extension in service.extensions -- a probe against
+# a collector without the extension dials a closed port and kills the pod.
+healthCheckPort: 13133
+
 gateway:
   replicas: 1
+  # Gateway PDB (templates/gateway-pdb.yaml): renders only when replicas >= 2,
+  # same drain-safety gating as dfe-common.pdb. maxUnavailable defaults to 1.
+  pdb:
+    enabled: true
   resources:
     requests:
       cpu: 200m

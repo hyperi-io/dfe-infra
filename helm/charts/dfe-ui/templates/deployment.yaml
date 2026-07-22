@@ -27,6 +27,16 @@ spec:
             - name: http
               containerPort: 3000
           env:
+            # Heap cap that TRACKS the pod memory limit: the percentage flag
+            # resolves against the cgroup limit, so raising resources.limits
+            # in an overlay moves the heap cap with it -- no second number to
+            # drift. Node's own default is ~50-55% of the limit; 70 leaves
+            # headroom for RSS outside old-space (Buffers, Workers, code
+            # cache) before the OOM killer. Requires Node 24+ (image ships
+            # v24) and a memory limit set (the chart sets one). Verified
+            # in-pod 2026-07-22: flag accepted, heap = 70% of memory.max.
+            - name: NODE_OPTIONS
+              value: {{ .Values.config.nodeOptions | default "--max-old-space-size-percentage=70" | quote }}
             - name: NEXT_PUBLIC_API_URL
               value: {{ .Values.config.nextPublicApiUrl | quote }}
             - name: NEXT_PUBLIC_HYPERDX_URL

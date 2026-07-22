@@ -1,0 +1,103 @@
+# The validation cycle: create -> test e2e -> destroy
+
+This repeatable loop is the validation SSoT this repo owns -- THE way we prove
+a DFE deployment works, on our clusters, on a teammate's clone, and on a
+customer's estate. Everything estate-specific rides in a gitignored env file,
+so the committed repo runs the same cycle everywhere.
+
+```mermaid
+flowchart LR
+    PF["preflight\n(read-only cluster check)"] --> SD["stack-deploy\nbootstrap + Argo sync\n+ readiness gate + 2 E2E"]
+    SD --> SM["verify\nfull smoke suite"]
+    SM --> DS["teardown\n(destroy; --keep to skip)"]
+    DS -.->|"repeat per change"| PF
+```
+
+One command runs the whole loop:
+
+    python3 scripts/dfe-ops cycle --mode single \
+        --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
+
+Each stage self-executes as its own `dfe-ops` subcommand (`preflight`,
+`stack-deploy`, `verify`, `teardown`), so the cycle and the hand-run commands
+can never drift -- and the cycle exports `--kubeconfig` as `KUBECONFIG` to
+every stage, so all four aim at the SAME cluster (running `verify`/`teardown`
+by hand uses your current context; check it first). A failed deploy still
+destroys -- a broken cycle must not strand a half-stack. `--keep` skips the
+destroy for interactive debugging on a dev cluster only.
+
+## The env-file contract (how a teammate gets running)
+
+Everything estate-specific -- addresses, domains, storage class, secrets
+endpoints -- lives in ONE flat `DFE_*` env file. The committed
+[bootstrap/local.env.example](../bootstrap/local.env.example) is the template
+(placeholder values only: RFC 2606 domains, RFC 5737 addresses); the filled
+copy (`bootstrap/.env`) is gitignored and distributed out-of-band, e.g. as a
+Bitwarden secure note.
+
+So the whole onboarding is:
+
+1. `git clone` this repo.
+2. Get the deployment's `.env` (Bitwarden) -> save as `bootstrap/.env`.
+3. Get a kubeconfig (`python3 scripts/dfe-ops kubeconfig --node <addr> --out
+   .tmp/target.kubeconfig`, or from whoever runs the cluster).
+4. `python3 scripts/dfe-ops cycle --mode single --kubeconfig
+   .tmp/target.kubeconfig --env-file bootstrap/.env`
+
+No step edits a tracked file. If a value belongs in git, it is not
+estate-specific; if it is estate-specific, it belongs in `.env` -- never both.
+
+## The cluster contract ("vanilla Rancher") and preflight
+
+The product rule: assume a vanilla Rancher/RKE2 cluster and BRING what the
+stack needs. "Vanilla" concretely means the things bootstrap CANNOT create for
+itself -- everything else (cert-manager, ESO, Argo CD, MetalLB, local-path
+storage) is detect-or-install: an existing operator is adopted, an absent one
+is installed.
+
+What the cluster must supply:
+
+| Contract item | Why | Preflight check |
+| --- | --- | --- |
+| Reachable API server, k8s >= 1.28 | the deploy target | FAIL if not |
+| Admin-ish RBAC (create ns/CRD/clusterrole/deploy/secret) | bootstrap installs operators | FAIL if not |
+| >= 1 Ready node (3 for `scale`) with headroom | scheduling | WARN under guidance floors |
+| The workload node label, when the overlay selects on one | pods sit Pending forever without it -- looks like a chart fault, is the wrong cluster | FAIL if no Ready node carries it |
+| A default StorageClass -- or none at all | PVCs; bootstrap falls back to local-path when absent | WARN/FAIL as applicable |
+| A LoadBalancer path on cloud targets | on-prem gets MetalLB from bootstrap | WARN |
+| Pull access to the image registry | image supply | WARN (checked from the operator's machine) |
+
+Check any cluster in seconds, read-only, before touching it:
+
+    python3 scripts/dfe-ops preflight --mode scale --env-file bootstrap/.env \
+        --require-label dfe.hyperi.io/workload=dfe
+
+Verified against both estate clusters 2026-07-22: the DFE cluster passes
+clean; the neighbouring devex cluster fails exactly one check -- the workload
+label -- which is precisely the wrong-cluster trap the check exists to catch.
+
+## Targets: on-prem now, cloud by parameter
+
+The cycle is target-neutral by construction: the target is (kubeconfig +
+env file), nothing else.
+
+- **On-prem Rancher/RKE2** (the first-class baseline): as above.
+- **AWS (and other clouds)**: `tofu apply` the environment first, then
+  either `--from-terraform terraform/environments/aws` (reads the outputs) or
+  an `.env` exported from them. Cloud deltas live in the env file
+  (`DFE_STORAGE_CLASS=gp3`, cloud LB, workload-identity annotations) -- the
+  cycle itself is identical. **A cloud test deployment is destroyed the same
+  day, no exceptions**: the cycle destroys by default, and when it was
+  provisioned via `--from-terraform` the destroy stage also runs the IaC
+  destroy (`teardown --with-terraform`), so the control plane and nodes die
+  with the test -- not just the DFE workloads on them. `--keep` is for dev
+  clusters only.
+
+## What the stages actually run
+
+| Stage | Wraps | Gate |
+| --- | --- | --- |
+| `preflight` | read-only kubectl against the target | cluster contract above |
+| `stack-deploy` | offline pin/drift/render preflight, then `bootstrap/bootstrap.sh` (Layer 0/1 + Argo profile sync at the pinned stack) | bounded readiness + the 2 default E2E tests (receiver->CH data path, self-monitoring OTel) |
+| `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration |
+| `teardown` | `bootstrap/destroy.sh` (`--with-terraform` also destroys IaC state) | leaves the cluster as preflight found it |

@@ -1,0 +1,2 @@
+{{- /* Replica-gated: renders only at replicaCount >= 2 (scale profile). */ -}}
+{{- include "dfe-common.pdb" . }}

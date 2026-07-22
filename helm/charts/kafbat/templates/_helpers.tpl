@@ -76,3 +76,19 @@ the ConfigMap.
 {{- define "kafbat.clusterEnvPrefix" -}}
 {{- printf "KAFKA_CLUSTER_%d" . -}}
 {{- end }}
+
+{{/*
+kafbat.effectiveAuthType -- the auth type actually rendered. OAUTH2 is only
+honoured when the oidc block is filled (oidc.enabled=true); without it the
+chart degrades to LOGIN_FORM (break-glass) so a vanilla deployment with an
+empty overlay still BOOTS -- kafbat exits 1 ("OAuth2 authentication is
+enabled but no providers specified") if auth.type=OAUTH2 reaches it bare.
+OIDC takes over the moment the overlay fills oidc.*. DISABLED passes through.
+*/}}
+{{- define "kafbat.effectiveAuthType" -}}
+{{- if and (eq .Values.auth.type "OAUTH2") (not .Values.oidc.enabled) -}}
+LOGIN_FORM
+{{- else -}}
+{{- .Values.auth.type -}}
+{{- end -}}
+{{- end }}

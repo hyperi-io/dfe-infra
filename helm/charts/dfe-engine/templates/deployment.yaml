@@ -100,6 +100,22 @@ spec:
             # crashes minting the JWT signing key at startup. (Same fix as dfe-docker.)
             - name: DFE_SECRETS_PATH
               value: {{ .Values.config.mountPath }}/.secrets
+            # Auth stores (accounts/groups/api-keys, + oidc-providers) -- same
+            # trap as DFE_SECRETS_PATH: without this the auth bootstrap falls
+            # back to ./config/auth under the read-only /app WORKDIR and the
+            # pod crashloops at startup (v1.10.7+, dfe-engine#106). emptyDir =
+            # per-pod ephemeral: fine at 1 replica; >1 replica needs shared
+            # storage for cross-pod JWKS (image-side work, dfe-engine#106).
+            - name: DFE_AUTH_DIR
+              value: {{ .Values.config.mountPath }}/auth
+            # The CLASS-WIDE guard for the same fallback: auth is not the only
+            # startup mkdir that defaults under cwd -- the org and
+            # service-surface registries (and rbac/connections.yaml lookup)
+            # resolve config/<x> under /app when DFE_CONFIG_DIR is unset, so
+            # fixing auth alone just moves the crash to the next registry.
+            # Point the shared root at the writable config mount.
+            - name: DFE_CONFIG_DIR
+              value: {{ .Values.config.mountPath }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
@@ -165,13 +181,13 @@ spec:
           # engine serves health on 9090 now (with /health/* aliases).
           livenessProbe:
             httpGet:
-              path: /health/live
+              path: /healthz
               port: obs
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health/ready
+              path: /readyz
               port: obs
             initialDelaySeconds: 5
             periodSeconds: 5

@@ -4,6 +4,12 @@ OWN pod (engine image, `dfe-hunt-runner run`). DISTINCT labels (app.kubernetes.i
 dfe-hunt-runner) so the engine Service selector never routes to it. DEFAULT 1 pod;
 autoscaling is BETA + opt-in (huntRunner.autoscaling.enabled) on the due-hunt backlog
 via the fail-safe dfe-keda-shim.
+
+NO PROBES by design: the runner is a polling scheduler loop (dfe_engine.hunt_runner
+daemon), not a server -- it opens no HTTP listener, so there is no endpoint an
+httpGet probe could hit. A liveness signal would need an app-side surface first
+(scalo mark_started/health territory); until then a probe would only kill healthy
+pods.
 */ -}}
 {{- if .Values.huntRunner.enabled }}
 apiVersion: apps/v1

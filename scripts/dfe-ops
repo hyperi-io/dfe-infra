@@ -31,6 +31,15 @@ Subcommands:
                E2E tests -> access summary. Provisions NOTHING (deploy ONTO, not
                create). The stack + mode + kubeconfig are flags; secrets come from
                --env-file / --from-terraform, never hardcoded.
+  preflight    READ-ONLY cluster-contract check: is this (Rancher/any) cluster
+               right for a DFE deployment? Verifies what bootstrap cannot fix
+               (API access, RBAC, Ready nodes, the workload-label trap) and
+               previews what it will decide (adopt-or-install, storage
+               fallback). Changes nothing.
+  cycle        THE repeatable validation loop this repo owns: preflight ->
+               stack-deploy (+ the 2 default E2E tests) -> full smoke suite ->
+               destroy. Every estate-specific value comes from --env-file;
+               --keep skips the destroy for dev-cluster debugging.
   teardown     Tear the deployment down (wraps bootstrap/destroy.sh); optionally
                also destroy terraform state.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
@@ -60,6 +69,15 @@ this file is committed publicly, so substitute your own node):
     python3 scripts/dfe-ops stack-deploy --mode scale --kubeconfig .tmp/dfe.kubeconfig \
         --env-file bootstrap/local.env
 
+    # Is this cluster fit for a DFE deployment? (read-only; the label check is
+    # the wrong-cluster trap-catcher):
+    python3 scripts/dfe-ops preflight --mode scale --env-file bootstrap/.env \
+        --require-label dfe.hyperi.io/workload=dfe
+
+    # THE validation cycle -- clone, get the env file (e.g. via Bitwarden), go:
+    python3 scripts/dfe-ops cycle --mode single --kubeconfig .tmp/dfe.kubeconfig \
+        --env-file bootstrap/.env
+
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
     python3 scripts/dfe-ops teardown --force --with-terraform
@@ -74,12 +92,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 import shutil
 import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -388,7 +408,303 @@ def _parse_env_file(path: str) -> dict[str, str]:
     return out
 
 
-def _preflight(args: argparse.Namespace) -> int:
+# --- preflight subcommand (ONLINE, read-only cluster-contract check) ----------
+def _parse_cpu(q: str) -> float:
+    """Parse a Kubernetes CPU quantity ('4', '3500m', '1500000000n') to cores."""
+    q = q.strip()
+    if q.endswith("n"):
+        return float(q[:-1]) / 1_000_000_000.0
+    if q.endswith("u"):
+        return float(q[:-1]) / 1_000_000.0
+    if q.endswith("m"):
+        return float(q[:-1]) / 1000.0
+    return float(q)
+
+
+# BinarySI + DecimalSI suffixes (k8s resource.Quantity). DecimalSI kilo is
+# LOWERCASE k; the uppercase forms are kept liberally for hand-written values.
+_MEM_SUFFIX = {
+    "Ki": 1024,
+    "Mi": 1024**2,
+    "Gi": 1024**3,
+    "Ti": 1024**4,
+    "k": 1000,
+    "K": 1000,
+    "M": 1000**2,
+    "G": 1000**3,
+    "T": 1000**4,
+}
+
+
+def _parse_mem(q: str) -> int:
+    """Parse a Kubernetes memory quantity ('16Gi', '104857600k', '2000000') to bytes."""
+    q = q.strip()
+    if q.endswith("m"):  # milli-bytes -- rare but a legal Quantity emission
+        return int(float(q[:-1]) / 1000)
+    for suffix in ("Ki", "Mi", "Gi", "Ti", "k", "K", "M", "G", "T"):
+        if q.endswith(suffix):
+            return int(float(q[: -len(suffix)]) * _MEM_SUFFIX[suffix])
+    return int(float(q))
+
+
+# Guidance capacity floors per mode -- allocatable across READY nodes. These are
+# operating-experience numbers (the 3-node dev cluster runs `scale`
+# comfortably), not published minimums: breach -> WARN, never FAIL.
+_MODE_CAPACITY = {
+    "slim": (2.0, 4 * 1024**3, 1),
+    "single": (4.0, 8 * 1024**3, 1),
+    "scale": (6.0, 12 * 1024**3, 3),
+}
+
+# Cluster-singleton operators bootstrap detect-or-installs. (name, CRD, deploy
+# name substring) -- deploy is matched by substring across ALL namespaces
+# because an adopted operator may live anywhere.
+_ADOPT_OR_INSTALL = (
+    ("cert-manager", "certificates.cert-manager.io", "cert-manager"),
+    ("external-secrets", "externalsecrets.external-secrets.io", "external-secrets"),
+    ("argocd", "applications.argoproj.io", "argocd-repo-server"),
+)
+
+# Deployment-name substrings that indicate a LoadBalancer provider exists.
+_LB_CONTROLLER_HINTS = ("metallb", "svclb", "cloud-controller", "cilium-operator", "aws-load-balancer")
+
+
+def _kubectl_json(base: list[str], *argv: str) -> tuple[int, dict, str]:
+    """Run kubectl ... -o json and parse. Returns (rc, parsed-or-{}, stderr)."""
+    rc, out, err = _run_text([*base, *argv, "-o", "json"])
+    if rc != 0:
+        return rc, {}, err.strip()
+    try:
+        return 0, json.loads(out), ""
+    except json.JSONDecodeError as exc:
+        return 1, {}, f"unparseable kubectl output: {exc}"
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """READ-ONLY cluster-contract check: is this cluster right for dfe-infra?
+
+    The product rule is "assume a vanilla Rancher/RKE2 cluster and BRING what
+    the stack needs" -- so this does not demand pre-installed operators; it
+    verifies the things bootstrap cannot fix (API access, RBAC, nodes,
+    scheduling labels) and PREVIEWS the decisions bootstrap will take
+    (adopt-or-install, storage fallback). Creates and changes NOTHING.
+    Documented in docs/TESTING-CYCLE.md (the cluster contract).
+    """
+    # --from-terraform then --env-file fill defaults the flags did not set
+    # (same precedence as stack-deploy's _assemble_env: terraform < env-file).
+    file_env: dict[str, str] = {}
+    if args.from_terraform:
+        sys.path.insert(0, str(BOOTSTRAP))
+        from bridge import get_tf_outputs
+
+        file_env.update({k: v for k, v in get_tf_outputs(args.from_terraform).items() if k.startswith("DFE_")})
+    for env_file in args.env_file:
+        file_env.update(_parse_env_file(env_file))
+    namespace = args.namespace or file_env.get("DFE_NAMESPACE") or "dfe-local"
+    storage_class = args.storage_class or file_env.get("DFE_STORAGE_CLASS") or ""
+    context = args.context or file_env.get("DFE_KUBE_CONTEXT") or ""
+
+    base = ["kubectl"]
+    if args.kubeconfig:
+        base += ["--kubeconfig", args.kubeconfig]
+    if context:
+        base += ["--context", context]
+
+    fails: list[str] = []
+    warns: list[str] = []
+
+    def ok(msg: str) -> None:
+        print(f"  [ok]   {msg}", file=sys.stderr)
+
+    def warn(msg: str) -> None:
+        warns.append(msg)
+        print(f"  [warn] {msg}", file=sys.stderr)
+
+    def fail(msg: str) -> None:
+        fails.append(msg)
+        print(f"  [FAIL] {msg}", file=sys.stderr)
+
+    print(
+        f"=== cluster preflight (READ-ONLY) mode={args.mode} "
+        f"context={context or '(current)'} namespace={namespace} ===",
+        file=sys.stderr,
+    )
+
+    if shutil.which("kubectl") is None:
+        print("  [FAIL] kubectl not on PATH", file=sys.stderr)
+        return 1
+
+    # 1. API reachable + server version.
+    rc, ver, err = _kubectl_json(base, "version")
+    if rc != 0:
+        fail(f"API server unreachable: {err or 'kubectl version failed'}")
+        print("=== PREFLIGHT FAILED (cannot reach the cluster) ===", file=sys.stderr)
+        return 1
+    server = ver.get("serverVersion", {})
+    git_version = server.get("gitVersion", "?")
+    try:
+        sv = (int(server.get("major", "0")), int(server.get("minor", "0").rstrip("+")))
+    except ValueError:
+        sv = (0, 0)
+    try:
+        floor = tuple(int(p.rstrip("+")) for p in args.min_k8s.split("."))
+    except ValueError:
+        print(f"  [FAIL] --min-k8s {args.min_k8s!r} is not a version (want e.g. 1.28)", file=sys.stderr)
+        return 2
+    if sv >= floor:
+        ok(f"API server {git_version} (>= {args.min_k8s})")
+    else:
+        fail(f"API server {git_version} is below the supported floor {args.min_k8s}")
+    if "+rke2" in git_version:
+        ok("RKE2 distribution detected (the on-prem baseline)")
+
+    # 2. Nodes: Ready, capacity, and the workload-label trap.
+    rc, nodes_json, err = _kubectl_json(base, "get", "nodes")
+    nodes = nodes_json.get("items", [])
+    if rc != 0 or not nodes:
+        fail(f"cannot list nodes: {err or 'no nodes returned'}")
+        print("=== PREFLIGHT FAILED ===", file=sys.stderr)
+        return 1
+    ready_nodes = [
+        n
+        for n in nodes
+        if any(
+            c.get("type") == "Ready" and c.get("status") == "True"
+            for c in n.get("status", {}).get("conditions", [])
+        )
+    ]
+    if not ready_nodes:
+        fail(f"0 of {len(nodes)} nodes Ready")
+    else:
+        ok(f"{len(ready_nodes)}/{len(nodes)} nodes Ready")
+    # Capacity is guidance, so a Quantity form the parsers do not know must
+    # degrade to a warning -- never a traceback in a tool that promises a
+    # verdict for every check.
+    try:
+        cpu = sum(_parse_cpu(n["status"]["allocatable"].get("cpu", "0")) for n in ready_nodes)
+        mem = sum(_parse_mem(n["status"]["allocatable"].get("memory", "0")) for n in ready_nodes)
+    except ValueError as exc:
+        warn(f"could not parse node allocatable quantities ({exc}) -- capacity check skipped")
+    else:
+        min_cpu, min_mem, min_nodes = _MODE_CAPACITY[args.mode]
+        cap = f"allocatable {cpu:.1f} CPU / {mem / 1024**3:.1f}Gi across {len(ready_nodes)} Ready node(s)"
+        if cpu >= min_cpu and mem >= min_mem and len(ready_nodes) >= min_nodes:
+            ok(f"{cap} (guidance floor for {args.mode}: {min_cpu:.0f} CPU / {min_mem / 1024**3:.0f}Gi / {min_nodes} node(s))")
+        else:
+            warn(
+                f"{cap} is under the {args.mode} guidance floor "
+                f"({min_cpu:.0f} CPU / {min_mem / 1024**3:.0f}Gi / {min_nodes} node(s)) -- expect scheduling pressure"
+            )
+    for pair in args.require_label:
+        if "=" not in pair:
+            fail(f"--require-label {pair!r} is not KEY=VALUE")
+            continue
+        key, val = pair.split("=", 1)
+        matching = [n for n in ready_nodes if n.get("metadata", {}).get("labels", {}).get(key) == val]
+        if matching:
+            ok(f"{len(matching)} Ready node(s) carry {key}={val}")
+        else:
+            fail(
+                f"NO Ready node carries {key}={val} -- every pod selecting on it will sit "
+                "Pending forever with 'didn't match Pod's node affinity/selector'. "
+                "Wrong cluster, or the label was never applied."
+            )
+
+    # 3. Storage: a default StorageClass, a named one, or bootstrap's fallback.
+    rc, sc_json, err = _kubectl_json(base, "get", "storageclass")
+    scs = sc_json.get("items", []) if rc == 0 else []
+    sc_names = [s.get("metadata", {}).get("name", "?") for s in scs]
+    default_scs = [
+        s.get("metadata", {}).get("name", "?")
+        for s in scs
+        if s.get("metadata", {}).get("annotations", {}).get("storageclass.kubernetes.io/is-default-class") == "true"
+    ]
+    if storage_class:
+        if storage_class in sc_names:
+            ok(f"named StorageClass {storage_class!r} exists")
+        elif storage_class == "local-path" and not sc_names:
+            ok(f"StorageClass {storage_class!r} absent -- bootstrap detect-or-installs local-path-provisioner")
+        else:
+            fail(f"StorageClass {storage_class!r} not found (have: {', '.join(sc_names) or 'none'})")
+    elif default_scs:
+        ok(f"default StorageClass: {default_scs[0]}")
+    else:
+        warn("no default StorageClass -- bootstrap will install local-path-provisioner (fine on-prem; on a cloud target set DFE_STORAGE_CLASS)")
+
+    # 4 + 5. One deploy sweep serves the LB heuristic and adopt-or-install.
+    rc, deploys_json, _ = _kubectl_json(base, "get", "deployments", "-A")
+    deploy_names = [d.get("metadata", {}).get("name", "") for d in deploys_json.get("items", [])] if rc == 0 else []
+
+    rc, svc_json, _ = _kubectl_json(base, "get", "services", "-A")
+    lb_live = [
+        s.get("metadata", {}).get("name", "?")
+        for s in svc_json.get("items", [])
+        if s.get("spec", {}).get("type") == "LoadBalancer" and s.get("status", {}).get("loadBalancer", {}).get("ingress")
+    ] if rc == 0 else []
+    lb_ctrl = [n for n in deploy_names if any(h in n for h in _LB_CONTROLLER_HINTS)]
+    if lb_live:
+        ok(f"LoadBalancer provider working ({len(lb_live)} Service(s) hold an address)")
+    elif lb_ctrl:
+        ok(f"LoadBalancer controller present: {lb_ctrl[0]}")
+    else:
+        warn("no LoadBalancer provider detected -- bootstrap installs MetalLB on-prem; on a cloud target the cloud LB controller must exist")
+
+    # 5. Adopt-or-install preview (mirrors bootstrap's dfe_should_install).
+    rc, crd_json, err = _kubectl_json(base, "get", "crd")
+    crd_names = {c.get("metadata", {}).get("name", "") for c in crd_json.get("items", [])} if rc == 0 else set()
+    if rc != 0:
+        warn(f"cannot list CRDs ({err}) -- adopt-or-install preview skipped")
+    else:
+        for name, crd, deploy_hint in _ADOPT_OR_INSTALL:
+            has_crd = crd in crd_names
+            has_deploy = any(deploy_hint in d for d in deploy_names)
+            if has_crd and has_deploy:
+                ok(f"{name}: present -> bootstrap ADOPTS the existing operator")
+            elif has_crd:
+                warn(f"{name}: CRD {crd} present but no running operator (lingering CRD) -> bootstrap re-adopts + INSTALLS")
+            else:
+                ok(f"{name}: absent -> bootstrap INSTALLS DFE-owned")
+
+    # 6. RBAC: the verbs bootstrap needs. can-i is a SelfSubjectAccessReview --
+    # read-only against the cluster.
+    for verb, resource, extra in (
+        ("create", "namespaces", []),
+        ("create", "customresourcedefinitions", []),
+        ("create", "clusterroles", []),
+        ("create", "deployments", ["-n", namespace]),
+        ("create", "secrets", ["-n", namespace]),
+    ):
+        rc, out, _err = _run_text([*base, "auth", "can-i", verb, resource, *extra])
+        scope = f" (ns {namespace})" if extra else ""
+        if rc == 0 and out.strip() == "yes":
+            ok(f"can {verb} {resource}{scope}")
+        else:
+            fail(f"cannot {verb} {resource}{scope} -- bootstrap needs it")
+
+    # 7. Registry reachability FROM THIS MACHINE (the in-cluster path can still
+    # differ -- an air-gapped cluster fails pulls even when this passes).
+    registry_host = args.registry.split("/")[0]
+    try:
+        req = urllib.request.Request(f"https://{registry_host}/v2/", method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            ok(f"registry {registry_host} reachable from here (HTTP {resp.status})")
+    except urllib.error.HTTPError as exc:
+        # 401 IS reachable -- /v2/ demands auth by design.
+        ok(f"registry {registry_host} reachable from here (HTTP {exc.code})")
+    except (urllib.error.URLError, OSError) as exc:
+        warn(f"registry {registry_host} unreachable from this machine ({exc}) -- verify the CLUSTER can pull before deploying")
+
+    hard = len(fails)
+    if args.strict and warns:
+        fails.extend(warns)
+    if fails:
+        print(f"=== PREFLIGHT FAILED ({hard} blocking issue(s), {len(warns)} warning(s){' [--strict]' if args.strict and warns else ''}) ===", file=sys.stderr)
+        return 1
+    print(f"=== PREFLIGHT PASSED ({len(warns)} warning(s)) -- cluster meets the dfe-infra contract ===", file=sys.stderr)
+    return 0
+
+
+def _offline_preflight(args: argparse.Namespace) -> int:
     """Offline, cluster-free gate before any deploy.
 
     Proves the four things that can be checked without a cluster: the stack pins
@@ -518,7 +834,7 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
         print(f"--mode must be one of {', '.join(MODES)}", file=sys.stderr)
         return 2
 
-    if _preflight(args) != 0:
+    if _offline_preflight(args) != 0:
         return 1
     if args.check_only:
         print("check-only: pre-flight passed; no cluster changes made.", file=sys.stderr)
@@ -579,6 +895,107 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
         print("  Two default E2E tests passed (receiver->CH data path + self-monitoring OTel).", file=sys.stderr)
     print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
     return 0
+
+
+# --- cycle subcommand (the repeat create -> test e2e -> destroy loop) ---------
+def cmd_cycle(args: argparse.Namespace) -> int:
+    """THE validation cycle this repo owns: preflight -> deploy+E2E -> smoke -> destroy.
+
+    Each stage self-executes as its own dfe-ops subcommand, so a stage run by
+    the cycle is EXACTLY the stage a human runs by hand -- no drift between
+    "the cycle" and "the commands". The one thing the cycle adds on top is
+    target pinning: --kubeconfig is exported as KUBECONFIG to EVERY stage,
+    because verify/teardown are ambient-context tools and a mixed-target
+    cycle would smoke-test one cluster and destroy another.
+    Documented in docs/TESTING-CYCLE.md.
+
+    Destroy runs by default (an ephemeral test deployment must die with the
+    cycle -- non-negotiable for cloud targets); --keep skips it for
+    interactive debugging on a dev cluster. A FAILED deploy still destroys,
+    so a broken run never strands a half-stack.
+    """
+    self_cmd = [sys.executable, str(Path(__file__).resolve())]
+    passthrough_kube = ["--kubeconfig", args.kubeconfig] if args.kubeconfig else []
+    passthrough_env = [flag for f in args.env_file for flag in ("--env-file", f)]
+
+    # EVERY stage must aim at the SAME cluster. verify/teardown wrap shell
+    # scripts that use the ambient context, so --kubeconfig alone would leave
+    # the smoke suite validating -- and the FORCED destroy wiping -- whatever
+    # cluster the operator's current context happens to point at (the exact
+    # wrong-cluster trap preflight exists to catch). Exporting KUBECONFIG to
+    # every child pins all four stages to the target.
+    stage_env = dict(os.environ)
+    if args.kubeconfig:
+        if not Path(args.kubeconfig).is_file():
+            print(f"ERROR: --kubeconfig {args.kubeconfig} not found", file=sys.stderr)
+            return 1
+        stage_env["KUBECONFIG"] = str(Path(args.kubeconfig).resolve())
+
+    stages: list[tuple[str, list[str]]] = []
+    if not args.skip_preflight:
+        preflight_cmd = [
+            *self_cmd, "preflight", "--mode", args.mode,
+            *passthrough_kube, *passthrough_env,
+            "--registry", args.registry.split("/")[0],
+        ]
+        if args.from_terraform:
+            preflight_cmd += ["--from-terraform", args.from_terraform]
+        for pair in args.require_label:
+            preflight_cmd += ["--require-label", pair]
+        stages.append(("preflight", preflight_cmd))
+
+    deploy_cmd = [
+        *self_cmd, "stack-deploy", "--mode", args.mode, "--stack", args.stack,
+        "--registry", args.registry,
+        *passthrough_kube, *passthrough_env,
+    ]
+    if args.from_terraform:
+        deploy_cmd += ["--from-terraform", args.from_terraform]
+    if args.target_revision:
+        deploy_cmd += ["--target-revision", args.target_revision]
+    stages.append(("deploy+e2e", deploy_cmd))
+    stages.append(("smoke", [*self_cmd, "verify"]))
+
+    results: list[tuple[str, int, float]] = []
+    aborted = False
+    for name, cmd in stages:
+        print(f"\n=== cycle stage: {name} ===", file=sys.stderr)
+        started = time.monotonic()
+        rc = _run_streaming(cmd, env=stage_env)
+        results.append((name, rc, time.monotonic() - started))
+        if rc != 0:
+            aborted = True
+            print(f"=== cycle stage {name} FAILED (rc {rc}) -- skipping later test stages ===", file=sys.stderr)
+            break
+
+    # Destroy is NOT skipped on failure -- an aborted cycle must not strand a
+    # half-deployed stack (and a cloud target must never outlive its test).
+    # A terraform-provisioned target also destroys its IaC state: the on-cluster
+    # teardown alone would leave the control plane + nodes running (and
+    # billing), which breaks the ephemeral-cloud rule.
+    if args.keep:
+        print("\n--keep: leaving the deployment up (destroy it yourself: dfe-ops teardown).", file=sys.stderr)
+    else:
+        print("\n=== cycle stage: destroy ===", file=sys.stderr)
+        teardown_cmd = [*self_cmd, "teardown", "--force"]
+        if args.from_terraform:
+            teardown_cmd += ["--with-terraform", "--tf-dir", args.from_terraform]
+        started = time.monotonic()
+        rc = _run_streaming(teardown_cmd, env=stage_env)
+        results.append(("destroy", rc, time.monotonic() - started))
+        if rc != 0:
+            aborted = True
+
+    print("\n=== cycle summary ===", file=sys.stderr)
+    for name, rc, secs in results:
+        verdict = "ok" if rc == 0 else f"FAILED rc={rc}"
+        print(f"  {name:<10} {verdict:<12} {secs:7.1f}s", file=sys.stderr)
+    skipped = [name for name, _ in stages if name not in {r[0] for r in results}]
+    for name in skipped:
+        print(f"  {name:<10} skipped", file=sys.stderr)
+    overall = 1 if aborted or any(rc != 0 for _, rc, _ in results) else 0
+    print(f"=== cycle {'FAILED' if overall else 'PASSED'} ===", file=sys.stderr)
+    return overall
 
 
 # --- parser ------------------------------------------------------------------
@@ -685,6 +1102,43 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--dry-run", action="store_true", help="pre-flight + bootstrap in DFE_DRY_RUN mode (prints commands, no apply)")
     sd.set_defaults(func=cmd_stack_deploy)
 
+    # preflight
+    pf = sub.add_parser(
+        "preflight",
+        help="READ-ONLY check: is this cluster right for a DFE deployment?",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    pf.add_argument("--mode", default="single", choices=list(MODES), help="deploy profile the cluster is being sized for")
+    pf.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    pf.add_argument("--context", default=None, help="kubeconfig context name (default: DFE_KUBE_CONTEXT from --env-file, else current)")
+    pf.add_argument("--namespace", default=None, help="target app namespace (default: DFE_NAMESPACE from --env-file, else dfe-local)")
+    pf.add_argument("--storage-class", default=None, help="named StorageClass to require (default: DFE_STORAGE_CLASS from --env-file, else any default SC)")
+    pf.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file supplying defaults (repeatable; later wins)")
+    pf.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* defaults from a terraform env dir (env files win over it)")
+    pf.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="a node label Ready workers MUST carry (repeatable) -- catches the wrong-cluster trap")
+    pf.add_argument("--registry", default="ghcr.io", help="registry HOST to check reachability of (from this machine)")
+    pf.add_argument("--min-k8s", default="1.28", help="minimum Kubernetes server version (guidance floor)")
+    pf.add_argument("--strict", action="store_true", help="treat warnings as failures")
+    pf.set_defaults(func=cmd_preflight)
+
+    # cycle
+    cy = sub.add_parser(
+        "cycle",
+        help="THE validation cycle: preflight -> stack-deploy+E2E -> smoke suite -> destroy",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    cy.add_argument("--mode", required=True, choices=list(MODES), help="deploy profile to cycle")
+    cy.add_argument("--stack", default=DEFAULT_STACK, help="versions.yaml stack version to deploy")
+    cy.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
+    cy.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
+    cy.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* outputs from a terraform env dir")
+    cy.add_argument("--target-revision", default=None, help="Argo git ref for the pinned charts")
+    cy.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix")
+    cy.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="node label the preflight must find (repeatable)")
+    cy.add_argument("--skip-preflight", action="store_true", help="skip the online cluster preflight stage")
+    cy.add_argument("--keep", action="store_true", help="do NOT destroy at the end (dev-cluster debugging only; cloud cycles must destroy)")
+    cy.set_defaults(func=cmd_cycle)
+
     # teardown
     td = sub.add_parser(
         "teardown",
@@ -696,7 +1150,12 @@ def build_parser() -> argparse.ArgumentParser:
     td.add_argument("--with-terraform", action="store_true", help="also destroy terraform state (OpenBao KV + AppRoles)")
     td.add_argument("--cloud", default="local", help="terraform env for --with-terraform")
     td.add_argument("--tf-dir", default=None, help="terraform env dir for --with-terraform (default: auto from --cloud)")
-    td.add_argument("--tf-bin", default="terraform", help="terraform binary (terraform or tofu)")
+    # OpenTofu is the house IaC tool; plain terraform is the retiring fallback.
+    td.add_argument(
+        "--tf-bin",
+        default=("tofu" if shutil.which("tofu") else "terraform"),
+        help="IaC binary for --with-terraform (auto: tofu if on PATH, else terraform)",
+    )
     td.set_defaults(func=cmd_teardown)
 
     # verify

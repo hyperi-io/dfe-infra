@@ -148,6 +148,10 @@ spec:
           volumeMounts:
             - name: pki
               mountPath: /etc/vpn/pki
+          # /health/* NOT the canonical /healthz+/readyz: the dfe-vpn health
+          # server (scripts/lib/health.py in that repo) serves ONLY the alias
+          # spellings today. Flip these when the app adds the canonical routes
+          # (tracked in the dfe-vpn repo) -- flipping first bricks the pod.
           livenessProbe:
             httpGet:
               path: /health/live

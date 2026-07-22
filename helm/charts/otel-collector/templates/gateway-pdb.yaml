@@ -1,0 +1,31 @@
+{{- /*
+Gateway PDB -- own manifest because the gateway Deployment uses its own
+selector (app.kubernetes.io/name: <fullname>-gateway), not
+dfe-common.selectorLabels, so the dfe-common.pdb helper cannot cover it.
+Same replica-gating rationale as the helper: a minAvailable PDB against a
+single replica blocks every voluntary eviction, so nothing renders until
+gateway.replicas >= 2. The daemonset needs no PDB (one pod per node by
+definition; drains evict it and the new node's pod takes over).
+*/ -}}
+{{- $enabled := true -}}
+{{- $maxUnavailable := 1 -}}
+{{- with .Values.gateway.pdb -}}
+{{- if hasKey . "enabled" }}{{- $enabled = .enabled -}}{{- end -}}
+{{- $maxUnavailable = .maxUnavailable | default 1 -}}
+{{- end -}}
+{{- if and $enabled (ge (int .Values.gateway.replicas) 2) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-gateway
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  {{- /* maxUnavailable, not minAvailable: same autoscaler-shrink rationale
+         as dfe-common.pdb -- a minAvailable budget on a workload that can
+         scale to 1 blocks every drain. */}}
+  maxUnavailable: {{ $maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway
+{{- end }}
