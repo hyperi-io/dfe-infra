@@ -5,10 +5,13 @@ version: 0.1.0
 appVersion: "0.0.1"
 dependencies:
   - name: dfe-common
-    # Range, NOT an exact pin. This harness exists only to prove the CURRENT
-    # library templates render, so it must track dfe-common rather than be
-    # bumped alongside it -- an exact pin silently breaks `helm dependency
-    # update` (and so the helm-lint workflow) on every library version bump,
-    # which is how it came to be pinned at 0.1.1 against a 0.1.2 library.
-    version: "^0.1.0"
+    # FLOOR with NO ceiling, not an exact pin and not a caret range. This
+    # harness exists only to prove the CURRENT library templates render, so
+    # it must track dfe-common rather than be bumped alongside it. An exact
+    # pin breaks `helm dependency update` (and the helm-lint workflow) on
+    # every library bump -- and the caret range that replaced it (^0.1.0)
+    # broke the same way at the 0.2.0 bump, because a caret is just a wider
+    # ceiling. The file:// repository always holds exactly one version (the
+    # working tree's), so an unbounded floor resolves to it and nothing else.
+    version: ">= 0.1.0"
     repository: "file://../../"
