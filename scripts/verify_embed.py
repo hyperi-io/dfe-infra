@@ -23,8 +23,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
+from pathlib import Path
 
-SHOT = "/Volumes/projects/dfe-infra/.tmp/embed.png"
+# Where the eyeball screenshot lands. NOT a hardcoded path: this script is part of
+# the product suite and runs on an external org's deploy host as readily as ours.
+DEFAULT_SHOT = Path(tempfile.gettempdir()) / "dfe-embed.png"
 
 
 def _fill_login(page, user: str, pw: str) -> bool:
@@ -56,6 +60,7 @@ def run(
     feature: str,
     hdx_user: str,
     hdx_pw: str,
+    shot: Path,
 ) -> int:
     try:
         from playwright.sync_api import sync_playwright
@@ -131,7 +136,8 @@ def run(
             except Exception as exc:
                 errors.append(f"theme probe: {exc}")
 
-        page.screenshot(path=SHOT, full_page=True)
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(shot), full_page=True)
         browser.close()
 
     logged_in = "/login" not in after_login_url
@@ -179,7 +185,7 @@ def run(
     print(f"  after login -> {after_login_url}")
     print(f"  iframe src  -> {iframe_src}")
     print(f"  hyperdx frame url -> {frame_url}  appnav_in_frame={frame_has_appnav}")
-    print(f"  screenshot -> {SHOT}\n")
+    print(f"  screenshot -> {shot}\n")
     failures = 0
     for name, ok, note in checks:
         print(f"  [{'ok  ' if ok else 'FAIL'}] {name}" + (f" -- {note}" if note else ""))
@@ -201,6 +207,12 @@ def main() -> int:
     ap.add_argument("--feature", default="search")
     ap.add_argument("--hdx-user", default="dev@dfe.local", help="hyperdx login")
     ap.add_argument("--hdx-password", default="DfeLocalDev123!")
+    ap.add_argument(
+        "--screenshot",
+        type=Path,
+        default=DEFAULT_SHOT,
+        help=f"where to write the eyeball screenshot (default: {DEFAULT_SHOT})",
+    )
     args = ap.parse_args()
     return run(
         args.dfeui,
@@ -210,6 +222,7 @@ def main() -> int:
         args.feature,
         args.hdx_user,
         args.hdx_password,
+        args.screenshot,
     )
 
 

@@ -36,6 +36,10 @@ run_test "CORE e2e (pipelines streaming)" "smoke-test-integration.sh"
 run_test "Layer 1 (Bootstrap)" "smoke-test.sh"
 run_test "Layer 2 (Data Platform)" "smoke-test-data.sh"
 run_test "Auth & Ingress" "smoke-test-auth.sh"
+# The fork's three DFE-specific seams (engine JWT / ClickHouse reads / embed
+# headers). Nothing upstream covers them, so an upstream sync can merge clean and
+# still break them -- this is where that shows up.
+run_test "HyperDX seams (auth/data/embed)" "smoke-test-hyperdx.sh"
 run_test "KEDA Autoscaling" "smoke-test-keda.sh"
 # The deep scale PROOF (artificial +1 pod via the fail-safe shim) mutates the cluster +
 # takes ~2-3 min, so it is gated. Defaults ON for full validation; set
