@@ -111,7 +111,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.10.6"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
+      dfe-engine: "v1.10.7"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
       dfe-ui: "v1.1.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
       dfe-receiver: "v1.15.15"      # independent release line
       dfe-loader: "v1.18.7"
@@ -128,7 +128,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:511aefae16392d849c6ed1399d0163a8d4d96f81aec483d202c43b4cd61a271f"
+      dfe-engine: "sha256:b445c7b472b1d17b7e11c64eabcbe477b893af07e1fad08a8909dc96e653176f"
       dfe-ui: "sha256:04eb29517c2293e99a844566dbad35d77c70c5ca53d8ed0b0f6f0f7d5a92f2d6"
       dfe-receiver: "sha256:3ea760b4a1aa0aab88bbca33a31fe396f00d4ed74dc42e299e539ca1a5ad4da1"
       dfe-loader: "sha256:c4f0d47adf8e99e2c5db9780d06b2f6cc23e3c1157a6abb6000b0ce4c6273da7"

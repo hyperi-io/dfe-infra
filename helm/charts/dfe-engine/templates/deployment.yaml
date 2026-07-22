@@ -40,6 +40,10 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           ports:
+            # Observability (health + /metrics), served by scalo's ServiceApp on
+            # 9090 -- the port the prometheus scrape annotation already targets.
+            - name: obs
+              containerPort: 9090
             - name: http
               containerPort: 8000
           env:
@@ -157,16 +161,18 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # Probes hit the observability port (#106), not the API port -- the
+          # engine serves health on 9090 now (with /health/* aliases).
           livenessProbe:
             httpGet:
               path: /health/live
-              port: http
+              port: obs
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /health/ready
-              port: http
+              port: obs
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
