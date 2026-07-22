@@ -11,6 +11,7 @@ on:
       - 'versions.yaml'
       - 'constraints/**'
       - 'scripts/check_versions_drift.py'
+      - 'scripts/check_governance_drift.py'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
   pull_request:
@@ -21,6 +22,7 @@ on:
       - 'versions.yaml'
       - 'constraints/**'
       - 'scripts/check_versions_drift.py'
+      - 'scripts/check_governance_drift.py'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
 
@@ -68,3 +70,33 @@ jobs:
           for f in $(find argocd -name '*.yaml' -type f); do
             python3 -c "import yaml,sys; list(yaml.safe_load_all(open('$f')))" && echo "OK: $f"
           done
+
+  # Drift guard (#22): the dfe-deploy template's governance actions dial chart
+  # values by dot-path; a chart renaming a dial var would orphan an action
+  # silently. dfe-deploy's own CI validates action STRUCTURE and leaves the
+  # chart side to us. dfe-deploy is PRIVATE, so this needs a repo secret
+  # DFE_DEPLOY_TOKEN (read access to hyperi-io/dfe-deploy); without it the job
+  # reports a LOUD skip rather than a silent green.
+  governance-drift:
+    name: governance actions vs chart values
+    runs-on: ubuntu-latest
+    env:
+      HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout dfe-deploy template
+        if: env.HAS_DEPLOY_TOKEN == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: hyperi-io/dfe-deploy
+          token: ${{ secrets.DFE_DEPLOY_TOKEN }}
+          path: .dfe-deploy
+
+      - name: Governance drift check
+        if: env.HAS_DEPLOY_TOKEN == 'true'
+        run: python3 scripts/check_governance_drift.py --deploy-root .dfe-deploy --require
+
+      - name: Governance drift check SKIPPED
+        if: env.HAS_DEPLOY_TOKEN != 'true'
+        run: echo "::warning::governance drift NOT checked -- no DFE_DEPLOY_TOKEN secret (needs read on hyperi-io/dfe-deploy)"
