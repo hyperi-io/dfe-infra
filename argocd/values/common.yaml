@@ -80,14 +80,22 @@ argocd:
     # Default RBAC policy — deny all, explicit grants only
     defaultPolicy: "role:readonly"
     # DFE role mappings (group → ArgoCD role)
-    # Populated by dfe-engine generate_rbac_csv() when OIDC is enabled
+    # Populated by dfe-engine generate_rbac_csv() when OIDC is enabled.
+    #
+    # Group names are the canonical set — dfe-engine docs/control-plane/
+    # rbac-vocabulary.md is the SSoT. Do not invent names here: a group ArgoCD
+    # does not know about is a user who looks authorised in the engine and is
+    # invisible to Argo.
     policy: |
       p, role:dfe-admin, applications, *, */*, allow
       p, role:dfe-admin, clusters, *, *, allow
       p, role:dfe-admin, repositories, *, *, allow
+      p, role:dfe-infra, applications, *, */*, allow
+      p, role:dfe-infra, repositories, *, *, allow
       p, role:dfe-operator, applications, get, */*, allow
       p, role:dfe-operator, applications, sync, */*, allow
       p, role:dfe-viewer, applications, get, */*, allow
       g, dfe-admins, role:dfe-admin
+      g, dfe-infra, role:dfe-infra
       g, dfe-operators, role:dfe-operator
       g, dfe-viewers, role:dfe-viewer

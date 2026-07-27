@@ -1,0 +1,84 @@
+# STAGED, NOT LIVE. Kafbat auth: local break-glass + OIDC locked to dfe-infra roles.
+#
+# The kafbat chart (helm/charts/kafbat) already ships the full auth build - local
+# break-glass LOGIN_FORM recovery PLUS native kafbat OIDC (OAUTH2) with an RBAC
+# role map. It is dormant by default (oidc.enabled=false, rbac subjects empty) so
+# a bare cluster still boots. This overlay ENABLES it and fills the subjects.
+#
+# It lives under argocd/values/staging/ so ArgoCD does NOT read it (the appset
+# cascade only reads common.yaml + <cloud>.yaml + profile-<tier>.yaml). Applying =
+# merge this `kafbat:` block into argocd/values/local-dfe.yaml (Cluster B / the
+# DFE cloud) and commit - but ONLY after the parked provisioning below, because
+# kafbat REFUSES TO BOOT if OAUTH2 is enabled with no reachable provider/secret.
+#
+# ---------------------------------------------------------------------------
+# PARKED provisioning (do these first, in order - each needs network/bao/live IdP)
+# ---------------------------------------------------------------------------
+# 1. Register a `kafbat` OIDC client at the IdP. On devex that is dex
+#    (https://dex.devex.hyperi.io): add a staticClient to the dex values in
+#    hyperi-infra ansible/playbooks/k8s-services.yml (alongside dfe-engine):
+#      - id: kafbat
+#        name: Kafbat
+#        secretEnv: DEX_KAFBAT_CLIENT_SECRET
+#        redirectURIs:
+#          - https://kafbat.devex.hyperi.io/login/oauth2/code/dfe
+#    (spring-security's redirect path is /login/oauth2/code/<registrationId>;
+#    the chart's registrationId is `dfe` - see templates/configmap.yaml.)
+# 2. Store the client secret in bao (kv/services/dex, key kafbat_client_secret)
+#    and add an ExternalSecret `dfe-kafbat-oidc` in the kafka namespace that
+#    materialises it with key `client-secret` (clientSecretName below).
+# 3. The dfe-infra groups the RBAC subjects reference must be REAL group claims
+#    the IdP emits: dfe-infra, dfe-admins (full admin) and dfe-infra-viewers
+#    (read-only). dex+glauth (the staged rig) emits exactly these - see
+#    hyperi-infra subprojects/dfe-oidc-testing/fixture.yaml.
+# 4. Cluster B has NO working L7 gateway yet (the Envoy Gateway controller is
+#    unwired - see dfe-infra bootstrap). Exposing kafbat at a hostname needs the
+#    gateway stood up first, OR reach it via `kubectl -n kafka port-forward`.
+#    kafbat is deliberately NOT behind the Envoy google-oidc edge policy: it does
+#    its OWN OIDC so it can read the group claim for RBAC (the edge only injects
+#    X-Oidc-* headers, which carry no groups).
+# 5. Merge the block below into argocd/values/local-dfe.yaml and commit.
+#
+# Break-glass stays enabled throughout: if the IdP is down, flip
+# kafbat.auth.type to LOGIN_FORM and log in as dfe-breakglass (secret
+# dfe-kafbat-breakglass) which maps to the admin role.
+# ---------------------------------------------------------------------------
+
+kafbat:
+  auth:
+    type: OAUTH2            # primary: OIDC. Break-glass recovery = LOGIN_FORM.
+
+  oidc:
+    enabled: true
+    issuerUri: https://dex.devex.hyperi.io
+    clientId: kafbat
+    clientSecretName: dfe-kafbat-oidc   # ESO Secret, key: client-secret
+    rolesField: groups                  # the claim carrying the user's groups
+
+  # RBAC locked to the dfe-infra role vocabulary (dfe-engine roles.yaml /
+  # rbac-vocabulary.md). Full admin for infra admins + platform admins;
+  # read-only for the infra viewers group.
+  rbac:
+    enabled: true
+    roles:
+      admin:
+        subjects: [dfe-infra, dfe-admins]
+      rw:
+        subjects: []            # no write-but-not-admin tier requested
+      ro:
+        subjects: [dfe-infra-viewers]
+
+  # Local recovery admin - the only non-OIDC path, for IdP-down / bootstrap.
+  breakGlass:
+    enabled: true
+    username: dfe-breakglass
+    secretName: dfe-kafbat-breakglass
+    generate: true             # ESO-generated on a bare cluster
+
+  # Manage the deployed DFE Kafka.
+  kafka:
+    clusters:
+      - name: dfe
+        provider: strimzi
+        bootstrapServers: dfe-kafka-bootstrap.kafka.svc:9092
+        credentialsSecretName: dfe-kafka-user
