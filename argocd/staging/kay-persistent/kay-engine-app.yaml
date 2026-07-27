@@ -1,0 +1,54 @@
+# STAGED, NOT LIVE (lives under argocd/staging/, which no appset reads).
+# Persistent always-on dfe-engine for Kay's UI testing, in namespace dfe-kay,
+# tracking GHCR and auto-bumping on new images via argocd-image-updater.
+#
+# Apply = move this + kay-ui-app.yaml to a path ArgoCD watches (or `kubectl apply`
+# them into the argocd namespace) AFTER the prerequisites in README.md. Parked
+# because it mutates the shared cluster and image-updater is not installed yet.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kay-dfe-engine
+  namespace: argocd
+  labels:
+    dfe.hyperi.io/env: kay
+  annotations:
+    # argocd-image-updater: auto-bump when a newer engine image lands on GHCR.
+    # semver strategy tracks release tags; swap to `newest-build` + an allow-tags
+    # regexp if you want to track a moving main-line tag instead.
+    argocd-image-updater.argoproj.io/image-list: >-
+      engine=ghcr.io/hyperi-io/dfe-engine
+    argocd-image-updater.argoproj.io/engine.update-strategy: semver
+    argocd-image-updater.argoproj.io/engine.pull-secret: pullsecret:argocd/ghcr-pull-secret
+    argocd-image-updater.argoproj.io/engine.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/engine.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: dfe-apps
+  source:
+    repoURL: git@github.com:hyperi-io/dfe-infra.git
+    targetRevision: main
+    path: helm/charts/dfe-engine
+    helm:
+      ignoreMissingValueFiles: true
+      valueFiles:
+        - ../../../argocd/values/common.yaml
+      values: |
+        global:
+          registry: ghcr.io/hyperi-io
+        image:
+          # image-updater manages tag; seed a known-good stable tag on first apply.
+          tag: ""
+        # For LIVE SSO e2e the engine needs native-RP wiring (see README.md):
+        # a session secret + a seeded OIDC provider. Left default here; enabling
+        # them is the parked prerequisite, not part of the deployment mechanics.
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dfe-kay
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,48 @@
+# STAGED, NOT LIVE. Persistent always-on dfe-ui for Kay, namespace dfe-kay,
+# GHCR-tracking with argocd-image-updater. Pairs with kay-engine-app.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kay-dfe-ui
+  namespace: argocd
+  labels:
+    dfe.hyperi.io/env: kay
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: >-
+      ui=ghcr.io/hyperi-io/dfe-ui
+    argocd-image-updater.argoproj.io/ui.update-strategy: semver
+    argocd-image-updater.argoproj.io/ui.pull-secret: pullsecret:argocd/ghcr-pull-secret
+    argocd-image-updater.argoproj.io/ui.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/ui.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: dfe-apps
+  source:
+    repoURL: git@github.com:hyperi-io/dfe-infra.git
+    targetRevision: main
+    path: helm/charts/dfe-ui
+    helm:
+      ignoreMissingValueFiles: true
+      valueFiles:
+        - ../../../argocd/values/common.yaml
+      values: |
+        global:
+          registry: ghcr.io/hyperi-io
+        image:
+          tag: ""
+        config:
+          # Point the UI at the Kay engine. NEXTAUTH_URL/API base are wired by the
+          # chart; the SSO buttons show when NEXT_PUBLIC_OIDC_PROVIDERS is set
+          # (see dfe-ui SsoButtons). Set the provider list once the engine has a
+          # seeded OIDC provider (README.md).
+          apiUrl: http://kay-dfe-engine.dfe-kay.svc:8000
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dfe-kay
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
