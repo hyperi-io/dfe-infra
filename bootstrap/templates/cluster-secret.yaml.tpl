@@ -24,9 +24,12 @@ metadata:
     # GitOps source
     dfe.hyperi.io/repo_url: "${DFE_REPO_URL}"
     dfe.hyperi.io/target_revision: "${DFE_TARGET_REVISION}"
-    # Deploy-specific gitops repo (dfe-engine writes, Argo watches). Defaults to
-    # the in-cluster Forgejo service (owner dfe-admin); may point at external
-    # GitHub/GitLab instead. MUST match the engine's DFE_GITOPS_REPO_URL.
+    # Deploy-specific gitops repo -- the SINGLE source for the deploy repo coords.
+    # Argo reads it here (layer2-apps source 2 + the git generator), and the appset
+    # injects the same value into the dfe-engine chart (gitops.repoUrl/branch), so
+    # the engine WRITES the repo it reads -- no separate DFE_GITOPS_REPO_URL to keep
+    # in sync. Unset DFE_CONFIG_REPO_URL -> the in-cluster Forgejo fallback; set it
+    # to an external GitHub/GitLab/self-hosted repo for the primary path.
     dfe.hyperi.io/config_repo_url: "${DFE_CONFIG_REPO_URL}"
     dfe.hyperi.io/config_repo_revision: "${DFE_CONFIG_REPO_REVISION}"
     # Infrastructure outputs (from Terraform)
