@@ -762,6 +762,12 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     else:
         common = ARGO_VALUES / "common.yaml"
         profile = ARGO_VALUES / f"profile-{args.mode}.yaml"
+        # appNamespace is an estate value the appset supplies at deploy from the
+        # cluster's dfe.hyperi.io/dfe_namespace annotation; scale's kafka chart
+        # fail-fasts without it (fromSecretsStore needs a target namespace to
+        # project the credential into). Offline there is no annotation, so feed a
+        # synthetic one -- this is a structural render check, the output is
+        # discarded, and the fail-fast still guards real deploys.
         for chart in (*_MODE_SUBSTRATE[args.mode], *_PREFLIGHT_APPS):
             tmp = tempfile.mkdtemp(prefix=f"dfe-render-{chart}-")
             try:
@@ -769,6 +775,7 @@ def _offline_preflight(args: argparse.Namespace) -> int:
                     [
                         "helm", "template", chart, str(HELM_CHARTS / chart),
                         "-f", str(common), "-f", str(profile),
+                        "--set", "appNamespace=preflight",
                         "--output-dir", tmp,
                     ]
                 )

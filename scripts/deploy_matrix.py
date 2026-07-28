@@ -193,6 +193,15 @@ def _mode_flag(cell: Cell) -> list[str]:
     # --set wins over the profile file, so the cell's mode is authoritative.
     for s in [f"{key}={cell.mode}", *cell.extra_sets]:
         flags += ["--set", s]
+    # The kafka chart fail-fasts when user.password.fromSecretsStore is on (the
+    # cluster + strimzi cells) unless appNamespace names where the KafkaUser
+    # credential is projected for the apps to read. In a live cluster the appset
+    # supplies it from the target's dfe.hyperi.io/dfe_namespace annotation; the
+    # matrix deploys the chart standalone, so the credential belongs in the cell's
+    # OWN namespace. Setting it here fixes both the render (dry-run) and the apply
+    # path, and is harmless on the kafka cells that never enter that branch.
+    if cell.chart == "kafka":
+        flags += ["--set", f"appNamespace={cell.namespace}"]
     return flags
 
 
