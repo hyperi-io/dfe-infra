@@ -114,15 +114,14 @@ spec:
           # up long enough to consume. A liveness probe that cannot pass is worse than
           # none -- it turns a healthy process into a crashloop.
           #
-          # NO startupProbe, deliberately, and do NOT add one from the contract doc:
-          # dfe-loader never calls scalo's mark_started(), so :9090/startupz answers a
-          # permanent 503 (verified live). The canonical startupProbe would fail every
-          # time and brick the pod -- the same shape of trap as the pgrep probe. Fix
-          # belongs upstream in dfe-loader (call mark_started once Kafka is subscribed
-          # and the schema cache is warm), THEN add the probe here.
+          # A startupProbe, if added, targets /livez. There is no startup route: k8s
+          # suspends liveness until the startup probe passes, so one path carries both
+          # the long boot budget and the tight liveness period. The old trap here was a
+          # startupProbe aimed at a path that answered a permanent 503 -- the same shape
+          # as the pgrep probe, a check that could never pass.
           livenessProbe:
             httpGet:
-              path: /healthz          # always 200 while the process can answer
+              path: /livez          # always 200 while the process can answer
               port: metrics
             initialDelaySeconds: 10
             periodSeconds: 30

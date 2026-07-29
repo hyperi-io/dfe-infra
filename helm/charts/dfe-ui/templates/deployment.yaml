@@ -72,10 +72,15 @@ spec:
               mountPath: /tmp
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          # The same probe trinity + shape the Rust services use (scalo-rs
-          # docs/core-pillars/HEALTH.md): startup owns the boot budget, liveness only
-          # asks "is the process deadlocked", readiness owns traffic. dfe-ui now
-          # serves the canonical paths with the canonical bodies.
+          # The same probes + shape the Rust services use (scalo-rs
+          # docs/core-pillars/health.md): liveness only asks "is the process
+          # deadlocked", readiness owns traffic. dfe-ui serves the canonical
+          # paths with the canonical bodies.
+          #
+          # startupProbe targets /livez -- there is no startup route. Kubernetes
+          # suspends liveness until the startup probe passes, so one path gives
+          # both the long boot budget and a tight liveness period, and the two
+          # cannot drift apart.
           #
           # These probed /health/live + /health/ready against an app that had NO health
           # routes at all -- every probe 404'd, so readiness never passed and liveness
@@ -90,7 +95,7 @@ spec:
           # and bodies are identical, which is what the probes actually read.
           startupProbe:
             httpGet:
-              path: /startupz
+              path: /livez
               port: http
             # 30 * 2s = 1 min boot budget, then restart. Next cold start is slow;
             # this is what stops a slow boot reading as a dead process.
@@ -98,7 +103,7 @@ spec:
             periodSeconds: 2
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: http
             periodSeconds: 10
           readinessProbe:

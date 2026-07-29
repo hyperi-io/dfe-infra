@@ -148,10 +148,12 @@ spec:
           volumeMounts:
             - name: pki
               mountPath: /etc/vpn/pki
-          # /health/* NOT the canonical /healthz+/readyz: the dfe-vpn health
-          # server (scripts/lib/health.py in that repo) serves ONLY the alias
-          # spellings today. Flip these when the app adds the canonical routes
-          # (tracked in the dfe-vpn repo) -- flipping first bricks the pod.
+          # /health/* NOT the canonical /livez+/readyz: the dfe-vpn health
+          # server (scripts/lib/health.py in that repo) serves ONLY these
+          # spellings today, and they are retired everywhere else. Flip these
+          # when the app serves the canonical routes (tracked in the dfe-vpn
+          # repo) -- flipping first bricks the pod, which is precisely the
+          # chart-ahead-of-app fault this standard exists to stop.
           livenessProbe:
             httpGet:
               path: /health/live

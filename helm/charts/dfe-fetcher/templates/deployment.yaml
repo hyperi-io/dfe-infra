@@ -34,7 +34,7 @@ spec:
             - "/etc/dfe/fetcher.yaml"
           ports:
             # scalo's metrics server (defaults on 0.0.0.0:9090) hosts /metrics and
-            # the /healthz + /readyz health endpoints -- one port for the scrape
+            # the /livez + /readyz health endpoints -- one port for the scrape
             # annotation and the probes to agree on. Same scalo contract as dfe-loader.
             - name: metrics
               containerPort: 9090
@@ -72,12 +72,12 @@ spec:
           # WAS `exec: pgrep dfe-fetcher` -- a process-existence check that stays
           # green on a wedged-but-alive process, exactly the state liveness must
           # catch (k8s.md:970, containers.md:688-711). Moved to the scalo HTTP health
-          # endpoints, matching dfe-loader (live-verified). NO startupProbe: scalo's
-          # /startupz stays 503 until the app calls mark_started(), so a startup probe
-          # would brick the pod (see the dfe-loader comment) -- add it upstream first.
+          # endpoints, matching dfe-loader (live-verified). A startupProbe, if added,
+          # targets /livez -- there is no startup route, and k8s suspends liveness
+          # until the startup probe passes.
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: metrics
             initialDelaySeconds: 10
             periodSeconds: 30
