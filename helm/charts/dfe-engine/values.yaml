@@ -36,15 +36,19 @@ otel:
   endpoint: ""
 
 # Gitops deploy repo -- dfe-engine renders + commits artifacts here; Argo applies.
-# Defaults to the in-cluster Forgejo FALLBACK repo; push creds = the Forgejo admin
-# secret (mirrored into this namespace by bootstrap.sh). When an external git
-# (GitHub/GitLab) is supplied, the deploy overlay repoints repoUrl + credentials.
+# repoUrl + branch are SINGLE-SOURCED: the layer2-apps appset injects them as helm
+# params from the cluster-secret config_repo_url / config_repo_revision
+# annotations, so the engine's write target ALWAYS equals the repo Argo reads
+# (they cannot drift). The values below are the standalone-install fallback only
+# (in-cluster Forgejo). Push cred: dfe-deploy-repo-auth (keys username/password),
+# created in this namespace by bootstrap.sh from the same input in both modes --
+# Forgejo admin creds when bundled, DFE_CONFIG_REPO_USER/TOKEN when external git.
 gitops:
   enabled: true
   repoUrl: "http://dfe-forgejo.forgejo.svc.cluster.local:3000/dfe-admin/deploy.git"
   branch: main
   localPath: /var/run/dfe/deploy-repo
-  credentialsSecret: dfe-forgejo-admin   # keys: username, password
+  credentialsSecret: dfe-deploy-repo-auth   # keys: username, password
 
 auth:
   jwtSecretName: dfe-engine-jwt

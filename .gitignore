@@ -34,6 +34,10 @@ override.tf.json
 # pattern misses this named file, so ignore it explicitly. Never commit.
 bootstrap/local.env
 
+# Deployment dial working copy -- render_dial.py reads it, and once populated it
+# carries estate endpoints. deployment.example.yaml is the committed template.
+/deployment.yaml
+
 # Scratch / temp
 .tmp/
 

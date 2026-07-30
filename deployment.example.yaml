@@ -1,0 +1,171 @@
+## Project:   dfe-infra
+## File:      deployment.example.yaml
+## Purpose:   The deployment dial (CANONICAL SUPERSET) -- copy to deployment.yaml
+## Language:  YAML
+##
+## License:   FSL-1.1-ALv2
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. This is the
+## CANONICAL SUPERSET: it spans every substrate (docker-vm + k8s) and every cloud,
+## and it is the persisted, wizard-populatable form of the DeployContext (the
+## LOCKED schema in docs/plans/2026-07-08-branch-preview-cycle.md). The chain is
+##
+##     dial  ->  DeployContext  ->  deploy(context)  ->  running stack
+##
+## so a redeploy is a dial edit, not a re-argument of the orchestrator. A QA GUI
+## wizard populates this same file later; every field is a labelled dial with a
+## default and its allowed values.
+##
+## HOW EACH SUBSTRATE READS IT:
+##   docker-vm -- `scripts/render_dial.py` in dfe-docker renders the `docker:`
+##     slice into that repo's .env. A lone dfe-docker clone carries its own
+##     subset copy of this file, so it deploys standalone with no dfe-infra
+##     checkout.
+##   k8s -- `scripts/render_dial.py` here renders the `k8s:` slice into the flat
+##     DFE_* env file `dfe-ops` already consumes (bootstrap/.env), then prints the
+##     derived `dfe-ops cycle` line. dfe-ops is the orchestrator unchanged; the
+##     dial just feeds it.
+##
+## SECRETS ARE REFERENCES, never values (a bao path + field, resolved at deploy).
+## ESTATE ENDPOINTS stay BLANK in this committed template -- hyperi-infra's thin
+## caller injects them from OpenBao at deploy time, or an operator fills them by
+## hand in the copied deployment.yaml. This file ships publicly, so it must never
+## carry a real domain, host, cluster address, or credential.
+##
+## Copy to deployment.yaml (gitignored) and populate.
+
+apiVersion: dfe.hyperi.io/v1
+kind: DeployContext
+
+## Which substrate this deployment targets.
+##   docker-vm -- single-VM docker compose stack (dfe-docker).
+##   k8s       -- an RKE2/EKS/GKE/AKS cluster via dfe-ops (this repo).
+## The k8s renderer here requires substrate: k8s; the docker renderer requires
+## docker-vm. One file, sliced per substrate.
+substrate: k8s
+
+## WHO + WHAT LIFECYCLE. metadata.name is the deploy id -> namespace / release /
+## Argo-app prefix. lifecycle drives whether the deployment is torn down with its
+## test (ephemeral) or kept (persistent); ttl is advisory for ephemeral only.
+metadata:
+  name: dfe
+  owner: ""
+  lifecycle: ephemeral       # ephemeral | persistent
+  ttl: 48h                   # ephemeral only; ignored when persistent
+  # labels: team=dfe         # optional; free-form, not read by the renderer
+
+## WHERE it lands. Exactly one of existing | provision (steps.provision gates it).
+## The committed default is `existing` -- deploy ONTO a cluster you already have
+## (preview, BYO-prod, devex). `provision` runs OpenTofu to create the cluster
+## first (marketplace / greenfield); see the AWS worked example under `cloud:`.
+target:
+  existing:
+    clusterRef: ""           # -> kubeconfig context / Argo cluster-secret (estate)
+    namespace: dfe
+  # provision:               # cloud-provisioned (tofu runs). Set steps.provision: true.
+  #   cloud: aws             # aws | gcp | azure | rancher
+  #   region: ap-southeast-2
+  #   cidr: 10.42.0.0/16
+  #   # nodePools are declared in terraform/environments/<cloud>/*.tfvars, not
+  #   # here -- a list does not belong in the wizard-populatable dial.
+
+## Image registry hosting the published dfe-* images.
+registry: ghcr.io/hyperi-io
+
+## VERSION dial: pin XOR track. Pinned is the default and the safe production
+## choice -- `version.pin` names a whole certified stack, which `dfe-stack render`
+## expands into the per-component version set. track-latest is the opt-in daemon
+## roll to the newest certified stack tag.
+version:
+  pin: 2.2.0-rc.1
+  # track: latest
+  # allow_prerelease: "false"
+
+## SHAPE. The deploy profile (== dfe-ops --mode) selects the service set + the
+## resource envelope.
+##   slim   -- gRPC, no Kafka, single-node ClickHouse (smallest).
+##   single -- one node of everything WITH Kafka (non-operator broker).
+##   scale  -- HA: operator ClickHouse cluster + Strimzi Kafka.
+profile: single
+
+## STEPS -- which stages run. dev/BYO deploys skip provision; a marketplace
+## greenfield runs all. Values are strings so the wizard writes them plainly.
+steps:
+  provision: "false"
+  layer1: "true"
+  layer2: "true"
+  ddl: "true"
+  smoke: "true"
+
+## SECRETS -- REFERENCES only, never values. The backend + base path; the thin
+## caller resolves the real values from here and injects the registry pull creds
+## and the OpenBao AppRole id into the rendered env. `render_dial.py` never reads
+## or writes a secret.
+secrets:
+  backend: openbao           # file | openbao | eso | aws-sm | gcp-sm | azure-kv
+  ref: kv/services           # base path; the value (which path) is estate context
+
+## OVERLAY -- optional private-context ref (fleet-scale ops, per-env config repo).
+## Blank in the committed template; its value points at a private repo.
+overlay: ""
+
+## ---------------------------------------------------------------------------
+## docker-vm SLICE -- consumed by dfe-docker's render_dial. Field names match
+## that repo's dial exactly, so one maintained dial slices to both substrates.
+## Ignored by the k8s renderer.
+## ---------------------------------------------------------------------------
+docker:
+  kafka_backend: redpanda    # redpanda | apache
+  kafbat_enabled: "true"
+  core_enabled: "true"
+  hyperdx_enabled: "false"
+  post_enabled: "true"
+  bind_host: 127.0.0.1       # operator surface (0.0.0.0 only on an exposed box)
+  ingress_bind_host: 0.0.0.0 # user ingest surface
+  # profile: default         # overrides the top-level profile for docker-vm only
+
+## ---------------------------------------------------------------------------
+## k8s SLICE -- consumed by this repo's render_dial. Each field maps to one DFE_*
+## key in the env file dfe-ops reads (bootstrap/.env). The cloud-swap knobs are
+## the DeployContext seam expressed as dial fields -- change the cloud, change
+## these, everything else is the same orchestrator.
+## ---------------------------------------------------------------------------
+k8s:
+  env: local                 # DFE_ENV
+  cloud: local               # DFE_CLOUD -- local | aws | gcp | azure | rancher
+  region: local              # DFE_REGION
+  domain: ""                 # DFE_DOMAIN -- estate, blank in template
+  storage_class: local-path  # DFE_STORAGE_CLASS -- local-path | gp3 | pd-ssd | managed-csi
+  repo_url: ""               # DFE_REPO_URL -- the dfe-infra chart source (Argo repo), estate
+  target_revision: main      # DFE_TARGET_REVISION -- Argo targetRevision (versionSet ref)
+  workload_identity_annotations: "{}"  # DFE_WORKLOAD_IDENTITY_ANNOTATIONS -- IRSA / WI, cloud
+  ## Cloud-swap knobs. Blank = the cluster/chart default (local-path, ClusterIP).
+  ## Set per cloud (see the AWS worked example below). These layer onto the
+  ## per-cloud argocd/values/<cloud>.yaml the chart already carries.
+  load_balancer_type: ""     # e.g. nlb (AWS), "" for the default Service type
+  config_storage: ""         # e.g. s3 (AWS), "" for in-cluster config storage
+
+## ---------------------------------------------------------------------------
+## CLOUD worked example -- AWS. The genericised swap: to move this deployment to
+## AWS you set target.provision.cloud: aws (or point target.existing at an EKS
+## kubeconfig) and copy these values up into the k8s slice. Every one of them is
+## a single field / values / module swap -- no new code path. gcp/azure follow
+## the same shape against argocd/values/{gcp,azure}.yaml.
+## ---------------------------------------------------------------------------
+# cloud_aws:
+#   cloud: aws
+#   region: ap-southeast-2
+#   storage_class: gp3
+#   load_balancer_type: nlb
+#   config_storage: s3
+#   # secrets.backend: aws-sm    # AWS Secrets Manager via ESO instead of OpenBao
+
+## ENDPOINTS -- estate-specific, BLANK in the committed template. Injected by
+## hyperi-infra's thin caller from OpenBao at deploy time, or set by hand. Left
+## empty, the in-cluster service DNS defaults in argocd/values/common.yaml apply.
+endpoints:
+  clickhouse_host: ""        # DFE_CLICKHOUSE_HOST
+  kafka_bootstrap: ""        # DFE_KAFKA_BOOTSTRAP (empty in slim -- gRPC transport)
+  otel_endpoint: ""          # DFE_OTEL_ENDPOINT
+  vault_addr: ""             # DFE_VAULT_ADDR -- the OpenBao address for this estate

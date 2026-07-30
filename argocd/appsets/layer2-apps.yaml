@@ -53,6 +53,17 @@ spec:
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               - '$values/{{ .path.path }}/{{ .path.filename }}'
+            # SSoT for the deploy repo: the engine's WRITE target (gitops.repoUrl/
+            # branch) is injected from the SAME config_repo_url/revision annotation
+            # Argo reads above (source 2 + the git generator). No second place to
+            # set the deploy repo, so the engine's write target cannot drift from
+            # what Argo reads. Only the dfe-engine chart has a gitops block; other
+            # charts ignore these params.
+            parameters:
+              - name: gitops.repoUrl
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+              - name: gitops.branch
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

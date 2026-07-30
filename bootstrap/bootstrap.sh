@@ -158,10 +158,11 @@ fi
 # given. If DFE_CONFIG_REPO_URL is set -> external mode (deployer also supplies
 # creds, see [4d] below); unset -> bundled Forgejo fallback.
 export DFE_CONFIG_REPO_REVISION="${DFE_CONFIG_REPO_REVISION:-main}"
-# Admin user owns the bundled deploy repo. MUST match the dfe-engine chart's
-# DFE_GITOPS_REPO_URL owner (dfe-admin) -- the engine writes the repo, Argo (via
-# the cluster-secret config_repo_url annotation) reads it; if the owners differ
-# the appset resolves a non-existent repo and fans out zero apps.
+# Admin user owns the bundled deploy repo (fallback path only). The engine's
+# DFE_GITOPS_REPO_URL is injected from the config_repo_url annotation by the
+# layer2-apps appset, so it tracks this URL automatically -- no manual
+# owner-matching to keep in sync, and the engine cannot write a different repo
+# than Argo reads.
 FORGEJO_ADMIN_USER="${DFE_FORGEJO_ADMIN_USER:-dfe-admin}"
 if [[ -n "${DFE_CONFIG_REPO_URL:-}" ]]; then
   export DFE_BUNDLED_DEPLOY_REPO="false"
@@ -283,27 +284,34 @@ fi
 # [4c/7] Deploy-repo credentials -- two paths by provider mode.
 if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   # FALLBACK: in-cluster Forgejo. Generate (once) a random admin password, reuse
-  # on re-runs, mirror to the dfe namespace as dfe-engine's push creds.
-  echo "==> [4c/7] Ensuring Forgejo admin secret (dfe-forgejo-admin)"
+  # on re-runs. The Forgejo secret lives in the forgejo namespace (for Forgejo
+  # itself); the engine's push cred goes into the dfe namespace under the
+  # provider-agnostic name dfe-deploy-repo-auth (see [4c] external path -- SAME
+  # name so the chart's credentialsSecret does not change between modes).
+  echo "==> [4c/7] Ensuring Forgejo admin secret + engine deploy-repo write cred"
   if kubectl -n forgejo get secret dfe-forgejo-admin >/dev/null 2>&1; then
     FORGEJO_ADMIN_PASSWORD=$(kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' | base64 -d)
   else
     FORGEJO_ADMIN_PASSWORD=$(openssl rand -hex 24)
   fi
-  for ns in forgejo "${DFE_NAMESPACE}"; do
-    kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
-    kubectl -n "$ns" create secret generic dfe-forgejo-admin \
-      --from-literal=username="${FORGEJO_ADMIN_USER}" \
-      --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
-      --dry-run=client -o yaml | kubectl apply -f -
-  done
-  echo "  Forgejo admin secret ready in forgejo + ${DFE_NAMESPACE}"
+  kubectl create namespace forgejo --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n forgejo create secret generic dfe-forgejo-admin \
+    --from-literal=username="${FORGEJO_ADMIN_USER}" \
+    --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n "${DFE_NAMESPACE}" create secret generic dfe-deploy-repo-auth \
+    --from-literal=username="${FORGEJO_ADMIN_USER}" \
+    --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "  Forgejo admin secret (forgejo ns) + engine write cred dfe-deploy-repo-auth (${DFE_NAMESPACE}) ready"
 elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
-  # EXTERNAL git (GitHub/GitLab): register an Argo repository credential so Argo
-  # can pull the deploy repo. Deployer supplies EITHER HTTPS+token
-  # (DFE_CONFIG_REPO_USER + DFE_CONFIG_REPO_TOKEN) OR an SSH key
-  # (DFE_CONFIG_REPO_SSH_KEY = path to a private key). The engine's WRITE cred is
-  # separate (engine gitops settings), not created here.
+  # EXTERNAL git (GitHub/GitLab/self-hosted): register the Argo READ credential so
+  # Argo can pull the deploy repo -- EITHER HTTPS+token (DFE_CONFIG_REPO_USER +
+  # DFE_CONFIG_REPO_TOKEN) OR an SSH key (DFE_CONFIG_REPO_SSH_KEY = path to a
+  # private key). The engine's WRITE cred (dfe-deploy-repo-auth, dfe namespace) is
+  # created below from the SAME token input -- same secret name as the bundled
+  # path, so the dfe-engine chart is provider-agnostic.
   echo "==> [4c/7] Registering Argo repo cred for external deploy repo"
   if [[ -n "${DFE_CONFIG_REPO_SSH_KEY:-}" ]]; then
     kubectl -n argocd create secret generic repo-deploy \
@@ -322,6 +330,19 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
     echo "  Argo repo cred (HTTPS+token) registered for ${DFE_CONFIG_REPO_URL}"
   else
     echo "  WARNING: external deploy repo but no DFE_CONFIG_REPO_TOKEN/SSH_KEY -- Argo may not be able to pull it."
+  fi
+  # Engine WRITE cred, dfe namespace, provider-agnostic name (matches the bundled
+  # path). The engine pushes over HTTPS+token (dulwich), so it needs a token even
+  # when Argo READS via SSH. SSH-only external -> the engine cannot push; warn.
+  if [[ -n "${DFE_CONFIG_REPO_TOKEN:-}" ]]; then
+    kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl -n "${DFE_NAMESPACE}" create secret generic dfe-deploy-repo-auth \
+      --from-literal=username="${DFE_CONFIG_REPO_USER:-oauth2}" \
+      --from-literal=password="${DFE_CONFIG_REPO_TOKEN}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    echo "  Engine write cred dfe-deploy-repo-auth ready in ${DFE_NAMESPACE}"
+  else
+    echo "  WARNING: external deploy repo with no DFE_CONFIG_REPO_TOKEN -- the engine CANNOT push (gitcrud) over SSH; it needs an HTTPS token. Set DFE_CONFIG_REPO_TOKEN for engine writes."
   fi
 fi
 
