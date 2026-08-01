@@ -41,7 +41,7 @@ jobs:
     name: gate, tag `current`, publish + sign the manifest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # full history: dfe-stack + tag existence checks
 
@@ -124,7 +124,7 @@ jobs:
           gh release create "$TAG" --verify-tag --title "DFE $TAG" --generate-notes || true
           gh release upload "$TAG" --clobber $FILES SHA256SUMS
 
-      - uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
+      - uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
         if: steps.ver.outputs.cut == 'true'
 
       - name: Push manifest as an OCI artifact
