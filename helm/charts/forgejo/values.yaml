@@ -35,7 +35,7 @@ deployRepo:
 
 # Image for the PostSync repo-creation Job (needs curl).
 setup:
-  image: curlimages/curl:8.20.0   # 2026-05 (clears 7-day cooldown); was stale 8.11.1
+  image: curlimages/curl:8.21.0   # 2026-05 (clears 7-day cooldown); was stale 8.11.1
   resources:
     requests:
       cpu: 25m
