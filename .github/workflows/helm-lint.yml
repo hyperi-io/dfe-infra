@@ -31,7 +31,7 @@ jobs:
     name: helm lint + yaml validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
@@ -40,9 +40,9 @@ jobs:
         run: python3 scripts/dfe-stack compat-check || true
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
-          version: "3.14.0"
+          version: "3.21.3"
 
       - name: Lint library charts via test charts
         run: |
@@ -83,11 +83,11 @@ jobs:
     env:
       HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Checkout dfe-deploy template
         if: env.HAS_DEPLOY_TOKEN == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: hyperi-io/dfe-deploy
           token: ${{ secrets.DFE_DEPLOY_TOKEN }}
