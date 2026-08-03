@@ -8,8 +8,8 @@ via the fail-safe dfe-keda-shim.
 NO PROBES by design: the runner is a polling scheduler loop (dfe_engine.hunt_runner
 daemon), not a server -- it opens no HTTP listener, so there is no endpoint an
 httpGet probe could hit. A liveness signal would need an app-side surface first
-(scalo mark_started/health territory); until then a probe would only kill healthy
-pods.
+(scalo would have to serve /livez here); until then a probe would only kill
+healthy pods.
 */ -}}
 {{- if .Values.huntRunner.enabled }}
 apiVersion: apps/v1

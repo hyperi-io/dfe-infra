@@ -181,7 +181,7 @@ spec:
           # engine serves health on 9090 now (with /health/* aliases).
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: obs
             initialDelaySeconds: 10
             periodSeconds: 10

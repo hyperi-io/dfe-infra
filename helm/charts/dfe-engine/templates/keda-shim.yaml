@@ -86,7 +86,7 @@ spec:
             {{- toYaml .Values.kedaShim.resources | nindent 12 }}
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10

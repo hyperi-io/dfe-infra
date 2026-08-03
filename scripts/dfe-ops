@@ -51,7 +51,7 @@ this file is committed publicly, so substitute your own node):
     python3 scripts/dfe-ops kubeconfig --node 192.0.2.10 --out .tmp/dfe.kubeconfig
 
     # Probe an endpoint (prints the status line then the body):
-    python3 scripts/dfe-ops probe GET http://localhost:8000/health/ready
+    python3 scripts/dfe-ops probe GET http://localhost:8000/readyz
 
     # Deploy to the local Rancher/RKE2 cluster, then verify:
     python3 scripts/dfe-ops deploy --cloud local
