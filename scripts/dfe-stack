@@ -301,7 +301,7 @@ def render_manifest(v: dict, registry: str, label: str) -> str:
     lines.append("content:")
     for name, tag in sorted(v.get("content", {}).items()):
         lines.append(f'  {name}: "{tag}"')
-    for section in ("bootstrap", "operators", "services", "providers", "tools"):
+    for section in ("bootstrap", "operators", "services", "providers"):
         lines.append(f"{section}:")
         for name, val in sorted(v.get(section, {}).items()):
             lines.append(f'  {name}: "{val}"')

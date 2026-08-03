@@ -31,7 +31,7 @@ kafka:
   # (opt-in, BSL -- see docs/REDPANDA-LIMITATIONS.md; requires redpanda.acceptLicense).
   provider: strimzi
   name: dfe-kafka
-  version: "4.1.1"
+  version: "4.2.0"
   # cluster node count. Defaults to 3; set higher for more brokers.
   # (single mode forces 1.)
   replicas: 3

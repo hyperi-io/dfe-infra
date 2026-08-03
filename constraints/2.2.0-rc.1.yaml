@@ -36,10 +36,10 @@ rules:
   clickhouse-operator-server-range:
     severity: "warn"
     when-key: "operators.clickhouse-operator"
-    when-equals: "0.0.5"
+    when-equals: "0.0.7"
     require-key: "services.clickhouse-version"
     require-range: ">=25.0.0 <27.0.0"
-    reason: "PLACEHOLDER bound -- the official clickhouse-operator 0.0.5 does not publish an explicit clickhouse-server compatibility range. Confirm the tested range and promote to error. Also verify the CRD kind (upstream docs say ClickHouseInstallation; our comment says ClickHouseCluster)."
+    reason: "PLACEHOLDER bound -- the official clickhouse-operator 0.0.7 does not publish an explicit clickhouse-server compatibility range. Confirm the tested range and promote to error. Also verify the CRD kind (upstream docs say ClickHouseInstallation; our comment says ClickHouseCluster). NOTE: when-equals is an EXACT match, so this guard must be re-pointed on every clickhouse-operator bump or the rule silently stops firing."
     source: "https://github.com/ClickHouse/clickhouse-operator/releases"
 
   redpanda-operator-broker-pairing:
