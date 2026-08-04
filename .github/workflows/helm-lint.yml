@@ -36,8 +36,11 @@ jobs:
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
 
+      # Omitting `--strict` is what makes rule violations advisory; the release
+      # workflow runs it strict. No `|| true`: that also swallows the structural
+      # exits -- a missing constraints file, or one declaring a different stack.
       - name: Stack compatibility check (advisory)
-        run: python3 scripts/dfe-stack compat-check || true
+        run: python3 scripts/dfe-stack compat-check
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
