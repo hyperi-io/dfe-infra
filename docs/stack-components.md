@@ -96,8 +96,8 @@ operator chart is a SEPARATE, k8s-only pin on its own release line.
   load-bearing reason the model is "logical version, two renderings".
 - OPERATOR CEILING (hard constraint): Strimzi 0.51 supports Kafka 4.1.x / 4.2.0
   ONLY. The logical `kafka-version` must never exceed what the pinned strimzi
-  operator supports, or the k8s path breaks. This field is therefore HARD-GATED
-  from automated Renovate bumps (see Renovate reconciliation) - bump it by hand,
+  operator supports, or the k8s path breaks. Renovate is bounded to that ceiling
+  by the org preset (see "Renovate and the operator ceilings") - bump it by hand,
   verified against strimzi's kafka-versions.yaml, in lockstep with the operator.
 
 ### Redpanda (opt-in, BSL)
@@ -105,7 +105,7 @@ operator chart is a SEPARATE, k8s-only pin on its own release line.
 - k8s: `helm/charts/kafka` values `kafka.redpanda.image.tag` -> Redpanda CR
   `spec.clusterSpec.image.tag`. Operator: `operators.redpanda-operator` (26.1.6,
   k8s-only, opt-in). The broker tag is PAIRED with the operator chart - move them
-  together (also hard-gated from Renovate for the same reason as kafka).
+  together (also bounded in the org preset, for the same reason as kafka).
 - docker: `REDPANDA_VERSION` -> `redpandadata/redpanda:<ver>@digest`.
 - Cascade: SAME image both sides. One number, both refs.
 
@@ -183,6 +183,31 @@ image. One number, same image ref both sides.
    out-of-scope migration).
 3. **Kafka/Redpanda operator ceiling.** `kafka-version` <= strimzi 0.51's
    supported set (4.2.0), `redpanda-version` paired with the redpanda operator
-   chart. Both hard-gated from Renovate; bumped by hand with their operator.
+   chart. Both bounded in the org preset; bumped by hand with their operator.
+
+## Renovate and the operator ceilings
+
+This repo extends `github>hyperi-io/renovate-config` and adds nothing but the
+description at the top of `renovate.json`. It carried a standalone config from
+2026-07-16 to 2026-08-04, which is why it missed the org cooldown behaviour,
+the CVE bypass and the PR-only policy for that window.
+
+The operator-coupled versions are bounded by `allowedVersions` rules in the
+preset, keyed by PACKAGE:
+
+| pin | bound | coupled to |
+|---|---|---|
+| `services.clickhouse-version` | `<26.4` | the 26.3 LTS line |
+| `services.kafka-version` | `<=4.2.0` | strimzi 0.51's supported set |
+| `services.redpanda-version` | `<26.2` | redpanda-operator 26.1.6's tested pairing |
+
+CONSTRAINED, not disabled: patches within the line still flow, so gated does
+not mean unwatched. Gating by package rather than by file is the point --
+nothing parses `versions.yaml`, so gating that file alone left the same image
+pinned in a compose file, a CI script or a chart values file wide open. That
+produced dfe-infra#32, dfe-engine#117 and dfe-loader#94.
+
+Widen a bound only in lockstep with its operator, and re-run
+`dfe-stack compat-check --strict`.
 4. **dfe-hyperdx image-name split.** k8s pulls `dfe-hyperdx`, docker pulls
    `hyperi-hyperdx`. Reconcile the name or map it explicitly in the render.

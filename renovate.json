@@ -1,22 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "versions.yaml is the third-party SSoT for the DFE stack. Renovate lives HERE (relocated from dfe-docker, which now derives its pins via `make stack`). OPERATOR-COUPLED service versions -- services.clickhouse-version (clickhouse-operator), services.kafka-version (strimzi 0.51 ceiling 4.2.0), services.redpanda-version (redpanda-operator) -- are HARD-GATED: NO Renovate manager touches them, they are bumped BY HAND in lockstep with their operator and verified against the operator support matrix + `dfe-stack compat-check`. FOLLOW-UP: the plain-image third-party (kafbat, ferretdb, documentdb-pg, nginx-proxy) will get a Renovate custom regex manager once a `dfe-stack refresh-digests` helper exists to keep services-digests in sync after a version bump (the SSoT splits version and sha256 across services/services-digests, so a version-only bump would strand the digest).",
-  "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigestsToSemver"
-  ],
-  "labels": ["dependencies"],
-  "commitMessagePrefix": "fix(deps):",
-  "commitMessageAction": "update",
-  "minimumReleaseAge": "7 days",
-  "internalChecksFilter": "strict",
-  "dependencyDashboard": true,
-  "packageRules": [
-    {
-      "description": "Group all GitHub Actions digest updates",
-      "matchManagers": ["github-actions"],
-      "groupName": "github-actions",
-      "automerge": true
-    }
-  ]
+  "description": "versions.yaml is the third-party SSoT for the DFE stack. Renovate lives HERE (relocated from dfe-docker, which now derives its pins via `make stack`). OPERATOR-COUPLED service versions -- services.clickhouse-version (clickhouse-operator), services.kafka-version (strimzi 0.51 ceiling 4.2.0), services.redpanda-version (redpanda-operator) -- are bounded by the ORG PRESET's allowedVersions rules, which gate by PACKAGE wherever the image is pinned rather than by file: nothing parses versions.yaml, so gating it alone left the same image in a compose file, a CI script or a chart values file wide open. They still move BY HAND in lockstep with their operator, verified against the operator support matrix and `dfe-stack compat-check`; the preset stops Renovate proposing past the ceiling. FOLLOW-UP: the plain-image third-party (kafbat, ferretdb, documentdb-pg, nginx-proxy) will get a Renovate custom regex manager once a `dfe-stack refresh-digests` helper exists to keep services-digests in sync after a version bump (the SSoT splits version and sha256 across services/services-digests, so a version-only bump would strand the digest).",
+  "extends": ["github>hyperi-io/renovate-config"]
 }
