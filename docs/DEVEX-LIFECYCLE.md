@@ -27,7 +27,9 @@ All component versions come from `versions.yaml` (the SSoT).
 - An OpenBao token for your Vault/OpenBao (e.g. `bao.example.com`; Terraform uses it).
 - Registry pull credentials: copy `bootstrap/local.env.example` to
   `bootstrap/local.env` and fill it in.
-- Tooling at the versions pinned in `versions.yaml` (terraform/opentofu, helm).
+- OpenTofu (or Terraform) and helm on PATH. CI pins the exact versions it uses in
+  the workflows themselves (`.github/workflows/tf-validate.yml`,
+  `.github/workflows/helm-lint.yml`) -- `versions.yaml` does not pin CI tooling.
 
 ## Build and validate
 

@@ -76,19 +76,19 @@ set in the CR our chart templates. SSoT holds the LOGICAL service version; the
 operator chart is a SEPARATE, k8s-only pin on its own release line.
 
 ### ClickHouse
-- SSoT logical version: `services.clickhouse-version` (26.3.13.31, LTS line).
+- SSoT logical version: `services.clickhouse-version` (26.3.17.56, LTS line).
 - k8s: `helm/charts/clickhouse-cluster` values `clickhouse.version` ->
   ClickHouseCluster CR `spec.image`; keeper image tag mirrors it. Operator:
-  `operators.clickhouse-operator` (0.0.5, k8s-only, scale mode only).
+  `operators.clickhouse-operator` (0.0.7, k8s-only, scale mode only).
 - docker: `CLICKHOUSE_VERSION` -> `clickhouse/clickhouse-server:<ver>@digest`.
 - Cascade: SAME upstream image both sides (`clickhouse/clickhouse-server`). One
   number, both refs. Clean.
 
 ### Kafka
-- SSoT logical version: `services.kafka-version` (4.1.1).
+- SSoT logical version: `services.kafka-version` (4.2.0 -- the strimzi 0.51 ceiling).
 - k8s: `helm/charts/kafka` values `kafka.version` -> Strimzi Kafka CR
   `spec.kafka.version`. Strimzi then pulls its OWN internal
-  `quay.io/strimzi/kafka:*-kafka-4.1.x` image - we never name that image.
+  `quay.io/strimzi/kafka:*-kafka-4.2.x` image - we never name that image.
   Operator: `operators.strimzi-kafka-operator` (0.51.0, k8s-only).
 - docker: `APACHE_KAFKA_VERSION` -> `apache/kafka:<ver>@digest`.
 - Cascade: TWO IMAGES for one logical number (strimzi-internal vs apache/kafka).

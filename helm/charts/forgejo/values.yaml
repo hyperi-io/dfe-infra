@@ -3,7 +3,7 @@ component: forgejo
 env: local
 cloud: local
 
-# Forgejo image. Tag defaults to Chart.appVersion (15.0.3 LTS). Pulled from the
+# Forgejo image. Tag defaults to Chart.appVersion (15.0.5 LTS). Pulled from the
 # CANONICAL Forgejo registry code.forgejo.org -- NOT codeberg.org/forgejo, whose
 # container registry returns 503s under load (proven on the bare-cluster test:
 # kubelet got "503 Service Unavailable" from codeberg.org, while code.forgejo.org

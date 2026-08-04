@@ -30,6 +30,9 @@ jobs:
         with:
           tofu_version: "1.7.0"
 
+      # terraform is RETIRING -- see hyperi-io/hyperi-developer#11. OpenTofu is
+      # being made canonical across HyperI; this matrix leg stays only until #11
+      # lands, then the job drops to tofu alone.
       - name: Install Terraform
         if: matrix.tf == 'terraform'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
