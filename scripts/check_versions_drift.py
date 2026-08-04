@@ -247,7 +247,57 @@ CHECKS: list[tuple[str, str, "callable"]] = [
             Path("bootstrap/templates/valkey.yaml"), r"valkey/valkey:([^\s\"]+)"
         ),
     ),
+    # services.forgejo cascades to the chart's appVersion: image.tag is empty,
+    # so dfe-common.image falls back to it.
+    (
+        "forgejo chart appVersion",
+        "services.forgejo",
+        lambda: find_regex(
+            Path("helm/charts/forgejo/Chart.yaml"), r'appVersion:\s*"([^"]+)"'
+        ),
+    ),
 ]
+
+# OpenTofu provider constraints, which versions.yaml records as a mirror of the
+# required_providers blocks. Every declaration must equal the record.
+#
+# Deliberately partial: the tf-oidc-* modules declare azuread, okta and google,
+# which `providers:` does not record at all. Whether the optional OIDC modules
+# belong in the stack manifest is an open question; until it is answered those
+# three are pinned only in their module.
+_PROVIDER_MIRRORS = [
+    ("providers.hashicorp-null", "null", ["terraform/modules/tf-naming/variables.tf"]),
+    (
+        "providers.hashicorp-vault",
+        "vault",
+        [
+            "terraform/modules/tf-iam/variables.tf",
+            "terraform/modules/tf-secrets/variables.tf",
+            "terraform/environments/local/main.tf",
+        ],
+    ),
+    (
+        "providers.hashicorp-random",
+        "random",
+        ["terraform/modules/tf-secrets/variables.tf"],
+    ),
+]
+
+for _key, _prov, _files in _PROVIDER_MIRRORS:
+    for _f in _files:
+        CHECKS.append(
+            (
+                f"{_prov} provider in {_f.split('/')[-2]}",
+                _key,
+                # `<name> = {` then the nearest following `version = "..."`,
+                # bounded so it cannot run into the next provider block.
+                lambda prov=_prov, f=_f: find_regex(
+                    Path(f),
+                    r"\b" + re.escape(prov) + r"\s*=\s*\{[\s\S]{0,120}?"
+                    r'version\s*=\s*"([^"]+)"',
+                ),
+            )
+        )
 
 # DFE app charts: each chart's appVersion MUST equal versions.yaml apps.<name>.
 # This is the pin that actually drives the deployed image tag -- dfe-common.image
@@ -282,6 +332,79 @@ for _app in _APP_CHARTS:
     )
 
 
+# Keys with no hardcoded second copy anywhere, and why. A key that is neither
+# checked above nor listed here fails the build: a pin nobody reads is dead
+# config, and a pin read in two places with only one tracked is drift waiting to
+# happen. Either state is a decision, so it has to be written down.
+#
+# Patterns are exact keys or `section.*`.
+UNCONSUMED: dict[str, str] = {
+    "bootstrap.cert-manager": "bootstrap.sh reads it at runtime (read_versions.py); no hardcoded copy",
+    "bootstrap.external-secrets": "bootstrap.sh reads it at runtime; no hardcoded copy",
+    "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
+    "bootstrap.local-path-provisioner": "bootstrap.sh reads it at runtime; no hardcoded copy",
+    "services.postgresql": "CNPG major version, consumed by dfe-stack render",
+    "services.cnpg-cluster-instances": "replica count, overridden per profile",
+    "services.kafka-replicas": "replica count, overridden per profile",
+    "services.clickhouse-replicas": "replica count, overridden per profile",
+    "services.ferretdb": "docker path only; the k8s chart lags on 1.24.0 under a dated waiver",
+    "services.documentdb-pg": "docker path only, consumed by dfe-stack render",
+    "services.hyperdx": "upstream reference for the dfe-hyperdx fork; nothing deploys it",
+    "services.nginx-proxy": "docker path only; k8s uses envoy-gateway",
+    "operators.envoy-gateway": "nothing here installs gateway-helm; the chart only configures a gateway already present",
+    "digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
+    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
+    "content.*": "lockstep content repos; PENDING until the first release stamps them",
+    "stack.*": "upgrade-graph metadata, not a version pin",
+}
+
+
+def unconsumed_reason(key: str) -> str | None:
+    """The recorded reason this key has no second copy, or None."""
+    if key in UNCONSUMED:
+        return UNCONSUMED[key]
+    section = key.split(".", 1)[0]
+    return UNCONSUMED.get(f"{section}.*")
+
+
+def dead_guards(versions: dict[str, str]) -> list[str]:
+    """Constraint rules whose `when-equals` no longer matches its key.
+
+    A `when-equals` guard is an exact match, so bumping the pin it watches
+    leaves the rule present, green and inert. Any such rule is reported: either
+    re-point it at the new value or delete it.
+    """
+    root = _parse_nested(VERSIONS_FILE.read_text())
+    stack = root.get("stacks", {}).get(root.get("current"), {})
+    rel = stack.get("constraints") if isinstance(stack, dict) else None
+    if not rel:
+        return []
+    path = REPO_ROOT / rel
+    if not path.is_file():
+        return [f"  [config]  constraints file not found: {rel}"]
+
+    problems = []
+    rules = _parse_nested(path.read_text()).get("rules", {})
+    for rule_id, body in rules.items():
+        if not isinstance(body, dict):
+            continue
+        pinned = body.get("when-equals")
+        when_key = body.get("when-key")
+        if not pinned or not when_key:
+            continue
+        current = versions.get(when_key)
+        if current is None:
+            problems.append(
+                f"  [dead guard] {rule_id}: when-key '{when_key}' is not in versions.yaml"
+            )
+        elif current != pinned:
+            problems.append(
+                f"  [dead guard] {rule_id}: when-equals '{pinned}' but {when_key} "
+                f"is now '{current}' -- the rule can never fire; re-point or delete it"
+            )
+    return problems
+
+
 def main() -> int:
     versions = load_versions()
     failures: list[str] = []
@@ -304,6 +427,31 @@ def main() -> int:
                 f"  [DRIFT]  {label}: file has '{actual}', versions.yaml says '{expected}' (key {key})"
             )
 
+    # Coverage: a key read by nothing is dead config, and it stays green forever
+    # unless something asks.
+    covered = {key for _, key, _ in CHECKS}
+    for key in sorted(versions):
+        if key in covered or unconsumed_reason(key):
+            continue
+        failures.append(
+            f"  [dead]    versions.yaml key '{key}' is read by no check -- add a "
+            f"CHECKS entry, or an UNCONSUMED reason saying why it has no second copy"
+        )
+
+    # Stale UNCONSUMED entries rot the same way the pins do.
+    for pattern in sorted(UNCONSUMED):
+        if pattern.endswith(".*"):
+            section = pattern[:-2]
+            if any(k.split(".", 1)[0] == section for k in versions):
+                continue
+        elif pattern in versions:
+            continue
+        failures.append(
+            f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml"
+        )
+
+    failures.extend(dead_guards(versions))
+
     if failures:
         print(
             "Version drift detected -- pins must match versions.yaml (SSoT):",
@@ -315,7 +463,10 @@ def main() -> int:
         )
         return 1
 
-    print(f"OK -- all {checked} version pins match versions.yaml.")
+    print(
+        f"OK -- all {checked} version pins match versions.yaml; "
+        f"{len(versions)} key(s) accounted for."
+    )
     return 0
 
 
