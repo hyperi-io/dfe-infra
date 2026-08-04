@@ -112,14 +112,14 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.10.7"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
-      dfe-ui: "v1.1.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
-      dfe-receiver: "v1.15.15"      # independent release line
-      dfe-loader: "v1.18.7"
-      dfe-archiver: "v1.7.8"
-      dfe-fetcher: "v1.4.3"
-      dfe-transform-vrl: "v1.1.9"
-      dfe-transform-vector: "v1.0.22"
+      dfe-engine: "v1.11.1"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
+      dfe-ui: "v1.2.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
+      dfe-receiver: "v1.15.19"      # independent release line
+      dfe-loader: "v1.18.14"
+      dfe-archiver: "v1.7.12"
+      dfe-fetcher: "v1.4.6"
+      dfe-transform-vrl: "v1.1.13"
+      dfe-transform-vector: "v1.0.26"
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
@@ -129,14 +129,14 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:b445c7b472b1d17b7e11c64eabcbe477b893af07e1fad08a8909dc96e653176f"
-      dfe-ui: "sha256:04eb29517c2293e99a844566dbad35d77c70c5ca53d8ed0b0f6f0f7d5a92f2d6"
-      dfe-receiver: "sha256:3ea760b4a1aa0aab88bbca33a31fe396f00d4ed74dc42e299e539ca1a5ad4da1"
-      dfe-loader: "sha256:c4f0d47adf8e99e2c5db9780d06b2f6cc23e3c1157a6abb6000b0ce4c6273da7"
-      dfe-archiver: "sha256:360fd336efd7951f6cefa6316025f5ef198b411f8d30be1e12376ce0390fe3cf"
-      dfe-fetcher: "sha256:6f099b98c8c184f028025b4e706f046206b4785bbaefca0e3eb755fc9ede3827"
-      dfe-transform-vrl: "sha256:77938867268c96632b09644479d432eccedb16485b40eef4f0381f5cfa40f1ad"
-      dfe-transform-vector: "sha256:fa004cb2a4096cf573ce34d9a9f1956b307a12dc8bf5b0ce7fad8f7abd0e2294"
+      dfe-engine: "sha256:7f997aa46e2d626e741267bea27c8fab32a45439950dfdbe5b718f34922d1bdf"
+      dfe-ui: "sha256:9b26c893a41ffa4399b68da9feece344b6938042fff54902602b325fe0fe6e23"
+      dfe-receiver: "sha256:4ba8eecf48596b93ef4192d078872057bab942348da47c00e2a20ff4c3c263e0"
+      dfe-loader: "sha256:e6491808cecd11c26f02dbb2c9c87b54aac7e3e65e9a8f9c7f917d88fe2c0d52"
+      dfe-archiver: "sha256:6f171ade97379b177a7fa91e056b22a14be114f1cfee00d26bbde03d63ade319"
+      dfe-fetcher: "sha256:8f0a6f8a2afdbb4a76764e93e76f667249f55e0746387799c8652f68fa268578"
+      dfe-transform-vrl: "sha256:4d5dff1ba84d2c1b86dae289f46cf2d49c66f4e77d6a0c5ac05bb56112edb118"
+      dfe-transform-vector: "sha256:73c742ad0aa2e1e7afcbc267dc716a4bd9168eae2d3dcde9034a9b17ed226711"
 
     # Digests for the DOCKER-path third-party plain images -- the immutable half
     # of the tag@sha256 pin that `dfe-stack render --target docker` emits. Keyed
