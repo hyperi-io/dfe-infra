@@ -5,7 +5,7 @@
 #                from versions.yaml (the single source of truth).
 #  Language:     Python
 #
-#  License:      FSL-1.1-ALv2
+#  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Drift-check: every real version pin must match versions.yaml.
 

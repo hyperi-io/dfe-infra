@@ -10,7 +10,7 @@
 #                cases. This IS the Playwright test suite (Python), reusable in CI.
 #  Language:     Python
 #
-#  License:      FSL-1.1-ALv2
+#  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Headless-browser validation of a running DFE UI.
 

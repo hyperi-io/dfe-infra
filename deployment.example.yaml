@@ -3,7 +3,7 @@
 ## Purpose:   The deployment dial (CANONICAL SUPERSET) -- copy to deployment.yaml
 ## Language:  YAML
 ##
-## License:   FSL-1.1-ALv2
+## License:   BUSL-1.1
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. This is the
