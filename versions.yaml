@@ -117,7 +117,7 @@ stacks:
       dfe-receiver: "v1.15.19"      # independent release line
       dfe-loader: "v1.18.14"
       dfe-archiver: "v1.7.12"
-      dfe-fetcher: "v1.4.6"
+      dfe-fetcher: "v1.4.7"
       dfe-transform-vrl: "v1.1.13"
       dfe-transform-vector: "v1.0.26"
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
@@ -134,7 +134,7 @@ stacks:
       dfe-receiver: "sha256:4ba8eecf48596b93ef4192d078872057bab942348da47c00e2a20ff4c3c263e0"
       dfe-loader: "sha256:e6491808cecd11c26f02dbb2c9c87b54aac7e3e65e9a8f9c7f917d88fe2c0d52"
       dfe-archiver: "sha256:6f171ade97379b177a7fa91e056b22a14be114f1cfee00d26bbde03d63ade319"
-      dfe-fetcher: "sha256:8f0a6f8a2afdbb4a76764e93e76f667249f55e0746387799c8652f68fa268578"
+      dfe-fetcher: "sha256:60a88d88365682275d20adee4fe2eb0399bfa9e9fc061a6fdf415d2f8c6e67c5"
       dfe-transform-vrl: "sha256:4d5dff1ba84d2c1b86dae289f46cf2d49c66f4e77d6a0c5ac05bb56112edb118"
       dfe-transform-vector: "sha256:73c742ad0aa2e1e7afcbc267dc716a4bd9168eae2d3dcde9034a9b17ed226711"
 
