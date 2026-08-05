@@ -16,7 +16,7 @@
 # segments), so 26.3.13.31 and v26.1.8 both parse. require-matches is a plain
 # substring test (for the 4-part ferretdb backend tag).
 #
-# License:   FSL-1.1-ALv2
+# License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 schema: 1

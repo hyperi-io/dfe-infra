@@ -7,7 +7,7 @@
 #                Python-Playwright, python3 allow-list. Grows with the embed work.
 #  Language:     Python
 #
-#  License:      FSL-1.1-ALv2
+#  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Verify the DFE seamless embed end-to-end.
 
