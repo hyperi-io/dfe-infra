@@ -171,7 +171,8 @@ stacks:
     # the first release cut stamps them.
     content:
       dfe-schemas: "PENDING-FIRST-TAG"   # baseline DDL; repo has no release tags yet
-      dfe-deploy: "PENDING-FIRST-TAG"    # the deploy-repo template (seeded at this tag)
+      # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
+      dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
       dfe-hyperdx: "PENDING-FIRST-IMAGE" # fork image not on GHCR yet; resolves services.hyperdx TODO
 
     # Stack upgrade metadata for THIS version.
