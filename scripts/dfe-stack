@@ -603,6 +603,106 @@ def _waiver_expired(w: dict) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# refresh-digests -- re-resolve the third-party services-digests. The SSoT
+# splits the tag (services:) from the sha256 (services-digests:), so a
+# version-only bump strands the digest. A floating tag strands it with no
+# version change at all: upstream rebuilds nginx:1.31-alpine in place.
+# ---------------------------------------------------------------------------
+
+# `# renovate: ... depName=<ref>` or `# image: <ref>` above a services: key.
+# The annotation doubles as the image map, so there is no second table to drift.
+_ANNOTATION = re.compile(
+    r"^[^\S\n]*#[^\S\n]*(?:renovate:[^\n]*?depName=(?P<a>[^\s]+)"
+    r"|image:[^\S\n]*(?P<b>[^\s]+))[^\n]*\n"
+    r"(?:^[^\S\n]*#[^\n]*\n)*"  # further comment lines between annotation and key
+    r"^[^\S\n]*(?P<key>[A-Za-z0-9_.-]+):[^\S\n]*\"(?P<value>[^\"]+)\"",
+    re.MULTILINE,
+)
+
+
+def annotated_images(text: str) -> dict[str, tuple[str, str]]:
+    """services key -> (image ref, tag) for every annotated pin."""
+    found: dict[str, tuple[str, str]] = {}
+    for m in _ANNOTATION.finditer(text):
+        found[m.group("key")] = (m.group("a") or m.group("b"), m.group("value"))
+    return found
+
+
+def resolve_digest(ref: str) -> tuple[str | None, str]:
+    """(manifest-list digest, error). Multi-arch safe -- the LIST digest, not one arch."""
+    out = _run(
+        [
+            "docker", "buildx", "imagetools", "inspect", ref,
+            "--format", "{{.Manifest.Digest}}",
+        ]
+    )
+    if out.returncode != 0:
+        return None, out.stderr.strip().splitlines()[-1] if out.stderr.strip() else "failed"
+    digest = out.stdout.strip()
+    return (digest, "") if digest.startswith("sha256:") else (None, f"unexpected: {digest!r}")
+
+
+def cmd_refresh_digests(args: argparse.Namespace) -> int:
+    path = REPO_ROOT / "versions.yaml"
+    text = path.read_text(encoding="utf-8")
+    _, pins = stack_pins(parse_simple_yaml(text), args.stack)
+    recorded = pins.get("services-digests", {})
+    images = annotated_images(text)
+
+    missing = sorted(set(recorded) - set(images))
+    if missing:
+        print(
+            f"ERROR {len(missing)} services-digests key(s) carry no image annotation, "
+            f"so their digest cannot be re-resolved: {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        print(
+            "      Add `# renovate: ... depName=<ref>` or `# image: <ref>` above "
+            "the matching services: key.",
+            file=sys.stderr,
+        )
+        return 1
+
+    changes: list[tuple[str, str, str]] = []
+    failed = 0
+    for key in sorted(recorded):
+        ref, tag = images[key]
+        full = f"{ref}:{tag}"
+        digest, err = resolve_digest(full)
+        if digest is None:
+            print(f"ERROR {key}: {full}: {err}")
+            failed += 1
+        elif digest != recorded[key]:
+            print(f"STALE {key}: {full}\n      {recorded[key]}\n   -> {digest}")
+            changes.append((key, recorded[key], digest))
+        else:
+            print(f"ok    {key}: {full}")
+
+    if failed:
+        print(f"\n{failed} image(s) could not be resolved; nothing written.", file=sys.stderr)
+        return 1
+    if not changes:
+        print("\nall services-digests match the registries")
+        return 0
+    if args.check:
+        print(f"\n{len(changes)} digest(s) STALE (--check: nothing written)")
+        return 1
+
+    for key, old, new in changes:
+        if text.count(old) != 1:
+            print(
+                f"ERROR {key}: its digest appears {text.count(old)} times in "
+                f"versions.yaml -- refusing to rewrite ambiguously",
+                file=sys.stderr,
+            )
+            return 1
+        text = text.replace(old, new)
+    path.write_text(text, encoding="utf-8", newline="\n")
+    print(f"\n{len(changes)} digest(s) rewritten in versions.yaml")
+    return 0
+
+
 def cmd_compat_check(args: argparse.Namespace) -> int:
     root = load_root()
     name, v = stack_pins(root, args.stack)
@@ -799,6 +899,18 @@ def main() -> int:
     p = sub.add_parser("verify", help="compare versions.yaml digests to GHCR")
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser(
+        "refresh-digests",
+        help="re-resolve services-digests from the registries and rewrite them",
+    )
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument(
+        "--check",
+        action="store_true",
+        help="report staleness and exit 1 without writing (for CI)",
+    )
+    p.set_defaults(func=cmd_refresh_digests)
 
     p = sub.add_parser("compat-check", help="validate the stack's interdependency constraints")
     p.add_argument("--stack", help="stack version (default: `current`)")

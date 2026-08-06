@@ -1,5 +1,43 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "versions.yaml is the third-party SSoT for the DFE stack. Renovate lives HERE (relocated from dfe-docker, which now derives its pins via `make stack`). OPERATOR-COUPLED service versions -- services.clickhouse-version (clickhouse-operator), services.kafka-version (strimzi 0.51 ceiling 4.2.0), services.redpanda-version (redpanda-operator) -- are bounded by the ORG PRESET's allowedVersions rules, which gate by PACKAGE wherever the image is pinned rather than by file: nothing parses versions.yaml, so gating it alone left the same image in a compose file, a CI script or a chart values file wide open. They still move BY HAND in lockstep with their operator, verified against the operator support matrix and `dfe-stack compat-check`; the preset stops Renovate proposing past the ceiling. FOLLOW-UP: the plain-image third-party (kafbat, ferretdb, documentdb-pg, nginx-proxy) will get a Renovate custom regex manager once a `dfe-stack refresh-digests` helper exists to keep services-digests in sync after a version bump (the SSoT splits version and sha256 across services/services-digests, so a version-only bump would strand the digest).",
-  "extends": ["github>hyperi-io/renovate-config"]
+  "description": "versions.yaml is the third-party SSoT for the DFE stack. Renovate lives HERE (relocated from dfe-docker, which now derives its pins via `make stack`). PIN FLOW IS INVERTED: Renovate edits versions.yaml ONLY, and `check_versions_drift.py --fix` propagates the SSoT into every mirror (chart values, chart appVersions, appset chart pins, plain manifests). Renovate cannot do that job itself -- it manages helm-values and terraform, but not the appset pins, the Chart.yaml appVersions or the bare `version:` keys, so a Renovate edit to a chart could only ever move ONE of a key's mirrors and left every PR failing the drift check. OPERATOR-COUPLED service versions -- services.clickhouse-version (clickhouse-operator), services.kafka-version (strimzi 0.51 ceiling 4.2.0), services.redpanda-version (redpanda-operator) -- carry an `# image:` annotation rather than a `# renovate:` one: `dfe-stack refresh-digests` resolves their digests, but the VERSION moves by hand in lockstep with the operator, verified against the operator support matrix and `dfe-stack compat-check`. The org preset's allowedVersions rules remain the backstop, gating by PACKAGE wherever the image is pinned.",
+  "extends": ["github>hyperi-io/renovate-config"],
+  "customManagers": [
+    {
+      "description": "The SSoT's own pins. An annotation comment above a `key: \"value\"` line names the image, so Renovate proposes the bump HERE and the propagator carries it to the mirrors. The org preset's identical manager covers .rs/.py/.sh only, which is why versions.yaml needs its own.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^versions\\.yaml$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[^\\n]*\\n\\s*[A-Za-z0-9_.-]+:\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "versioningTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Stop Renovate editing the MIRRORS of an SSoT pin. These images are pinned in both versions.yaml and a chart; letting the helm-values manager edit the chart copy would fight the propagator and produce a PR that moves one mirror of a key that has up to three. versions.yaml is the only place these are proposed now. Deliberately package-scoped rather than a blanket helm-values disable: curlimages/curl in the forgejo chart has NO SSoT key, and losing Renovate on it would leave it genuinely unwatched.",
+      "matchManagers": ["helm-values", "helmv3"],
+      "matchPackageNames": [
+        "clickhouse/clickhouse-server",
+        "docker.io/clickhouse/clickhouse-server",
+        "clickhouse/clickhouse-keeper",
+        "docker.io/clickhouse/clickhouse-keeper",
+        "apache/kafka",
+        "apache/kafka-native",
+        "redpandadata/redpanda",
+        "docker.redpanda.com/redpandadata/redpanda",
+        "ghcr.io/kafbat/kafka-ui",
+        "ghcr.io/ferretdb/ferretdb",
+        "ghcr.io/ferretdb/postgres-documentdb",
+        "otel/opentelemetry-collector-contrib"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Group every SSoT pin into ONE PR. The propagator runs per-PR and rewrites whatever the SSoT moved, so splitting the SSoT edits across PRs would mean each one races the others' mirrors. Last rule, so it beats the preset's manager-based groups for this repo.",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["versions.yaml"],
+      "groupName": "stack pins (versions.yaml SSoT)"
+    }
+  ]
 }

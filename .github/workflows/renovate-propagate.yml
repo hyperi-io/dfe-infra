@@ -1,0 +1,71 @@
+# Renovate edits versions.yaml (the SSoT) and nothing else -- it cannot reach
+# the appset pins, the Chart.yaml appVersions or the bare `version:` keys, so it
+# could only ever move one mirror of a key that has up to three. This job
+# propagates the SSoT across every mirror and re-resolves the digests, then
+# pushes the result back onto Renovate's own branch so the PR arrives green.
+#
+# Runs on PUSH, not pull_request: a pull_request run from a bot gets a read-only
+# token and cannot push. Renovate pushes its branches to this repo (never a
+# fork), so a push trigger is same-repo and the token is writable.
+name: Renovate propagate
+
+on:
+  push:
+    branches:
+      - 'renovate/**'
+
+# Least privilege: write the branch, read packages so ghcr digests resolve.
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: renovate-propagate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  propagate:
+    name: propagate versions.yaml to the pin mirrors
+    runs-on: ubuntu-latest
+    # Only Renovate's own pushes -- a human pushing a renovate/** branch keeps
+    # their commit unaltered.
+    if: github.actor == 'renovate[bot]'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Anonymous ghcr pulls are rate-limited and can fail outright; the token
+      # this job already holds removes that as a failure mode.
+      - name: Log in to ghcr
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Refuses rather than guessing when a pattern stops matching, so a chart
+      # that changed shape fails the job instead of being written at a guessed
+      # offset.
+      - name: Propagate the SSoT into every mirror
+        run: python3 scripts/check_versions_drift.py --fix
+
+      - name: Re-resolve third-party digests
+        run: python3 scripts/dfe-stack refresh-digests
+
+      - name: Push the propagation back onto the branch
+        run: |
+          set -euo pipefail
+          # Explicit paths, never `git add -A`: this job runs on a bot's branch
+          # with a writable token, so it commits only what the propagator owns.
+          git add -- versions.yaml helm argocd bootstrap terraform
+          if git diff --cached --quiet; then
+            echo "SSoT and mirrors already agree; nothing to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(deps): propagate versions.yaml to the pin mirrors" \
+            -m "Renovate edits the SSoT; the mirrors are generated. See scripts/check_versions_drift.py --fix."
+          # Explicit refspec rather than relying on checkout leaving a tracking
+          # branch -- a detached HEAD would otherwise fail only at this step.
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "Pushed. The re-run this triggers finds nothing to do and exits."

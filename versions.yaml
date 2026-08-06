@@ -92,17 +92,28 @@ stacks:
     services:
       postgresql: "17"               # CNPG cluster PG major version
       cnpg-cluster-instances: "3"    # Number of PG instances (HA)
+      # image: apache/kafka -- operator-coupled: refresh-digests resolves the
+      # digest, but the VERSION moves by hand with the strimzi support matrix.
       kafka-version: "4.2.0"         # Kafka inside Strimzi. AT THE CEILING for strimzi 0.51 -- do not go higher while strimzi-kafka-operator is held at 0.51. VERIFIED 2026-08-04 against strimzi 0.51.0 kafka-versions.yaml: 4.2.0 is `supported: true` AND `default: true` (Kafka 4.2.0 released 2026-02-10, before strimzi 0.51.0 on 2026-03-06). UNIFIED 2026-07-16: dfe-docker apache/kafka had drifted to 4.3.1, which strimzi 0.51 CANNOT run; both paths now move together. Bounded to <=4.2.0 in the org Renovate preset, by package (operator-coupled). services-digests.kafka-version pins the apache/kafka:4.2.0 docker image; strimzi resolves its own image on k8s.
       kafka-replicas: "3"            # Kafka broker count (cluster mode default; settable higher)
+      # image: docker.redpanda.com/redpandadata/redpanda -- operator-coupled:
+      # refresh-digests resolves the digest, the VERSION moves by hand.
       redpanda-version: "v26.1.8"    # redpanda broker image tag the operator chart 26.1.6 pairs with (tested pairing). Used in the Redpanda CR spec.clusterSpec.image.tag when provider=redpanda. UNIFIED 2026-07-16: dfe-docker had v26.1.9; both paths now v26.1.8. Bounded to <26.2 in the org Renovate preset, by package (operator-coupled).
+      # image: clickhouse/clickhouse-server -- operator-coupled: refresh-digests
+      # resolves the digest, but the VERSION moves by hand with the operator.
       clickhouse-version: "26.3.17.56"  # DOCKER tag (NOT the v..-lts release tag -- Docker drops -lts; verified pullable). LTS release v26.3.17.56-lts 2026-07-20, the newest on the 26.3 LTS line (line opened v26.3.1.896-lts 2026-03-27; ClickHouse LTS is supported one year from initial release, so this line ages out ~2027-03). Stays on 26.3 deliberately: 26.4/26.5/26.6/26.7 are stable-line, not LTS. 24.8 past-EOL. UNIFIED 2026-07-16: dfe-docker had drifted to 26.6.1.1193 (off-LTS); both paths now hold this LTS. Same upstream image both paths; services-digests.clickhouse-version pins it. clickhouse-keeper shares the tag (helm/charts/clickhouse-cluster/values.yaml).
       clickhouse-replicas: "1"       # default; overridden by profile (slim/single=1, scale=3)
+      # renovate: datasource=docker depName=ghcr.io/ferretdb/ferretdb
       ferretdb: "2.7.0"              # 2025-11-10. 2.x requires DocumentDB PG ext; NOT in-place upgradable from 1.x (dump/restore). Pair with documentdb-pg. NOTE: the k8s ferretdb CHART is still appVersion 1.24.0 on vanilla CNPG PG17 -- a k8s 1.x->2.x gap (see docs/stack-components.md), so ferretdb+documentdb-pg are docker-path today.
+      # renovate: datasource=docker depName=ghcr.io/ferretdb/postgres-documentdb
       documentdb-pg: "17-0.107.0-ferretdb-2.7.0"  # FerretDB 2.x PG backend image tag (docker HYPERDX_POSTGRES_VERSION). Docker-only until the k8s ferretdb 2.x migration.
       forgejo: "15.0.5"              # code.forgejo.org/forgejo/forgejo -- bundled deploy-repo FALLBACK (only when no external GitHub/GitLab supplied). 15.0.5 2026-07-15 on the v15 LTS line (v15.0.0 2026-04-16; Forgejo LTS runs 1 year 3 months, so supported to 2027-07). STAY ON v15: v16 is the stable line, not LTS. 15.0.6 exists (2026-07-30) but was inside the 7-day cooldown at this refresh. REGISTRY: code.forgejo.org (canonical), NOT codeberg.org (503s under load). digest sha256:eda2e378442d2f18cfa563994f8ad66e71f04ac9c3bb4259cc57bdd641890f5c. GPLv3+ run-unmodified; k8s-only. Cascades to helm/charts/forgejo Chart.appVersion (image.tag is empty and falls back to it).
+      # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
       otel-collector: "0.157.0"      # 2026-07-22 (clears cooldown). Both rendered collector configs -- gateway (otlp/batch/memory_limiter/otlphttp/prometheus/debug/health_check) and daemonset (filelog/hostmetrics/k8sattributes/otlp/health_check) -- pass `otelcol validate` against this image. No component we use was removed.
       hyperdx: "2.16.0"              # UPSTREAM HyperDX app version reference; our dfe-hyperdx fork image is content.dfe-hyperdx. Tied to the fork-update workstream.
+      # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
       kafbat: "v1.5.0"               # ghcr.io/kafbat/kafka-ui -- Kafka web UI, bundled with the kafka substrate. v1.5.0 2026-04-20 (clears cooldown; no LTS line, latest stable 2026-07-12). DFE integrated-app auth (OIDC + ro/rw/admin + break-glass). services-digests.kafbat pins it (both paths).
+      # renovate: datasource=docker depName=nginx
       nginx-proxy: "1.31-alpine"     # DOCKER-ONLY reverse proxy image (dfe-docker DFE_PROXY_VERSION); class E. k8s uses envoy-gateway, not nginx, so there is NO k8s cascade. Added to the SSoT 2026-07-16 so a stack version pins it too (make stack fills the hard-fail ${DFE_PROXY_VERSION:?}). services-digests.nginx-proxy pins it. See docs/stack-components.md.
 
     # Stage apps: DFE application services (ArgoCD wave 5, appsets/layer2-apps.yaml).
