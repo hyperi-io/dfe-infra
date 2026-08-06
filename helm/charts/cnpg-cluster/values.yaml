@@ -17,6 +17,11 @@ cluster:
     repository: ghcr.io/ferretdb/postgres-documentdb
     tag: "17-0.107.0-ferretdb-2.7.0"
     digest: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"
+    # The uid/gid of `postgres` in the image above -- Debian-based, so 999.
+    # CNPG's own UBI build uses 26, which is what its CRD defaults to; set both
+    # back to 26 when swapping repository to ghcr.io/cloudnative-pg/postgresql.
+    postgresUID: 999
+    postgresGID: 999
   storage:
     size: 10Gi
     storageClass: ""  # empty = default StorageClass
