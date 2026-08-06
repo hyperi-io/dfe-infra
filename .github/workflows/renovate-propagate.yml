@@ -20,6 +20,7 @@ permissions:
   contents: write
   packages: read
   actions: write
+  statuses: write
 
 concurrency:
   group: renovate-propagate-${{ github.ref }}
@@ -73,12 +74,27 @@ jobs:
           git push origin "HEAD:${GITHUB_REF_NAME}"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      # A push made with GITHUB_TOKEN triggers NO workflow, so the commit just
-      # pushed would carry no checks at all and the PR would sit unverified.
-      # workflow_dispatch is the documented exception, so the run is asked for
-      # explicitly.
+      # The pull_request run for a bot-authored commit lands in `action_required`
+      # and waits for a human, so the branch would otherwise go unverified until
+      # someone noticed. workflow_dispatch is not gated that way.
       - name: Ask for the checks the bot push cannot trigger
         if: steps.push.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run helm-lint.yml --ref "${GITHUB_REF_NAME}"
+
+      # A workflow_dispatch run does not attach to the PR, so the step above
+      # verifies the branch without the PR showing anything. A commit status
+      # does show, and reports what the steps above actually verified -- the job
+      # fails before reaching here if propagation or the digests fail.
+      - name: Report the propagation on the pushed commit
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/$(git rev-parse HEAD)" \
+            --method POST \
+            -f state=success \
+            -f context="pin propagation" \
+            -f description="SSoT propagated to every mirror; drift check passed"
