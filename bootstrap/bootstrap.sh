@@ -431,9 +431,14 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   echo "==> Verifying ArgoCD can read the chart repo"
   repo_err=""
   for _ in $(seq 1 30); do
+    # Force a refresh each pass. A ComparisonError is CACHED on the Application,
+    # so an Application that failed before the credential existed keeps reporting
+    # the old error and this check would fail a repo it can now read.
+    kubectl -n argocd annotate applications --all \
+      argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+    sleep 4
     repo_err=$(kubectl -n argocd get applications -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="ComparisonError")].message}{"\n"}{end}' 2>/dev/null | grep -m1 'failed to list refs' || true)
     [[ -z "${repo_err}" ]] && break
-    sleep 2
   done
   if [[ -n "${repo_err}" ]]; then
     echo "ERROR: ArgoCD cannot read the chart repo ${DFE_REPO_URL}" >&2
