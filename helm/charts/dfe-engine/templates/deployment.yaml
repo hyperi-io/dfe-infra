@@ -74,6 +74,7 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: DFE_CLICKHOUSE_SECURE
               value: "false"
+            {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             # Config-registry directories. WITHOUT these the engine leaves every
             # registry uninitialised and the config API returns 503 not_configured.
             # All live under the (writable) config mount; the engine seeds defaults
