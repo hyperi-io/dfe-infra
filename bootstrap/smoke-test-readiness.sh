@@ -16,11 +16,13 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 #
 #  Usage: ./smoke-test-readiness.sh [kubeconfig]
-#  Env:   READINESS_TIMEOUT   (default 900s) -- backstop; convergence wait ceiling.
+#  Env:   DFE_NS              -- the app namespace; empty skips the presence check.
+#         READINESS_TIMEOUT   (default 900s) -- backstop; convergence wait ceiling.
 #         READINESS_INTERVAL  (default 15s)  -- poll cadence.
 #         READINESS_RESTART_THRESHOLD (default 10) -- restarts above this fail.
 set -uo pipefail
 [ -n "${1:-}" ] && export KUBECONFIG="$1"
+DFE_NS="${DFE_NS:-}"
 TIMEOUT="${READINESS_TIMEOUT:-900}"
 INTERVAL="${READINESS_INTERVAL:-15}"
 THRESH="${READINESS_RESTART_THRESHOLD:-10}"
@@ -59,6 +61,17 @@ run_check() {
     [ -z "$ns" ] && continue
     [ "${have:-0}" != "${want:-0}" ] && echo "daemonset $ns/$name ${have:-0}/${want:-0} ready" >> "$ISSUES_FILE"
   done < <(kubectl get daemonset -A --no-headers -o custom-columns=NS:.metadata.namespace,N:.metadata.name,W:.status.desiredNumberScheduled,H:.status.numberReady 2>/dev/null)
+
+  # PRESENCE. Every check above judges what exists, so a deploy that produced
+  # nothing passes them all. An unseeded or unreadable deploy repo generates zero
+  # Applications and leaves this namespace empty.
+  if [ -n "$DFE_NS" ]; then
+    local workloads
+    workloads=$(kubectl -n "$DFE_NS" get deployment,statefulset --no-headers 2>/dev/null | grep -c .)
+    if [ "${workloads:-0}" -eq 0 ]; then
+      echo "namespace $DFE_NS has NO app workloads -- the deploy repo enabled no apps (expected one values/<svc>-<inst>-values.yaml per app)" >> "$ISSUES_FILE"
+    fi
+  fi
 
   grep -c . "$ISSUES_FILE"
 }
