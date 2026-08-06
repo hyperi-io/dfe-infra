@@ -74,6 +74,8 @@ def load_versions() -> dict[str, str]:
     `current` pointer, descend into stacks[current], and flatten THAT stack's
     sections (e.g. operators.keda, services.clickhouse-version). The drift-check
     always validates the stack under development.
+
+    The `current` pointer is also returned, as `pointers.current`.
     """
     root = _parse_nested(VERSIONS_FILE.read_text())
     current = root.get("current")
@@ -83,7 +85,10 @@ def load_versions() -> dict[str, str]:
             f"versions.yaml: `current` ({current!r}) not found in stacks: "
             f"({', '.join(stacks) or 'none'})"
         )
-    flat: dict[str, str] = {}
+    # The `current` pointer is itself a pin -- deployment.example.yaml names a
+    # stack version the same way a chart names an image tag -- so it is exposed
+    # under a synthetic section rather than left unreachable to the checks.
+    flat: dict[str, str] = {"pointers.current": current}
     for section, body in stacks[current].items():
         if isinstance(body, dict):
             for key, value in body.items():
@@ -316,6 +321,14 @@ CHECKS += [
         Path("helm/charts/kafbat/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # The worked example names a stack version the same way a chart names an
+    # image tag, so it goes stale the moment `current` moves.
+    Check(
+        "stack pin (deployment example)",
+        "pointers.current",
+        Path("deployment.example.yaml"),
+        r"\nversion:\n\s*pin:\s*\"?([^\"\s#]+)",
+    ),
 ]
 
 # OpenTofu provider constraints, which versions.yaml records as a mirror of the
@@ -449,6 +462,7 @@ SWEEP_PATTERNS = (
     ("appVersion", r'(?m)^[^\S\n]*appVersion:[^\S\n]*"?([^"\s#]+)"?'),
     ("image ref", r'(?m)^[^\S\n]*image:[^\S\n]*"?[\w./-]+:([^"\s#@]+)'),
     ("provider constraint", r'(?m)^[^\S\n]*version[^\S\n]*=[^\S\n]*"([^"]+)"'),
+    ("stack pin", r'(?m)^[^\S\n]*pin:[^\S\n]*"?([^"\s#]+)"?'),
 )
 
 _HAS_DIGIT = re.compile(r"\d")
@@ -527,6 +541,14 @@ def sweep_files() -> tuple[Path, ...]:
             for p in base.rglob("*")
             if p.is_file() and p.suffix in SWEEP_SUFFIXES
         ]
+    # The repo root itself, NOT recursed -- a new top-level file is then swept
+    # without anyone remembering to list it. deployment.example.yaml pins a
+    # stack version up here, outside every root above.
+    found += [
+        p.relative_to(REPO_ROOT)
+        for p in REPO_ROOT.iterdir()
+        if p.is_file() and p.suffix in SWEEP_SUFFIXES
+    ]
     return tuple(sorted(found))
 
 

@@ -64,6 +64,68 @@ def test_sweep_reads_a_real_tree() -> None:
     )
 
 
+def test_sweep_reaches_the_repo_root() -> None:
+    """The root is swept non-recursively, so top-level pins are not invisible."""
+    files = drift.sweep_files()
+    expect(
+        "deployment.example.yaml is in the swept set",
+        Path("deployment.example.yaml") in files,
+        f"root files swept: {[f for f in files if f.parent == Path('.')]}",
+    )
+
+
+def test_stack_pin_surfaces_without_its_check() -> None:
+    """Drop the check and the example's stack pin must come back as unswept.
+
+    Proves the root sweep and the `pin:` pattern both work, rather than the
+    literal being invisible to the sweep and merely covered by a check.
+    """
+    original = drift.CHECKS
+    try:
+        drift.CHECKS = [
+            c for c in original if c.label != "stack pin (deployment example)"
+        ]
+        unswept = [
+            p
+            for p in drift.reverse_sweep()
+            if "[unswept]" in p and "deployment.example.yaml" in p
+        ]
+        expect(
+            "the example's stack pin is visible to the sweep",
+            len(unswept) == 1,
+            f"got {unswept}",
+        )
+    finally:
+        drift.CHECKS = original
+
+
+def test_stale_stack_pin_is_caught() -> None:
+    """A worked example left on the previous stack must be reported."""
+    versions = drift.load_versions()
+    check = next(c for c in drift.CHECKS if c.label == "stack pin (deployment example)")
+    real_read = drift.read_source
+
+    def poisoned(file_path: Path) -> str:
+        text = real_read(file_path)
+        if file_path.as_posix() == "deployment.example.yaml":
+            return text.replace(versions["pointers.current"], "2.1.0-rc.9")
+        return text
+
+    try:
+        drift.read_source = poisoned
+        expect(
+            "an example pinning a superseded stack is caught",
+            drift.extract_value(check) != versions["pointers.current"],
+        )
+    finally:
+        drift.read_source = real_read
+
+    expect(
+        "the example matches the current stack as committed",
+        drift.extract_value(check) == versions["pointers.current"],
+    )
+
+
 def test_missing_sweep_root_is_fatal() -> None:
     """A renamed directory must stop the run, not quietly shrink the sweep."""
     original = drift.SWEEP_ROOTS
