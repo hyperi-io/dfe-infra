@@ -19,6 +19,12 @@ spec:
   # ghcr.io/cloudnative-pg/postgresql. Nothing here is estate-specific.
   imageName: {{ printf "%s:%s" .Values.cluster.image.repository .Values.cluster.image.tag }}{{ with .Values.cluster.image.digest }}@{{ . }}{{ end }}
 
+  # The uid/gid `postgres` has inside that image, which CNPG defaults to its own
+  # UBI build's 26. initdb aborts with "could not look up effective user ID" when
+  # the id it runs as has no passwd entry, failing the cluster at bootstrap.
+  postgresUID: {{ .Values.cluster.image.postgresUID }}
+  postgresGID: {{ .Values.cluster.image.postgresGID }}
+
   storage:
     size: {{ .Values.cluster.storage.size }}
     # CNPG's field is storageClass, NOT the core-PVC spelling storageClassName.
