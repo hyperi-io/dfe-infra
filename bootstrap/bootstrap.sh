@@ -20,7 +20,11 @@
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com
 #   DFE_PROFILE              slim | single | scale
-#   DFE_REPO_URL             Git repo URL for ArgoCD
+#   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
+#   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
+#   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
+#   DFE_REPO_SSH_KEY         optional; path to an SSH key when the chart repo is
+#                            private and DFE_REPO_URL is an SSH URL
 #   DFE_TARGET_REVISION      Git branch/tag (e.g. main)
 #   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard
 #   DFE_NAMESPACE            K8s namespace for DFE apps (e.g. dfe-prod)
@@ -383,6 +387,31 @@ else
   echo "  Using existing ArgoCD; registering DFE AppProjects + ApplicationSets into it."
 fi
 
+# Argo CD repo credential for the CHART repo (DFE_REPO_URL), which is where Argo
+# READS charts -- distinct from the DEPLOY repo credential in [4c/7], where the
+# engine WRITES. Optional, so one bootstrap serves both postures: a public chart
+# repo needs no credential, a private one takes a token or an SSH key.
+if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  if [[ -n "${DFE_REPO_SSH_KEY:-}" ]] && [[ -f "${DFE_REPO_SSH_KEY}" ]]; then
+    echo "  [chart repo] SSH key supplied -> creating Argo repository credential"
+    kubectl -n argocd create secret generic repo-charts \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_REPO_URL}" \
+      --from-file=sshPrivateKey="${DFE_REPO_SSH_KEY}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+  elif [[ -n "${DFE_REPO_TOKEN:-}" ]]; then
+    echo "  [chart repo] token supplied -> creating Argo repository credential"
+    kubectl -n argocd create secret generic repo-charts \
+      --from-literal=type=git \
+      --from-literal=url="${DFE_REPO_URL}" \
+      --from-literal=username="${DFE_REPO_USER:-git}" \
+      --from-literal=password="${DFE_REPO_TOKEN}" \
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+  else
+    echo "  [chart repo] no DFE_REPO_TOKEN/DFE_REPO_SSH_KEY -- assuming ${DFE_REPO_URL} is PUBLIC"
+  fi
+fi
+
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"
 # Standalone in-repo chart apps are envsubst-templated (repoURL, cloud overlay)
@@ -392,6 +421,28 @@ envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run k
 # (dfe-common.scaledobject helper), driven by the per-instance overlay.
 # cluster-addons ApplicationSet uses goTemplate — no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
+
+# Prove Argo can actually READ the chart repo before declaring bootstrap done.
+# An unreadable repo leaves every Application stuck Unknown, so layer2 never
+# generates and the failure surfaces much later as missing ClickHouse and Kafka
+# -- symptoms that name everything except the cause. Checked by reachability,
+# not by URL scheme, so an SSH URL with a key supplied stays valid.
+if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  echo "==> Verifying ArgoCD can read the chart repo"
+  repo_err=""
+  for _ in $(seq 1 30); do
+    repo_err=$(kubectl -n argocd get applications -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="ComparisonError")].message}{"\n"}{end}' 2>/dev/null | grep -m1 'failed to list refs' || true)
+    [[ -z "${repo_err}" ]] && break
+    sleep 2
+  done
+  if [[ -n "${repo_err}" ]]; then
+    echo "ERROR: ArgoCD cannot read the chart repo ${DFE_REPO_URL}" >&2
+    echo "       ${repo_err}" >&2
+    echo "       Set DFE_REPO_TOKEN (HTTPS) or DFE_REPO_SSH_KEY (SSH) if it is private." >&2
+    exit 1
+  fi
+  echo "  [ok] chart repo readable"
+fi
 
 # Argo CD repo credential for the bundled in-cluster Forgejo deploy repo, so Argo
 # can pull it. Uses the Forgejo admin creds. External git repo creds are handled
