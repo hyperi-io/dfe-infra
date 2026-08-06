@@ -94,6 +94,14 @@ spec:
               value: {{ .Values.config.mountPath }}/rules
             - name: DFE_HUNTS_ALERT_DESTINATIONS_DIR
               value: {{ .Values.config.mountPath }}/alerts
+            # The shared signing key. Supplying it means the engine adopts the
+            # same key its sidecar pods read, instead of minting a private one
+            # only it can see.
+            - name: DFE_API_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.jwtSecretName }}
+                  key: {{ .Values.auth.jwtSecretKey }}
             # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
             # the WRITABLE config mount. The default ./.secrets resolves to
             # /app/.secrets on the root-owned WORKDIR (non-writable) -> the engine

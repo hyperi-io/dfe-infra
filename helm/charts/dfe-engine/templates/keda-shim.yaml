@@ -56,6 +56,13 @@ spec:
             - name: http
               containerPort: {{ .Values.kedaShim.port }}
           env:
+            # Same shared signing key as the engine and the hunt runner -- this
+            # pod cannot read the engine's per-pod emptyDir either.
+            - name: DFE_API_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.jwtSecretName }}
+                  key: {{ .Values.auth.jwtSecretKey }}
             # Same in-cluster ClickHouse the engine reads (plaintext HTTP :8123). The
             # shim polls it READ-ONLY for the pressure gauge + the hunt due-count.
             - name: DFE_CLICKHOUSE_HOST

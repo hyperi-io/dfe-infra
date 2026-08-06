@@ -57,6 +57,14 @@ spec:
           command: ["dfe-hunt-runner"]
           args: ["run", "--poll", {{ .Values.huntRunner.poll | quote }}, "--cap", {{ .Values.huntRunner.cap | quote }}]
           env:
+            # The engine mints its key into a per-pod emptyDir, which this pod
+            # cannot read; without the shared Secret it falls back to the dev
+            # placeholder and DFESettings rejects that under env=production.
+            - name: DFE_API_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.jwtSecretName }}
+                  key: {{ .Values.auth.jwtSecretKey }}
             # Same in-cluster ClickHouse the engine uses (plaintext HTTP :8123). The
             # runner coordinates leases/watermarks and runs hunt queries here.
             - name: DFE_CLICKHOUSE_HOST
