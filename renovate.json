@@ -34,10 +34,10 @@
       "enabled": false
     },
     {
-      "description": "Group every SSoT pin into ONE PR. The propagator runs per-PR and rewrites whatever the SSoT moved, so splitting the SSoT edits across PRs would mean each one races the others' mirrors. Last rule, so it beats the preset's manager-based groups for this repo.",
+      "description": "Group every SSoT pin into ONE PR. The propagator runs per-PR and rewrites whatever the SSoT moved, so splitting the SSoT edits across PRs would mean each one races the others' mirrors. Last rule, so it beats the preset's manager-based groups for this repo. The name is kept free of parentheses and spaces beyond the hyphenation Renovate applies, because it becomes a branch name that shell and git tooling has to handle.",
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["versions.yaml"],
-      "groupName": "stack pins (versions.yaml SSoT)"
+      "groupName": "stack pins"
     }
   ]
 }
