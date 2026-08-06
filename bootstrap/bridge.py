@@ -26,13 +26,48 @@ from pathlib import Path
 from shutil import which
 
 
-def _find_tf_binary() -> str:
-    """Find terraform or tofu binary, exit if neither found."""
+def _find_tf_binary() -> str | None:
+    """The IaC binary, or None -- a missing one has a fallback, so it is not fatal."""
     for cmd in ("tofu", "terraform"):
         if which(cmd):
             return cmd
-    print("ERROR: neither terraform nor opentofu found on PATH", file=sys.stderr)
-    sys.exit(1)
+    return None
+
+
+def _outputs_from_state(tf_dir: str) -> dict[str, str]:
+    """Read outputs straight out of terraform.tfstate.
+
+    The binary is the right reader when it is present -- it honours remote state
+    and workspaces. This is for the machine that has the state file but no tofu
+    installed, where the alternative is being unable to deploy at all. Local
+    state only, and it says so rather than silently reading a stale file.
+    """
+    state = Path(tf_dir) / "terraform.tfstate"
+    if not state.is_file():
+        print(
+            f"ERROR: neither terraform nor opentofu is on PATH, and there is no "
+            f"local state to fall back on at {state}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        raw = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: could not read {state}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    outputs = {
+        k: str(v.get("value", ""))
+        for k, v in (raw.get("outputs") or {}).items()
+        if v.get("value") is not None
+    }
+    print(
+        f"NOTE: no tofu/terraform on PATH -- read {len(outputs)} output(s) from "
+        f"the LOCAL state file {state}. If this environment uses remote state, "
+        f"that file may be stale; install tofu to read authoritatively.",
+        file=sys.stderr,
+    )
+    return outputs
 
 
 def get_tf_outputs(tf_dir: str) -> dict[str, str]:
@@ -40,8 +75,12 @@ def get_tf_outputs(tf_dir: str) -> dict[str, str]:
 
     Handles sensitive outputs: terraform output -json redacts them.
     For any sensitive output, falls back to `terraform output -raw <key>`.
+
+    With no IaC binary installed, falls back to reading terraform.tfstate.
     """
     tf_bin = _find_tf_binary()
+    if tf_bin is None:
+        return _outputs_from_state(tf_dir)
     result = subprocess.run(
         [tf_bin, "output", "-json"],
         cwd=tf_dir,
