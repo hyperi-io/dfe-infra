@@ -51,7 +51,14 @@ gitops:
   credentialsSecret: dfe-deploy-repo-auth   # keys: username, password
 
 auth:
+  # Every dfe-engine pod reads the signing key from this Secret. The chart
+  # generates it when absent and ADOPTS it when present, so supplying it from
+  # ESO or a sealed secret is just a matter of creating it under this name first.
   jwtSecretName: dfe-engine-jwt
+  jwtSecretKey: jwt-secret
+  # Pin a known key for a deployment that restores from backup or rotates
+  # centrally. Empty mints a 64-char random one.
+  jwtSecret: ""
   oidcEnabled: false
 
 # OIDC provider credentials — mounted as env vars from K8s Secrets.
