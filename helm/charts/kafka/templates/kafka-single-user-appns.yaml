@@ -1,0 +1,114 @@
+{{- if and (eq .Values.kafka.mode "single") .Values.appNamespace }}
+# The single tier's SCRAM credential, copied into the APP namespace.
+#
+# clusterexternalsecret-appns.yaml covers the cluster tier by reading the store
+# twice, once per namespace. That does not work here: single mode has no store to
+# read, because kafka-single-user.yaml GENERATES the password in-cluster (ESO
+# Password generator) so the smallest tier needs no seeded secrets store. A second
+# ExternalSecret against that generator mints a DIFFERENT password, so the app
+# namespace has to be given the value that already exists.
+#
+# ESO's kubernetes provider is the copy: a ClusterSecretStore pointed at this
+# namespace, read through a ServiceAccount that may read this one Secret and
+# nothing else.
+#
+# Without it every dfe-* pod that wants Kafka sits in CreateContainerConfigError
+# with `secret "dfe-kafka-user" not found`, while the broker runs perfectly.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.user.name }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.user.name }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  # resourceNames scopes this to the one Secret; the token ESO mints for this
+  # account cannot read anything else in the namespace.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.user.name | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.user.name }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.user.name }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.user.name }}-reader
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ .Values.user.name }}-broker-ns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: {{ .Release.Namespace }}
+      server:
+        # Every namespace carries kube-root-ca.crt, so the API server's CA needs
+        # no separate distribution step.
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+          namespace: {{ .Release.Namespace }}
+      auth:
+        serviceAccount:
+          name: {{ .Values.user.name }}-reader
+          namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: {{ .Values.user.name }}-appns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  externalSecretName: {{ .Values.user.name }}
+  refreshTime: 1h
+  namespaceSelectors:
+    {{- range (concat (list .Values.appNamespace) .Values.user.password.extraAppNamespaces) }}
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ . | quote }}
+    {{- end }}
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: {{ .Values.user.name }}-broker-ns
+      kind: ClusterSecretStore
+    target:
+      # The name every dfe-* chart's kafka.saslSecretName defaults to.
+      name: {{ .Values.user.name }}
+      creationPolicy: Owner
+    # Copied key for key, so the app-namespace Secret is byte-identical to the
+    # broker's and the two tiers present the same shape to clients.
+    data:
+      - secretKey: username
+        remoteRef:
+          key: {{ .Values.user.name }}
+          property: username
+      - secretKey: password
+        remoteRef:
+          key: {{ .Values.user.name }}
+          property: password
+      - secretKey: sasl.mechanism
+        remoteRef:
+          key: {{ .Values.user.name }}
+          property: sasl.mechanism
+{{- end }}
