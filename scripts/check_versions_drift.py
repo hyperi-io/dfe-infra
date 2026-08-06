@@ -30,6 +30,7 @@ import sys
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from functools import cache
+from itertools import pairwise
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -650,8 +651,109 @@ def dead_guards(versions: dict[str, str]) -> list[str]:
     return problems
 
 
+def plan_fix(
+    versions: dict[str, str],
+) -> tuple[dict[Path, str], list[str], list[str]]:
+    """Compute each mirror file's new text. Writes NOTHING.
+
+    The inverse of the check, off the SAME table: `extract_span` already reports
+    where the literal sits, so writing it is a slice replacement. That is the
+    whole reason CHECKS is data rather than closures.
+
+    Refuses rather than guesses. A pattern that no longer matches its file means
+    the file changed shape, and a write at a guessed offset would corrupt a
+    chart -- so it is reported and skipped, and the caller exits non-zero.
+
+    Returns (new text keyed by file, fixed labels, refusals).
+    """
+    writes: dict[Path, str] = {}
+    fixed: list[str] = []
+    refused: list[str] = []
+    # Group by file so one file with several mirrors is read and written once,
+    # and so later spans in the same file are not invalidated by an earlier write.
+    by_file: dict[Path, list[Check]] = {}
+    for check in CHECKS:
+        by_file.setdefault(check.file, []).append(check)
+
+    for file_path, checks in sorted(by_file.items(), key=lambda kv: str(kv[0])):
+        text = read_source(file_path)
+        edits: list[tuple[int, int, str, str]] = []
+        for check in checks:
+            expected = versions.get(check.key)
+            if expected is None:
+                refused.append(
+                    f"  [refused] {check.label}: versions.yaml has no key '{check.key}'"
+                )
+                continue
+            found = extract_span(check)
+            if found is None:
+                refused.append(
+                    f"  [refused] {check.label}: its pattern no longer matches "
+                    f"{file_path} -- the file changed shape; fix the pattern rather "
+                    f"than letting a write land at a guessed offset"
+                )
+                continue
+            actual, start, end = found
+            if actual != expected:
+                edits.append((start, end, expected, check.label))
+
+        if not edits:
+            continue
+        # Overlapping spans mean two checks claim the same bytes; splicing both
+        # would corrupt the file, so refuse rather than write something neither
+        # check describes.
+        ordered = sorted(edits)
+        for (a_start, a_end, _, a_label), (b_start, _, _, b_label) in pairwise(ordered):
+            if b_start < a_end:
+                refused.append(
+                    f"  [refused] {a_label} and {b_label} claim overlapping bytes "
+                    f"in {file_path} ({a_start}-{a_end} vs {b_start}-) -- their "
+                    f"patterns need narrowing before either can be written"
+                )
+        # Right to left, so each replacement leaves earlier offsets valid.
+        for start, end, expected, label in sorted(edits, reverse=True):
+            text = text[:start] + expected + text[end:]
+            fixed.append(f"  [fixed]   {label}: -> '{expected}'")
+        writes[file_path] = text
+
+    return writes, fixed, refused
+
+
+def apply_fix(versions: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Write every mirror that disagrees with the SSoT. Returns (fixed, refused).
+
+    Nothing is written when anything was refused: a partial propagation would
+    leave the tree in a state neither the SSoT nor the mirrors describe.
+    """
+    writes, fixed, refused = plan_fix(versions)
+    if refused:
+        return fixed, refused
+    for file_path, text in writes.items():
+        (REPO_ROOT / file_path).write_text(text, encoding="utf-8", newline="\n")
+    read_source.cache_clear()
+    return fixed, refused
+
+
 def main() -> int:
+    fix = "--fix" in sys.argv[1:]
     versions = load_versions()
+
+    if fix:
+        fixed, refused = apply_fix(versions)
+        if refused:
+            print("\n".join(refused), file=sys.stderr)
+            print(
+                f"\n{len(refused)} mirror(s) REFUSED -- NOTHING was written, "
+                f"including the {len(fixed)} that would otherwise have been "
+                f"rewritten. A partial propagation leaves the tree matching "
+                f"neither the SSoT nor the mirrors.",
+                file=sys.stderr,
+            )
+            return 1
+        print("\n".join(fixed) if fixed else "  (every mirror already matches)")
+        print(f"\n{len(fixed)} mirror(s) rewritten from versions.yaml.")
+        # Fall through and verify, so --fix never reports success on its own say-so.
+
     failures: list[str] = []
     checked = 0
 

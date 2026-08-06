@@ -173,6 +173,120 @@ def test_dropping_a_waiver_resurfaces_its_literals() -> None:
         drift.SWEEP_WAIVERS = original
 
 
+def test_fix_is_a_noop_when_nothing_drifts() -> None:
+    writes, fixed, refused = drift.plan_fix(drift.load_versions())
+    expect("--fix writes nothing when the tree is clean", writes == {}, f"{writes}")
+    expect("--fix reports no repairs when clean", fixed == [], f"{fixed}")
+    expect("--fix refuses nothing when clean", refused == [], f"{refused}")
+
+
+def test_fix_propagates_one_ssot_key_to_every_mirror() -> None:
+    """One SSoT bump must reach ALL of a key's mirrors, not just Renovate's one.
+
+    services.clickhouse-version has three: the server version and the keeper tag
+    in values.yaml, and the chart appVersion. Only the keeper tag is helm-values,
+    so Renovate could never have carried the other two.
+    """
+    versions = dict(drift.load_versions())
+    versions["services.clickhouse-version"] = "26.3.17.110"
+
+    writes, fixed, refused = drift.plan_fix(versions)
+    expect("propagation refuses nothing on a plain bump", refused == [], f"{refused}")
+    expect(
+        "all three clickhouse mirrors are rewritten",
+        len([f for f in fixed if "clickhouse" in f]) == 3,
+        f"{fixed}",
+    )
+    chart = writes.get(Path("helm/charts/clickhouse-cluster/Chart.yaml"), "")
+    values = writes.get(Path("helm/charts/clickhouse-cluster/values.yaml"), "")
+    expect(
+        "the chart appVersion carries the new value",
+        'appVersion: "26.3.17.110"' in chart,
+    )
+    expect(
+        "both values.yaml mirrors carry it",
+        values.count("26.3.17.110") == 2,
+        f"count={values.count('26.3.17.110')}",
+    )
+    expect(
+        "surrounding content is untouched",
+        "clickhouse-keeper" in values and "dfe-clickhouse" in values,
+    )
+
+
+def test_fix_refuses_rather_than_guessing() -> None:
+    """A pattern that stopped matching means the file changed shape.
+
+    Writing at a guessed offset would corrupt a chart, so the whole run must
+    refuse -- and refuse ATOMICALLY, leaving no partial propagation behind.
+    """
+    versions = dict(drift.load_versions())
+    versions["services.clickhouse-version"] = "26.3.17.110"
+    original = drift.CHECKS
+    try:
+        drift.CHECKS = [
+            drift.Check(
+                "deliberately unmatchable",
+                "services.clickhouse-version",
+                Path("helm/charts/clickhouse-cluster/values.yaml"),
+                r"this-pattern-matches-nothing-([0-9]+)",
+            ),
+            *original,
+        ]
+        writes, fixed, refused = drift.plan_fix(versions)
+        expect(
+            "an unmatchable pattern is refused",
+            any("deliberately unmatchable" in r for r in refused),
+            f"{refused}",
+        )
+        expect(
+            "the refusal names the file so it can be repaired",
+            any("values.yaml" in r for r in refused),
+            f"{refused}",
+        )
+        # The other mirrors ARE planned -- so it is the refusal, not an empty
+        # plan, that stops apply_fix writing. That is what makes it atomic.
+        expect(
+            "valid mirrors are still planned alongside the refusal",
+            bool(writes) and bool(fixed),
+            f"writes={len(writes)} fixed={len(fixed)}",
+        )
+    finally:
+        drift.CHECKS = original
+
+
+def test_fix_refuses_overlapping_spans() -> None:
+    """Two checks claiming the same bytes would splice into garbage."""
+    versions = dict(drift.load_versions())
+    versions["services.clickhouse-version"] = "26.3.17.110"
+    original = drift.CHECKS
+    try:
+        # Two patterns whose capture groups overlap on the same literal.
+        target = Path("helm/charts/clickhouse-cluster/values.yaml")
+        drift.CHECKS = [
+            drift.Check(
+                "overlap A",
+                "services.clickhouse-version",
+                target,
+                r"\n  version:\s*\"([^\"]+)\"",
+            ),
+            drift.Check(
+                "overlap B",
+                "services.clickhouse-version",
+                target,
+                r"\n  version:\s*\"([^\"]+)\"",
+            ),
+        ]
+        _, _, refused = drift.plan_fix(versions)
+        expect(
+            "overlapping spans are refused, not spliced",
+            any("overlapping bytes" in r for r in refused),
+            f"{refused}",
+        )
+    finally:
+        drift.CHECKS = original
+
+
 def test_regressed_appversions_are_caught() -> None:
     """The values these charts carried before the reverse sweep found them.
 

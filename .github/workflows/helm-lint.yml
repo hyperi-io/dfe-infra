@@ -42,6 +42,11 @@ jobs:
       - name: Drift-check failure paths
         run: python3 scripts/tests/test_check_versions_drift.py
 
+      # Ties renovate.json's customManager regex to versions.yaml: a manager
+      # that matches nothing proposes nothing and reports no error.
+      - name: SSoT annotation + Renovate manager contract
+        run: python3 scripts/tests/test_dfe_stack.py
+
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
 
