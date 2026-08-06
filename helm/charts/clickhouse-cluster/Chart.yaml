@@ -3,7 +3,7 @@ name: clickhouse-cluster
 description: ClickHouse cluster for DFE analytics and observability (via Altinity operator)
 type: application
 version: 0.1.0
-appVersion: "24.8"
+appVersion: "26.3.17.56"
 dependencies:
   - name: dfe-common
     version: "0.2.0"

@@ -12,6 +12,7 @@ on:
       - 'constraints/**'
       - 'scripts/check_versions_drift.py'
       - 'scripts/check_governance_drift.py'
+      - 'scripts/tests/**'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
   pull_request:
@@ -23,6 +24,7 @@ on:
       - 'constraints/**'
       - 'scripts/check_versions_drift.py'
       - 'scripts/check_governance_drift.py'
+      - 'scripts/tests/**'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
 
@@ -32,6 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Runs first: a drift check whose patterns have stopped matching prints
+      # the same OK as one that is working.
+      - name: Drift-check failure paths
+        run: python3 scripts/tests/test_check_versions_drift.py
 
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
