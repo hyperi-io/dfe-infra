@@ -3,6 +3,11 @@ component: clickhouse
 env: local
 cloud: local
 
+# Namespace the DFE apps run in, supplied by the appset from the cluster's
+# dfe.hyperi.io/dfe_namespace annotation. Empty -> the app-namespace credential
+# copy is skipped, and the apps have no way to authenticate.
+appNamespace: ""
+
 clickhouse:
   # Deployment mode (DFE owns its data layer; deploy unless external given):
   #   cluster  -> ClickHouseCluster (operator) + DFE-owned Keeper, ReplicatedMergeTree

@@ -75,6 +75,7 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: DFE_CLICKHOUSE_SECURE
               value: "false"
+            {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             # Hunt configs + rules + schemas live under the shared config mount.
             - name: DFE_HUNTS_DIR
               value: {{ .Values.config.mountPath }}/hunts

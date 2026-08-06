@@ -73,6 +73,7 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: DFE_CLICKHOUSE_SECURE
               value: "false"
+            {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             - name: DFE_KEDA_SHIM_PORT
               value: {{ .Values.kedaShim.port | quote }}
             - name: DFE_KEDA_SHIM_OTEL_DATABASE

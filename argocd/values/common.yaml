@@ -58,6 +58,13 @@ clickhouse:
   host: "dfe-clickhouse.clickhouse.svc.cluster.local"
   port: 8123
   database: dfe
+  # The account the apps connect as. The server is started with CLICKHOUSE_USER
+  # set to this name, which makes the official image stop accepting a
+  # passwordless `default` -- so an app that sends no credential is refused with
+  # code 194. Name and Secret must match clickhouse-cluster's users.admin.
+  user: admin
+  passwordSecretName: clickhouse-admin-password
+  passwordSecretKey: password
 
 postgresql:
   host: ""  # Set per-environment: cnpg-cluster-rw.{namespace}.svc.cluster.local
