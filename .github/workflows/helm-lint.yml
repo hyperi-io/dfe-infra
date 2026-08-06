@@ -51,6 +51,9 @@ jobs:
       - name: SSoT annotation + Renovate manager contract
         run: python3 scripts/tests/test_dfe_stack.py
 
+      - name: Terraform-output reader
+        run: python3 scripts/tests/test_bridge.py
+
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
 
