@@ -40,7 +40,7 @@ clickhouse:
     replicas: 3
     image:
       repository: docker.io/clickhouse/clickhouse-keeper
-      tag: "26.3.17.56"
+      tag: "26.3.17.110"
     storage:
       size: 10Gi
       storageClass: ""
