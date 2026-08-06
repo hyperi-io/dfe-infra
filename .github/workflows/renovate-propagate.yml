@@ -14,10 +14,12 @@ on:
     branches:
       - 'renovate/**'
 
-# Least privilege: write the branch, read packages so ghcr digests resolve.
+# Least privilege: write the branch, read packages so ghcr digests resolve,
+# dispatch so the checks this job's own push cannot trigger get asked for.
 permissions:
   contents: write
   packages: read
+  actions: write
 
 concurrency:
   group: renovate-propagate-${{ github.ref }}
@@ -52,6 +54,7 @@ jobs:
         run: python3 scripts/dfe-stack refresh-digests
 
       - name: Push the propagation back onto the branch
+        id: push
         run: |
           set -euo pipefail
           # Explicit paths, never `git add -A`: this job runs on a bot's branch
@@ -68,4 +71,14 @@ jobs:
           # Explicit refspec rather than relying on checkout leaving a tracking
           # branch -- a detached HEAD would otherwise fail only at this step.
           git push origin "HEAD:${GITHUB_REF_NAME}"
-          echo "Pushed. The re-run this triggers finds nothing to do and exits."
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # A push made with GITHUB_TOKEN triggers NO workflow, so the commit just
+      # pushed would carry no checks at all and the PR would sit unverified.
+      # workflow_dispatch is the documented exception, so the run is asked for
+      # explicitly.
+      - name: Ask for the checks the bot push cannot trigger
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run helm-lint.yml --ref "${GITHUB_REF_NAME}"
