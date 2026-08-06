@@ -44,6 +44,46 @@ spec:
               else
                 echo "deploy repo creation failed (HTTP $code)"; exit 1
               fi
+
+              # Seed the default app set. One values/<svc>-<inst>-values.yaml is
+              # what enables an app, so an unseeded repo deploys nothing.
+              API="$GITEA/api/v1/repos/${GITEA_USER}/${REPO}/contents"
+              listing=$(curl -s -u "${GITEA_USER}:${GITEA_PASS}" "$API/values" || true)
+              if echo "$listing" | grep -q -- '-values\.yaml'; then
+                echo "values/ already populated -- leaving it alone:"
+                echo "$listing" | tr ',' '\n' | grep -o '"name":"[^"]*-values\.yaml"' | sed 's/.*:"/  /;s/"$//'
+                exit 0
+              fi
+              # The guard skips on any values file rather than filling gaps, so a
+              # deleted app stays deleted and a mid-loop failure strands a partial
+              # seed. Name what is missing rather than exiting on the first error.
+              failed=""
+              for svc in ${SEED_APPS}; do
+                file="${svc}-${SEED_INSTANCE}-values.yaml"
+                body=$(printf '%s\n' \
+                  "# Enables ${svc} for this deployment (seeded at bootstrap)." \
+                  "# Delete this file to remove the app; add chart values here to" \
+                  "# override the base + cloud + profile layers." \
+                  "deploy:" \
+                  "  service: ${svc}" \
+                  "  instance: ${SEED_INSTANCE}" | base64 | tr -d '\n')
+                code=$(curl -s -o /dev/null -w "%{http_code}" -u "${GITEA_USER}:${GITEA_PASS}" \
+                  -X POST -H "Content-Type: application/json" \
+                  -d "{\"content\":\"${body}\",\"branch\":\"${BRANCH}\",\"message\":\"seed ${svc}\"}" \
+                  "$API/values/${file}")
+                if [ "$code" = "201" ]; then
+                  echo "  seeded values/${file}"
+                else
+                  echo "  FAILED values/${file} (HTTP $code)"
+                  failed="${failed} ${file}"
+                fi
+              done
+              if [ -n "${failed}" ]; then
+                echo "deploy repo seeded INCOMPLETELY -- missing:${failed}"
+                echo "add them by hand; a re-run will not, because values/ is no longer empty"
+                exit 1
+              fi
+              echo "deploy repo seeded with the default app set"
           env:
             - name: REPO
               value: {{ .Values.deployRepo.name | quote }}
@@ -51,6 +91,10 @@ spec:
               value: {{ .Values.deployRepo.defaultBranch | quote }}
             - name: PRIVATE
               value: {{ .Values.deployRepo.private | quote }}
+            - name: SEED_APPS
+              value: {{ join " " .Values.deployRepo.seedApps | quote }}
+            - name: SEED_INSTANCE
+              value: {{ .Values.deployRepo.seedInstance | quote }}
             - name: GITEA_USER
               valueFrom:
                 secretKeyRef:
