@@ -222,7 +222,7 @@ if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cer
   run helm upgrade --install cert-manager jetstack/cert-manager \
     --namespace cert-manager --create-namespace \
     --version "${CERT_MANAGER_VERSION}" \
-    --set installCRDs=true \
+    --set crds.enabled=true \
     --wait --timeout 5m
 fi
 
