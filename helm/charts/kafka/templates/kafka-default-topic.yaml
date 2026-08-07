@@ -1,4 +1,4 @@
-{{- if eq .Values.kafka.provider "strimzi" }}
+{{- if and (eq .Values.kafka.mode "cluster") (eq .Values.kafka.provider "strimzi") }}
 {{- if .Values.kafka.defaultTopic.create }}
 {{/*
 The DEFAULT data path's landing topic.
@@ -22,6 +22,10 @@ the broker agree too, before either starts.
 Per-source topics beyond the default stay dynamic -- the receiver creates
 `{source}_land` as sources are defined. This is only the floor that lets a
 bare deploy come up.
+
+CLUSTER mode only: a KafkaTopic CR needs the Strimzi operator to reconcile it,
+and the single tier installs none. That tier creates the same topic with the
+broker's own CLI -- see kafka-single-default-topic.yaml.
 */}}
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic

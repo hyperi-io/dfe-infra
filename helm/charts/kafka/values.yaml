@@ -51,8 +51,18 @@ kafka:
     name: default_land
     partitions: 3
     # Clamped to kafka.replicas at render -- asking for more replicas than brokers
-    # leaves the topic un-Ready forever.
+    # leaves the topic un-Ready forever. The single tier has one broker and hard-
+    # codes 1.
     replicationFactor: 3
+    # For the single tier's create-topic Job; the cluster tier uses a CR and runs
+    # no pod of its own.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   # Redpanda provider opts (BSL gate). Deployed via the Redpanda OPERATOR
   # (Redpanda + User CRDs), the same operator+thin-CR model as Strimzi.
   redpanda:
