@@ -37,7 +37,11 @@ cluster:
   instances: 3
 
 # Kafka -- cluster mode via Strimzi (default provider). replicas default 3.
+# bootstrapServers MUST be overridden here: common.yaml defaults to the single
+# tier's plain Service name, which does not exist in cluster mode. Strimzi owns the
+# broker Services and names its bootstrap <cluster>-kafka-bootstrap.
 kafka:
   mode: cluster
   provider: strimzi
   replicas: 3
+  bootstrapServers: "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092"
