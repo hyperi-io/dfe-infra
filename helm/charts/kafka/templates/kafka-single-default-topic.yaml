@@ -1,0 +1,79 @@
+{{- if and (eq .Values.kafka.mode "single") .Values.kafka.defaultTopic.create }}
+{{- $name := .Values.kafka.name }}
+# The default landing topic for the single tier, created with the broker's own
+# CLI.
+#
+# kafka-default-topic.yaml covers the cluster tier with a Strimzi KafkaTopic. That
+# CR does nothing here: the single tier runs a plain StatefulSet and installs no
+# operator, so the CR is accepted, never reconciled, and the topic never exists.
+#
+# Without the topic dfe-loader exits on "Auto-discovery found no matching topics"
+# and crashloops until someone publishes -- which nothing can do through a loader
+# that is down.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-default-topic
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # PostSync so the broker is up; idempotent, so a re-run is free.
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: create-topic
+          image: "apache/kafka:{{ .Values.kafka.version }}"
+          resources:
+            {{- toYaml .Values.kafka.defaultTopic.resources | nindent 12 }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BOOTSTRAP="{{ $name }}.{{ .Release.Namespace }}.svc.cluster.local:9092"
+              CFG=/tmp/client.properties
+              # The broker's only listener is SASL_PLAINTEXT, so admin calls
+              # authenticate as the same service user the apps use.
+              cat > "$CFG" <<EOF
+              security.protocol=SASL_PLAINTEXT
+              sasl.mechanism=SCRAM-SHA-512
+              sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_USER}" password="${KAFKA_PASSWORD}";
+              EOF
+              echo "Waiting for broker ${BOOTSTRAP}..."
+              for i in $(seq 1 60); do
+                if /opt/kafka/bin/kafka-broker-api-versions.sh \
+                     --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 5
+              done
+              # --if-not-exists so an operator who repartitioned the topic keeps
+              # their settings; this only guarantees the topic is there at all.
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" \
+                --create --if-not-exists \
+                --topic "{{ .Values.kafka.defaultTopic.name }}" \
+                --partitions {{ .Values.kafka.defaultTopic.partitions }} \
+                --replication-factor 1
+              echo "topic {{ .Values.kafka.defaultTopic.name }} present:"
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" \
+                --describe --topic "{{ .Values.kafka.defaultTopic.name }}"
+          env:
+            - name: KAFKA_USER
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.user.name }}, key: username }
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.user.name }}, key: password }
+{{- end }}

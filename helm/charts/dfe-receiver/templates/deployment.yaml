@@ -97,10 +97,18 @@ spec:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: sasl.mechanism
             {{- end }}
-            # BIND_ADDRESS is the setting's name (mod.rs:247); LISTEN_ADDRESS
-            # matches nothing and left the bind address on its config-file default.
+            # BIND_ADDRESS is the setting's name (mod.rs:247) and it takes host:PORT
+            # -- a bare host fails with "invalid socket address syntax". The port
+            # comes from the http listener rather than a literal, because listeners
+            # is this chart's source of truth for ports; no http listener means no
+            # override, and the app's own 0.0.0.0:8080 default stands.
+            {{- $bindHost := .Values.receiver.listenAddress }}
+            {{- range .Values.listeners }}
+            {{- if eq .name "http" }}
             - name: DFE_RECEIVER_BIND_ADDRESS
-              value: {{ .Values.receiver.listenAddress | quote }}
+              value: {{ printf "%s:%v" $bindHost .port | quote }}
+            {{- end }}
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
