@@ -44,8 +44,11 @@ otel:
   endpoint: ""
   tls: false
 
+# Consumer-facing Kafka endpoint. Default = the single tier's own broker Service,
+# matching the clickhouse block below. The cluster tier's broker is operator-owned
+# and named differently, so profile-scale.yaml overrides this.
 kafka:
-  bootstrapServers: "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092"
+  bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
   sasl:
     enabled: true
     mechanism: SCRAM-SHA-512
@@ -57,6 +60,9 @@ kafka:
 clickhouse:
   host: "dfe-clickhouse.clickhouse.svc.cluster.local"
   port: 8123
+  # Native protocol port, for clients that speak it rather than HTTP. dfe-loader
+  # defaults to native and inserts RowBinary over it, so it takes this one.
+  nativePort: 9000
   database: dfe
   # The account the apps connect as. The server is started with CLICKHOUSE_USER
   # set to this name, which makes the official image stop accepting a

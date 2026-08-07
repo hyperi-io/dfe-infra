@@ -51,7 +51,10 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
-            - name: KAFKA_BOOTSTRAP_SERVERS
+            # Prefixed, like the SASL block below: the loader's flat-env contract is
+            # DFE_LOADER_* (loader.rs:194), and a bare KAFKA_BOOTSTRAP_SERVERS matches
+            # nothing, leaving the broker list on its localhost:9092 default.
+            - name: DFE_LOADER_KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- if .Values.kafka.saslSecretName }}
@@ -64,10 +67,8 @@ spec:
             # try to authenticate with literal asterisks.
             #
             # Names are the loader's own flat-env contract (loader.rs:210-217),
-            # prefix DFE_LOADER (loader.rs:183). NOT the bare KAFKA_* above, which no
-            # prefix matches and which are therefore inert. NOTE: dfe-receiver spells
-            # the same field KAFKA_SASL_USER, not USERNAME -- do not copy this block
-            # verbatim.
+            # prefix DFE_LOADER (loader.rs:183). NOTE: dfe-receiver spells the same
+            # field KAFKA_SASL_USER, not USERNAME -- do not copy this block verbatim.
             - name: DFE_LOADER_KAFKA_SASL_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -79,12 +80,25 @@ spec:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: password
             {{- end }}
-            - name: CLICKHOUSE_HOST
-              value: {{ .Values.clickhouse.host | quote }}
-            - name: CLICKHOUSE_PORT
-              value: {{ .Values.clickhouse.port | quote }}
-            - name: CLICKHOUSE_DATABASE
+            # Same prefix trap as the brokers above: bare CLICKHOUSE_* matched
+            # nothing, so the loader kept its localhost:9000 / default / no-password
+            # defaults. hosts is a LIST of host:port (loader.rs) and the port belongs
+            # in the string -- there is no separate port setting.
+            - name: DFE_LOADER_CLICKHOUSE_HOSTS
+              value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort | quote }}
+            - name: DFE_LOADER_CLICKHOUSE_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
+            {{- with .Values.clickhouse.user }}
+            - name: DFE_LOADER_CLICKHOUSE_USERNAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.clickhouse.passwordSecretName }}
+            - name: DFE_LOADER_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.clickhouse.passwordSecretKey | default "password" }}
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}

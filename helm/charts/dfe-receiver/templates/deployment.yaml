@@ -48,7 +48,11 @@ spec:
               protocol: {{ .protocol | default "TCP" }}
             {{- end }}
           env:
-            - name: KAFKA_BOOTSTRAP_SERVERS
+            # Same flat-env contract as the SASL block below (mod.rs:261, prefix
+            # DFE_RECEIVER at :35). A bare KAFKA_BOOTSTRAP_SERVERS is read by
+            # nothing, leaving the receiver to fail on "kafka.brokers is required
+            # when using Kafka destination" until the engine authors a config file.
+            - name: DFE_RECEIVER_KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- if .Values.kafka.saslSecretName }}
@@ -93,7 +97,9 @@ spec:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: sasl.mechanism
             {{- end }}
-            - name: DFE_RECEIVER_LISTEN_ADDRESS
+            # BIND_ADDRESS is the setting's name (mod.rs:247); LISTEN_ADDRESS
+            # matches nothing and left the bind address on its config-file default.
+            - name: DFE_RECEIVER_BIND_ADDRESS
               value: {{ .Values.receiver.listenAddress | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
