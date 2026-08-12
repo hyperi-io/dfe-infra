@@ -60,6 +60,17 @@ auth:
   # centrally. Empty mints a 64-char random one.
   jwtSecret: ""
   oidcEnabled: false
+  # Trust X-Oidc-Subject / -Email / -Groups as authenticated identity.
+  #
+  # Only true where the gateway in front of this route STRIPS those headers off
+  # every inbound request AND re-adds them from a verified token -- both, not
+  # either. The gateway chart does that when jwtAuthn.enabled is set; enabling
+  # Envoy's OIDC redirect alone does NOT, which is why this is its own switch and
+  # not a rider on oidc.enabled.
+  #
+  # A forged header is a full identity when this is wrong, so it stays false
+  # until a deployment states otherwise.
+  trustProxyHeaders: false
 
 # OIDC provider credentials — mounted as env vars from K8s Secrets.
 # dfe-engine is the SSoT: it writes provider secrets to Vault and renders this
