@@ -53,6 +53,40 @@ setup() {
     [[ "$output" =~ "X-Forwarded-User" ]]
 }
 
+@test "jwt_authn strips the identity headers before it sets them" {
+    run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        --set domain=example.com \
+        --set jwtAuthn.enabled=true \
+        --set jwtAuthn.issuer=https://accounts.google.com
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "header_mutation" ]]
+    [[ "$output" =~ 'remove: "X-Oidc-Subject"' ]]
+    [[ "$output" =~ 'remove: "X-Oidc-Groups"' ]]
+    [[ "$output" =~ 'remove: "X-Oidc-Email"' ]]
+    # The strip is only a strip if it runs first: index 0 removes, index 1 verifies.
+    [[ "$output" =~ "http_filters/0\"".*$'\n'.*"header_mutation" ]] || \
+        echo "$output" | grep -A3 'http_filters/0' | grep -q header_mutation
+    echo "$output" | grep -A3 'http_filters/1' | grep -q jwt_authn
+}
+
+@test "the engine does not trust identity headers just because OIDC is on" {
+    # oidc.enabled is Envoy's OIDC REDIRECT; it does not inject verified headers.
+    # Trusting them off that switch is how a forged header becomes an identity.
+    run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
+        --set global.registry=ghcr.io/test \
+        --set oidc.enabled=true
+    [ "$status" -eq 0 ]
+    [[ ! "$output" =~ "DFE_AUTH_TRUST_PROXY_AUTH_HEADERS" ]]
+}
+
+@test "the engine trusts identity headers when the deployment says so" {
+    run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
+        --set global.registry=ghcr.io/test \
+        --set auth.trustProxyHeaders=true
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "DFE_AUTH_TRUST_PROXY_AUTH_HEADERS" ]]
+}
+
 @test "dfe-engine renders without OIDC (simple auth mode)" {
     run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
         --set global.registry=ghcr.io/test

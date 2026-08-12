@@ -13,11 +13,32 @@ spec:
     name: {{ .Values.gateway.name }}
   type: JSONPatch
   jsonPatches:
+    # Strip the identity headers off every inbound request BEFORE jwt_authn runs,
+    # so the only values the engine can ever see are ones this gateway minted from
+    # a verified token. Without this a caller that reaches the route sets its own
+    # X-Oidc-Subject and the engine believes it.
+    #
+    # Ordered by index, not by trusting claim_to_headers to overwrite: these two
+    # patches apply in sequence, so the mutation lands at 0 and jwt_authn at 1.
     - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
       name: "{{ .Values.gateway.namespace }}/{{ .Values.gateway.name }}/https"
       operation:
         op: add
         path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+        value:
+          name: "envoy.filters.http.header_mutation"
+          typed_config:
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation"
+            mutations:
+              request_mutations:
+                {{- range list .Values.jwtAuthn.forwardHeaders.subject .Values.jwtAuthn.forwardHeaders.groups .Values.jwtAuthn.forwardHeaders.user "X-Oidc-Email" }}
+                - remove: {{ . | quote }}
+                {{- end }}
+    - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+      name: "{{ .Values.gateway.namespace }}/{{ .Values.gateway.name }}/https"
+      operation:
+        op: add
+        path: "/default_filter_chain/filters/0/typed_config/http_filters/1"
         value:
           name: "envoy.filters.http.jwt_authn"
           typed_config:
