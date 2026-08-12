@@ -17,9 +17,16 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
   annotations:
-    # PostSync so the broker is up; idempotent, so a re-run is free.
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    # A TRACKED resource, not a PostSync hook. Argo omits hooks from an
+    # Application's resource tree, so a hook that never fires is invisible -- and
+    # this one did not fire, leaving the loader crashlooping on a deploy that
+    # reported success.
+    #
+    # Wave 1 runs it after the wave-0 broker reports healthy. A Job spec is
+    # immutable, so Replace lets a changed spec through instead of failing the
+    # sync forever.
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 5
   ttlSecondsAfterFinished: 600
