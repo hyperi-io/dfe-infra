@@ -54,29 +54,39 @@ spec:
             - name: CLICKHOUSE_USER
               value: {{ .Values.clickhouse.user }}
             {{- end }}
-            {{- if .Values.clickhouse.secretName }}
+            {{- if .Values.clickhouse.passwordSecretName }}
             # Only reference a secret that the deploy actually creates. Referencing an
             # absent secret leaves the pod in CreateContainerConfigError forever, which
             # reads as "hyperdx is broken" rather than "this deploy has no CH user".
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.clickhouse.secretName }}
-                  key: {{ .Values.clickhouse.secretKey }}
+                  name: {{ .Values.clickhouse.passwordSecretName }}
+                  key: {{ .Values.clickhouse.passwordSecretKey | default "password" }}
             {{- end }}
             - name: MONGO_URI
               value: {{ .Values.mongodb.uri | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
             {{- if .Values.dfeAuth.enabled }}
-            # Trust Envoy/oauth2-proxy identity headers (no HyperDX login).
-            # Maps the universal DFE contract onto the fork's DFE_AUTH_HEADER_*.
             - name: DFE_AUTH_MODE
               value: {{ .Values.dfeAuth.mode | quote }}
+            {{- if eq .Values.dfeAuth.mode "oidc-proxy" }}
+            # Required in this mode: the fork throws without it and the middleware
+            # turns that into a silent fall-through, so every request 401s.
+            - name: DFE_ENGINE_JWKS_URL
+              value: {{ include "hyperdx.engineJwksUrl" . | quote }}
+            {{- with .Values.dfeAuth.engineIssuer }}
+            - name: DFE_ENGINE_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- else }}
+            # header-dev only; oidc-proxy ignores these entirely.
             - name: DFE_AUTH_HEADER_EMAIL
               value: {{ .Values.dfeAuth.headerEmail | quote }}
             - name: DFE_AUTH_HEADER_GROUPS
               value: {{ .Values.dfeAuth.headerGroups | quote }}
+            {{- end }}
             - name: DFE_AUTH_DEFAULT_TEAM
               value: {{ .Values.dfeAuth.defaultTeam | quote }}
             {{- end }}
