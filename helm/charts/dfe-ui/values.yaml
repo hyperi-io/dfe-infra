@@ -45,9 +45,13 @@ config:
   nextauthSecretName: dfe-ui-nextauth
   # NextAuth builds its callback URLs from this; empty falls back to https://<domain>.
   nextauthUrl: ""
-  # ClusterSecretStore holding the NextAuth signing secret (seeded by the deploy
-  # layer -- terraform/modules/tf-secrets seed_ui_nextauth).
-  secretStoreName: dfe-secret-store
+  # ClusterSecretStore holding the NextAuth signing secret, seeded by the deploy
+  # layer (terraform/modules/tf-secrets seed_ui_nextauth).
+  #
+  # Empty generates the secret in-cluster instead, so the UI deploys on a bare
+  # cluster with no secrets store. Set this only where the store is real and
+  # seeded -- an unready store leaves the pod in CreateContainerConfigError.
+  secretStoreName: ""
 
 otel:
   endpoint: ""
