@@ -35,23 +35,19 @@ usageStats:
 
 # Telemetry ClickHouse (external -- the cluster's clickhouse).
 #
-# host: the OPERATOR-emitted service. In cluster mode the ClickHouse operator emits
-# ONLY a headless service (<name>-clickhouse-headless) -- there is no plain
-# `dfe-clickhouse` service on any layout it produces, so the old default resolved to
-# nothing and hyperdx would have failed its first connection. Same trap the loader hit.
+# host: the service the deploy actually emits. Single mode emits `dfe-clickhouse`;
+# a cluster-mode operator emits only a headless `<name>-clickhouse-headless`.
 # Override per deploy (external/managed ClickHouse just points elsewhere).
 clickhouse:
-  host: dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local
+  host: dfe-clickhouse.clickhouse.svc.cluster.local
   port: 8123
   database: dfe
-  # user/secret: EMPTY means connect as the operator's default user with no password,
-  # which is how dfe-loader and the engine already connect to this cluster. The old
-  # default was `admin` + the clickhouse-admin-password secret, and that user DOES NOT
-  # EXIST here -- proven live: "code 516: admin: Authentication failed ... or there is
-  # no user with such name". A deploy that provisions a real CH user sets these.
+  # Key names match every other chart and the shared overlay. They were
+  # secretName/secretKey here alone, so the overlay's passwordSecretName never
+  # matched and the deployment rendered with NO password block at all.
   user: ""
-  secretName: ""
-  secretKey: password
+  passwordSecretName: ""
+  passwordSecretKey: password
 
 # Mongo-protocol metadata store (FerretDB, deployed separately).
 # NOTE: the fork targets FerretDB 2.7 (DocumentDB Postgres extension). The
@@ -60,12 +56,27 @@ clickhouse:
 mongodb:
   uri: "mongodb://hyperdx:hyperdx@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authMechanism=PLAIN"
 
-# DFE auth: trust Envoy/oauth2-proxy identity headers (no HyperDX login).
-# Header names map the UNIVERSAL DFE contract (X-Oidc-Subject / X-Oidc-Groups)
-# onto the fork's DFE_AUTH_HEADER_* config.
+# DFE auth. Two modes, and they read different settings.
+#
+# oidc-proxy (default): dfe-engine is the single JWT issuer and hyperdx verifies
+# its ES384 token against the engine's JWKS. `engineJwksUrl` is REQUIRED -- the
+# fork throws without it, and the middleware swallows that into a fall-through,
+# so every token-bearing request lands unauthenticated and 401s.
+#
+# header-dev: trust identity headers from a proxy, no token verification. Only
+# this mode reads headerEmail/headerGroups.
 dfeAuth:
   enabled: true
   mode: oidc-proxy
+  # The engine's in-cluster service. The JWKS URL is derived from these, which is
+  # correct wherever the engine is co-deployed; a split or preview deployment
+  # overrides engineNamespace, and an out-of-cluster engine sets engineJwksUrl.
+  engineService: dfe-engine
+  engineNamespace: ""  # empty -> this release's namespace
+  enginePort: 8000
+  engineJwksUrl: ""  # set to bypass the derivation entirely
+  # Enforced as the `iss` claim when set; empty accepts any issuer.
+  engineIssuer: ""
   headerEmail: x-oidc-subject
   headerGroups: x-oidc-groups
   defaultTeam: dfe
