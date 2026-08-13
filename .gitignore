@@ -110,6 +110,9 @@ GEMINI.md
 # Git worktrees (local dev convenience)
 .worktrees/
 
+# Playwright MCP session artefacts (interactive browser driving)
+.playwright-mcp/
+
 # Local scratch / tmp (CORE.md: scratch goes here, gitignored, NOT
 # /tmp). Bare patterns (no leading slash) match a tmp dir at ANY
 # depth, so these cover top-level .tmp/ and tmp/ as well as nested
