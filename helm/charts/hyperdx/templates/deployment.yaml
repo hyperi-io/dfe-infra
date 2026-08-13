@@ -96,6 +96,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.defaultConnections.secretName }}
                   key: DEFAULT_CONNECTIONS
+            # Optional sibling: sources bootstrap through the same seeding path.
+            - name: DEFAULT_SOURCES
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.defaultConnections.secretName }}
+                  key: DEFAULT_SOURCES
+                  optional: true
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
