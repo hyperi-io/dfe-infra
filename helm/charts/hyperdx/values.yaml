@@ -92,6 +92,11 @@ defaultConnections:
   enabled: false
   secretName: dfe-hyperdx-connections   # key: DEFAULT_CONNECTIONS
 
+# Local email/password login+register pages (dev-only in the image). Opt-in
+# stopgap for deployments whose OIDC wiring has not landed yet.
+localAuthPages:
+  enabled: false
+
 # OTLP ingest (Path A: HyperDX collector). Path B replaces this with the DFE
 # receiver/loader; toggle off when using DFE ingestion.
 otlp:

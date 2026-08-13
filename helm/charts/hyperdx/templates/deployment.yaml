@@ -90,6 +90,12 @@ spec:
             - name: DFE_AUTH_DEFAULT_TEAM
               value: {{ .Values.dfeAuth.defaultTeam | quote }}
             {{- end }}
+            {{- if .Values.localAuthPages.enabled }}
+            # Opt-in local login/register pages until the deployment's OIDC
+            # wiring lands; read per request, so no image rebuild.
+            - name: DFE_LOCAL_AUTH_PAGES
+              value: "true"
+            {{- end }}
             {{- if .Values.defaultConnections.enabled }}
             - name: DEFAULT_CONNECTIONS
               valueFrom:
