@@ -43,5 +43,10 @@ export default defineConfig({
       testMatch: 'engine/**/*.spec.ts',
       use: { ...devices['Desktop Chrome'], baseURL: ENGINE_URL },
     },
+    {
+      name: 'tenancy',
+      testMatch: 'tenancy/**/*.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
 });
