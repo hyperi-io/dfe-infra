@@ -26,6 +26,11 @@ The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD`
 the identity fixture's devpack (`fetch-secrets.sh` in the infrastructure
 repository's dfe-oidc-testing subproject) -- never commit it.
 
+The tenancy project talks to ClickHouse directly: `E2E_CH_URL` (default
+localhost:18124 over a port-forward) and `E2E_CH_CREDS_JSON`, a
+`{username: password}` map for the reconciler-minted identities. Specs
+skip when the env is absent.
+
 Chromium runs with a fresh profile every time -- never point this at a
 personal browser profile.
 
