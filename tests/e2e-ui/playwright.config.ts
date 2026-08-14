@@ -14,7 +14,7 @@
 
 import { defineConfig, devices } from '@playwright/test';
 
-import { DFE_UI_URL, HYPERDX_URL } from './harness/env';
+import { DFE_UI_URL, ENGINE_URL, HYPERDX_URL } from './harness/env';
 
 export default defineConfig({
   testDir: './specs',
@@ -37,6 +37,11 @@ export default defineConfig({
       name: 'dfe-ui',
       testMatch: 'dfe-ui/**/*.spec.ts',
       use: { ...devices['Desktop Chrome'], baseURL: DFE_UI_URL },
+    },
+    {
+      name: 'engine',
+      testMatch: 'engine/**/*.spec.ts',
+      use: { ...devices['Desktop Chrome'], baseURL: ENGINE_URL },
     },
   ],
 });

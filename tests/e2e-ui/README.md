@@ -19,6 +19,12 @@ Endpoints come from env (defaults match the laptop port-forward layout):
 
     kubectl -n dfe-local port-forward svc/dfe-hyperdx 18080:8080
     kubectl -n dfe-local port-forward svc/dfe-ui 13001:3000
+    kubectl -n dfe-local port-forward svc/dfe-engine 18000:8000
+
+The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD`
+(and `E2E_OIDC_PROVIDER` when the provider is not named dex). Fetch it with
+the identity fixture's devpack (`fetch-secrets.sh` in the infrastructure
+repository's dfe-oidc-testing subproject) -- never commit it.
 
 Chromium runs with a fresh profile every time -- never point this at a
 personal browser profile.
@@ -50,15 +56,17 @@ One harness, one Playwright project per deployed app, specs under
   build; if upstream reshuffles the DOM, fix these and leave the proxy spec
   alone.
 - `specs/dfe-ui/smoke.spec.ts` -- the deployed dfe-ui serves its shell.
+- `specs/engine/oidc-rba.spec.ts` -- the twelve-user OIDC role matrix: real
+  IdP redirect flow per fixture identity, then roles + org_ids asserted from
+  `/auth/me` against the hand-written truth table.
 
 ## Where this grows
 
-In order: OIDC redirect flows against the estate's standing dex extended with
-the shared twelve-user fixture; the org_id tenancy matrix (single-org,
-multi-org union, platform roles unfiltered, fail-closed); then the RBA matrix
--- per role, what each account can SEE and DO. Specs whose wiring has not
-shipped land `test.fail()`-marked, so the suite documents the contract before
-it is true.
+Next: the org_id tenancy matrix through ClickHouse for the org-scoped
+fixture identities (single-org, multi-org union, platform roles unfiltered,
+fail-closed), and per-role SEE/DO probes across the app surfaces. Specs whose
+wiring has not shipped land `test.fail()`-marked, so the suite documents the
+contract before it is true.
 
 Prerequisites the suite assumes (the deploy provides them): an auth-mode
 hyperdx seeded via DEFAULT_CONNECTIONS/DEFAULT_SOURCES, and the demo rows in
