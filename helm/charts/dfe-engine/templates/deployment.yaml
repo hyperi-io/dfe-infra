@@ -170,6 +170,11 @@ spec:
           {{- end }}
           {{- end }}
           {{- end }}
+          {{- if .Values.authConfig.caBundleConfigMap }}
+            # Private-CA IdPs and datastores verify against this bundle.
+            - name: SSL_CERT_FILE
+              value: /etc/dfe-ca/ca-bundle.pem
+          {{- end }}
           volumeMounts:
             # Config is WRITABLE: the engine is a git-native config control plane
             # -- it seeds defaults + commits CRUD here (DirectoryConfigStore).
@@ -185,6 +190,24 @@ spec:
             {{- if .Values.gitops.enabled }}
             - name: deploy-repo
               mountPath: {{ dir .Values.gitops.localPath }}
+            {{- end }}
+            {{- if .Values.authConfig.providersConfigMap }}
+            # OIDC providers + group->role/org files are deployment config;
+            # nesting these read-only mounts inside the writable config volume
+            # keeps the rest of /config/auth (accounts, secrets) writable.
+            - name: oidc-providers
+              mountPath: {{ .Values.config.mountPath }}/auth/oidc-providers
+              readOnly: true
+            {{- end }}
+            {{- if .Values.authConfig.groupsConfigMap }}
+            - name: auth-groups
+              mountPath: {{ .Values.config.mountPath }}/auth/groups
+              readOnly: true
+            {{- end }}
+            {{- if .Values.authConfig.caBundleConfigMap }}
+            - name: ca-bundle
+              mountPath: /etc/dfe-ca
+              readOnly: true
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -214,6 +237,24 @@ spec:
           {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if .Values.authConfig.providersConfigMap }}
+        - name: oidc-providers
+          configMap:
+            name: {{ .Values.authConfig.providersConfigMap }}
+        {{- end }}
+        {{- if .Values.authConfig.groupsConfigMap }}
+        - name: auth-groups
+          configMap:
+            name: {{ .Values.authConfig.groupsConfigMap }}
+        {{- end }}
+        {{- if .Values.authConfig.caBundleConfigMap }}
+        - name: ca-bundle
+          configMap:
+            name: {{ .Values.authConfig.caBundleConfigMap }}
+            items:
+              - key: ca-bundle.pem
+                path: ca-bundle.pem
+        {{- end }}
         {{- if .Values.gitops.enabled }}
         - name: deploy-repo
           emptyDir: {}

@@ -88,6 +88,18 @@ oidc:
   #       DFE_OIDC_GOOGLE_CLIENT_SECRET: client-secret
   #       DFE_GOOGLE_SA_JSON: service-account-json
 
+# Auth config delivery. The engine reads OIDC provider YAML from
+# <config.mountPath>/auth/oidc-providers and group->role/org YAML from
+# <config.mountPath>/auth/groups, both loaded at startup. Each key names a
+# ConfigMap the deployment provides; empty leaves the engine's writable
+# defaults (group CRUD via the API needs groupsConfigMap left empty).
+# caBundleConfigMap (key ca-bundle.pem) also sets SSL_CERT_FILE for
+# deployments whose IdP or datastores use a private CA.
+authConfig:
+  providersConfigMap: ""
+  groupsConfigMap: ""
+  caBundleConfigMap: ""
+
 resources:
   requests:
     cpu: 200m
