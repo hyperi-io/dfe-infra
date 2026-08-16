@@ -33,27 +33,38 @@ service:
   type: ClusterIP
   port: 8080
 
-# The page content. dfe-infra defines the SHAPE; each deployment's config repo
-# fills in its own URLs (product rule: no estate specifics in tracked files).
-# The page is a projection of these values -- change a URL here and the same
-# Argo sync that applies it re-renders the page.
+# Where the DFE app services run. The bundled ApplicationSet passes this from
+# the cluster's dfe_namespace annotation; empty falls back to {project}-{env}.
+appNamespace: ""
+
+# The page content. The chart renders a DEFAULT page covering every standard
+# stack surface as localhost port-forward URLs (true on any kubectl-reachable
+# deployment); `groups` appends deployment-specific entries, and a deployment
+# with real gateway hostnames overrides via these values. The page is a
+# projection of values -- the same Argo sync that changes them re-renders it.
 page:
   title: ""            # defaults to "<project> deployment"
-  description: "Every web surface this deployment exposes."
+  description: >-
+    Every web surface this deployment exposes. Links default to the standard
+    kubectl port-forward layout; each note is the forward that serves its
+    link, and a grey/red dot means that target is not answering.
   # Client-side reachability dots: a no-cors fetch per link, green when the
   # host answers, grey when unreachable. Probes are skipped automatically for
   # http targets on an https page (the browser blocks mixed content).
   statusProbes: true
+  # The standard stack surfaces (apps, data stores, GitOps). Disable when a
+  # deployment writes its whole page via `groups`.
+  includeDefaults: true
+  # Names an engine OIDC provider to link its browser login entry; empty
+  # omits the entry (the provider name is a deployment choice).
+  oidcProvider: ""
+  # Deployment-specific extras, appended after the defaults.
   # groups:
   #   - name: Observability
   #     links:
-  #       - name: HyperDX
-  #         url: https://hyperdx.example.com
-  #         note: logs + traces search
-  #   - name: GitOps
-  #     links:
-  #       - name: Argo CD
-  #         url: https://argocd.example.com
+  #       - name: Grafana
+  #         url: https://grafana.example.com
+  #         note: estate dashboards
   groups: []
 
 # PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2.

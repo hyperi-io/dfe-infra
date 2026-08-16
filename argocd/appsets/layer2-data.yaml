@@ -55,6 +55,16 @@ spec:
                   namespace: kafka
                   wave: "5"
                   appProject: data
+                # Deployment links page -- the one well-known URL answering
+                # "where is everything?" (dfe-infra#75). Bundled by default;
+                # gate off with links.enabled=false in a values overlay. The
+                # default page needs no deployment values (standard
+                # port-forward layout); deployments append/override via the
+                # chart's page values.
+                - app: links
+                  namespace: links
+                  wave: "5"
+                  appProject: data
   template:
     metadata:
       name: '{{ .app }}-{{ .name }}'

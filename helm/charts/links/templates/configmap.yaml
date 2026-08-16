@@ -1,10 +1,44 @@
 {{- if .Values.links.enabled }}
 {{- $title := .Values.page.title | default (printf "%s deployment" .Values.project) }}
+{{- $p := .Values.project }}
+{{- $appNs := .Values.appNamespace | default (include "dfe-common.namespace" .) }}
+{{- $defaults := list }}
+{{- if .Values.page.includeDefaults }}
+{{- $fwd := printf "kubectl -n %s port-forward svc/" $appNs }}
+{{- $apps := list
+      (dict "name" "DFE UI" "url" "http://localhost:13001"
+            "note" (printf "%s%s-ui 13001:3000" $fwd $p))
+      (dict "name" "HyperDX" "url" "http://localhost:18080"
+            "note" (printf "%s%s-hyperdx 18080:8080" $fwd $p))
+      (dict "name" "Engine API (Swagger)" "url" "http://localhost:18000/docs"
+            "note" (printf "%s%s-engine 18000:8000" $fwd $p)) }}
+{{- with .Values.page.oidcProvider }}
+{{- $apps = append $apps (dict "name" (printf "Engine OIDC login (%s)" .)
+      "url" (printf "http://localhost:18000/api/v1/auth/oidc/%s/login" .)
+      "note" "same forward as the engine API") }}
+{{- end }}
+{{- $data := list
+      (dict "name" "ClickHouse Play" "url" "http://localhost:18124/play"
+            "note" (printf "kubectl -n clickhouse port-forward svc/%s-clickhouse 18124:8123" $p))
+      (dict "name" "Kafbat (Kafka UI)" "url" "http://localhost:18082"
+            "note" (printf "kubectl -n kafka port-forward svc/%s-kafbat 18082:8080" $p)) }}
+{{- $gitops := list
+      (dict "name" "Argo CD" "url" "http://localhost:18081"
+            "note" "kubectl -n argocd port-forward svc/argocd-server 18081:80")
+      (dict "name" "Forgejo (bundled deploy repo, when present)" "url" "http://localhost:13000"
+            "note" (printf "kubectl -n forgejo port-forward svc/%s-forgejo 13000:3000" $p))
+      (dict "name" "This page" "url" "http://localhost:18888"
+            "note" (printf "kubectl -n %s port-forward svc/%s-links 18888:8080" .Release.Namespace $p)) }}
+{{- $defaults = list
+      (dict "name" "Apps" "links" $apps)
+      (dict "name" "Data" "links" $data)
+      (dict "name" "GitOps + infra" "links" $gitops) }}
+{{- end }}
 {{- $model := dict
       "title" $title
       "description" (.Values.page.description | default "")
       "probes" .Values.page.statusProbes
-      "groups" (.Values.page.groups | default list) }}
+      "groups" (concat $defaults (.Values.page.groups | default list)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
