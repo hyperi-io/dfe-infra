@@ -1,0 +1,75 @@
+project: dfe
+component: links
+env: local
+cloud: local
+
+# Namespaced gate (the kafbat pattern): the shared profile cascade can toggle
+# this chart without a bare top-level `enabled` leaking into other charts.
+links:
+  enabled: true
+
+# nginxinc/nginx-unprivileged -- non-root static file server (uid 101, listens
+# 8080, pid + temp under /tmp). SHA-pinned like kafbat; the 1.31-alpine TAG
+# FLOATS upstream (same as services.nginx-proxy), so the digest is re-resolved
+# on every version refresh. versions.yaml services-digests.nginx-unprivileged
+# pins it.
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: "1.31-alpine@sha256:334d92979f15aaecd5dd50af5105e1230e2bb70765d45b1e2f964e7c5eda81c3"
+  pullPolicy: IfNotPresent
+  # Public Docker Hub image: suppress the fleet-wide imagePullSecrets.
+  public: true
+
+# The image runs as USER nginx = uid 101, not the DFE default 1000.
+# runAsNonRoot needs a NUMERIC uid, so pin it here.
+podSecurityContext:
+  runAsUser: 101
+  runAsGroup: 101
+  fsGroup: 101
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# The page content. dfe-infra defines the SHAPE; each deployment's config repo
+# fills in its own URLs (product rule: no estate specifics in tracked files).
+# The page is a projection of these values -- change a URL here and the same
+# Argo sync that applies it re-renders the page.
+page:
+  title: ""            # defaults to "<project> deployment"
+  description: "Every web surface this deployment exposes."
+  # Client-side reachability dots: a no-cors fetch per link, green when the
+  # host answers, grey when unreachable. Probes are skipped automatically for
+  # http targets on an https page (the browser blocks mixed content).
+  statusProbes: true
+  # groups:
+  #   - name: Observability
+  #     links:
+  #       - name: HyperDX
+  #         url: https://hyperdx.example.com
+  #         note: logs + traces search
+  #   - name: GitOps
+  #     links:
+  #       - name: Argo CD
+  #         url: https://argocd.example.com
+  groups: []
+
+# PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2.
+pdb:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+nodeScheduling: {}

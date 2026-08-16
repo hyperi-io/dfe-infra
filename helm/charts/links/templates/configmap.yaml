@@ -1,0 +1,98 @@
+{{- if .Values.links.enabled }}
+{{- $title := .Values.page.title | default (printf "%s deployment" .Values.project) }}
+{{- $model := dict
+      "title" $title
+      "description" (.Values.page.description | default "")
+      "probes" .Values.page.statusProbes
+      "groups" (.Values.page.groups | default list) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-page
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ $title }}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem;
+             padding: 0 1rem; line-height: 1.5; }
+      h1 { margin-bottom: 0.2rem; }
+      p.desc { margin-top: 0; opacity: 0.75; }
+      h2 { margin: 1.6rem 0 0.4rem; font-size: 1.05rem; border-bottom: 1px solid
+           color-mix(in srgb, currentColor 25%, transparent); padding-bottom: 0.2rem; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.25rem 0; }
+      a { font-weight: 600; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      span.note { opacity: 0.7; font-size: 0.9rem; }
+      span.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex: none;
+                 background: #999; align-self: center; }
+      span.dot.up { background: #2da44e; }
+      span.dot.down { background: #cf222e; }
+      footer { margin-top: 2.5rem; font-size: 0.8rem; opacity: 0.6; }
+    </style>
+    </head>
+    <body>
+    <h1 id="title"></h1>
+    <p class="desc" id="desc"></p>
+    <noscript>This page renders its link list with JavaScript.</noscript>
+    <main id="groups"></main>
+    <footer>Rendered from this deployment's GitOps values -- edit the config
+    repo, not this page.</footer>
+    <script type="application/json" id="model">{{ $model | toJson }}</script>
+    <script>
+      "use strict";
+      const model = JSON.parse(document.getElementById("model").textContent);
+      document.title = model.title;
+      document.getElementById("title").textContent = model.title;
+      document.getElementById("desc").textContent = model.description;
+      const main = document.getElementById("groups");
+      const dots = [];
+      for (const group of model.groups) {
+        const h2 = document.createElement("h2");
+        h2.textContent = group.name;
+        main.appendChild(h2);
+        const ul = document.createElement("ul");
+        for (const link of group.links || []) {
+          const li = document.createElement("li");
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          dot.title = "not probed";
+          li.appendChild(dot);
+          dots.push([dot, link.url]);
+          const a = document.createElement("a");
+          a.href = link.url;
+          a.textContent = link.name;
+          li.appendChild(a);
+          if (link.note) {
+            const note = document.createElement("span");
+            note.className = "note";
+            note.textContent = link.note;
+            li.appendChild(note);
+          }
+          ul.appendChild(li);
+        }
+        main.appendChild(ul);
+      }
+      // Reachability only: no-cors responses are opaque, so a resolved fetch
+      // means "host answered", never "HTTP 200". Mixed content (http target on
+      // an https page) is blocked by the browser, so those stay unprobed.
+      if (model.probes) {
+        for (const [dot, url] of dots) {
+          if (location.protocol === "https:" && url.startsWith("http:")) continue;
+          fetch(url, { mode: "no-cors", cache: "no-store" })
+            .then(() => { dot.className = "dot up"; dot.title = "reachable"; })
+            .catch(() => { dot.className = "dot down"; dot.title = "unreachable"; });
+        }
+      }
+    </script>
+    </body>
+    </html>
+{{- end }}

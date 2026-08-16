@@ -1,0 +1,69 @@
+{{- if .Values.links.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        # Roll the pod the moment the page content changes; the ConfigMap
+        # volume alone only refreshes on the kubelet sync period.
+        checksum/page: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # A static file server has no business with the API server.
+      automountServiceAccountToken: false
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: nginx
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            # Whole-directory mount, never subPath: a subPath mount pins the
+            # file at mount time and misses ConfigMap updates.
+            - name: page
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+            # nginx-unprivileged keeps its pid and temp files under /tmp, so
+            # one writable scratch dir keeps the rootfs read-only.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 15
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+      volumes:
+        - name: page
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-page
+        - name: tmp
+          emptyDir: {}
+{{- end }}

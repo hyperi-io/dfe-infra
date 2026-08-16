@@ -242,6 +242,20 @@ CHECKS += [
         Path("helm/charts/kafbat/values.yaml"),
         r"kafka-ui\n\s*tag:\s*\"([^\"@]+)",
     ),
+    # links page (class D shape): chart value is tag@digest -- compare the TAG
+    # part to SSoT; appVersion cascades the same pin.
+    Check(
+        "links image tag",
+        "services.nginx-unprivileged",
+        Path("helm/charts/links/values.yaml"),
+        r"nginx-unprivileged\n\s*tag:\s*\"([^\"@]+)",
+    ),
+    Check(
+        "links chart appVersion",
+        "services.nginx-unprivileged",
+        Path("helm/charts/links/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
     # ferretdb: EXCLUDED from the loop-closer -- the k8s ferretdb chart is still
     # appVersion 1.24.0 while SSoT services.ferretdb is 2.7.0 (the 1.x->2.x
     # DocumentDB migration is out of scope; see docs/stack-components.md). A check
