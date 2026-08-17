@@ -44,7 +44,7 @@ spec:
             - name: INTERNAL_API_URL
               value: {{ .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project (include "dfe-common.namespace" .)) | quote }}
             - name: NEXT_PUBLIC_HYPERDX_URL
-              value: {{ .Values.config.nextPublicHyperdxUrl | quote }}
+              value: {{ .Values.config.nextPublicHyperdxUrl | default (printf "https://%s.%s" .Values.config.hyperdxHostname .Values.domain) | quote }}
             {{- if .Values.config.nextauthSecretName }}
             # next-auth REFUSES to start in production without a secret
             # ("[next-auth][error][NO_SECRET]"), which is why dfe-ui crashlooped.
