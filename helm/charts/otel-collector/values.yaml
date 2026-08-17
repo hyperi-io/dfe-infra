@@ -54,9 +54,8 @@ daemonset:
 appNamespace: ""
 
 exporters:
-  # Path A: Direct to HyperDX. Empty endpoint derives
-  # http://{project}-hyperdx.{appNamespace}:4318 -- hyperdx deploys into the
-  # app namespace (layer2-apps), not a namespace of its own.
+  # Path A: Direct to HyperDX over gRPC. Empty endpoint uses the ONE otel
+  # destination every app resolves (dfe-common.otelEndpoint from telemetry.*).
   hyperdx:
     enabled: true
     endpoint: ""

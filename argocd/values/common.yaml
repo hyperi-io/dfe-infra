@@ -31,7 +31,9 @@ nodeScheduling: {}
 #             external Prometheus to scrape.
 telemetry:
   mode: hyperdx
-  hyperdxEndpoint: "dfe-hyperdx-otel.hyperdx.svc.cluster.local:4317"
+  # Empty derives {project}-hyperdx.{appNamespace}:4317 (the fork's OTLP
+  # receiver beside the apps); set only to aim elsewhere.
+  hyperdxEndpoint: ""
   receiverEndpoint: "dfe-receiver.dfe.svc.cluster.local:8443"
   externalEndpoint: ""
   prometheus:

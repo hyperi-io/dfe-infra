@@ -31,7 +31,12 @@ prometheus mode (no OTLP push) -- callers should guard the OTEL env on non-empty
 {{- else -}}
 {{- $t := .Values.telemetry | default dict -}}
 {{- $mode := $t.mode | default "hyperdx" -}}
-{{- if eq $mode "hyperdx" -}}{{ $t.hyperdxEndpoint }}
+{{- if eq $mode "hyperdx" -}}
+{{- $appNs := .Values.appNamespace | default (include "dfe-common.namespace" .) -}}
+{{/* Empty hyperdxEndpoint derives the fork's OTLP receiver in the app
+     namespace -- hyperdx deploys with the apps, never a namespace of its
+     own. */}}
+{{- $t.hyperdxEndpoint | default (printf "%s-hyperdx.%s.svc.cluster.local:4317" .Values.project $appNs) -}}
 {{- else if eq $mode "receiver" -}}{{ $t.receiverEndpoint }}
 {{- else if eq $mode "external" -}}{{ $t.externalEndpoint }}
 {{- end -}}

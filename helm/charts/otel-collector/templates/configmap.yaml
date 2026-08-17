@@ -28,9 +28,10 @@ data:
 
     exporters:
       {{- if .Values.exporters.hyperdx.enabled }}
-      {{- $appNs := .Values.appNamespace | default (include "dfe-common.namespace" .) }}
-      otlphttp/hyperdx:
-        endpoint: {{ .Values.exporters.hyperdx.endpoint | default (printf "http://%s-hyperdx.%s.svc.cluster.local:4318" .Values.project $appNs) }}
+      {{- /* The ONE otel destination: the same telemetry.* resolution every
+           app uses (dfe-common.otelEndpoint), gRPC form. */}}
+      otlp/hyperdx:
+        endpoint: {{ .Values.exporters.hyperdx.endpoint | default (include "dfe-common.otelEndpoint" .) }}
         tls:
           insecure: true
       {{- end }}
@@ -49,7 +50,7 @@ data:
           exporters:
             - debug
             {{- if .Values.exporters.hyperdx.enabled }}
-            - otlphttp/hyperdx
+            - otlp/hyperdx
             {{- end }}
         metrics:
           receivers: [otlp]
@@ -57,7 +58,7 @@ data:
           exporters:
             - prometheus
             {{- if .Values.exporters.hyperdx.enabled }}
-            - otlphttp/hyperdx
+            - otlp/hyperdx
             {{- end }}
         logs:
           receivers: [otlp]
@@ -65,7 +66,7 @@ data:
           exporters:
             - debug
             {{- if .Values.exporters.hyperdx.enabled }}
-            - otlphttp/hyperdx
+            - otlp/hyperdx
             {{- end }}
 
   daemonset-config.yaml: |
