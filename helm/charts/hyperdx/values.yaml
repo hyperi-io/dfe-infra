@@ -101,6 +101,11 @@ defaultConnections:
 localAuthPages:
   enabled: false
 
+# Browser-facing base URL. Empty derives https://{hostnames.hyperdx}.{domain};
+# the image's localhost default breaks post-login redirects and the session
+# cookie behind the gateway.
+frontendUrl: ""
+
 # OTLP ingest (Path A: HyperDX collector). Path B replaces this with the DFE
 # receiver/loader; toggle off when using DFE ingestion.
 otlp:

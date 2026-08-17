@@ -106,6 +106,10 @@ spec:
             - name: DFE_LOCAL_AUTH_PAGES
               value: "true"
             {{- end }}
+            # Post-login redirects and the session cookie anchor on this URL;
+            # the image's localhost default breaks both behind the gateway.
+            - name: FRONTEND_URL
+              value: {{ .Values.frontendUrl | default (printf "https://%s.%s" (coalesce .Values.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain) | quote }}
             {{- if .Values.defaultConnections.enabled }}
             - name: DEFAULT_CONNECTIONS
               valueFrom:
