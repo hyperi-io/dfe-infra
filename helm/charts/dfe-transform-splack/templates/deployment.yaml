@@ -87,13 +87,6 @@ spec:
             periodSeconds: 5
       volumes:
         - name: config
-          {{- if .Values.config.nfs.server }}
-          nfs:
-            server: {{ .Values.config.nfs.server }}
-            path: {{ .Values.config.nfs.path }}
-            readOnly: true
-          {{- else }}
           emptyDir: {}
-          {{- end }}
         - name: tmp
           emptyDir: {}

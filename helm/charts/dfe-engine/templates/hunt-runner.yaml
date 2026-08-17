@@ -100,15 +100,11 @@ spec:
           resources:
             {{- toYaml .Values.huntRunner.resources | nindent 12 }}
       volumes:
+        # Scratch only -- the runner receives its work over the API/broker,
+        # never from the engine's config store (which is a ReadWriteOnce PVC
+        # the engine pod holds).
         - name: config
-          {{- if .Values.config.nfs.server }}
-          nfs:
-            server: {{ .Values.config.nfs.server }}
-            path: {{ .Values.config.nfs.path }}
-            readOnly: true
-          {{- else }}
           emptyDir: {}
-          {{- end }}
         - name: tmp
           emptyDir: {}
 {{- if .Values.huntRunner.autoscaling.enabled }}

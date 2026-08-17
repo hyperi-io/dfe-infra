@@ -8,6 +8,6 @@ envoyGateway:
   service:
     type: LoadBalancer
 
-configStorage:
-  type: gcs
-  # bucket: set from cluster secret annotation
+# The engine's runtime store is a PVC against the cluster's default
+# StorageClass (dfe-engine chart config.persistence) -- no per-cloud
+# storage seam needed.

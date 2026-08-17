@@ -13,6 +13,6 @@ envoyGateway:
     annotations:
       service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 
-configStorage:
-  type: s3
-  # bucket: set from cluster secret annotation dfe.hyperi.io/config_bucket
+# The engine's runtime store is a PVC against the cluster's default
+# StorageClass (dfe-engine chart config.persistence) -- no per-cloud
+# storage seam needed.

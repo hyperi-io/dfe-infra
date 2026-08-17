@@ -28,9 +28,6 @@ otel:
 
 config:
   mountPath: /config
-  nfs:
-    server: ""
-    path: ""
 
 resources:
   requests:

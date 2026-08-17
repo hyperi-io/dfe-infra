@@ -16,10 +16,14 @@ service:
 
 config:
   mountPath: /config
-  # NFS mount for local, cloud storage for others
-  nfs:
-    server: ""
-    path: ""
+  # The engine's runtime store lives here: local accounts, orgs, wizard
+  # state, role bindings. A PVC by default -- on emptyDir a pod restart
+  # factory-resets identity. The class comes from the cluster (the
+  # bootstrap guarantees a default StorageClass exists).
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""  # empty -> cluster default class
 
 clickhouse:
   host: ""

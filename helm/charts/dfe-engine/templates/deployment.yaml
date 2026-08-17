@@ -6,6 +6,12 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  {{- if .Values.config.persistence.enabled }}
+  # The config PVC is ReadWriteOnce: a rolling update can strand the new pod
+  # on another node waiting for the attach the old pod still holds.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
@@ -220,8 +226,8 @@ spec:
           volumeMounts:
             # Config is WRITABLE: the engine is a git-native config control plane
             # -- it seeds defaults + commits CRUD here (DirectoryConfigStore).
-            # readOnly broke registry init. (emptyDir is ephemeral; a real deploy
-            # backs this with a PVC or the git config repo -- follow-up.)
+            # readOnly broke registry init. PVC-backed by default: identity
+            # state (accounts, orgs, wizard progress) must survive restarts.
             - name: config
               mountPath: {{ .Values.config.mountPath }}
             # Writable scratch: the container rootfs is read-only
@@ -256,11 +262,9 @@ spec:
             periodSeconds: 5
       volumes:
         - name: config
-          {{- if .Values.config.nfs.server }}
-          nfs:
-            server: {{ .Values.config.nfs.server }}
-            path: {{ .Values.config.nfs.path }}
-            readOnly: true
+          {{- if .Values.config.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-config
           {{- else }}
           emptyDir: {}
           {{- end }}

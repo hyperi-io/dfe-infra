@@ -48,7 +48,6 @@ clickhouse:
 vault:
   address: "https://bao.example.com:8200"
 
-configStorage:
-  type: nfs
-  server: "storage.example.com"
-  path: /data/dfe-config
+# The engine's runtime store is a PVC against the cluster's default
+# StorageClass (dfe-engine chart config.persistence) -- no per-cloud
+# storage seam needed.

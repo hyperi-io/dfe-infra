@@ -1,0 +1,19 @@
+{{- if .Values.config.persistence.enabled }}
+# The engine's runtime store: local accounts, orgs, wizard state, role
+# bindings. Identity lives OUTSIDE the git CRUD cycle, so this volume is
+# its only durable home.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.config.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.config.persistence.size }}
+{{- end }}
