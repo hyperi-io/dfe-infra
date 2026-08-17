@@ -2,13 +2,29 @@
 
 How a DFE deployment's web surfaces get outside the cluster, and who is
 allowed through. The model: every web UI is exposed through the Envoy
-Gateway by default, and every exposed UI is controlled by OIDC with
-**dfe-engine as the deployment's OIDC master**. The engine's internal
-users and groups are ALWAYS present -- the permanent base -- and any number
-of external OIDC providers (dex, Entra, Google, Okta) can be added AS WELL,
-additive alongside internal login, never a replacement. The login surface
-offers them concurrently: local credentials plus one "sign in with X" per
-configured external.
+Gateway by default, and every exposed UI is controlled by OIDC with a
+**bundled dex as the deployment's one issuer**. Dex brokers every external
+identity provider (generic OIDC -- Entra, Okta, Google, Keycloak -- and
+LDAP/AD) as concurrent "sign in with X" choices beside its local login.
+dfe-engine remains the identity MANAGEMENT plane: its users/groups CRUD
+drives dex's local accounts (gRPC API), it maps identities to roles, and it
+keeps minting machine tokens (API keys + engine JWKS) for services -- a
+disjoint audience from dex's human sessions.
+
+Local accounts follow the tier: at SME they are the daily driver, at
+enterprise they are BREAK-GLASS ONLY (an ops-managed random secret,
+deliberately MFA-free -- break-glass exists for when the IdP is down) and
+all real users federate. MFA always comes from the federated IdP, never
+locally. SAML IdPs are unsupported (dex's SAML connector is unmaintained
+upstream); their OIDC face is the supported path.
+
+dfe-engine and dfe-ui slave to exactly ONE issuer. A hardcore deployment
+swaps the bundled dex for its corporate IdP directly -- dex not deployed,
+no local accounts at all (its accepted trade: IdP down means no browser
+login; machine tokens still work). Identity data stays OUT of the git
+CRUD cycle: accounts live in dex's store, role bindings in the engine's
+runtime store, and git carries only deployment config (issuer URL, client
+refs) -- roles remain product vocabulary in code.
 
 Port-forwarding is the debug fallback, not the product access path: it
 still works on any deployment (it only needs kubectl), but nothing in the
@@ -30,7 +46,8 @@ flowchart LR
     subgraph appns["app namespace"]
         UI["dfe-ui<br/>THE landing page"]
         HX["hyperdx<br/>iframe inside dfe-ui"]
-        ENG["dfe-engine<br/>API + OIDC master"]
+        ENG["dfe-engine<br/>API + identity mgmt"]
+        DX["dex<br/>the one issuer"]
     end
     subgraph adminns["admin surfaces"]
         LK["links page (ns links)"]
@@ -42,55 +59,61 @@ flowchart LR
     GW --> UI
     UI -.->|iframe| HX
     GW -->|"/api"| ENG
+    GW --> DX
     GW --> LK
     GW --> AR
     GW --> KB
+    ENG -->|"gRPC: local user CRUD"| DX
 ```
 
 - **dfe-ui is always the landing page**, with HyperDX embedded as an iframe
   inside it -- HyperDX is never presented as its own URL.
 - The links page is a convenience launch pad for admins (see below), never
   a landing page.
-- Kafbat does its own OIDC against the same identity plane (the
-  integrated-app pattern) -- it is routed, not edge-policied.
+- Kafbat does its own OIDC against the same issuer (the integrated-app
+  pattern) -- it is routed, not edge-policied.
 - dfe-engine's browser paths sit behind the edge OIDC policy; its `/api`
   machine paths authenticate by API key/JWT and are never redirected to a
   login.
 
-## The identity plane: dfe-engine as OIDC master
+## The identity plane: dex as the one issuer
 
-The gateway is ONE OIDC client with ONE issuer -- the engine. Internal
-accounts come from the engine's own store and work from first boot, which
-is what makes exposed-and-authenticated the DEFAULT posture: a vanilla
-deployment needs no external IdP to be secure. Configured externals are
-brokered by the engine; the edge never learns about them.
+The gateway is ONE OIDC client with ONE issuer -- dex. Dex's local
+password store works from first boot, which is what makes
+exposed-and-authenticated the DEFAULT posture: a vanilla deployment needs
+no external IdP to be secure. Configured externals are dex connectors; the
+edge never learns about them.
 
 ```mermaid
 sequenceDiagram
     participant B as Browser
     participant E as Envoy Gateway
-    participant OP as dfe-engine (OIDC master)
+    participant D as dex (the issuer)
     participant X as External IdPs (0..n)
+    participant ENG as dfe-engine
     B->>E: GET https://dfe.{domain}
     E->>B: 302 /authorize (no session)
-    B->>OP: /authorize
-    alt internal account (always present)
-        OP->>B: engine login form
-    else federated (added as well)
-        OP->>X: brokered OIDC flow
-        X->>OP: identity + groups
+    B->>D: /authorize
+    alt local account (SME daily / ENT break-glass)
+        D->>B: dex login form
+    else federated (the ENT norm)
+        D->>X: connector flow (OIDC / LDAP)
+        X->>D: identity + groups
     end
-    OP->>B: 302 Envoy callback + code
+    D->>B: 302 Envoy callback + code
     B->>E: /oauth2/callback?code=...
-    E->>OP: /token (code exchange, PKCE)
-    OP->>E: id_token (sub, email, groups, roles, org_ids)
-    E->>E: validate vs engine JWKS,<br/>group policy (deny by default)
+    E->>D: /token (code exchange, PKCE)
+    D->>E: id_token (sub, email, groups)
+    E->>E: validate vs dex JWKS,<br/>group policy (deny by default)
     E->>B: content, or 403
+    Note over ENG: maps groups -> roles -> org_ids;<br/>dex local users have no groups,<br/>so per-USER role bindings apply
 ```
 
-The claims the engine mints (`groups`, `roles`, `org_ids`) are the same
-ones the edge policies match on and the same ones the tenancy layer pins
-ClickHouse identities from -- one identity contract end to end.
+The `groups` claim dex forwards is what the edge policies match on and
+what the engine maps to roles and tenancy (`org_viewer` -> pinned
+ClickHouse identity) -- one identity contract end to end. Dex local users
+carry no groups, so the engine grants their roles through per-user
+bindings instead.
 
 ## Per-surface policy
 
@@ -98,6 +121,7 @@ ClickHouse identities from -- one identity contract end to end.
 |---|---|---|---|
 | dfe-ui (+ HyperDX iframe) | `dfe.{domain}` | yes | OIDC, any authenticated user |
 | dfe-engine browser paths | `dfe.{domain}/api` interactive | yes | OIDC; machine paths API-key/JWT, never redirected |
+| dex | `dfe.{domain}` auth paths | yes | the issuer itself -- reachable, its own CSRF/session handling |
 | Argo CD | `argocd.{domain}` | yes | OIDC + Argo's own RBAC from the same groups |
 | Links page | `links.{domain}` | yes | OIDC + `oidc.adminGroups` only (deny by default) |
 | Kafbat | `kafbat.{domain}` | deployment's call | its own OIDC (integrated-app pattern) |
@@ -120,9 +144,9 @@ domain it falls back to the port-forward layout for debug access.
 
 The gateway install path is settled (`argocd/bootstrap/envoy-gateway-app.yaml`
 installs the operator + CRDs; `envoy-gateway-config` configures it) and the
-edge policy machinery is built and schema-validated. The engine's OP surface
--- discovery, authorize, token, client registry -- and the management plane
-above it (role bindings to users or groups of any provider, internal account
-basics, external provider CRUD) are engine-side work. Edge OIDC ships
-disabled and turns on per deployment once the engine issuer is configured;
-on an undomained rig, UI access is by port-forward.
+edge policy machinery is built and schema-validated. Remaining build: the
+bundled dex chart (+ its dfe-docker compose service), the engine-to-dex
+gRPC management path, per-user role bindings, and the edge flip to dex as
+the one issuer. Edge OIDC ships disabled and turns on per deployment once
+the issuer is configured; on an undomained rig, UI access is by
+port-forward.

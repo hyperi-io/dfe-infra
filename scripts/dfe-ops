@@ -21,6 +21,10 @@ Subcommands:
                rewriting the loopback API server to a reachable address.
   probe        Minimal curl-equivalent HTTP client (stdlib urllib) for smoke
                tests + health checks where curl is unavailable or blocked.
+  deploy-values Get/put/delete a values file in the bundled deploy repo via the
+               Gitea-family contents API (credential read in-process from the
+               cluster Secret, never argv). Adding/removing a values file IS
+               the deploy on the layer2-apps fan-out.
   deploy       Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
                terraform -> bridge -> bootstrap -> Argo).
   stack-deploy Drive one END-TO-END deploy of a PINNED stack version in a chosen
@@ -288,6 +292,106 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
     if args.fail and status >= 400:
         return 22  # mirror curl -f's exit code
+    return 0
+
+
+# --- deploy-values subcommand (deploy-repo values-file CRUD) ------------------
+def _deploy_repo_cred(args: argparse.Namespace) -> tuple[str, str]:
+    """Admin credential for the bundled deploy repo, read in-process from the
+    cluster Secret bootstrap created -- never argv."""
+    cmd = ["kubectl"]
+    if args.kubeconfig:
+        cmd += ["--kubeconfig", args.kubeconfig]
+    cmd += ["-n", args.secret_namespace, "get", "secret", args.secret, "-o", "json"]
+    out = subprocess.run(
+        cmd, capture_output=True, text=True, check=True, encoding="utf-8", errors="replace"
+    ).stdout
+    data = json.loads(out)["data"]
+    return (
+        base64.b64decode(data["username"]).decode(),
+        base64.b64decode(data["password"]).decode(),
+    )
+
+
+def cmd_deploy_values(args: argparse.Namespace) -> int:
+    if args.action == "put" and not args.file:
+        print("put needs --file", file=sys.stderr)
+        return 2
+    try:
+        user, password = _deploy_repo_cred(args)
+    except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError) as exc:
+        print(f"cannot read deploy-repo credential: {exc}", file=sys.stderr)
+        return 1
+    owner = args.owner or user
+    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+    headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
+    url = f"{args.url}/api/v1/repos/{owner}/{args.repo}/contents/{args.path}"
+
+    # The Gitea-family contents API needs the current sha to update or delete.
+    # A directory path returns a LIST (no sha): get prints the listing,
+    # put/delete refuse.
+    sha = None
+    listing = None
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - URL from flags
+            urllib.request.Request(url, headers=headers), timeout=args.timeout
+        ) as resp:
+            info = json.loads(resp.read())
+            if isinstance(info, list):
+                listing = info
+            else:
+                sha = info["sha"]
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            print(f"lookup failed: HTTP {exc.code}", file=sys.stderr)
+            return 1
+
+    if listing is not None and args.action != "get":
+        print(f"{args.path} is a directory", file=sys.stderr)
+        return 2
+
+    if args.action == "get":
+        if listing is not None:
+            for entry in listing:
+                print(f"{entry['type']}\t{entry['path']}")
+            return 0
+        if sha is None:
+            print(f"absent: {args.path}")
+            return 1
+        with urllib.request.urlopen(  # noqa: S310
+            urllib.request.Request(url, headers=headers), timeout=args.timeout
+        ) as resp:
+            print(base64.b64decode(json.loads(resp.read())["content"]).decode())
+        return 0
+
+    if args.action == "delete":
+        if sha is None:
+            print(f"already absent: {args.path}")
+            return 0
+        body = {"sha": sha, "message": args.message or f"remove {args.path}"}
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(), headers=headers, method="DELETE"
+        )
+    else:  # put
+        content = Path(args.file).read_text(encoding="utf-8")
+        body = {
+            "content": base64.b64encode(content.encode()).decode(),
+            "message": args.message or f"update {args.path}",
+        }
+        if sha:
+            body["sha"] = sha
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers=headers,
+            method="PUT" if sha else "POST",
+        )
+    try:
+        with urllib.request.urlopen(req, timeout=args.timeout) as resp:  # noqa: S310
+            print(f"HTTP {resp.status} - {args.action} {args.path}")
+    except urllib.error.HTTPError as exc:
+        print(f"{args.action} failed: HTTP {exc.code} {exc.read().decode('utf-8', 'replace')[:300]}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -1046,6 +1150,25 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--head", action="store_true", help="print response headers too")
     pr.add_argument("--fail", action="store_true", help="exit non-zero on HTTP status >= 400")
     pr.set_defaults(func=cmd_probe)
+
+    # deploy-values
+    dv = sub.add_parser(
+        "deploy-values",
+        help="get/put/delete a values file in the bundled deploy repo (Gitea-family API)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    dv.add_argument("action", choices=["get", "put", "delete"], help="operation")
+    dv.add_argument("path", help="file path inside the repo, e.g. values/foo-values.yaml")
+    dv.add_argument("--file", default=None, help="local file with the content (put)")
+    dv.add_argument("--url", default="http://localhost:13000", help="deploy-repo git host base URL (e.g. the Forgejo port-forward)")
+    dv.add_argument("--repo", default="deploy", help="repository name")
+    dv.add_argument("--owner", default=None, help="repository owner (default: the admin user)")
+    dv.add_argument("--kubeconfig", default=None, help="kubeconfig for the credential read (default: ambient)")
+    dv.add_argument("--secret-namespace", default="forgejo", help="namespace of the admin Secret")
+    dv.add_argument("--secret", default="dfe-forgejo-admin", help="admin Secret name (keys: username, password)")
+    dv.add_argument("-m", "--message", default=None, help="commit message")
+    dv.add_argument("--timeout", type=float, default=15.0, help="timeout (seconds)")
+    dv.set_defaults(func=cmd_deploy_values)
 
     # deploy
     dp = sub.add_parser(
