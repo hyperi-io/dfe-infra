@@ -38,4 +38,10 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $.Values.gatewayNamespace }}
+    # Allow from the OTel collector (its ClickHouse exporter writes the
+    # otel_* tables the embedded HyperDX reads)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.otelNamespace }}
 {{- end }}
