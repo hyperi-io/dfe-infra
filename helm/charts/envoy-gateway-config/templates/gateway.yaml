@@ -22,8 +22,9 @@ spec:
       tls:
         mode: Terminate
         certificateRefs:
-          - name: dfe-wildcard-tls
+          - group: ""
             kind: Secret
+            name: dfe-wildcard-tls
       allowedRoutes:
         namespaces:
           from: All

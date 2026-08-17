@@ -8,7 +8,9 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   parentRefs:
-    - name: {{ .Values.gateway.name }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
   hostnames:
     - "{{ .Values.routes.dfeEngine.hostname | default .Values.hostnames.dfe }}.{{ .Values.domain }}"
@@ -36,4 +38,7 @@ spec:
       backendRefs:
         - name: {{ .Values.routes.dfeEngine.backendService }}
           port: {{ .Values.routes.dfeEngine.backendPort }}
+          group: ""
+          kind: Service
+          weight: 1
 {{- end }}
