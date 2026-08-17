@@ -90,7 +90,7 @@ spec:
             # TOGETHER (the loader validates the pairing).
             - name: DFE_LOADER_CLICKHOUSE_HOSTS
               value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
-            - name: DFE_LOADER_CLICKHOUSE_TRANSPORT
+            - name: DFE_LOADER_CLICKHOUSE__TRANSPORT
               value: "http"
             - name: DFE_LOADER_CLICKHOUSE_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
