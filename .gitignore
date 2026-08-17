@@ -40,6 +40,8 @@ bootstrap/local.env
 
 # Scratch / temp
 .tmp/
+# Worktrees (any .wt-<topic>/ checkout rooted in the repo)
+.wt-*/
 
 # Python bytecode
 __pycache__/
