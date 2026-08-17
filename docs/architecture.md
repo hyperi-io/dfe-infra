@@ -58,7 +58,7 @@ abstraction or a chart mode -- never a fork of the charts.
 | Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+IRSA), ... |
 | Kafka | chart mode + endpoint | `kafka` chart mode, `kafka.bootstrapServers` | in-k8s single/Strimzi cluster, MSK, Redpanda (licence gate) |
 | ClickHouse | chart mode + endpoint | `clickhouse.mode` single/cluster/external, `clickhouse.host` | in-k8s, ClickHouse Cloud SaaS, private cloud |
-| PostgreSQL | endpoint | `postgresql.host` (cnpg-cluster bundled) | CNPG in-k8s, RDS-class external |
+| Document store | mongo-protocol endpoint | ferretdb chart (own embedded documentdb PG -- the stack's only postgres) | bundled FerretDB, external mongo-protocol service |
 | Edge / LB | Gateway API + EnvoyProxy CR | `gateway.service.*` (type, class, annotations) | MetalLB, cloud NLB, NodePort behind HW LB |
 | Deploy repo | provider mode | `DFE_BUNDLED_DEPLOY_REPO` + creds | bundled Forgejo, GitHub/GitLab |
 
