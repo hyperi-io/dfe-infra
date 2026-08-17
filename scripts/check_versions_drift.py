@@ -263,11 +263,21 @@ CHECKS += [
         Path("helm/charts/links/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
-    # ferretdb: EXCLUDED from the loop-closer -- the k8s ferretdb chart is still
-    # appVersion 1.24.0 while SSoT services.ferretdb is 2.7.0 (the 1.x->2.x
-    # DocumentDB migration is out of scope; see docs/stack-components.md). A check
-    # now would either fail CI or force that migration. Re-add when k8s ferretdb
-    # moves to 2.x.
+    # ferretdb (class D shape): appVersion cascades the image tag (image.tag is
+    # empty), and the chart's documentdb backend pins its own copy of the
+    # documentdb-pg tag alongside cnpg-cluster's.
+    Check(
+        "ferretdb chart appVersion",
+        "services.ferretdb",
+        Path("helm/charts/ferretdb/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
+    Check(
+        "documentdb-pg image tag (ferretdb values)",
+        "services.documentdb-pg",
+        Path("helm/charts/ferretdb/values.yaml"),
+        r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:\s*"([^"]+)"',
+    ),
     # ClickHouse chart values: server version + keeper tag
     Check(
         "clickhouse server version",
@@ -441,7 +451,6 @@ UNCONSUMED: dict[str, str] = {
     "services.cnpg-cluster-instances": "replica count, overridden per profile",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
-    "services.ferretdb": "docker path only; the k8s chart lags on 1.24.0 under a dated waiver",
     "services.hyperdx": "the hyperdx chart's appVersion carries it and agrees, but CLAUDE.md routes hyperdx-chart work through a dfe-engine issue first, so it is waived rather than checked here",
     "services.nginx-proxy": "docker path only; k8s uses envoy-gateway",
     "digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
@@ -507,11 +516,6 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "helm/library/dfe-common/tests/lint-test/*",
         "*",
         "helm-lint fixture, not a deployed chart",
-    ),
-    (
-        "helm/charts/ferretdb/Chart.yaml",
-        "appVersion",
-        "the k8s ferretdb chart lags on 1.24.0 under a dated waiver; see docs/stack-components.md",
     ),
     (
         "helm/charts/hyperdx/Chart.yaml",

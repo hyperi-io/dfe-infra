@@ -64,6 +64,16 @@ spec:
                   name: {{ .Values.clickhouse.passwordSecretName }}
                   key: {{ .Values.clickhouse.passwordSecretKey | default "password" }}
             {{- end }}
+            {{- if .Values.mongodb.passwordSecretName }}
+            # Declared BEFORE MONGO_URI: kubelet $(VAR) expansion only reads
+            # previously-declared env. Only referenced when the deploy actually
+            # projects the secret (same guard as CLICKHOUSE_PASSWORD above).
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mongodb.passwordSecretName }}
+                  key: {{ .Values.mongodb.passwordSecretKey | default "password" }}
+            {{- end }}
             - name: MONGO_URI
               value: {{ .Values.mongodb.uri | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

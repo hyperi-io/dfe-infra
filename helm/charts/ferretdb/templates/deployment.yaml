@@ -1,3 +1,4 @@
+{{- if eq .Values.ferretdb.mode "deploy" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,6 +7,10 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  # The documentdb backend carries its own app.kubernetes.io/name
+  # ({fullname}-documentdb), so this selector stays disjoint from it AND
+  # unchanged from the 1.x chart -- selectors are immutable, and an in-place
+  # 1.x -> 2.x upgrade must not require deleting the live Deployment.
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
@@ -14,9 +19,9 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
     spec:
-      # The image declares USER "ferretdb" (a name); the helper emits a NUMERIC
-      # runAsUser (1000, the ferretdb uid -- verified from the image passwd), which
-      # is what the kubelet needs to satisfy runAsNonRoot.
+      # The image declares USER "ferretdb" (a NAME -- still true at 2.7.0,
+      # verified from the image config); the helper emits a NUMERIC runAsUser
+      # (1000), which is what the kubelet needs to satisfy runAsNonRoot.
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
@@ -27,42 +32,47 @@ spec:
           ports:
             - name: mongodb
               containerPort: 27017
+            # FERRETDB_DEBUG_ADDR (image default :8088) serves the probe
+            # endpoints /debug/livez and /debug/readyz.
+            - name: debug
+              containerPort: 8088
           env:
-            # sslmode=require forces TLS to CNPG (which serves TLS by
-            # default), closing the sslmode=prefer silent-plaintext
-            # fallback. sslmode=verify-full + sslrootcert (the CNPG CA) is
-            # the CA-backed CNSA end-state; set postgresql.sslrootcert to
-            # a mounted ca.crt to enable it.
-            - name: FERRETDB_POSTGRESQL_URL
-              value: "postgres://$(PGUSER):$(PGPASSWORD)@{{ .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode={{ .Values.postgresql.sslmode }}{{ with .Values.postgresql.sslrootcert }}&sslrootcert={{ . }}{{ end }}"
-            - name: PGUSER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.postgresql.secretName }}
-                  key: {{ .Values.postgresql.secretUserKey }}
+            # Declared BEFORE the URL: kubelet $(VAR) expansion only reads
+            # previously-declared env.
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.postgresql.secretName }}
-                  key: {{ .Values.postgresql.secretPasswordKey }}
+                  name: {{ .Values.documentdb.auth.secretName }}
+                  key: password
+            # FerretDB 2.x: one env var carries the whole backend connection,
+            # and these credentials double as the Mongo-side login (client auth
+            # is delegated to PostgreSQL, SCRAM-SHA-256 on the wire). sslmode
+            # defaults to prefer because the bundled backend serves no TLS;
+            # documentdb.sslmode raises it for an external TLS-serving backend.
+            - name: FERRETDB_POSTGRESQL_URL
+              value: "postgres://{{ .Values.documentdb.auth.username }}:$(PGPASSWORD)@{{ include "dfe-common.fullname" . }}-documentdb:5432/{{ .Values.documentdb.database }}?sslmode={{ .Values.documentdb.sslmode }}"
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
-            # readOnlyRootFilesystem is on; FerretDB writes its state dir (/state,
-            # the image's FERRETDB_STATE_DIR) and may use /tmp. Data itself lives in
-            # PostgreSQL, so these are scratch.
+            # readOnlyRootFilesystem is on; FerretDB writes its state dir
+            # (/state, the image's FERRETDB_STATE_DIR) and may use /tmp. Data
+            # itself lives in the documentdb backend, so these are scratch.
             - name: state
               mountPath: /state
             - name: tmp
               mountPath: /tmp
           livenessProbe:
-            tcpSocket:
-              port: mongodb
+            httpGet:
+              path: /debug/livez
+              port: debug
             initialDelaySeconds: 10
             periodSeconds: 10
+          # readyz round-trips a Mongo ping through to PostgreSQL, so readiness
+          # here also gates consumers on the backend actually answering.
           readinessProbe:
-            tcpSocket:
-              port: mongodb
+            httpGet:
+              path: /debug/readyz
+              port: debug
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
@@ -70,3 +80,4 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+{{- end }}

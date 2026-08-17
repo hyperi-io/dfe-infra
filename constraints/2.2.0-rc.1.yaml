@@ -62,10 +62,6 @@ rules:
 
 # Accepted, tracked exceptions the check must not fail on yet. A waiver names a
 # rule id it suppresses (or a free scope), a reason, an expiry, and a ref.
+# (None currently: the k8s-ferretdb-chart-lag waiver retired when the k8s
+# ferretdb chart moved to 2.x with its bundled documentdb backend.)
 waivers:
-
-  k8s-ferretdb-chart-lag:
-    scope: "k8s ferretdb chart appVersion 1.24.0 vs SSoT services.ferretdb 2.7.0"
-    reason: "ferretdb 2.x on k8s is a separate migration workstream; ferretdb+documentdb are docker-path today. Not a rule failure (the rule checks documentdb pairing, which holds), recorded so the gap is visible. Remove when the k8s chart moves to 2.x."
-    expires: "2026-10-01"
-    ref: "docs/stack-components.md"

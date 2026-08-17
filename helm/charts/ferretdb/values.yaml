@@ -3,34 +3,88 @@ component: ferretdb
 env: local
 cloud: local
 
+# Namespace the DFE apps run in, supplied by the appset from the cluster's
+# dfe.hyperi.io/dfe_namespace annotation (layer2-data passes it to every data
+# chart). The generated DocumentDB password is projected there so hyperdx can
+# authenticate (templates/auth.yaml). Empty -> the copy is skipped, and the
+# consumers have no way to authenticate.
+appNamespace: ""
+
+# Deployment-wide default StorageClass (set by the cloud overlay, e.g.
+# local-path). documentdb.storage.storageClass overrides per-component; empty
+# everywhere falls through to the cluster default class.
+storageClass: ""
+
 image:
   repository: ghcr.io/ferretdb/ferretdb
   tag: ""  # defaults to Chart.appVersion
   pullPolicy: IfNotPresent
+  # Public GHCR image: suppress the fleet-wide imagePullSecrets, which
+  # bootstrap only materialises in the app namespace (the kafbat lesson).
+  public: true
 
 replicaCount: 1
 
-# PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2
-# (the scale profile), so single-replica deployments never get a PDB that
-# blocks node drains. The budget is maxUnavailable: 1 (autoscaler-safe: a KEDA scale-to-one pod can still evict).
+# PodDisruptionBudget: renders only when replicaCount >= 2 (the scale
+# profile), so single-replica deployments never get a PDB that blocks node
+# drains. maxUnavailable: 1 (autoscaler-safe). Own manifest rather than
+# dfe-common.pdb because this chart carries a second workload (documentdb)
+# and the budget must select the proxy pods only.
 pdb:
   enabled: true
 
-postgresql:
-  # Connection to CNPG cluster (created by cnpg-cluster chart)
-  # Short name works when FerretDB deploys in same namespace as CNPG.
-  # Use FQDN (dfe-pg-rw.cnpg.svc.cluster.local) if deployed separately.
-  host: dfe-pg-rw
-  port: 5432
-  database: ferretdb
-  # Credentials from CNPG-generated secret
-  secretName: dfe-pg-app
-  secretUserKey: username
-  secretPasswordKey: password
-  # TLS to Postgres. require = encrypt always (CNSA now-step, no silent
-  # plaintext fallback). verify-full + sslrootcert = the CA-backed target.
-  sslmode: require
-  sslrootcert: ""   # e.g. /etc/pg-ca/ca.crt (mount the CNPG CA) for verify-full
+ferretdb:
+  # Deployment mode (the modularity seam -- docs/architecture.md swappable
+  # table). DFE owns its metadata store; deploy unless an external one given:
+  #   deploy   -> bundled FerretDB + the postgres-documentdb backend below.
+  #   external -> deploy NOTHING; the deployment brings its own Mongo-wire
+  #               endpoint and points the consumer at it directly (the hyperdx
+  #               chart's mongodb.uri + mongodb.passwordSecretName seam).
+  #               Mirrors clickhouse.mode=external.
+  mode: deploy
+
+# The FerretDB 2.x storage backend: PostgreSQL 17 WITH the DocumentDB
+# extension (ghcr.io/ferretdb/postgres-documentdb), a standalone StatefulSet +
+# PVC in this namespace. DELIBERATELY NOT the shared CNPG cluster: CNPG runs
+# its own instance manager in place of the image entrypoint, so the extension
+# preload/initialisation this image performs at initdb never happens there and
+# FerretDB 2.x fails its DocumentDB check. Mirrors the proven dfe-docker
+# compose pair (hyperdx-postgres + hyperdx-ferretdb).
+documentdb:
+  image:
+    repository: ghcr.io/ferretdb/postgres-documentdb
+    # PG17 pinned exception until ferretdb publishes an 18 image (they publish
+    # 15/16/17 lines only); the DFE PostgreSQL standard is 18.6. Latest 17-line
+    # tag paired with FerretDB 2.7.0, verified against ghcr.
+    tag: "17-0.107.0-ferretdb-2.7.0"
+    digest: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"
+    pullPolicy: IfNotPresent
+  auth:
+    # FerretDB 2.x delegates client auth to PostgreSQL (SCRAM-SHA-256 on the
+    # wire): this PG user IS the Mongo-side login hyperdx authenticates with.
+    # The password is generated in-cluster once (templates/auth.yaml) and
+    # projected into appNamespace -- never a chart value, never in git.
+    username: hyperdx
+    secretName: dfe-ferretdb-password
+  # MUST stay "postgres": the DocumentDB extension initialises against the
+  # image's default database (upstream requirement; docs.ferretdb.io).
+  database: postgres
+  # TLS to the backend. The bundled image serves no TLS, so this default keeps
+  # pgx's `prefer` for the in-namespace pod-to-pod hop. An EXTERNAL
+  # DocumentDB-capable PG that serves TLS should raise this to
+  # require/verify-full (the CNSA end-state once the bundled backend carries a
+  # cert).
+  sslmode: prefer
+  storage:
+    size: 5Gi
+    storageClass: ""  # empty -> top-level storageClass -> cluster default
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
 
 service:
   port: 27017
