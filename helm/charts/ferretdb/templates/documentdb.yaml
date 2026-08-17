@@ -1,0 +1,101 @@
+{{- if eq .Values.ferretdb.mode "deploy" }}
+# The FerretDB 2.x backend: PostgreSQL 17 + the DocumentDB extension, run as a
+# standalone StatefulSet (the clickhouse-single shape). NOT the shared CNPG
+# cluster: CNPG replaces this image's entrypoint with its own instance
+# manager, so the extension preload/initialisation the image performs at
+# initdb never happens there and FerretDB 2.x fails its DocumentDB check.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-documentdb
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  # Own app.kubernetes.io/name, NOT the chart's selectorLabels: the proxy
+  # Deployment's immutable 1.x selector matches on the chart name, and these
+  # pods must never fall under it.
+  selector:
+    app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-documentdb
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-documentdb
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "dfe-common.fullname" . }}-documentdb
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-documentdb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-documentdb
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        app.kubernetes.io/part-of: "dfe"
+        app.kubernetes.io/managed-by: "helm"
+    spec:
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      securityContext:
+        # postgres uid/gid in this Debian-based image is 999; the entrypoint
+        # starts as root, chowns PGDATA and drops to postgres via gosu, so no
+        # runAsNonRoot here -- the hardened posture would break the image's
+        # own init path.
+        fsGroup: 999
+      containers:
+        - name: documentdb
+          image: "{{ .Values.documentdb.image.repository }}:{{ .Values.documentdb.image.tag }}{{ with .Values.documentdb.image.digest }}@{{ . }}{{ end }}"
+          imagePullPolicy: {{ .Values.documentdb.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            # POSTGRES_DB must stay "postgres" -- the DocumentDB extension
+            # initialises against the image's default database.
+            - name: POSTGRES_DB
+              value: {{ .Values.documentdb.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.documentdb.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.documentdb.auth.secretName }}
+                  key: password
+            # Subdirectory of the mount, so initdb never sees the lost+found a
+            # block-storage class leaves at the volume root.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            {{- toYaml .Values.documentdb.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.documentdb.auth.username | quote }}]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.documentdb.auth.username | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with (.Values.documentdb.storage.storageClass | default .Values.storageClass) }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.documentdb.storage.size }}
+{{- end }}

@@ -93,10 +93,10 @@ spec:
             - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
           parameters:
             # Where the DFE apps run -- the SAME annotation layer2-apps places them
-            # with, so substrate and apps cannot disagree about the namespace. Only
-            # the kafka chart reads it (to project the broker credential into the app
-            # namespace); Helm ignores an unused value, so passing it to every data
-            # chart is harmless.
+            # with, so the data services and apps cannot disagree about the
+            # namespace. kafka and ferretdb read it (each projects a credential
+            # into the app namespace); Helm ignores an unused value, so passing
+            # it to every data chart is harmless.
             - name: appNamespace
               value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
             # The deployment's own domain (bootstrap sets the annotation from

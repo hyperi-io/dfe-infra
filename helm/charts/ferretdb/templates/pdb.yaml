@@ -1,2 +1,16 @@
-{{- /* Replica-gated: renders only at replicaCount >= 2 (scale profile). */ -}}
-{{- include "dfe-common.pdb" . }}
+{{- /* Replica-gated: renders only at replicaCount >= 2 (scale profile). Own
+manifest rather than dfe-common.pdb for the ferretdb.mode gate; the selector
+misses the documentdb backend, which carries its own name label. */ -}}
+{{- if and (eq .Values.ferretdb.mode "deploy") .Values.pdb.enabled (ge (int (.Values.replicaCount | default 1)) 2) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.pdb.maxUnavailable | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+{{- end }}

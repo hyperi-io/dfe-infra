@@ -1,9 +1,9 @@
 apiVersion: v2
 name: ferretdb
-description: FerretDB — MongoDB wire protocol proxy over CNPG PostgreSQL 17
+description: FerretDB 2.x — MongoDB wire protocol over a bundled postgres-documentdb (DocumentDB extension) backend
 type: application
-version: 0.1.0
-appVersion: "1.24.0"
+version: 0.2.0
+appVersion: "2.7.0"
 dependencies:
   - name: dfe-common
     version: "0.2.0"

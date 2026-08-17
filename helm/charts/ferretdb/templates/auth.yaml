@@ -1,0 +1,129 @@
+{{- if eq .Values.ferretdb.mode "deploy" }}
+# The backend password, generated IN-CLUSTER by ESO's Password generator.
+# CreatedOnce pins it: re-syncs never rotate a live credential. Alphanumeric
+# only, because the value is spliced into postgres:// and mongodb:// URIs by
+# kubelet env expansion and URI-reserved characters would need
+# percent-encoding.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ .Values.documentdb.auth.secretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  symbolCharacters: ""
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.documentdb.auth.secretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  refreshPolicy: CreatedOnce
+  target:
+    name: {{ .Values.documentdb.auth.secretName }}
+    creationPolicy: Owner
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ .Values.documentdb.auth.secretName }}
+{{- if .Values.appNamespace }}
+---
+# The credential, copied into the APP namespace so hyperdx can authenticate.
+# Same shape as the clickhouse-cluster app-namespace copy: an in-cluster
+# generated value cannot be re-derived in a second namespace, so ESO's
+# kubernetes provider copies the one that exists, through a ServiceAccount
+# whose Role names the single Secret it may read.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.documentdb.auth.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.documentdb.auth.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.documentdb.auth.secretName | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.documentdb.auth.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.documentdb.auth.secretName }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.documentdb.auth.secretName }}-reader
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ .Values.documentdb.auth.secretName }}-source-ns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: {{ .Release.Namespace }}
+      server:
+        # Every namespace carries kube-root-ca.crt, so the API server's CA
+        # needs no separate distribution step.
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+          namespace: {{ .Release.Namespace }}
+      auth:
+        serviceAccount:
+          name: {{ .Values.documentdb.auth.secretName }}-reader
+          namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: {{ .Values.documentdb.auth.secretName }}-appns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  externalSecretName: {{ .Values.documentdb.auth.secretName }}
+  refreshTime: 1h
+  namespaceSelectors:
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ .Values.appNamespace | quote }}
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: {{ .Values.documentdb.auth.secretName }}-source-ns
+      kind: ClusterSecretStore
+    target:
+      # The name the hyperdx chart's mongodb.passwordSecretName defaults to.
+      name: {{ .Values.documentdb.auth.secretName }}
+      creationPolicy: Owner
+    data:
+      - secretKey: password
+        remoteRef:
+          key: {{ .Values.documentdb.auth.secretName }}
+          property: password
+{{- end }}
+{{- end }}

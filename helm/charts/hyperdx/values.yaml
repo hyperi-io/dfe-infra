@@ -49,12 +49,16 @@ clickhouse:
   passwordSecretName: ""
   passwordSecretKey: password
 
-# Mongo-protocol metadata store (FerretDB, deployed separately).
-# NOTE: the fork targets FerretDB 2.7 (DocumentDB Postgres extension). The
-# existing dfe-infra ferretdb app is 1.24 on vanilla CNPG PG17 -- confirm/upgrade
-# before deploy. Creds come from the ferretdb secret.
+# Mongo-protocol metadata store: the bundled FerretDB 2.x (helm/charts/ferretdb,
+# DocumentDB PG backend) -- the fork's target. FerretDB 2.x auth is SCRAM-SHA-256
+# against the backend's PostgreSQL users (PLAIN was 1.x), so the URI carries no
+# authMechanism and $(MONGO_PASSWORD) is kubelet-expanded from the secret the
+# ferretdb chart projects into this namespace. External endpoint: set uri to the
+# full URI (inline creds) and passwordSecretName to "".
 mongodb:
-  uri: "mongodb://hyperdx:hyperdx@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authMechanism=PLAIN"
+  uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authSource=admin"
+  passwordSecretName: dfe-ferretdb-password
+  passwordSecretKey: password
 
 # DFE auth. Two modes, and they read different settings.
 #
