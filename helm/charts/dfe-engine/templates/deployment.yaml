@@ -203,6 +203,14 @@ spec:
                   name: {{ .Values.gitops.credentialsSecret }}
                   key: password
           {{- end }}
+          {{- if .Values.hyperdx.enabled }}
+            # Machine-JWT control surface: the engine confirms the fork's
+            # default team and seeds connections (settings.hyperdx.*).
+            - name: DFE_HYPERDX_ENABLED
+              value: "true"
+            - name: DFE_HYPERDX_BASE_URL
+              value: {{ include "dfe-engine.hyperdxBaseUrl" . | quote }}
+          {{- end }}
           {{- if .Values.auth.trustProxyHeaders }}
             # The engine believes X-Oidc-* only where a gateway both STRIPS the
             # inbound values and injects verified ones. Its own default is false,

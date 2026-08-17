@@ -29,3 +29,17 @@ Usage:
       key: {{ $.Values.clickhouse.passwordSecretKey | default "password" }}
 {{- end }}
 {{- end }}
+
+{{/*
+An explicit hyperdx.baseUrl wins, for a fork outside the cluster. Otherwise it
+is derived from the fork's API service, defaulting to this release's namespace
+so a co-deployed fork needs no configuration at all.
+*/}}
+{{- define "dfe-engine.hyperdxBaseUrl" -}}
+{{- with .Values.hyperdx.baseUrl -}}
+{{ . }}
+{{- else -}}
+{{- $ns := .Values.hyperdx.namespace | default .Release.Namespace -}}
+{{- printf "http://%s.%s.svc.cluster.local:%v" .Values.hyperdx.service $ns .Values.hyperdx.apiPort -}}
+{{- end -}}
+{{- end -}}

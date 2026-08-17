@@ -54,6 +54,17 @@ gitops:
   localPath: /var/run/dfe/deploy-repo
   credentialsSecret: dfe-deploy-repo-auth   # keys: username, password
 
+# HyperDX control surface: the engine confirms the fork's default team and
+# seeds connections over engine-signed machine JWTs (no stored credential).
+# The URL is derived from the co-deployed fork's service; a split deployment
+# overrides namespace, and an out-of-cluster fork sets baseUrl directly.
+hyperdx:
+  enabled: true
+  service: dfe-hyperdx
+  namespace: ""   # empty -> this release's namespace
+  apiPort: 8000
+  baseUrl: ""     # set to bypass the derivation entirely
+
 auth:
   # Every dfe-engine pod reads the signing key from this Secret. The chart
   # generates it when absent and ADOPTS it when present, so supplying it from
