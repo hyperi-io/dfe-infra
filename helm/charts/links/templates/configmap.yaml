@@ -15,7 +15,7 @@
       (dict "name" "DFE UI (HyperDX embedded)" "url" (printf "https://%s.%s" $h.dfe $domain)
             "note" "the landing page")
       (dict "name" "Engine API (Swagger)" "url" (printf "https://%s.%s/docs" $h.dfe $domain)
-            "note" (printf "API base https://%s.%s/api" $h.dfe $domain)) }}
+            "note" (printf "API base https://%s.%s/api/v1" $h.dfe $domain)) }}
 {{- with .Values.page.oidcProvider }}
 {{- $apps = append $apps (dict "name" (printf "Engine OIDC login (%s)" .)
       "url" (printf "https://%s.%s/api/v1/auth/oidc/%s/login" $h.dfe $domain .)

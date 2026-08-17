@@ -132,7 +132,9 @@ routes:
     backendService: dfe-engine
     backendNamespace: ""
     backendPort: 8000
-    pathPrefix: /api
+    # /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
+    # origin (the docker proxy draws the same line).
+    pathPrefix: /api/v1
 
   argocd:
     enabled: true
