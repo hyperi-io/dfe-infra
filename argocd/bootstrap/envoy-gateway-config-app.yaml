@@ -25,6 +25,11 @@ spec:
           - ../../../argocd/values/common.yaml
           - ../../../argocd/values/${DFE_CLOUD}.yaml
           - $values/envoy/oidc-values.yaml
+        parameters:
+          # Routes and their SecurityPolicies land in the app namespace so a
+          # backendRef never dangles in the release namespace.
+          - name: appNamespace
+            value: ${DFE_NAMESPACE}
     - repoURL: ${DFE_CONFIG_REPO_URL}
       targetRevision: ${DFE_CONFIG_REPO_REVISION}
       ref: values

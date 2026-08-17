@@ -76,7 +76,7 @@ stacks:
 
     # Stage operators: cluster addons + operators (ArgoCD waves 2-3, appsets/layer1-addons.yaml; the 3 data operators via layer-scale.yaml). NOTE: the layer1-addons appset labels this stage "addons"; the SSoT canonical stage name is "operators".
     operators:
-      envoy-gateway: "v1.8.3"        # 2026-07-22 (OCI gateway-helm; chart==app version). NOTE: nothing in this repo installs gateway-helm -- this pin is referenced only here, while helm/charts/envoy-gateway-config only CONFIGURES an already-present gateway. Kept in step with upstream until the install path is settled.
+      envoy-gateway: "v1.8.3"        # 2026-07-22 (OCI gateway-helm; chart==app version). Installed by argocd/bootstrap/envoy-gateway-app.yaml (drift-checked); helm/charts/envoy-gateway-config CONFIGURES the gateway it installs.
       external-dns: "1.21.1"         # 2026-04-30 (chart; review endpointslices RBAC change)
       keda: "2.20.1"                 # 2026-06-15 (chart; needs events.k8s.io RBAC at 2.20)
       metrics-server: "3.13.1"       # 2026-06-11 (chart; app v0.8.x)

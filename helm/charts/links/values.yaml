@@ -37,17 +37,31 @@ service:
 # the cluster's dfe_namespace annotation; empty falls back to {project}-{env}.
 appNamespace: ""
 
+# The deployment's own domain -- every deployment owns one, and every surface
+# is a name under it ({hostname}.{domain}), never an IP. Set (same value the
+# gateway chart reads), the default page renders gateway-first https URLs;
+# empty falls back to the kubectl port-forward debug layout.
+domain: ""
+
+# Subdomain labels under `domain`, mirroring the envoy-gateway-config
+# routes.*.hostname defaults. A deployment that renames a route hostname
+# there overrides the matching label here.
+hostnames:
+  dfe: dfe          # dfe-ui at /, engine API at /api -- one shared hostname
+  argocd: argocd
+  forgejo: forgejo
+  kafbat: kafbat
+  links: links
+
 # The page content. The chart renders a DEFAULT page covering every standard
-# stack surface as localhost port-forward URLs (true on any kubectl-reachable
-# deployment); `groups` appends deployment-specific entries, and a deployment
-# with real gateway hostnames overrides via these values. The page is a
-# projection of values -- the same Argo sync that changes them re-renders it.
+# stack surface: gateway https URLs derived from `domain` + `hostnames` when
+# a domain is set, else the localhost port-forward layout (true on any
+# kubectl-reachable deployment); `groups` appends deployment-specific entries.
+# The page is a projection of values -- the same Argo sync that changes them
+# re-renders it.
 page:
   title: ""            # defaults to "<project> deployment"
-  description: >-
-    Every web surface this deployment exposes. Links default to the standard
-    kubectl port-forward layout; each note is the forward that serves its
-    link, and a grey/red dot means that target is not answering.
+  description: ""      # defaults per layout (gateway-first or port-forward)
   # Client-side reachability dots: a no-cors fetch per link, green when the
   # host answers, grey when unreachable. Probes are skipped automatically for
   # http targets on an https page (the browser blocks mixed content).

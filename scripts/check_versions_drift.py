@@ -242,6 +242,13 @@ CHECKS += [
         Path("helm/charts/kafbat/values.yaml"),
         r"kafka-ui\n\s*tag:\s*\"([^\"@]+)",
     ),
+    # envoy-gateway operator: standalone bootstrap app pulls the OCI chart.
+    Check(
+        "envoy-gateway operator app",
+        "operators.envoy-gateway",
+        Path("argocd/bootstrap/envoy-gateway-app.yaml"),
+        r"chart: gateway-helm\n\s*targetRevision:\s*\"([^\"]+)\"",
+    ),
     # links page (class D shape): chart value is tag@digest -- compare the TAG
     # part to SSoT; appVersion cascades the same pin.
     Check(
@@ -437,7 +444,6 @@ UNCONSUMED: dict[str, str] = {
     "services.ferretdb": "docker path only; the k8s chart lags on 1.24.0 under a dated waiver",
     "services.hyperdx": "the hyperdx chart's appVersion carries it and agrees, but CLAUDE.md routes hyperdx-chart work through a dfe-engine issue first, so it is waived rather than checked here",
     "services.nginx-proxy": "docker path only; k8s uses envoy-gateway",
-    "operators.envoy-gateway": "nothing here installs gateway-helm; the chart only configures a gateway already present",
     "digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
     "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",

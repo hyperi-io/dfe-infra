@@ -1,0 +1,30 @@
+# Standalone Application installing the Envoy Gateway operator (gateway-helm,
+# OCI chart) plus the Gateway API + Envoy Gateway CRDs it bundles. The in-repo
+# envoy-gateway-config chart only CONFIGURES the gateway, so this must exist
+# first -- bootstrap.sh applies it ahead of envoy-gateway-config-app.yaml and
+# waits for the CRDs to establish. targetRevision matches versions.yaml
+# operators.envoy-gateway (drift-checked). Anonymous OCI pull: bootstrap
+# registers the envoyproxy registry as a Helm repository with enableOCI.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: envoy-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: infra
+  source:
+    repoURL: registry-1.docker.io/envoyproxy
+    chart: gateway-helm
+    targetRevision: "v1.8.3"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: envoy-gateway-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -95,6 +95,13 @@ tls:
 
 domain: ""
 
+# Where the DFE app services run. Routes with no explicit backendNamespace are
+# placed HERE so route and backend share a namespace (only the parentRef
+# crosses namespaces, which the Gateway's allowedRoutes permits and needs no
+# ReferenceGrant). bootstrap.sh passes it from DFE_NAMESPACE; empty falls back
+# to the release namespace, where an app backendRef cannot resolve.
+appNamespace: ""
+
 # HTTPRoutes — map hostnames to backend services
 routes:
   dfeUi:
@@ -147,6 +154,18 @@ routes:
     backendNamespace: kafka
     backendPort: 8080
 
+  # Deployment links page (bundled chart, ns links). Infra UI -> default
+  # internal; flip enabled:true to expose. The page has NO auth of its own, so
+  # exposing it without oidc.enabled leaves it open to the network -- when OIDC
+  # is on it is fronted by the ADMIN policy (oidc.adminGroups), not the
+  # standard targetRoutes one.
+  links:
+    enabled: false
+    hostname: "links"
+    backendService: dfe-links
+    backendNamespace: links
+    backendPort: 8080
+
 # OIDC — disabled by default (local auth is default).
 # Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.
 # Provider addition/removal is a Helm values change + ArgoCD sync — NOT a
@@ -160,23 +179,33 @@ oidc:
   # generated per route, each with its OWN redirectURL on its OWN hostname
   # (cookies must be set on the host the user is on). Universal: add any future
   # interactive service's route here -- {name = HTTPRoute metadata.name,
-  # hostname = its subdomain label under {domain}} -- and it is fronted with no
-  # policy-code change. NOT a blanket Gateway-level policy: dfe-engine /api
-  # machine paths use API-key/JWT and must not be redirected to OIDC login.
+  # hostname = its subdomain label under {domain}, optional namespace when the
+  # route is not in appNamespace} -- and it is fronted with no policy-code
+  # change. A SecurityPolicy must live in its target route's namespace, so
+  # each policy (and the provider's client-secret ExternalSecret) is rendered
+  # there. NOT a blanket Gateway-level policy: dfe-engine /api machine paths
+  # use API-key/JWT and must not be redirected to OIDC login.
   targetRoutes:
     - name: dfe-engine
       hostname: dfe
     - name: hyperdx
       hostname: hyperdx
+  # Groups whose members may reach the ADMIN surfaces (the links page). The
+  # canonical names come from dfe-engine docs/control-plane/rbac-vocabulary.md.
+  adminGroups:
+    - dfe-admins
+    - dfe-infra
   providers: []
-  # Example:
+  # Example (jwksUrl feeds the admin policy's claim checks; default
+  # {issuerUrl}/keys matches dex -- set it for providers with another layout):
   # providers:
   #   - name: google-workspace
   #     issuerUrl: https://accounts.google.com
   #     clientId: "123456.apps.googleusercontent.com"
   #     clientSecretName: dfe-oidc-google
   #     clientSecretKey: client-secret
-  #     scopes: [openid, email, profile]
+  #     scopes: [openid, email, profile, groups]
+  #     jwksUrl: https://www.googleapis.com/oauth2/v3/certs
 
 # jwt_authn filter — chains after OIDC to extract claims into headers.
 # These headers are the contract between Envoy and dfe-engine.

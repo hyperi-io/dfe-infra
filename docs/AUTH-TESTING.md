@@ -29,8 +29,8 @@ Twelve users span the RBAC roles. Two of them exist specifically to prove
 
 | Fixture user | Carries | Proves |
 |---|---|---|
-| `dfe-acme-viewer` | `customer_viewer` on one org | Sees ONLY that org's rows |
-| `dfe-multi-viewer` | `customer_viewer` on two orgs | Sees exactly those two, no more |
+| `dfe-acme-viewer` | `tenant_viewer` on one org | Sees ONLY that org's rows |
+| `dfe-multi-viewer` | `tenant_viewer` on two orgs | Sees exactly those two, no more |
 | `dfe-nobody` | no roles at all | Default deny -- every screen refuses |
 | `dfe-admin` | `admin` | The allow-everything baseline |
 

@@ -66,6 +66,7 @@ a chart value).
 | [deployment/deployment-logs/](deployment/deployment-logs/TEMPLATE.md) | per-deploy log template |
 | [TESTING-CYCLE.md](TESTING-CYCLE.md) | THE validation loop (preflight -> deploy+E2E -> smoke -> destroy), the env-file contract, the vanilla-cluster contract |
 | [AUTOSCALING.md](AUTOSCALING.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |
+| [EDGE-AUTH.md](EDGE-AUTH.md) | edge exposure + auth: gateway on by default, dfe-engine as the OIDC master (internal users always present, multiple externals additive), per-surface policy |
 | [archive/](archive/) | the 2026-03 research corpus + superseded material (decision trail) |
 
 DEVEX-LIFECYCLE.md and DEVEX-OPERATIONS.md remain at docs/ root pending

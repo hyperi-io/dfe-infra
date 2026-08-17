@@ -7,11 +7,14 @@
 # host the user is actually on (a single shared redirectURL would break OIDC on
 # every subdomain except the callback host). Universal: add a route to
 # oidc.targetRoutes and it is fronted automatically -- no policy-code change.
+{{- /* A SecurityPolicy only targets routes in its own namespace, so the
+       policy and its client secret live where the route does. */}}
+{{- $routeNs := $route.namespace | default $.Values.appNamespace | default $.Release.Namespace }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
   name: dfe-oidc-{{ $provider.name }}-{{ $route.name }}
-  namespace: {{ $.Values.gateway.namespace }}
+  namespace: {{ $routeNs }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
@@ -25,7 +28,7 @@ spec:
     clientID: {{ $provider.clientId }}
     clientSecret:
       name: {{ $provider.clientSecretName | default (printf "dfe-oidc-%s" $provider.name) }}
-      namespace: {{ $.Values.gateway.namespace }}
+      namespace: {{ $routeNs }}
     scopes:
       {{- toYaml ($provider.scopes | default (list "openid" "email" "profile")) | nindent 6 }}
     redirectURL: "https://{{ $route.hostname }}.{{ $.Values.domain }}/oauth2/callback"

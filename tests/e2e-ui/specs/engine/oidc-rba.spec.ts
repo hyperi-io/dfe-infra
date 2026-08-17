@@ -28,7 +28,7 @@ interface Expectation {
 const TRUTH_TABLE: Expectation[] = [
   { user: 'dfe-test', roles: ['admin', 'data_viewer'], orgIds: [] },
   { user: 'dfe-admin', roles: ['admin'], orgIds: [] },
-  { user: 'dfe-test-org-viewer', roles: ['customer_viewer'], orgIds: ['test_org'] },
+  { user: 'dfe-test-org-viewer', roles: ['tenant_viewer'], orgIds: ['test_org'] },
   { user: 'dfe-nobody', roles: [], orgIds: [] },
   { user: 'dfe-infra-admin', roles: ['infra_admin'], orgIds: [] },
   { user: 'dfe-infra-viewer', roles: ['infra_viewer'], orgIds: [] },
@@ -38,7 +38,7 @@ const TRUTH_TABLE: Expectation[] = [
   { user: 'dfe-operator', roles: ['dfe_operator'], orgIds: [] },
   {
     user: 'dfe-multi-viewer',
-    roles: ['customer_viewer'],
+    roles: ['tenant_viewer'],
     orgIds: ['test_org', 'test_org_2'],
   },
   { user: 'dfe-nested-member', roles: [], orgIds: [] },

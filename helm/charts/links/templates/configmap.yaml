@@ -1,15 +1,48 @@
 {{- if .Values.links.enabled }}
-{{- $title := .Values.page.title | default (printf "%s deployment" .Values.project) }}
+{{- $title := .Values.page.title | default (printf "%s deployment" (upper .Values.project)) }}
 {{- $p := .Values.project }}
 {{- $appNs := .Values.appNamespace | default (include "dfe-common.namespace" .) }}
+{{- $domain := .Values.domain | default (dig "domain" "" (.Values.global | default dict)) }}
+{{- $desc := .Values.page.description }}
 {{- $defaults := list }}
 {{- if .Values.page.includeDefaults }}
-{{- $fwd := printf "kubectl -n %s port-forward svc/" $appNs }}
+{{- /* HyperDX is never listed separately: it is an iframe inside dfe-ui. */}}
+{{- if $domain }}
+{{- /* Gateway-first: every surface is a name under the deployment's domain. */}}
+{{- $h := .Values.hostnames }}
+{{- $desc = $desc | default "Every web surface this deployment exposes, each on its own hostname. A grey/red dot means that target is not answering; default-internal surfaces serve only once their gateway route is enabled." }}
 {{- $apps := list
-      (dict "name" "DFE UI" "url" "http://localhost:13001"
+      (dict "name" "DFE UI (HyperDX embedded)" "url" (printf "https://%s.%s" $h.dfe $domain)
+            "note" "the landing page")
+      (dict "name" "Engine API (Swagger)" "url" (printf "https://%s.%s/docs" $h.dfe $domain)
+            "note" (printf "API base https://%s.%s/api" $h.dfe $domain)) }}
+{{- with .Values.page.oidcProvider }}
+{{- $apps = append $apps (dict "name" (printf "Engine OIDC login (%s)" .)
+      "url" (printf "https://%s.%s/api/v1/auth/oidc/%s/login" $h.dfe $domain .)
+      "note" "browser login via the engine") }}
+{{- end }}
+{{- $data := list
+      (dict "name" "ClickHouse Play" "url" "http://localhost:18124/play"
+            "note" (printf "no gateway route -- kubectl -n clickhouse port-forward svc/%s-clickhouse 18124:8123" $p))
+      (dict "name" "Kafbat (Kafka UI)" "url" (printf "https://%s.%s" $h.kafbat $domain)
+            "note" "default internal; enable its gateway route to expose") }}
+{{- $gitops := list
+      (dict "name" "Argo CD" "url" (printf "https://%s.%s" $h.argocd $domain)
+            "note" "GitOps control plane")
+      (dict "name" "Forgejo (bundled deploy repo, when present)" "url" (printf "https://%s.%s" $h.forgejo $domain)
+            "note" "default internal; enable its gateway route to expose")
+      (dict "name" "This page" "url" (printf "https://%s.%s" $h.links $domain)
+            "note" "admin-gated when OIDC is on") }}
+{{- $defaults = list
+      (dict "name" "Apps" "links" $apps)
+      (dict "name" "Data" "links" $data)
+      (dict "name" "GitOps + infra" "links" $gitops) }}
+{{- else }}
+{{- $fwd := printf "kubectl -n %s port-forward svc/" $appNs }}
+{{- $desc = $desc | default "Every web surface this deployment exposes. Links default to the standard kubectl port-forward layout; each note is the forward that serves its link, and a grey/red dot means that target is not answering." }}
+{{- $apps := list
+      (dict "name" "DFE UI (HyperDX embedded)" "url" "http://localhost:13001"
             "note" (printf "%s%s-ui 13001:3000" $fwd $p))
-      (dict "name" "HyperDX" "url" "http://localhost:18080"
-            "note" (printf "%s%s-hyperdx 18080:8080" $fwd $p))
       (dict "name" "Engine API (Swagger)" "url" "http://localhost:18000/docs"
             "note" (printf "%s%s-engine 18000:8000" $fwd $p)) }}
 {{- with .Values.page.oidcProvider }}
@@ -34,9 +67,10 @@
       (dict "name" "Data" "links" $data)
       (dict "name" "GitOps + infra" "links" $gitops) }}
 {{- end }}
+{{- end }}
 {{- $model := dict
       "title" $title
-      "description" (.Values.page.description | default "")
+      "description" ($desc | default "")
       "probes" .Values.page.statusProbes
       "groups" (concat $defaults (.Values.page.groups | default list)) }}
 apiVersion: v1

@@ -1,0 +1,57 @@
+{{- if and .Values.oidc.enabled .Values.routes.links.enabled }}
+{{- $linksNs := .Values.routes.links.backendNamespace | default .Release.Namespace }}
+{{- range $provider := .Values.oidc.providers }}
+---
+# ADMIN-ONLY edge policy for the links page: OIDC login, then the groups
+# claim (from the provider's access token, re-validated against its JWKS)
+# must carry one of oidc.adminGroups -- everyone else gets a 403. Denies by
+# default, so a token with no groups claim is refused, not admitted.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: dfe-oidc-{{ $provider.name }}-links-admin
+  namespace: {{ $linksNs }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: links
+  oidc:
+    provider:
+      issuer: {{ $provider.issuerUrl }}
+    clientID: {{ $provider.clientId }}
+    clientSecret:
+      name: {{ $provider.clientSecretName | default (printf "dfe-oidc-%s" $provider.name) }}
+      namespace: {{ $linksNs }}
+    scopes:
+      {{- toYaml ($provider.scopes | default (list "openid" "email" "profile" "groups")) | nindent 6 }}
+    redirectURL: "https://{{ $.Values.routes.links.hostname }}.{{ $.Values.domain }}/oauth2/callback"
+    logoutPath: "/oauth2/logout"
+    cookieNames:
+      accessToken: dfe-links-access-token
+  jwt:
+    providers:
+      - name: {{ $provider.name }}
+        issuer: {{ $provider.issuerUrl }}
+        remoteJWKS:
+          uri: {{ $provider.jwksUrl | default (printf "%s/keys" $provider.issuerUrl) }}
+        extractFrom:
+          cookies:
+            - dfe-links-access-token
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: allow-admin-groups
+        action: Allow
+        principal:
+          jwt:
+            provider: {{ $provider.name }}
+            claims:
+              - name: groups
+                valueType: StringArray
+                values:
+                  {{- toYaml $.Values.oidc.adminGroups | nindent 18 }}
+{{- end }}
+{{- end }}

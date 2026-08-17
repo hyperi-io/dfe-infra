@@ -1,0 +1,19 @@
+{{- if .Values.routes.links.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: links
+  namespace: {{ .Values.routes.links.backendNamespace | default .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+  hostnames:
+    - "{{ .Values.routes.links.hostname }}.{{ .Values.domain }}"
+  rules:
+    - backendRefs:
+        - name: {{ .Values.routes.links.backendService }}
+          port: {{ .Values.routes.links.backendPort }}
+{{- end }}

@@ -414,9 +414,36 @@ fi
 
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"
-# Standalone in-repo chart apps are envsubst-templated (repoURL, cloud overlay)
-envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml" | run kubectl apply -f -
-envsubst < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run kubectl apply -f -
+# Envoy Gateway operator: anonymous OCI Helm repo cred, then the operator app.
+# The config app below needs the Gateway API CRDs the operator installs, so
+# wait for them to establish before applying it (its sync retry budget is
+# finite -- exhausting it on missing CRDs wedges the app until a manual
+# refresh).
+kubectl -n argocd create secret generic repo-envoyproxy-oci \
+  --from-literal=type=helm \
+  --from-literal=name=envoyproxy \
+  --from-literal=url=registry-1.docker.io/envoyproxy \
+  --from-literal=enableOCI="true" \
+  --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | run kubectl apply -f -
+run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-app.yaml"
+if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  echo "  waiting for the Gateway API CRDs (installed by the operator app)..."
+  for _ in $(seq 1 60); do
+    kubectl get crd httproutes.gateway.networking.k8s.io >/dev/null 2>&1 && break
+    sleep 5
+  done
+  kubectl wait --for condition=Established --timeout=120s \
+    crd/gatewayclasses.gateway.networking.k8s.io \
+    crd/gateways.gateway.networking.k8s.io \
+    crd/httproutes.gateway.networking.k8s.io || \
+    echo "  WARNING: Gateway API CRDs not established -- envoy-gateway-config will need a retry"
+fi
+# Standalone in-repo chart apps are envsubst-templated (repoURL, cloud overlay).
+# The variable allowlist is REQUIRED: bare envsubst also substitutes Argo's
+# $values ref to an empty string, silently severing the deploy-repo seam.
+DFE_APP_VARS='${DFE_REPO_URL} ${DFE_TARGET_REVISION} ${DFE_CLOUD} ${DFE_CONFIG_REPO_URL} ${DFE_CONFIG_REPO_REVISION} ${DFE_NAMESPACE}'
+envsubst "${DFE_APP_VARS}" < "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-config-app.yaml" | run kubectl apply -f -
+envsubst "${DFE_APP_VARS}" < "${SCRIPT_DIR}/../argocd/bootstrap/network-policies-app.yaml" | run kubectl apply -f -
 # NOTE: keda-scalers chart retired -- KEDA is now folded into each app chart
 # (dfe-common.scaledobject helper), driven by the per-instance overlay.
 # cluster-addons ApplicationSet uses goTemplate — no envsubst needed
