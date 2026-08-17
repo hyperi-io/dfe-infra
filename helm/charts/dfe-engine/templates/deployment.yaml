@@ -8,12 +8,13 @@ spec:
   replicas: {{ .Values.replicaCount }}
   {{- if .Values.config.persistence.enabled }}
   # The config PVC is ReadWriteOnce: a rolling update can strand the new pod
-  # on another node waiting for the attach the old pod still holds. The
-  # explicit null clears rollingUpdate defaults a previous apply left on the
-  # live object -- the API rejects them next to type Recreate.
+  # on another node waiting for the attach the old pod still holds.
+  # UPGRADE NOTE from a RollingUpdate install: the API-defaulted
+  # rollingUpdate block on the live object must be cleared once by hand
+  # (kubectl patch strategy type=Recreate rollingUpdate=null) -- Argo
+  # strips nulls, so the sync cannot clear it itself.
   strategy:
     type: Recreate
-    rollingUpdate: null
   {{- end }}
   selector:
     matchLabels:
