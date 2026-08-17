@@ -37,16 +37,12 @@ spec:
             # in-pod 2026-07-22: flag accepted, heap = 70% of memory.max.
             - name: NODE_OPTIONS
               value: {{ .Values.config.nodeOptions | default "--max-old-space-size-percentage=70" | quote }}
-            {{- $internalApi := .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project (include "dfe-common.namespace" .)) }}
-            # Server-side reads only (the client bundle inlines the image's "").
-            # The ui's getSetupStatus takes no INTERNAL_API_URL fallback, so
-            # this defaults to the same in-cluster engine URL.
             - name: NEXT_PUBLIC_API_URL
-              value: {{ .Values.config.nextPublicApiUrl | default $internalApi | quote }}
+              value: {{ .Values.config.nextPublicApiUrl | quote }}
             # NextAuth's authorize fetch runs server-side; a missing base URL
             # makes every credentials login fail before reaching the engine.
             - name: INTERNAL_API_URL
-              value: {{ $internalApi | quote }}
+              value: {{ .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project (include "dfe-common.namespace" .)) | quote }}
             - name: NEXT_PUBLIC_HYPERDX_URL
               value: {{ .Values.config.nextPublicHyperdxUrl | quote }}
             # Read at request time by the (auth) layout: lights the /observe/*
