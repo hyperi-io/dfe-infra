@@ -126,7 +126,7 @@ stacks:
     # == the pin here.
     apps:
       dfe-engine: "v1.11.2"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
-      dfe-ui: "v1.3.1"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
+      dfe-ui: "v1.3.2"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
       dfe-receiver: "v1.15.19"      # independent release line
       dfe-loader: "v1.18.14"
       dfe-archiver: "v1.7.12"
@@ -143,7 +143,7 @@ stacks:
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
       dfe-engine: "sha256:fd9d39ec7b2e2e4c42f16a5ee0d00a9414f029da586cc416827b1aad03565cbe"
-      dfe-ui: "sha256:c1fce7575ddbf67ebed99f7fa7b2cf3fcddc1a13cb04f9afd338e591e7ffa02f"
+      dfe-ui: "sha256:93575ff93ca7d1f0e5eec1fe351f6591f1456d1774af1db85adbc8b48242b7d4"
       dfe-receiver: "sha256:4ba8eecf48596b93ef4192d078872057bab942348da47c00e2a20ff4c3c263e0"
       dfe-loader: "sha256:e6491808cecd11c26f02dbb2c9c87b54aac7e3e65e9a8f9c7f917d88fe2c0d52"
       dfe-archiver: "sha256:6f171ade97379b177a7fa91e056b22a14be114f1cfee00d26bbde03d63ade319"
