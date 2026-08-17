@@ -1,22 +1,22 @@
 #!/usr/bin/env bats
-# The single tier's landing topic must be created by a resource Argo TRACKS.
-# A PostSync hook is omitted from the Application resource tree, so one that
-# never fires is invisible -- which is how dfe-loader crashlooped 1657 times on a
-# deploy that reported success.
+# The single tier's bootstrap topics (landing + DLQ) must be created by a
+# resource Argo TRACKS. A PostSync hook is omitted from the Application
+# resource tree, so one that never fires is invisible -- which is how
+# dfe-loader crashlooped 1657 times on a deploy that reported success.
 
 setup() {
     REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
     SINGLE=(--set kafka.mode=single --set appNamespace=dfe-local)
 }
 
-@test "single tier renders a create-topic Job" {
+@test "single tier renders a bootstrap-topics Job" {
     run helm template test "${REPO_ROOT}/helm/charts/kafka/" "${SINGLE[@]}"
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "dfe-kafka-default-topic" ]]
+    [[ "$output" =~ "dfe-kafka-bootstrap-topics" ]]
     [[ "$output" =~ "kafka-topics.sh" ]]
 }
 
-@test "the create-topic Job is tracked, not a hook" {
+@test "the bootstrap-topics Job is tracked, not a hook" {
     run helm template test "${REPO_ROOT}/helm/charts/kafka/" "${SINGLE[@]}"
     [ "$status" -eq 0 ]
     [[ ! "$output" =~ "argocd.argoproj.io/hook" ]]
@@ -25,7 +25,7 @@ setup() {
     [[ "$output" =~ "Replace=true" ]]
 }
 
-@test "the topic is created at replication factor 1 on a one-broker tier" {
+@test "topics are created at replication factor 1 on a one-broker tier" {
     run helm template test "${REPO_ROOT}/helm/charts/kafka/" "${SINGLE[@]}"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "--replication-factor 1" ]]
@@ -37,12 +37,30 @@ setup() {
     [[ "$output" =~ "--if-not-exists" ]]
 }
 
-@test "the cluster tier uses the Strimzi CR and renders no Job" {
+@test "the single-tier Job creates every DLQ topic" {
+    run helm template test "${REPO_ROOT}/helm/charts/kafka/" "${SINGLE[@]}"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "dfe_receiver_dlq" ]]
+    [[ "$output" =~ "dfe_loader_dlq" ]]
+    [[ "$output" =~ "dfe_archiver_dlq" ]]
+    [[ "$output" =~ "dfe_fetcher_dlq" ]]
+    [[ "$output" =~ "dfe_transform_dlq" ]]
+}
+
+@test "numeric per-topic config renders as an integer, not scientific notation" {
+    run helm template test "${REPO_ROOT}/helm/charts/kafka/" "${SINGLE[@]}" \
+        --set kafka.dlqTopics.config."retention\.ms"=604800000
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "retention.ms=604800000" ]]
+    [[ ! "$output" =~ "e+0" ]]
+}
+
+@test "the cluster tier uses Strimzi CRs and renders no Job" {
     run helm template test "${REPO_ROOT}/helm/charts/kafka/" \
         --set kafka.mode=cluster --set appNamespace=dfe-local
     [ "$status" -eq 0 ]
     [[ "$output" =~ "kind: KafkaTopic" ]]
-    [[ ! "$output" =~ "dfe-kafka-default-topic" ]]
+    [[ ! "$output" =~ "dfe-kafka-bootstrap-topics" ]]
 }
 
 @test "the single tier renders no Strimzi CR -- nothing would reconcile it" {
@@ -51,9 +69,20 @@ setup() {
     [[ ! "$output" =~ "kind: KafkaTopic" ]]
 }
 
-@test "defaultTopic.create=false opts out of both paths" {
+@test "defaultTopic.create=false still creates the DLQ topics" {
     run helm template test "${REPO_ROOT}/helm/charts/kafka/" \
         "${SINGLE[@]}" --set kafka.defaultTopic.create=false
     [ "$status" -eq 0 ]
-    [[ ! "$output" =~ "dfe-kafka-default-topic" ]]
+    [[ "$output" =~ "dfe-kafka-bootstrap-topics" ]]
+    [[ ! "$output" =~ "default_land" ]]
+    [[ "$output" =~ "dfe_loader_dlq" ]]
+}
+
+@test "both creates disabled renders neither Job nor CR" {
+    run helm template test "${REPO_ROOT}/helm/charts/kafka/" \
+        "${SINGLE[@]}" --set kafka.defaultTopic.create=false \
+        --set kafka.dlqTopics.create=false
+    [ "$status" -eq 0 ]
+    [[ ! "$output" =~ "dfe-kafka-bootstrap-topics" ]]
+    [[ ! "$output" =~ "kind: KafkaTopic" ]]
 }

@@ -85,13 +85,16 @@ component, EXCEPT the single-node full deploy, which carries the same
 DLQ topics as k8s.
 
 The kafka chart's bootstrap-topics seam (`kafka.dlqTopics`) pre-creates
-the five topics on both tiers -- a DLQ write happens AT failure time, the
-one moment nothing can be creating topics. DLQ topics carry 7-day
-retention against the 72h data-topic default: a poisoned message is
-exactly the record an operator must still find days later, and once its
-source offset commits it exists nowhere else. Apps are pointed at their
-topic by chart env (the fleet-uniform `DLQ_TOPIC` / `DLQ_MODE` contract,
-each in the app's own env regime).
+the five topics on both tiers (cluster tier: Strimzi provider only -- the
+redpanda provider creates no topics on either path) -- a DLQ write
+happens AT failure time, the one moment nothing can be creating topics.
+DLQ topics carry 7-day retention against the 72h data-topic default: a
+poisoned message is exactly the record an operator must still find days
+later, and once its source offset commits it exists nowhere else. The
+four fleet apps are pointed at their topic by chart env (the
+fleet-uniform `DLQ_TOPIC` / `DLQ_MODE` contract, each in the app's own
+env regime); the transforms cannot consume `dfe_transform_dlq` yet
+(dfe-transform-vrl#30, dfe-transform-vector#46 own that wiring).
 
 ## The overlay seam (how engine dials land here)
 

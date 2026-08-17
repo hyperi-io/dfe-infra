@@ -75,7 +75,10 @@ spec:
               # their settings; this only guarantees the topics are there at all.
               # Replication is hard-coded 1: the single tier has one broker.
               {{- range $t := $topics }}
-              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --create --if-not-exists --topic "{{ $t.name }}" --partitions {{ $t.partitions }} --replication-factor 1{{ range $k, $v := $t.config }} --config {{ $k }}={{ $v }}{{ end }}
+              {{- /* The toJson round-trip makes numbers float64; a bare render
+                     of a large one is scientific notation, which the broker
+                     CLI rejects. Integral floats render via int64. */}}
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --create --if-not-exists --topic "{{ $t.name }}" --partitions {{ $t.partitions }} --replication-factor 1{{ range $k, $v := $t.config }} --config {{ $k }}={{ if kindIs "float64" $v }}{{ int64 $v }}{{ else }}{{ $v }}{{ end }}{{ end }}
               echo "topic {{ $t.name }} present:"
               /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --describe --topic "{{ $t.name }}"
               {{- end }}

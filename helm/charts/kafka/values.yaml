@@ -61,6 +61,9 @@ kafka:
   # happens AT failure time, the one moment nothing can be creating topics.
   # Names are product policy; app charts point their DLQ at these by default.
   # Override per deployment only alongside the matching app-chart dlq.topic.
+  # Broker auto-create stays ON (the receiver's dynamic {source}_land topics
+  # need it), so a produce racing the wave-1 create can win with broker
+  # defaults -- the idempotent create then keeps that topic's settings.
   dlqTopics:
     create: true
     # Poison messages are low-volume and read by a human, not a consumer group.
