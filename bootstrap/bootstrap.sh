@@ -223,11 +223,24 @@ fi
 
 echo "==> [2/7] cert-manager (detect-or-install)"
 if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cert-manager; then
+  # enableGatewayAPI: the gateway-shim watches Gateway annotations and issues
+  # the dfe-wildcard-tls Secret the https listener references; without it the
+  # annotation is inert and the listener never programs.
   run helm upgrade --install cert-manager jetstack/cert-manager \
     --namespace cert-manager --create-namespace \
     --version "${CERT_MANAGER_VERSION}" \
     --set crds.enabled=true \
+    --set config.enableGatewayAPI=true \
     --wait --timeout 5m
+fi
+# Private-CA issuance (the chart's tls.vault issuer mode): seed the AppRole
+# SecretID cert-manager authenticates to Vault/OpenBao with. Outside the
+# detect-or-install gate so an existing install still gets the secret.
+if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  kubectl -n cert-manager create secret generic cert-manager-approle \
+    --from-literal=secretId="${DFE_CERTMANAGER_SECRET_ID}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  echo "  Seeded cert-manager AppRole SecretID (cert-manager-approle)"
 fi
 
 echo "==> [3/7] external-secrets (detect-or-install)"

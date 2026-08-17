@@ -42,6 +42,29 @@ noting it was done, for politeness.
 | Version pins | `versions.yaml` | single source for chart/operator/image versions |
 | Cloud prep | `terraform/` (OpenTofu-first, terraform-compatible) | secrets/IAM prep per cloud target |
 
+## Swappable components (the modularity contract)
+
+The initial build is native-k8s-only, but every major component sits behind
+a config-driven seam so a deployment swaps it without redesign. RKE2 is the
+standard cluster for all deployments (on-prem and cloud) unless a deployment
+has a strong reason otherwise. The seam is always an existing k8s
+abstraction or a chart mode -- never a fork of the charts.
+
+| Component | Seam | Knob | Swap targets |
+|---|---|---|---|
+| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 standard; EKS-class only with cause |
+| DNS | external-dns / estate-managed | provider config; or the deployment's own DNS | CoreDNS record (on-prem), Route53, ... |
+| Private CA / TLS | cert-manager ClusterIssuer | `tls.acme.*` or `tls.vault.*` (exactly one) | ACME/Let's Encrypt, Vault/OpenBao PKI; cloud CA issuer later |
+| Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+IRSA), ... |
+| Kafka | chart mode + endpoint | `kafka` chart mode, `kafka.bootstrapServers` | in-k8s single/Strimzi cluster, MSK, Redpanda (licence gate) |
+| ClickHouse | chart mode + endpoint | `clickhouse.mode` single/cluster/external, `clickhouse.host` | in-k8s, ClickHouse Cloud SaaS, private cloud |
+| PostgreSQL | endpoint | `postgresql.host` (cnpg-cluster bundled) | CNPG in-k8s, RDS-class external |
+| Edge / LB | Gateway API + EnvoyProxy CR | `gateway.service.*` (type, class, annotations) | MetalLB, cloud NLB, NodePort behind HW LB |
+| Deploy repo | provider mode | `DFE_BUNDLED_DEPLOY_REPO` + creds | bundled Forgejo, GitHub/GitLab |
+
+A new architectural dependency must name its seam in this table before it
+lands; a component reachable only through one provider is a bug.
+
 ## The overlay seam (how engine dials land here)
 
 One mechanism: layer2-apps generates one Argo Application per

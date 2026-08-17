@@ -1,3 +1,6 @@
+{{- if and .Values.tls.acme.email .Values.tls.vault.server }}
+{{- fail "tls.acme.email and tls.vault.server are exclusive -- set exactly one issuer mode" }}
+{{- end }}
 {{- if .Values.tls.acme.email }}
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -17,4 +20,25 @@ spec:
             apiTokenSecretRef:
               name: {{ .Values.tls.acme.cloudflareTokenSecretName }}
               key: {{ .Values.tls.acme.cloudflareTokenSecretKey }}
+{{- else if .Values.tls.vault.server }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.tls.issuerName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  vault:
+    server: {{ .Values.tls.vault.server }}
+    path: {{ required "tls.vault.path is required with tls.vault.server" .Values.tls.vault.path }}
+    {{- with .Values.tls.vault.caBundle }}
+    caBundle: {{ . }}
+    {{- end }}
+    auth:
+      appRole:
+        path: {{ .Values.tls.vault.appRole.path }}
+        roleId: {{ required "tls.vault.appRole.roleId is required with tls.vault.server" .Values.tls.vault.appRole.roleId | quote }}
+        secretRef:
+          name: {{ .Values.tls.vault.appRole.secretName }}
+          key: {{ .Values.tls.vault.appRole.secretKey }}
 {{- end }}

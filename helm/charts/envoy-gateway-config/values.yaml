@@ -93,6 +93,20 @@ tls:
     cloudflareTokenSecretName: cloudflare-api-token
     cloudflareTokenSecretKey: token
 
+  # Vault/OpenBao PKI issuer mode -- the private-CA swap seam. vault.server
+  # set renders the issuerName ClusterIssuer Vault-backed; acme.email set
+  # renders it ACME (set exactly one). AppRole SecretID Secret is seeded by
+  # bootstrap.sh from DFE_CERTMANAGER_SECRET_ID.
+  vault:
+    server: ""             # e.g. https://bao.example.com:8200
+    path: ""               # PKI sign path, e.g. pki_tls/sign/example-role
+    caBundle: ""           # base64 PEM chain that verifies `server`'s TLS
+    appRole:
+      path: approle
+      roleId: ""
+      secretName: cert-manager-approle
+      secretKey: secretId
+
 domain: ""
 
 # Where the DFE app services run. Routes with no explicit backendNamespace are

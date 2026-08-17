@@ -67,7 +67,7 @@ Thumbs.db
 .secrets/
 
 # Local test artefacts
-.coverage
+.coverage*
 cov.xml
 
 # Local working files (not committed)

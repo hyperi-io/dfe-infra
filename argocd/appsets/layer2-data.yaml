@@ -99,6 +99,12 @@ spec:
             # chart is harmless.
             - name: appNamespace
               value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+            # The deployment's own domain (bootstrap sets the annotation from
+            # DFE_DOMAIN). The tracked values overlays carry only placeholder
+            # domains; the real one is a cluster fact. Consumed by links for
+            # its gateway-first URLs; harmless elsewhere.
+            - name: domain
+              value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
