@@ -28,8 +28,9 @@ data:
 
     exporters:
       {{- if .Values.exporters.hyperdx.enabled }}
+      {{- $appNs := .Values.appNamespace | default (include "dfe-common.namespace" .) }}
       otlphttp/hyperdx:
-        endpoint: {{ .Values.exporters.hyperdx.endpoint }}
+        endpoint: {{ .Values.exporters.hyperdx.endpoint | default (printf "http://%s-hyperdx.%s.svc.cluster.local:4318" .Values.project $appNs) }}
         tls:
           insecure: true
       {{- end }}

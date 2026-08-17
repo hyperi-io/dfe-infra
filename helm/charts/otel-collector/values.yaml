@@ -49,11 +49,17 @@ daemonset:
       cpu: 500m
       memory: 512Mi
 
+# Where the DFE apps run (the ApplicationSet passes the cluster annotation);
+# empty falls back to {project}-{env}.
+appNamespace: ""
+
 exporters:
-  # Path A: Direct to HyperDX
+  # Path A: Direct to HyperDX. Empty endpoint derives
+  # http://{project}-hyperdx.{appNamespace}:4318 -- hyperdx deploys into the
+  # app namespace (layer2-apps), not a namespace of its own.
   hyperdx:
     enabled: true
-    endpoint: "http://dfe-hyperdx.hyperdx.svc.cluster.local:4318"
+    endpoint: ""
   # ClickHouse exporter for raw telemetry
   clickhouse:
     enabled: true
