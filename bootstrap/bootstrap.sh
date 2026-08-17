@@ -395,6 +395,7 @@ if dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
     --set-string 'configs.cm.timeout\.reconciliation=300s' \
     --set-string 'configs.params.controller\.self\.heal\.timeout\.seconds=30' \
     --set-string 'configs.params.controller\.repo\.server\.timeout\.seconds=60' \
+    --set-string 'configs.params.controller\.diff\.server\.side=true' \
     --wait --timeout 10m
 else
   echo "  Using existing ArgoCD; registering DFE AppProjects + ApplicationSets into it."
