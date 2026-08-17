@@ -51,13 +51,4 @@ spec:
               kubernetes.io/metadata.name: forgejo
       ports:
         - { port: 3000, protocol: TCP }
-    # HyperDX -- OTLP self-monitoring + UI backend
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: hyperdx
-      ports:
-        - { port: 4317, protocol: TCP }
-        - { port: 4318, protocol: TCP }
-        - { port: 8000, protocol: TCP }
 {{- end }}
