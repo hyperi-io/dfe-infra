@@ -55,9 +55,11 @@ spec:
                   key: secret
             {{- end }}
             # next-auth builds its callback URLs from this. Wrong or unset behind a
-            # proxy and the login round-trip bounces to the wrong origin.
+            # proxy and the login round-trip bounces to the wrong origin. The UI
+            # serves on {hostname}.{domain} (the gateway routes.dfeUi default),
+            # never the apex.
             - name: NEXTAUTH_URL
-              value: {{ .Values.config.nextauthUrl | default (printf "https://%s" .Values.domain) | quote }}
+              value: {{ .Values.config.nextauthUrl | default (printf "https://%s.%s" .Values.config.hostname .Values.domain) | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}

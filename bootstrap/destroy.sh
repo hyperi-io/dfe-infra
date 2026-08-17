@@ -54,12 +54,13 @@ echo "==> [4/7] Deleting DFE namespaces"
 # profiles; --ignore-not-found makes listing them harmless when a profile did not
 # create them. Missing any here strands the namespace (+ its finalizers) after a
 # teardown, which then blocks a clean redeploy.
-for ns in strimzi kafka clickhouse clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx keda reloader external-dns redpanda-operator forgejo gitea; do
+for ns in strimzi kafka clickhouse clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx keda reloader external-dns redpanda-operator forgejo gitea links; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
-# Delete any dfe-* namespaces
+# Delete any dfe-* namespaces. grep exits 1 on no match, which pipefail
+# would turn into an abort on an already-clean cluster.
 if [[ "${DRY_RUN}" != "true" ]]; then
-    kubectl get ns -o name 2>/dev/null | grep "namespace/dfe-" | while read -r ns; do
+    { kubectl get ns -o name 2>/dev/null | grep "namespace/dfe-" || true; } | while read -r ns; do
         kubectl delete "${ns}" --ignore-not-found 2>/dev/null || true
     done
 else

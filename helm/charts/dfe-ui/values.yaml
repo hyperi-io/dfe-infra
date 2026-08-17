@@ -37,6 +37,9 @@ service:
 metricsPort: 3000
 
 config:
+  # Subdomain label the UI serves on under {domain} -- mirrors the
+  # envoy-gateway-config routes.dfeUi.hostname default.
+  hostname: "dfe"
   nextPublicApiUrl: ""           # https://dfe.{domain}/api
   nextPublicHyperdxUrl: ""       # https://hyperdx.{domain}
   # Node heap cap. Default tracks the pod memory limit via the cgroup-aware

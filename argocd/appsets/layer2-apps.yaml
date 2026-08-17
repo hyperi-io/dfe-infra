@@ -64,6 +64,10 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
               - name: gitops.branch
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+              # The deployment's own domain (a cluster fact; tracked overlays
+              # carry placeholders). dfe-ui derives NEXTAUTH_URL from it.
+              - name: domain
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values
