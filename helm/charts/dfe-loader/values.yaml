@@ -46,9 +46,11 @@ service:
 # http, not native: the pinned clickhouse-rs fork has no TCP row fetch, so
 # schema queries silently fail on 9000 (messages DLQ on
 # schema_pending_timeout). Pairs with the HTTP port in the HOSTS env.
+# The loader's config key is `protocol` (config/loader.rs From impl matches
+# cfg.protocol); a `transport` key is silently ignored.
 config:
   clickhouse:
-    transport: http
+    protocol: http
 
 otel:
   endpoint: ""

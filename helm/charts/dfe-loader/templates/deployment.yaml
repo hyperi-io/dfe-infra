@@ -86,11 +86,12 @@ spec:
             # in the string -- there is no separate port setting.
             # HTTP, not native: the pinned clickhouse-rs fork has no TCP row
             # fetch, so schema queries silently fail on 9000 and every message
-            # DLQs on schema_pending_timeout. hosts and transport must move
-            # TOGETHER (the loader validates the pairing).
+            # DLQs on schema_pending_timeout. hosts and protocol must move
+            # TOGETHER (the loader validates the pairing). The key is
+            # `protocol` -- the loader ignores a `transport` key silently.
             - name: DFE_LOADER_CLICKHOUSE_HOSTS
               value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
-            - name: DFE_LOADER_CLICKHOUSE__TRANSPORT
+            - name: DFE_LOADER_CLICKHOUSE__PROTOCOL
               value: "http"
             - name: DFE_LOADER_CLICKHOUSE_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
