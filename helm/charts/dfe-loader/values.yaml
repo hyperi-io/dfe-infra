@@ -43,7 +43,12 @@ service:
 # defaults in would put deployment-specific addresses in a product chart, and
 # Helm's map merge would silently leave stale keys behind when the engine's
 # overlay does not overwrite them.
-config: {}
+# http, not native: the pinned clickhouse-rs fork has no TCP row fetch, so
+# schema queries silently fail on 9000 (messages DLQ on
+# schema_pending_timeout). Pairs with the HTTP port in the HOSTS env.
+config:
+  clickhouse:
+    transport: http
 
 otel:
   endpoint: ""

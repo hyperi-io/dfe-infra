@@ -73,6 +73,17 @@ shared deploy-config fact -- including the canonical `hostnames:` map
 page and dfe-ui embed URLs all resolve from. A shared fact defined outside
 these two files is config sprawl and gets consolidated on sight.
 
+## Dead-letter queues
+
+Every k8s-deployed app dead-letters to a Kafka topic dfe-infra creates:
+`dfe_receiver_dlq`, `dfe_loader_dlq`, `dfe_archiver_dlq`,
+`dfe_fetcher_dlq`, and one shared `dfe_transform_dlq` for the transforms
+(a transform overrides only when it genuinely needs its own). Kafka is
+the DEFAULT DLQ target -- the file fallback cannot work under the charts'
+read-only rootfs and silently drops. dfe-docker: DLQs are opt-IN per
+component, EXCEPT the single-node full deploy, which carries the same
+DLQ topics as k8s.
+
 ## The overlay seam (how engine dials land here)
 
 One mechanism: layer2-apps generates one Argo Application per
