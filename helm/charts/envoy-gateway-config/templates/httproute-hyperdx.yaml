@@ -15,7 +15,17 @@ spec:
   hostnames:
     - "{{ .Values.routes.hyperdx.hostname | default .Values.hostnames.hyperdx }}.{{ .Values.domain }}"
   rules:
-    - backendRefs:
+    - filters:
+        # The fork ships frame-ancestors 'self', which blocks its ONE
+        # supported consumer -- the dfe-ui iframe on the deployment's UI
+        # hostname. The deployment overwrites it with that origin until the
+        # fork takes allowed ancestors from env.
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Content-Security-Policy
+                value: "frame-ancestors 'self' https://{{ .Values.routes.dfeUi.hostname | default .Values.hostnames.dfe }}.{{ .Values.domain }}"
+      backendRefs:
         - name: {{ .Values.routes.hyperdx.backendService }}
           port: {{ .Values.routes.hyperdx.backendPort }}
           group: ""
