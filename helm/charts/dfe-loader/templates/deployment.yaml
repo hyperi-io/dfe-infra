@@ -84,8 +84,14 @@ spec:
             # nothing, so the loader kept its localhost:9000 / default / no-password
             # defaults. hosts is a LIST of host:port (loader.rs) and the port belongs
             # in the string -- there is no separate port setting.
+            # HTTP, not native: the pinned clickhouse-rs fork has no TCP row
+            # fetch, so schema queries silently fail on 9000 and every message
+            # DLQs on schema_pending_timeout. hosts and transport must move
+            # TOGETHER (the loader validates the pairing).
             - name: DFE_LOADER_CLICKHOUSE_HOSTS
-              value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort | quote }}
+              value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
+            - name: DFE_LOADER_CLICKHOUSE__TRANSPORT
+              value: "http"
             - name: DFE_LOADER_CLICKHOUSE_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
             {{- with .Values.clickhouse.user }}
