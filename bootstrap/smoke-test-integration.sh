@@ -86,8 +86,11 @@ skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 # every chq() call would have failed on exec, and the checks below would have read as
 # a broken pipeline instead of a broken test.
 ch_pods() {
+  # Both layouts: operator/cluster pods (-N-N-N) AND the single-mode
+  # StatefulSet (-N) -- matching only the operator shape makes every check
+  # a false negative on a single-mode deploy.
   kubectl -n "$NS_CH" get pods --no-headers -o custom-columns=N:.metadata.name 2>/dev/null \
-    | grep -E '^.*-clickhouse-[0-9]+-[0-9]+-[0-9]+$'
+    | grep -E -- '-clickhouse-[0-9]+(-[0-9]+-[0-9]+)?$'
 }
 
 # ClickHouse auth, RESOLVED once against the live cluster rather than assumed.
