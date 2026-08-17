@@ -40,6 +40,9 @@ config:
   # Subdomain label the UI serves on under {domain} -- mirrors the
   # envoy-gateway-config routes.dfeUi.hostname default.
   hostname: "dfe"
+  # Server-side engine base URL (NextAuth authorize runs in the pod, not the
+  # browser). Empty derives http://{project}-engine.{namespace}:8000.
+  internalApiUrl: ""
   nextPublicApiUrl: ""           # https://dfe.{domain}/api
   nextPublicHyperdxUrl: ""       # https://hyperdx.{domain}
   # Node heap cap. Default tracks the pod memory limit via the cgroup-aware
