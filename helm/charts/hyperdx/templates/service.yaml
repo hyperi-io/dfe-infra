@@ -10,6 +10,12 @@ spec:
     - name: http
       port: {{ .Values.service.port }}
       targetPort: http
+    # The engine's machine-JWT control surface (GET /team, connections,
+    # sources) talks to the API directly; without this port the connect
+    # black-holes on the ClusterIP and callers hang.
+    - name: api
+      port: {{ .Values.service.apiPort }}
+      targetPort: api
     {{- if .Values.otlp.enabled }}
     - name: otlp-grpc
       port: {{ .Values.otlp.grpcPort }}
