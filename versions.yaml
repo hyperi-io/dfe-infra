@@ -128,7 +128,7 @@ stacks:
       dfe-engine: "v1.11.2"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
       dfe-ui: "v1.3.2"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
       dfe-receiver: "v1.15.19"      # independent release line
-      dfe-loader: "v1.18.14"
+      dfe-loader: "v1.18.15"
       dfe-archiver: "v1.7.12"
       dfe-fetcher: "v1.4.7"
       dfe-transform-vrl: "v1.1.13"
@@ -145,7 +145,7 @@ stacks:
       dfe-engine: "sha256:fd9d39ec7b2e2e4c42f16a5ee0d00a9414f029da586cc416827b1aad03565cbe"
       dfe-ui: "sha256:93575ff93ca7d1f0e5eec1fe351f6591f1456d1774af1db85adbc8b48242b7d4"
       dfe-receiver: "sha256:4ba8eecf48596b93ef4192d078872057bab942348da47c00e2a20ff4c3c263e0"
-      dfe-loader: "sha256:e6491808cecd11c26f02dbb2c9c87b54aac7e3e65e9a8f9c7f917d88fe2c0d52"
+      dfe-loader: "sha256:bf02ff6b4457bc27890e3e68cb60be01224875c31e9b3778b41cc1bb2374f43e"
       dfe-archiver: "sha256:6f171ade97379b177a7fa91e056b22a14be114f1cfee00d26bbde03d63ade319"
       dfe-fetcher: "sha256:60a88d88365682275d20adee4fe2eb0399bfa9e9fc061a6fdf415d2f8c6e67c5"
       dfe-transform-vrl: "sha256:4d5dff1ba84d2c1b86dae289f46cf2d49c66f4e77d6a0c5ac05bb56112edb118"
