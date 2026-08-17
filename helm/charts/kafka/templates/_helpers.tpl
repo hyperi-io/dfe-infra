@@ -18,3 +18,42 @@ Usage:
 {{- define "dfe-kafka.credentialKey" -}}
 {{ .Values.project }}/{{ .Values.env }}/kafka/{{ .Values.kafka.provider }}
 {{- end }}
+
+{{/*
+dfe-kafka.bootstrapTopics -- the ONE list of topics a deploy guarantees exist
+before the apps start: the default landing topic plus the per-app DLQ topics.
+
+ONE definition because two templates create them -- the Strimzi KafkaTopic CRs
+(cluster tier) and the broker-CLI Job (single tier). If those ever iterate
+different lists, one tier silently ships without a topic the apps are
+configured to write to, and the failure surfaces as produce errors at the
+worst possible moment (a DLQ write IS the failure path).
+
+Emits a JSON array of {name, partitions, replicationFactor, config};
+consumers parse with fromJsonArray. replicationFactor is UNCLAMPED here --
+each tier applies its own broker arithmetic (cluster: min(rf, replicas);
+single: hard-coded 1).
+
+Usage:
+  {{- $topics := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
+*/}}
+{{- define "dfe-kafka.bootstrapTopics" -}}
+{{- $out := list -}}
+{{- if .Values.kafka.defaultTopic.create -}}
+{{- $out = append $out (dict
+      "name" .Values.kafka.defaultTopic.name
+      "partitions" (int .Values.kafka.defaultTopic.partitions)
+      "replicationFactor" (int .Values.kafka.defaultTopic.replicationFactor)
+      "config" (dict)) -}}
+{{- end -}}
+{{- if .Values.kafka.dlqTopics.create -}}
+{{- range .Values.kafka.dlqTopics.names -}}
+{{- $out = append $out (dict
+      "name" .
+      "partitions" (int $.Values.kafka.dlqTopics.partitions)
+      "replicationFactor" (int $.Values.kafka.dlqTopics.replicationFactor)
+      "config" ($.Values.kafka.dlqTopics.config | default (dict))) -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end }}

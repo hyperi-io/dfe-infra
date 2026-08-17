@@ -1,0 +1,60 @@
+{{- if and (eq .Values.kafka.mode "cluster") (eq .Values.kafka.provider "strimzi") }}
+{{/*
+The topics a deploy guarantees before the apps start -- the default landing
+topic plus the per-app DLQ topics. The list itself is the
+dfe-kafka.bootstrapTopics helper (_helpers.tpl); this template only renders it
+as Strimzi CRs.
+
+Why the LANDING topic exists as a CR rather than being left to auto-creation:
+dfe-loader resolves its topics by AUTO-DISCOVERY (kafka.topics empty = discover
+every *_land / *_load topic -- dfe-loader config/kafka.rs:20-22), and
+discovering NOTHING is FATAL: "Auto-discovery found no matching topics" and the
+process exits. On a clean install nobody has published yet, so no *_land topic
+exists, so the loader crashloops until the first event arrives -- but the first
+event cannot be loaded by a loader that is down. Live-proven 2026-07-17:
+creating this topic took the loader straight from that fatal to "Resolved Kafka
+topics: [default_land]" and a running pipeline.
+
+The landing topic's name is NOT arbitrary: dfe-receiver derives it as
+`{routing.default_source}{routing.topic_suffix}` = default + _land
+(src/routing/mod.rs:79), and it is dfe-loader's own GrpcConfig.default_topic
+(config/kafka.rs:109). Both sides already agree on `default_land`; this makes
+the broker agree too, before either starts.
+
+Why the DLQ topics are pre-created: the fleet's containers run a read-only
+rootfs, so the file DLQ backend is a no-op (EROFS) and kafka is every app's
+DLQ backend. A DLQ write happens AT failure time -- the one moment nothing can
+be creating topics -- so the topic must exist before the first poisoned
+message, not after.
+
+Per-source topics beyond the default stay dynamic -- the receiver creates
+`{source}_land` as sources are defined. This is only the floor that lets a
+bare deploy come up.
+
+CLUSTER mode only: a KafkaTopic CR needs the Strimzi operator to reconcile it,
+and the single tier installs none. That tier creates the same topics with the
+broker's own CLI -- see kafka-single-bootstrap-topics.yaml. The redpanda
+provider creates no topics on either path (pre-existing parity gap; it relies
+on broker auto-creation).
+*/}}
+{{- range $t := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: {{ $t.name | replace "_" "-" }}
+  labels:
+    strimzi.io/cluster: {{ $.Values.kafka.name }}
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  topicName: {{ $t.name }}
+  partitions: {{ $t.partitions }}
+  # Never ask for more replicas than there are brokers -- Strimzi accepts the CR
+  # and the topic then sits un-Ready forever.
+  replicas: {{ min $t.replicationFactor ($.Values.kafka.replicas | int) }}
+  {{- with $t.config }}
+  config:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

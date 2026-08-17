@@ -109,6 +109,14 @@ spec:
               value: {{ printf "%s:%v" $bindHost .port | quote }}
             {{- end }}
             {{- end }}
+            # DLQ standard: fixed per-app topic on the kafka backend -- a file
+            # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
+            # pre-created by the kafka chart (kafka.dlqTopics); names are the
+            # receiver's flat-env contract (mod.rs DLQ_TOPIC/DLQ_MODE).
+            - name: DFE_RECEIVER_DLQ_TOPIC
+              value: {{ .Values.dlq.topic | quote }}
+            - name: DFE_RECEIVER_DLQ_MODE
+              value: {{ .Values.dlq.mode | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}

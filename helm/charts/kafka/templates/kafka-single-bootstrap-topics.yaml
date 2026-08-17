@@ -1,19 +1,26 @@
-{{- if and (eq .Values.kafka.mode "single") .Values.kafka.defaultTopic.create }}
+{{- if eq .Values.kafka.mode "single" }}
+{{- $topics := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
+{{- if $topics }}
 {{- $name := .Values.kafka.name }}
-# The default landing topic for the single tier, created with the broker's own
-# CLI.
+# The bootstrap topics for the single tier (default landing topic + per-app DLQ
+# topics -- the list is the dfe-kafka.bootstrapTopics helper), created with the
+# broker's own CLI.
 #
-# kafka-default-topic.yaml covers the cluster tier with a Strimzi KafkaTopic. That
-# CR does nothing here: the single tier runs a plain StatefulSet and installs no
-# operator, so the CR is accepted, never reconciled, and the topic never exists.
+# kafka-bootstrap-topics.yaml covers the cluster tier with Strimzi KafkaTopic
+# CRs. Those CRs do nothing here: the single tier runs a plain StatefulSet and
+# installs no operator, so a CR is accepted, never reconciled, and the topic
+# never exists.
 #
-# Without the topic dfe-loader exits on "Auto-discovery found no matching topics"
-# and crashloops until someone publishes -- which nothing can do through a loader
-# that is down.
+# Without the landing topic dfe-loader exits on "Auto-discovery found no
+# matching topics" and crashloops until someone publishes -- which nothing can
+# do through a loader that is down. Without the DLQ topics the first poisoned
+# message has nowhere to go: the file DLQ is a no-op on the fleet's read-only
+# rootfs (EROFS), and a DLQ write happens at failure time, when nothing can be
+# creating topics.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ $name }}-default-topic
+  name: {{ $name }}-bootstrap-topics
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
   annotations:
@@ -38,10 +45,10 @@ spec:
       restartPolicy: Never
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
-        - name: create-topic
+        - name: create-topics
           image: "apache/kafka:{{ .Values.kafka.version }}"
           resources:
-            {{- toYaml .Values.kafka.defaultTopic.resources | nindent 12 }}
+            {{- toYaml .Values.kafka.topicJob.resources | nindent 12 }}
           command:
             - /bin/sh
             - -c
@@ -64,18 +71,14 @@ spec:
                 fi
                 sleep 5
               done
-              # --if-not-exists so an operator who repartitioned the topic keeps
-              # their settings; this only guarantees the topic is there at all.
-              /opt/kafka/bin/kafka-topics.sh \
-                --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" \
-                --create --if-not-exists \
-                --topic "{{ .Values.kafka.defaultTopic.name }}" \
-                --partitions {{ .Values.kafka.defaultTopic.partitions }} \
-                --replication-factor 1
-              echo "topic {{ .Values.kafka.defaultTopic.name }} present:"
-              /opt/kafka/bin/kafka-topics.sh \
-                --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" \
-                --describe --topic "{{ .Values.kafka.defaultTopic.name }}"
+              # --if-not-exists so an operator who repartitioned a topic keeps
+              # their settings; this only guarantees the topics are there at all.
+              # Replication is hard-coded 1: the single tier has one broker.
+              {{- range $t := $topics }}
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --create --if-not-exists --topic "{{ $t.name }}" --partitions {{ $t.partitions }} --replication-factor 1{{ range $k, $v := $t.config }} --config {{ $k }}={{ $v }}{{ end }}
+              echo "topic {{ $t.name }} present:"
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --describe --topic "{{ $t.name }}"
+              {{- end }}
           env:
             - name: KAFKA_USER
               valueFrom:
@@ -83,4 +86,5 @@ spec:
             - name: KAFKA_PASSWORD
               valueFrom:
                 secretKeyRef: { name: {{ .Values.user.name }}, key: password }
+{{- end }}
 {{- end }}

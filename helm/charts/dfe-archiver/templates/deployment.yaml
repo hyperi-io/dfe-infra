@@ -47,6 +47,14 @@ spec:
               value: {{ .Values.s3.endpoint | quote }}
             - name: S3_BUCKET
               value: {{ .Values.s3.bucket | quote }}
+            # DLQ standard: fixed per-app topic on the kafka backend -- a file
+            # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
+            # pre-created by the kafka chart (kafka.dlqTopics); names are the
+            # archiver's bare flat-env contract (core config.rs DLQ_TOPIC/DLQ_MODE).
+            - name: DLQ_TOPIC
+              value: {{ .Values.dlq.topic | quote }}
+            - name: DLQ_MODE
+              value: {{ .Values.dlq.mode | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
