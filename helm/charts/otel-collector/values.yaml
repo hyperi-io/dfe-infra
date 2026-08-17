@@ -54,13 +54,17 @@ daemonset:
 appNamespace: ""
 
 exporters:
-  # Path A: Direct to HyperDX over gRPC. Empty endpoint uses the ONE otel
-  # destination every app resolves (dfe-common.otelEndpoint from telemetry.*).
+  # OTLP push to a hyperdx-side receiver. OFF: the dfe-hyperdx image ships
+  # no OTLP listener; flip on (with an endpoint) only when the fork deploys
+  # its own collector.
   hyperdx:
-    enabled: true
+    enabled: false
     endpoint: ""
-  # ClickHouse exporter for raw telemetry
+  # ClickHouse exporter -- writes the otel_logs/otel_traces/otel_metrics
+  # tables the embedded HyperDX reads. THE default telemetry sink.
   clickhouse:
     enabled: true
     endpoint: "tcp://dfe-clickhouse.clickhouse.svc.cluster.local:9000"
-    database: dfe
+    database: default
+    username: admin
+    passwordSecretName: clickhouse-admin-password

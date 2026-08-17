@@ -79,6 +79,10 @@ spec:
   namespaceSelectors:
     - matchLabels:
         kubernetes.io/metadata.name: {{ .Values.appNamespace | quote }}
+    {{- range .Values.extraCredentialNamespaces }}
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ . | quote }}
+    {{- end }}
   externalSecretSpec:
     refreshInterval: 1h
     secretStoreRef:

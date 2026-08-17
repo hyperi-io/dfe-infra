@@ -48,7 +48,7 @@ spec:
             # Read at request time by the (auth) layout: lights the /observe/*
             # sidebar entries that iframe the chromeless dfe-hyperdx fork.
             - name: HYPERDX_URL
-              value: {{ .Values.config.hyperdxUrl | default (printf "https://%s.%s" .Values.config.hyperdxHostname .Values.domain) | quote }}
+              value: {{ .Values.config.hyperdxUrl | default (printf "https://%s.%s" (coalesce .Values.config.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain) | quote }}
             {{- if .Values.config.nextauthSecretName }}
             # next-auth REFUSES to start in production without a secret
             # ("[next-auth][error][NO_SECRET]"), which is why dfe-ui crashlooped.
@@ -67,7 +67,7 @@ spec:
             # serves on {hostname}.{domain} (the gateway routes.dfeUi default),
             # never the apex.
             - name: NEXTAUTH_URL
-              value: {{ .Values.config.nextauthUrl | default (printf "https://%s.%s" .Values.config.hostname .Values.domain) | quote }}
+              value: {{ .Values.config.nextauthUrl | default (printf "https://%s.%s" (coalesce .Values.config.hostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain) | quote }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}

@@ -27,7 +27,7 @@ spec:
       namespace: {{ $linksNs }}
     scopes:
       {{- toYaml ($provider.scopes | default (list "openid" "email" "profile" "groups")) | nindent 6 }}
-    redirectURL: "https://{{ $.Values.routes.links.hostname }}.{{ $.Values.domain }}/oauth2/callback"
+    redirectURL: "https://{{ $.Values.routes.links.hostname | default $.Values.hostnames.links }}.{{ $.Values.domain }}/oauth2/callback"
     logoutPath: "/oauth2/logout"
     cookieNames:
       accessToken: dfe-links-access-token

@@ -65,6 +65,14 @@ abstraction or a chart mode -- never a fork of the charts.
 A new architectural dependency must name its seam in this table before it
 lands; a component reachable only through one provider is a bug.
 
+Two files anchor the seams (the hyperi-ci versions.yaml pattern):
+`versions.yaml` holds every pin, and `argocd/values/common.yaml` holds every
+shared deploy-config fact -- including the canonical `hostnames:` map
+(role-named service subdomains: `dfe`, `hyperdx`, `auth` for the issuer,
+`argocd`, `git`, `kafbat`, `links`, `otel`) that the gateway routes, links
+page and dfe-ui embed URLs all resolve from. A shared fact defined outside
+these two files is config sprawl and gets consolidated on sight.
+
 ## The overlay seam (how engine dials land here)
 
 One mechanism: layer2-apps generates one Argo Application per

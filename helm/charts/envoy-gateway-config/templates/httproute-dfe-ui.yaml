@@ -11,7 +11,7 @@ spec:
     - name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
   hostnames:
-    - "{{ .Values.routes.dfeUi.hostname }}.{{ .Values.domain }}"
+    - "{{ .Values.routes.dfeUi.hostname | default .Values.hostnames.dfe }}.{{ .Values.domain }}"
   rules:
     - matches:
         - path:

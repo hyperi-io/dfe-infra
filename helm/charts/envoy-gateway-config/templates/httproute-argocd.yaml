@@ -11,7 +11,7 @@ spec:
     - name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
   hostnames:
-    - "{{ .Values.routes.argocd.hostname }}.{{ .Values.domain }}"
+    - "{{ .Values.routes.argocd.hostname | default .Values.hostnames.argocd }}.{{ .Values.domain }}"
   rules:
     - backendRefs:
         - name: {{ .Values.routes.argocd.backendService }}

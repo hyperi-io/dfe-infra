@@ -37,16 +37,16 @@ service:
 metricsPort: 3000
 
 config:
-  # Subdomain label the UI serves on under {domain} -- mirrors the
-  # envoy-gateway-config routes.dfeUi.hostname default.
-  hostname: "dfe"
+  # Subdomain label the UI serves on; empty = hostnames.dfe from the
+  # deploy-config SSoT (argocd/values/common.yaml).
+  hostname: ""
   # Server-side engine base URL (NextAuth authorize runs in the pod, not the
   # browser). Empty derives http://{project}-engine.{namespace}:8000.
   internalApiUrl: ""
   # Subdomain label of the embedded HyperDX (iframe inside dfe-ui, never its
-  # own landing) -- mirrors routes.hyperdx.hostname. Feeds the HYPERDX_URL
-  # default https://{hyperdxHostname}.{domain}.
-  hyperdxHostname: "hyperdx"
+  # own landing); empty = hostnames.hyperdx from the deploy-config SSoT.
+  # Feeds the HYPERDX_URL default https://{label}.{domain}.
+  hyperdxHostname: ""
   # Full HyperDX base URL override; empty derives from hyperdxHostname+domain.
   hyperdxUrl: ""
   nextPublicApiUrl: ""           # https://dfe.{domain}/api

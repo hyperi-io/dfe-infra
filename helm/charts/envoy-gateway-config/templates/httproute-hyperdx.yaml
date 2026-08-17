@@ -11,7 +11,7 @@ spec:
     - name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
   hostnames:
-    - "{{ .Values.routes.hyperdx.hostname }}.{{ .Values.domain }}"
+    - "{{ .Values.routes.hyperdx.hostname | default .Values.hostnames.hyperdx }}.{{ .Values.domain }}"
   rules:
     - backendRefs:
         - name: {{ .Values.routes.hyperdx.backendService }}

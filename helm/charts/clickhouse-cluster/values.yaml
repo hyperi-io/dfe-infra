@@ -8,6 +8,11 @@ cloud: local
 # copy is skipped, and the apps have no way to authenticate.
 appNamespace: ""
 
+# Further namespaces the admin credential is projected into (same ESO copy as
+# appNamespace). The otel collector's ClickHouse exporter authenticates with it.
+extraCredentialNamespaces:
+  - otel
+
 clickhouse:
   # Deployment mode (DFE owns its data layer; deploy unless external given):
   #   cluster  -> ClickHouseCluster (operator) + DFE-owned Keeper, ReplicatedMergeTree

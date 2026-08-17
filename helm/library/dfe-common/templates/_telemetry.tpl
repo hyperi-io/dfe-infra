@@ -32,11 +32,11 @@ prometheus mode (no OTLP push) -- callers should guard the OTEL env on non-empty
 {{- $t := .Values.telemetry | default dict -}}
 {{- $mode := $t.mode | default "hyperdx" -}}
 {{- if eq $mode "hyperdx" -}}
-{{- $appNs := .Values.appNamespace | default (include "dfe-common.namespace" .) -}}
-{{/* Empty hyperdxEndpoint derives the fork's OTLP receiver in the app
-     namespace -- hyperdx deploys with the apps, never a namespace of its
-     own. */}}
-{{- $t.hyperdxEndpoint | default (printf "%s-hyperdx.%s.svc.cluster.local:4317" .Values.project $appNs) -}}
+{{- $collectorNs := $t.collectorNamespace | default "otel" -}}
+{{/* Empty hyperdxEndpoint derives the deploy-layer collector gateway --
+     the one OTLP door; its exporters own the write into the tables
+     hyperdx reads (the fork image ships no OTLP receiver). */}}
+{{- $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:4317" .Values.project $collectorNs) -}}
 {{- else if eq $mode "receiver" -}}{{ $t.receiverEndpoint }}
 {{- else if eq $mode "external" -}}{{ $t.externalEndpoint }}
 {{- end -}}

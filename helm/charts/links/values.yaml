@@ -43,15 +43,9 @@ appNamespace: ""
 # empty falls back to the kubectl port-forward debug layout.
 domain: ""
 
-# Subdomain labels under `domain`, mirroring the envoy-gateway-config
-# routes.*.hostname defaults. A deployment that renames a route hostname
-# there overrides the matching label here.
-hostnames:
-  dfe: dfe          # dfe-ui at /, engine API at /api -- one shared hostname
-  argocd: argocd
-  forgejo: forgejo
-  kafbat: kafbat
-  links: links
+# Canonical service-name map, supplied by the deploy-config SSoT
+# (argocd/values/common.yaml) -- never redefined here.
+hostnames: {}
 
 # The page content. The chart renders a DEFAULT page covering every standard
 # stack surface: gateway https URLs derived from `domain` + `hostnames` when

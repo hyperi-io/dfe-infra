@@ -21,6 +21,17 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["--config=/etc/otel/gateway-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          {{- if .Values.exporters.clickhouse.enabled }}
+          env:
+            # Expanded by the collector config (${env:CLICKHOUSE_PASSWORD});
+            # the clickhouse-cluster chart projects the secret into this
+            # namespace.
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.exporters.clickhouse.passwordSecretName }}
+                  key: password
+          {{- end }}
           ports:
             - name: otlp-grpc
               containerPort: 4317

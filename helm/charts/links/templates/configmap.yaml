@@ -29,7 +29,7 @@
 {{- $gitops := list
       (dict "name" "Argo CD" "url" (printf "https://%s.%s" $h.argocd $domain)
             "note" "GitOps control plane")
-      (dict "name" "Forgejo (bundled deploy repo, when present)" "url" (printf "https://%s.%s" $h.forgejo $domain)
+      (dict "name" "Forgejo (bundled deploy repo, when present)" "url" (printf "https://%s.%s" $h.git $domain)
             "note" "default internal; enable its gateway route to expose")
       (dict "name" "This page" "url" (printf "https://%s.%s" $h.links $domain)
             "note" "admin-gated when OIDC is on") }}

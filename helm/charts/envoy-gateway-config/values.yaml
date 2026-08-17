@@ -116,11 +116,16 @@ domain: ""
 # to the release namespace, where an app backendRef cannot resolve.
 appNamespace: ""
 
+# Canonical service-name map, supplied by the deploy-config SSoT
+# (argocd/values/common.yaml). A routes.*.hostname set below overrides its
+# entry for this deployment only.
+hostnames: {}
+
 # HTTPRoutes — map hostnames to backend services
 routes:
   dfeUi:
     enabled: true
-    hostname: "dfe"           # becomes {hostname}.{domain}
+    hostname: ""              # empty = hostnames.dfe from the config SSoT
     backendService: dfe-ui
     backendNamespace: ""      # set via ArgoCD values overlay
     backendPort: 3000
@@ -128,7 +133,7 @@ routes:
 
   dfeEngine:
     enabled: true
-    hostname: "dfe"
+    hostname: ""
     backendService: dfe-engine
     backendNamespace: ""
     backendPort: 8000
@@ -138,14 +143,14 @@ routes:
 
   argocd:
     enabled: true
-    hostname: "argocd"
+    hostname: ""
     backendService: argocd-server
     backendNamespace: argocd
     backendPort: 443
 
   hyperdx:
     enabled: true
-    hostname: "hyperdx"
+    hostname: ""
     backendService: dfe-hyperdx
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
@@ -155,7 +160,7 @@ routes:
   # supplied (see layer2-deploy-repo appset).
   forgejo:
     enabled: false
-    hostname: "forgejo"
+    hostname: ""
     backendService: dfe-forgejo
     backendNamespace: forgejo
     backendPort: 3000
@@ -165,10 +170,20 @@ routes:
   # policy), so do NOT add it there -- see the integrated-app auth pattern.
   kafbat:
     enabled: false
-    hostname: "kafbat"
+    hostname: ""
     backendService: dfe-kafbat
     backendNamespace: kafka
     backendPort: 8080
+
+  # Platform OTLP ingest: the ONE standard DNS door for telemetry from
+  # outside the cluster (edge agents, other estates). OTLP/HTTP; in-cluster
+  # senders keep the collector's service DNS.
+  otel:
+    enabled: true
+    hostname: ""
+    backendService: dfe-otel-collector-gateway
+    backendNamespace: otel
+    backendPort: 4318
 
   # Deployment links page (bundled chart, ns links). Infra UI -> default
   # internal; flip enabled:true to expose. The page has NO auth of its own, so
@@ -177,7 +192,7 @@ routes:
   # standard targetRoutes one.
   links:
     enabled: false
-    hostname: "links"
+    hostname: ""
     backendService: dfe-links
     backendNamespace: links
     backendPort: 8080

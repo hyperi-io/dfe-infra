@@ -11,7 +11,7 @@ spec:
     - name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
   hostnames:
-    - "{{ .Values.routes.links.hostname }}.{{ .Values.domain }}"
+    - "{{ .Values.routes.links.hostname | default .Values.hostnames.links }}.{{ .Values.domain }}"
   rules:
     - backendRefs:
         - name: {{ .Values.routes.links.backendService }}
