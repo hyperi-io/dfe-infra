@@ -1,0 +1,107 @@
+{{- if .Values.dex.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- if .Values.persistence.enabled }}
+  strategy:
+    type: Recreate          # single sqlite-backed PVC, no concurrent writers
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "dex.config" . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: dex
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["dex", "serve", "/etc/dex/config.yaml"]
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.httpPort }}
+            {{- if .Values.grpc.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.service.grpcPort }}
+            {{- end }}
+            - name: telemetry
+              containerPort: {{ .Values.service.telemetryPort }}
+          env:
+            {{- if .Values.clients.envoy.enabled }}
+            - name: DEX_ENVOY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clients.envoy.secret.name }}
+                  key: {{ .Values.clients.envoy.secret.key }}
+                  optional: true
+            {{- end }}
+            {{- if and .Values.grpc.enabled .Values.grpc.connectorsCrud }}
+            - name: DEX_API_CONNECTORS_CRUD
+              value: "true"
+            {{- end }}
+            {{- if eq .Values.signer.type "vault" }}
+            - name: DEX_VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.signer.vault.tokenSecret.name }}
+                  key: {{ .Values.signer.vault.tokenSecret.key }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex
+              readOnly: true
+            {{- if .Values.grpc.enabled }}
+            - name: grpc-tls
+              mountPath: /etc/dex/grpc
+              readOnly: true
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /var/dex
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: telemetry
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: telemetry
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "dfe-common.fullname" . }}-config
+        {{- if .Values.grpc.enabled }}
+        - name: grpc-tls
+          secret:
+            secretName: {{ include "dex.grpcTlsSecret" . }}
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-data
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}
