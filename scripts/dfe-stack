@@ -226,6 +226,7 @@ _DOCKER_THIRDPARTY = [
     ("ferretdb", "HYPERDX_FERRETDB_VERSION", "ghcr.io/ferretdb/ferretdb"),
     ("documentdb-pg", "HYPERDX_POSTGRES_VERSION", "ghcr.io/ferretdb/postgres-documentdb"),
     ("envoy-proxy", "DFE_PROXY_VERSION", "envoyproxy/envoy"),
+    ("otel-collector", "DFE_OTEL_COLLECTOR_VERSION", "otel/opentelemetry-collector-contrib"),
 ]
 
 
