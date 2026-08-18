@@ -26,8 +26,9 @@ Resolve the OTLP exporter endpoint. An explicit .Values.otel.endpoint wins
 prometheus mode (no OTLP push) -- callers should guard the OTEL env on non-empty.
 */}}
 {{- define "dfe-common.otelEndpoint" -}}
+{{- $ep := "" -}}
 {{- if .Values.otel.endpoint -}}
-{{- .Values.otel.endpoint -}}
+{{- $ep = .Values.otel.endpoint -}}
 {{- else -}}
 {{- $t := .Values.telemetry | default dict -}}
 {{- $mode := $t.mode | default "hyperdx" -}}
@@ -36,11 +37,19 @@ prometheus mode (no OTLP push) -- callers should guard the OTEL env on non-empty
 {{/* Empty hyperdxEndpoint derives the deploy-layer collector gateway --
      the one OTLP door; its exporters own the write into the tables
      hyperdx reads (the fork image ships no OTLP receiver). */}}
-{{- $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:4317" .Values.project $collectorNs) -}}
-{{- else if eq $mode "receiver" -}}{{ $t.receiverEndpoint }}
-{{- else if eq $mode "external" -}}{{ $t.externalEndpoint }}
+{{- $ep = $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:4317" .Values.project $collectorNs) -}}
+{{- else if eq $mode "receiver" -}}{{- $ep = $t.receiverEndpoint -}}
+{{- else if eq $mode "external" -}}{{- $ep = $t.externalEndpoint -}}
 {{- end -}}
 {{- end -}}
+{{/* OTEL_EXPORTER_OTLP_ENDPOINT must be a URL with a scheme -- a bare host:port is
+     an InvalidUri to the gRPC (tonic) exporter and every export fails. Scheme a
+     bare endpoint from otel.tls; an endpoint that already carries :// is left as-is
+     (a deployer-supplied external/override URL owns its own scheme). */}}
+{{- if and $ep (not (contains "://" $ep)) -}}
+{{- $ep = printf "%s://%s" (ternary "https" "http" (.Values.otel.tls | default false)) $ep -}}
+{{- end -}}
+{{- $ep -}}
 {{- end -}}
 
 {{/*
