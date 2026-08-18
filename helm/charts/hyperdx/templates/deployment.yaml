@@ -126,15 +126,28 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # scalo two-probe standard (scalo-rs docs/core-pillars/health.md):
+          # /livez asks only "is the process deadlocked", /readyz owns traffic.
+          # These live on the Express API listener (the `api` port, 8000), NOT the
+          # Next.js http port -- the fork mounts them there, ahead of session/
+          # passport, so a probe never authenticates. startupProbe targets /livez
+          # too: k8s suspends liveness until startup passes, so one path gives both
+          # the boot budget and a tight liveness period and they cannot drift.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: api
+            # 30 * 2s = 1 min boot budget before a restart; the combined Next.js
+            # + API image is a slow cold start.
+            failureThreshold: 30
+            periodSeconds: 2
           livenessProbe:
             httpGet:
-              path: /api/health
-              port: http
-            initialDelaySeconds: 20
+              path: /livez
+              port: api
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /api/health
-              port: http
-            initialDelaySeconds: 10
+              path: /readyz
+              port: api
             periodSeconds: 5
