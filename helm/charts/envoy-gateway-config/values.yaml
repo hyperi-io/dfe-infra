@@ -226,11 +226,15 @@ oidc:
   # each policy (and the provider's client-secret ExternalSecret) is rendered
   # there. NOT a blanket Gateway-level policy: dfe-engine /api machine paths
   # use API-key/JWT and must not be redirected to OIDC login.
+  #
+  # HyperDX is deliberately NOT here: it is embedded as an iframe inside dfe-ui,
+  # so an interactive OIDC redirect on its route cannot complete (the IdP denies
+  # framing and it would be a second login). The fork is its own PEP -- it
+  # authenticates the user from the dfe_token cookie the UI shares across the
+  # domain -- so it needs no edge OIDC policy.
   targetRoutes:
     - name: dfe-engine
       hostname: dfe
-    - name: hyperdx
-      hostname: hyperdx
   # Groups whose members may reach the ADMIN surfaces (the links page). The
   # canonical names come from dfe-engine docs/control-plane/rbac-vocabulary.md.
   adminGroups:

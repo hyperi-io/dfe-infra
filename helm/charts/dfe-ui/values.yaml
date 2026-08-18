@@ -57,6 +57,10 @@ config:
   nextauthSecretName: dfe-ui-nextauth
   # NextAuth builds its callback URLs from this; empty falls back to https://<domain>.
   nextauthUrl: ""
+  # Domain the dfe_token cookie is scoped to so the HyperDX iframe subdomain
+  # receives it; empty defaults to .Values.domain (the shared parent of dfe.
+  # and hyperdx.). Set empty for single-origin/docker (host-only cookie).
+  cookieDomain: ""
   # ClusterSecretStore holding the NextAuth signing secret, seeded by the deploy
   # layer (terraform/modules/tf-secrets seed_ui_nextauth).
   #

@@ -49,6 +49,11 @@ spec:
             # sidebar entries that iframe the chromeless dfe-hyperdx fork.
             - name: HYPERDX_URL
               value: {{ .Values.config.hyperdxUrl | default (printf "https://%s.%s" (coalesce .Values.config.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain) | quote }}
+            # Scopes the dfe_token cookie to {domain} so the HyperDX iframe
+            # (hyperdx.{domain}) is sent the same engine token the UI (dfe.{domain})
+            # holds. Empty leaves the cookie host-only (single-origin/docker).
+            - name: DFE_COOKIE_DOMAIN
+              value: {{ .Values.config.cookieDomain | default .Values.domain | quote }}
             {{- if .Values.config.nextauthSecretName }}
             # next-auth REFUSES to start in production without a secret
             # ("[next-auth][error][NO_SECRET]"), which is why dfe-ui crashlooped.
