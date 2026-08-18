@@ -468,7 +468,7 @@ stacks:
       dfe-schemas: "PENDING-FIRST-TAG"   # baseline DDL; repo has no release tags yet
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
-      dfe-hyperdx: "v0.1.8"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:588fb8e5960a0904568674209ff48632462a03afe8ae4c5fcf8d1407bdefc4d0 (per-org connection seam + admin-surface lockdown); deployment tag pin lives in the deploy repo values
+      dfe-hyperdx: "v0.1.11"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:a703252702eef2887259d7fc90f4f66c87b671acaf283416e07f72ac24056a27 (per-org connection seam + admin-lockdown, read-open sources/connections, scalo observability); deployment tag pin lives in the deploy repo values
 
     # Stack upgrade metadata for THIS version.
     stack:
