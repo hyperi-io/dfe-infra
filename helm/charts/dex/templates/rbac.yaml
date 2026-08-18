@@ -1,0 +1,58 @@
+{{- if and .Values.dex.enabled .Values.rbac.create (eq .Values.storage.type "kubernetes") }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["dex.coreos.com"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dfe-common.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dfe-common.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.rbac.createClusterScoped }}
+---
+# Cluster-scoped: dex auto-creates its CustomResourceDefinitions on first boot.
+# list + create only -- never delete or update. Drop this (createClusterScoped=false)
+# when the CRDs are pre-applied at bootstrap.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-crd
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-crd
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "dfe-common.fullname" . }}-crd
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dfe-common.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

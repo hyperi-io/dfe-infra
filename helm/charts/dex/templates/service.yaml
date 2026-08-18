@@ -1,0 +1,24 @@
+{{- if .Values.dex.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+    {{- if .Values.grpc.enabled }}
+    - name: grpc
+      port: {{ .Values.service.grpcPort }}
+      targetPort: grpc
+    {{- end }}
+    - name: telemetry
+      port: {{ .Values.service.telemetryPort }}
+      targetPort: telemetry
+{{- end }}

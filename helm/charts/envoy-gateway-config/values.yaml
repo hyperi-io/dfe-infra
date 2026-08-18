@@ -197,6 +197,16 @@ routes:
     backendNamespace: links
     backendPort: 8080
 
+  # Bundled dex OIDC issuer. Exposed by DEFAULT when dex is deployed -- it IS the
+  # issuer: reachable, and NOT fronted by the OIDC admin policy (gating the issuer
+  # behind itself breaks login). Dex's own CSRF/session handling protects it.
+  dex:
+    enabled: true
+    hostname: ""              # empty = hostnames.auth
+    backendService: dfe-dex
+    backendNamespace: dex
+    backendPort: 5556
+
 # OIDC — disabled by default (local auth is default).
 # Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.
 # Provider addition/removal is a Helm values change + ArgoCD sync — NOT a
