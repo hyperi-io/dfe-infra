@@ -225,7 +225,7 @@ _DOCKER_THIRDPARTY = [
     ("kafbat", "KAFBAT_VERSION", "ghcr.io/kafbat/kafka-ui"),
     ("ferretdb", "HYPERDX_FERRETDB_VERSION", "ghcr.io/ferretdb/ferretdb"),
     ("documentdb-pg", "HYPERDX_POSTGRES_VERSION", "ghcr.io/ferretdb/postgres-documentdb"),
-    ("nginx-proxy", "DFE_PROXY_VERSION", "nginx"),
+    ("envoy-proxy", "DFE_PROXY_VERSION", "envoyproxy/envoy"),
 ]
 
 
@@ -607,7 +607,8 @@ def _waiver_expired(w: dict) -> bool:
 # refresh-digests -- re-resolve the third-party services-digests. The SSoT
 # splits the tag (services:) from the sha256 (services-digests:), so a
 # version-only bump strands the digest. A floating tag strands it with no
-# version change at all: upstream rebuilds nginx:1.31-alpine in place.
+# version change at all: upstream rebuilds nginxinc/nginx-unprivileged:1.31-alpine
+# in place.
 # ---------------------------------------------------------------------------
 
 # `# renovate: ... depName=<ref>` or `# image: <ref>` above a services: key.

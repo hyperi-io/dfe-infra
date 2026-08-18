@@ -460,7 +460,7 @@ UNCONSUMED: dict[str, str] = {
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "the hyperdx chart's appVersion carries it and agrees, but CLAUDE.md routes hyperdx-chart work through a dfe-engine issue first, so it is waived rather than checked here",
-    "services.nginx-proxy": "docker path only; k8s uses envoy-gateway",
+    "services.envoy-proxy": "docker path only; k8s installs envoy-gateway, which carries its own proxy image",
     "digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
     "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",

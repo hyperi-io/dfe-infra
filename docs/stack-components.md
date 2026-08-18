@@ -140,12 +140,20 @@ image. One number, same image ref both sides.
 
 ## Class E - third-party plain image, docker-ONLY
 
-### nginx (dfe-proxy)
-- docker: `DFE_PROXY_VERSION` -> `nginx:1.31-alpine@digest`. Reverse proxy for the
-  compose stack. k8s does this job with envoy-gateway instead, so there is NO k8s
-  nginx cascade. NOT in versions.yaml today - ADD it as a docker-only pin so a
-  complete stack version pins it too (else `make stack` cannot fill
-  `DFE_PROXY_VERSION`, which is a hard-fail `${...:?}` in compose).
+### Envoy (dfe-proxy)
+- SSoT: `services.envoy-proxy` (v1.39.0@sha256:...). docker: `DFE_PROXY_VERSION`
+  -> `envoyproxy/envoy`. The compose stack's entrypoint, fronting dfe-ui and
+  dfe-engine on one origin.
+- Docker-ONLY despite the name. k8s runs Envoy too, but installs it via
+  envoy-gateway (`operators.envoy-gateway`), which carries its OWN proxy image -
+  so there is no cascade from this pin, and the two versions move independently.
+- Replaced nginx here on 2026-08-18 (dfe-docker#8): OSS nginx has no free inbound
+  OIDC, Envoy's oauth2/jwt_authn filters are Apache-2.0 and are the seam the
+  bundled dex issuer chains into.
+- Pin the UBUNTU-based `vX.Y.Z` tag, not `distroless-*`: dfe-docker's compose
+  healthcheck drives the admin `/ready` over bash's `/dev/tcp`, and distroless
+  ships no shell. Envoy publishes no alpine variant and no LTS line - it supports
+  the newest four minors, so track the newest.
 
 ### postgres-documentdb (FerretDB 2.x PG backend)
 - SSoT: `services.documentdb-pg` (17-0.107.0-ferretdb-2.7.0). docker:
@@ -170,8 +178,12 @@ image. One number, same image ref both sides.
 
 ## Known gaps this audit surfaced (track, do not silently ignore)
 
-1. **nginx missing from the SSoT.** docker pins `DFE_PROXY_VERSION` but
-   versions.yaml has no nginx field. Added as a docker-only (class E) pin.
+1. **CLOSED - the docker proxy is in the SSoT.** It was added as a docker-only
+   (class E) pin, and 2026-08-18 it became `services.envoy-proxy` when dfe-docker
+   swapped nginx for Envoy. Lesson kept: a compose image whose var is a hard-fail
+   `${...:?}` MUST have an SSoT entry, and renaming the IMAGE without renaming
+   that entry renders a valid tag@digest for the wrong repository - which is
+   exactly how `envoyproxy/envoy:1.31-alpine@<nginx digest>` reached a VM.
 2. **FerretDB k8s vs SSoT drift.** SSoT `services.ferretdb` = 2.7.0 (the docker +
    HyperDX-fork target, needing the DocumentDB PG extension), but the k8s
    `helm/charts/ferretdb` chart appVersion = 1.24.0 on vanilla CNPG PG17. The k8s
