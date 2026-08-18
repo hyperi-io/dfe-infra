@@ -1,0 +1,139 @@
+project: dfe
+component: dex
+env: local
+cloud: local
+
+# Deployment-wide facts arrive through the values cascade (common.yaml + the
+# appset's domain param). The defaults here keep a standalone `helm template` sane.
+global:
+  registry: ""
+domain: ""
+hostnames: {}
+
+# Namespaced gate (the links/kafbat pattern): the shared profile cascade toggles
+# this chart. Hardcore (corporate-IdP-direct) sets dex.enabled=false -- no dex.
+dex:
+  enabled: true
+
+# Where the DFE app services run (dfe-engine especially). The appset passes this
+# from the cluster's dfe_namespace annotation; empty falls back to the release ns.
+# The network policy allows this namespace to reach the gRPC management port.
+appNamespace: ""
+
+# Dex image -- public ghcr, tag defaults to Chart.appVersion. public:true suppresses
+# the fleet's private-registry pull secret (dfe-common.imagePullSecrets).
+image:
+  repository: ghcr.io/dexidp/dex
+  tag: ""
+  pullPolicy: IfNotPresent
+  public: true
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  httpPort: 5556
+  grpcPort: 5557
+  telemetryPort: 5558
+
+# The OIDC issuer URL. Empty derives https://{hostnames.auth}.{global.domain}; with
+# no domain it falls back to the in-cluster Service URL -- a domainless rig is
+# port-forward/debug only, never a product access path.
+issuer:
+  url: ""
+
+# Storage backend. k8s -> kubernetes (CRD in etcd): dex state rides the store the
+# cluster already has, so auth depends on nothing but the cluster itself. docker ->
+# sqlite3 on a volume. NO postgres -- not offered in a DFE deployment. Dex does NOT
+# encrypt at rest -- see DESIGN.md for the etcd-CR-encryption + OpenBao-signer hardening.
+storage:
+  type: kubernetes        # kubernetes (CRD, k8s) | sqlite3 (docker)
+  sqlite:
+    file: /var/dex/dex.db
+
+# Token signing. Default LOCAL signer keeps keys in the storage backend (etcd),
+# covered by the cluster's etcd-at-rest encryption -- component-agnostic, no secrets
+# manager. type=vault is an OPTIONAL Vault/OpenBao-transit seam (dex has no native
+# cloud-KMS signer); never a cloud assumption.
+signer:
+  type: ""                 # "" (local, default) | vault (optional Vault/OpenBao transit)
+  vault:
+    keyName: dex/signing-key
+    addr: ""
+    tokenSecret:           # vault token via env DEX_VAULT_TOKEN
+      name: ""
+      key: token
+
+# The engine's gRPC management path (local-account CRUD + connector CRUD). OFF by
+# default -- matches dex's own default and the product posture; T3 turns it on with
+# mutual TLS + the engine client. Connector CRUD needs dex's API_CONNECTORS_CRUD
+# feature flag, set as an env var when enabled.
+grpc:
+  enabled: false
+  reflection: false
+  connectorsCrud: true
+  tls:
+    mode: certManager      # certManager | existingSecret
+    existingSecret: ""     # keys tls.crt / tls.key / ca.crt
+    issuerRef:
+      name: ""             # the deployment's ClusterIssuer (estate PCA)
+      kind: ClusterIssuer
+
+# OIDC clients dex serves. The envoy edge is the one bundled client; its secret is a
+# K8s Secret (bootstrap-generated), read via secretEnv.
+clients:
+  envoy:
+    enabled: true
+    id: dfe-envoy
+    name: DFE
+    redirectURIs: []       # empty derives https://{hostnames.dfe}.{domain}/oauth2/callback
+    secret:
+      name: dfe-dex-clients
+      key: envoy-client-secret
+
+# Login-surface brand. The full custom theme (hyperi-graphics assets) is a follow-up
+# (DESIGN.md open Q4); this names the issuer shown on the page.
+frontend:
+  issuer: DFE
+  theme: ""
+  dir: ""
+
+# Role for dex.coreos.com/* (namespaced) + an optional ClusterRole for CRD auto-create.
+# Hardened deployments pre-apply dex's CRDs at bootstrap and set createClusterScoped
+# false, leaving dex with ZERO cluster-scoped permissions.
+rbac:
+  create: true
+  createClusterScoped: true
+
+# Default-deny NetworkPolicy admitting only the gateway -> http, the engine -> gRPC,
+# and scrape/probes -> telemetry. The management port is unreachable except from the
+# engine.
+networkPolicy:
+  enabled: true
+  gatewayNamespace: envoy-gateway-system
+  engineNamespace: ""      # empty = appNamespace (where dfe-engine runs)
+  scrapeNamespace: otel
+
+persistence:               # sqlite storage only
+  enabled: false
+  storageClass: ""
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+podSecurityContext: {}
+containerSecurityContext: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+nodeScheduling: {}
+imagePullSecrets: []
