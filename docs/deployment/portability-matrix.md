@@ -54,7 +54,7 @@ ClickHouse and object storage can be in-cluster or a managed endpoint.
 | Secrets | ESO ClusterSecretStore | OpenBao | Secrets Manager | Key Vault | Secret Manager |
 | Private CA / TLS | cert-manager ClusterIssuer (+ external issuer) | OpenBao PKI | ACME or AWS PCA | ACME or Key Vault | ACME or Google CAS |
 | Kafka | chart mode + `kafka.bootstrapServers` | Strimzi / Redpanda* | MSK | Event Hubs / Confluent | Confluent / Redpanda Cloud |
-| ClickHouse | `clickhouse.mode` + `.host` | in-k8s operator | CH Cloud | CH Cloud | CH Cloud |
+| ClickHouse | `clickhouse.mode` + `.host` | in-k8s operator | CH Cloud (pref) / in-k8s | CH Cloud (pref) / in-k8s | CH Cloud (pref) / in-k8s |
 | Edge LoadBalancer | `gateway.service` type=LoadBalancer | MetalLB | NLB | Azure LB | GCP LB |
 | Object store | S3-compatible endpoint + creds | MinIO / Ceph RGW | S3 | Blob (S3 API) | GCS (S3 API) |
 | Container registry | `global.registry` + pull secret | Harbor | ECR | ACR | GAR |
@@ -83,6 +83,9 @@ ClickHouse and object storage can be in-cluster or a managed endpoint.
   default to in-cluster (Strimzi, CH operator) and swap to a managed endpoint by
   pointing the chart's `*.host` / `bootstrapServers` at it. FerretDB's PG stays
   in-cluster (it is the document store's backend, not a general PG).
+- **ClickHouse on cloud:** ClickHouse Cloud is PREFERRED, but self-hosted ClickHouse
+  in-k8s (the operator) is equally ACCEPTABLE on any cloud -- the `clickhouse.mode`
+  seam supports both everywhere, so it is a per-deployment call, not a hard rule.
 - **Nothing cloud-specific is assumed by a chart.** A component reachable through
   only one provider is a bug (architecture.md). The 443/6443 API-egress fix and the
   local-signer-over-OpenBao correction are the kind of on-prem assumption a
