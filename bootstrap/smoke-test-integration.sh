@@ -270,6 +270,16 @@ KSH
       "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:9092 --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
       "kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -q ."
+    # The DLQ standard's topics must exist BEFORE the first poisoned message:
+    # a DLQ write happens at failure time, when nothing can be creating topics,
+    # and the file backend is an EROFS no-op under the read-only rootfs.
+    for DLQ_TOPIC in dfe_receiver_dlq dfe_loader_dlq dfe_archiver_dlq dfe_fetcher_dlq dfe_transform_dlq; do
+      check "DLQ topic ${DLQ_TOPIC} pre-created" \
+        "kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -qw '${DLQ_TOPIC}'"
+    done
+    # Dead letters must outlive a weekend, against the 72h data-topic default.
+    check "DLQ retention is longer than the data-topic default" \
+      "kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq' | grep -q 'retention.ms=604800000'"
   fi
 elif [ "$PROFILE" = "single" ] || [ "$PROFILE" = "scale" ]; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would
