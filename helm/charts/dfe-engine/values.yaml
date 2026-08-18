@@ -3,6 +3,11 @@ component: engine
 env: local
 cloud: local
 
+# Reconcile per-org ClickHouse RBAC on engine startup (row policies, per-org
+# users, the non-_org_id deny). Opt-in: a deployment using org isolation sets true.
+orgProvisioning:
+  enabled: false
+
 image:
   repository: ""     # set from global.registry
   tag: ""

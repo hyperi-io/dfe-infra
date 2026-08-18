@@ -125,7 +125,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.11.4"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
+      dfe-engine: "v1.12.0"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
       dfe-ui: "v1.3.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
       dfe-receiver: "v1.15.20"      # independent release line
       dfe-loader: "v1.18.16"
@@ -142,7 +142,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:b5e8262d1f238746d619abd0467e33377e919b1818aaa31211560b1442e4df84"
+      dfe-engine: "sha256:71517a6000eaf4ebd7aaa1f415a28eb58c4a3c5412bfc56a414ccd637b52590e"
       dfe-ui: "sha256:e5fc22690eea86d7630d8183931a8aa371ec1e424110281972041f9ed868719a"
       dfe-receiver: "sha256:53579bdc0d8a1e75aec4748c84f3e0cb9e4c879dec38636ffdf30d7881908874"
       dfe-loader: "sha256:d0ac3a9ea42141b084f27f7334d9fbea2696d2c86c295b8cec9a9fbed14395bd"
@@ -176,7 +176,7 @@ stacks:
       dfe-schemas: "PENDING-FIRST-TAG"   # baseline DDL; repo has no release tags yet
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
-      dfe-hyperdx: "v0.1.7"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:3ad8a832e596646c9e639dff3829182465f37e89de205629182dfca18f9af6e5 (machine-JWT + SQL-first + typography); deployment tag pin lives in the deploy repo values
+      dfe-hyperdx: "v0.1.8"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:588fb8e5960a0904568674209ff48632462a03afe8ae4c5fcf8d1407bdefc4d0 (per-org connection seam + admin-surface lockdown); deployment tag pin lives in the deploy repo values
 
     # Stack upgrade metadata for THIS version.
     stack:
