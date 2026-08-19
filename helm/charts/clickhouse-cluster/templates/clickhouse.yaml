@@ -1,13 +1,9 @@
 {{- if eq .Values.clickhouse.mode "cluster" }}
-# ZOMBIE-PROBE NOTE (dfe-infra#4.2): the official ClickHouse operator's DEFAULT
-# readiness probe is `exec: bash -c "wget -qO- :8123 | grep -o Ok."` at
-# periodSeconds=1 -- a shell pipe whose children are NOT reaped by clickhouse-
-# server (PID 1), so every probe cycle leaks 2 zombies. The v0.0.5 CRD exposes NO
-# probe override (no containerTemplate.*Probe, no podTemplate.spec.containers), so
-# we CANNOT fix it from this CR. single mode (clickhouse-single.yaml) already uses
-# httpGet /ping and is zombie-free -- that is the slim/single default. For cluster
-# mode the fix is an OPERATOR bump to a version that defaults to httpGet (or runs a
-# reaping init); tracked as a flagged follow-up, not fixable here.
+# CLUSTER-MODE CONFIG NOTE (dfe-infra#4.2): the earlier exit-231 crashloop here was
+# NOT a zombie-probe leak (operator 0.0.7 uses httpGet /ping, verified). Its real
+# cause was custom_settings_prefixes below rejecting the operator's injected
+# custom_operator_reload_revision setting -> CANNOT_LOAD_CONFIG. Fixed by allowing
+# the custom_ prefix (see settings.extraConfig). Keep both prefixes in cluster mode.
 apiVersion: clickhouse.com/v1alpha1
 kind: ClickHouseCluster
 metadata:
@@ -46,7 +42,10 @@ spec:
       # SQL_ is ClickHouse Cloud's built-in prefix; this self-hosted cluster must
       # allow it here, else CH rejects every SQL_* setting and tenant scoping
       # silently cannot apply. See dfe-engine governance/ch/models.py TENANT_SETTING.
-      custom_settings_prefixes: SQL_
+      # custom_ is required in cluster mode: the ClickHouse operator injects
+      # custom_operator_reload_revision into the __operator profile, and CH refuses
+      # to load users.yaml (CANNOT_LOAD_CONFIG, crashloop) if that prefix is unallowed.
+      custom_settings_prefixes: SQL_,custom_
       users:
         {{ .Values.clickhouse.users.loader.name }}:
           profile: default
