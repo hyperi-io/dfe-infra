@@ -33,6 +33,18 @@ envoyGateway:
     type: LoadBalancer
     externalIPs: []
 
+# Edge wildcard-cert issuer. The chart default (dfe-letsencrypt) renders a
+# ClusterIssuer only when tls.acme.email or tls.vault.server is set; with neither,
+# the gateway-shim requests against a ClusterIssuer that never exists ->
+# IssuerNotFound, dfe-wildcard-tls stuck Ready=False. dfe.devex.hyperi.io is an
+# internal split-horizon name, so public ACME cannot validate it. Point the edge
+# cert at the self-signed internal CA: instant issue, no DNS-01, no external
+# credential. Clients must trust dfe-internal-ca-tls (ns cert-manager) or see a
+# warning. For a browser-trusted leaf, use OpenBao PKI via tls.vault.* (server,
+# path, caBundle, appRole.roleId -- SecretID already seeded as cert-manager-approle).
+tls:
+  issuerName: dfe-internal-ca
+
 # Standard profile substrate: DFE's own single-node ClickHouse (keeperless,
 # MergeTree), no Kafka (gRPC transport). Flip to cluster/external to test those.
 clickhouse:
