@@ -36,13 +36,6 @@ spec:
                   namespace: otel
                   wave: "4"
                   appProject: data
-                # Bundled dex OIDC issuer -- the auth.{domain} issuer. Deployed when a
-                # UI is present; hardcore (corporate-IdP-direct) sets dex.enabled=false
-                # in an overlay. Own namespace for netpol isolation.
-                - app: dex
-                  namespace: dex
-                  wave: "4"
-                  appProject: data
                 # NOTE: the in-cluster git server (forgejo) is NOT substrate.
                 # It is the deploy-repo FALLBACK, deployed ONLY when no external git
                 # (GitHub/GitLab) is supplied -- see appsets/layer2-deploy-repo.yaml,

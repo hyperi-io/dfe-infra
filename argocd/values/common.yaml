@@ -17,12 +17,10 @@ global:
 
 # THE canonical service-name map: every surface is {hostname}.{domain}, and
 # every chart resolves names from HERE (gateway routes, links page, dfe-ui
-# embed URLs). Role names, never vendor names (git, not forgejo). auth is
-# reserved for the bundled dex issuer.
+# embed URLs). Role names, never vendor names (git, not forgejo).
 hostnames:
   dfe: dfe            # dfe-ui at /, engine API at /api/v1 -- one shared hostname
   hyperdx: hyperdx    # the embedded fork (iframe inside dfe-ui)
-  auth: auth          # the OIDC issuer (bundled dex)
   argocd: argocd
   git: git            # deploy-repo git host (bundled Forgejo or external)
   kafbat: kafbat

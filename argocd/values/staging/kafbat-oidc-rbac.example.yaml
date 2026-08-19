@@ -14,22 +14,18 @@
 # ---------------------------------------------------------------------------
 # PARKED provisioning (do these first, in order - each needs network/bao/live IdP)
 # ---------------------------------------------------------------------------
-# 1. Register a `kafbat` OIDC client at the IdP. On devex that is dex
-#    (https://dex.devex.hyperi.io): add a staticClient to the dex values in
-#    hyperi-infra ansible/playbooks/k8s-services.yml (alongside dfe-engine):
-#      - id: kafbat
-#        name: Kafbat
-#        secretEnv: DEX_KAFBAT_CLIENT_SECRET
-#        redirectURIs:
-#          - https://kafbat.devex.hyperi.io/login/oauth2/code/dfe
+# 1. Register a `kafbat` OIDC client at the deployment's external OIDC provider
+#    (the SAME IdP configured in oidc.providers - Entra / Okta / Google / any
+#    conformant OIDC IdP). Register the redirect URI:
+#      https://kafbat.example.com/login/oauth2/code/dfe
 #    (spring-security's redirect path is /login/oauth2/code/<registrationId>;
 #    the chart's registrationId is `dfe` - see templates/configmap.yaml.)
-# 2. Store the client secret in bao (kv/services/dex, key kafbat_client_secret)
-#    and add an ExternalSecret `dfe-kafbat-oidc` in the kafka namespace that
-#    materialises it with key `client-secret` (clientSecretName below).
+# 2. Store the client secret in the estate secret store and add an ExternalSecret
+#    `dfe-kafbat-oidc` in the kafka namespace that materialises it with key
+#    `client-secret` (clientSecretName below).
 # 3. The dfe-infra groups the RBAC subjects reference must be REAL group claims
 #    the IdP emits: dfe-infra, dfe-admins (full admin) and dfe-infra-viewers
-#    (read-only). dex+glauth (the staged rig) emits exactly these - see
+#    (read-only). The staged OIDC test fixture emits exactly these - see
 #    hyperi-infra subprojects/dfe-oidc-testing/fixture.yaml.
 # 4. Cluster B has NO working L7 gateway yet (the Envoy Gateway controller is
 #    unwired - see dfe-infra bootstrap). Exposing kafbat at a hostname needs the
@@ -50,7 +46,7 @@ kafbat:
 
   oidc:
     enabled: true
-    issuerUri: https://dex.devex.hyperi.io
+    issuerUri: https://oidc.example.com   # the deployment's external OIDC provider
     clientId: kafbat
     clientSecretName: dfe-kafbat-oidc   # ESO Secret, key: client-secret
     rolesField: groups                  # the claim carrying the user's groups

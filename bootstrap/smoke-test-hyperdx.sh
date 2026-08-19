@@ -39,7 +39,7 @@ HYPERDX_PORT="${DFE_HYPERDX_PORT:-8080}"
 ENGINE_PORT="${DFE_ENGINE_PORT:-8000}"
 
 # The otel db/table HyperDX reads back. Same SSoT defaults as the integration test.
-OTEL_DB="${DFE_OTEL_DB:-default}"
+OTEL_DB="${DFE_OTEL_DB:-dfe}"
 OTEL_LOGS_TABLE="${DFE_OTEL_LOGS_TABLE:-otel_logs}"
 
 PASS=0; FAIL=0; SKIP=0

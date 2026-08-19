@@ -148,8 +148,8 @@ image. One number, same image ref both sides.
   envoy-gateway (`operators.envoy-gateway`), which carries its OWN proxy image -
   so there is no cascade from this pin, and the two versions move independently.
 - Replaced nginx here on 2026-08-18 (dfe-docker#8): OSS nginx has no free inbound
-  OIDC, Envoy's oauth2/jwt_authn filters are Apache-2.0 and are the seam the
-  bundled dex issuer chains into.
+  OIDC, Envoy's oauth2/jwt_authn filters are Apache-2.0 and are the seam an
+  external OIDC issuer chains into.
 - Pin the UBUNTU-based `vX.Y.Z` tag, not `distroless-*`: dfe-docker's compose
   healthcheck drives the admin `/ready` over bash's `/dev/tcp`, and distroless
   ships no shell. Envoy publishes no alpine variant and no LTS line - it supports
