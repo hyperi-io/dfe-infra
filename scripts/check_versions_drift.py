@@ -319,14 +319,6 @@ CHECKS += [
         Path("helm/charts/forgejo/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
-    # services.dex cascades to the dex chart's appVersion (image.tag empty falls
-    # back to it, the deploy default) -- the bundled OIDC issuer.
-    Check(
-        "dex chart appVersion",
-        "services.dex",
-        Path("helm/charts/dex/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
     # The four below were found by the reverse sweep, not by anyone adding them.
     # dfe-common.labels stamps app.kubernetes.io/version from .Chart.AppVersion
     # onto every object a chart renders, so a stale appVersion is a wrong version

@@ -31,7 +31,7 @@
 #  Contract names (env-overridable) default to the SSoT:
 #    dfe.default        -- dfe-schemas/argocd/ddl/dfe.default.sql + loader default
 #    default_land       -- receiver default_source `default` + topic_suffix `_land`
-#    default.otel_logs  -- dfe-hyperdx fork source default (DEFAULT_DATABASE)
+#    dfe.otel_logs      -- dfe-hyperdx fork otel source (otel tables in the dfe db)
 #  NOTE: chain commands (curl/CLI paths) are first-cut and may need tuning to the
 #  exact image tooling on first live run -- the PRINCIPLE is fixed: assert the
 #  chain + freshness, never just the pod.
@@ -58,7 +58,7 @@ PROFILE="${DFE_PROFILE:-}"
 # Contract names (SSoT defaults; override per deployment if reconfigured).
 CH_DATA_TABLE="${DFE_CH_DATA_TABLE:-dfe.default}"
 KAFKA_TOPIC="${DFE_KAFKA_TOPIC:-default_land}"
-OTEL_DB="${DFE_OTEL_DB:-default}"
+OTEL_DB="${DFE_OTEL_DB:-dfe}"
 OTEL_LOGS_TABLE="${DFE_OTEL_LOGS_TABLE:-otel_logs}"
 # Freshness window (seconds): a CORE pipeline must show data NEWER than this, so
 # stale rows from a previous run cannot mask a dead pipeline. Default 10 min.

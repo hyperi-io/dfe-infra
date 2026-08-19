@@ -65,6 +65,8 @@ exporters:
   clickhouse:
     enabled: true
     endpoint: "tcp://dfe-clickhouse.clickhouse.svc.cluster.local:9000"
-    database: default
+    # DFE canonical database (the CH-builtin `default` is retired); a parameter,
+    # override per deployment. otel tables land as dfe.otel_*.
+    database: dfe
     username: admin
     passwordSecretName: clickhouse-admin-password

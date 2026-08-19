@@ -24,7 +24,7 @@ flowchart TB
     end
     subgraph core["In-cluster, every target"]
         GW["Envoy Gateway<br/>(all L7 routing)"]
-        DEX["dex (issuer)"]
+        ENG["dfe-engine<br/>(identity authority)"]
         FDB["FerretDB + documentdb PG"]
         APPS["dfe-* apps + UIs"]
     end
@@ -34,7 +34,7 @@ flowchart TB
         OBJ[Object store]:::seam
     end
     LB --> GW --> APPS
-    GW --> DEX
+    GW --> ENG
     APPS --> KAF
     APPS --> CH
     classDef seam fill:#0b3,stroke:#062,color:#fff;
@@ -42,8 +42,9 @@ flowchart TB
 
 One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL
 L7 routing -- there are no per-app cloud LBs and no cloud L7 (ALB/App Gateway).
-dex, the Envoy edge, and FerretDB's documentdb PG are always in-cluster; Kafka,
-ClickHouse and object storage can be in-cluster or a managed endpoint.
+dfe-engine (the identity authority), the Envoy edge, and FerretDB's documentdb PG
+are always in-cluster; Kafka, ClickHouse and object storage can be in-cluster or a
+managed endpoint.
 
 ## The matrix
 
@@ -62,7 +63,8 @@ ClickHouse and object storage can be in-cluster or a managed endpoint.
 | Workload identity | ServiceAccount annotations | static creds (OpenBao) | IRSA | Azure Workload Identity | GKE Workload Identity |
 | etcd-at-rest KMS | cluster EncryptionConfiguration provider | secretbox / aescbc | KMS | Key Vault KMS | Cloud KMS |
 | Document store PG | ferretdb chart (always in-cluster) | documentdb StatefulSet | " | " | " |
-| Identity issuer | `dex.enabled` (bundled) vs corporate IdP | dex | dex | dex | dex |
+| Identity authority | dfe-engine account store (always in-cluster) | dfe-engine | dfe-engine | dfe-engine | dfe-engine |
+| Federated login | `oidc.providers` external OIDC (opt-in) | any OIDC IdP | Entra / Okta / ... | Entra | Google / ... |
 
 \* Redpanda on-prem is behind a licence gate.
 
@@ -76,8 +78,8 @@ ClickHouse and object storage can be in-cluster or a managed endpoint.
   cloud LB controller reach their cloud APIs via IRSA / Workload Identity, annotated
   onto the ServiceAccount. On-prem there is no cloud API -- creds come from OpenBao
   through ESO. Nothing hardcodes a static cloud key.
-- **etcd-at-rest is a cluster seam, not an app one.** dex (and every `secrets`
-  consumer) inherits whatever the cluster's EncryptionConfiguration uses -- cloud
+- **etcd-at-rest is a cluster seam, not an app one.** dfe-engine (and every
+  `secrets` consumer) inherits whatever the cluster's EncryptionConfiguration uses -- cloud
   KMS on managed clusters, secretbox/aescbc on-prem. No app couples to a KMS.
 - **Data services are in-cluster OR managed, per deployment.** Kafka and ClickHouse
   default to in-cluster (Strimzi, CH operator) and swap to a managed endpoint by
