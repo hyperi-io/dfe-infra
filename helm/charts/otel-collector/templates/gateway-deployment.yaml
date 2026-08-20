@@ -15,6 +15,10 @@ spec:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      # The k8s_cluster receiver reads the API server, so the gateway needs the
+      # chart's ServiceAccount rather than the namespace default the ClusterRole
+      # is not bound to.
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: otel-collector
