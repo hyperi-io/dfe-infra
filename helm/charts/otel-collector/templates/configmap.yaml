@@ -154,16 +154,54 @@ data:
             password: ${env:KAFKA_PASSWORD}
         {{- end }}
       {{- end }}
-      {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
-      # Loopback scrape of this collector's own service.telemetry endpoint, which is
-      # what puts otelcol_* into the same pipeline as everything else.
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled }}
       prometheus:
         config:
           scrape_configs:
+            {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
+            # Loopback scrape of this collector's own service.telemetry endpoint,
+            # which is what puts otelcol_* into the same pipeline as everything else.
             - job_name: otelcol
               scrape_interval: 30s
               static_configs:
                 - targets: ["127.0.0.1:{{ .Values.clusterTelemetry.selfTelemetry.port }}"]
+            {{- end }}
+            {{- if .Values.clusterTelemetry.dfeServices.enabled }}
+            # The DFE services expose /metrics but only PUSH OTLP when built with
+            # scalo's otel-metrics feature, which the Rust six are not (scalo-rs#28).
+            # Scraping the exposition every chart already annotates is what gets
+            # records_*, buffer_* and rdkafka_* into otel_metrics_* meanwhile.
+            # Discovery is by annotation, so a new DFE service needs no edit here.
+            - job_name: dfe-services
+              scrape_interval: {{ .Values.clusterTelemetry.dfeServices.collectionInterval }}
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_part_of]
+                  action: keep
+                  regex: dfe
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $$1:$$2
+                  target_label: __address__
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  regex: (.+)
+                  target_label: __metrics_path__
+                # The receiver maps `job` onto service.name, so setting it per pod
+                # is what gives each service its own ServiceName instead of one
+                # bucket named after the scrape job.
+                - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                  action: replace
+                  target_label: job
+                - source_labels: [__meta_kubernetes_pod_name]
+                  action: replace
+                  target_label: k8s_pod_name
+            {{- end }}
       {{- end }}
 
     processors:
