@@ -71,6 +71,15 @@ kafka:
     enabled: true
     mechanism: SCRAM-SHA-512
 
+# Read only by the kafka chart, which projects the SCRAM credential into the
+# namespaces that need it beyond appNamespace. The collector's kafka_metrics
+# receiver authenticates as the same service user, so its namespace belongs here;
+# without it the gateway pod cannot resolve dfe-kafka-user and never starts.
+user:
+  password:
+    extraAppNamespaces:
+      - otel
+
 # Consumer-facing ClickHouse endpoint. Default = DFE's own single-mode service.
 # cluster mode: override host with the operator's service (confirm name at deploy);
 # external mode: override host with the supplied endpoint. (Seam: per-deploy this
