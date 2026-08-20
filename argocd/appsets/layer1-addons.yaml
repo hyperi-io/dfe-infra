@@ -47,14 +47,16 @@ spec:
                   # Scaler value, active flag and error counters pushed to the
                   # collector gateway over OTLP, rather than exposed for scraping
                   # via prometheus.operator.enabled.
-                  # The uri needs its scheme; a bare host:port is an invalid URI
-                  # and the export fails silently.
+                  # Port 4318, not 4317: KEDA's exporter speaks OTLP/HTTP and POSTs
+                  # to /v1/metrics, so the gRPC port answers with a frame it cannot
+                  # parse ("malformed HTTP response").
+                  # The uri needs its scheme; a bare host:port is an invalid URI.
                   chartValuesYaml: |
                     opentelemetry:
                       operator:
                         enabled: true
                       collector:
-                        uri: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
+                        uri: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
                   version: "3.13.1"
