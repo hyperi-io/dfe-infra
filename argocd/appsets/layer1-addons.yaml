@@ -29,36 +29,53 @@ spec:
               elements:
                 # cert-manager + external-secrets intentionally absent -- bootstrap
                 # owns them (see header). Adding them here re-introduces the dup.
+                # chartValues is merged into helm.valuesObject below. goTemplate
+                # runs with missingkey=error, so every element must carry the key.
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
                   version: "1.21.1"
                   namespace: external-dns
                   wave: "2"
                   appProject: infra
+                  chartValuesYaml: ""
                 - chart: keda
                   repo: https://kedacore.github.io/charts
                   version: "2.20.1"
                   namespace: keda
                   wave: "3"
                   appProject: infra
+                  # Scaler value, active flag and error counters pushed to the
+                  # collector gateway over OTLP, rather than exposed for scraping
+                  # via prometheus.operator.enabled.
+                  # The uri needs its scheme; a bare host:port is an invalid URI
+                  # and the export fails silently.
+                  chartValuesYaml: |
+                    opentelemetry:
+                      operator:
+                        enabled: true
+                      collector:
+                        uri: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
                   version: "3.13.1"
                   namespace: kube-system
                   wave: "3"
                   appProject: infra
+                  chartValuesYaml: ""
                 - chart: reloader
                   repo: https://stakater.github.io/stakater-charts
                   version: "2.2.14"
                   namespace: reloader
                   wave: "3"
                   appProject: infra
+                  chartValuesYaml: ""
                 - chart: cloudnative-pg
                   repo: https://cloudnative-pg.github.io/charts
                   version: "0.29.0"
                   namespace: cnpg-system
                   wave: "3"
                   appProject: infra
+                  chartValuesYaml: ""
                 # strimzi-kafka-operator (Kafka substrate) and clickhouse-operator
                 # (clickhouse.com CRDs) are cluster-only operators: deployed in the
                 # scale profile via appsets/layer-scale.yaml (cluster-label gated).
@@ -76,11 +93,16 @@ spec:
         chart: '{{ .chart }}'
         targetRevision: '{{ .version }}'
         helm:
-          valuesObject:
+          # `values` (a YAML string) rather than `valuesObject`: the ApplicationSet
+          # template is parsed as YAML before it is Go-templated, so a structured
+          # valuesObject cannot carry a per-element block. Inside this string the
+          # generator's chartValuesYaml is plain text.
+          values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
               cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+            {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

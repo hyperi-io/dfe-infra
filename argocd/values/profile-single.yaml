@@ -40,3 +40,11 @@ kafbat:
 # CNPG -- single instance (no HA at this tier).
 cluster:
   instances: 1
+
+# Observability collection -- full set. Kafka exists at this tier, and one node's
+# worth of container series is affordable.
+clusterTelemetry:
+  kubeletStats:
+    enabled: true
+  kafka:
+    enabled: true

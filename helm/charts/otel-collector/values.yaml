@@ -53,6 +53,75 @@ daemonset:
 # empty falls back to {project}-{env}.
 appNamespace: ""
 
+# Cluster + dependency telemetry, feeding the pre-canned HyperDX dashboards
+# (dfe-engine#184). The dashboards are identical on every profile; collection cost
+# is not, so the expensive scrapers are gated here and enabled per profile.
+clusterTelemetry:
+  # Cluster-scoped state: node conditions, allocatable, replica counts, pod phase.
+  # Gateway-only -- it reads the API server, and one instance per cluster is the
+  # contract.
+  k8sCluster:
+    enabled: true
+    collectionInterval: 30s
+
+  # Per-node/pod/container consumption, read off each node's kubelet. DaemonSet-only.
+  # Container-level series multiply by every container on every node, so slim leaves
+  # it off. `volume` is omitted: a series per mounted volume, unused by the PV tiles.
+  kubeletStats:
+    enabled: false
+    collectionInterval: 30s
+    metricGroups: [node, pod, container]
+
+  # ClickHouse server metrics via sqlquery over system.metrics/events/parts.
+  # Not the :9363 Prometheus endpoint -- the clickhouse-cluster chart does not
+  # expose it and managed ClickHouse does not offer it, whereas these system tables
+  # are readable from any client on any provider.
+  # Credentials come from the gateway's existing CLICKHOUSE_PASSWORD env.
+  clickhouse:
+    enabled: true
+    collectionInterval: 30s
+
+  # Broker-side Kafka metrics. kafka_metrics speaks the Kafka protocol against
+  # bootstrapServers, so single-broker and Strimzi share one config with no JMX
+  # exporter. Complements the consumers' own rdkafka_* lag, which stops reporting
+  # when a consumer dies.
+  # Off by default -- slim has no Kafka. SASL/SCRAM-SHA-512 is the DFE broker
+  # standard, so the credential must be projected here via the kafka chart's
+  # `user.password.extraAppNamespaces`.
+  kafka:
+    enabled: false
+    collectionInterval: 30s
+    # Pinned rather than left to the receiver default of 2.1.0.
+    protocolVersion: "3.6.0"
+    scrapers: [brokers, topics, consumers]
+    sasl:
+      enabled: true
+      mechanism: SCRAM-SHA-512
+      username: dfe-kafka-user
+      passwordSecretName: dfe-kafka-user
+      passwordSecretKey: password
+
+  # KEDA needs no receiver here: the operator pushes its own metrics over OTLP to
+  # the gateway, enabled in argocd/appsets/layer1-addons.yaml. Kept as a documented
+  # absence so the next reader does not add a scrape job for it.
+
+  # The collector's own pipeline health (otelcol_*): queue depth, enqueue failures,
+  # send failures. Served on loopback and scraped back into the same pipeline.
+  selfTelemetry:
+    enabled: true
+    port: 8888
+
+# Shared endpoint facts. Defaulted here so the chart renders standalone; a real
+# deploy takes them from argocd/values/common.yaml, which is the SSoT.
+clickhouse:
+  host: dfe-clickhouse.clickhouse.svc.cluster.local
+  nativePort: 9000
+  database: dfe
+  user: admin
+
+kafka:
+  bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
+
 exporters:
   # OTLP push to a hyperdx-side receiver. OFF: the dfe-hyperdx image ships
   # no OTLP listener; flip on (with an endpoint) only when the fork deploys
