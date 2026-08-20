@@ -21,16 +21,27 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["--config=/etc/otel/gateway-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
-          {{- if .Values.exporters.clickhouse.enabled }}
+          {{- if or .Values.exporters.clickhouse.enabled .Values.clusterTelemetry.clickhouse.enabled .Values.clusterTelemetry.kafka.sasl.enabled }}
           env:
+            {{- if or .Values.exporters.clickhouse.enabled .Values.clusterTelemetry.clickhouse.enabled }}
             # Expanded by the collector config (${env:CLICKHOUSE_PASSWORD});
             # the clickhouse-cluster chart projects the secret into this
-            # namespace.
+            # namespace. Shared by the ClickHouse exporter and the sqlquery receiver.
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.exporters.clickhouse.passwordSecretName }}
                   key: password
+            {{- end }}
+            {{- if and .Values.clusterTelemetry.kafka.enabled .Values.clusterTelemetry.kafka.sasl.enabled }}
+            # Requires the kafka chart to project dfe-kafka-user into this
+            # namespace via user.password.extraAppNamespaces.
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clusterTelemetry.kafka.sasl.passwordSecretName }}
+                  key: {{ .Values.clusterTelemetry.kafka.sasl.passwordSecretKey }}
+            {{- end }}
           {{- end }}
           ports:
             - name: otlp-grpc

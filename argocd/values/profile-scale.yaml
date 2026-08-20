@@ -45,3 +45,11 @@ kafka:
   provider: strimzi
   replicas: 3
   bootstrapServers: "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092"
+
+# Observability collection -- full set. Container-level kubelet series scale with
+# the node count here; measure before widening metricGroups.
+clusterTelemetry:
+  kubeletStats:
+    enabled: true
+  kafka:
+    enabled: true

@@ -28,6 +28,13 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["--config=/etc/otel/daemonset-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          env:
+            # Consumed by the resource/node processor and, when enabled, by the
+            # kubeletstats endpoint -- each pod must reach its OWN node's kubelet.
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           ports:
             - name: health
               containerPort: {{ .Values.healthCheckPort }}

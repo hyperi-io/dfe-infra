@@ -17,6 +17,154 @@ data:
             endpoint: 0.0.0.0:4317
           http:
             endpoint: 0.0.0.0:4318
+      {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
+      k8s_cluster:
+        collection_interval: {{ .Values.clusterTelemetry.k8sCluster.collectionInterval }}
+        auth_type: serviceAccount
+        node_conditions_to_report: [Ready, MemoryPressure, DiskPressure, PIDPressure]
+        allocatable_types_to_report: [cpu, memory, storage, ephemeral-storage]
+      {{- end }}
+      {{- if .Values.clusterTelemetry.clickhouse.enabled }}
+      # Server-side ClickHouse health. Column aliases become the metric names, so
+      # each SELECT is a fixed set of named columns rather than a metric/value pair.
+      sqlquery/clickhouse:
+        driver: clickhouse
+        datasource: "clickhouse://{{ .Values.clickhouse.user }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.nativePort }}/{{ .Values.clickhouse.database }}"
+        collection_interval: {{ .Values.clusterTelemetry.clickhouse.collectionInterval }}
+        queries:
+          # Instantaneous counters from system.metrics.
+          - sql: >-
+              SELECT
+                toInt64(sumIf(value, metric = 'Query')) AS ch_queries_running,
+                toInt64(sumIf(value, metric = 'Merge')) AS ch_merges_running,
+                toInt64(sumIf(value, metric = 'PartMutation')) AS ch_mutations_running,
+                toInt64(sumIf(value, metric = 'MemoryTracking')) AS ch_memory_tracked_bytes,
+                toInt64(sumIf(value, metric = 'TCPConnection')) AS ch_tcp_connections,
+                toInt64(sumIf(value, metric = 'ReadonlyReplica')) AS ch_readonly_replicas,
+                toInt64(sumIf(value, metric = 'DelayedInserts')) AS ch_delayed_inserts
+              FROM system.metrics
+            metrics:
+              - metric_name: clickhouse_queries_running
+                value_column: ch_queries_running
+              - metric_name: clickhouse_merges_running
+                value_column: ch_merges_running
+              - metric_name: clickhouse_mutations_running
+                value_column: ch_mutations_running
+              - metric_name: clickhouse_memory_tracked_bytes
+                value_column: ch_memory_tracked_bytes
+                unit: By
+              - metric_name: clickhouse_tcp_connections
+                value_column: ch_tcp_connections
+              - metric_name: clickhouse_readonly_replicas
+                value_column: ch_readonly_replicas
+              # Non-zero means inserts are being throttled because merges cannot
+              # keep up -- the step before "too many parts" rejects writes.
+              - metric_name: clickhouse_delayed_inserts
+                value_column: ch_delayed_inserts
+          # Part pressure. max-parts-per-partition is the leading indicator of the
+          # "too many parts" failure; the total is the context for it.
+          - sql: >-
+              SELECT
+                toInt64(sum(part_count)) AS ch_active_parts,
+                toInt64(max(part_count)) AS ch_max_parts_per_partition
+              FROM (
+                SELECT count() AS part_count
+                FROM system.parts
+                WHERE active
+                GROUP BY database, table, partition
+              )
+            metrics:
+              - metric_name: clickhouse_active_parts
+                value_column: ch_active_parts
+              - metric_name: clickhouse_max_parts_per_partition
+                value_column: ch_max_parts_per_partition
+          # Cumulative server counters. Rates are computed at query time.
+          - sql: >-
+              SELECT
+                toInt64(sumIf(value, event = 'InsertedRows')) AS ch_inserted_rows,
+                toInt64(sumIf(value, event = 'InsertedBytes')) AS ch_inserted_bytes,
+                toInt64(sumIf(value, event = 'SelectedRows')) AS ch_selected_rows,
+                toInt64(sumIf(value, event = 'MergedRows')) AS ch_merged_rows,
+                toInt64(sumIf(value, event = 'Query')) AS ch_queries,
+                toInt64(sumIf(value, event = 'FailedQuery')) AS ch_failed_queries,
+                toInt64(sumIf(value, event = 'FailedInsertQuery')) AS ch_failed_insert_queries
+              FROM system.events
+            metrics:
+              - metric_name: clickhouse_inserted_rows_total
+                value_column: ch_inserted_rows
+                data_type: sum
+                monotonic: true
+              - metric_name: clickhouse_inserted_bytes_total
+                value_column: ch_inserted_bytes
+                data_type: sum
+                monotonic: true
+                unit: By
+              - metric_name: clickhouse_selected_rows_total
+                value_column: ch_selected_rows
+                data_type: sum
+                monotonic: true
+              - metric_name: clickhouse_merged_rows_total
+                value_column: ch_merged_rows
+                data_type: sum
+                monotonic: true
+              - metric_name: clickhouse_queries_total
+                value_column: ch_queries
+                data_type: sum
+                monotonic: true
+              - metric_name: clickhouse_failed_queries_total
+                value_column: ch_failed_queries
+                data_type: sum
+                monotonic: true
+              - metric_name: clickhouse_failed_insert_queries_total
+                value_column: ch_failed_insert_queries
+                data_type: sum
+                monotonic: true
+          # Per-table size. One series per table, which is bounded by the DFE
+          # schema rather than by traffic.
+          - sql: >-
+              SELECT
+                database,
+                table,
+                toInt64(sum(rows)) AS ch_table_rows,
+                toInt64(sum(bytes_on_disk)) AS ch_table_bytes
+              FROM system.parts
+              WHERE active
+              GROUP BY database, table
+            metrics:
+              - metric_name: clickhouse_table_rows
+                value_column: ch_table_rows
+                attribute_columns: [database, table]
+              - metric_name: clickhouse_table_bytes_on_disk
+                value_column: ch_table_bytes
+                attribute_columns: [database, table]
+                unit: By
+      {{- end }}
+      {{- if .Values.clusterTelemetry.kafka.enabled }}
+      kafka_metrics:
+        brokers: [{{ .Values.kafka.bootstrapServers | quote }}]
+        protocol_version: {{ .Values.clusterTelemetry.kafka.protocolVersion | quote }}
+        collection_interval: {{ .Values.clusterTelemetry.kafka.collectionInterval }}
+        scrapers:
+          {{- toYaml .Values.clusterTelemetry.kafka.scrapers | nindent 10 }}
+        {{- if .Values.clusterTelemetry.kafka.sasl.enabled }}
+        auth:
+          sasl:
+            mechanism: {{ .Values.clusterTelemetry.kafka.sasl.mechanism }}
+            username: {{ .Values.clusterTelemetry.kafka.sasl.username }}
+            password: ${env:KAFKA_PASSWORD}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
+      # Loopback scrape of this collector's own service.telemetry endpoint, which is
+      # what puts otelcol_* into the same pipeline as everything else.
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: otelcol
+              scrape_interval: 30s
+              static_configs:
+                - targets: ["127.0.0.1:{{ .Values.clusterTelemetry.selfTelemetry.port }}"]
+      {{- end }}
 
     processors:
       batch:
@@ -25,6 +173,29 @@ data:
       memory_limiter:
         check_interval: 5s
         limit_mib: 1536
+      {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
+      # k8s_cluster emits no service.name, so its metrics would land in the same
+      # unattributed bucket as anything else missing one.
+      resource/k8s_cluster:
+        attributes:
+          - key: service.name
+            value: k8s-cluster
+            action: upsert
+      {{- end }}
+      {{- if .Values.clusterTelemetry.clickhouse.enabled }}
+      resource/clickhouse:
+        attributes:
+          - key: service.name
+            value: clickhouse
+            action: upsert
+      {{- end }}
+      {{- if .Values.clusterTelemetry.kafka.enabled }}
+      resource/kafka:
+        attributes:
+          - key: service.name
+            value: kafka
+            action: upsert
+      {{- end }}
 
     exporters:
       {{- if .Values.exporters.hyperdx.enabled }}
@@ -53,6 +224,16 @@ data:
 
     service:
       extensions: [health_check]
+      {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 127.0.0.1
+                    port: {{ .Values.clusterTelemetry.selfTelemetry.port }}
+      {{- end }}
       pipelines:
         traces:
           receivers: [otlp]
@@ -66,7 +247,11 @@ data:
             - otlp/hyperdx
             {{- end }}
         metrics:
-          receivers: [otlp]
+          receivers:
+            - otlp
+            {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
+            - prometheus
+            {{- end }}
           processors: [memory_limiter, batch]
           exporters:
             - prometheus
@@ -76,6 +261,50 @@ data:
             {{- if .Values.exporters.hyperdx.enabled }}
             - otlp/hyperdx
             {{- end }}
+        {{- /*
+          One pipeline per source that needs its own resource processor. A single
+          pipeline cannot tag k8s_cluster, ClickHouse and Kafka with different
+          service.name values, and the exporter fan-out is shared regardless.
+        */}}
+        {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
+        metrics/k8s_cluster:
+          receivers: [k8s_cluster]
+          processors: [memory_limiter, resource/k8s_cluster, batch]
+          exporters:
+            - prometheus
+            {{- if .Values.exporters.clickhouse.enabled }}
+            - clickhouse
+            {{- end }}
+            {{- if .Values.exporters.hyperdx.enabled }}
+            - otlp/hyperdx
+            {{- end }}
+        {{- end }}
+        {{- if .Values.clusterTelemetry.clickhouse.enabled }}
+        metrics/clickhouse:
+          receivers: [sqlquery/clickhouse]
+          processors: [memory_limiter, resource/clickhouse, batch]
+          exporters:
+            - prometheus
+            {{- if .Values.exporters.clickhouse.enabled }}
+            - clickhouse
+            {{- end }}
+            {{- if .Values.exporters.hyperdx.enabled }}
+            - otlp/hyperdx
+            {{- end }}
+        {{- end }}
+        {{- if .Values.clusterTelemetry.kafka.enabled }}
+        metrics/kafka:
+          receivers: [kafka_metrics]
+          processors: [memory_limiter, resource/kafka, batch]
+          exporters:
+            - prometheus
+            {{- if .Values.exporters.clickhouse.enabled }}
+            - clickhouse
+            {{- end }}
+            {{- if .Values.exporters.hyperdx.enabled }}
+            - otlp/hyperdx
+            {{- end }}
+        {{- end }}
         logs:
           receivers: [otlp]
           processors: [memory_limiter, batch]
@@ -111,6 +340,17 @@ data:
           disk: {}
           filesystem: {}
           network: {}
+      {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
+      kubeletstats:
+        collection_interval: {{ .Values.clusterTelemetry.kubeletStats.collectionInterval }}
+        auth_type: serviceAccount
+        endpoint: "https://${env:K8S_NODE_NAME}:10250"
+        # The kubelet serving cert is signed by the node's own CA, which is not in
+        # the collector image's trust store on a vanilla RKE2 cluster.
+        insecure_skip_verify: true
+        metric_groups:
+          {{- toYaml .Values.clusterTelemetry.kubeletStats.metricGroups | nindent 10 }}
+      {{- end }}
 
     processors:
       batch:
@@ -119,6 +359,16 @@ data:
         auth_type: serviceAccount
         extract:
           metadata: [k8s.namespace.name, k8s.pod.name, k8s.node.name]
+      # Node-scoped metrics carry no pod, so k8sattributes cannot enrich them and
+      # they arrive with an empty ServiceName. Both attributes are set here instead.
+      resource/node:
+        attributes:
+          - key: service.name
+            value: k8s-node
+            action: upsert
+          - key: k8s.node.name
+            value: ${env:K8S_NODE_NAME}
+            action: upsert
 
     exporters:
       otlp/gateway:
@@ -134,6 +384,10 @@ data:
           processors: [k8sattributes, batch]
           exporters: [otlp/gateway]
         metrics:
-          receivers: [hostmetrics]
-          processors: [k8sattributes, batch]
+          receivers:
+            - hostmetrics
+            {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
+            - kubeletstats
+            {{- end }}
+          processors: [k8sattributes, resource/node, batch]
           exporters: [otlp/gateway]

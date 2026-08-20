@@ -41,3 +41,11 @@ kafbat:
 # CNPG -- single instance (no HA).
 cluster:
   instances: 1
+
+# Observability collection -- the cheap scrapers only. Per-container kubelet stats
+# are the cardinality cost this tier exists to avoid, and there is no Kafka to scrape.
+clusterTelemetry:
+  kubeletStats:
+    enabled: false
+  kafka:
+    enabled: false
