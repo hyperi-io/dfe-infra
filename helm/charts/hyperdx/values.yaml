@@ -96,6 +96,39 @@ defaultConnections:
   enabled: false
   secretName: dfe-hyperdx-connections   # key: DEFAULT_CONNECTIONS
 
+# Pre-canned dashboards. dfe-engine is the SSoT for the CONTENT; this chart only
+# carries it. An init container on the ENGINE image writes the shipped Template
+# JSON into an emptyDir the hyperdx container mounts, so there is exactly one copy
+# of a dashboard in the product and bumping the engine pin ships new dashboards.
+#
+# HyperDX's own provisioner then reads that directory on a one-minute cron and
+# upserts each file per team. Two flags matter:
+#   allTeams    - every team, not one hard-coded id; a tenant team seeded later
+#                 still gets its dashboards.
+#   requireRefs - skip a dashboard whose source names the team does not hold.
+#                 That is what keeps operator telemetry off a tenant: only the
+#                 platform team has `otel_metrics`, so only it gets the platform
+#                 dashboards. No allow-list to maintain.
+#
+# image.tag is pinned rather than derived: Helm cannot read a sibling chart's
+# appVersion, so this tracks versions.yaml apps.dfe-engine like every other pin.
+dashboards:
+  enabled: true
+  mountPath: /etc/hyperdx/dashboards
+  allTeams: true
+  requireRefs: true
+  image:
+    repository: ""     # empty -> {{ global.registry }}/dfe-engine
+    tag: "v1.15.1"     # == versions.yaml apps.dfe-engine (drift-checked)
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
 # Local email/password login+register pages (dev-only in the image). Opt-in
 # stopgap for deployments whose OIDC wiring has not landed yet.
 localAuthPages:

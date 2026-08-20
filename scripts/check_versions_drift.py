@@ -436,6 +436,18 @@ CHECKS += [
     for app in _APP_CHARTS
 ]
 
+# The hyperdx chart runs an init container on the ENGINE image to materialise the
+# dashboards the engine owns. Helm cannot read a sibling chart's appVersion, so
+# the engine tag has a second copy here and needs watching like any other.
+CHECKS += [
+    Check(
+        "hyperdx dashboards init-container engine tag",
+        "apps.dfe-engine",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
+    ),
+]
+
 
 # Keys with no hardcoded second copy anywhere, and why. A key that is neither
 # checked above nor listed here fails the build: a pin nobody reads is dead

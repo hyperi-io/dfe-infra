@@ -51,12 +51,18 @@ spec:
                   # to /v1/metrics, so the gRPC port answers with a frame it cannot
                   # parse ("malformed HTTP response").
                   # The uri needs its scheme; a bare host:port is an invalid URI.
+                  # OTEL_SERVICE_NAME because KEDA sets no service.name of its
+                  # own, so the Go SDK falls back to `unknown_service:keda` and
+                  # every KEDA series groups under that instead of the operator.
                   chartValuesYaml: |
                     opentelemetry:
                       operator:
                         enabled: true
                       collector:
                         uri: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318
+                    env:
+                      - name: OTEL_SERVICE_NAME
+                        value: keda
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
                   version: "3.13.1"

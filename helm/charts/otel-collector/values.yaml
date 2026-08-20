@@ -56,6 +56,13 @@ appNamespace: ""
 # Cluster + dependency telemetry, feeding the pre-canned HyperDX dashboards
 # (dfe-engine#184). The dashboards are identical on every profile; collection cost
 # is not, so the expensive scrapers are gated here and enabled per profile.
+# Parse a severity out of each container log line (DaemonSet filelog). Without it
+# every log row stores SeverityText='' and no severity filter or error tile works.
+# Verified against a 406-line sample of live cluster logs: 395 parsed, no line
+# carrying a level token missed, and no false ERROR.
+logSeverity:
+  enabled: true
+
 clusterTelemetry:
   # Cluster-scoped state: node conditions, allocatable, replica counts, pod phase.
   # Gateway-only -- it reads the API server, and one instance per cluster is the
