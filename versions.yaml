@@ -411,7 +411,7 @@ stacks:
     # == the pin here.
     apps:
       dfe-engine: "v1.15.1"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Reconcile password reassert + otel db->dfe isolation + engine as the sole identity authority.
-      dfe-ui: "v1.3.6"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED. Hide-unpermitted + no-access page.
+      dfe-ui: "v1.3.7"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED. "Meta Schemas" nav label + break-glass wizard + org-IDs + dex comment cleanup.
       dfe-receiver: "v1.15.23"      # independent release line
       dfe-loader: "v1.18.21"        # default event destination -> dfe.default
       dfe-archiver: "v1.7.16"
@@ -428,7 +428,7 @@ stacks:
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
       dfe-engine: "sha256:b3ff22f87f98ab4aa9cc65c45dc3572b4fcd28569dc4838ef3f6bb429be894f6"
-      dfe-ui: "sha256:7d91591003684572583c62bad6dfdb0a7b7ada99ac3fccb1e5a163cd9cebad8f"
+      dfe-ui: "sha256:1c5c23c71574b6ae063d93012c00aecad39f177997e7706f67633b56a001b1f8"
       dfe-receiver: "sha256:f3a358673743e9e0e9501f917e6905974edc79b35bf0d475c7825c78e8f02c05"
       dfe-loader: "sha256:32259b6405f3dcb6353c588cf45622d77373d2773cf72cace10cb48ceff59b9c"
       dfe-archiver: "sha256:cbfb645c93b908b84612832b5d7ea8d291f2e0a262181fbcfcffd5072edb17d0"
@@ -462,7 +462,7 @@ stacks:
       dfe-schemas: "PENDING-FIRST-TAG"   # baseline DDL; repo has no release tags yet
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
-      dfe-hyperdx: "v0.1.12"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:99ea052850e2370fcd1cd19265674cc72421657bc3d62b4606f2a837eee6f193 (per-team default/hunts/otel source seeding, events->default rename, embed chrome-flash fix); deployment tag pin lives in the deploy repo values
+      dfe-hyperdx: "v0.1.14"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:d465e8c04a78b041f94717678f86ae5c47b58d950c57cbdcff007c8d04445969 (per-team default/hunts/otel source seeding, events->default rename, embed chrome-flash + theme black-flash fixes); deployment tag pin lives in the deploy repo values
 
     # Stack upgrade metadata for THIS version.
     stack:
