@@ -51,6 +51,11 @@
 #                            Legacy per-gate vars are still honoured and override
 #                            DFE_POST for that gate:
 #                            DFE_SKIP_READINESS_GATE / DFE_SKIP_INTEGRATION_TESTS
+#   DFE_POST_CLEANUP=false   Delete the CORE-2 sample rows once the ingest path
+#                            is proven. Default keep -- the themed rows double as
+#                            a live HyperDX JSON test bed, scoped to the run marker.
+#   DFE_POST_FIXTURE=<path>  NDJSON sample-event fixture posted by CORE 2
+#                            (default bootstrap/fixtures/post-hitchhiker.ndjson).
 
 set -euo pipefail
 
