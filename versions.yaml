@@ -410,7 +410,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.15.1"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Reconcile password reassert + otel db->dfe isolation + dex issuer backout.
+      dfe-engine: "v1.15.1"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Reconcile password reassert + otel db->dfe isolation + engine as the sole identity authority.
       dfe-ui: "v1.3.6"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED. Hide-unpermitted + no-access page.
       dfe-receiver: "v1.15.23"      # independent release line
       dfe-loader: "v1.18.21"        # default event destination -> dfe.default
@@ -462,7 +462,7 @@ stacks:
       dfe-schemas: "PENDING-FIRST-TAG"   # baseline DDL; repo has no release tags yet
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
-      dfe-hyperdx: "v0.1.11"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:a703252702eef2887259d7fc90f4f66c87b671acaf283416e07f72ac24056a27 (per-org connection seam + admin-lockdown, read-open sources/connections, scalo observability); deployment tag pin lives in the deploy repo values
+      dfe-hyperdx: "v0.1.12"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:99ea052850e2370fcd1cd19265674cc72421657bc3d62b4606f2a837eee6f193 (per-team default/hunts/otel source seeding, events->default rename, embed chrome-flash fix); deployment tag pin lives in the deploy repo values
 
     # Stack upgrade metadata for THIS version.
     stack:
