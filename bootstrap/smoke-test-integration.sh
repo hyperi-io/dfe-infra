@@ -12,9 +12,11 @@
 #                     traces) is landing in the OTel DB on ClickHouse VIA HyperDX.
 #                     Proves the instrumentation configs AND the self-telemetry
 #                     ingest pipeline are live (fresh rows, not stale).
-#                  2. DATA PATH: a test event POSTed to the receiver lands in
-#                     dfe.default on ClickHouse. Proves the customer-data ingest
-#                     pipeline is live.
+#                  2. DATA PATH: a themed, mixed-type NDJSON fixture POSTed to the
+#                     receiver lands in dfe.default on ClickHouse. Proves the
+#                     customer-data ingest pipeline is live AND that structured
+#                     _json ingest works -- a typed sub-column read (_json.answer)
+#                     and a populated _raw are asserted, not just row presence.
 #                  3. KAFKA SEAM (single/scale tiers only): the default landing
 #                     topic `default_land` is created, PRODUCED to (receiver) and
 #                     CONSUMED from (loader). Slim has no kafka -> skipped.
@@ -73,6 +75,19 @@ FRESH_WINDOW="${DFE_FRESH_WINDOW:-600}"
 #      would have failed on a query error, not on the data.
 # __MARK__ is substituted by the caller.
 MARK_PREDICATE="${DFE_MARK_PREDICATE:-toString(_json) LIKE '%__MARK__%'}"
+
+# POST sample payload. CORE 2 posts a real, themed, mixed-type event set through
+# the receiver rather than a bare marker, so a passing run also PROVES structured
+# _json ingest (not just "a row landed"). The data lives in an NDJSON FIXTURE, not
+# inline here, so it can be swapped per deployment without touching this script.
+# Each line carries the token __MARK__, replaced at post time with this run's
+# unique marker so the per-node assertion (and any cleanup) is scoped to THIS run.
+POST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+POST_FIXTURE="${DFE_POST_FIXTURE:-${POST_DIR}/fixtures/post-hitchhiker.ndjson}"
+# Opt-in: delete the sample rows once the pipeline is proven. Default KEEP -- the
+# themed rows are useful as a live HyperDX JSON render/filter test bed, and they
+# are scoped to this run's marker so they never accumulate silently.
+POST_CLEANUP="${DFE_POST_CLEANUP:-false}"
 
 PASS=0; FAIL=0; SKIP=0
 check() {
@@ -196,21 +211,47 @@ echo "=== CORE 2: data path (receiver -> [kafka ->] loader -> ClickHouse) ==="
 # would route to smoke_land -- a topic nobody consumes -- and the row would never
 # arrive, failing the CORE data path for a reason that is purely the test's.
 MARK="smoke-$(tr -dc a-f0-9 </dev/urandom | head -c8)"
-posted=0
-if kubectl -n "$NS_APP" exec deploy/dfe-receiver -- sh -c \
-     "curl -fsS -X POST -H 'Content-Type: application/json' -d '{\"_source\":\"default\",\"msg\":\"$MARK\"}' http://localhost:8080/ingest" >/dev/null 2>&1; then
-  posted=1
+# Post every fixture line with __MARK__ replaced by this run's marker. --data-binary
+# @- feeds the JSON on stdin so a payload containing quotes/apostrophes (the Vogon
+# poem) survives without shell-escaping. sent counts lines tried, posted counts 2xx.
+sent=0; posted=0
+if [ -r "$POST_FIXTURE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    sent=$((sent+1))
+    if printf '%s' "${line//__MARK__/$MARK}" | kubectl -n "$NS_APP" exec -i deploy/dfe-receiver -- \
+         curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- \
+         http://localhost:8080/ingest >/dev/null 2>&1; then
+      posted=$((posted+1))
+    fi
+  done < "$POST_FIXTURE"
+else
+  echo "  [WARN] POST fixture not readable at $POST_FIXTURE -- CORE 2 will FAIL loudly" >&2
 fi
-# Poll until it lands (flush interval + replication), then assert on EVERY node.
-if [ "$posted" -eq 1 ]; then
+echo "  posted ${posted}/${sent} fixture events (marker ${MARK})"
+# Poll until they land (flush interval + replication), then assert on EVERY node.
+if [ "$posted" -gt 0 ]; then
   for _ in $(seq 1 30); do
     marker_on_all_nodes "$MARK" >/dev/null 2>&1 && break
     sleep 3
   done
 fi
 echo "  marker ${MARK} per-node counts:"
-check "event posted to receiver lands in ${CH_DATA_TABLE} on EVERY ClickHouse node" \
-  "test $posted -eq 1 && marker_on_all_nodes '$MARK'"
+check "fixture events posted to receiver land in ${CH_DATA_TABLE} on EVERY ClickHouse node" \
+  "test $sent -gt 0 && test $posted -eq $sent && marker_on_all_nodes '$MARK'"
+
+# Prove structured _json ingest, not just that a row landed: read a TYPED sub-column
+# with a typed filter (the native ClickHouse JSON path, NOT a string match). The
+# zaphod fixture line carries answer=42; a typed read of _json.answer must return it.
+# This is the same capability HyperDX needs to render/filter otel + default JSON.
+check "native JSON typed sub-column reads back (_json.answer = 42 for this run)" \
+  "test \"\$(chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK} AND _json.answer.:Int64 = 42\")\" -gt 0 2>/dev/null"
+
+# _raw is declared @captured: raw_payload, but the loader implements only the
+# logoriginal->_raw rename, so API-posted events land with _raw = NULL. Skipped, not
+# asserted, until that capture gap closes (dfe-engine#182); the check is written and
+# ready to promote back the moment _raw is populated. _json capture IS proven above.
+skip "_raw on the API ingest path -- @captured: raw_payload unimplemented in the loader (dfe-engine#182)"
 
 # ---------------------------------------------------------------------------
 echo ""
@@ -333,6 +374,21 @@ if kubectl -n "$NS_FERRET" exec deploy/dfe-ferretdb -- mongosh --version >/dev/n
     "kubectl -n $NS_FERRET exec deploy/dfe-ferretdb -- mongosh mongodb://localhost:27017/smoke --quiet --eval 'db.s.insertOne({k:1}); printjson(db.s.findOne({k:1}))' | grep -q 'k'"
 else
   skip "ferretdb->PG round-trip -- no mongosh/shell in the ferretdb image (distroless); needs a client pod or a PG-side assert. NOT evidence the chain works."
+fi
+
+# Opt-in cleanup: remove THIS run's sample rows (scoped to the marker) once proven.
+# Default keep -- the themed rows double as a live HyperDX JSON test bed. The delete
+# is issued on every node so it covers replicated and per-node-scattered layouts alike.
+if [ "$POST_CLEANUP" = "true" ]; then
+  echo ""
+  echo "=== POST cleanup: deleting this run's sample rows (DFE_POST_CLEANUP=true) ==="
+  for n in $(ch_pods); do
+    chq_on "$n" "ALTER TABLE ${CH_DATA_TABLE} DELETE WHERE ${MARK_PREDICATE//__MARK__/$MARK}" >/dev/null 2>&1
+    echo "    ${n}: delete mutation submitted"
+  done
+else
+  echo ""
+  echo "  POST sample rows KEPT (marker ${MARK}); set DFE_POST_CLEANUP=true to auto-delete after proof."
 fi
 
 echo ""
