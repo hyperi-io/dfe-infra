@@ -1,11 +1,13 @@
 # ClickHouse native JSON type
 
-> **Read this before writing any ClickHouse JSON DDL or query.** Model knowledge
-> of "the ClickHouse JSON type" is routinely STALE - it describes the deprecated
-> experimental `Object('json')`, whose behaviour (least-common-type unification,
-> `col['key']` map access) does NOT apply to the current native `JSON` type.
-> Sourced from the live ClickHouse docs (2026-08-20); re-verify version-specific
-> numbers against the target server before quoting as gospel.
+> The current native `JSON` type - the one that replaced the experimental
+> `Object('json')` in ClickHouse 25.x. The two behave very differently:
+> `Object('json')` unified every path to a single least-common-type and used
+> `col['key']` map access, while the native type stores each path as its own
+> typed sub-column with dot access. A lot of older docs, blog posts and answers
+> still describe the old one, so double-check anything you carry over. Facts here
+> are from the live ClickHouse docs; re-verify the version-specific numbers
+> against your server before relying on them.
 
 The `JSON` type stores semi-structured data column-wise. Every JSON path is
 inferred and stored as its **own typed sub-column** on disk, so you query a field
@@ -210,7 +212,7 @@ SELECT json.a, json.b FROM test;   -- now typed sub-columns
 - The exact `Object('json')` removal release (v25.11) came from release-call
   material, not the data-type page - confirm against the upgrade target's changelog.
 
-## Sources (fetched 2026-08-20)
+## Sources (ClickHouse docs, 2026-08-20)
 
 - <https://clickhouse.com/docs/reference/data-types/newjson> - primary: declaration,
   sub-column access, `^`/`.:Type` casting, SKIP, limits, indexing, perf, the 25.3
