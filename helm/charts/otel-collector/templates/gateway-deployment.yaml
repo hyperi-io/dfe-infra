@@ -11,6 +11,8 @@ spec:
       app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway
     spec:
