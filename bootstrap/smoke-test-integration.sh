@@ -247,11 +247,12 @@ check "fixture events posted to receiver land in ${CH_DATA_TABLE} on EVERY Click
 check "native JSON typed sub-column reads back (_json.answer = 42 for this run)" \
   "test \"\$(chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK} AND _json.answer.:Int64 = 42\")\" -gt 0 2>/dev/null"
 
-# _raw is declared @captured: raw_payload, but the loader implements only the
-# logoriginal->_raw rename, so API-posted events land with _raw = NULL. Skipped, not
-# asserted, until that capture gap closes (dfe-engine#182); the check is written and
-# ready to promote back the moment _raw is populated. _json capture IS proven above.
-skip "_raw on the API ingest path -- @captured: raw_payload unimplemented in the loader (dfe-engine#182)"
+# _raw carries the full source payload on the API ingest path. The loader once
+# filled it only via the logoriginal->_raw rename, so a plain JSON POST landed with
+# _raw = NULL (dfe-engine#182); loader v1.18.22 (#113) writes the full payload to
+# _raw in Full mode, so an API-posted event now carries it regardless of logoriginal.
+check "_raw is populated on the API ingest path (full payload captured for this run)" \
+  "test \"\$(chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK} AND length(_raw) > 0\")\" -gt 0 2>/dev/null"
 
 # ---------------------------------------------------------------------------
 echo ""
