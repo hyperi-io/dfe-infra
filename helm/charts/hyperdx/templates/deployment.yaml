@@ -110,6 +110,11 @@ spec:
             # the image's localhost default breaks both behind the gateway.
             - name: FRONTEND_URL
               value: {{ .Values.frontendUrl | default (printf "https://%s.%s" (coalesce .Values.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain) | quote }}
+            # Link-back origin so the embedded HyperDX opens created rules in the
+            # DFE UI; needed when dfe-ui and HyperDX are on separate subdomains.
+            # next-runtime-env reads it per request, so no image rebuild.
+            - name: NEXT_PUBLIC_DFE_UI_BASE_URL
+              value: {{ .Values.dfeUiBaseUrl | default (printf "https://%s.%s" (coalesce .Values.dfeHostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain) | quote }}
             {{- if .Values.defaultConnections.enabled }}
             - name: DEFAULT_CONNECTIONS
               valueFrom:
