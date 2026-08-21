@@ -23,6 +23,23 @@ PROFILE="$(ann profile)"
 # Is a route exposed? (HTTPRoute exists for that host)
 exposed() { kubectl get httproute "$1" -A >/dev/null 2>&1 && echo "exposed" || echo "internal (port-forward)"; }
 
+# Stable named logins seeded + reconciled by the engine every boot (#106). Lists
+# the configured seed accounts (username + groups) from the chart-created Secret,
+# or "(none configured)" on a deploy that did not opt in.
+SEED_SECRET="dfe-engine-seed-accounts"
+seed_logins() {
+  local json
+  json="$(kubectl -n "${NS}" get secret "${SEED_SECRET}" -o jsonpath='{.data.seed-accounts}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+  [ -z "$json" ] && { echo "(none configured)"; return; }
+  printf '%s' "$json" | python3 -c 'import sys, json
+try:
+    accts = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for a in accts:
+    print("- `%s`  groups=[%s]" % (a.get("username", ""), ", ".join(a.get("groups", []))))'
+}
+
 read -r -d '' BODY <<EOF || true
 # DFE access -- where everything is
 
@@ -65,6 +82,23 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.pas
 kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' | base64 -d; echo
 # ClickHouse admin
 kubectl -n clickhouse get secret clickhouse-admin-password -o jsonpath='{.data.password}' | base64 -d; echo
+\`\`\`
+
+## Stable named logins (#106)
+
+Seeded from config and RECONCILED on every boot, so a teardown+rebuild restores
+the same shared team logins -- unlike the random-on-first-boot break-glass admin.
+Configured on this deployment:
+
+$(seed_logins)
+
+Fetch their passwords (and the stable admin password) from the seed-accounts Secret:
+
+\`\`\`sh
+# Stable break-glass admin password
+kubectl -n ${NS} get secret dfe-engine-seed-accounts -o jsonpath='{.data.admin-password}' | base64 -d; echo
+# Named seed accounts (username -> password -> groups), as configured
+kubectl -n ${NS} get secret dfe-engine-seed-accounts -o jsonpath='{.data.seed-accounts}' | base64 -d | jq -r '.[] | "\(.username)\t\(.password)\t[\(.groups | join(","))]"'
 \`\`\`
 
 ## Smoke check

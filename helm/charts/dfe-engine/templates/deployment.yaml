@@ -185,6 +185,29 @@ spec:
             # Point the shared root at the writable config mount.
             - name: DFE_CONFIG_DIR
               value: {{ .Values.config.mountPath }}
+            {{- if gt (len .Values.seedAuth.seedAccounts) 0 }}
+            # Stable named team logins, reconciled on every boot -- config wins,
+            # so a teardown+rebuild restores the exact shared logins (#106).
+            # Only referenced when the overlay supplies accounts, so an absent
+            # Secret never wedges the pod in CreateContainerConfigError (same
+            # guard idiom as the hyperdx chart's passwordSecretName).
+            - name: DFE_AUTH_LOCAL_SEED_ACCOUNTS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.seedAuth.secretName }}
+                  key: seed-accounts
+            {{- end }}
+            {{- if .Values.seedAuth.adminPassword }}
+            # Stable break-glass admin password. Seeded only into an EMPTY store,
+            # so a fresh install/rebuild gets a known admin login instead of a
+            # random one; a rotated password persisted to the deploy repo still
+            # wins over this on later boots. Empty -> engine mints a random admin.
+            - name: DFE_AUTH_LOCAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.seedAuth.secretName }}
+                  key: admin-password
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
