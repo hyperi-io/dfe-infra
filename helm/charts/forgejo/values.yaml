@@ -33,21 +33,29 @@ deployRepo:
   defaultBranch: main
   private: true
 
-  # The app set a fresh deployment starts with: the core ingest path plus the
-  # control plane. layer2-apps fans out one Application per values/*-values.yaml,
-  # so an unseeded repo deploys no apps. archiver, fetcher and the transform
-  # workers are opt-in -- an operator adds a values file to enable one.
-  # Override per tier in argocd/values/profile-<mode>.yaml; a Helm list is
-  # replaced rather than merged, so an override states the whole set.
+  # The app set a fresh deployment starts with: the core ingest path, the control
+  # plane, and the embedded observability console. layer2-apps fans out one
+  # Application per values/*-values.yaml, so an unseeded repo deploys no apps.
+  # archiver, fetcher and the transform workers are opt-in -- an operator adds a
+  # values file to enable one. Override per tier in
+  # argocd/values/profile-<mode>.yaml; a Helm list is replaced rather than
+  # merged, so an override states the whole set.
   seedApps:
     - dfe-engine
     - dfe-ui
     - dfe-receiver
     - dfe-loader
+    # dfe-ui embeds HyperDX in an iframe, so the console is not optional -- the
+    # UI's observability pages are blank without it.
+    - hyperdx
   # Instance name for the seeded files -- values/<svc>-<instance>-values.yaml.
   # Multi-instance services get one file per instance, added by hand or by the
   # engine.
   seedInstance: default
+  # Records which seedApps entries this deployment has already been offered, so
+  # adding one reaches an existing deploy while a deleted values file stays
+  # deleted.
+  seedMarker: .seeded-apps
 
 # Image for the PostSync repo-creation Job (needs curl).
 setup:
