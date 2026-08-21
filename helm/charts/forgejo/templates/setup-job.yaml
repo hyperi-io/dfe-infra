@@ -47,18 +47,35 @@ spec:
 
               # Seed the default app set. One values/<svc>-<inst>-values.yaml is
               # what enables an app, so an unseeded repo deploys nothing.
-              API="$GITEA/api/v1/repos/${GITEA_USER}/${REPO}/contents"
-              listing=$(curl -s -u "${GITEA_USER}:${GITEA_PASS}" "$API/values" || true)
-              if echo "$listing" | grep -q -- '-values\.yaml'; then
-                echo "values/ already populated -- leaving it alone:"
-                echo "$listing" | tr ',' '\n' | grep -o '"name":"[^"]*-values\.yaml"' | sed 's/.*:"/  /;s/"$//'
-                exit 0
+              AUTH="${GITEA_USER}:${GITEA_PASS}"
+              REPO_API="$GITEA/api/v1/repos/${GITEA_USER}/${REPO}"
+              API="$REPO_API/contents"
+
+              # The marker records what this deployment has already been OFFERED,
+              # which is a different question from what values/ currently holds:
+              # deleting a values file is how an operator turns an app off, and a
+              # new entry in seedApps still has to reach a populated repo.
+              marker_sha=$(curl -s -u "$AUTH" "$API/${MARKER}?ref=${BRANCH}" \
+                | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -n "${marker_sha}" ]; then
+                seeded=$(curl -s -u "$AUTH" "$REPO_API/raw/${MARKER}?ref=${BRANCH}")
+              else
+                # A repo predating the marker: adopt values/ so the upgrade cannot
+                # resurrect an app someone removed.
+                seeded=$(curl -s -u "$AUTH" "$API/values?ref=${BRANCH}" | tr ',' '\n' \
+                  | grep -o "\"name\":\"[^\"]*-${SEED_INSTANCE}-values\.yaml\"" \
+                  | cut -d'"' -f4 | sed "s/-${SEED_INSTANCE}-values\.yaml\$//")
+                [ -n "${seeded}" ] && echo "no seed marker -- adopting values/ as already-seeded"
               fi
-              # The guard skips on any values file rather than filling gaps, so a
-              # deleted app stays deleted and a mid-loop failure strands a partial
-              # seed. Name what is missing rather than exiting on the first error.
-              failed=""
+
+              # Name every app that did not land rather than exiting on the first
+              # error, so a partial seed is never silent.
+              failed=""; added=""
               for svc in ${SEED_APPS}; do
+                if echo "${seeded}" | grep -qx -- "${svc}"; then
+                  echo "  ${svc} already seeded -- skipping"
+                  continue
+                fi
                 file="${svc}-${SEED_INSTANCE}-values.yaml"
                 body=$(printf '%s\n' \
                   "# Enables ${svc} for this deployment (seeded at bootstrap)." \
@@ -67,23 +84,45 @@ spec:
                   "deploy:" \
                   "  service: ${svc}" \
                   "  instance: ${SEED_INSTANCE}" | base64 | tr -d '\n')
-                code=$(curl -s -o /dev/null -w "%{http_code}" -u "${GITEA_USER}:${GITEA_PASS}" \
+                code=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
                   -X POST -H "Content-Type: application/json" \
                   -d "{\"content\":\"${body}\",\"branch\":\"${BRANCH}\",\"message\":\"seed ${svc}\"}" \
                   "$API/values/${file}")
                 if [ "$code" = "201" ]; then
                   echo "  seeded values/${file}"
+                  added="${added} ${svc}"
                 else
                   echo "  FAILED values/${file} (HTTP $code)"
                   failed="${failed} ${file}"
                 fi
               done
+
+              # Recorded even on a partial run, so an app that DID land is not
+              # seeded a second time on the retry.
+              have=$(printf '%s\n' "${seeded}" | grep -v '^$' | sort -u)
+              want=$(printf '%s\n%s\n' "${seeded}" "$(printf '%s' "${added}" | tr ' ' '\n')" \
+                | grep -v '^$' | sort -u)
+              if [ "${want}" != "${have}" ]; then
+                content=$(printf '%s\n' "${want}" | base64 | tr -d '\n')
+                if [ -n "${marker_sha}" ]; then
+                  method=PUT; payload="{\"content\":\"${content}\",\"branch\":\"${BRANCH}\",\"sha\":\"${marker_sha}\",\"message\":\"record seeded apps\"}"
+                else
+                  method=POST; payload="{\"content\":\"${content}\",\"branch\":\"${BRANCH}\",\"message\":\"record seeded apps\"}"
+                fi
+                code=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+                  -X "${method}" -H "Content-Type: application/json" \
+                  -d "${payload}" "$API/${MARKER}")
+                case "${code}" in
+                  200|201) echo "recorded ${MARKER}" ;;
+                  *) echo "FAILED to write ${MARKER} (HTTP ${code}) -- the next run would re-seed"; exit 1 ;;
+                esac
+              fi
+
               if [ -n "${failed}" ]; then
                 echo "deploy repo seeded INCOMPLETELY -- missing:${failed}"
-                echo "add them by hand; a re-run will not, because values/ is no longer empty"
                 exit 1
               fi
-              echo "deploy repo seeded with the default app set"
+              echo "deploy repo seeding up to date"
           env:
             - name: REPO
               value: {{ .Values.deployRepo.name | quote }}
@@ -95,6 +134,8 @@ spec:
               value: {{ join " " .Values.deployRepo.seedApps | quote }}
             - name: SEED_INSTANCE
               value: {{ .Values.deployRepo.seedInstance | quote }}
+            - name: MARKER
+              value: {{ .Values.deployRepo.seedMarker | quote }}
             - name: GITEA_USER
               valueFrom:
                 secretKeyRef:

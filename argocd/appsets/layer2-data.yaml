@@ -1,5 +1,6 @@
 # Wave 4: CNPG PostgreSQL cluster, ClickHouse cluster, Strimzi Kafka, FerretDB, OTel Collector.
-# HyperDX is deployed with dfe-ui at wave 5 (integrated into dfe-ui, not standalone).
+# HyperDX is an app, not substrate: layer2-apps deploys it at wave 5 from the
+# deploy repo's values/hyperdx-<instance>-values.yaml, like every other app.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
