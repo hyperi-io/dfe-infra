@@ -16,6 +16,28 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- if .Values.dashboards.enabled }}
+      initContainers:
+        # dfe-engine owns the dashboard JSON; this copies it out of the engine
+        # image into a volume the provisioner reads. Overriding command bypasses
+        # the image's `dfe-engine run` entrypoint, so no config or database is
+        # touched.
+        - name: dashboards
+          image: {{ include "hyperdx.dashboardsImage" . | quote }}
+          imagePullPolicy: {{ .Values.dashboards.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          command:
+            - python
+            - -m
+            - dfe_engine.hyperdx.dashboards
+            - --out
+            - {{ .Values.dashboards.mountPath | quote }}
+          volumeMounts:
+            - name: dashboards
+              mountPath: {{ .Values.dashboards.mountPath | quote }}
+          resources:
+            {{- toYaml .Values.dashboards.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: hyperdx
           image: {{ include "dfe-common.image" . | quote }}
@@ -78,6 +100,20 @@ spec:
               value: {{ .Values.mongodb.uri | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
+            {{- if .Values.dashboards.enabled }}
+            # Setting the directory is what starts the provisioner: entry.prod.sh
+            # launches the provision-dashboards task only when it is present.
+            - name: DASHBOARD_PROVISIONER_DIR
+              value: {{ .Values.dashboards.mountPath | quote }}
+            {{- if .Values.dashboards.allTeams }}
+            - name: DASHBOARD_PROVISIONER_ALL_TEAMS
+              value: "true"
+            {{- end }}
+            {{- if .Values.dashboards.requireRefs }}
+            - name: DASHBOARD_PROVISIONER_REQUIRE_REFS
+              value: "true"
+            {{- end }}
+            {{- end }}
             {{- if .Values.dfeAuth.enabled }}
             - name: DFE_AUTH_MODE
               value: {{ .Values.dfeAuth.mode | quote }}
@@ -131,6 +167,12 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.dashboards.enabled }}
+          volumeMounts:
+            - name: dashboards
+              mountPath: {{ .Values.dashboards.mountPath | quote }}
+              readOnly: true
+          {{- end }}
           # scalo two-probe standard (scalo-rs docs/core-pillars/health.md):
           # /livez asks only "is the process deadlocked", /readyz owns traffic.
           # These live on the Express API listener (the `api` port, 8000), NOT the
@@ -156,3 +198,10 @@ spec:
               path: /readyz
               port: api
             periodSeconds: 5
+      {{- if .Values.dashboards.enabled }}
+      volumes:
+        # emptyDir, not a ConfigMap: the content comes from the engine image, so a
+        # restart re-materialises it and there is no object to keep in step.
+        - name: dashboards
+          emptyDir: {}
+      {{- end }}

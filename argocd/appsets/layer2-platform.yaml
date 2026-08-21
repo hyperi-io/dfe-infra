@@ -1,0 +1,79 @@
+# Wave 2: cluster platform config -- edge routing and network policy.
+#
+# First-party dfe-infra charts that configure the CLUSTER rather than run a
+# workload, so they sit apart from layer2-data (substrate) and layer2-apps (DFE
+# services). Both are generated here so a rebuild recreates them; applied by hand
+# they take neither the profile overlay nor the domain, and every HTTPRoute
+# renders on local.yaml's placeholder host.
+#
+# Wave 2 puts the Gateway and its routes in place before the workloads they route
+# to; an HTTPRoute whose backend is absent reports NotFound until it exists.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-layer2-platform
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+          - list:
+              elements:
+                # Gateway + HTTPRoutes for every deployment surface. Needs the
+                # envoy-gateway operator, installed at wave 3 by layer1-addons;
+                # the CRDs it depends on come with that install, so this Application
+                # reports SyncFailed until the operator lands and then converges.
+                - app: envoy-gateway-config
+                  namespace: envoy-gateway-system
+                  wave: "2"
+                  appProject: infra
+                # Default-deny plus the explicit allows between DFE namespaces.
+                - app: network-policies
+                  namespace: default
+                  wave: "2"
+                  appProject: infra
+  template:
+    metadata:
+      name: '{{ .app }}-{{ .name }}'
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .wave }}'
+    spec:
+      project: '{{ .appProject }}'
+      source:
+        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+        path: 'helm/charts/{{ .app }}'
+        helm:
+          ignoreMissingValueFiles: true
+          valueFiles:
+            - "../../../argocd/values/common.yaml"
+            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+          parameters:
+            # The deployment's own domain, from the cluster fact rather than a
+            # values file -- the tracked overlays carry placeholders only. Every
+            # hostname envoy-gateway-config publishes derives from it.
+            - name: domain
+              value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+            # Where the DFE apps run, so the network policies name the same
+            # namespace the apps are actually placed in.
+            - name: appNamespace
+              value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

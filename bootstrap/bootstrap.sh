@@ -269,6 +269,11 @@ else
       --from-literal=roleSecretID="${DFE_VAULT_SECRET_ID}" \
       --dry-run=client -o yaml | kubectl apply -f -
     echo "  Seeded ESO AppRole SecretID (dfe-vault-approle-secret)"
+  else
+    echo "  WARNING: DFE_VAULT_SECRET_ID is unset, so dfe-vault-approle-secret was NOT created."
+    echo "           ESO cannot authenticate to OpenBao, so every ExternalSecret stays unresolved."
+    echo "           Downstream: dfe-local/dfe-kafka-user never appears and the data plane sits in"
+    echo "           CreateContainerConfigError. Set DFE_VAULT_SECRET_ID and re-run."
   fi
   envsubst < "${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl" | kubectl apply -f -
   # ESO's vault provider cannot skip TLS verify (the env's VAULT_SKIP_VERIFY is for
@@ -301,6 +306,10 @@ if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
     --docker-password="${DFE_PULL_SECRET_TOKEN}" \
     --dry-run=client -o yaml | run kubectl apply -f -
   echo "  Pull secret created/updated in ${DFE_NAMESPACE}"
+else
+  echo "  WARNING: DFE_PULL_SECRET_TOKEN is unset, so ghcr-pull-secret was NOT created."
+  echo "           Every app image from a private registry fails with ImagePullBackOff and"
+  echo "           FailedToRetrieveImagePullSecret. Set DFE_PULL_SECRET_TOKEN and re-run."
 fi
 
 # [4c/7] Deploy-repo credentials -- two paths by provider mode.

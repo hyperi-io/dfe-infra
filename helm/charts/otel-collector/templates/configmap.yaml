@@ -154,16 +154,54 @@ data:
             password: ${env:KAFKA_PASSWORD}
         {{- end }}
       {{- end }}
-      {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
-      # Loopback scrape of this collector's own service.telemetry endpoint, which is
-      # what puts otelcol_* into the same pipeline as everything else.
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled }}
       prometheus:
         config:
           scrape_configs:
+            {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
+            # Loopback scrape of this collector's own service.telemetry endpoint,
+            # which is what puts otelcol_* into the same pipeline as everything else.
             - job_name: otelcol
               scrape_interval: 30s
               static_configs:
                 - targets: ["127.0.0.1:{{ .Values.clusterTelemetry.selfTelemetry.port }}"]
+            {{- end }}
+            {{- if .Values.clusterTelemetry.dfeServices.enabled }}
+            # The DFE services expose /metrics but only PUSH OTLP when built with
+            # scalo's otel-metrics feature, which the Rust six are not (scalo-rs#28).
+            # Scraping the exposition every chart already annotates is what gets
+            # records_*, buffer_* and rdkafka_* into otel_metrics_* meanwhile.
+            # Discovery is by annotation, so a new DFE service needs no edit here.
+            - job_name: dfe-services
+              scrape_interval: {{ .Values.clusterTelemetry.dfeServices.collectionInterval }}
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: "true"
+                - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_part_of]
+                  action: keep
+                  regex: dfe
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: ([^:]+)(?::\d+)?;(\d+)
+                  replacement: $$1:$$2
+                  target_label: __address__
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  regex: (.+)
+                  target_label: __metrics_path__
+                # The receiver maps `job` onto service.name, so setting it per pod
+                # is what gives each service its own ServiceName instead of one
+                # bucket named after the scrape job.
+                - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                  action: replace
+                  target_label: job
+                - source_labels: [__meta_kubernetes_pod_name]
+                  action: replace
+                  target_label: k8s_pod_name
+            {{- end }}
       {{- end }}
 
     processors:
@@ -332,6 +370,118 @@ data:
         operators:
           - type: container
             id: container-parser
+          {{- if .Values.logSeverity.enabled }}
+          # The container runtime envelope carries no severity, so without this
+          # every row lands SeverityText='' and a severity filter matches nothing.
+          # One route per log format seen across the estate; a line matching none
+          # keeps an empty severity rather than being guessed at. Every parser is
+          # on_error: send, so a regex miss never drops the record.
+          - type: router
+            id: severity-router
+            default: noop
+            routes:
+              - expr: 'body matches "^\\s*\\{.*\"(level|severity)\"\\s*:\\s*\"[A-Za-z]+\""'
+                output: sev-json
+              - expr: 'body matches "(^|\\s)level=[A-Za-z]+"'
+                output: sev-logfmt
+              - expr: 'body matches "^[EWIF][0-9]{4} [0-9]{2}:"'
+                output: sev-klog
+              - expr: 'body matches "<(Trace|Debug|Information|Warning|Error|Fatal)>"'
+                output: sev-clickhouse
+              - expr: 'body matches "\\[(TRACE|DEBUG|INFO|INFORMATION|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL)\\]"'
+                output: sev-bracket
+              - expr: 'body matches "(^|[ \\t])(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL|PANIC|trace|debug|info|warn|warning|error|fatal)([ \\t:]|$)"'
+                output: sev-token
+
+          # Structured JSON: etcd, cnpg, external-secrets, fleet, gitlab.
+          - type: regex_parser
+            id: sev-json
+            parse_from: body
+            parse_to: attributes["hdx.sev"]
+            regex: '"(?:level|severity)"\s*:\s*"(?P<level>[A-Za-z]+)"'
+            on_error: send
+            output: sev-strip
+            severity:
+              parse_from: attributes["hdx.sev"].level
+
+          # logfmt: the argocd family, external-dns, actions-runner.
+          - type: regex_parser
+            id: sev-logfmt
+            parse_from: body
+            parse_to: attributes["hdx.sev"]
+            regex: '(?:^|\s)level=(?P<level>[A-Za-z]+)'
+            on_error: send
+            output: sev-strip
+            severity:
+              parse_from: attributes["hdx.sev"].level
+
+          # klog: a single leading letter then MMDD, e.g. `E0820 22:06:05`.
+          - type: regex_parser
+            id: sev-klog
+            parse_from: body
+            parse_to: attributes["hdx.sev"]
+            regex: '^(?P<level>[EWIF])[0-9]{4} [0-9]{2}:'
+            on_error: send
+            output: sev-strip
+            severity:
+              parse_from: attributes["hdx.sev"].level
+              mapping:
+                error: E
+                warn: W
+                info: I
+                fatal: F
+
+          # ClickHouse server and keeper: `<Trace>`, `<Error>`.
+          - type: regex_parser
+            id: sev-clickhouse
+            parse_from: body
+            parse_to: attributes["hdx.sev"]
+            regex: '<(?P<level>Trace|Debug|Information|Warning|Error|Fatal)>'
+            on_error: send
+            output: sev-strip
+            severity:
+              parse_from: attributes["hdx.sev"].level
+              mapping:
+                info: Information
+
+          # Bracketed: calico, coredns, harbor, rancher.
+          - type: regex_parser
+            id: sev-bracket
+            parse_from: body
+            parse_to: attributes["hdx.sev"]
+            regex: '\[(?P<level>TRACE|DEBUG|INFO|INFORMATION|NOTICE|WARN|WARNING|ERROR|FATAL|CRITICAL)\]'
+            on_error: send
+            output: sev-strip
+            severity:
+              parse_from: attributes["hdx.sev"].level
+              mapping:
+                info: [INFORMATION, NOTICE]
+                fatal: CRITICAL
+
+          # A delimited bare token: Rust tracing and the engine's own
+          # `<ts> - <logger> - LEVEL - <msg>`, plus logback, zap and postgres.
+          - type: regex_parser
+            id: sev-token
+            parse_from: body
+            parse_to: attributes["hdx.sev"]
+            regex: '(?:^|[ \t])(?P<level>TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL|PANIC|trace|debug|info|warn|warning|error|fatal)(?:[ \t:]|$)'
+            on_error: send
+            output: sev-strip
+            severity:
+              parse_from: attributes["hdx.sev"].level
+              mapping:
+                fatal: [CRITICAL, PANIC]
+
+          # The captured token is scaffolding; the parsed severity is the output.
+          - type: remove
+            id: sev-strip
+            field: attributes["hdx.sev"]
+            on_error: send
+            output: noop
+
+          - type: noop
+            id: noop
+          {{- end }}
       hostmetrics:
         collection_interval: 30s
         scrapers:
@@ -358,7 +508,20 @@ data:
       k8sattributes:
         auth_type: serviceAccount
         extract:
-          metadata: [k8s.namespace.name, k8s.pod.name, k8s.node.name]
+          metadata: [k8s.namespace.name, k8s.pod.name, k8s.node.name, k8s.deployment.name]
+      # Container logs carry no service.name, so every filelog row lands with an
+      # empty ServiceName and a group-by-service tile collapses to one bucket.
+      # The filelog `container` operator already parses k8s.container.name out of
+      # the pod log path, so the name only needs promoting. Container name first
+      # (a pod can run several), then the workload, then the pod.
+      transform/log_service_name:
+        error_mode: ignore
+        log_statements:
+          - context: resource
+            statements:
+              - set(attributes["service.name"], attributes["k8s.container.name"]) where attributes["service.name"] == nil and attributes["k8s.container.name"] != nil
+              - set(attributes["service.name"], attributes["k8s.deployment.name"]) where attributes["service.name"] == nil and attributes["k8s.deployment.name"] != nil
+              - set(attributes["service.name"], attributes["k8s.pod.name"]) where attributes["service.name"] == nil and attributes["k8s.pod.name"] != nil
       # Node-scoped metrics carry no pod, so k8sattributes cannot enrich them and
       # they arrive with an empty ServiceName. Both attributes are set here instead.
       resource/node:
@@ -381,7 +544,7 @@ data:
       pipelines:
         logs:
           receivers: [filelog]
-          processors: [k8sattributes, batch]
+          processors: [k8sattributes, transform/log_service_name, batch]
           exporters: [otlp/gateway]
         metrics:
           receivers:
