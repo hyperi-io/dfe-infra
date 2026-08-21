@@ -24,6 +24,11 @@ healthCheckPort: 13133
 
 gateway:
   replicas: 1
+  # Adds the `debug` exporter to the traces and logs pipelines, which prints one
+  # line per batch to the collector's own log. Off by default: at a few hundred
+  # records a second it is the loudest thing in the namespace and it tells an
+  # operator nothing the pipeline metrics do not.
+  debugExporter: false
   # Gateway PDB (templates/gateway-pdb.yaml): renders only when replicas >= 2,
   # same drain-safety gating as dfe-common.pdb. maxUnavailable defaults to 1.
   pdb:

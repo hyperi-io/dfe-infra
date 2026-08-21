@@ -10,6 +10,11 @@ spec:
       app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
   template:
     metadata:
+      annotations:
+        # The collector reads its config once, at start. Without this the pods
+        # keep running the config they were born with and every later edit is
+        # silently inert -- the same annotation every DFE app chart carries.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
     spec:

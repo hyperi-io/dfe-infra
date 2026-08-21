@@ -257,8 +257,12 @@ data:
       prometheus:
         endpoint: 0.0.0.0:{{ .Values.gateway.service.prometheusPort }}
         metric_expiration: 5m
+      {{- if .Values.gateway.debugExporter }}
+      # Prints a line per batch to the collector's own log. Diagnostic only: on a
+      # busy deploy it is the loudest thing in the namespace.
       debug:
         verbosity: basic
+      {{- end }}
 
     service:
       extensions: [health_check]
@@ -277,7 +281,9 @@ data:
           receivers: [otlp]
           processors: [memory_limiter, batch]
           exporters:
+            {{- if .Values.gateway.debugExporter }}
             - debug
+            {{- end }}
             {{- if .Values.exporters.clickhouse.enabled }}
             - clickhouse
             {{- end }}
@@ -347,7 +353,9 @@ data:
           receivers: [otlp]
           processors: [memory_limiter, batch]
           exporters:
+            {{- if .Values.gateway.debugExporter }}
             - debug
+            {{- end }}
             {{- if .Values.exporters.clickhouse.enabled }}
             - clickhouse
             {{- end }}
