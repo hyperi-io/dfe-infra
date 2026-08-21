@@ -92,6 +92,37 @@ auth:
   # until a deployment states otherwise.
   trustProxyHeaders: false
 
+# Stable named local logins (dfe-infra #106). The engine reconciles these on
+# every boot -- the configured password and groups WIN -- so a teardown+rebuild
+# restores the exact shared team logins unchanged, instead of the random-on-
+# first-boot break-glass admin. The chart creates seedAuth.secretName from these
+# values and wires the two env vars the engine reads.
+#
+# DEFAULT-OFF: empty adminPassword + empty seedAccounts => no Secret, no env, a
+# vanilla deploy is unaffected and the engine mints its usual random admin. This
+# is a PRODUCT; devex is one deployment, so the default stays inert.
+#
+# Real values NEVER live here (this chart ships publicly). Set them in the
+# gitignored .env / the deploy-repo overlay. Each seed account is
+# {username, password, groups}; groups must be engine group names
+# (dfe-admins, dfe-analysts, dfe-viewers, dfe-infra) -- the engine skips unknown
+# groups. Example:
+#   seedAuth:
+#     adminPassword: "<stable break-glass admin password>"
+#     seedAccounts:
+#       - username: alice
+#         password: "<strong password>"
+#         groups: [dfe-analysts]
+seedAuth:
+  # Chart-created Secret holding seed-accounts (JSON) + admin-password.
+  secretName: dfe-engine-seed-accounts
+  # Stable break-glass admin password. Empty -> engine mints a random one on
+  # first boot. Seeded only into an empty store (sets the initial credential),
+  # NOT reconciled every boot, so an operator's later rotation still wins.
+  adminPassword: ""
+  # Named accounts reconciled on every boot (config wins). Empty -> no seeding.
+  seedAccounts: []
+
 # OIDC provider credentials — mounted as env vars from K8s Secrets.
 # dfe-engine is the SSoT: it writes provider secrets to Vault and renders this
 # oidc config into the gitops repo; ESO materialises the K8s Secrets. Deploy is
