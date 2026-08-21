@@ -23,10 +23,14 @@ Requires an authenticated `gh` (the packages API needs read:packages).
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
 import sys
 from pathlib import Path
+
+# The tag -> digest lookup lives in registry_pins so this checker and the
+# resolve_pins writer share ONE definition (dfe-infra#116). Imported by path so
+# it works whether check_image_pins is run as a script or imported.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from registry_pins import RegistryError, package_tags, version_key  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSIONS = REPO_ROOT / "versions.yaml"
@@ -58,46 +62,6 @@ def _find_section(tree: object, name: str) -> dict[str, str]:
     return {}
 
 
-def package_tags(org: str, app: str) -> dict[str, str]:
-    """Map tag -> digest for every tagged version of the container package."""
-    proc = subprocess.run(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            f"/orgs/{org}/packages/container/{app}/versions?per_page=100",
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or "gh api failed")
-
-    # --paginate concatenates JSON arrays; parse each one.
-    tags: dict[str, str] = {}
-    decoder = json.JSONDecoder()
-    text = proc.stdout.strip()
-    idx = 0
-    while idx < len(text):
-        chunk, end = decoder.raw_decode(text, idx)
-        for version in chunk:
-            digest = version.get("name", "")
-            for tag in version.get("metadata", {}).get("container", {}).get("tags", []):
-                tags[tag] = digest
-        idx = end
-        while idx < len(text) and text[idx].isspace():
-            idx += 1
-    return tags
-
-
-def version_key(tag: str) -> tuple[int, ...]:
-    """Numeric sort key so v1.18.19 ranks above v1.18.9, unlike a string sort."""
-    return tuple(int(part) if part.isdigit() else 0 for part in tag.lstrip("v").split("."))
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", action="append", help="check only these apps")
@@ -126,7 +90,7 @@ def main() -> int:
 
         try:
             tags = package_tags(args.org, app)
-        except RuntimeError as exc:
+        except RegistryError as exc:
             failures.append(f"  [api]     {app}: {exc}")
             continue
 
