@@ -48,6 +48,12 @@ Subcommands:
                also destroy terraform state.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
                or just the readiness gate.
+  pin          Resolve a pinned version (tag) to its current GHCR digest and,
+               with --write, set the current stack's digests: in versions.yaml
+               (supply-chain cooldown honoured). --check is the read-only "are my
+               pins fresh" gate. Kills the hand look-up-a-sha-and-paste loop. The
+               tag->digest core (scripts/registry_pins.py) is what dfe-deploy
+               reuses to resolve an overlay's image.tag.
 
 Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
 this file is committed publicly, so substitute your own node):
@@ -115,6 +121,11 @@ HELM_CHARTS = REPO_ROOT / "helm" / "charts"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
 DFE_STACK = SCRIPTS / "dfe-stack"
 DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
+
+# `pin` (version -> registry digest resolve/check/write) lives in resolve_pins so
+# the standalone tool and `dfe-ops pin` are one code path (dfe-infra#116).
+sys.path.insert(0, str(SCRIPTS))
+from resolve_pins import add_pin_subparser  # noqa: E402
 
 # The deploy MODES (== the appset profile value each selects). One lever --
 # DFE_PROFILE -- drives the whole stack: the cluster secret's label (which gates
@@ -1296,6 +1307,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vf.add_argument("--readiness-only", action="store_true", help="run only the readiness gate (pods Ready)")
     vf.set_defaults(func=cmd_verify)
+
+    # pin -- resolve a version's registry digest and (with --write) set the
+    # current stack's digests: in versions.yaml. Registered from resolve_pins.
+    add_pin_subparser(sub)
 
     return ap
 
