@@ -446,6 +446,15 @@ CHECKS += [
         Path("helm/charts/hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
     ),
+    # The chart directory is `hyperdx` while the pin is `apps.dfe-hyperdx`, so it
+    # does not fit _APP_CHARTS' name-derived path. Left unchecked it kept upstream
+    # HyperDX's own appVersion, which is not a tag the fork ever publishes.
+    Check(
+        "hyperdx chart appVersion",
+        "content.dfe-hyperdx",
+        Path("helm/charts/hyperdx/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
 ]
 
 
@@ -463,7 +472,7 @@ UNCONSUMED: dict[str, str] = {
     "services.cnpg-cluster-instances": "replica count, overridden per profile",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
-    "services.hyperdx": "the hyperdx chart's appVersion carries it and agrees, but CLAUDE.md routes hyperdx-chart work through a dfe-engine issue first, so it is waived rather than checked here",
+    "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
     "services.envoy-proxy": "docker path only; k8s installs envoy-gateway, which carries its own proxy image",
     "digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
     "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
@@ -528,11 +537,6 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "helm/library/dfe-common/tests/lint-test/*",
         "*",
         "helm-lint fixture, not a deployed chart",
-    ),
-    (
-        "helm/charts/hyperdx/Chart.yaml",
-        "appVersion",
-        "agrees with services.hyperdx, but CLAUDE.md routes hyperdx-chart work through a dfe-engine issue first",
     ),
     (
         "helm/charts/forgejo/values.yaml",
