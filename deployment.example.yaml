@@ -78,7 +78,7 @@ registry: ghcr.io/hyperi-io
 ## expands into the per-component version set. track-latest is the opt-in daemon
 ## roll to the newest certified stack tag.
 version:
-  pin: 2.2.0-rc.3
+  pin: 2.2.0-rc.4
   # track: latest
   # allow_prerelease: "false"
 
