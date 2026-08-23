@@ -30,6 +30,10 @@ spec:
           # backendRef never dangles in the release namespace.
           - name: appNamespace
             value: ${DFE_NAMESPACE}
+          # The deployment domain's one seam is the deploy env; a parameter
+          # beats every valueFile, so no overlay can pin a stale domain.
+          - name: domain
+            value: ${DFE_DOMAIN}
     - repoURL: ${DFE_CONFIG_REPO_URL}
       targetRevision: ${DFE_CONFIG_REPO_REVISION}
       ref: values
