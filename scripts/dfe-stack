@@ -273,12 +273,21 @@ def render_docker(v: dict, registry: str, label: str) -> str:
     unp = unpublished_apps(v)
     if unp:
         lines.append(f"# NOT YET PUBLISHED (excluded): {', '.join(_docker_app_var(n) for n in unp)}")
+
+    # The HyperDX fork is versioned under content:, so the apps loop misses it,
+    # and dfe-docker's compose fails loud on the missing variable.
+    lines.append("")
+    lines.append("# ---- HyperDX fork (class A, versioned under content:) ----")
     hx = v.get("content", {}).get("dfe-hyperdx", "")
     if not hx or hx.startswith("PENDING"):
         lines.append(
             "# DFE_HYPERDX_VERSION -- fork image not yet published "
             "(content.dfe-hyperdx PENDING); set manually or wait for first image."
         )
+    else:
+        hx_digest = digests.get("dfe-hyperdx", "")
+        lines.append(f"DFE_HYPERDX_VERSION={hx}@{hx_digest}" if hx_digest
+                     else f"DFE_HYPERDX_VERSION={hx}")
     return "\n".join(lines) + "\n"
 
 
