@@ -36,12 +36,11 @@ dlq:
   topic: dfe_loader_dlq
   mode: kafka_only
 
-# Internal Service. grpcPort carries the receiver -> loader direct-gRPC path (the
-# no-Kafka transport). 6000 is the DFE gRPC convention: the receiver listens on
-# 6000 (dfe-receiver config default bind_address 0.0.0.0:6000) and names the
-# loader target as grpc://loader.internal:6000 (dfe-receiver src/error.rs:257);
-# the loader's own GrpcConfig documents "0.0.0.0:6000" (dfe-loader
-# src/config/kafka.rs:80). The config blob's grpc.listen port MUST match this.
+# Internal Service. grpcPort carries the receiver -> loader direct-gRPC path
+# (the no-Kafka transport); 6000 is the DFE gRPC convention. The loader's
+# grpc.listen has NO default and is REQUIRED in grpc mode (GrpcConfig,
+# dfe-loader src/config/kafka.rs:82) -- the deployment template derives it
+# from this port, so they cannot drift.
 service:
   type: ClusterIP
   grpcPort: 6000
