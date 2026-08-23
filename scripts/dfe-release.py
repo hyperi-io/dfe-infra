@@ -18,7 +18,8 @@ delete a repo, or change settings.
 Subcommands (each is one `gh` orchestration):
   open     Create the PR for a pushed branch (prints the PR number).
   merge    Merge a PR to main (--merge, preserving the typed commits for
-           semantic-release; --admin to bypass required checks on an authorised run).
+           semantic-release; --publish squash-merges with the release trailer so the
+           merge itself ships; --admin to bypass required checks on an authorised run).
   dispatch Trigger the CI workflow with from-head=true (runs semantic-release +
            the GHCR image build/publish).
   wait     Poll the latest CI run to completion; prints its conclusion. Long-running
@@ -35,6 +36,9 @@ import sys
 import time
 
 ORG = "hyperi-io"
+
+# The release workflow greps a main-branch push message for this exact trailer.
+PUBLISH_TRAILER = "Publish: true"
 
 # Fixed allowlist -- the DFE app repos this tool may release. Not open slather.
 ALLOWED_REPOS = {
@@ -89,6 +93,8 @@ def cmd_open(a: argparse.Namespace) -> int:
 
 def cmd_merge(a: argparse.Namespace) -> int:
     repo = _repo(a.repo)
+    if a.publish:
+        return _merge_publishing(repo, a)
     cmd = ["pr", "merge", str(a.pr), "-R", repo, "--merge"]
     if a.admin:
         cmd.append("--admin")
@@ -96,6 +102,37 @@ def cmd_merge(a: argparse.Namespace) -> int:
         cmd.append("--delete-branch")
     proc = _gh(cmd, check=False)
     print((proc.stdout + proc.stderr).strip())
+    return proc.returncode
+
+
+def _merge_publishing(repo: str, a: argparse.Namespace) -> int:
+    """Squash-merge with the release trailer, so the merge itself ships.
+
+    The publish workflow only fires on a `refs/heads/main` push whose message
+    carries `Publish: true`, and a squash merge replaces the branch commits with
+    the message given here -- so the trailer belongs on the squash message, not
+    on any commit in the branch. One landing instead of merge-then-dispatch.
+    """
+    view = _gh(["pr", "view", str(a.pr), "-R", repo, "--json", "title,body"], check=False)
+    if view.returncode != 0:
+        print(view.stderr.strip(), file=sys.stderr)
+        return view.returncode
+    pr = json.loads(view.stdout or "{}")
+    subject = a.subject or pr.get("title") or f"fix: land #{a.pr}"
+    pr_lines = (pr.get("body") or "").strip().splitlines()
+    note = a.note or (pr_lines[0] if pr_lines else "")
+    body = f"{note}\n\n{PUBLISH_TRAILER}" if note else PUBLISH_TRAILER
+
+    cmd = ["pr", "merge", str(a.pr), "-R", repo, "--squash",
+           "--subject", subject, "--body", body]
+    if a.admin:
+        cmd.append("--admin")
+    if a.delete_branch:
+        cmd.append("--delete-branch")
+    proc = _gh(cmd, check=False)
+    print((proc.stdout + proc.stderr).strip())
+    if proc.returncode == 0:
+        print(f"squashed with the release trailer -- {repo} will publish from main")
     return proc.returncode
 
 
@@ -194,6 +231,10 @@ def main() -> int:
     pm.add_argument("--pr", required=True, type=int)
     pm.add_argument("--admin", action="store_true")
     pm.add_argument("--delete-branch", action="store_true")
+    pm.add_argument("--publish", action="store_true",
+                    help="squash-merge with the Publish: true trailer -- the merge itself releases")
+    pm.add_argument("--subject", help="squash subject (default: the PR title)")
+    pm.add_argument("--note", help="squash body line (default: the PR body's first line)")
     pm.set_defaults(func=cmd_merge)
 
     pd = sub.add_parser("dispatch", help="trigger the CI release workflow")

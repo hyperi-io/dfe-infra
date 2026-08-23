@@ -454,11 +454,36 @@ def cmd_teardown(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    """Run the smoke suite against the SAME env the deploy used.
+
+    Without the env files the suite falls back to its compiled-in namespace
+    defaults -- `dfe` rather than the deployed `dfe-local` -- and then reports a
+    healthy stack as broken, one FAIL per namespace-scoped check.
+    """
     name = "smoke-test-readiness.sh" if args.readiness_only else "run-all-smoke-tests.sh"
     script = _require_script(name)
     if script is None:
         return 1
-    return _run_streaming(["bash", str(script)])
+
+    env = dict(os.environ)
+    if args.from_terraform:
+        sys.path.insert(0, str(BOOTSTRAP))
+        from bridge import get_tf_outputs
+
+        tf = {k: v for k, v in get_tf_outputs(args.from_terraform).items()
+              if k.startswith("DFE_")}
+        env.update(tf)
+        print(f"  loaded {len(tf)} DFE_* var(s) from terraform {args.from_terraform}",
+              file=sys.stderr)
+    for env_file in args.env_file:
+        loaded = _parse_env_file(env_file)
+        env.update(loaded)
+        print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
+    if args.kubeconfig:
+        env["KUBECONFIG"] = args.kubeconfig
+    if args.mode:
+        env["DFE_PROFILE"] = args.mode
+    return _run_streaming(["bash", str(script)], env=env)
 
 
 # --- stack-deploy subcommand (the pinned-stack + mode k8s deploy driver) ------
@@ -1076,7 +1101,13 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     if args.target_revision:
         deploy_cmd += ["--target-revision", args.target_revision]
     stages.append(("deploy+e2e", deploy_cmd))
-    stages.append(("smoke", [*self_cmd, "verify"]))
+    # The smoke stage needs the deploy's env too, not just its cluster: the
+    # namespaces it checks come from those same sources.
+    smoke_cmd = [*self_cmd, "verify", "--mode", args.mode,
+                 *passthrough_kube, *passthrough_env]
+    if args.from_terraform:
+        smoke_cmd += ["--from-terraform", args.from_terraform]
+    stages.append(("smoke", smoke_cmd))
 
     results: list[tuple[str, int, float]] = []
     aborted = False
@@ -1306,6 +1337,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     vf.add_argument("--readiness-only", action="store_true", help="run only the readiness gate (pods Ready)")
+    vf.add_argument("--kubeconfig", help="kubeconfig for the target cluster")
+    vf.add_argument("--env-file", action="append", default=[], metavar="PATH",
+                    help="DFE_* env file the deploy used (repeatable; later wins). Without it the suite uses its default namespaces and fails a healthy stack.")
+    vf.add_argument("--mode", choices=MODES, help="deploy profile, so the suite knows whether a broker is expected")
+    vf.add_argument("--from-terraform", metavar="TF_DIR",
+                    help="read DFE_* outputs from this terraform environment, as the deploy did (supplies DFE_NAMESPACE)")
     vf.set_defaults(func=cmd_verify)
 
     # pin -- resolve a version's registry digest and (with --write) set the

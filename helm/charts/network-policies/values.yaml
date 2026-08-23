@@ -27,6 +27,11 @@ operatorNamespaces:
 # Envoy Gateway namespace (source of ingress traffic)
 gatewayNamespace: envoy-gateway-system
 
+# Autoscaler namespace. KEDA polls the in-namespace keda-shim for the pressure
+# metric, so without this the metrics-api scaler times out and nothing scales.
+kedaNamespace: keda
+kedaShimPort: 8080
+
 # OTel Collector namespace (all pods can send telemetry here)
 otelNamespace: otel
 otelPort: 4317

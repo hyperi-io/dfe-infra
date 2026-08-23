@@ -24,4 +24,14 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: {{ . }}
     {{- end }}
+    {{- if $.Values.kedaNamespace }}
+    # KEDA polls the keda-shim for the scaling-pressure metric.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.kedaNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.kedaShimPort }}
+    {{- end }}
 {{- end }}

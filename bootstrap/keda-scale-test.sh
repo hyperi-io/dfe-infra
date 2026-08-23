@@ -17,14 +17,19 @@
 #                                      [--shim dfe-keda-shim.dfe.svc.cluster.local:8080]
 set -euo pipefail
 
-NS="dfe"
-CH_NS="clickhouse"
-CH_SELECTOR="app.kubernetes.io/name=clickhouse"
-SHIM="dfe-keda-shim.dfe.svc.cluster.local:8080"
-TARGET="keda-scale-test"
+NS="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
+CH_NS="${DFE_CH_NS:-clickhouse}"
+CH_SELECTOR="${DFE_CH_SELECTOR:-app.kubernetes.io/name=dfe-clickhouse}"
+SHIM="${DFE_KEDA_SHIM:-dfe-keda-shim.${NS}.svc.cluster.local:8080}"
+# Unique per run. Cleanup deletes the injected rows through an ALTER ... DELETE
+# mutation, which is asynchronous, so a fixed name lets the previous run's zeros
+# sit inside the shim's 60s averaging window and hold the next run below target.
+TARGET="keda-scale-test-$$-${RANDOM}"
 OTEL_DB="dfe"
 SCALE_OUT_TIMEOUT=120   # seconds to reach 2 replicas (pollingInterval + KEDA reaction)
-SCALE_IN_TIMEOUT=180    # seconds to return to 1 (shim 60s window + cooldown 30s + slack)
+# Above minReplicaCount 0 the HPA's own scale-down stabilization window governs,
+# and its default is 300s -- cooldownPeriod only applies to scale-to-zero.
+SCALE_IN_TIMEOUT="${DFE_SCALE_IN_TIMEOUT:-420}"
 
 while [ $# -gt 0 ]; do
     case "$1" in

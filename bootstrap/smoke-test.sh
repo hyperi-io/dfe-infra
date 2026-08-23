@@ -37,7 +37,7 @@ echo ""
 echo "--- Core Pods ---"
 check "ArgoCD server running" "kubectl -n argocd get deploy argocd-server -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 check "ArgoCD repo-server running" "kubectl -n argocd get deploy argocd-repo-server -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
-check "Valkey running" "kubectl -n argocd get statefulset dfe-valkey-master -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
+check "Valkey running" "kubectl -n argocd get deploy valkey -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 check "cert-manager running" "kubectl -n cert-manager get deploy cert-manager -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 check "ESO running" "kubectl -n external-secrets get deploy external-secrets -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 check "Envoy Gateway running" "kubectl -n envoy-gateway-system get deploy envoy-gateway -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
@@ -50,7 +50,10 @@ check "Root ApplicationSet exists" "kubectl -n argocd get applicationset dfe-clu
 
 echo ""
 echo "--- ESO ---"
-check "ClusterSecretStore healthy" "kubectl get clustersecretstore dfe-secret-store -o jsonpath='{.status.conditions[0].status}' | grep -q True"
+# Assert on the secrets the deploy consumes, not on one named store: an unused
+# optional store is not a broken deployment.
+check "every ExternalSecret is synced" \
+  "test -n \"\$(kubectl get externalsecrets -A -o name 2>/dev/null)\" && ! kubectl get externalsecrets -A -o jsonpath='{range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{\"\n\"}{end}' | grep -q False"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

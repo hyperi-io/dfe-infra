@@ -16,8 +16,10 @@ check "KEDA operator running" "kubectl -n keda get deploy keda-operator -o jsonp
 check "KEDA metrics server" "kubectl -n keda get deploy keda-operator-metrics-apiserver -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 echo ""
 echo "--- ScaledObjects ---"
-check "receiver ScaledObject exists" "kubectl get scaledobject dfe-receiver-scaler --all-namespaces -o name | grep -q scaledobject"
-check "loader ScaledObject exists" "kubectl get scaledobject dfe-loader-scaler --all-namespaces -o name | grep -q scaledobject"
+# kubectl refuses a named resource together with --all-namespaces, so these
+# search the cluster-wide listing by name instead.
+check "receiver ScaledObject exists" "kubectl get scaledobject -A -o name | grep -q '/dfe-receiver-scaler\$'"
+check "loader ScaledObject exists" "kubectl get scaledobject -A -o name | grep -q '/dfe-loader-scaler\$'"
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 if (( FAIL > 0 )); then echo "KEDA is NOT healthy."; exit 1
