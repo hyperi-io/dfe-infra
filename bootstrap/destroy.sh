@@ -57,6 +57,10 @@ echo "==> [4/7] Deleting DFE namespaces"
 for ns in strimzi kafka clickhouse clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx keda reloader external-dns redpanda-operator forgejo gitea links; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
+# KEDA registers the external-metrics APIService cluster-wide; deleting its
+# namespace strands the registration, which wedges the metrics API and every
+# later readiness/teardown pass that touches it.
+run kubectl delete apiservice v1beta1.external.metrics.k8s.io --ignore-not-found 2>/dev/null || true
 # Delete any dfe-* namespaces. grep exits 1 on no match, which pipefail
 # would turn into an abort on an already-clean cluster.
 if [[ "${DRY_RUN}" != "true" ]]; then
