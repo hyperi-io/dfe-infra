@@ -48,9 +48,13 @@ set -uo pipefail
 # (live-proven 2026-07-16: NS_KAFKA defaulted to `kafka` while the broker was in
 # `strimzi`, so CORE 3 reported a reassuring SKIP and the seam went untested).
 NS_FERRET="${DFE_FERRET_NS:-cnpg}"
-NS_HYPERDX="${DFE_HYPERDX_NS:-hyperdx}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
 NS_APP="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
+# HyperDX ships as an app, so it lands in the app namespace; the bare `hyperdx`
+# namespace bootstrap creates is empty legacy debris. Defaulting to that empty one
+# made the diagnostic below announce "HyperDX is NOT DEPLOYED" on a deploy where it
+# was running and CORE 1 had just passed through it.
+NS_HYPERDX="${DFE_HYPERDX_NS:-$NS_APP}"
 NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
 
 # Which tier is this? A tier that runs a broker MUST prove the kafka seam; only a
@@ -343,18 +347,14 @@ check "ClickHouse answers a query (dfe DB present)" \
 # hyperdx -> ferretdb (app state). If CORE 1 fails, this tells you whether the
 # break is hyperdx<->ferretdb vs gateway<->hyperdx vs hyperdx<->clickhouse.
 #
-# Distinguish "HyperDX is broken" from "HyperDX is not here", because right now it is
-# the latter and the two need very different actions. Live 2026-07-17: the hyperdx
-# namespace is EMPTY and no Argo Application deploys it -- the chart appears only in
-# preview-apps.yaml, never in a layer appset -- while telemetry.mode defaults to
-# hyperdx and points every service at dfe-hyperdx-otel:4317. So the whole stack has
-# been pushing OTLP at a backend the default deploy never installs, and CORE 1 above
-# cannot pass. That is a deploy-composition decision, not a smoke-test failure.
+# Distinguish "HyperDX is broken" from "HyperDX is not in this profile" -- the two
+# need very different actions, and slim deliberately omits it while telemetry.mode
+# still names it the default OTLP destination.
 if kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then
   check "hyperdx API reaches its ferretdb backend" \
     "kubectl -n $NS_HYPERDX exec deploy/dfe-hyperdx -- sh -c 'curl -fsS localhost:8080/api/health || wget -qO- localhost:8080/api/health' | grep -qiE 'ok|healthy|true'"
 else
-  skip "hyperdx->ferretdb -- HyperDX is NOT DEPLOYED (empty ns/$NS_HYPERDX, no Application). telemetry.mode=hyperdx names it as the DEFAULT OTLP destination, so CORE 1 self-telemetry cannot pass until it ships or the default changes."
+  skip "hyperdx->ferretdb -- no dfe-hyperdx deployment in ns/$NS_HYPERDX, so this profile does not ship it. CORE 1 above says whether the OTel path still reaches ClickHouse without it."
 fi
 
 # ferretdb -> PostgreSQL (DocumentDB backend) -- the layer under hyperdx state.

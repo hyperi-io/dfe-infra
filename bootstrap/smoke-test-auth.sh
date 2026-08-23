@@ -32,17 +32,20 @@ check "Gateway exists" "kubectl -n envoy-gateway-system get gateway dfe-gateway"
 check "Gateway programmed" "kubectl -n envoy-gateway-system get gateway dfe-gateway -o jsonpath='{.status.conditions[?(@.type==\"Programmed\")].status}' | grep -q True"
 
 echo ""
+echo ""
+# kubectl refuses a named resource together with --all-namespaces, so these
+# search the cluster-wide listing by name instead.
 echo "--- HTTPRoutes ---"
-check "dfe-ui HTTPRoute" "kubectl get httproute dfe-ui --all-namespaces -o name | grep -q httproute"
-check "dfe-engine HTTPRoute" "kubectl get httproute dfe-engine --all-namespaces -o name | grep -q httproute"
+check "dfe-ui HTTPRoute" "kubectl get httproute -A -o name | grep -q '/dfe-ui\$'"
+check "dfe-engine HTTPRoute" "kubectl get httproute -A -o name | grep -q '/dfe-engine\$'"
 check "argocd HTTPRoute" "kubectl -n argocd get httproute argocd"
-check "hyperdx HTTPRoute" "kubectl get httproute hyperdx --all-namespaces -o name | grep -q httproute"
+check "hyperdx HTTPRoute" "kubectl get httproute -A -o name | grep -q '/hyperdx\$'"
 
 echo ""
 echo "--- Network Policies ---"
-check "DFE namespace ingress policy" "kubectl get networkpolicy dfe-ingress-policy --all-namespaces -o name | grep -q networkpolicy"
+check "DFE namespace ingress policy" "kubectl get networkpolicy -A -o name | grep -q '/dfe-ingress-policy\$'"
 check "Data namespace ingress policy" "kubectl -n cnpg get networkpolicy data-ingress-policy"
-check "OTel egress policy" "kubectl get networkpolicy allow-otel-egress --all-namespaces -o name | grep -q networkpolicy"
+check "OTel egress policy" "kubectl get networkpolicy -A -o name | grep -q '/allow-baseline-egress\$'"
 
 echo ""
 echo "--- OIDC Providers (conditional) ---"
@@ -61,7 +64,7 @@ fi
 echo ""
 echo "--- OIDC Independence Check ---"
 check "Envoy Gateway runs without dfe-engine" \
-    "kubectl -n envoy-gateway-system get pods -l app.kubernetes.io/name=envoy-gateway -o jsonpath='{.items[0].status.phase}' | grep -q Running"
+    "kubectl -n envoy-gateway-system get pods -l control-plane=envoy-gateway -o jsonpath='{.items[0].status.phase}' | grep -q Running"
 check "SecurityPolicies are K8s CRDs (not dfe-engine managed)" \
     "[[ -z \"${OIDC_POLICIES}\" ]] || kubectl -n envoy-gateway-system get securitypolicy -o yaml | grep -q 'managed-by.*helm'"
 
