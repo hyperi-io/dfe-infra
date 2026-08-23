@@ -154,7 +154,7 @@ data:
             password: ${env:KAFKA_PASSWORD}
         {{- end }}
       {{- end }}
-      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled }}
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
       prometheus:
         config:
           scrape_configs:
@@ -201,6 +201,48 @@ data:
                 - source_labels: [__meta_kubernetes_pod_name]
                   action: replace
                   target_label: k8s_pod_name
+            {{- end }}
+            {{- if .Values.clusterTelemetry.platformComponents.enabled }}
+            # The data operators' controller metrics. Endpoint discovery, so an
+            # operator joins by exposing a metrics Service and needs no edit here.
+            - job_name: platform-components
+              scrape_interval: {{ .Values.clusterTelemetry.platformComponents.collectionInterval }}
+              # controller-runtime authorises the scrape against the /metrics
+              # nonResourceURL (see rbac.yaml); without a token it returns 403.
+              authorization:
+                type: Bearer
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              tls_config:
+                # The serving cert is issued by the operator's own cert-manager
+                # Issuer, which is not in the collector's trust store.
+                insecure_skip_verify: true
+              kubernetes_sd_configs:
+                - role: endpoints
+                  namespaces:
+                    names:
+                      {{- range $operator, $operatorNamespace := .Values.operatorNamespaces }}
+                      - {{ $operatorNamespace }}
+                      {{- end }}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_endpoint_port_name]
+                  action: keep
+                  regex: {{ .Values.clusterTelemetry.platformComponents.portNames | quote }}
+                # controller-runtime serves HTTPS on a port named `https`, and the
+                # port number carries no scheme, so the name is the only signal.
+                - source_labels: [__meta_kubernetes_endpoint_port_name]
+                  action: replace
+                  regex: https
+                  replacement: https
+                  target_label: __scheme__
+                - source_labels: [__meta_kubernetes_service_name]
+                  action: replace
+                  target_label: job
+                - source_labels: [__meta_kubernetes_pod_name]
+                  action: replace
+                  target_label: k8s_pod_name
+                - source_labels: [__meta_kubernetes_namespace]
+                  action: replace
+                  target_label: k8s_namespace_name
             {{- end }}
       {{- end }}
 
@@ -293,7 +335,9 @@ data:
         metrics:
           receivers:
             - otlp
-            {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
+            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
+            # One receiver carries every scrape job, so this must match the
+            # receiver's own gate or configured jobs are never routed anywhere.
             - prometheus
             {{- end }}
           processors: [memory_limiter, batch]

@@ -36,10 +36,13 @@ spec:
                 # internal n-tier cached operator + CH fork (docs/deployment/
                 # clickhouse.md). The Altinity operator is NOT tested with this
                 # stack -- do not substitute it and expect the CRs to hold.
+                # Namespace is upstream's own and MUST match common.yaml
+                # operatorNamespaces.clickhouse, which is what opens the
+                # NetworkPolicy the operator needs to probe Keeper and run DDL.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.7"
-                  namespace: clickhouse-operator
+                  namespace: clickhouse-operator-system
                   wave: "3"
                   appProject: infra
   template:
