@@ -306,8 +306,12 @@ P=/tmp/dfe-smoke.props
 $1
 KSH
     }
+    # Every assertion here captures kafka_cli's output before matching it. Piping
+    # straight into `grep -q` makes grep exit on the first hit, which SIGPIPEs the
+    # kubectl exec upstream; under pipefail the pipeline then reports 141 and a
+    # matching check FAILS.
     check "topic ${KAFKA_TOPIC} exists (created)" \
-      "kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -qw '${KAFKA_TOPIC}'"
+      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list')\" | grep -qw '${KAFKA_TOPIC}'"
     # kafka-get-offsets.sh, NOT `kafka-run-class.sh kafka.tools.GetOffsetShell`: that
     # class is GONE in Kafka 4.x (the DFE broker line), so the old check errored and
     # summed to 0 -- reporting "receiver never produced" while the topic was in fact
@@ -315,17 +319,17 @@ KSH
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
       "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:9092 --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -q ."
+      "test -n \"\$(kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --list')\""
     # The DLQ standard's topics must exist BEFORE the first poisoned message:
     # a DLQ write happens at failure time, when nothing can be creating topics,
     # and the file backend is an EROFS no-op under the read-only rootfs.
     for DLQ_TOPIC in dfe_receiver_dlq dfe_loader_dlq dfe_archiver_dlq dfe_fetcher_dlq dfe_transform_dlq; do
       check "DLQ topic ${DLQ_TOPIC} pre-created" \
-        "kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list' | grep -qw '${DLQ_TOPIC}'"
+        "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list')\" | grep -qw '${DLQ_TOPIC}'"
     done
     # Dead letters must outlive a weekend, against the 72h data-topic default.
     check "DLQ retention is longer than the data-topic default" \
-      "kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq' | grep -q 'retention.ms=604800000'"
+      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
   fi
 elif [ "$PROFILE" = "single" ] || [ "$PROFILE" = "scale" ]; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would
@@ -351,8 +355,10 @@ check "ClickHouse answers a query (dfe DB present)" \
 # need very different actions, and slim deliberately omits it while telemetry.mode
 # still names it the default OTLP destination.
 if kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then
+  # /readyz on the api port (8000) is what the pod's own readiness probe uses, and
+  # it only answers once the ferretdb-backed API is up. The image ships no curl.
   check "hyperdx API reaches its ferretdb backend" \
-    "kubectl -n $NS_HYPERDX exec deploy/dfe-hyperdx -- sh -c 'curl -fsS localhost:8080/api/health || wget -qO- localhost:8080/api/health' | grep -qiE 'ok|healthy|true'"
+    "printf '%s' \"\$(kubectl -n $NS_HYPERDX exec deploy/dfe-hyperdx -c hyperdx -- wget -qO- http://localhost:8000/readyz)\" | grep -qi 'ready'"
 else
   skip "hyperdx->ferretdb -- no dfe-hyperdx deployment in ns/$NS_HYPERDX, so this profile does not ship it. CORE 1 above says whether the OTel path still reaches ClickHouse without it."
 fi

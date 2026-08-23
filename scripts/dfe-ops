@@ -466,6 +466,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 1
 
     env = dict(os.environ)
+    if args.from_terraform:
+        sys.path.insert(0, str(BOOTSTRAP))
+        from bridge import get_tf_outputs
+
+        tf = {k: v for k, v in get_tf_outputs(args.from_terraform).items()
+              if k.startswith("DFE_")}
+        env.update(tf)
+        print(f"  loaded {len(tf)} DFE_* var(s) from terraform {args.from_terraform}",
+              file=sys.stderr)
     for env_file in args.env_file:
         loaded = _parse_env_file(env_file)
         env.update(loaded)
@@ -1093,11 +1102,12 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         deploy_cmd += ["--target-revision", args.target_revision]
     stages.append(("deploy+e2e", deploy_cmd))
     # The smoke stage needs the deploy's env too, not just its cluster: the
-    # namespaces it checks come from those files.
-    stages.append(("smoke", [
-        *self_cmd, "verify", "--mode", args.mode,
-        *passthrough_kube, *passthrough_env,
-    ]))
+    # namespaces it checks come from those same sources.
+    smoke_cmd = [*self_cmd, "verify", "--mode", args.mode,
+                 *passthrough_kube, *passthrough_env]
+    if args.from_terraform:
+        smoke_cmd += ["--from-terraform", args.from_terraform]
+    stages.append(("smoke", smoke_cmd))
 
     results: list[tuple[str, int, float]] = []
     aborted = False
@@ -1331,6 +1341,8 @@ def build_parser() -> argparse.ArgumentParser:
     vf.add_argument("--env-file", action="append", default=[], metavar="PATH",
                     help="DFE_* env file the deploy used (repeatable; later wins). Without it the suite uses its default namespaces and fails a healthy stack.")
     vf.add_argument("--mode", choices=MODES, help="deploy profile, so the suite knows whether a broker is expected")
+    vf.add_argument("--from-terraform", metavar="TF_DIR",
+                    help="read DFE_* outputs from this terraform environment, as the deploy did (supplies DFE_NAMESPACE)")
     vf.set_defaults(func=cmd_verify)
 
     # pin -- resolve a version's registry digest and (with --write) set the

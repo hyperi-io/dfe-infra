@@ -29,8 +29,10 @@ set -uo pipefail
 
 [ -n "${1:-}" ] && export KUBECONFIG="$1"
 
-NS_HYPERDX="${DFE_HYPERDX_NS:-hyperdx}"
 NS_APP="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
+# HyperDX ships as an app, so it lands in the app namespace; the bare `hyperdx`
+# namespace bootstrap creates is empty legacy debris.
+NS_HYPERDX="${DFE_HYPERDX_NS:-$NS_APP}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
 
 HYPERDX_DEPLOY="${DFE_HYPERDX_DEPLOY:-dfe-hyperdx}"
@@ -54,12 +56,14 @@ note() { echo "         $1"; }
 # changed between base-image bumps. Trying both stops a green seam reading as red
 # for a purely cosmetic reason.
 hdx_exec() {
-  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -- sh -c "$1" 2>/dev/null
+  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c hyperdx -- sh -c "$1" 2>/dev/null
 }
 
+# 127.0.0.1, never localhost: the frontend binds IPv4 only while the API binds
+# IPv6 too, so localhost resolves to ::1 and the frontend probe is refused.
 hdx_head() {
   local path="$1"
-  hdx_exec "curl -fsSI http://localhost:${HYPERDX_PORT}${path} 2>/dev/null || wget -qS --spider http://localhost:${HYPERDX_PORT}${path} 2>&1"
+  hdx_exec "curl -fsSI http://127.0.0.1:${HYPERDX_PORT}${path} 2>/dev/null || wget -qS --spider http://127.0.0.1:${HYPERDX_PORT}${path} 2>&1"
 }
 
 echo "=== DFE HyperDX seam smoke test (auth / data / embed) ==="
@@ -136,10 +140,16 @@ fi
 echo ""
 echo "=== SEAM 2: data (HyperDX queries the DFE ClickHouse) ==="
 
-CH_HOST="$(kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" \
-  -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="DEFAULT_CONNECTIONS")].value}' 2>/dev/null)"
-[ -z "$CH_HOST" ] && CH_HOST="$(kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" \
-  -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="CLICKHOUSE_ENDPOINT")].value}' 2>/dev/null)"
+hdx_env() {
+  kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" \
+    -o jsonpath="{.spec.template.spec.containers[*].env[?(@.name==\"$1\")].value}" 2>/dev/null
+}
+
+# The chart configures the connection as discrete CLICKHOUSE_* vars; the bundled
+# DEFAULT_CONNECTIONS blob is the upstream single-container form.
+CH_HOST="$(hdx_env CLICKHOUSE_HOST)"
+[ -z "$CH_HOST" ] && CH_HOST="$(hdx_env DEFAULT_CONNECTIONS)"
+[ -z "$CH_HOST" ] && CH_HOST="$(hdx_env CLICKHOUSE_ENDPOINT)"
 
 check "HyperDX has a ClickHouse connection configured" "[ -n '$CH_HOST' ]"
 
@@ -153,8 +163,16 @@ check "HyperDX pod reaches ClickHouse over HTTP (${CH_URL})" \
 # The query side of the same tables the integration test writes to. Rows may be
 # legitimately absent on a just-provisioned cluster, so assert the table RESOLVES;
 # freshness is the integration test's job.
+# ClickHouse serves /ping unauthenticated but rejects an unauthenticated query, so
+# the credentials come from HyperDX's own environment inside the pod. One helper,
+# one layer of quoting: threading the headers through check's eval mangles them.
+hdx_ch_query() {
+  # shellcheck disable=SC2016  # $CLICKHOUSE_* must reach the pod's shell, not expand here.
+  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c hyperdx -- sh -c \
+    'curl -fsS -H "X-ClickHouse-User: $CLICKHOUSE_USER" -H "X-ClickHouse-Key: $CLICKHOUSE_PASSWORD" "'"${CH_URL}"'/?query='"$1"'" 2>/dev/null || wget -q --header="X-ClickHouse-User: $CLICKHOUSE_USER" --header="X-ClickHouse-Key: $CLICKHOUSE_PASSWORD" -O- "'"${CH_URL}"'/?query='"$1"'"' 2>/dev/null
+}
 check "otel table ${OTEL_DB}.${OTEL_LOGS_TABLE} is queryable from HyperDX" \
-  "hdx_exec \"curl -fsS '${CH_URL}/?query=SELECT+count()+FROM+${OTEL_DB}.${OTEL_LOGS_TABLE}' || wget -qO- '${CH_URL}/?query=SELECT+count()+FROM+${OTEL_DB}.${OTEL_LOGS_TABLE}'\" | grep -qE '^[0-9]+'"
+  "printf '%s' \"\$(hdx_ch_query 'SELECT+count()+FROM+${OTEL_DB}.${OTEL_LOGS_TABLE}')\" | grep -qE '^[0-9]+'"
 
 # ---------------------------------------------------------------------------
 echo ""
