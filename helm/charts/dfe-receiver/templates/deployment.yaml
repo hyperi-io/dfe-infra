@@ -115,8 +115,10 @@ spec:
             {{- end }}
             {{- if eq (default "" .Values.kafka.mode) "disabled" }}
             # No-kafka profile: the DLQ's kafka backend is gone with the broker.
-            - name: DFE_RECEIVER_DLQ_MODE
-              value: "disabled"
+            # The receiver's mode vocabulary has no "disabled" word (unlike the
+            # loader); DLQ_ENABLED=false is its off-switch (config/mod.rs).
+            - name: DFE_RECEIVER_DLQ_ENABLED
+              value: "false"
             {{- else }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is

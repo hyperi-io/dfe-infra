@@ -54,8 +54,12 @@ spec:
             {{- if eq (default "" .Values.kafka.mode) "disabled" }}
             # No-kafka profile (slim): receiver -> loader direct gRPC on the
             # service grpcPort; the DLQ's kafka backend is gone with the broker.
+            # grpc.listen has NO default and is required in grpc mode
+            # (GrpcConfig, dfe-loader src/config/kafka.rs).
             - name: DFE_LOADER_TRANSPORT
               value: "grpc"
+            - name: DFE_LOADER_GRPC__LISTEN
+              value: {{ printf "0.0.0.0:%v" .Values.service.grpcPort | quote }}
             - name: DFE_LOADER_DLQ_MODE
               value: "disabled"
             {{- else }}
