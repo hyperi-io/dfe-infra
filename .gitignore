@@ -115,6 +115,10 @@ GEMINI.md
 # Playwright MCP session artefacts (interactive browser driving)
 .playwright-mcp/
 
+# kubectl's discovery cache, which lands here rather than under $HOME when a
+# tool invokes kubectl without one.
+.kube/
+
 # Local scratch / tmp (CORE.md: scratch goes here, gitignored, NOT
 # /tmp). Bare patterns (no leading slash) match a tmp dir at ANY
 # depth, so these cover top-level .tmp/ and tmp/ as well as nested
