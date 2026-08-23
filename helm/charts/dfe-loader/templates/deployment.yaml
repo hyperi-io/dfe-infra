@@ -51,6 +51,14 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
+            {{- if eq (default "" .Values.kafka.mode) "disabled" }}
+            # No-kafka profile (slim): receiver -> loader direct gRPC on the
+            # service grpcPort; the DLQ's kafka backend is gone with the broker.
+            - name: DFE_LOADER_TRANSPORT
+              value: "grpc"
+            - name: DFE_LOADER_DLQ_MODE
+              value: "disabled"
+            {{- else }}
             # Prefixed, like the SASL block below: the loader's flat-env contract is
             # DFE_LOADER_* (loader.rs:194), and a bare KAFKA_BOOTSTRAP_SERVERS matches
             # nothing, leaving the broker list on its localhost:9092 default.
@@ -80,6 +88,7 @@ spec:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: password
             {{- end }}
+            {{- end }}
             # Same prefix trap as the brokers above: bare CLICKHOUSE_* matched
             # nothing, so the loader kept its localhost:9000 / default / no-password
             # defaults. hosts is a LIST of host:port (loader.rs) and the port belongs
@@ -106,6 +115,7 @@ spec:
                   name: {{ . }}
                   key: {{ $.Values.clickhouse.passwordSecretKey | default "password" }}
             {{- end }}
+            {{- if ne (default "" .Values.kafka.mode) "disabled" }}
             # DLQ standard: fixed per-app topic on the kafka backend. The file
             # DLQ cannot work here -- the rootfs is read-only, so a file DLQ
             # write is an EROFS no-op and the poison message vanishes. The
@@ -115,6 +125,7 @@ spec:
               value: {{ .Values.dlq.topic | quote }}
             - name: DFE_LOADER_DLQ_MODE
               value: {{ .Values.dlq.mode | quote }}
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
