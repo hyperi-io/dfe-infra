@@ -11,4 +11,13 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- $cfg := deepCopy (.Values.config | default dict) }}
+    {{- if eq (default "" .Values.kafka.mode) "disabled" }}
+    {{- /* No-kafka profile: route the default destination to the loader over
+           direct gRPC. The receiver has no flat-env keys for loader.transport
+           or destinations.default (config/mod.rs apply_flat_env), so this is
+           the one seam that can set them. grpc_endpoint derives from address. */}}
+    {{- $_ := set $cfg "destinations" (mergeOverwrite (default dict (get $cfg "destinations")) (dict "default" "loader")) }}
+    {{- $_ := set $cfg "loader" (mergeOverwrite (default dict (get $cfg "loader")) (dict "address" .Values.loaderGrpcAddress "transport" "grpc")) }}
+    {{- end }}
+    {{- toYaml $cfg | nindent 4 }}

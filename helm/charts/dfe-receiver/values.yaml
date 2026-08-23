@@ -78,7 +78,14 @@ receiver:
   # + LBs above, not by binding a specific address.)
   listenAddress: "0.0.0.0"
 
+# Loader gRPC target for the no-kafka profiles (kafka.mode: disabled): the
+# loader Service name + its grpcPort. Same-namespace short name on purpose.
+loaderGrpcAddress: "dfe-loader:6000"
+
 kafka:
+  # "disabled" (set by the no-kafka profiles) drops every kafka env + secret ref
+  # and routes the default destination to the loader over direct gRPC.
+  mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
   # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |

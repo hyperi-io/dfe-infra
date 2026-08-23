@@ -11,6 +11,9 @@ image:
 replicaCount: 1
 
 kafka:
+  # "disabled" (set by the no-kafka profiles) drops every kafka env + secret ref
+  # and flips the transport to receiver -> loader direct gRPC. Empty = kafka on.
+  mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
   # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
