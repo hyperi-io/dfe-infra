@@ -8,6 +8,9 @@
 # <cloud>.yaml. Keys unknown to a chart are ignored by Helm.
 
 # DFE service deployments -- minimum viable + a little safety headroom.
+# Requests are the tier's real cost (scheduling); limits are only a runaway
+# cap. The 1Gi memory limit exists for hyperdx (multi-process Node: app + api
+# + alert-task + provisioner OOMs at 384Mi); the Rust apps never approach it.
 replicaCount: 1
 resources:
   requests:
@@ -15,7 +18,7 @@ resources:
     memory: 96Mi
   limits:
     cpu: 500m
-    memory: 384Mi
+    memory: 1Gi
 
 keda:
   minReplicas: 1

@@ -34,8 +34,11 @@ trap 'rm -f "$ISSUES_FILE"' EXIT
 run_check() {
   : > "$ISSUES_FILE"
 
-  # Pods: real container readiness, phase, restart sanity.
-  while read -r ns name ready status restarts _; do
+  # Pods: real container readiness, phase, restart sanity. Restart counts are
+  # LIFETIME, so long-lived kube-system statics exceed any threshold forever.
+  # The recency kubectl prints beside the count ("19 (19h ago)") separates
+  # history from live churn: only a seconds/minutes-ago last restart is a fault.
+  while read -r ns name ready status restarts recency _; do
     case "$status" in Completed|Succeeded) continue ;; esac
     local have="${ready%%/*}" want="${ready##*/}"
     if [ "$status" != "Running" ]; then
@@ -43,7 +46,10 @@ run_check() {
     elif [ "$have" != "$want" ]; then
       echo "pod $ns/$name NOT READY ($ready)" >> "$ISSUES_FILE"
     elif [ "${restarts:-0}" -gt "$THRESH" ] 2>/dev/null; then
-      echo "pod $ns/$name runaway restarts ($restarts > $THRESH)" >> "$ISSUES_FILE"
+      case "$recency" in
+        \(*h*|\(*d*|\(*y*) : ;;
+        *) echo "pod $ns/$name runaway restarts ($restarts > $THRESH, last $recency ago)" >> "$ISSUES_FILE" ;;
+      esac
     fi
   done < <(kubectl get pods -A --no-headers 2>/dev/null)
 
