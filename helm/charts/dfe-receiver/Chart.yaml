@@ -3,7 +3,7 @@ name: dfe-receiver
 description: DFE Rust ingest service — listens on 100.64.x.x, Kafka producer
 type: application
 version: 0.1.0
-appVersion: "v1.15.23"   # == versions.yaml apps.dfe-receiver (drift-checked)
+appVersion: "v1.15.25"   # == versions.yaml apps.dfe-receiver (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.2.0"

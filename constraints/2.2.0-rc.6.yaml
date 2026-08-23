@@ -1,0 +1,67 @@
+# Compatibility constraints for DFE stack 2.2.0-rc.6.
+#
+# Referenced from versions.yaml stacks."2.2.0-rc.6".constraints.
+# Validated by: python3 scripts/dfe-stack compat-check --stack 2.2.0-rc.6
+#
+# The interdependency limitations we found live here MACHINE-READABLY (they were
+# prose comments before). Rules are keyed by ID (a MAP, not a list) so the
+# existing stdlib reader parses this with zero new parser code. Each rule is a
+# GUARD (`when-*` on one pin) plus a REQUIREMENT (`require-*` on another pin):
+# if the guard holds for this stack, the requirement MUST hold too.
+#   when-key + one of:  when-range | when-equals
+#   require-key + one of:  require-range | require-equals | require-matches | require-present
+#   *-range: whitespace-separated comparators (>= <= > < ==), ALL must hold.
+#   severity: error (blocks under --strict) | warn (advisory).
+# Version compare is TOLERANT (strip a leading v, leading-numeric dotted
+# segments), so 26.3.13.31 and v26.1.8 both parse. require-matches is a plain
+# substring test (for the 4-part ferretdb backend tag).
+#
+# License:   BUSL-1.1
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+
+schema: 1
+stack: "2.2.0-rc.6"
+
+rules:
+
+  strimzi-kafka-ceiling:
+    severity: "error"
+    when-key: "operators.strimzi-kafka-operator"
+    when-range: ">=0.51.0 <0.52.0"
+    require-key: "services.kafka-version"
+    require-range: ">=4.1.0 <=4.2.0"
+    reason: "strimzi 0.51 supports Apache Kafka 4.1.x-4.2.0 only. Past 4.2.0 fails the operator supported-version check and breaks the k8s path (the logical kafka-version is shared by both render paths, so this bounds docker too)."
+    source: "https://github.com/strimzi/strimzi-kafka-operator/blob/main/kafka-versions.yaml"
+
+  clickhouse-operator-server-range:
+    severity: "warn"
+    when-key: "operators.clickhouse-operator"
+    when-equals: "0.0.7"
+    require-key: "services.clickhouse-version"
+    require-range: ">=25.0.0 <27.0.0"
+    reason: "PLACEHOLDER bound -- the official clickhouse-operator 0.0.7 does not publish an explicit clickhouse-server compatibility range. Confirm the tested range and promote to error. Also verify the CRD kind (upstream docs say ClickHouseInstallation; our comment says ClickHouseCluster). NOTE: when-equals is an EXACT match, so this guard must be re-pointed on every clickhouse-operator bump or the rule silently stops firing."
+    source: "https://github.com/ClickHouse/clickhouse-operator/releases"
+
+  redpanda-operator-broker-pairing:
+    severity: "warn"
+    when-key: "operators.redpanda-operator"
+    when-equals: "26.1.6"
+    require-key: "services.redpanda-version"
+    require-equals: "v26.1.8"
+    reason: "redpanda-operator chart 26.1.6 is tested/paired with broker image v26.1.8. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
+    source: "https://github.com/redpanda-data/redpanda-operator/releases"
+
+  ferretdb2-requires-documentdb:
+    severity: "error"
+    when-key: "services.ferretdb"
+    when-range: ">=2.0.0"
+    require-key: "services.documentdb-pg"
+    require-matches: "ferretdb-2"
+    reason: "FerretDB 2.x REQUIRES the postgres-documentdb backend (a documentdb 2.x image). 1.x to 2.x is not in-place upgradable (dump/restore)."
+    source: "https://docs.ferretdb.io/"
+
+# Accepted, tracked exceptions the check must not fail on yet. A waiver names a
+# rule id it suppresses (or a free scope), a reason, an expiry, and a ref.
+# (None currently: the k8s-ferretdb-chart-lag waiver retired when the k8s
+# ferretdb chart moved to 2.x with its bundled documentdb backend.)
+waivers:
