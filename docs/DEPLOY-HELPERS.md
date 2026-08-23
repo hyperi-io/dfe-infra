@@ -26,6 +26,7 @@ repo, or change settings.
 |---|---|
 | `open --repo <r> --head <branch> --title <t> --body-file <f>` | Create the PR for a pushed branch; prints the PR number. Idempotent -- prints the existing PR if one is already open. `--base` defaults to `main`. |
 | `merge --repo <r> --pr <n> [--admin] [--delete-branch]` | Merge to main with `--merge`, preserving the typed feat/fix commits so semantic-release sees them. `--admin` bypasses required checks on an authorised run. |
+| `merge ... --publish [--subject <s>] [--note <n>]` | Squash-merge instead, stamping `Publish: true` on the squash message so the merge itself releases -- no separate `dispatch`. The squash subject is what `check-commits` validates on main, so its description must start lowercase; `--subject` overrides the PR title when it does not. |
 | `dispatch --repo <r> [--workflow CI] [--ref main]` | Trigger the CI workflow with `from-head=true`, which runs semantic-release plus the GHCR image build/publish. |
 | `wait --repo <r> [--workflow CI] [--interval 20] [--timeout 1800]` | Poll the latest CI run to completion; prints its conclusion. Long-running -- run it backgrounded. |
 | `digest --repo <r> --version <v>` | Resolve the sha256 digest GHCR published for a version tag, via `gh api /orgs/hyperi-io/packages/container/<r>/versions`. |
@@ -60,6 +61,12 @@ tag.
 1. Push the branch with typed commits, then release it:
 
        python3 scripts/dfe-release.py open --repo <r> --head <branch> --title <t> --body-file <f>
+       python3 scripts/dfe-release.py merge --repo <r> --pr <n> --publish --delete-branch
+
+   `--publish` lands and ships in one step. Without it, merge and then dispatch
+   separately -- which is also the recovery path when a squash message fails the
+   commit-message gate, since `dispatch` releases from head and skips it:
+
        python3 scripts/dfe-release.py merge --repo <r> --pr <n> --admin --delete-branch
        python3 scripts/dfe-release.py dispatch --repo <r>
 
