@@ -17,8 +17,8 @@
 {{- if not $obj.endpoint }}
 {{- fail "clickhouse.tiering.objectStorage.endpoint is required when clickhouse.tiering.mode is \"cache\"." }}
 {{- end }}
-{{- if not (has $obj.type (list "s3" "azure_blob_storage")) }}
-{{- fail (printf "clickhouse.tiering.objectStorage.type %q is not one of s3, azure_blob_storage." $obj.type) }}
+{{- if ne $obj.type "s3" }}
+{{- fail (printf "clickhouse.tiering.objectStorage.type %q is not supported. Only \"s3\" is implemented, which also covers GCS via its S3-compatible endpoint. azure_blob_storage takes storage_account_url, container_name and account_name/account_key rather than the s3 keys, and is not wired up." $obj.type) }}
 {{- end }}
 {{- end }}
 # CLUSTER-MODE CONFIG NOTE (dfe-infra#4.2): the earlier exit-231 crashloop here was

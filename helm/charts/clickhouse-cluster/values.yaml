@@ -109,7 +109,9 @@ clickhouse:
       # Populates the cache on write, which ties INSERT success to cache health.
       cacheOnWrite: false
     objectStorage:
-      # s3 (also GCS via its S3-compatible endpoint) or azure_blob_storage.
+      # s3 only, which also covers GCS via its S3-compatible endpoint.
+      # azure_blob_storage takes a different set of config keys and is not
+      # wired up yet.
       type: s3
       endpoint: ""
       # Credentials reach the server as env vars and are read via "@from_env",
