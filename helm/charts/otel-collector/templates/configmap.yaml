@@ -286,9 +286,12 @@ data:
       {{- end }}
       {{- if .Values.exporters.clickhouse.enabled }}
       clickhouse:
-        endpoint: {{ .Values.exporters.clickhouse.endpoint }}
-        database: {{ .Values.exporters.clickhouse.database }}
-        username: {{ .Values.exporters.clickhouse.username }}
+        # Derived from the shared clickhouse facts rather than held twice: the
+        # Service name differs per mode, so a second copy resolves to no such
+        # host on the mode it was not written for.
+        endpoint: {{ .Values.exporters.clickhouse.endpoint | default (printf "tcp://%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort) }}
+        database: {{ .Values.exporters.clickhouse.database | default .Values.clickhouse.database }}
+        username: {{ .Values.exporters.clickhouse.username | default .Values.clickhouse.user }}
         password: ${env:CLICKHOUSE_PASSWORD}
         timeout: 10s
         sending_queue:

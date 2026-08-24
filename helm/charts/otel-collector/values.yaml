@@ -161,7 +161,7 @@ clickhouse:
   host: dfe-clickhouse.clickhouse.svc.cluster.local
   nativePort: 9000
   database: dfe
-  user: admin
+  user: default
 
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
@@ -177,10 +177,9 @@ exporters:
   # tables the embedded HyperDX reads. THE default telemetry sink.
   clickhouse:
     enabled: true
-    endpoint: "tcp://dfe-clickhouse.clickhouse.svc.cluster.local:9000"
-    # DFE canonical database (the CH-builtin `default` is retired); a parameter,
-    # override per deployment. otel tables land as dfe.otel_*.
-    database: dfe
-    # The deploy layer's one credential; must match common.yaml clickhouse.user.
-    username: default
+    # Empty -> derived from the shared clickhouse facts below, which is what a
+    # real deploy wants; set these only to point the exporter somewhere else.
+    endpoint: ""
+    database: ""
+    username: ""
     passwordSecretName: clickhouse-admin-password
