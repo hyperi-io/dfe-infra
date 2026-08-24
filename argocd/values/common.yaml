@@ -102,11 +102,12 @@ clickhouse:
   # defaults to native and inserts RowBinary over it, so it takes this one.
   nativePort: 9000
   database: dfe
-  # The account the apps connect as. The server is started with CLICKHOUSE_USER
-  # set to this name, which makes the official image stop accepting a
-  # passwordless `default` -- so an app that sends no credential is refused with
-  # code 194. Name and Secret must match clickhouse-cluster's users.admin.
-  user: admin
+  # The account the apps connect as, and the one credential the deploy layer
+  # owns. `default` because that is the only account the ClickHouse operator can
+  # password from a Secret, and it is what docker and single mode already start.
+  # Name and Secret must match clickhouse-cluster's users.admin.
+  # Per-service roles come from engine governance -- docs/CLICKHOUSE-IDENTITY.md.
+  user: default
   passwordSecretName: clickhouse-admin-password
   passwordSecretKey: password
 

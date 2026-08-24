@@ -136,11 +136,17 @@ resolve_ch_auth() {
     return 0
   fi
 
+  # `default` first: it is the account the deploy layer owns on every target.
+  # `admin` stays in the list so an older deploy still resolves.
   pw="$(kubectl -n "$NS_CH" get secret "${DFE_CH_ADMIN_SECRET:-clickhouse-admin-password}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
-  if [ -n "$pw" ] && kubectl -n "$NS_CH" exec "$pod" -- \
-       clickhouse-client --user admin --password "$pw" --query "SELECT 1" >/dev/null 2>&1; then
-    CH_AUTH_ARGS="--user admin --password $pw"
-    return 0
+  if [ -n "$pw" ]; then
+    for u in default admin; do
+      if kubectl -n "$NS_CH" exec "$pod" -- \
+           clickhouse-client --user "$u" --password "$pw" --query "SELECT 1" >/dev/null 2>&1; then
+        CH_AUTH_ARGS="--user $u --password $pw"
+        return 0
+      fi
+    done
   fi
 
   # Default user, no password -- prove it works rather than silently degrading.

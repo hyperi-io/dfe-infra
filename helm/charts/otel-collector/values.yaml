@@ -181,5 +181,6 @@ exporters:
     # DFE canonical database (the CH-builtin `default` is retired); a parameter,
     # override per deployment. otel tables land as dfe.otel_*.
     database: dfe
-    username: admin
+    # The deploy layer's one credential; must match common.yaml clickhouse.user.
+    username: default
     passwordSecretName: clickhouse-admin-password
