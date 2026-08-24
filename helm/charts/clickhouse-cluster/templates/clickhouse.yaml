@@ -46,18 +46,12 @@ spec:
       # custom_operator_reload_revision into the __operator profile, and CH refuses
       # to load users.yaml (CANNOT_LOAD_CONFIG, crashloop) if that prefix is unallowed.
       custom_settings_prefixes: SQL_,custom_
-    # users.xml, not config.xml: extraConfig is server configuration, so users
-    # declared there are silently never created (dfe-infra#136).
-    extraUsersConfig:
-      users:
-        {{ .Values.clickhouse.users.loader.name }}:
-          profile: default
-          grants:
-            - query: "GRANT ALL ON {{ .Values.clickhouse.database }}.*"
-        {{ .Values.clickhouse.users.query.name }}:
-          profile: readonly
-          grants:
-            - query: "GRANT SELECT ON {{ .Values.clickhouse.database }}.*"
+    # No extraUsersConfig: the apps connect as clickhouse.user (admin), and the
+    # per-service least-privilege roles are engine governance
+    # (governance/ch/service-roles), so declaring them here duplicates the
+    # authority and applies on k8s only. A user declared without an
+    # authentication method also makes CH refuse users.yaml outright, which
+    # crashloops every server (dfe-infra#136).
   {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled }}
   podTemplate:
     {{- if .Values.nodeScheduling }}

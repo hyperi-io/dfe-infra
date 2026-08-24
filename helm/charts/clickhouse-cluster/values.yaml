@@ -84,11 +84,6 @@ clickhouse:
     admin:
       name: admin
       secretName: clickhouse-admin-password
-    # DFE loader role (async insert, limited permissions)
-    loader:
-      name: dfe_loader_role
-      databases: ["dfe"]
-    # DFE query role (read-only for hunts)
-    query:
-      name: dfe_query_role
-      databases: ["dfe"]
+    # Per-service least-privilege roles are engine governance
+    # (governance/ch/service-roles), which applies on every target rather than
+    # k8s alone -- they are deliberately not declared here.

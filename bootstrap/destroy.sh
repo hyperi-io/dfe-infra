@@ -43,6 +43,11 @@ fi
 echo "==> [3/7] Deleting DFE data resources (CRDs)"
 run kubectl -n strimzi delete kafka --all 2>/dev/null || true
 run kubectl -n cnpg delete cluster --all 2>/dev/null || true
+# ClickHouseCluster/KeeperCluster are the clickhouse.com operator's kinds and
+# clickhouseinstallation is Altinity's; a CR left behind keeps its finalizer and
+# wedges the namespace delete below.
+run kubectl -n clickhouse delete clickhousecluster --all 2>/dev/null || true
+run kubectl -n clickhouse delete keepercluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete clickhouseinstallation --all 2>/dev/null || true
 if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 5
