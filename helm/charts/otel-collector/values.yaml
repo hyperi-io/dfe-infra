@@ -162,6 +162,11 @@ clickhouse:
   nativePort: 9000
   database: dfe
   user: default
+  # Empty on a single node, where ON CLUSTER has no cluster to name. Set to the
+  # server's cluster for a replicated deploy so the exporter's table creation
+  # reaches every replica; tableEngine defaults to ReplicatedMergeTree with it.
+  clusterName: ""
+  tableEngine: ""
 
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"

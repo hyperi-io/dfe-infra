@@ -334,8 +334,23 @@ KSH
         "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list')\" | grep -qw '${DLQ_TOPIC}'"
     done
     # Dead letters must outlive a weekend, against the 72h data-topic default.
-    check "DLQ retention is longer than the data-topic default" \
-      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
+    #
+    # Read from the KafkaTopic CR where one exists. Reading it from the broker
+    # needs DescribeConfigs, which the app's KafkaUser is not granted and should
+    # not be widened to hold for a test's sake -- under Strimzi's authorizer that
+    # call returns TopicAuthorizationException and the check reports a
+    # misconfigured DLQ against a correctly configured one. A Ready CR means the
+    # operator has applied the spec, so it is both declared and reconciled state.
+    # Redpanda runs the same user as a superuser, so the CLI path works there.
+    if kubectl -n "$NS_KAFKA" get kafkatopic dfe-loader-dlq >/dev/null 2>&1; then
+      check "DLQ retention is longer than the data-topic default" \
+        "kubectl -n ${NS_KAFKA} get kafkatopic dfe-loader-dlq -o jsonpath='{.spec.config.retention\\.ms}' | grep -q '^604800000$'"
+      check "DLQ topic CR is reconciled onto the broker" \
+        "kubectl -n ${NS_KAFKA} get kafkatopic dfe-loader-dlq -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
+    else
+      check "DLQ retention is longer than the data-topic default" \
+        "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
+    fi
   fi
 elif [ "$PROFILE" = "single" ] || [ "$PROFILE" = "scale" ]; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would

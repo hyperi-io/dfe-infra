@@ -32,6 +32,10 @@ clickhouse:
   host: "dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local"
   replicas: 3
   shardsCount: 1
+  # The operator names its cluster `default` in remote_servers. Consumed by the
+  # otel collector, whose exporter creates the otel tables: without it the
+  # creation lands on one replica and a query against any other returns 404.
+  clusterName: "default"
 
 # CNPG -- HA.
 cluster:
