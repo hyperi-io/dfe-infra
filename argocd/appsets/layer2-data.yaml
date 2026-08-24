@@ -33,9 +33,20 @@ spec:
                   namespace: cnpg
                   wave: "4"
                   appProject: data
+                # The schema gate. Wave 5, so it lands after ClickHouse is up and
+                # before anything writes: the collector runs with
+                # create_schema=false and the loader assumes its table exists.
+                # Runs in the clickhouse namespace: it is a ClickHouse client and
+                # that is where the admin credential already lives, so it needs no
+                # projection into the app namespace.
+                - app: dfe-schema
+                  namespace: clickhouse
+                  wave: "5"
+                  appProject: data
+                # Wave 6: needs its otel tables, which dfe-schema creates.
                 - app: otel-collector
                   namespace: otel
-                  wave: "4"
+                  wave: "6"
                   appProject: data
                 # NOTE: the in-cluster git server (forgejo) is NOT substrate.
                 # It is the deploy-repo FALLBACK, deployed ONLY when no external git
@@ -51,10 +62,10 @@ spec:
                   wave: "4"
                   appProject: data
                 # Kafbat (Kafka web UI) -- bundled by DEFAULT with the kafka
-                # substrate (single + scale). Wave 5 so it starts after the broker.
+                # substrate (single + scale). After the broker.
                 - app: kafbat
                   namespace: kafka
-                  wave: "5"
+                  wave: "6"
                   appProject: data
                 # Deployment links page -- the one well-known URL answering
                 # "where is everything?" (dfe-infra#75). Bundled by default;
@@ -64,7 +75,7 @@ spec:
                 # chart's page values.
                 - app: links
                   namespace: links
-                  wave: "5"
+                  wave: "6"
                   appProject: data
   template:
     metadata:

@@ -39,7 +39,9 @@ spec:
       name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
       namespace: argocd
       annotations:
-        argocd.argoproj.io/sync-wave: "5"
+        # Wave 7: after dfe-schema (5) has created the tables these write to,
+        # and after the otel collector (6) they export telemetry to.
+        argocd.argoproj.io/sync-wave: "7"
     spec:
       project: dfe-apps
       sources:
