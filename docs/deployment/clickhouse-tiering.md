@@ -134,19 +134,32 @@ Measured on a rig, not reasoned about.
 | --- | --- |
 | `enable_filesystem_cache = 0` at query time | Serves correctly, no restart. The kill switch works |
 | Cache dropped under a running server | Re-fetches from the store, identical results |
+| Cache volume 100% full | Reads correct, inserts still succeed, `CHECK TABLE` clean |
 | Blobs missing from the bucket | Fails loudly with `S3_ERROR`; `CHECK TABLE` reports `is_passed = 0` and names the key |
 | Object store unreachable | Fails loudly, never wrong. **Time to fail is the problem** |
+| **Cache device returning I/O errors** | **Query fails. It does NOT fall back to the store** |
 
-Nothing returned a wrong answer in any case, and nothing damaged a part. The one
-result worth acting on is the last: with the retry and timeout settings left at
-their defaults, a read against an unreachable store blocked for over nine minutes
-before failing. Setting `retryAttempts: 1`, `connectTimeoutMs: 2000` and
-`requestTimeoutMs: 5000` brought the same failure down to 10.4 seconds.
+No fault returned a wrong answer, and none damaged a part. Two need acting on.
 
-Those numbers are a demonstration, not a recommendation. One retry is aggressive
-against real S3, which throws transient 5xx routinely, so pick production values
-against the actual store. What the defaults must not stay is unbounded: for a
-dashboard, a nine-minute stall is indistinguishable from an outage.
+**A failing cache device takes queries with it.** With the cache volume swapped
+to a device-mapper `error` target, a read died on
+`filesystem error: in create_directories: Input/output error` rather than
+falling back to the object store. The cache holds no authoritative copy of
+anything, so a disposable component is taking the service down with it.
+`enable_filesystem_cache = 0` does rescue it, and the result is byte-identical
+to a healthy read, which makes the kill switch the operational answer -- worth
+knowing before an incident rather than during one. The ext4 on that volume also
+goes read-only and does not self-heal: recovery is discarding the cache volume
+or rescheduling the pod onto a fresh one, not repairing it.
+
+**An unreachable store fails slowly.** With the retry and timeout settings left
+at their defaults, a read blocked for over nine minutes before failing. Setting
+`retryAttempts: 1`, `connectTimeoutMs: 2000` and `requestTimeoutMs: 5000`
+brought the same failure down to 10.4 seconds. Those numbers are a
+demonstration, not a recommendation: one retry is aggressive against real S3,
+which throws transient 5xx routinely, so pick production values against the
+actual store. What they must not stay is unbounded, because for a dashboard a
+nine-minute stall is indistinguishable from an outage.
 
 ## Verifying a deployment
 
