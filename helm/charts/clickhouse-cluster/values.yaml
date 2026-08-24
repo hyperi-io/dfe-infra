@@ -71,7 +71,73 @@ clickhouse:
     secretStoreName: dfe-secret-store
   storage:
     size: 50Gi
+    # With tiering enabled this is the HOT tier -- point it at the SSD class.
     storageClass: ""
+  # SSD tiering over the bulk store (cluster mode only). Opt-in, off by default,
+  # and fixed at cluster CREATION: the operator takes no new disk on an existing
+  # cluster. Rationale and rollout: docs/deployment/clickhouse-tiering.md.
+  #
+  #   off   -> one volume from dataVolumeClaimSpec
+  #   tier  -> hot SSD volume + cold bulk volume, parts demoted as hot fills
+  #   cache -> bulk on object storage, filesystem cache on an SSD volume
+  #
+  # ClickHouse cannot cache one local disk on another, so `tier` is the only
+  # option over block storage; `cache` needs a real object store.
+  tiering:
+    mode: "off"
+
+    # mode: tier. Data MOVES between volumes, so both must be durable.
+    cold:
+      # Names the PVC template, the mount, the disk, and the cold volume.
+      # Must sort after "default", else the tiers invert silently; the chart
+      # fails the render if it does not.
+      name: slow
+      size: 1Ti
+      storageClass: ""
+    # Fraction of the hot volume kept free before parts are demoted to cold.
+    # Policy-level, so it applies without any table DDL.
+    moveFactor: 0.2
+
+    # mode: cache. The cache is disposable; the bucket holds the durable copy.
+    bulkDiskName: bulk
+    cache:
+      name: fscache
+      size: 500Gi
+      # Keep below the volume size so eviction has headroom.
+      maxSize: 450Gi
+      storageClass: ""
+      # Populates the cache on write, which ties INSERT success to cache health.
+      cacheOnWrite: false
+    objectStorage:
+      # s3, which also covers GCS via its S3-compatible endpoint, or
+      # azure_blob_storage.
+      type: s3
+      # s3 only: full endpoint including bucket and prefix.
+      endpoint: ""
+      # azure_blob_storage only. NOT yet verified against a real storage
+      # account -- see docs/deployment/clickhouse-tiering.md.
+      storageAccountUrl: ""
+      containerName: ""
+      # Set true when the container is provisioned ahead of ClickHouse, so the
+      # credential needs no container-create right.
+      containerAlreadyExists: false
+      # Credentials reach the server as env vars and are read via "@from_env",
+      # so they never land in the CR or the rendered config. s3 reads an access
+      # key id and secret key; azure reads the account name and account key.
+      secretName: dfe-clickhouse-object-storage
+      identityKey: access-key-id
+      secretKey: secret-access-key
+      # s3 only. GCS rejects batch delete; set false against a GCS endpoint.
+      supportBatchDelete: true
+      # s3 only. Request-rate ceilings, empty to leave the defaults alone.
+      maxGetRps: ""
+      maxPutRps: ""
+      # s3 only. Bound how long a read blocks when the store is unreachable.
+      # Left unset, a read retries for minutes before failing; 1/2000/5000
+      # failed in 10s in testing. Production values want a real S3 first.
+      retryAttempts: ""
+      connectTimeoutMs: ""
+      requestTimeoutMs: ""
   resources:
     requests:
       cpu: 500m

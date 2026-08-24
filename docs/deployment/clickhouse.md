@@ -43,6 +43,8 @@ has ever run on it.
 
 - Chart: `helm/charts/clickhouse-cluster` (modes above; keeper bundled for
   cluster mode).
+- SSD tiering and caching over the official operator, opt-in per deployment:
+  [clickhouse-tiering.md](clickhouse-tiering.md).
 - Operator install: `argocd/appsets/layer-scale.yaml` (wave 3, scale tier
   only -- single mode needs no operator).
 - Version pins + the operator decision record: `versions.yaml`

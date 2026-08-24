@@ -1,4 +1,35 @@
 {{- if eq .Values.clickhouse.mode "cluster" }}
+{{- $tiering := .Values.clickhouse.tiering }}
+{{- $tierMode := $tiering.mode | default "off" }}
+{{- if not (has $tierMode (list "off" "tier" "cache")) }}
+{{- fail (printf "clickhouse.tiering.mode %q is not one of off, tier, cache." $tierMode) }}
+{{- end }}
+{{- if eq $tierMode "tier" }}
+{{- if eq $tiering.cold.name "default" }}
+{{- fail "clickhouse.tiering.cold.name must not be \"default\": that is the hot disk the operator provisions from dataVolumeClaimSpec." }}
+{{- end }}
+{{- if ne (index (sortAlpha (list "default" $tiering.cold.name)) 0) "default" }}
+{{- fail (printf "clickhouse.tiering.cold.name %q sorts before \"default\", which silently inverts the tiers -- the bulk disk would become the hot volume. Pick a name sorting after \"default\" (e.g. slow, tier2, warm)." $tiering.cold.name) }}
+{{- end }}
+{{- end }}
+{{- $obj := $tiering.objectStorage }}
+{{- if eq $tierMode "cache" }}
+{{- if not (has $obj.type (list "s3" "azure_blob_storage")) }}
+{{- fail (printf "clickhouse.tiering.objectStorage.type %q is not one of s3, azure_blob_storage." $obj.type) }}
+{{- end }}
+{{- if eq $obj.type "s3" }}
+{{- if not $obj.endpoint }}
+{{- fail "clickhouse.tiering.objectStorage.endpoint is required for type s3." }}
+{{- end }}
+{{- else }}
+{{- if not $obj.storageAccountUrl }}
+{{- fail "clickhouse.tiering.objectStorage.storageAccountUrl is required for type azure_blob_storage." }}
+{{- end }}
+{{- if not $obj.containerName }}
+{{- fail "clickhouse.tiering.objectStorage.containerName is required for type azure_blob_storage." }}
+{{- end }}
+{{- end }}
+{{- end }}
 # CLUSTER-MODE CONFIG NOTE (dfe-infra#4.2): the earlier exit-231 crashloop here was
 # NOT a zombie-probe leak (operator 0.0.7 uses httpGet /ping, verified). Its real
 # cause was custom_settings_prefixes below rejecting the operator's injected
@@ -24,6 +55,23 @@ spec:
       limits:
         cpu: {{ .Values.clickhouse.resources.limits.cpu }}
         memory: {{ .Values.clickhouse.resources.limits.memory }}
+    {{- if eq $tierMode "cache" }}
+    # Read by the disk config via "@from_env" so the credential never appears
+    # in the CR, the rendered ConfigMap, or the preprocessed config.
+    env:
+      - name: DFE_OBJECT_IDENTITY
+        valueFrom:
+          secretKeyRef:
+            name: {{ $obj.secretName }}
+            key: {{ $obj.identityKey }}
+      - name: DFE_OBJECT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: {{ $obj.secretName }}
+            key: {{ $obj.secretKey }}
+    {{- end }}
+  # Must be durable. In cache mode it also holds the map from ClickHouse paths
+  # to object blobs, which cannot be rebuilt from the bucket.
   dataVolumeClaimSpec:
     accessModes: ["ReadWriteOnce"]
     resources:
@@ -32,6 +80,37 @@ spec:
     {{- with (.Values.clickhouse.storage.storageClass | default .Values.storageClass) }}
     storageClassName: {{ . | quote }}
     {{- end }}
+  {{- if ne $tierMode "off" }}
+  # The operator mounts each entry at /var/lib/clickhouse/disks/<name> and
+  # registers a ClickHouse disk of the same name. Fixed at cluster creation:
+  # the CRD does not accept a new disk on an existing cluster.
+  additionalVolumeClaimTemplates:
+    {{- if eq $tierMode "tier" }}
+    - metadata:
+        name: {{ $tiering.cold.name }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ $tiering.cold.size }}
+        {{- with ($tiering.cold.storageClass | default .Values.storageClass) }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+    {{- end }}
+    {{- if eq $tierMode "cache" }}
+    # Disposable: losing it costs a cold cache and nothing else.
+    - metadata:
+        name: {{ $tiering.cache.name }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ $tiering.cache.size }}
+        {{- with ($tiering.cache.storageClass | default .Values.storageClass) }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+    {{- end }}
+  {{- end }}
   keeperClusterRef:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
@@ -46,6 +125,88 @@ spec:
       # custom_operator_reload_revision into the __operator profile, and CH refuses
       # to load users.yaml (CANNOT_LOAD_CONFIG, crashloop) if that prefix is unallowed.
       custom_settings_prefixes: SQL_,custom_
+      {{- if eq $tierMode "tier" }}
+      # Replaces the operator's generated JBOD policy, which stripes the bulk
+      # disk alongside the hot one rather than ranking them. Rendered into
+      # 99-extra-config.yaml, so it merges after the operator's 10-storage-jbod.yaml.
+      # The hot volume keeps the name "default" and disk "default": ClickHouse
+      # rejects a policy change that drops a volume name it already loaded.
+      # Volume order sets tier priority and the API server re-serialises these
+      # keys alphabetically, hence the sort guard on cold.name above.
+      storage_configuration:
+        policies:
+          default:
+            "@replace": "1"
+            move_factor: {{ $tiering.moveFactor }}
+            volumes:
+              default:
+                disk: default
+              {{ $tiering.cold.name }}:
+                disk: {{ $tiering.cold.name }}
+      {{- end }}
+      {{- if eq $tierMode "cache" }}
+      # The cache disk wraps the bulk disk, which ClickHouse permits only over
+      # object storage. The "_cached" suffix keeps the wrapper sorting after the
+      # disk it wraps, which the alphabetical key order requires.
+      storage_configuration:
+        disks:
+          {{ $tiering.bulkDiskName }}:
+            type: {{ $obj.type }}
+            # Defaults to /var/lib/clickhouse/disks/<name>, which the operator
+            # owns as the mount parent for additional volumes and the server
+            # cannot write to.
+            metadata_path: /var/lib/clickhouse/object_metadata/{{ $tiering.bulkDiskName }}/
+            {{- if eq $obj.type "s3" }}
+            endpoint: {{ $obj.endpoint | quote }}
+            access_key_id:
+              "@from_env": DFE_OBJECT_IDENTITY
+            secret_access_key:
+              "@from_env": DFE_OBJECT_SECRET
+            {{- if not $obj.supportBatchDelete }}
+            support_batch_delete: false
+            {{- end }}
+            {{- with $obj.maxGetRps }}
+            s3_max_get_rps: {{ . }}
+            {{- end }}
+            {{- with $obj.maxPutRps }}
+            s3_max_put_rps: {{ . }}
+            {{- end }}
+            {{- with $obj.retryAttempts }}
+            s3_retry_attempts: {{ . }}
+            {{- end }}
+            {{- with $obj.connectTimeoutMs }}
+            s3_connect_timeout_ms: {{ . }}
+            {{- end }}
+            {{- with $obj.requestTimeoutMs }}
+            s3_request_timeout_ms: {{ . }}
+            {{- end }}
+            {{- else }}
+            storage_account_url: {{ $obj.storageAccountUrl | quote }}
+            container_name: {{ $obj.containerName | quote }}
+            account_name:
+              "@from_env": DFE_OBJECT_IDENTITY
+            account_key:
+              "@from_env": DFE_OBJECT_SECRET
+            {{- if $obj.containerAlreadyExists }}
+            # Skips the create-container call, so the credential needs no
+            # container-create right.
+            container_already_exists: true
+            {{- end }}
+            {{- end }}
+          {{ $tiering.bulkDiskName }}_cached:
+            type: cache
+            disk: {{ $tiering.bulkDiskName }}
+            path: /var/lib/clickhouse/disks/{{ $tiering.cache.name }}/
+            max_size: {{ $tiering.cache.maxSize }}
+            # Couples INSERT success to cache health when enabled.
+            cache_on_write_operations: {{ ternary 1 0 $tiering.cache.cacheOnWrite }}
+        policies:
+          default:
+            "@replace": "1"
+            volumes:
+              default:
+                disk: {{ $tiering.bulkDiskName }}_cached
+      {{- end }}
     # users.xml, not config.xml: extraConfig is server configuration, so users
     # declared there are silently never created (dfe-infra#136).
     extraUsersConfig:
