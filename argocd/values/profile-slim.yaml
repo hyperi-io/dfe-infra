@@ -21,9 +21,10 @@ resources:
     memory: 1Gi
 
 keda:
-  minReplicas: 1
-  maxReplicas: 2
-  scalingPressureThreshold: "0.75"
+  minReplicaCount: 1
+  maxReplicaCount: 2
+  pressure:
+    targetValue: 75
 
 # ClickHouse -- single standalone node (keeperless, MergeTree).
 clickhouse:

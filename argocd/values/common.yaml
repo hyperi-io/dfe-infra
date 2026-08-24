@@ -119,10 +119,15 @@ postgresql:
 receiver:
   listenCIDR: "100.64.0.0/10"
 
+# Key names mirror the ScaledObject spec fields the library helper writes; the
+# earlier minReplicas/maxReplicas spelling matched nothing and never applied.
+# Profiles override these per tier. pressure.targetValue is on the 0-100
+# ScalingPressure gauge and only applies where a chart opts pressure in.
 keda:
-  minReplicas: 1
-  maxReplicas: 5
-  scalingPressureThreshold: "0.7"
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  pressure:
+    targetValue: 70
 
 # ArgoCD — Envoy Gateway handles OIDC, not Dex
 argocd:
