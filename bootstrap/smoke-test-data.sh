@@ -83,7 +83,10 @@ fi
 
 echo ""
 echo "--- ClickHouse ---"
-check "ClickHouse pods running" "running_pods ${NS_CH} app.kubernetes.io/name=dfe-clickhouse"
+# Both layouts: the chart's StatefulSet labels pods dfe-clickhouse, the operator
+# labels them clickhouse-server. Matching one makes the other a false negative.
+check "ClickHouse pods running" \
+  "running_pods ${NS_CH} 'app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)'"
 
 echo ""
 echo "--- FerretDB ---"

@@ -89,6 +89,36 @@ ClickHouse endpoint and crashlooped on the profile it was not written for; the
 fix was to derive it from the shared fact, which removed the mirror rather than
 synchronising it.
 
+## Hard-coding is a defect, not a shortcut
+
+A literal that restates a fact defined elsewhere is the same failure as a stale
+mirror, minus the guard. Every one found so far reported a broken pipeline
+against a healthy one:
+
+| literal | what it broke |
+|---|---|
+| otel exporter's ClickHouse endpoint | collector crashlooped on `no such host` -- single mode emits `dfe-clickhouse`, the operator emits only a headless Service |
+| smoke-test pod selector `app.kubernetes.io/name=dfe-clickhouse` | reported a dead datastore against three healthy servers |
+| the same selector in the KEDA scale proof | `no ClickHouse pod found` |
+| smoke-test `CH_URL` | built from a literal while ignoring the correct host resolved nine lines above it |
+
+When you find one, replace it with the value's real source, in this order:
+
+1. **Derive it** from the shared fact already in scope -- the otel endpoint
+   became `printf "tcp://%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort`.
+2. **Read it from the thing being tested.** A smoke test asks the pod what it is
+   configured with rather than asserting what it should be, so it tests the
+   deployment instead of its own assumptions.
+3. **Take it from the config cascade** -- for a scalo service, the terminal
+   default belongs in the binary and every layer above it overrides; for a
+   chart, the SSoT is `argocd/values/common.yaml` and the chart default is only
+   the standalone-render fallback.
+
+A literal is acceptable in exactly one case: it IS the definition, appears
+once, and is overridable. `bootstrap.sh` naming the bundled Forgejo URL is that
+case -- it is the only statement of the fact and `DFE_CONFIG_REPO_URL` replaces
+it.
+
 ## Adding a shared fact
 
 1. Put the SSoT in one file and say in a comment that it is the SSoT.

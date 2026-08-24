@@ -19,7 +19,9 @@ set -euo pipefail
 
 NS="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
 CH_NS="${DFE_CH_NS:-clickhouse}"
-CH_SELECTOR="${DFE_CH_SELECTOR:-app.kubernetes.io/name=dfe-clickhouse}"
+# Both layouts: the chart's StatefulSet labels pods dfe-clickhouse, the operator
+# labels them clickhouse-server.
+CH_SELECTOR="${DFE_CH_SELECTOR:-app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)}"
 SHIM="${DFE_KEDA_SHIM:-dfe-keda-shim.${NS}.svc.cluster.local:8080}"
 # Unique per run. Cleanup deletes the injected rows through an ALTER ... DELETE
 # mutation, which is asynchronous, so a fixed name lets the previous run's zeros
