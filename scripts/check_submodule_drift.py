@@ -66,6 +66,16 @@ def _gh_json(endpoint: str) -> object | None:
     return json.loads(result.stdout)
 
 
+def _readable(repo: str) -> bool:
+    """Whether the token can read *repo* at all.
+
+    CI's default GITHUB_TOKEN is scoped to the repo it runs in, so every other
+    private repo 404s exactly as a deleted one would. Asking this first is what
+    separates "the token cannot see it" from "the submodule is gone".
+    """
+    return isinstance(_gh_json(f"repos/{ORG}/{repo}"), dict)
+
+
 def _pinned_sha(repo: str, path: str) -> str | None:
     payload = _gh_json(f"repos/{ORG}/{repo}/contents/{path}")
     if not isinstance(payload, dict) or payload.get("type") != "submodule":
@@ -93,23 +103,29 @@ def _behind(repo: str, base: str, head: str) -> int | None:
     return ahead if isinstance(ahead, int) else None
 
 
-def audit() -> tuple[list[str], list[dict]]:
-    """Return (failure messages, per-consumer rows)."""
+def audit() -> tuple[list[str], list[dict], list[str]]:
+    """Return (failure messages, per-consumer rows, skip messages)."""
     failures: list[str] = []
     rows: list[dict] = []
+    skips: list[str] = []
 
     for module, spec in sorted(SHARED_SUBMODULES.items()):
         head = _head_sha(module)
         if head is None:
+            if not _readable(module):
+                skips.append(f"{module}: not readable by this token")
+                continue
             failures.append(f"{module}: cannot read its default-branch HEAD")
             continue
 
         for consumer in spec["consumers"]:
+            if not _readable(consumer):
+                skips.append(f"{consumer}: not readable by this token")
+                continue
             pinned = _pinned_sha(consumer, spec["path"])
             if pinned is None:
                 failures.append(
-                    f"{consumer}: no submodule at `{spec['path']}` -- it was "
-                    f"removed, moved, or the repo is unreachable"
+                    f"{consumer}: no submodule at `{spec['path']}` -- it was removed or moved"
                 )
                 continue
             behind = _behind(module, pinned, head)
@@ -128,12 +144,14 @@ def audit() -> tuple[list[str], list[dict]]:
                     f"behind {head[:7]}"
                 )
 
-    return failures, rows
+    return failures, rows, skips
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", help="emit the pin table as JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="emit the pin table as JSON"
+    )
     args = parser.parse_args()
 
     if shutil.which("gh") is None:
@@ -144,10 +162,18 @@ def main() -> int:
         )
         return 0
 
-    failures, rows = audit()
+    failures, rows, skips = audit()
 
     if args.json:
         print(json.dumps(rows, indent=2))
+
+    # A repo-scoped token 404s on a sibling private repo exactly as a deleted
+    # one does, so report it as unverified rather than calling it drift.
+    for skip in skips:
+        print(
+            f"SKIPPED: {skip} -- pin NOT checked. This is a skip, not a pass.",
+            file=sys.stderr,
+        )
 
     if failures:
         print("FAIL: shared-submodule drift", file=sys.stderr)
@@ -159,10 +185,17 @@ def main() -> int:
         )
         return 1
 
-    consumers = sum(len(s["consumers"]) for s in SHARED_SUBMODULES.values())
+    checked = len(rows)
+    if not checked:
+        print(
+            "SKIPPED: no submodule pin was readable -- nothing was verified.",
+            file=sys.stderr,
+        )
+        return 0
+
     print(
-        f"PASS: {consumers} consumer(s) across {len(SHARED_SUBMODULES)} shared "
-        "submodule(s) all pin the current commit"
+        f"PASS: {checked} consumer pin(s) across {len(SHARED_SUBMODULES)} shared "
+        "submodule(s) match the current commit"
     )
     return 0
 
