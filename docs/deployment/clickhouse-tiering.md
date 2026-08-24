@@ -170,9 +170,24 @@ In `cache` mode `system.disks` also lists the cache PVC as an unused local disk
 named after `tiering.cache.name`. The operator registers a disk for every
 additional volume; that one carries no data and is expected.
 
+## moveFactor needs two real devices
+
+Demotion triggers on the hot volume's free space as a fraction of its total, so
+the two tiers must be separate devices. Verified on devex, one node, one dataset,
+changing nothing but the value:
+
+| moveFactor | Where new parts ended up |
+| --- | --- |
+| 0.95 | `slow`, the spinning tier -- demoted with no TTL and no manual move |
+| 0.2 | `default`, the SSD tier -- stayed hot |
+
+The hot volume there had 55.7 GiB free of 61 GiB, a free ratio of 0.91. Below
+`moveFactor` it demotes, above it does not. Point both classes at the same
+filesystem and both tiers report identical free space, so demotion either never
+fires or fires constantly.
+
 ## Not covered here
 
-Benchmarks, per-platform cost modelling, workload identity in place of static
-keys, and fault injection against the cache device are spike work, not settled
-configuration. Automatic demotion by `moveFactor` in particular depends on the
-two tiers being genuinely separate devices with separate free space.
+Benchmarks, per-platform cost modelling, and workload identity in place of static
+keys are spike work, not settled configuration. So is fault injection against the
+cache device itself, which needs `dm-flakey` over a real block device.
