@@ -1,7 +1,4 @@
 {{- if eq .Values.clickhouse.mode "single" }}
-{{- if ne (.Values.clickhouse.tiering.mode | default "off") "off" }}
-{{- fail "clickhouse.tiering is cluster-mode only; single mode runs one plain StatefulSet with no additional volumes. Set clickhouse.mode=cluster or clickhouse.tiering.mode=off." }}
-{{- end }}
 # Standalone single-node ClickHouse (no operator, no Keeper). For small/test.
 # Tables are MergeTree (non-replicated) -- the engine emits topology=single DDL.
 # Admin user/db created on first start via the official image's entrypoint env.
