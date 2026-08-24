@@ -12,13 +12,22 @@
 {{- fail (printf "clickhouse.tiering.cold.name %q sorts before \"default\", which silently inverts the tiers -- the bulk disk would become the hot volume. Pick a name sorting after \"default\" (e.g. slow, tier2, warm)." $tiering.cold.name) }}
 {{- end }}
 {{- end }}
-{{- if eq $tierMode "cache" }}
 {{- $obj := $tiering.objectStorage }}
-{{- if not $obj.endpoint }}
-{{- fail "clickhouse.tiering.objectStorage.endpoint is required when clickhouse.tiering.mode is \"cache\"." }}
+{{- if eq $tierMode "cache" }}
+{{- if not (has $obj.type (list "s3" "azure_blob_storage")) }}
+{{- fail (printf "clickhouse.tiering.objectStorage.type %q is not one of s3, azure_blob_storage." $obj.type) }}
 {{- end }}
-{{- if ne $obj.type "s3" }}
-{{- fail (printf "clickhouse.tiering.objectStorage.type %q is not supported. Only \"s3\" is implemented, which also covers GCS via its S3-compatible endpoint. azure_blob_storage takes storage_account_url, container_name and account_name/account_key rather than the s3 keys, and is not wired up." $obj.type) }}
+{{- if eq $obj.type "s3" }}
+{{- if not $obj.endpoint }}
+{{- fail "clickhouse.tiering.objectStorage.endpoint is required for type s3." }}
+{{- end }}
+{{- else }}
+{{- if not $obj.storageAccountUrl }}
+{{- fail "clickhouse.tiering.objectStorage.storageAccountUrl is required for type azure_blob_storage." }}
+{{- end }}
+{{- if not $obj.containerName }}
+{{- fail "clickhouse.tiering.objectStorage.containerName is required for type azure_blob_storage." }}
+{{- end }}
 {{- end }}
 {{- end }}
 # CLUSTER-MODE CONFIG NOTE (dfe-infra#4.2): the earlier exit-231 crashloop here was
@@ -50,16 +59,16 @@ spec:
     # Read by the disk config via "@from_env" so the credential never appears
     # in the CR, the rendered ConfigMap, or the preprocessed config.
     env:
-      - name: DFE_OBJECT_ACCESS_KEY_ID
+      - name: DFE_OBJECT_IDENTITY
         valueFrom:
           secretKeyRef:
-            name: {{ $tiering.objectStorage.secretName }}
-            key: {{ $tiering.objectStorage.accessKeyIdKey }}
-      - name: DFE_OBJECT_SECRET_ACCESS_KEY
+            name: {{ $obj.secretName }}
+            key: {{ $obj.identityKey }}
+      - name: DFE_OBJECT_SECRET
         valueFrom:
           secretKeyRef:
-            name: {{ $tiering.objectStorage.secretName }}
-            key: {{ $tiering.objectStorage.secretAccessKeyKey }}
+            name: {{ $obj.secretName }}
+            key: {{ $obj.secretKey }}
     {{- end }}
   # Must be durable. In cache mode it also holds the map from ClickHouse paths
   # to object blobs, which cannot be rebuilt from the bucket.
@@ -142,24 +151,47 @@ spec:
       storage_configuration:
         disks:
           {{ $tiering.bulkDiskName }}:
-            type: {{ $tiering.objectStorage.type }}
-            endpoint: {{ $tiering.objectStorage.endpoint | quote }}
+            type: {{ $obj.type }}
             # Defaults to /var/lib/clickhouse/disks/<name>, which the operator
             # owns as the mount parent for additional volumes and the server
             # cannot write to.
             metadata_path: /var/lib/clickhouse/object_metadata/{{ $tiering.bulkDiskName }}/
+            {{- if eq $obj.type "s3" }}
+            endpoint: {{ $obj.endpoint | quote }}
             access_key_id:
-              "@from_env": DFE_OBJECT_ACCESS_KEY_ID
+              "@from_env": DFE_OBJECT_IDENTITY
             secret_access_key:
-              "@from_env": DFE_OBJECT_SECRET_ACCESS_KEY
-            {{- if not $tiering.objectStorage.supportBatchDelete }}
+              "@from_env": DFE_OBJECT_SECRET
+            {{- if not $obj.supportBatchDelete }}
             support_batch_delete: false
             {{- end }}
-            {{- with $tiering.objectStorage.maxGetRps }}
+            {{- with $obj.maxGetRps }}
             s3_max_get_rps: {{ . }}
             {{- end }}
-            {{- with $tiering.objectStorage.maxPutRps }}
+            {{- with $obj.maxPutRps }}
             s3_max_put_rps: {{ . }}
+            {{- end }}
+            {{- with $obj.retryAttempts }}
+            s3_retry_attempts: {{ . }}
+            {{- end }}
+            {{- with $obj.connectTimeoutMs }}
+            s3_connect_timeout_ms: {{ . }}
+            {{- end }}
+            {{- with $obj.requestTimeoutMs }}
+            s3_request_timeout_ms: {{ . }}
+            {{- end }}
+            {{- else }}
+            storage_account_url: {{ $obj.storageAccountUrl | quote }}
+            container_name: {{ $obj.containerName | quote }}
+            account_name:
+              "@from_env": DFE_OBJECT_IDENTITY
+            account_key:
+              "@from_env": DFE_OBJECT_SECRET
+            {{- if $obj.containerAlreadyExists }}
+            # Skips the create-container call, so the credential needs no
+            # container-create right.
+            container_already_exists: true
+            {{- end }}
             {{- end }}
           {{ $tiering.bulkDiskName }}_cached:
             type: cache

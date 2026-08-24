@@ -14,10 +14,17 @@ The choice is made for you by what the customer's cluster actually has.
 | `tier` | a second PVC on a cheap class | an SSD PVC holding recent parts | Block storage only, no object store |
 | `cache` | an S3-compatible object store (S3, GCS, MinIO, Ceph RGW) | an SSD PVC holding a disposable cache | An object store is available |
 
-Azure Blob is not wired up. ClickHouse addresses it with `storage_account_url`,
-`container_name` and `account_name`/`account_key` rather than the S3 keys, so it
-needs its own branch in the chart and a test against a real account. The chart
-rejects `type: azure_blob_storage` rather than rendering config that cannot work.
+Azure Blob is wired up but **not yet verified against a real storage account**.
+ClickHouse addresses it with `storage_account_url`, `container_name` and
+`account_name`/`account_key`, which the chart emits. Authentication and
+addressing were confirmed against the Azurite emulator; container creation could
+not be, because Azurite 3.36.0 rejects the create-container call from ClickHouse
+and from `az` alike ("Incoming URL doesn't match any of swagger defined request
+patterns"), meaning the emulator does not implement the API version those
+clients speak. Provision the container ahead of time and set
+`containerAlreadyExists: true`, which is the better posture anyway since the
+credential then needs no container-create right. Treat the first Azure
+deployment as a test.
 
 The constraint that decides it: **ClickHouse cannot cache one local disk on
 another.** The `cache` disk type only wraps object storage, so over plain block
@@ -118,6 +125,28 @@ fails the render if it does not.
 for additional volumes and the server cannot write to. The chart pins it to
 `/var/lib/clickhouse/object_metadata/<name>/` on the durable data volume, which
 is where it belongs anyway.
+
+## Failure behaviour in cache mode
+
+Measured on a rig, not reasoned about.
+
+| Fault | Behaviour |
+| --- | --- |
+| `enable_filesystem_cache = 0` at query time | Serves correctly, no restart. The kill switch works |
+| Cache dropped under a running server | Re-fetches from the store, identical results |
+| Blobs missing from the bucket | Fails loudly with `S3_ERROR`; `CHECK TABLE` reports `is_passed = 0` and names the key |
+| Object store unreachable | Fails loudly, never wrong. **Time to fail is the problem** |
+
+Nothing returned a wrong answer in any case, and nothing damaged a part. The one
+result worth acting on is the last: with the retry and timeout settings left at
+their defaults, a read against an unreachable store blocked for over nine minutes
+before failing. Setting `retryAttempts: 1`, `connectTimeoutMs: 2000` and
+`requestTimeoutMs: 5000` brought the same failure down to 10.4 seconds.
+
+Those numbers are a demonstration, not a recommendation. One retry is aggressive
+against real S3, which throws transient 5xx routinely, so pick production values
+against the actual store. What the defaults must not stay is unbounded: for a
+dashboard, a nine-minute stall is indistinguishable from an outage.
 
 ## Verifying a deployment
 

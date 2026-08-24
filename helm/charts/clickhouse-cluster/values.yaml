@@ -109,21 +109,35 @@ clickhouse:
       # Populates the cache on write, which ties INSERT success to cache health.
       cacheOnWrite: false
     objectStorage:
-      # s3 only, which also covers GCS via its S3-compatible endpoint.
-      # azure_blob_storage takes a different set of config keys and is not
-      # wired up yet.
+      # s3, which also covers GCS via its S3-compatible endpoint, or
+      # azure_blob_storage.
       type: s3
+      # s3 only: full endpoint including bucket and prefix.
       endpoint: ""
+      # azure_blob_storage only. NOT yet verified against a real storage
+      # account -- see docs/deployment/clickhouse-tiering.md.
+      storageAccountUrl: ""
+      containerName: ""
+      # Set true when the container is provisioned ahead of ClickHouse, so the
+      # credential needs no container-create right.
+      containerAlreadyExists: false
       # Credentials reach the server as env vars and are read via "@from_env",
-      # so they never land in the CR or the rendered config.
+      # so they never land in the CR or the rendered config. s3 reads an access
+      # key id and secret key; azure reads the account name and account key.
       secretName: dfe-clickhouse-object-storage
-      accessKeyIdKey: access-key-id
-      secretAccessKeyKey: secret-access-key
-      # GCS rejects batch delete; set false against a GCS endpoint.
+      identityKey: access-key-id
+      secretKey: secret-access-key
+      # s3 only. GCS rejects batch delete; set false against a GCS endpoint.
       supportBatchDelete: true
-      # Request-rate ceilings, empty to leave ClickHouse's defaults alone.
+      # s3 only. Request-rate ceilings, empty to leave the defaults alone.
       maxGetRps: ""
       maxPutRps: ""
+      # s3 only. Bound how long a read blocks when the store is unreachable.
+      # Left unset, a read retries for minutes before failing; 1/2000/5000
+      # failed in 10s in testing. Production values want a real S3 first.
+      retryAttempts: ""
+      connectTimeoutMs: ""
+      requestTimeoutMs: ""
   resources:
     requests:
       cpu: 500m
