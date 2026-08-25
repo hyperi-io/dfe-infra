@@ -1120,7 +1120,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.17.3"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). scalo 2.29.15: [metrics] carries the OTel SDK, so /metrics + OTLP export work on the single extra (the self-monitoring E2E was green while exporting nothing).
+      dfe-engine: "v1.17.4"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). dfe-schema loads only the ClickHouse settings, so a k8s Job with no API secret can apply the schema.
       dfe-ui: "v1.3.9"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
       dfe-receiver: "v1.15.25"      # independent release line
       dfe-loader: "v1.18.24"        # default event destination -> dfe.default; clippy + startup-timeout test fixes.
@@ -1137,7 +1137,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:770bc34665a498f45b5b6c31f0758c4094a92c50ed5c88803cb9d2c01f9f4f80"
+      dfe-engine: "sha256:c78ff3ffd993a85ca4cec7c8f688f2301d9cc604b62bbf0c8d0ad2512a200e1b"
       dfe-ui: "sha256:4cf40eeca384bbd2a30b29b1224c490150e69651b6365a439f2fd7b7531aa081"
       dfe-receiver: "sha256:81a991eddef2494bd4557763cf6215df90d276622154c1e8aa97c36669d16578"
       dfe-loader: "sha256:5681f66d11c875a5582a3a99f553a1c5e6434078a2a57548eb9139a2dbe3c7ef"
