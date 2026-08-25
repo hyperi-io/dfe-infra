@@ -290,22 +290,29 @@ else
 fi
 
 echo "==> [4b/7] Creating imagePullSecrets"
+# An imagePullSecret is namespace-scoped, so it goes in EVERY namespace that can
+# pull a private DFE image -- not just the app namespace. The schema Job runs in
+# `clickhouse` (where the admin credential lives) and pulls the engine image, so
+# without this it only worked when an app deployment had already cached that tag
+# on the node.
 for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
   # JFrog regcred (if registry credentials provided)
   if [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
     TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
   fi
+  # Private registry pull secret (GHCR, ECR, GCR, etc.)
+  # Set DFE_PULL_SECRET_SERVER, DFE_PULL_SECRET_USER, DFE_PULL_SECRET_TOKEN in env.
+  if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
+    kubectl -n "$ns" create secret docker-registry ghcr-pull-secret \
+      --docker-server="${DFE_PULL_SECRET_SERVER:-ghcr.io}" \
+      --docker-username="${DFE_PULL_SECRET_USER:-token}" \
+      --docker-password="${DFE_PULL_SECRET_TOKEN}" \
+      --dry-run=client -o yaml | run kubectl apply -f -
+  fi
 done
-# Private registry pull secret (GHCR, ECR, GCR, etc.)
-# Set DFE_PULL_SECRET_SERVER, DFE_PULL_SECRET_USER, DFE_PULL_SECRET_TOKEN in env.
 if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
-  kubectl -n "${DFE_NAMESPACE}" create secret docker-registry ghcr-pull-secret \
-    --docker-server="${DFE_PULL_SECRET_SERVER:-ghcr.io}" \
-    --docker-username="${DFE_PULL_SECRET_USER:-token}" \
-    --docker-password="${DFE_PULL_SECRET_TOKEN}" \
-    --dry-run=client -o yaml | run kubectl apply -f -
-  echo "  Pull secret created/updated in ${DFE_NAMESPACE}"
+  echo "  Pull secret created/updated in every DFE namespace"
 else
   echo "  WARNING: DFE_PULL_SECRET_TOKEN is unset, so ghcr-pull-secret was NOT created."
   echo "           Every app image from a private registry fails with ImagePullBackOff and"
