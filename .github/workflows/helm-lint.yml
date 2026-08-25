@@ -13,6 +13,8 @@ on:
       - 'constraints/**'
       - 'scripts/check_versions_drift.py'
       - 'scripts/check_governance_drift.py'
+      - 'scripts/check_namespace_drift.py'
+      - 'scripts/check_submodule_drift.py'
       - 'scripts/tests/**'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
@@ -26,6 +28,8 @@ on:
       - 'constraints/**'
       - 'scripts/check_versions_drift.py'
       - 'scripts/check_governance_drift.py'
+      - 'scripts/check_namespace_drift.py'
+      - 'scripts/check_submodule_drift.py'
       - 'scripts/tests/**'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
@@ -54,8 +58,22 @@ jobs:
       - name: Terraform-output reader
         run: python3 scripts/tests/test_bridge.py
 
+      # A namespaceSelector naming an absent namespace matches nothing and
+      # raises no error (#136), so the guard's failure paths run first.
+      - name: Namespace drift failure paths
+        run: python3 scripts/tests/test_check_namespace_drift.py
+
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
+
+      - name: Namespace drift check (common.yaml is SSoT)
+        run: python3 scripts/check_namespace_drift.py
+
+      # Renovate raises the submodule bump; nothing stops one repo sitting on it.
+      - name: Shared-submodule drift check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_submodule_drift.py
 
       # Omitting `--strict` is what makes rule violations advisory; the release
       # workflow runs it strict. No `|| true`: that also swallows the structural

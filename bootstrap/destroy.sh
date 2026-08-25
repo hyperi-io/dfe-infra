@@ -43,6 +43,11 @@ fi
 echo "==> [3/7] Deleting DFE data resources (CRDs)"
 run kubectl -n strimzi delete kafka --all 2>/dev/null || true
 run kubectl -n cnpg delete cluster --all 2>/dev/null || true
+# ClickHouseCluster/KeeperCluster are the clickhouse.com operator's kinds and
+# clickhouseinstallation is Altinity's; a CR left behind keeps its finalizer and
+# wedges the namespace delete below.
+run kubectl -n clickhouse delete clickhousecluster --all 2>/dev/null || true
+run kubectl -n clickhouse delete keepercluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete clickhouseinstallation --all 2>/dev/null || true
 if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 5
@@ -50,11 +55,13 @@ fi
 
 echo "==> [4/7] Deleting DFE namespaces"
 # Data-plane + operator + bundled deploy-repo (Forgejo) namespaces. The operator
-# namespaces (clickhouse-operator/redpanda-operator) and kafka exist only in some
-# profiles; --ignore-not-found makes listing them harmless when a profile did not
-# create them. Missing any here strands the namespace (+ its finalizers) after a
+# namespaces (clickhouse-operator-system/redpanda-operator) and kafka exist only in
+# some profiles; --ignore-not-found makes listing them harmless when a profile did
+# not create them. Missing any here strands the namespace (+ its finalizers) after a
 # teardown, which then blocks a clean redeploy.
-for ns in strimzi kafka clickhouse clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx keda reloader external-dns redpanda-operator forgejo gitea links; do
+# clickhouse-operator is the pre-rc.7 namespace, kept so a teardown of an older
+# deploy cannot leave a second operator reconciling the same CRs.
+for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx keda reloader external-dns redpanda-operator forgejo gitea links; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
 # KEDA registers the external-metrics APIService cluster-wide; deleting its

@@ -13,9 +13,10 @@ resources:
     memory: 2Gi
 
 keda:
-  minReplicas: 2
-  maxReplicas: 10
-  scalingPressureThreshold: "0.7"
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pressure:
+    targetValue: 70
 
 # ClickHouse -- operator cluster (own Keeper, ReplicatedMergeTree).
 # host MUST be overridden here: common.yaml defaults to the single-mode service
@@ -45,6 +46,12 @@ kafka:
   provider: strimzi
   replicas: 3
   bootstrapServers: "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092"
+  # Partitions cap consumer parallelism -- a group assigns at most one consumer
+  # per partition, so a loader replica past this count joins and idles.
+  # Sized from the KEDA ceiling of 10, rounded up to divide by 2/3/4/6.
+  # Raise only: Kafka cannot shrink a topic and KIP-694 is unadopted.
+  defaultTopic:
+    partitions: 12
 
 # Observability collection -- full set. Container-level kubelet series scale with
 # the node count here; measure before widening metricGroups.

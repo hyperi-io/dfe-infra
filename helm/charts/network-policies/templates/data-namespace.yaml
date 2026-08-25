@@ -27,11 +27,11 @@ spec:
               kubernetes.io/metadata.name: {{ . }}
     {{- end }}
     # Allow from operator namespaces (CNPG, Strimzi, ClickHouse operators)
-    {{- range $.Values.operatorNamespaces }}
+    {{- range $operator, $operatorNamespace := $.Values.operatorNamespaces }}
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ . }}
+              kubernetes.io/metadata.name: {{ $operatorNamespace }}
     {{- end }}
     # Allow from Envoy Gateway (external clients reach data services via gateway)
     - from:

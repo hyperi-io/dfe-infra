@@ -18,11 +18,16 @@ dataNamespaces:
   - strimzi
   - clickhouse
 
-# Operator namespaces (need access to data namespaces for reconciliation)
+# Operator namespaces -- the operators reconcile INTO the data namespaces, and
+# the ClickHouse one also probes Keeper on 2181 and runs its DDL over 9000, so a
+# name that does not match where the operator actually runs silently strands the
+# whole cluster (dfe-infra#136).
+# SSoT is argocd/values/common.yaml `operatorNamespaces`; these are chart
+# defaults for a standalone render only.
 operatorNamespaces:
-  - cnpg-system
-  - strimzi
-  - clickhouse-operator-system
+  cnpg: cnpg-system
+  strimzi: strimzi
+  clickhouse: clickhouse-operator-system
 
 # Envoy Gateway namespace (source of ingress traffic)
 gatewayNamespace: envoy-gateway-system

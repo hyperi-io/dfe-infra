@@ -49,9 +49,7 @@ def _parse_nested(text: str) -> dict:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip())
-        m = re.match(
-            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
-        )
+        m = re.match(r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip())
         if not m:
             continue
         key, quoted = m.group(1), m.group(2)
@@ -209,8 +207,7 @@ _APPSET_PINS = [
 ]
 
 CHECKS: list[Check] = [
-    Check(label, key, Path(f), appset_chart_pattern(chart))
-    for label, key, f, chart in _APPSET_PINS
+    Check(label, key, Path(f), appset_chart_pattern(chart)) for label, key, f, chart in _APPSET_PINS
 ]
 
 # Pins with a one-off shape, each needing its own anchor.
@@ -453,6 +450,15 @@ CHECKS += [
         "hyperdx chart appVersion",
         "content.dfe-hyperdx",
         Path("helm/charts/hyperdx/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
+    # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
+    # points, not an artefact of its own -- so the chart name does not match the
+    # pin and it cannot ride _APP_CHARTS.
+    Check(
+        "dfe-schema chart appVersion",
+        "apps.dfe-engine",
+        Path("helm/charts/dfe-schema/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
 ]
@@ -721,9 +727,7 @@ def plan_fix(
         for check in checks:
             expected = versions.get(check.key)
             if expected is None:
-                refused.append(
-                    f"  [refused] {check.label}: versions.yaml has no key '{check.key}'"
-                )
+                refused.append(f"  [refused] {check.label}: versions.yaml has no key '{check.key}'")
                 continue
             found = extract_span(check)
             if found is None:
@@ -805,9 +809,7 @@ def main() -> int:
             continue
         actual = extract_value(check)
         if actual is None:
-            failures.append(
-                f"  [missing] {label}: could not locate the pin in its file"
-            )
+            failures.append(f"  [missing] {label}: could not locate the pin in its file")
             continue
         checked += 1
         if actual != expected:
@@ -834,9 +836,7 @@ def main() -> int:
                 continue
         elif pattern in versions:
             continue
-        failures.append(
-            f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml"
-        )
+        failures.append(f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml")
 
     failures.extend(dead_guards(versions))
 
@@ -849,9 +849,7 @@ def main() -> int:
             file=sys.stderr,
         )
         print("\n".join(failures), file=sys.stderr)
-        print(
-            f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr
-        )
+        print(f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr)
         return 1
 
     # Say what the sweep looked at, not just that it found nothing: a silent

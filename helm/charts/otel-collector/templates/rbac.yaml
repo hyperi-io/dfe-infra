@@ -30,6 +30,16 @@ rules:
     resources: ["horizontalpodautoscalers"]
     verbs: ["get", "list", "watch"]
 {{- end }}
+{{- if .Values.clusterTelemetry.platformComponents.enabled }}
+  # Endpoint discovery for the operator scrape job.
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # controller-runtime authorises a secure /metrics scrape against this
+  # nonResourceURL; without it every such scrape returns 403.
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+{{- end }}
 {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
   # kubeletstats receiver: reads the node's own /stats/summary endpoint.
   - apiGroups: [""]

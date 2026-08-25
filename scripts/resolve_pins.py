@@ -59,7 +59,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from registry_pins import (  # noqa: E402
+from registry_pins import (
     RegistryError,
     Resolved,
     resolve,
@@ -109,15 +109,22 @@ def load_stack(stack: str | None):
 class Outcome:
     """One app's resolution verdict against the registry."""
 
-    FRESH = "fresh"      # recorded digest == registry
-    STALE = "stale"      # recorded digest != registry (or absent) -- a write target
+    FRESH = "fresh"  # recorded digest == registry
+    STALE = "stale"  # recorded digest != registry (or absent) -- a write target
     MISSING = "missing"  # the tag is not on the registry at all
-    ERROR = "error"      # gh/API failure resolving this app
+    ERROR = "error"  # gh/API failure resolving this app
 
 
 class Row:
-    def __init__(self, app: str, tag: str, recorded: str, outcome: str,
-                 resolved: Resolved | None, detail: str = "") -> None:
+    def __init__(
+        self,
+        app: str,
+        tag: str,
+        recorded: str,
+        outcome: str,
+        resolved: Resolved | None,
+        detail: str = "",
+    ) -> None:
         self.app = app
         self.tag = tag
         self.recorded = recorded
@@ -145,8 +152,7 @@ def _selected_apps(stack_map, requested: list[str]) -> list[str]:
     return [a for a in apps if a in digests]
 
 
-def resolve_rows(stack_map, org: str, apps: list[str],
-                 tag_override: str | None) -> list[Row]:
+def resolve_rows(stack_map, org: str, apps: list[str], tag_override: str | None) -> list[Row]:
     """Resolve each selected app's tag to its registry digest."""
     app_pins = stack_map.get("apps", {})
     digests = stack_map.get("digests", {})
@@ -160,8 +166,16 @@ def resolve_rows(stack_map, org: str, apps: list[str],
             rows.append(Row(app, tag, recorded, Outcome.ERROR, None, str(exc)))
             continue
         if found is None:
-            rows.append(Row(app, tag, recorded, Outcome.MISSING, None,
-                            "tag not on the registry (release without an image? hyperi-ci#102)"))
+            rows.append(
+                Row(
+                    app,
+                    tag,
+                    recorded,
+                    Outcome.MISSING,
+                    None,
+                    "tag not on the registry (release without an image? hyperi-ci#102)",
+                )
+            )
         elif found.digest == recorded:
             rows.append(Row(app, tag, recorded, Outcome.FRESH, found))
         else:
@@ -172,7 +186,7 @@ def resolve_rows(stack_map, org: str, apps: list[str],
 def _age_days(published: datetime.datetime | None) -> float | None:
     if published is None:
         return None
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     return (now - published).total_seconds() / 86400.0
 
 
@@ -200,8 +214,9 @@ def _print_row(row: Row) -> None:
 
 
 # --- write --------------------------------------------------------------------
-def apply_writes(yaml, data, stack_map, rows: list[Row],
-                 cooldown_days: int, allow_fresh: bool) -> tuple[list[str], list[str]]:
+def apply_writes(
+    yaml, data, stack_map, rows: list[Row], cooldown_days: int, allow_fresh: bool
+) -> tuple[list[str], list[str]]:
     """Set digests: for each STALE row, cooldown permitting. Returns (written, held).
 
     Each digest is independent, so a held (too-fresh) pin does not block the
@@ -248,8 +263,9 @@ def cmd_pin(args: argparse.Namespace) -> int:
     yaml, data, name, stack_map = load_stack(args.stack)
 
     apps = _selected_apps(stack_map, args.app)
-    print(f"=== resolve_pins: stack {name}, org {args.org} "
-          f"({len(apps)} app(s)) ===", file=sys.stderr)
+    print(
+        f"=== resolve_pins: stack {name}, org {args.org} ({len(apps)} app(s)) ===", file=sys.stderr
+    )
 
     rows = resolve_rows(stack_map, args.org, apps, args.version)
 
@@ -285,16 +301,19 @@ def cmd_pin(args: argparse.Namespace) -> int:
         return 1
 
     if args.write:
-        written, held = apply_writes(yaml, data, stack_map, rows,
-                                     args.cooldown_days, args.allow_fresh)
+        written, held = apply_writes(
+            yaml, data, stack_map, rows, args.cooldown_days, args.allow_fresh
+        )
         if written:
             print("\n" + "\n".join(written))
             print(f"\n{len(written)} digest(s) written to versions.yaml (stack {name}).")
         if held:
             print("\n" + "\n".join(held), file=sys.stderr)
         if missing:
-            print(f"\n{len(missing)} tag(s) missing from the registry -- not written.",
-                  file=sys.stderr)
+            print(
+                f"\n{len(missing)} tag(s) missing from the registry -- not written.",
+                file=sys.stderr,
+            )
         if not written and not held and not missing:
             print("\nevery pin already matches the registry -- nothing to write.")
         # Incomplete if anything could not be pinned.
@@ -302,16 +321,21 @@ def cmd_pin(args: argparse.Namespace) -> int:
 
     if args.check:
         if stale or missing:
-            print(f"\n{len(stale)} stale, {len(missing)} missing -- "
-                  f"pins are NOT fresh (run with --write).", file=sys.stderr)
+            print(
+                f"\n{len(stale)} stale, {len(missing)} missing -- "
+                f"pins are NOT fresh (run with --write).",
+                file=sys.stderr,
+            )
             return 1
         print(f"\nOK -- all {len(rows)} pin(s) match the registry.")
         return 0
 
     # Default informational mode.
-    print(f"\n{len(stale)} stale, {len(missing)} missing, "
-          f"{len(rows) - len(stale) - len(missing)} fresh. "
-          f"Use --write to update, --check to gate.")
+    print(
+        f"\n{len(stale)} stale, {len(missing)} missing, "
+        f"{len(rows) - len(stale) - len(missing)} fresh. "
+        f"Use --write to update, --check to gate."
+    )
     return 0
 
 
@@ -325,21 +349,43 @@ def add_pin_subparser(sub: argparse._SubParsersAction) -> None:
         help="resolve a version's registry digest and (with --write) set digests: for the current stack",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--app", action="append", default=[], metavar="NAME",
-                   help="restrict to this app (repeatable; default: every published app)")
-    p.add_argument("--version", default=None, metavar="TAG",
-                   help="resolve this tag instead of the apps: pin (needs one --app)")
+    p.add_argument(
+        "--app",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="restrict to this app (repeatable; default: every published app)",
+    )
+    p.add_argument(
+        "--version",
+        default=None,
+        metavar="TAG",
+        help="resolve this tag instead of the apps: pin (needs one --app)",
+    )
     p.add_argument("--stack", default=None, help="stack version (default: versions.yaml `current`)")
     p.add_argument("--org", default=DEFAULT_ORG, help="GH org owning the packages")
     p.add_argument("--registry", default=DEFAULT_REGISTRY, help="registry prefix for printed refs")
-    p.add_argument("--check", action="store_true",
-                   help="read-only: exit non-zero if any pin is stale or missing")
-    p.add_argument("--write", action="store_true",
-                   help="rewrite digests: in place for stale pins (cooldown-gated)")
-    p.add_argument("--cooldown-days", type=int, default=DEFAULT_COOLDOWN_DAYS,
-                   help="do not write a digest whose image is younger than this")
-    p.add_argument("--allow-fresh", action="store_true",
-                   help="override the cooldown (internal or security bump)")
+    p.add_argument(
+        "--check",
+        action="store_true",
+        help="read-only: exit non-zero if any pin is stale or missing",
+    )
+    p.add_argument(
+        "--write",
+        action="store_true",
+        help="rewrite digests: in place for stale pins (cooldown-gated)",
+    )
+    p.add_argument(
+        "--cooldown-days",
+        type=int,
+        default=DEFAULT_COOLDOWN_DAYS,
+        help="do not write a digest whose image is younger than this",
+    )
+    p.add_argument(
+        "--allow-fresh",
+        action="store_true",
+        help="override the cooldown (internal or security bump)",
+    )
     p.set_defaults(func=cmd_pin)
 
 

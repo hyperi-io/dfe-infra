@@ -30,7 +30,7 @@ from pathlib import Path
 # resolve_pins writer share ONE definition (dfe-infra#116). Imported by path so
 # it works whether check_image_pins is run as a script or imported.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from registry_pins import RegistryError, package_tags, version_key  # noqa: E402
+from registry_pins import RegistryError, package_tags, version_key
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSIONS = REPO_ROOT / "versions.yaml"

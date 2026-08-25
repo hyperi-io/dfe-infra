@@ -27,7 +27,7 @@ import argparse
 import sys
 
 DEFAULT_EMAIL = "dev@dfe.local"
-DEFAULT_PASSWORD = "DfeLocalDev123!"  # noqa: S105 - local dev placeholder only
+DEFAULT_PASSWORD = "DfeLocalDev123!"
 SPLASH = ("Loading DFE", "Loading HyperDX")
 
 

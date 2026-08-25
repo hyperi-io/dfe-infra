@@ -27,6 +27,17 @@ hostnames:
   links: links
   otel: otel          # platform OTLP ingest
 
+# THE canonical operator-namespace map: network-policies allows data-namespace
+# ingress from these, and otel-collector scrapes their controllers' metrics.
+# A wrong name here fails SILENTLY -- a namespaceSelector naming a namespace that
+# does not exist matches nothing and raises no error (dfe-infra#136).
+# MUST agree with the destination namespaces in appsets/layer-scale.yaml and
+# appsets/layer1-addons.yaml.
+operatorNamespaces:
+  clickhouse: clickhouse-operator-system
+  strimzi: strimzi
+  cnpg: cnpg-system
+
 # Image pull secrets — list of K8s secret names for private registries.
 # Override in cloud-specific values. Bootstrap creates these secrets.
 imagePullSecrets: []
@@ -91,11 +102,12 @@ clickhouse:
   # defaults to native and inserts RowBinary over it, so it takes this one.
   nativePort: 9000
   database: dfe
-  # The account the apps connect as. The server is started with CLICKHOUSE_USER
-  # set to this name, which makes the official image stop accepting a
-  # passwordless `default` -- so an app that sends no credential is refused with
-  # code 194. Name and Secret must match clickhouse-cluster's users.admin.
-  user: admin
+  # The account the apps connect as, and the one credential the deploy layer
+  # owns. `default` because that is the only account the ClickHouse operator can
+  # password from a Secret, and it is what docker and single mode already start.
+  # Name and Secret must match clickhouse-cluster's users.admin.
+  # Per-service roles come from engine governance -- docs/CLICKHOUSE-IDENTITY.md.
+  user: default
   passwordSecretName: clickhouse-admin-password
   passwordSecretKey: password
 
@@ -107,10 +119,15 @@ postgresql:
 receiver:
   listenCIDR: "100.64.0.0/10"
 
+# Key names mirror the ScaledObject spec fields the library helper writes; the
+# earlier minReplicas/maxReplicas spelling matched nothing and never applied.
+# Profiles override these per tier. pressure.targetValue is on the 0-100
+# ScalingPressure gauge and only applies where a chart opts pressure in.
 keda:
-  minReplicas: 1
-  maxReplicas: 5
-  scalingPressureThreshold: "0.7"
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  pressure:
+    targetValue: 70
 
 # ArgoCD — Envoy Gateway handles OIDC, not Dex
 argocd:

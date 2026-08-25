@@ -44,7 +44,7 @@ import datetime
 import json
 import subprocess
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,7 @@ def _gh_api(path: str) -> list[dict]:
     return records
 
 
-@lru_cache(maxsize=None)
+@cache
 def package_versions(org: str, app: str) -> tuple[dict, ...]:
     """Every version record for an org's container package (cached per process).
 
@@ -103,9 +103,7 @@ def package_versions(org: str, app: str) -> tuple[dict, ...]:
     across the check and the write path -- one API sweep per package, not per
     lookup. Returns a tuple so the lru_cache value stays immutable.
     """
-    return tuple(
-        _gh_api(f"/orgs/{org}/packages/container/{app}/versions?per_page=100")
-    )
+    return tuple(_gh_api(f"/orgs/{org}/packages/container/{app}/versions?per_page=100"))
 
 
 def _parse_ts(value: str) -> datetime.datetime | None:

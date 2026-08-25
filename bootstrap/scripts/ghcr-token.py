@@ -9,7 +9,13 @@ Usage:
     python3 ghcr-token.py                    # PEM from OpenBao
     python3 ghcr-token.py --pem /path/to.pem # PEM from file
 """
-import json, time, base64, sys, subprocess, os
+
+import base64
+import json
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 APP_ID = "3230495"
@@ -32,13 +38,16 @@ def load_pem() -> str:
         return os.environ["GHCR_APP_PEM"]
 
     # OpenBao via bao-admin
-    bao_admin = Path(__file__).resolve().parent.parent.parent.parent / "hyperi-infra/scripts/bao-admin"
+    bao_admin = (
+        Path(__file__).resolve().parent.parent.parent.parent / "hyperi-infra/scripts/bao-admin"
+    )
     if not bao_admin.exists():
         bao_admin = Path("/projects/hyperi-infra/scripts/bao-admin")
 
     result = subprocess.run(
         [str(bao_admin), "kv", "get", "-format=json", "secret/github/hyperi-container-mgt"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         print(f"ERROR: Could not read PEM from OpenBao: {result.stderr}", file=sys.stderr)
@@ -49,9 +58,10 @@ def load_pem() -> str:
 
 
 def mint_token(pem: str) -> str:
+    import urllib.request
+
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
-    import urllib.request
 
     pk = serialization.load_pem_private_key(pem.encode(), password=None)
     now = int(time.time())

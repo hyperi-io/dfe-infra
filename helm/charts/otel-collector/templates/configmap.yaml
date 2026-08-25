@@ -154,7 +154,7 @@ data:
             password: ${env:KAFKA_PASSWORD}
         {{- end }}
       {{- end }}
-      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled }}
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
       prometheus:
         config:
           scrape_configs:
@@ -202,6 +202,48 @@ data:
                   action: replace
                   target_label: k8s_pod_name
             {{- end }}
+            {{- if .Values.clusterTelemetry.platformComponents.enabled }}
+            # The data operators' controller metrics. Endpoint discovery, so an
+            # operator joins by exposing a metrics Service and needs no edit here.
+            - job_name: platform-components
+              scrape_interval: {{ .Values.clusterTelemetry.platformComponents.collectionInterval }}
+              # controller-runtime authorises the scrape against the /metrics
+              # nonResourceURL (see rbac.yaml); without a token it returns 403.
+              authorization:
+                type: Bearer
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              tls_config:
+                # The serving cert is issued by the operator's own cert-manager
+                # Issuer, which is not in the collector's trust store.
+                insecure_skip_verify: true
+              kubernetes_sd_configs:
+                - role: endpoints
+                  namespaces:
+                    names:
+                      {{- range $operator, $operatorNamespace := .Values.operatorNamespaces }}
+                      - {{ $operatorNamespace }}
+                      {{- end }}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_endpoint_port_name]
+                  action: keep
+                  regex: {{ .Values.clusterTelemetry.platformComponents.portNames | quote }}
+                # controller-runtime serves HTTPS on a port named `https`, and the
+                # port number carries no scheme, so the name is the only signal.
+                - source_labels: [__meta_kubernetes_endpoint_port_name]
+                  action: replace
+                  regex: https
+                  replacement: https
+                  target_label: __scheme__
+                - source_labels: [__meta_kubernetes_service_name]
+                  action: replace
+                  target_label: job
+                - source_labels: [__meta_kubernetes_pod_name]
+                  action: replace
+                  target_label: k8s_pod_name
+                - source_labels: [__meta_kubernetes_namespace]
+                  action: replace
+                  target_label: k8s_namespace_name
+            {{- end }}
       {{- end }}
 
     processors:
@@ -244,10 +286,20 @@ data:
       {{- end }}
       {{- if .Values.exporters.clickhouse.enabled }}
       clickhouse:
-        endpoint: {{ .Values.exporters.clickhouse.endpoint }}
-        database: {{ .Values.exporters.clickhouse.database }}
-        username: {{ .Values.exporters.clickhouse.username }}
+        # Derived from the shared clickhouse facts rather than held twice: the
+        # Service name differs per mode, so a second copy resolves to no such
+        # host on the mode it was not written for.
+        endpoint: {{ .Values.exporters.clickhouse.endpoint | default (printf "tcp://%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort) }}
+        database: {{ .Values.exporters.clickhouse.database | default .Values.clickhouse.database }}
+        username: {{ .Values.exporters.clickhouse.username | default .Values.clickhouse.user }}
         password: ${env:CLICKHOUSE_PASSWORD}
+        # dfe-engine owns the otel table DDL (dfe_engine.schema.otel_tables),
+        # applied by dfe-schema before this collector starts. The exporter senses
+        # no topology, so left to create its own tables it emits a plain CREATE
+        # TABLE against whichever replica it connected to and the siblings end up
+        # without the table -- or with a different engine. With create_schema off
+        # the only SQL it sends is INSERT.
+        create_schema: false
         timeout: 10s
         sending_queue:
           queue_size: 1000
@@ -293,7 +345,9 @@ data:
         metrics:
           receivers:
             - otlp
-            {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
+            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
+            # One receiver carries every scrape job, so this must match the
+            # receiver's own gate or configured jobs are never routed anywhere.
             - prometheus
             {{- end }}
           processors: [memory_limiter, batch]

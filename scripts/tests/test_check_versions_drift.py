@@ -59,9 +59,7 @@ def test_sweep_is_clean_as_committed() -> None:
 def test_sweep_reads_a_real_tree() -> None:
     """Guards the failure mode where the roots stop resolving and it sweeps air."""
     files = drift.sweep_files()
-    expect(
-        "sweep reaches a non-trivial file set", len(files) > 100, f"got {len(files)}"
-    )
+    expect("sweep reaches a non-trivial file set", len(files) > 100, f"got {len(files)}")
 
 
 def test_sweep_reaches_the_repo_root() -> None:
@@ -82,13 +80,9 @@ def test_stack_pin_surfaces_without_its_check() -> None:
     """
     original = drift.CHECKS
     try:
-        drift.CHECKS = [
-            c for c in original if c.label != "stack pin (deployment example)"
-        ]
+        drift.CHECKS = [c for c in original if c.label != "stack pin (deployment example)"]
         unswept = [
-            p
-            for p in drift.reverse_sweep()
-            if "[unswept]" in p and "deployment.example.yaml" in p
+            p for p in drift.reverse_sweep() if "[unswept]" in p and "deployment.example.yaml" in p
         ]
         expect(
             "the example's stack pin is visible to the sweep",
@@ -130,7 +124,7 @@ def test_missing_sweep_root_is_fatal() -> None:
     """A renamed directory must stop the run, not quietly shrink the sweep."""
     original = drift.SWEEP_ROOTS
     try:
-        drift.SWEEP_ROOTS = original + ("does-not-exist",)
+        drift.SWEEP_ROOTS = (*original, "does-not-exist")
         drift.sweep_files.cache_clear()
         raised = False
         try:
@@ -146,7 +140,8 @@ def test_missing_sweep_root_is_fatal() -> None:
 def test_waiver_that_excuses_nothing_is_reported() -> None:
     original = drift.SWEEP_WAIVERS
     try:
-        drift.SWEEP_WAIVERS = original + (
+        drift.SWEEP_WAIVERS = (
+            *original,
             ("helm/charts/does-not-exist/values.yaml", "image tag", "nothing"),
         )
         problems = drift.reverse_sweep()

@@ -80,15 +80,11 @@ clickhouse:
       cpu: "4"
       memory: 8Gi
   users:
-    # Default admin user (password via ESO secret)
+    # The one credential the deploy layer owns, named `default` on every target.
+    # Only `default` can take its password from a Secret
+    # (settings.defaultUserPassword); any other name needs it inline in the CR.
+    # Every other user, role and policy is engine governance -- see
+    # docs/CLICKHOUSE-IDENTITY.md.
     admin:
-      name: admin
+      name: default
       secretName: clickhouse-admin-password
-    # DFE loader role (async insert, limited permissions)
-    loader:
-      name: dfe_loader_role
-      databases: ["dfe"]
-    # DFE query role (read-only for hunts)
-    query:
-      name: dfe_query_role
-      databases: ["dfe"]

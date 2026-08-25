@@ -134,13 +134,34 @@ clusterTelemetry:
     enabled: true
     collectionInterval: 30s
 
+  # The data operators' own controller metrics: reconcile errors, work-queue depth,
+  # API latency. Scraped rather than pushed because none of them speak OTLP.
+  # Discovery is by Service endpoint, not pod annotation: the ClickHouse chart's
+  # scraping_annotations omit prometheus.io/scheme while its port serves HTTPS, so
+  # an annotation-driven scrape fails the TLS handshake.
+  # Bounded to operatorNamespaces -- the job presents the collector's
+  # ServiceAccount token, which must not leave namespaces we install into.
+  platformComponents:
+    enabled: true
+    collectionInterval: 30s
+    # Port names to scrape. `https` selects controller-runtime's secure endpoint;
+    # the plain names are the convention for unauthenticated exposition.
+    portNames: "https|metrics|http-metrics"
+
 # Shared endpoint facts. Defaulted here so the chart renders standalone; a real
 # deploy takes them from argocd/values/common.yaml, which is the SSoT.
+
+# Where the data operators run -- the discovery scope for platformComponents.
+operatorNamespaces:
+  clickhouse: clickhouse-operator-system
+  strimzi: strimzi
+  cnpg: cnpg-system
+
 clickhouse:
   host: dfe-clickhouse.clickhouse.svc.cluster.local
   nativePort: 9000
   database: dfe
-  user: admin
+  user: default
 
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
@@ -156,9 +177,9 @@ exporters:
   # tables the embedded HyperDX reads. THE default telemetry sink.
   clickhouse:
     enabled: true
-    endpoint: "tcp://dfe-clickhouse.clickhouse.svc.cluster.local:9000"
-    # DFE canonical database (the CH-builtin `default` is retired); a parameter,
-    # override per deployment. otel tables land as dfe.otel_*.
-    database: dfe
-    username: admin
+    # Empty -> derived from the shared clickhouse facts below, which is what a
+    # real deploy wants; set these only to point the exporter somewhere else.
+    endpoint: ""
+    database: ""
+    username: ""
     passwordSecretName: clickhouse-admin-password

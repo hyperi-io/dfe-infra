@@ -121,6 +121,7 @@ HELM_CHARTS = REPO_ROOT / "helm" / "charts"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
 DFE_STACK = SCRIPTS / "dfe-stack"
 DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
+NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 
 # `pin` (version -> registry digest resolve/check/write) lives in resolve_pins so
 # the standalone tool and `dfe-ops pin` are one code path (dfe-infra#116).
@@ -885,7 +886,18 @@ def _offline_preflight(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    # 3. Compat-check -- the stack's interdependency locks.
+    # 3. Namespace drift -- the operator-namespace SSoT vs where the appsets
+    #    install each operator. A selector naming an absent namespace matches
+    #    nothing and raises no error, so nothing else catches this (#136).
+    rc, out, err = _run_text(["python3", str(NAMESPACE_DRIFT_CHECK)])
+    if rc != 0:
+        print("  [FAIL] operator-namespace drift vs common.yaml (SSoT):", file=sys.stderr)
+        print((out or err).rstrip(), file=sys.stderr)
+        hard_fail += 1
+    else:
+        print(f"  [ok]   {_last_line(out) or 'no namespace drift'}", file=sys.stderr)
+
+    # 4. Compat-check -- the stack's interdependency locks.
     compat_cmd = ["python3", str(DFE_STACK), "compat-check", "--stack", args.stack]
     if args.strict_compat:
         compat_cmd.append("--strict")
@@ -895,7 +907,7 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     if rc != 0 and args.strict_compat:
         hard_fail += 1
 
-    # 4. Render the mode's charts at the pinned versions (catch a broken profile
+    # 5. Render the mode's charts at the pinned versions (catch a broken profile
     #    offline). helm optional -- a missing binary warns, it does not fail.
     if shutil.which("helm") is None:
         print("  [warn] helm not on PATH -- skipping the chart-render pre-flight.", file=sys.stderr)

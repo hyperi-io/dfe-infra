@@ -93,12 +93,16 @@ def expand(sql: str, source_table: str | None) -> str:
     # Longest names first, exactly as replaceMacros sorts them.
     with_args(
         "dateTimeFilter",
-        lambda a: f"({a[0]} >= {_date(START_MS)} AND {a[0]} <= {_date(END_MS)})"
-        f" AND ({a[1]} >= {_dt(START_MS)} AND {a[1]} <= {_dt(END_MS)})",
+        lambda a: (
+            f"({a[0]} >= {_date(START_MS)} AND {a[0]} <= {_date(END_MS)})"
+            f" AND ({a[1]} >= {_dt(START_MS)} AND {a[1]} <= {_dt(END_MS)})"
+        ),
     )
     with_args(
         "timeInterval_ms",
-        lambda a: f"toStartOfInterval(toDateTime64({a[0]}, 3), INTERVAL {INTERVAL_MS_PARAM} millisecond)",
+        lambda a: (
+            f"toStartOfInterval(toDateTime64({a[0]}, 3), INTERVAL {INTERVAL_MS_PARAM} millisecond)"
+        ),
     )
     with_args(
         "timeInterval",
@@ -149,9 +153,7 @@ def check_shape(display: str, meta: list[dict]) -> str | None:
     if display in VALUELESS_TYPES:
         return None
     types = [c["type"] for c in meta]
-    if display in TIME_SERIES_TYPES and not any(
-        t.startswith(DATE_TYPES) for t in types
-    ):
+    if display in TIME_SERIES_TYPES and not any(t.startswith(DATE_TYPES) for t in types):
         return f"no Date/DateTime column (got {types})"
     if not any(NUMERIC.match(t) for t in types):
         return f"no numeric column (got {types})"
@@ -196,9 +198,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     args.window_ms = args.window_minutes * 60 * 1000
     args.interval_s = args.interval_seconds
     args.ch_password = (
-        pathlib.Path(args.ch_password_file)
-        .read_text(encoding="utf-8", errors="replace")
-        .strip()
+        pathlib.Path(args.ch_password_file).read_text(encoding="utf-8", errors="replace").strip()
     )
     return args
 
@@ -220,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 sql = expand(config["sqlTemplate"], config.get("_verifySourceTable"))
                 result = run(sql, now_ms, cfg)
-            except Exception as err:  # noqa: BLE001 - the report is the point
+            except Exception as err:
                 failures += 1
                 detail = getattr(err, "read", None)
                 msg = detail().decode("utf-8", errors="replace")[:400] if detail else err

@@ -186,7 +186,6 @@ keda:
 kedaShim:
   enabled: true
   port: 8080
-  otelDatabase: dfe   # ClickHouse db holding HyperDX's otel_metrics_gauge (pressure)
   resources:
     requests:
       cpu: 25m

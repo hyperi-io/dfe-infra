@@ -1,0 +1,74 @@
+{{- /*
+The schema gate. `dfe-schema apply` creates or reconciles every DFE table and
+exits non-zero if it cannot, so a failure leaves the wave unsynced rather than
+letting the data plane start against a database with no tables.
+
+Named with the chart revision so a re-sync creates a NEW Job: a completed Job's
+pod template is immutable, and reusing the name makes ArgoCD fail the sync
+instead of re-running the apply.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dfe-schema-{{ .Release.Revision }}
+  labels: &schemaLabels
+    app.kubernetes.io/name: dfe-schema
+    app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/version: {{ .Chart.AppVersion | default "0.0.0" | quote }}
+    app.kubernetes.io/component: schema
+    dfe.hyperi.io/env: {{ .Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
+spec:
+  backoffLimit: {{ .Values.backoffLimit }}
+  template:
+    metadata:
+      labels: *schemaLabels
+    spec:
+      restartPolicy: Never
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: schema
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          command: ["dfe-schema"]
+          args:
+            - "apply"
+            - "--wait"
+            - {{ .Values.connectTimeout | quote }}
+          env:
+            - name: DFE_CLICKHOUSE_HOST
+              value: {{ .Values.clickhouse.host | quote }}
+            - name: DFE_CLICKHOUSE_PORT
+              value: {{ .Values.clickhouse.port | quote }}
+            - name: DFE_CLICKHOUSE_DATA_DATABASE
+              value: {{ .Values.clickhouse.database | quote }}
+            - name: DFE_CLICKHOUSE_SECURE
+              value: "false"
+            {{- with .Values.clickhouse.user }}
+            - name: DFE_CLICKHOUSE_USERNAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.clickhouse.passwordSecretName }}
+            - name: DFE_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.clickhouse.passwordSecretKey | default "password" }}
+            {{- end }}
+            # No OTLP endpoint: this runs a wave BEFORE the collector, so an
+            # export would have nothing to reach. The apply reports to stdout,
+            # which is where a Job's record belongs.
+            - name: OTEL_SERVICE_NAME
+              value: dfe-schema
+          volumeMounts:
+            # The container rootfs is read-only, so anything writing /tmp needs this.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}

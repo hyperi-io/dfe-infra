@@ -75,8 +75,18 @@ def _gh(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
 def cmd_open(a: argparse.Namespace) -> int:
     repo = _repo(a.repo)
     cmd = [
-        "pr", "create", "-R", repo, "--head", a.head, "--base", a.base,
-        "--title", a.title, "--body-file", a.body_file,
+        "pr",
+        "create",
+        "-R",
+        repo,
+        "--head",
+        a.head,
+        "--base",
+        a.base,
+        "--title",
+        a.title,
+        "--body-file",
+        a.body_file,
     ]
     proc = _gh(cmd, check=False)
     if proc.returncode != 0:
@@ -123,8 +133,7 @@ def _merge_publishing(repo: str, a: argparse.Namespace) -> int:
     note = a.note or (pr_lines[0] if pr_lines else "")
     body = f"{note}\n\n{PUBLISH_TRAILER}" if note else PUBLISH_TRAILER
 
-    cmd = ["pr", "merge", str(a.pr), "-R", repo, "--squash",
-           "--subject", subject, "--body", body]
+    cmd = ["pr", "merge", str(a.pr), "-R", repo, "--squash", "--subject", subject, "--body", body]
     if a.admin:
         cmd.append("--admin")
     if a.delete_branch:
@@ -148,8 +157,18 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
 
 def _latest_run(repo: str, workflow: str) -> dict | None:
     proc = _gh(
-        ["run", "list", "-R", repo, "-w", workflow, "--limit", "1",
-         "--json", "databaseId,status,conclusion,headBranch,createdAt,url"],
+        [
+            "run",
+            "list",
+            "-R",
+            repo,
+            "-w",
+            workflow,
+            "--limit",
+            "1",
+            "--json",
+            "databaseId,status,conclusion,headBranch,createdAt,url",
+        ],
         check=False,
     )
     if proc.returncode != 0:
@@ -231,8 +250,11 @@ def main() -> int:
     pm.add_argument("--pr", required=True, type=int)
     pm.add_argument("--admin", action="store_true")
     pm.add_argument("--delete-branch", action="store_true")
-    pm.add_argument("--publish", action="store_true",
-                    help="squash-merge with the Publish: true trailer -- the merge itself releases")
+    pm.add_argument(
+        "--publish",
+        action="store_true",
+        help="squash-merge with the Publish: true trailer -- the merge itself releases",
+    )
     pm.add_argument("--subject", help="squash subject (default: the PR title)")
     pm.add_argument("--note", help="squash body line (default: the PR body's first line)")
     pm.set_defaults(func=cmd_merge)
