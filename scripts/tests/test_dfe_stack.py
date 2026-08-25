@@ -153,6 +153,111 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
     )
 
 
+def _constraints_fixture(tmp: Path, from_name: str) -> dict:
+    """A minimal root + on-disk constraints file, rooted at a throwaway tree."""
+    (tmp / "constraints").mkdir(parents=True, exist_ok=True)
+    (tmp / "constraints" / f"{from_name}.yaml").write_text(
+        f"# Constraints for DFE stack {from_name}.\n"
+        f"# Validated by: dfe-stack compat-check --stack {from_name}\n"
+        f'stack: "{from_name}"\n'
+        "rules:\n"
+        "  a-rule:\n"
+        '    severity: "error"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    return {"stacks": {from_name: {"constraints": f"constraints/{from_name}.yaml"}}}
+
+
+def test_cut_carries_the_constraints_file_forward() -> None:
+    """A cut re-points `constraints:` at the new version, so it must WRITE it.
+
+    Without this the cut lands referencing a file that does not exist and
+    compat-check hard-fails -- which is exactly how every cut so far ended up
+    hand-copying the file.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root = _constraints_fixture(tmp, "9.9.0-rc.1")
+        original = stack.REPO_ROOT
+        stack.REPO_ROOT = tmp
+        try:
+            written = stack._carry_constraints(root, "9.9.0-rc.1", "9.9.0-rc.2")
+        finally:
+            stack.REPO_ROOT = original
+
+        expect(
+            "it reports the path it wrote",
+            written == "constraints/9.9.0-rc.2.yaml",
+            f"{written}",
+        )
+        text = (tmp / "constraints" / "9.9.0-rc.2.yaml").read_text(encoding="utf-8")
+        expect("the new file declares the NEW stack", 'stack: "9.9.0-rc.2"' in text, text)
+        expect("no stale version string survives", "9.9.0-rc.1" not in text, text)
+        expect("the rules carry over unchanged", "a-rule:" in text, text)
+
+
+def test_cut_never_clobbers_an_existing_constraints_file() -> None:
+    """Re-cutting must not overwrite hand-edited rules for a version already cut."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        root = _constraints_fixture(tmp, "9.9.0-rc.1")
+        target = tmp / "constraints" / "9.9.0-rc.2.yaml"
+        target.write_text("hand-edited\n", encoding="utf-8", newline="\n")
+        original = stack.REPO_ROOT
+        stack.REPO_ROOT = tmp
+        try:
+            written = stack._carry_constraints(root, "9.9.0-rc.1", "9.9.0-rc.2")
+        finally:
+            stack.REPO_ROOT = original
+
+        expect("it declines rather than overwriting", written is None, f"{written}")
+        expect(
+            "the hand-edited file is untouched",
+            target.read_text(encoding="utf-8") == "hand-edited\n",
+            target.read_text(encoding="utf-8"),
+        )
+
+
+def test_cut_is_silent_when_no_constraints_are_declared() -> None:
+    """A stack with no constraints key has nothing to carry -- not an error."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        original = stack.REPO_ROOT
+        stack.REPO_ROOT = Path(td)
+        try:
+            written = stack._carry_constraints(
+                {"stacks": {"9.9.0-rc.1": {}}}, "9.9.0-rc.1", "9.9.0-rc.2"
+            )
+        finally:
+            stack.REPO_ROOT = original
+        expect("no constraints declared -> nothing written", written is None, f"{written}")
+
+
+def test_every_stack_constraints_reference_resolves() -> None:
+    """The repo-level invariant the carry-forward exists to hold.
+
+    compat-check raises on a missing file, so a stack pointing at one that was
+    never created is a latent failure sitting in the SSoT.
+    """
+    root = stack.load_root()
+    dangling = []
+    for name, block in root.get("stacks", {}).items():
+        rel = block.get("constraints")
+        if rel and not (REPO_ROOT / rel).exists():
+            dangling.append(f"{name} -> {rel}")
+    expect(
+        "every stack's constraints file exists on disk",
+        not dangling,
+        f"dangling: {dangling}",
+    )
+
+
 def main() -> int:
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

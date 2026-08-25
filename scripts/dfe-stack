@@ -68,6 +68,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Sibling module, imported by path so `python3 scripts/dfe-stack` works from any cwd.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import registry_pins  # noqa: E402
+
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
 
@@ -922,6 +923,39 @@ def _rewrite_scalar(block: list[str], section: str, key: str, value: str) -> boo
     return False
 
 
+def _carry_constraints(root: dict, from_name: str, new: str) -> str | None:
+    """Clone the source stack's constraints file for the new version.
+
+    `cut` already re-points the block's `constraints:` key at
+    `constraints/<new>.yaml`, so without this the cut lands referencing a file
+    that does not exist and `compat-check` hard-fails. The rules themselves
+    carry over unchanged -- an interdependency lock is a property of the
+    components, not of the version that happens to pin them -- so the only edit
+    is the version string in the header, the `stack:` key and the self-
+    referencing commands.
+
+    Returns the path written, or None when there is nothing to carry (no
+    constraints declared, source missing, or the target already exists).
+    """
+    _, from_v = stack_pins(root, from_name)
+    src_rel = from_v.get("constraints")
+    if not src_rel:
+        return None
+    src = REPO_ROOT / src_rel
+    if not src.exists():
+        return None
+    dst_rel = src_rel.replace(from_name, new)
+    dst = REPO_ROOT / dst_rel
+    if dst.exists():
+        return None
+    dst.write_text(
+        src.read_text(encoding="utf-8").replace(from_name, new),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return dst_rel
+
+
 def cmd_cut(args: argparse.Namespace) -> int:
     """Cut a new stack version from the CURRENT LATEST build of every app.
 
@@ -989,6 +1023,10 @@ def cmd_cut(args: argparse.Namespace) -> int:
         print("  nothing moved -- every app was already at its latest published release")
 
     if args.dry_run:
+        _, from_v = stack_pins(root, from_name)
+        src_rel = from_v.get("constraints")
+        if src_rel:
+            print(f"  would clone constraints -> {src_rel.replace(from_name, new)}")
         print("dry-run: versions.yaml unchanged")
         return 0
 
@@ -999,6 +1037,10 @@ def cmd_cut(args: argparse.Namespace) -> int:
     if n != 1:
         raise SystemExit("error: no `current:` pointer to move -- refusing a half-written cut")
     path.write_text(text)
+
+    carried = _carry_constraints(root, from_name, new)
+    if carried:
+        print(f"  constraints -> {carried} (cloned from {from_name}; review the rules)")
 
     print(f"  current -> {new}")
     print("  next: dfe-stack compat-check; check_versions_drift.py --fix; dfe-stack release-gate")
