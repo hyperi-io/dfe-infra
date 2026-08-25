@@ -3,14 +3,25 @@ The schema gate. `dfe-schema apply` creates or reconciles every DFE table and
 exits non-zero if it cannot, so a failure leaves the wave unsynced rather than
 letting the data plane start against a database with no tables.
 
-Named with the chart revision so a re-sync creates a NEW Job: a completed Job's
-pod template is immutable, and reusing the name makes ArgoCD fail the sync
-instead of re-running the apply.
+A Job's pod template is immutable, so a re-sync needs either a new name or a
+deleted predecessor. ArgoCD renders with `helm template`, where .Release.Revision
+is ALWAYS 1 (helm/helm#10690) -- a revision-suffixed name never changes, so the
+second sync tries to patch a finished Job and fails on an immutable field. The
+Sync hook plus BeforeHookCreation is what actually re-runs it: ArgoCD deletes the
+previous Job before creating the next, which also leaves the last run in place to
+read. ArgoCD is the deploy vehicle for this chart; a bare `helm upgrade` would
+collide on the fixed name.
+
+The apply is a reconciler, so running it every sync is the intended semantic --
+it creates what is absent, diffs what exists, and exits quickly when neither.
 */ -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: dfe-schema-{{ .Release.Revision }}
+  name: dfe-schema
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
   labels: &schemaLabels
     app.kubernetes.io/name: dfe-schema
     app.kubernetes.io/part-of: {{ .Values.project | quote }}
@@ -21,6 +32,9 @@ metadata:
     dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
 spec:
   backoffLimit: {{ .Values.backoffLimit }}
+  # A hung apply would otherwise block the sync forever: the in-process --wait
+  # bounds the CONNECT, not a DDL statement that never returns.
+  activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}
   template:
     metadata:
       labels: *schemaLabels
