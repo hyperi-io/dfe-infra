@@ -455,6 +455,15 @@ CHECKS += [
         Path("helm/charts/hyperdx/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
+    # points, not an artefact of its own -- so the chart name does not match the
+    # pin and it cannot ride _APP_CHARTS.
+    Check(
+        "dfe-schema chart appVersion",
+        "apps.dfe-engine",
+        Path("helm/charts/dfe-schema/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
 ]
 
 
