@@ -140,8 +140,7 @@ def audit() -> tuple[list[str], list[dict], list[str]]:
             if pinned != head:
                 gap = "an unknown number of" if behind is None else str(behind)
                 failures.append(
-                    f"{consumer}: pins {module} at {pinned[:7]}, {gap} commit(s) "
-                    f"behind {head[:7]}"
+                    f"{consumer}: pins {module} at {pinned[:7]}, {gap} commit(s) behind {head[:7]}"
                 )
 
     return failures, rows, skips
@@ -149,15 +148,12 @@ def audit() -> tuple[list[str], list[dict], list[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--json", action="store_true", help="emit the pin table as JSON"
-    )
+    parser.add_argument("--json", action="store_true", help="emit the pin table as JSON")
     args = parser.parse_args()
 
     if shutil.which("gh") is None:
         print(
-            "SKIPPED: gh is not on PATH -- submodule pins NOT checked. This is a "
-            "skip, not a pass.",
+            "SKIPPED: gh is not on PATH -- submodule pins NOT checked. This is a skip, not a pass.",
             file=sys.stderr,
         )
         return 0

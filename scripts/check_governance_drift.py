@@ -115,8 +115,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="checkout of the dfe-deploy template (default: $DFE_DEPLOY_ROOT, else ../dfe-deploy beside this repo)",
     )
-    ap.add_argument("--charts-dir", default=str(REPO_ROOT / "helm" / "charts"), help="chart fleet to resolve against")
-    ap.add_argument("--require", action="store_true", help="a missing deploy checkout FAILS instead of skipping (CI)")
+    ap.add_argument(
+        "--charts-dir",
+        default=str(REPO_ROOT / "helm" / "charts"),
+        help="chart fleet to resolve against",
+    )
+    ap.add_argument(
+        "--require",
+        action="store_true",
+        help="a missing deploy checkout FAILS instead of skipping (CI)",
+    )
     args = ap.parse_args(argv)
 
     import os
@@ -153,7 +161,10 @@ def main(argv: list[str] | None = None) -> int:
         changes = doc.get("changes")
         if not isinstance(changes, list):
             # Structure is dfe-deploy's validator's job; note and move on.
-            print(f"  [warn] {action_file.name}: no changes[] list (structure is dfe-deploy CI's job)", file=sys.stderr)
+            print(
+                f"  [warn] {action_file.name}: no changes[] list (structure is dfe-deploy CI's job)",
+                file=sys.stderr,
+            )
             continue
         for i, change in enumerate(changes):
             if not isinstance(change, dict):
@@ -163,7 +174,10 @@ def main(argv: list[str] | None = None) -> int:
                 skipped_classes += 1
                 continue
             if cls != "helmvars":
-                print(f"  [FAIL] {action_file.name} changes[{i}]: unknown cls {cls!r}", file=sys.stderr)
+                print(
+                    f"  [FAIL] {action_file.name} changes[{i}]: unknown cls {cls!r}",
+                    file=sys.stderr,
+                )
                 failures += 1
                 continue
             name, path = change.get("name", ""), change.get("path", "")

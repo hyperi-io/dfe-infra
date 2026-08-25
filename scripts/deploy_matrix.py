@@ -641,7 +641,7 @@ def run_cell(cell: Cell, *, do_apply: bool) -> CellResult:
         t0 = time.monotonic()
         try:
             ok, err = fn(cell)
-        except Exception as exc:  # noqa: BLE001 -- any phase failure must still teardown
+        except Exception as exc:
             ok, err = False, f"{step} raised: {exc!r}"
         res.timings[step] = round(time.monotonic() - t0, 2)
         setattr(res, flag, ok)

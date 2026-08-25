@@ -83,9 +83,7 @@ def test_missing_state_is_fatal_and_says_why() -> None:
 
 def test_malformed_state_is_fatal() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        (Path(tmp) / "terraform.tfstate").write_text(
-            "{not json", encoding="utf-8", newline="\n"
-        )
+        (Path(tmp) / "terraform.tfstate").write_text("{not json", encoding="utf-8", newline="\n")
         raised = False
         try:
             bridge._outputs_from_state(tmp)

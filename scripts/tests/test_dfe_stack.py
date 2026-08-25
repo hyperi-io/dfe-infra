@@ -133,9 +133,7 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
     text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     # Renovate/RE2 spell named groups (?<n>...); python re wants (?P<n>...).
     pattern = re.sub(r"\(\?<([A-Za-z]+)>", r"(?P<\1>", managers[0]["matchStrings"][0])
-    matched = {
-        m.group("depName"): m.group("currentValue") for m in re.finditer(pattern, text)
-    }
+    matched = {m.group("depName"): m.group("currentValue") for m in re.finditer(pattern, text)}
 
     annotated = re.findall(r"#\s*renovate:.*?depName=(\S+)", text)
     expect(

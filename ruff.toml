@@ -1,0 +1,43 @@
+# Ruff config for the repo's Python -- the ops scripts under scripts/.
+#
+# dfe-infra ships no Python package, so this is a standalone ruff.toml rather
+# than a [tool.ruff] table. Without it ruff fell back to its 88-column default
+# while the scripts are written at 100, and every local pre-push gate failed on
+# hundreds of pre-existing lines nobody had touched.
+#
+# 100 matches dfe-engine, the sibling Python repo, and the code as written: 18
+# lines here exceed 100 against 84 that exceed 88.
+
+line-length = 100
+target-version = "py312"
+
+extend-exclude = [
+    ".tmp",
+    "helm",
+]
+
+[lint]
+# The same families dfe-engine selects, so a script moving between the repos
+# does not change shape. T20 stays OUT: these scripts ARE command-line tools and
+# printing is what they do.
+select = ["E4", "E7", "E9", "F", "B", "S", "I", "UP", "N", "PT", "RUF", "PIE"]
+ignore = [
+    "S101",  # assert -- the drift-guard tests are built on it
+    "S105",  # hardcoded password: sentinel and secret-NAME strings, not secrets
+    "S603",  # subprocess without shell -- every one of these shells out to gh/kubectl/helm
+    "S607",  # partial executable path -- gh, kubectl and helm come from PATH by design
+    "S608",  # SQL built by format -- ClickHouse DDL from config, never user input
+    "S110",  # try-except-pass, where a probe genuinely has nothing to do on failure
+    "S112",  # try-except-continue, where the next candidate IS the handling
+    # urlopen against an endpoint the operator supplied. The rule guards a `file:`
+    # or custom scheme arriving from untrusted input; these URLs are CLI arguments
+    # and config, and the scripts run on an operator's own machine.
+    "S310",
+    "S311",  # seeded random in loadgen -- reproducibility, not cryptography
+    "N814",  # a deliberate short local alias for a long ruamel class
+]
+
+[lint.per-file-ignores]
+# Test helpers load the script under test by path, which needs the import
+# machinery rather than a module import.
+"scripts/tests/*" = ["S102"]

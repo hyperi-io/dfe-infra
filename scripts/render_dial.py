@@ -161,9 +161,7 @@ def _merge_env(env_path: Path, updates: dict[str, str]) -> None:
 
     if remaining:
         out.append("")
-        out.append(
-            "## Set by render_dial.py from deployment.yaml -- do not edit by hand."
-        )
+        out.append("## Set by render_dial.py from deployment.yaml -- do not edit by hand.")
         out.extend(f'{key}="{value}"' for key, value in remaining.items())
 
     with env_path.open("w", encoding="utf-8", newline="\n") as handle:
@@ -175,11 +173,7 @@ def _derived_command(dial: dict[str, object], env_path: Path) -> str:
     mode = _scalar(dial, ("profile",)) or "single"
     stack = _scalar(dial, ("version", "pin")) or ""
     registry = _scalar(dial, ("registry",)) or ""
-    rel_env = (
-        env_path.relative_to(REPO_ROOT)
-        if env_path.is_relative_to(REPO_ROOT)
-        else env_path
-    )
+    rel_env = env_path.relative_to(REPO_ROOT) if env_path.is_relative_to(REPO_ROOT) else env_path
     parts = ["python3 scripts/dfe-ops cycle", f"--mode {mode}"]
     if stack:
         parts.append(f"--stack {stack}")
@@ -194,9 +188,7 @@ def main() -> int:
         prog="render_dial.py",
         description="Render the deployment dial's k8s slice into the DFE_* env file.",
     )
-    ap.add_argument(
-        "--dial", type=Path, default=DIAL, help="dial path (default: deployment.yaml)"
-    )
+    ap.add_argument("--dial", type=Path, default=DIAL, help="dial path (default: deployment.yaml)")
     ap.add_argument(
         "--out",
         type=Path,
@@ -234,9 +226,7 @@ def main() -> int:
             return 1
         args.out.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ENV_TEMPLATE, args.out)
-        print(
-            f"render_dial: seeded {args.out} from {ENV_TEMPLATE.name}", file=sys.stderr
-        )
+        print(f"render_dial: seeded {args.out} from {ENV_TEMPLATE.name}", file=sys.stderr)
 
     updates = _env_updates(dial)
     if updates:
@@ -247,9 +237,7 @@ def main() -> int:
             file=sys.stderr,
         )
     else:
-        print(
-            "render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr
-        )
+        print("render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr)
 
     print(file=sys.stderr)
     print("Deploy this dial with:", file=sys.stderr)

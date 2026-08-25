@@ -133,13 +133,11 @@ def compare(
         expected = ssot.get(operator)
         if expected is None:
             failures.append(
-                f"{operator}: in the network-policies defaults but not in the "
-                "common.yaml SSoT"
+                f"{operator}: in the network-policies defaults but not in the common.yaml SSoT"
             )
         elif expected != namespace:
             failures.append(
-                f"{operator}: network-policies default `{namespace}` != SSoT "
-                f"`{expected}`"
+                f"{operator}: network-policies default `{namespace}` != SSoT `{expected}`"
             )
 
     for operator in sorted(set(ssot) - set(netpol)):
@@ -162,8 +160,10 @@ def main() -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
 
-    print(f"PASS: {len(ssot)} operator namespaces agree across common.yaml, "
-          "the appsets and the network-policies defaults")
+    print(
+        f"PASS: {len(ssot)} operator namespaces agree across common.yaml, "
+        "the appsets and the network-policies defaults"
+    )
     return 0
 
 

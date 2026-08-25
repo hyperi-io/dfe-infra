@@ -48,9 +48,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--workers", type=int, default=8, help="concurrent sender threads")
     ap.add_argument("--source", default="default", help="_source value on each event")
     ap.add_argument("--timeout", type=int, default=30, help="per-request timeout (s)")
-    ap.add_argument(
-        "--seed", type=int, default=20260821, help="base RNG seed (per-worker offset)"
-    )
+    ap.add_argument("--seed", type=int, default=20260821, help="base RNG seed (per-worker offset)")
     return ap.parse_args(argv)
 
 
@@ -69,8 +67,7 @@ def _run(args: argparse.Namespace) -> int:
                     "_source": args.source,
                     "org_id": rng.choice(ORGS),
                     "logoriginal": (
-                        f"[loadgen] {rng.choice(LEVELS)} event {n} "
-                        "from the Heart of Gold"
+                        f"[loadgen] {rng.choice(LEVELS)} event {n} from the Heart of Gold"
                     ),
                     "event": rng.choice(EVENTS),
                     "seq": n,
@@ -86,15 +83,13 @@ def _run(args: argparse.Namespace) -> int:
                     resp.read()
                 with lock:
                     tally["sent"] += 1
-            except Exception:  # noqa: BLE001 - the tally is the point
+            except Exception:
                 with lock:
                     tally["failed"] += 1
             n += args.workers
             time.sleep(interval)
 
-    threads = [
-        threading.Thread(target=worker, args=(w,)) for w in range(args.workers)
-    ]
+    threads = [threading.Thread(target=worker, args=(w,)) for w in range(args.workers)]
     for t in threads:
         t.start()
     for t in threads:

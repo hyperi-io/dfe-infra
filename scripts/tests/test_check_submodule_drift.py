@@ -25,7 +25,8 @@ _MODULE = Path(__file__).resolve().parents[1] / "check_submodule_drift.py"
 
 def _load():
     spec = importlib.util.spec_from_file_location("check_submodule_drift", _MODULE)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -102,9 +103,7 @@ def test_a_stale_pin_is_a_failure_with_the_gap(guard, monkeypatch):
                     "type": "submodule",
                     "sha": "b" * 40,
                 },
-                f"repos/hyperi-io/dfe-schemas/compare/{'b' * 40}...{'a' * 40}": {
-                    "ahead_by": 26
-                },
+                f"repos/hyperi-io/dfe-schemas/compare/{'b' * 40}...{'a' * 40}": {"ahead_by": 26},
             }
         ),
     )

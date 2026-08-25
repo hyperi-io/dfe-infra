@@ -45,7 +45,7 @@ resolve_pins = _load("resolve_pins")
 
 # --- fixtures (in-memory GH records + a synthetic versions.yaml) --------------
 def _iso(days_ago: float) -> str:
-    when = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days_ago)
+    when = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days_ago)
     return when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -121,8 +121,7 @@ def _install(monkeypatch, tmp_path):
 
 # --- registry_pins core -------------------------------------------------------
 def test_resolve_returns_digest_and_publish_date(monkeypatch):
-    monkeypatch.setattr(registry_pins, "package_versions",
-                        lambda o, a: tuple(FAKE_PACKAGES[a]))
+    monkeypatch.setattr(registry_pins, "package_versions", lambda o, a: tuple(FAKE_PACKAGES[a]))
     found = registry_pins.resolve("hyperi-io", "dfe-engine", "v1.15.1")
     assert found is not None
     assert found.digest == "sha256:" + "a" * 64
@@ -130,14 +129,12 @@ def test_resolve_returns_digest_and_publish_date(monkeypatch):
 
 
 def test_resolve_digest_is_none_for_absent_tag(monkeypatch):
-    monkeypatch.setattr(registry_pins, "package_versions",
-                        lambda o, a: tuple(FAKE_PACKAGES[a]))
+    monkeypatch.setattr(registry_pins, "package_versions", lambda o, a: tuple(FAKE_PACKAGES[a]))
     assert registry_pins.resolve_digest("hyperi-io", "dfe-engine", "v9.9.9") is None
 
 
 def test_package_tags_maps_every_tag(monkeypatch):
-    monkeypatch.setattr(registry_pins, "package_versions",
-                        lambda o, a: tuple(FAKE_PACKAGES[a]))
+    monkeypatch.setattr(registry_pins, "package_versions", lambda o, a: tuple(FAKE_PACKAGES[a]))
     tags = registry_pins.package_tags("hyperi-io", "dfe-engine")
     assert tags["v1.15.1"] == "sha256:" + "a" * 64
     assert tags["v1.15.0"] == "sha256:" + "0" * 64
@@ -149,6 +146,7 @@ def test_version_key_orders_numerically():
 
 def test_gh_api_parses_concatenated_pages(monkeypatch):
     """--paginate concatenates one JSON array per page with no separator."""
+
     class FakeProc:
         returncode = 0
         stdout = '[{"name":"x"}]\n[{"name":"y"}]'
@@ -262,7 +260,7 @@ def test_ad_hoc_version_prints_ref(monkeypatch, tmp_path, capsys):
     rc = resolve_pins.cmd_pin(args)
     out = capsys.readouterr().out
     assert rc == 0
-    assert f'ghcr.io/hyperi-io/dfe-loader:v1.18.21@sha256:{"b" * 64}' in out
+    assert f"ghcr.io/hyperi-io/dfe-loader:v1.18.21@sha256:{'b' * 64}" in out
 
 
 def test_ad_hoc_write_refuses_tag_mismatch(monkeypatch, tmp_path):
@@ -277,10 +275,18 @@ def test_ad_hoc_write_refuses_tag_mismatch(monkeypatch, tmp_path):
 # --- arg helper ---------------------------------------------------------------
 def _args(**over):
     import argparse
+
     ns = argparse.Namespace(
-        app=[], version=None, stack=None, org="hyperi-io",
-        registry="ghcr.io/hyperi-io", check=False, write=False,
-        cooldown_days=7, allow_fresh=False, func=None,
+        app=[],
+        version=None,
+        stack=None,
+        org="hyperi-io",
+        registry="ghcr.io/hyperi-io",
+        check=False,
+        write=False,
+        cooldown_days=7,
+        allow_fresh=False,
+        func=None,
     )
     for k, v in over.items():
         setattr(ns, k, v)
@@ -313,10 +319,7 @@ def main() -> int:
     import tempfile
 
     failures = 0
-    tests = [
-        (n, f) for n, f in sorted(globals().items())
-        if n.startswith("test_") and callable(f)
-    ]
+    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     for name, fn in tests:
         mp = _MP()
         _buf = io.StringIO()
@@ -333,7 +336,7 @@ def main() -> int:
                 with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(io.StringIO()):
                     fn(**kw)
                 print(f"PASS  {name}")
-            except Exception as exc:  # noqa: BLE001 - report every failure
+            except Exception as exc:
                 failures += 1
                 print(f"FAIL  {name}  {exc}")
             finally:

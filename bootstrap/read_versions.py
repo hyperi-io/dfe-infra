@@ -58,9 +58,7 @@ def _parse_simple_yaml(text: str) -> dict:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip())
-        m = re.match(
-            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
-        )
+        m = re.match(r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip())
         if not m:
             continue
         key, quoted = m.group(1), m.group(2)
@@ -101,9 +99,7 @@ def main() -> None:
         help="Output as UPPER_SNAKE=value for shell eval",
     )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument(
-        "--file", default=None, help="Path to versions.yaml (default: auto-detect)"
-    )
+    parser.add_argument("--file", default=None, help="Path to versions.yaml (default: auto-detect)")
     parser.add_argument(
         "--stack",
         default=None,
