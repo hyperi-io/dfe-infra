@@ -60,7 +60,10 @@ reads as "unpublished".
     python3 scripts/dfe-stack release-gate --stack 2.2.0-rc.7
 
 `compat-check` validates the interdependency locks in
-`constraints/<version>.yaml` -- create that file for the new version.
+`constraints/<version>.yaml`. `cut` clones that file from the source stack, so
+it exists already -- review the rules rather than recreating them, because a
+lock is a property of the components and only a component move invalidates one.
+An existing file is never overwritten.
 `check_versions_drift.py --fix` propagates the SSoT into the pin mirrors that
 Renovate cannot reach (appset pins, `Chart.yaml` appVersions).
 `release-gate` fails a release-maturity stack that still has unpublished apps.
