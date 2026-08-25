@@ -27,6 +27,12 @@ connectTimeout: 300
 # cover (a node eviction, an image pull).
 backoffLimit: 3
 
+# How long the whole Job gets, retries included. Bounds a DDL statement that
+# never returns, which connectTimeout does not cover -- without it a hung apply
+# blocks the sync indefinitely. Set above connectTimeout x (backoffLimit + 1) so
+# a slow cluster start is a retry, not a deadline.
+activeDeadlineSeconds: 1800
+
 clickhouse:
   host: ""
   port: 8123
