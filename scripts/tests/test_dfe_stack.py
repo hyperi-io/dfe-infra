@@ -153,6 +153,64 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
     )
 
 
+_NESTED_STACKS = """\
+current: "2.0.0"
+stacks:
+  1.0.0:
+    apps:
+      an-app: "v1.0.0"
+      other: "v0.1.0"
+    digests:
+      an-app: "sha256:aaa"
+      other: "sha256:bbb"
+  2.0.0:
+    apps:
+      an-app: "v2.0.0"
+      other: "v0.2.0"
+    digests:
+      an-app: "sha256:ccc"
+      other: "sha256:ddd"
+"""
+
+
+def test_bump_app_targets_the_current_stack_not_the_first_one() -> None:
+    """The corruption this guards: a whole-file rewrite hits the OLDEST stack.
+
+    versions.yaml carries every stack's complete pin set, so a file-wide
+    substitution with count=1 rewrites the first match -- silently editing a
+    shipped, immutable record while leaving `current` untouched.
+    """
+    lines = _NESTED_STACKS.splitlines(keepends=True)
+    start, end = stack._block_span(lines, "2.0.0")
+    start, end = stack._sub_block_span(lines, start, end, "apps")
+    hits = [i for i in range(start, end) if lines[i].strip().startswith("an-app:")]
+
+    expect("exactly one apps pin in the target stack", len(hits) == 1, f"{hits}")
+    if hits:
+        expect(
+            "it is the CURRENT stack's pin, not the first in the file",
+            '"v2.0.0"' in lines[hits[0]],
+            lines[hits[0]],
+        )
+
+
+def test_the_apps_sub_block_excludes_digests() -> None:
+    """Every app name appears twice per stack -- under apps AND under digests."""
+    lines = _NESTED_STACKS.splitlines(keepends=True)
+    start, end = stack._block_span(lines, "2.0.0")
+    whole_block = [i for i in range(start, end) if lines[i].strip().startswith("an-app:")]
+    a_start, a_end = stack._sub_block_span(lines, start, end, "apps")
+    apps_only = [i for i in range(a_start, a_end) if lines[i].strip().startswith("an-app:")]
+
+    expect("the stack block holds both", len(whole_block) == 2, f"{whole_block}")
+    expect("the apps sub-block holds one", len(apps_only) == 1, f"{apps_only}")
+    expect(
+        "and it is the version, not the digest",
+        "sha256" not in lines[apps_only[0]],
+        lines[apps_only[0]],
+    )
+
+
 def _constraints_fixture(tmp: Path, from_name: str) -> dict:
     """A minimal root + on-disk constraints file, rooted at a throwaway tree."""
     (tmp / "constraints").mkdir(parents=True, exist_ok=True)

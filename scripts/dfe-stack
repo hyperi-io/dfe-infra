@@ -812,18 +812,32 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     name = args.app
 
     vpath = REPO_ROOT / "versions.yaml"
-    vtext = vpath.read_text()
-    vnew, vn = re.subn(
-        rf'(?m)^(\s+{re.escape(name)}:\s*)"[^"]*"',
-        rf'\1"{version}"',
-        vtext,
-        count=1,
-    )
-    if vn != 1:
+    lines = vpath.read_text().splitlines(keepends=True)
+
+    # Scope the rewrite to ONE stack block. versions.yaml carries every stack's
+    # complete pin set, so a whole-file substitution rewrites the FIRST match --
+    # the oldest stack -- and silently corrupts a shipped, immutable record.
+    stack = args.stack or load_root().get("current")
+    if not stack:
+        raise SystemExit("error: no --stack given and no `current:` pointer to fall back on")
+    start, end = _block_span(lines, stack)
+    # Narrow again to `apps:`. A stack repeats every app name under `digests:`
+    # too, so the whole block still holds two lines per app.
+    start, end = _sub_block_span(lines, start, end, "apps")
+
+    matches = [
+        i for i in range(start, end) if re.match(rf'^\s+{re.escape(name)}:\s*"[^"]*"', lines[i])
+    ]
+    if len(matches) != 1:
         raise SystemExit(
-            f"error: versions.yaml has no `apps.{name}` pin to rewrite (matched {vn}). "
+            f"error: stack {stack} has {len(matches)} `{name}` pin(s) to rewrite, expected 1. "
             f"Check the key name; this refuses rather than guess."
         )
+    i = matches[0]
+    lines[i] = re.sub(
+        rf'^(\s+{re.escape(name)}:\s*)"[^"]*"', rf'\1"{version}"', lines[i]
+    )
+    vnew = "".join(lines)
 
     cpath = REPO_ROOT / "helm" / "charts" / name / "Chart.yaml"
     if not cpath.exists():
@@ -834,15 +848,18 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
         raise SystemExit(f"error: {cpath} has no appVersion scalar to rewrite (matched {cn})")
 
     if args.dry_run:
-        print(f"dry-run: {name} -> {version} (versions.yaml + {cpath.name})")
+        print(f"dry-run: {name} -> {version} in stack {stack} (versions.yaml + {cpath.name})")
         return 0
 
     # Write both only after BOTH matched, so a failure never leaves them disagreeing.
     vpath.write_text(vnew)
     cpath.write_text(cnew)
-    print(f"{name} -> {version}")
+    print(f"{name} -> {version} (stack {stack})")
     print(f"  versions.yaml apps.{name}")
     print(f"  helm/charts/{name}/Chart.yaml appVersion")
+    # An app can be mirrored beyond its own chart -- the engine pin also drives
+    # the dfe-schema chart and the hyperdx dashboards tag.
+    print("  next: check_versions_drift.py --fix, for any other mirror of this pin")
     return 0
 
 
@@ -884,6 +901,24 @@ def _block_span(lines: list[str], stack: str) -> tuple[int, int]:
         if re.match(r"^  \S", lines[i]):
             return start, i
     return start, len(lines)
+
+
+def _sub_block_span(lines: list[str], start: int, end: int, key: str) -> tuple[int, int]:
+    """Line span of a `key:` map nested inside an already-bounded block."""
+    head = next(
+        (i for i in range(start, end) if re.match(rf"^(\s+){re.escape(key)}:\s*$", lines[i])),
+        None,
+    )
+    if head is None:
+        raise SystemExit(f"error: no `{key}:` map in the stack block")
+    indent = len(lines[head]) - len(lines[head].lstrip())
+    for i in range(head + 1, end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if len(lines[i]) - len(lines[i].lstrip()) <= indent:
+            return head + 1, i
+    return head + 1, end
 
 
 def _latest_published(org: str, app: str) -> tuple[str, str] | None:
@@ -1129,6 +1164,10 @@ def main() -> int:
     )
     p.add_argument("app", help="app name, e.g. dfe-engine (the versions.yaml apps.<name> key)")
     p.add_argument("version", help='image version, e.g. v1.10.6')
+    p.add_argument(
+        "--stack",
+        help="stack to bump in (default: the `current` pointer). Older stacks are shipped records.",
+    )
     p.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
     p.set_defaults(func=cmd_bump_app)
 
