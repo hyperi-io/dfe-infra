@@ -1120,7 +1120,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.17.5"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). dfe-schema loads only the ClickHouse settings, so a k8s Job with no API secret can apply the schema.
+      dfe-engine: "v1.17.7"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). The otel and engine-state tables are read from dfe-schemas rather than defined in engine code.
       dfe-ui: "v1.3.9"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
       dfe-receiver: "v1.15.25"      # independent release line
       dfe-loader: "v1.18.24"        # default event destination -> dfe.default; clippy + startup-timeout test fixes.
@@ -1137,7 +1137,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:854feaabe30670d0669b88bd1d656f4232a2b544c50cece10c883bba2af5d810"
+      dfe-engine: "sha256:9288999b13505344d435eab30d2a9bbd407fcfca03e1ed4cf51d2fccb81ce620"
       dfe-ui: "sha256:4cf40eeca384bbd2a30b29b1224c490150e69651b6365a439f2fd7b7531aa081"
       dfe-receiver: "sha256:81a991eddef2494bd4557763cf6215df90d276622154c1e8aa97c36669d16578"
       dfe-loader: "sha256:5681f66d11c875a5582a3a99f553a1c5e6434078a2a57548eb9139a2dbe3c7ef"

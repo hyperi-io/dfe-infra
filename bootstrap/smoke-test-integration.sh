@@ -31,7 +31,7 @@
 #  Usage: ./smoke-test-integration.sh [kubeconfig]
 #  Namespaces default to the standard layout; override via env (DFE_NS etc.).
 #  Contract names (env-overridable) default to the SSoT:
-#    dfe.default        -- dfe-schemas/argocd/ddl/dfe.default.sql + loader default
+#    dfe.default        -- dfe-schemas common-header + loader default
 #    default_land       -- receiver default_source `default` + topic_suffix `_land`
 #    dfe.otel_logs      -- dfe-hyperdx fork otel source (otel tables in the dfe db)
 #  NOTE: chain commands (curl/CLI paths) are first-cut and may need tuning to the
