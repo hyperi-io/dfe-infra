@@ -34,4 +34,14 @@ spec:
         - protocol: TCP
           port: {{ $.Values.kedaShimPort }}
     {{- end }}
+    {{- if $.Values.otelNamespace }}
+    # The collector SCRAPES /metrics here, which is inbound and needs its own
+    # rule -- the otel entry elsewhere is egress, for apps pushing OTLP out.
+    # Unported: scrape targets are discovered from pod annotations, so a port
+    # list would silently drop any app that picks a different one.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.otelNamespace }}
+    {{- end }}
 {{- end }}

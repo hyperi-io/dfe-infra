@@ -37,7 +37,10 @@ gatewayNamespace: envoy-gateway-system
 kedaNamespace: keda
 kedaShimPort: 8080
 
-# OTel Collector namespace (all pods can send telemetry here)
+# OTel Collector namespace. Two directions: apps push OTLP out to otelPort, and
+# the collector scrapes /metrics back in. Without the ingress half every DFE
+# scrape target reports up=0 while pushed metrics keep arriving, so the gap
+# looks like a slow endpoint rather than a blocked one.
 otelNamespace: otel
 otelPort: 4317
 

@@ -125,14 +125,14 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.17.2"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
-      dfe-ui: "v1.3.9"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
-      dfe-receiver: "v1.15.25"      # independent release line
-      dfe-loader: "v1.18.23"
-      dfe-archiver: "v1.7.17"
-      dfe-fetcher: "v1.4.11"
-      dfe-transform-vrl: "v1.1.18"
-      dfe-transform-vector: "v1.0.30"
+      dfe-engine: "v1.12.0"         # ghcr.io/hyperi-io/dfe-engine (Python; own line)
+      dfe-ui: "v1.3.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). PUBLISHED.
+      dfe-receiver: "v1.15.21"      # independent release line
+      dfe-loader: "v1.18.19"
+      dfe-archiver: "v1.7.15"
+      dfe-fetcher: "v1.4.9"
+      dfe-transform-vrl: "v1.1.14"
+      dfe-transform-vector: "v1.0.27"
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
