@@ -48,6 +48,7 @@ spec:
               protocol: {{ .protocol | default "TCP" }}
             {{- end }}
           env:
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_RECEIVER_") | nindent 12 }}
             {{- if ne (default "" .Values.kafka.mode) "disabled" }}
             # Same flat-env contract as the SASL block below (mod.rs:261, prefix
             # DFE_RECEIVER at :35). A bare KAFKA_BOOTSTRAP_SERVERS is read by

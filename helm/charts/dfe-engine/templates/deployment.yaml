@@ -99,6 +99,7 @@ spec:
             - name: http
               containerPort: 8000
           env:
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "") | nindent 12 }}
             # Declare the deployment's posture to the engine. WITHOUT this the
             # engine's `env` defaults to "production" (settings.py), so a dev
             # cluster silently self-identifies as prod: every gitcrud write is

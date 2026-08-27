@@ -40,6 +40,7 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_FETCHER_") | nindent 12 }}
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             - name: DFE_FETCHER_API_KEY

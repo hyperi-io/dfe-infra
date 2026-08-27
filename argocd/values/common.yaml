@@ -58,6 +58,17 @@ nodeScheduling: {}
 #             external Prometheus to scrape.
 telemetry:
   mode: hyperdx
+
+# Startup version check -- every DFE service boots with an opt-out release
+# check (one POST of {product, version, os, arch, install id} to the HyperI
+# releases endpoint; the id is one-way UUIDv5, deployment names never sent).
+# The knob renders through dfe-common.versionCheckEnv into every app; unset
+# means the apps' own defaults (ON). Uncomment here for a fleet-wide choice,
+# or set under one app's overlay for a per-app one:
+# versionCheck:
+#   enabled: false        # total opt-out -- no check, nothing sent (air-gap)
+#   sendInstanceId: false # keep the check, strip the install id
+#   apiUrl: ""            # point the check at a mirror
   # Empty derives {project}-hyperdx.{appNamespace}:4317 (the fork's OTLP
   # receiver beside the apps); set only to aim elsewhere.
   hyperdxEndpoint: ""

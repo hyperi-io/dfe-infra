@@ -53,6 +53,25 @@ tag certifies the whole set as one stack version (`stack:` metadata +
 lockstep `content:` repo tags); the full release model is in dfe-docs
 `deployment/stack-versioning.md`.
 
+## Version check
+
+Every DFE service boots with an opt-out release check: one POST of
+`{product, current_version, os, arch, instance_id}` to the HyperI releases
+endpoint, logging whether a newer version exists. The id is a one-way
+UUIDv5 derived from the platform; deployment names are never sent; any
+failure costs one WARN line and nothing else.
+
+The `versionCheck` values key is the deployment override, rendered into
+every app by the `dfe-common.versionCheckEnv` helper -- fleet-wide in
+`argocd/values/common.yaml`, or per app in its overlay:
+
+```yaml
+versionCheck:
+  enabled: false        # total opt-out -- no check, nothing sent (air-gap)
+  sendInstanceId: false # keep the check, strip the install id
+  apiUrl: ""            # point the check at a mirror
+```
+
 ## Related
 
 - [architecture.md](../architecture.md) - where this repo sits in the suite
