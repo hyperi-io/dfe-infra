@@ -1,0 +1,258 @@
+# dfe-stack umbrella defaults -- the SLIM TRIAL shape.
+#
+# `helm template` and `helm install` work with NO required values: single-node
+# ClickHouse, no Kafka (receiver -> loader direct gRPC), ClusterIP everywhere,
+# no LoadBalancer, laptop-sized requests. Mirrors the composition the ArgoCD
+# ApplicationSets build from argocd/values/common.yaml + profile-slim.yaml.
+#
+# SSoT NOTE. Helm subcharts only see values under their own key, so the shared
+# facts the appsets pass to every chart as ONE file are carried here as YAML
+# anchors under `x-dfe-shared` -- defined once, referenced per chart. The
+# authorities remain:
+#   argocd/values/common.yaml     -- every shared deploy-config fact
+#   argocd/values/profile-*.yaml  -- per-tier sizing and modes
+#   versions.yaml                 -- every version pin (image tags ride each
+#                                    component chart's appVersion, drift-checked)
+# A value here that restates one of those names its source; single-namespace
+# service names replace the per-namespace FQDNs (this chart installs everything
+# into ONE namespace -- the appsets spread the same charts across namespaces).
+#
+# Install namespace: the examples and network-policies defaults assume
+#   helm install dfe helm/dfe-stack -n dfe --create-namespace
+# Installing into another namespace: override network-policies.dfeNamespaces,
+# otel-collector.appNamespace and links.appNamespace to match.
+
+global:
+  # Source: argocd/values/common.yaml `global:`.
+  project: dfe
+  env: ""
+  cloud: ""
+  # No DNS in the trial -- surfaces are reached by port-forward (NOTES.txt).
+  # A deployment that owns a domain sets it here AND enables the gateway.
+  domain: ""
+  region: ""
+  # Source: argocd/values/local.yaml -- the published DFE images on GHCR.
+  registry: "ghcr.io/hyperi-io"
+
+# Shared facts, anchored once (see the SSoT note above). Helm ignores unknown
+# top-level keys, so this block is data for the anchors only.
+x-dfe-shared:
+  # Source: argocd/values/common.yaml `clickhouse:`; host shortened from
+  # dfe-clickhouse.clickhouse.svc.cluster.local (single-namespace install).
+  clickhouse: &dfeClickhouseEndpoint
+    host: dfe-clickhouse
+    port: 8123
+    nativePort: 9000
+    database: dfe
+    user: default
+    passwordSecretName: clickhouse-admin-password
+    passwordSecretKey: password
+  # Source: argocd/values/common.yaml `telemetry:`; endpoints shortened to
+  # same-namespace service names.
+  telemetry: &dfeTelemetry
+    mode: hyperdx
+    hyperdxEndpoint: "dfe-otel-collector-gateway:4317"
+    receiverEndpoint: "dfe-receiver:8443"
+    externalEndpoint: ""
+    prometheus:
+      port: 9090
+      path: /metrics
+  # Source: argocd/values/common.yaml `hostnames:` -- the canonical
+  # service-name map ({hostname}.{domain} once a domain + gateway exist).
+  hostnames: &dfeHostnames
+    dfe: dfe
+    hyperdx: hyperdx
+    argocd: argocd
+    git: git
+    kafbat: kafbat
+    links: links
+    otel: otel
+  # Source: argocd/values/profile-slim.yaml `resources:` -- minimum viable +
+  # safety; the 1Gi limit exists for hyperdx (multi-process Node).
+  resources: &dfeSlimResources
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# --- platform ---------------------------------------------------------------
+
+network-policies:
+  enabled: true
+  # Single-namespace install: every component lives in the install namespace,
+  # so the app policies target it and the data-namespace list is empty (a
+  # non-empty list would duplicate the baseline policy in the same namespace).
+  dfeNamespaces: ["dfe"]
+  dataNamespaces: []
+  otelNamespace: dfe
+  telemetry: *dfeTelemetry
+
+# The edge (Gateway + HTTPRoutes + self-signed CA via cert-manager). OFF for
+# the trial: needs the envoy-gateway operator, Gateway API CRDs, cert-manager
+# and a LoadBalancer -- README.md "Enabling the gateway".
+envoy-gateway-config:
+  enabled: false
+  domain: ""
+  hostnames: *dfeHostnames
+  appNamespace: dfe
+  telemetry: *dfeTelemetry
+
+# --- data substrate ---------------------------------------------------------
+
+cnpg-cluster:
+  enabled: true
+  cluster:
+    # Source: argocd/values/profile-slim.yaml `cluster.instances` (no HA).
+    instances: 1
+    resources:
+      # Trial sizing (laptop k3d/kind); the product slim tier keeps the
+      # chart's 500m/1Gi requests.
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  telemetry: *dfeTelemetry
+
+clickhouse-cluster:
+  enabled: true
+  # Single-namespace install: consumers read the admin Secret directly, so no
+  # cross-namespace credential projection (common.yaml projects into `otel`).
+  appNamespace: ""
+  extraCredentialNamespaces: []
+  clickhouse:
+    # Source: argocd/values/profile-slim.yaml `clickhouse:` -- standalone
+    # keeperless single node, plain MergeTree, no operator.
+    mode: single
+    replicas: 1
+    shardsCount: 1
+    resources:
+      # Trial sizing (laptop); the product slim tier keeps the chart's
+      # 500m/2Gi requests.
+      requests:
+        cpu: 250m
+        memory: 1Gi
+    storage:
+      size: 20Gi
+  telemetry: *dfeTelemetry
+
+ferretdb:
+  enabled: true
+  # Single-namespace install: hyperdx reads the generated password Secret in
+  # place, no app-namespace projection.
+  appNamespace: ""
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry
+
+# Source: argocd/values/profile-slim.yaml -- slim has NO Kafka (gRPC
+# transport); mode=disabled renders nothing, so the chart stays wired for the
+# profiles/single.yaml flip.
+kafka:
+  enabled: true
+  appNamespace: ""
+  kafka:
+    mode: disabled
+  telemetry: *dfeTelemetry
+
+# Source: argocd/values/profile-slim.yaml `kafbat.enabled` (no Kafka to manage).
+kafbat:
+  enabled: false
+
+dfe-schema:
+  enabled: true
+  clickhouse: *dfeClickhouseEndpoint
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry
+
+otel-collector:
+  enabled: true
+  # Where the DFE apps run -- the install namespace (see the header note).
+  appNamespace: dfe
+  clickhouse: *dfeClickhouseEndpoint
+  # clusterTelemetry chart defaults ARE the slim posture (kubeletStats and
+  # kafka scrapers off) -- profile-slim.yaml restates them.
+  telemetry: *dfeTelemetry
+
+links:
+  enabled: true
+  # Empty domain renders the kubectl port-forward layout -- the trial's actual
+  # access path.
+  domain: ""
+  hostnames: *dfeHostnames
+  appNamespace: dfe
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry
+
+# Deploy-repo fallback git host -- OFF, no GitOps loop in the trial (pairs
+# with dfe-engine.gitops.enabled below).
+forgejo:
+  enabled: false
+
+# --- DFE applications (the slim app set) ------------------------------------
+
+dfe-engine:
+  enabled: true
+  clickhouse: *dfeClickhouseEndpoint
+  postgresql:
+    # cnpg-cluster's Cluster CR is `dfe-pg`; CNPG serves it at <name>-rw and
+    # mints the app Secret dfe-pg-app the chart already defaults to.
+    host: dfe-pg-rw
+  # No ArgoCD and no deploy repo in the trial; the engine runs store-backed
+  # without publishing overlays. The product path re-enables this.
+  gitops:
+    enabled: false
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry
+  # A stable break-glass admin password for the trial can be set here
+  # (seedAuth.adminPassword); empty keeps the engine's own seeding -- NOTES.txt
+  # explains where the credential comes from.
+
+dfe-ui:
+  enabled: true
+  domain: ""
+  hostnames: *dfeHostnames
+  config:
+    # The chart derives this via {project}-{env} namespace naming; the
+    # single-namespace install reaches the engine by its short Service name.
+    internalApiUrl: "http://dfe-engine:8000"
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry
+  # KEDA autoscaling stays off in the trial (no KEDA operator); the product
+  # tiers install KEDA via layer1-addons and leave this on.
+  keda:
+    enabled: false
+
+dfe-receiver:
+  enabled: true
+  # Source: argocd/values/profile-slim.yaml `kafka.mode` -- routes the default
+  # destination to the loader over direct gRPC (loaderGrpcAddress default).
+  kafka:
+    mode: disabled
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry
+  keda:
+    enabled: false
+
+dfe-loader:
+  enabled: true
+  kafka:
+    mode: disabled
+  clickhouse: *dfeClickhouseEndpoint
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry
+  keda:
+    enabled: false
+
+# Values key = the dependency alias (see Chart.yaml); the chart is
+# helm/charts/hyperdx unchanged.
+dfe-hyperdx:
+  enabled: true
+  domain: ""
+  hostnames: *dfeHostnames
+  clickhouse: *dfeClickhouseEndpoint
+  mongodb:
+    # Single-namespace shortening of the chart default
+    # (dfe-ferretdb.cnpg.svc.cluster.local).
+    uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb:27017/hyperdx?authSource=admin"
+  resources: *dfeSlimResources
+  telemetry: *dfeTelemetry

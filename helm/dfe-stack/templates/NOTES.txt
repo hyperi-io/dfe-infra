@@ -1,0 +1,76 @@
+{{- /*
+Trial install notes: access paths, the break-glass credential, and a
+CRD preflight over .Capabilities (helm has no dependency preflight of its own).
+*/ -}}
+DFE {{ .Chart.AppVersion }} -- TRIAL profile (slim shape)
+=========================================================
+
+This is the TRIAL install path: every component in ONE namespace
+({{ .Release.Namespace }}), single-node ClickHouse, no Kafka, ClusterIP only.
+The PRODUCT deployment path is ArgoCD + the dfe-infra ApplicationSets
+(multi-namespace, GitOps, profiles slim/single/scale) -- see the chart README.
+
+PREFLIGHT
+---------
+{{- $missing := list }}
+{{- if not (.Capabilities.APIVersions.Has "external-secrets.io/v1") }}
+{{- $missing = append $missing "external-secrets (ClusterSecretStore/ExternalSecret CRDs) -- generates the ClickHouse admin, FerretDB and NextAuth secrets" }}
+{{- end }}
+{{- if not (.Capabilities.APIVersions.Has "generators.external-secrets.io/v1alpha1") }}
+{{- $missing = append $missing "external-secrets generators (Password CRD) -- same operator, CRDs not registered yet" }}
+{{- end }}
+{{- if not (.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1") }}
+{{- $missing = append $missing "cloudnative-pg (Cluster CRD) -- runs the dfe-pg PostgreSQL cluster" }}
+{{- end }}
+{{- if $missing }}
+WARNING: this cluster is missing prerequisite operators (or this is an
+offline `helm template`, which cannot see the cluster's CRDs):
+{{- range $missing }}
+  - {{ . }}
+{{- end }}
+Install them first (pins: versions.yaml; commands: the chart README), or the
+resources needing their CRDs will fail to apply.
+{{- else }}
+Prerequisite CRDs found (external-secrets, cloudnative-pg).
+{{- end }}
+
+REACHING THE STACK (no LoadBalancer -- port-forward)
+----------------------------------------------------
+The links page lists every surface in this layout:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/dfe-links 8080:8080     # http://localhost:8080
+  kubectl -n {{ .Release.Namespace }} port-forward svc/dfe-ui 3000:3000        # DFE console  http://localhost:3000
+  kubectl -n {{ .Release.Namespace }} port-forward svc/dfe-hyperdx 8081:8080   # HyperDX      http://localhost:8081
+  kubectl -n {{ .Release.Namespace }} port-forward svc/dfe-engine 8000:8000    # engine API   http://localhost:8000/api/v1
+  kubectl -n {{ .Release.Namespace }} port-forward svc/dfe-receiver 4317:8443  # OTLP/gRPC ingest
+
+Send yourself data: point any OTLP exporter at http://localhost:4317
+(gRPC) while the receiver forward runs, then query it in the console.
+
+LOGGING IN (the break-glass credential)
+---------------------------------------
+Local login, user `admin`:
+{{- if (index .Values "dfe-engine").seedAuth }}
+{{- if (index .Values "dfe-engine").seedAuth.adminPassword }}
+  - Password: the value you set in dfe-engine.seedAuth.adminPassword, held in
+    Secret dfe-engine-seed-accounts (key admin-password):
+      kubectl -n {{ .Release.Namespace }} get secret dfe-engine-seed-accounts -o jsonpath='{.data.admin-password}' | base64 -d
+{{- else }}
+  - Password: the engine seeds its break-glass default `changeme` on first
+    boot; the setup flow forces a rotation at first login. Set
+    dfe-engine.seedAuth.adminPassword before install for a stable credential
+    (it lands in Secret dfe-engine-seed-accounts, key admin-password).
+{{- end }}
+{{- else }}
+  - Password: the engine seeds its break-glass default `changeme` on first
+    boot; the setup flow forces a rotation at first login. Set
+    dfe-engine.seedAuth.adminPassword before install for a stable credential.
+{{- end }}
+
+THIS IS A TRIAL PROFILE
+-----------------------
+Same charts and images as production, trial-shaped values: no edge TLS (the
+gateway dependency is off; enabling it needs envoy-gateway, cert-manager and a
+LoadBalancer -- README "Enabling the gateway"), no GitOps loop, no
+autoscaling, laptop-sized requests. Graduating to a real deployment is a
+values change onto the ArgoCD path, not a migration.
