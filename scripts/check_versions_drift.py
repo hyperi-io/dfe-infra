@@ -358,6 +358,13 @@ CHECKS += [
         Path("deployment.example.yaml"),
         r"\nversion:\n\s*pin:\s*\"?([^\"\s#]+)",
     ),
+    # The trial umbrella advertises the stack version it composes.
+    Check(
+        "dfe-stack umbrella appVersion",
+        "pointers.current",
+        Path("helm/dfe-stack/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
 ]
 
 # OpenTofu provider constraints, which versions.yaml records as a mirror of the
