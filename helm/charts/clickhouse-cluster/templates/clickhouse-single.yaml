@@ -69,6 +69,11 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/config.d/dfe-custom.xml
               subPath: dfe-custom.xml
+            # users.d overlay: async inserts for every writer via the default
+            # settings profile (async_insert has no table-level form).
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/users.d/dfe-users.xml
+              subPath: dfe-users.xml
           resources:
             {{- toYaml .Values.clickhouse.resources | nindent 12 }}
           readinessProbe:
@@ -121,5 +126,20 @@ data:
         <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
         <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
       </access_control_improvements>
+    </clickhouse>
+  # users.d overlay: server-side async inserts for EVERY writer, via the
+  # default settings profile (the base every identity inherits). async_insert
+  # is user/query-scope -- no table-level form exists -- so this one seam
+  # covers every table any identity writes; the loader's minted profile still
+  # carries its own tuned values on top. wait=1 keeps insert errors visible to
+  # the client. Flush cadence stays on ClickHouse's adaptive defaults (24.2+).
+  dfe-users.xml: |
+    <clickhouse>
+      <profiles>
+        <default>
+          <async_insert>1</async_insert>
+          <wait_for_async_insert>1</wait_for_async_insert>
+        </default>
+      </profiles>
     </clickhouse>
 {{- end }}
