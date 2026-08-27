@@ -44,9 +44,9 @@ Definitions: `dfe_engine/governance/ch/models.py`.
 
 | identity | CH objects | used by | privilege |
 |---|---|---|---|
-| `dfe_loader` | user + `dfe_loader_role` + `dfe_loader_profile` | dfe-loader | `INSERT ON dfe.*`, `INSERT ON dfe_hunts.*`, async-insert settings |
-| `dfe_query_reader` | user + `dfe_query_reader_role` + profile | HyperDX connections | `SELECT` on both data databases plus `system` introspection, `readonly=2` |
-| `dfe_hunt_runner_role` | role only | hunt-runner | `SELECT`/`INSERT ON dfe_hunts.*` |
+| `dfe_loader` | user + `dfe_loader_role` + `dfe_loader_profile` | dfe-loader | `INSERT ON dfe.*`, async-insert settings |
+| `dfe_query_reader` | user + `dfe_query_reader_role` + profile | HyperDX connections | `SELECT ON dfe.*` plus `system` introspection, `readonly=2` |
+| `dfe_hunt_runner_role` | role only | hunt-runner | `SELECT`/`INSERT ON dfe.*` |
 | `dfe_otel_reader_role` | role only | admin + infra-admin group users | `SELECT ON dfe.*` |
 | `dfe_tenant_role` | role + row policy | org-bound OIDC users | `SELECT` fenced by `_org_id` |
 | `dfe_org_<org>` | role per org | `org_viewer` users | pins one org's `_org_id` |

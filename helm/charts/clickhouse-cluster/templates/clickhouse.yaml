@@ -52,6 +52,18 @@ spec:
       access_control_improvements:
         select_from_system_db_requires_grant: true
         select_from_information_schema_requires_grant: true
+    # Server-side async inserts for EVERY writer, via the default settings
+    # profile (the base every identity inherits). async_insert is a
+    # user/query-scope setting -- there is no table-level form -- so this one
+    # seam covers every table any identity writes; identities with tuned
+    # values (dfe_loader's minted profile) still override it. wait=1 keeps
+    # insert errors visible to the client instead of fire-and-forget. The
+    # flush cadence stays on ClickHouse's adaptive defaults (24.2+).
+    extraUsersConfig:
+      profiles:
+        default:
+          async_insert: 1
+          wait_for_async_insert: 1
     # The deploy layer's one credential. Cluster mode creates no account of its
     # own, so without this every app is refused with code 516 (dfe-infra#136).
     # Secret-backed rather than declared in extraUsersConfig, which takes a
