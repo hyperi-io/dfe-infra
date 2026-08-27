@@ -51,6 +51,7 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_LOADER_") | nindent 12 }}
             {{- if eq (default "" .Values.kafka.mode) "disabled" }}
             # No-kafka profile (slim): receiver -> loader direct gRPC on the
             # service grpcPort; the DLQ's kafka backend is gone with the broker.
