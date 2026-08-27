@@ -46,6 +46,12 @@ spec:
       # custom_operator_reload_revision into the __operator profile, and CH refuses
       # to load users.yaml (CANNOT_LOAD_CONFIG, crashloop) if that prefix is unallowed.
       custom_settings_prefixes: SQL_,custom_
+      # The system database is deny-by-default, so an org-fenced tenant cannot read
+      # server metadata no row policy covers; dfe-engine grants back only what the
+      # embedded HyperDX needs (governance/ch/models.py TENANT_SYSTEM_TABLES).
+      access_control_improvements:
+        select_from_system_db_requires_grant: true
+        select_from_information_schema_requires_grant: true
     # The deploy layer's one credential. Cluster mode creates no account of its
     # own, so without this every app is refused with code 516 (dfe-infra#136).
     # Secret-backed rather than declared in extraUsersConfig, which takes a

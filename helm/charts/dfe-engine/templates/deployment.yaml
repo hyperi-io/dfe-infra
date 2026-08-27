@@ -110,14 +110,11 @@ spec:
             # gets the PR flow, which is the point.
             - name: DFE_ENV
               value: {{ .Values.env | quote }}
-            {{- if .Values.orgProvisioning.enabled }}
-            # Reconcile per-org CH RBAC on startup: tier roles, per-org row
-            # policies (incl the non-_org_id deny), and one CH user per org/group.
-            # Opt-in -- a deployment that uses org isolation must set this true or
-            # the isolation policies are never reconciled onto ClickHouse.
-            - name: DFE_ORG_PROVISIONING_ENABLED
-              value: "true"
-            {{- end }}
+            # Reconcile the CH tenant fence on startup: tier roles, the _org_id row
+            # policies, the deny policies over tables without one, and a CH user per
+            # org/group. Set false only for a deployment with no tenant isolation.
+            - name: DFE_TENANT_ISOLATION_ENABLED
+              value: {{ .Values.tenantIsolation.enabled | quote }}
             # The engine settings loader reads DFE_CLICKHOUSE_* (or legacy
             # CLICKHOUSE_*), NOT a DFE_ENGINE_ prefix -- the old DFE_ENGINE_* names
             # were silently ignored, leaving CH at the localhost:9000 default. The
