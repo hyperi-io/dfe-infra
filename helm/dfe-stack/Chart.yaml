@@ -1,0 +1,109 @@
+apiVersion: v2
+name: dfe-stack
+description: >-
+  DFE trial umbrella -- installs the whole Data Fusion Engine stack with one
+  helm command, no ArgoCD required. Wraps the SAME per-component charts in
+  helm/charts/ that the ArgoCD ApplicationSets compose (never a parallel
+  re-implementation); defaults produce the SLIM trial shape. The product
+  deployment path remains ArgoCD + the appsets in argocd/ -- see this chart's
+  README.md.
+type: application
+version: 0.1.0
+# appVersion == versions.yaml `current` (the pin SSoT). Image pins are NOT
+# duplicated here: each component chart's appVersion carries its image tag and
+# is drift-checked against versions.yaml by scripts/check_versions_drift.py.
+appVersion: "2.2.0-rc.9"
+
+# The dependency set mirrors the SLIM profile's chart set as composed by
+# argocd/appsets/*.yaml (layer2-platform wave 2, layer2-data waves 4-6,
+# layer2-apps wave 7). Helm has no sync waves; install ordering inside one
+# release is kind-sorted, and the dfe-schema Job + the apps retry their
+# backing-service connections, which is what the waves ordered.
+#
+# Deliberately NOT dependencies (they are not in a slim deployment either):
+#   - dfe-archiver / dfe-fetcher / dfe-transform-* -- per-source, opt-in apps;
+#     the deploy repo enables them (see appsets/layer-scale.yaml header).
+#   - dfe-vpn -- separate workstream, not in the release set.
+#   - argocd / keda / metrics-server / reloader / external-dns / the operators
+#     -- cluster addons the bootstrap or layer1-addons installs; the trial
+#     needs only the prerequisites named in README.md.
+dependencies:
+  # --- platform (layer2-platform, wave 2) -----------------------------------
+  - name: network-policies
+    version: "0.2.1"
+    repository: "file://../charts/network-policies"
+    condition: network-policies.enabled
+  # Default OFF for the trial: the gateway needs the envoy-gateway operator,
+  # Gateway API CRDs, cert-manager AND a LoadBalancer -- the trial uses
+  # ClusterIP + port-forward instead (NOTES.txt). Flip on for a real edge.
+  - name: envoy-gateway-config
+    version: "0.1.1"
+    repository: "file://../charts/envoy-gateway-config"
+    condition: envoy-gateway-config.enabled
+  # --- data substrate (layer2-data, waves 4-6) ------------------------------
+  - name: cnpg-cluster
+    version: "0.1.0"
+    repository: "file://../charts/cnpg-cluster"
+    condition: cnpg-cluster.enabled
+  - name: clickhouse-cluster
+    version: "0.1.0"
+    repository: "file://../charts/clickhouse-cluster"
+    condition: clickhouse-cluster.enabled
+  - name: ferretdb
+    version: "0.2.0"
+    repository: "file://../charts/ferretdb"
+    condition: ferretdb.enabled
+  # kafka renders NOTHING while kafka.mode=disabled (the slim default); the
+  # dependency stays enabled so profiles/single.yaml is a values change only.
+  - name: kafka
+    version: "0.1.0"
+    repository: "file://../charts/kafka"
+    condition: kafka.enabled
+  - name: kafbat
+    version: "0.1.1"
+    repository: "file://../charts/kafbat"
+    condition: kafbat.enabled
+  - name: dfe-schema
+    version: "0.1.0"
+    repository: "file://../charts/dfe-schema"
+    condition: dfe-schema.enabled
+  - name: otel-collector
+    version: "0.1.0"
+    repository: "file://../charts/otel-collector"
+    condition: otel-collector.enabled
+  - name: links
+    version: "0.1.1"
+    repository: "file://../charts/links"
+    condition: links.enabled
+  # Deploy-repo FALLBACK git host. OFF: the trial runs no GitOps loop (there
+  # is no ArgoCD to consume the deploy repo), and dfe-engine.gitops.enabled is
+  # false to match. See appsets/layer2-deploy-repo.yaml for the product gating.
+  - name: forgejo
+    version: "0.1.0"
+    repository: "file://../charts/forgejo"
+    condition: forgejo.enabled
+  # --- DFE applications (layer2-apps, wave 7; slim app set) -----------------
+  - name: dfe-engine
+    version: "0.1.0"
+    repository: "file://../charts/dfe-engine"
+    condition: dfe-engine.enabled
+  - name: dfe-ui
+    version: "0.1.0"
+    repository: "file://../charts/dfe-ui"
+    condition: dfe-ui.enabled
+  - name: dfe-receiver
+    version: "0.1.0"
+    repository: "file://../charts/dfe-receiver"
+    condition: dfe-receiver.enabled
+  - name: dfe-loader
+    version: "0.1.0"
+    repository: "file://../charts/dfe-loader"
+    condition: dfe-loader.enabled
+  # Aliased: dfe-engine's own values carry a `hyperdx:` key, and a sibling
+  # subchart with that exact name makes Helm's dependency-values coalescing
+  # shadow the two (a spurious "destination is a table" warning).
+  - name: hyperdx
+    alias: dfe-hyperdx
+    version: "0.2.0"
+    repository: "file://../charts/hyperdx"
+    condition: dfe-hyperdx.enabled

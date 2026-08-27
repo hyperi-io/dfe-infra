@@ -1,0 +1,66 @@
+# Profile overlay: SINGLE -- one node of everything WITH Kafka.
+# Source: argocd/values/profile-single.yaml, mapped onto the umbrella's
+# per-subchart keys (endpoints shortened for the single-namespace install).
+# Usage: helm install dfe helm/dfe-stack -n dfe --create-namespace -f helm/dfe-stack/profiles/single.yaml
+#
+# Needs NO extra operators beyond the slim prerequisites: single-mode Kafka is
+# a plain non-operator StatefulSet, like single-mode ClickHouse.
+
+x-single-shared:
+  # Source: argocd/values/profile-single.yaml `resources:` (reliability-sized).
+  resources: &singleResources
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  # kafka chart single mode serves the broker at dfe-kafka:9092 with
+  # SASL/SCRAM-SHA-512 (Secret dfe-kafka-user), per common.yaml `kafka:`.
+  kafka: &singleKafka
+    mode: single
+    bootstrapServers: "dfe-kafka:9092"
+    provider: strimzi
+
+kafka:
+  kafka:
+    mode: single
+
+kafbat:
+  enabled: true
+  kafka:
+    clusters:
+      - name: dfe
+        provider: strimzi
+        bootstrapServers: "dfe-kafka:9092"
+        credentialsSecretName: dfe-kafka-user
+
+dfe-receiver:
+  kafka: *singleKafka
+  resources: *singleResources
+
+dfe-loader:
+  kafka: *singleKafka
+  resources: *singleResources
+
+dfe-engine:
+  resources: *singleResources
+
+dfe-ui:
+  resources: *singleResources
+
+dfe-hyperdx:
+  resources: *singleResources
+
+ferretdb:
+  resources: *singleResources
+
+otel-collector:
+  # Source: argocd/values/profile-single.yaml `clusterTelemetry:` (full set).
+  clusterTelemetry:
+    kubeletStats:
+      enabled: true
+    kafka:
+      enabled: true
+  kafka:
+    bootstrapServers: "dfe-kafka:9092"

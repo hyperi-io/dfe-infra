@@ -1,0 +1,118 @@
+# Profile overlay: SCALE -- HA replicas, ClickHouse cluster, Kafka via Strimzi.
+# Source: argocd/values/profile-scale.yaml, mapped onto the umbrella's
+# per-subchart keys (endpoints shortened for the single-namespace install).
+#
+# EXTRA prerequisites over slim/single (pins: versions.yaml `operators:`):
+#   - strimzi-kafka-operator 0.51.0 (Kafka cluster CRs)
+#   - clickhouse-operator 0.0.7    (ClickHouseCluster + KeeperCluster CRs)
+#   - keda 2.20.1                  (the app charts' ScaledObjects)
+# At this tier the ArgoCD product path (argocd/appsets/) is the right vehicle;
+# this overlay exists so the umbrella's composition can be exercised end to end.
+# Usage: helm template dfe helm/dfe-stack -n dfe -f helm/dfe-stack/profiles/scale.yaml
+
+x-scale-shared:
+  # Source: argocd/values/profile-scale.yaml `resources:`.
+  resources: &scaleResources
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  # Strimzi names its bootstrap Service <cluster>-kafka-bootstrap.
+  kafka: &scaleKafka
+    mode: cluster
+    bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
+    provider: strimzi
+  # Source: argocd/values/profile-scale.yaml `keda:`.
+  keda: &scaleKeda
+    enabled: true
+    minReplicaCount: 2
+    maxReplicaCount: 10
+
+clickhouse-cluster:
+  clickhouse:
+    # Source: argocd/values/profile-scale.yaml `clickhouse:` -- operator
+    # cluster with DFE-owned Keeper, ReplicatedMergeTree.
+    mode: cluster
+    replicas: 3
+    shardsCount: 1
+
+cnpg-cluster:
+  cluster:
+    # Source: argocd/values/profile-scale.yaml `cluster.instances` (HA).
+    instances: 3
+
+kafka:
+  kafka:
+    mode: cluster
+    provider: strimzi
+    replicas: 3
+    defaultTopic:
+      # Source: argocd/values/profile-scale.yaml -- partitions cap consumer
+      # parallelism; sized from the KEDA ceiling of 10.
+      partitions: 12
+  user:
+    password:
+      # Single-namespace install: the User Operator generates the credential
+      # into the broker namespace, which IS the app namespace here -- no
+      # seeded secrets store required (the product path routes it through
+      # the store for cross-namespace projection).
+      fromSecretsStore: false
+
+kafbat:
+  enabled: true
+  kafka:
+    clusters:
+      - name: dfe
+        provider: strimzi
+        bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
+        credentialsSecretName: dfe-kafka-user
+
+dfe-engine:
+  # The operator cluster emits only a headless client Service.
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *scaleResources
+
+dfe-ui:
+  replicaCount: 2
+  resources: *scaleResources
+  keda: *scaleKeda
+
+dfe-receiver:
+  replicaCount: 2
+  kafka: *scaleKafka
+  resources: *scaleResources
+  keda: *scaleKeda
+
+dfe-loader:
+  replicaCount: 2
+  kafka: *scaleKafka
+  # The operator cluster emits only a headless client Service.
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *scaleResources
+  keda: *scaleKeda
+
+dfe-hyperdx:
+  replicaCount: 2
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *scaleResources
+
+dfe-schema:
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+
+otel-collector:
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  # Source: argocd/values/profile-scale.yaml `clusterTelemetry:` (full set).
+  clusterTelemetry:
+    kubeletStats:
+      enabled: true
+    kafka:
+      enabled: true
+  kafka:
+    bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
