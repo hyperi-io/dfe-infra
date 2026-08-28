@@ -49,6 +49,16 @@ spec:
               value: {{ .Values.kafka.destTopic | quote }}
             - name: KAFKA_CONSUMER_GROUP
               value: {{ .Values.kafka.consumerGroup | default (printf "dfe-%s" .Values.component) | quote }}
+            {{- if .Values.kafka.securityProtocol }}
+            # check_credentials runs before KafkaTransport::new, and only the
+            # latter calls apply_provider, so KAFKA_PROVIDER alone leaves
+            # security_protocol at plaintext and the app refuses to start with
+            # credentials it believes would never be sent. Both are set here
+            # until scalo derives them earlier.
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            - name: KAFKA_SASL_MECHANISM
+              value: {{ .Values.kafka.saslMechanism | quote }}
             - name: KAFKA_SASL_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -59,6 +69,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: password
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}

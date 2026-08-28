@@ -52,7 +52,6 @@ spec:
               value: {{ .Values.kafka.bootstrapServers | quote }}
             - name: DFE_TRANSFORM_SINK_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- with .Values.kafka.sourceTopic }}
             - name: DFE_TRANSFORM_SOURCE_TOPICS
               value: {{ . | quote }}

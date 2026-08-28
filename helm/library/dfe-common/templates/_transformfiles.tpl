@@ -12,9 +12,10 @@ actually mounted rather than whatever the opaque config blob happens to say.
 */}}
 
 {{/*
-The directory the transform files are mounted into. Deliberately a sibling of the
-config mount, not a child: nesting one ConfigMap volume inside another leaves the
-parent's visible contents dependent on mount ordering.
+The directory the transform files are mounted into. The default is a sibling of
+the config mount rather than a child, because nesting one ConfigMap volume inside
+another leaves the parent's visible contents dependent on mount ordering. An
+overlay setting transformFilesDir below the config mount reintroduces that.
 */}}
 {{- define "dfe-common.transformFilesDir" -}}
 {{- .Values.transformFilesDir | default (printf "/etc/dfe-%s-transforms" .Values.component) -}}
@@ -30,15 +31,22 @@ ConfigMap name holding the transform files.
 {{/*
 The ConfigMap data block. Each entry becomes one file keyed by its name.
 
+Serialised through toYaml rather than emitted as a hand-rolled block scalar: a
+bare `|` block takes its indentation from the first non-empty line, so a file
+whose first line is indented further than a later one terminates the block early
+and breaks the whole ConfigMap render. Letting the YAML library choose the
+representation also keeps leading tabs, CRLF and trailing whitespace intact.
+
 Usage in a chart template:
   data:
     {{- include "dfe-common.transformFilesData" . | nindent 2 }}
 */}}
 {{- define "dfe-common.transformFilesData" -}}
-{{- range .Values.transformFiles }}
-{{ .name }}: |
-{{ .content | trimSuffix "\n" | indent 2 }}
-{{- end }}
+{{- $data := dict -}}
+{{- range .Values.transformFiles -}}
+{{- $_ := set $data .name .content -}}
+{{- end -}}
+{{- toYaml $data -}}
 {{- end -}}
 
 {{/*

@@ -22,6 +22,11 @@ kafka:
   sourceTopic: ""        # set per deployment via ArgoCD values
   destTopic: ""          # set per deployment
   consumerGroup: ""      # defaults to dfe-transform-elastic
+  # Empty leaves the deployment on plaintext and injects NO credentials. Setting
+  # it turns SASL on and requires saslMechanism with it, because the app refuses
+  # credentials that its security_protocol would never send.
+  securityProtocol: ""
+  saslMechanism: SCRAM-SHA-512
 
 otel:
   endpoint: ""
