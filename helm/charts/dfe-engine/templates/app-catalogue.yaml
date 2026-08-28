@@ -1,0 +1,14 @@
+# The app manifest the engine's management API reflects. Rendered from
+# .Values.appCatalogue, whose source of truth is apps.yaml at the repo root, so a
+# new or changed app reaches the engine without an engine release.
+{{- if .Values.appCatalogue }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-app-catalogue
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  apps.yaml: |
+    {{- toYaml .Values.appCatalogue | nindent 4 }}
+{{- end }}

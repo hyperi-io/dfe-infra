@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  {{- include "dfe-common.replicas" . }}
   {{- if .Values.config.persistence.enabled }}
   # The config PVC is ReadWriteOnce: a rolling update can strand the new pod
   # on another node waiting for the attach the old pod still holds.
@@ -143,6 +143,12 @@ spec:
               value: {{ .Values.config.mountPath }}/services
             - name: DFE_DEPLOYMENT_CONFIG_DIR
               value: {{ .Values.config.mountPath }}/deployments
+            {{- if .Values.appCatalogue }}
+            # Points the management API at the mounted manifest, so a new or
+            # changed app reflects without an engine release.
+            - name: DFE_APP_CATALOGUE_FILE
+              value: /etc/dfe-engine/catalogue/apps.yaml
+            {{- end }}
             - name: DFE_SCHEMAS_DIR
               value: {{ .Values.config.mountPath }}/schemas
             - name: DFE_FIELDMAPS_DIR
@@ -276,6 +282,11 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.appCatalogue }}
+            - name: app-catalogue
+              mountPath: /etc/dfe-engine/catalogue
+              readOnly: true
+            {{- end }}
             {{- if .Values.gitops.enabled }}
             - name: deploy-repo
               mountPath: {{ dir .Values.gitops.localPath }}
@@ -311,6 +322,11 @@ spec:
           {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if .Values.appCatalogue }}
+        - name: app-catalogue
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-app-catalogue
+        {{- end }}
         {{- if .Values.authConfig.providersConfigMap }}
         - name: oidc-providers
           configMap:

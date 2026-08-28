@@ -1,0 +1,141 @@
+# apps.yaml -- SINGLE SOURCE OF TRUTH for what each DFE app IS.
+#
+# versions.yaml pins WHICH version of an app is deployed. This file declares what
+# KIND of app it is: how it turns config into pods, whether it carries scaling
+# dials, and which files it reads off disk. dfe-engine's management API reflects
+# this file, so adding or changing an app is an edit HERE and never a code change
+# in the engine.
+#
+# The engine resolves it in this order: DFE_APP_CATALOGUE_FILE, then a copy
+# mounted into the engine pod from this file, then the snapshot bundled in the
+# engine image. A deployment that mounts this file picks up a new app without
+# waiting for an engine release.
+#
+# Multiplicity and replication are INDEPENDENT axes. A transform is both: there
+# may be hundreds of them, one per source, and each one is separately KEDA-scaled.
+#
+# multiplicity
+#   single      One deployment for the whole stack.
+#   per_config  One deployment per config, many side by side. Each carries the
+#               instance in its component name so its Kubernetes objects and its
+#               telemetry stay distinct from its siblings'.
+#
+# scale_deployed
+#   Whether the app carries CPU, memory and KEDA dials at all. Those dials are
+#   reported unsupported off Kubernetes regardless, since Compose has no KEDA.
+#
+# files[]
+#   A family of files the app reads off disk. Content is carried in the instance's
+#   values overlay, because Helm cannot read a raw file out of an Argo $values
+#   source. Fields:
+#     name         identifier used in the API path
+#     values_path  dot-path in the overlay holding the list of {name, content}
+#     links_path   dot-path in the overlay holding the library links that produced
+#                  that content. Optional; defaults to values_path + "Links".
+#     dir_setting  the app's own config key naming the directory it reads
+#     suffixes     extensions the app will actually load; anything else is refused
+#     language     editor syntax hint
+#     reload       hot    the app applies a change without a restart
+#                  roll   a pod roll applies it; the chart checksums the files
+#                  restart needs a manual restart
+#
+# source_binding
+#   Present when an instance of this app IS a DFE source's processing step, which
+#   makes the instance name the source name. Maps a dot-path in the overlay to a
+#   template with {source} substituted, so an app binds through whatever its own
+#   config calls for without the engine knowing which app it is. The platform
+#   topic convention is {source}_land in, {source}_load out.
+#
+# kinds
+#   What KIND of thing an artefact in the versioned library is. The library CRUD
+#   is generic over these, so supporting a new authored language is an edit here
+#   rather than engine code. Fields:
+#     language   editor syntax hint, and the key the syntax validator registers
+#                under; a kind with no validator is simply not checked
+#     suffixes   extensions a linked file of this kind may carry; the file set it
+#                links into must also accept the extension
+#     encoding   text    the content is stored and transported verbatim
+#                base64  the content is transported base64-encoded, and the
+#                        digest is taken over the decoded bytes
+
+apps:
+  dfe-receiver:
+    multiplicity: single
+    scale_deployed: true
+
+  dfe-loader:
+    multiplicity: single
+    scale_deployed: true
+
+  dfe-archiver:
+    multiplicity: single
+    scale_deployed: true
+
+  # A fetcher deployment is 1:1 with one source's fetcher config, so many run side
+  # by side, each with its own dedicated settings. It polls its upstream rather
+  # than draining a queue, so it does not scale out.
+  dfe-fetcher:
+    multiplicity: per_config
+    scale_deployed: false
+
+  # Compiles every .vrl in its transforms directory into one program at startup
+  # and holds it immutable for the process lifetime, so an edit needs a roll.
+  dfe-transform-vrl:
+    multiplicity: per_config
+    scale_deployed: true
+    # No source shorthand in this app, so the topics are set explicitly.
+    source_binding:
+      config.source.topics: ["{source}_land"]
+      config.sink.topic: "{source}_load"
+      config.source.group_id: "dfe-transform-vrl-{source}"
+    files:
+      - name: transforms
+        values_path: transformFiles
+        links_path: transformFileLinks
+        dir_setting: config.transforms.dir
+        suffixes: [".vrl"]
+        language: vrl
+        reload: roll
+
+  # Supervises a Vector subprocess. Its reload compares config structs, and the
+  # transform config holds only paths, so a content edit needs a roll as well.
+  dfe-transform-vector:
+    multiplicity: per_config
+    scale_deployed: true
+    # This app derives topics and consumer group from its own dfe_source field.
+    source_binding:
+      config.dfe_source: "{source}"
+    files:
+      - name: transforms
+        values_path: transformFiles
+        links_path: transformFileLinks
+        dir_setting: config.transforms.dir
+        suffixes: [".yaml", ".yml"]
+        language: yaml
+        reload: roll
+
+  # Selects a compiled-in transform by source.name and reads no authored files.
+  dfe-transform-elastic:
+    multiplicity: per_config
+    scale_deployed: true
+    source_binding:
+      config.source.topics: ["{source}_land"]
+      config.sink.topic: "{source}_load"
+      config.source.group_id: "dfe-transform-elastic-{source}"
+
+kinds:
+  vrl:
+    language: vrl
+    suffixes: [".vrl"]
+    encoding: text
+
+  vector-yaml:
+    language: yaml
+    suffixes: [".yaml", ".yml"]
+    encoding: text
+
+  # A compiled module has no text form, so it travels base64-encoded.
+  wasm:
+    language: wasm
+    suffixes: [".wasm"]
+    encoding: base64

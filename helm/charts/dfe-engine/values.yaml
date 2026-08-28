@@ -21,6 +21,11 @@ service:
   type: ClusterIP
   port: 8000
 
+# The app manifest the management API reflects, sourced from apps.yaml at the
+# repo root. Empty falls back to the snapshot bundled in the engine image, which
+# pins whatever that release shipped with.
+appCatalogue: {}
+
 config:
   mountPath: /config
   # The engine's runtime store lives here: local accounts, orgs, wizard
