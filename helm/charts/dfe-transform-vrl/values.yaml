@@ -37,6 +37,20 @@ otel:
 # them.
 config: {}
 
+# The .vrl programs this instance runs, as a list of {name, content}. Written by
+# dfe-engine into the per-instance overlay and rendered into a ConfigMap mounted at
+# transformFilesDir. A list rather than a map because a filename's own dot would be
+# ambiguous with the dot-path addressing the engine uses.
+transformFiles: []
+
+# Where transformFiles are mounted. Also exported as DFE_TRANSFORM_TRANSFORMS_DIR,
+# which outranks the config file, so the app reads what the chart actually mounted.
+transformFilesDir: ""
+
+# OTel service.name for this instance. Empty falls back to the app name, which
+# leaves two instances of one app indistinguishable in the otel tables.
+otelServiceName: ""
+
 resources:
   requests:
     cpu: 100m

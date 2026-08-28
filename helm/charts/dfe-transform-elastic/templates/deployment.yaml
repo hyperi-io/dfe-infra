@@ -14,6 +14,9 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
+        # Roll the pods when the config blob changes -- the app reads the file at
+        # startup only, so a ConfigMap update alone would not take effect.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -24,6 +27,11 @@ spec:
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          # Mirrors the image CMD (dfe-transform-elastic Dockerfile:48). Explicit so
+          # the config path is visible here rather than buried in the image.
+          args:
+            - "--config"
+            - "{{ .Values.configMountPath }}/config.yaml"
           ports:
             # scalo's metrics server (defaults on 0.0.0.0:9090) hosts /metrics and
             # the /livez + /readyz health endpoints -- one port for the scrape
@@ -55,11 +63,13 @@ spec:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
             {{- end }}
+            # Per-INSTANCE, not per-app: scalo otherwise defaults service.name to the
+            # binary name, so two instances are indistinguishable in the otel tables.
             - name: OTEL_SERVICE_NAME
-              value: {{ printf "dfe-%s" .Values.component | quote }}
+              value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
           volumeMounts:
             - name: config
-              mountPath: {{ .Values.config.mountPath }}
+              mountPath: {{ .Values.configMountPath }}
               readOnly: true
             # Writable scratch: the container rootfs is read-only
             # (dfe-common.containerSecurityContext), so anything writing /tmp
@@ -87,6 +97,7 @@ spec:
             periodSeconds: 5
       volumes:
         - name: config
-          emptyDir: {}
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}

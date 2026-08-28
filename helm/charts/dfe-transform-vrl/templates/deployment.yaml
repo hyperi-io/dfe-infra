@@ -17,6 +17,9 @@ spec:
         # Roll the pods when the config blob changes -- the app reads the file at
         # startup only, so a ConfigMap update alone would not take effect.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Same for the .vrl programs: they are compiled once at startup and held
+        # immutable for the process lifetime, so an edit needs a roll to apply.
+        checksum/transforms: {{ include (print $.Template.BasePath "/transforms-configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -41,35 +44,61 @@ spec:
               protocol: TCP
           env:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_") | nindent 12 }}
-            - name: KAFKA_BOOTSTRAP_SERVERS
+            # dfe-transform-vrl reads the DFE_TRANSFORM_* flat env contract
+            # (src/config/loader.rs), never bare KAFKA_* names. Credentials arrive
+            # only this way -- they cannot sit in the config blob, which is committed
+            # to git. A non-empty username makes the app enable SASL itself.
+            - name: DFE_TRANSFORM_SOURCE_BROKERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            - name: DFE_TRANSFORM_SINK_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
-            - name: KAFKA_SOURCE_TOPIC
-              value: {{ .Values.kafka.sourceTopic | quote }}
-            - name: KAFKA_DEST_TOPIC
-              value: {{ .Values.kafka.destTopic | quote }}
-            - name: KAFKA_CONSUMER_GROUP
+            {{- with .Values.kafka.sourceTopic }}
+            - name: DFE_TRANSFORM_SOURCE_TOPICS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kafka.destTopic }}
+            - name: DFE_TRANSFORM_SINK_TOPIC
+              value: {{ . | quote }}
+            {{- end }}
+            - name: DFE_TRANSFORM_SOURCE_GROUP_ID
               value: {{ .Values.kafka.consumerGroup | default (printf "dfe-%s" .Values.component) | quote }}
-            - name: KAFKA_SASL_USERNAME
+            {{- if .Values.kafka.saslSecretName }}
+            - name: DFE_TRANSFORM_SOURCE_SASL_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: username
-            - name: KAFKA_SASL_PASSWORD
+            - name: DFE_TRANSFORM_SOURCE_SASL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: password
+            - name: DFE_TRANSFORM_SINK_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_TRANSFORM_SINK_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            {{- end }}
+            {{- include "dfe-common.transformFilesEnv" . | nindent 12 }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
             {{- end }}
+            # Per-INSTANCE, not per-app: scalo otherwise defaults service.name to the
+            # binary name, so two instances are indistinguishable in the otel tables.
             - name: OTEL_SERVICE_NAME
-              value: {{ printf "dfe-%s" .Values.component | quote }}
+              value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
           volumeMounts:
             - name: config
               mountPath: /etc/dfe-transform-vrl
               readOnly: true
+            {{- include "dfe-common.transformFilesMount" . | nindent 12 }}
             # Writable scratch: the container rootfs is read-only
             # (dfe-common.containerSecurityContext), so anything writing /tmp
             # needs this emptyDir.
@@ -98,5 +127,6 @@ spec:
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
+        {{- include "dfe-common.transformFilesVolume" . | nindent 8 }}
         - name: tmp
           emptyDir: {}

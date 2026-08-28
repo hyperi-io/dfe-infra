@@ -26,8 +26,20 @@ kafka:
 otel:
   endpoint: ""
 
-config:
-  mountPath: /config
+# The app's scalo config, rendered VERBATIM into a ConfigMap. An OPAQUE
+# passthrough: dfe-engine is the config authority and publishes it as the
+# per-instance overlay, so the chart never interprets the per-app keys.
+# Kafka credentials stay OUT of here and arrive as env from a Secret, which the
+# app reads separately through scalo's KafkaConfig::from_env.
+config: {}
+
+# Where the config file is mounted. Separate from `config` so no chart-level key
+# leaks into the app's own config file.
+configMountPath: /etc/dfe-transform-elastic
+
+# OTel service.name for this instance. Empty falls back to the app name, which
+# leaves two instances of one app indistinguishable in the otel tables.
+otelServiceName: ""
 
 resources:
   requests:

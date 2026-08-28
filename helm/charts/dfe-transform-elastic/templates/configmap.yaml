@@ -1,0 +1,12 @@
+# The app's scalo config file, rendered VERBATIM from the .Values.config blob.
+# dfe-engine is the config authority and emits `config` as an OPAQUE passthrough;
+# this chart only writes it to the path the image's CMD reads.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}
