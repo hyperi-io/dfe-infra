@@ -20,7 +20,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ $name }}-bootstrap-topics
+  # The topic list is hashed into the name so a changed list is a NEW Job rather
+  # than an edit to an immutable one. Replace=true cannot do that job: the API
+  # server only defaults spec.selector on CREATE, so replacing a Job that
+  # declares none is rejected outright and the Application never syncs again.
+  name: {{ $name }}-bootstrap-topics-{{ $topics | toJson | sha256sum | trunc 8 }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
   annotations:
@@ -29,11 +33,8 @@ metadata:
     # this one did not fire, leaving the loader crashlooping on a deploy that
     # reported success.
     #
-    # Wave 1 runs it after the wave-0 broker reports healthy. A Job spec is
-    # immutable, so Replace lets a changed spec through instead of failing the
-    # sync forever.
+    # Wave 1 runs it after the wave-0 broker reports healthy.
     argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 5
   ttlSecondsAfterFinished: 600
