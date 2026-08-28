@@ -6,5 +6,5 @@ version: 0.1.0
 appVersion: "v1.18.26"   # == versions.yaml apps.dfe-loader (drift-checked)
 dependencies:
   - name: dfe-common
-    version: "0.3.0"
+    version: "0.4.0"
     repository: "file://../../library/dfe-common"

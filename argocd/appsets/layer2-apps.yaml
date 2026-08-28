@@ -76,6 +76,15 @@ spec:
       destination:
         server: '{{ .server }}'
         namespace: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+      # Replica count belongs to KEDA's HPA, so selfHeal must not revert a scale as
+      # drift. RespectIgnoreDifferences applies the rule during sync, not only in
+      # the diff view. The charts omit `replicas:` under KEDA too
+      # (dfe-common.replicas) -- this covers charts this repo does not own.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas
       syncPolicy:
         automated:
           prune: true
@@ -83,3 +92,4 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - RespectIgnoreDifferences=true

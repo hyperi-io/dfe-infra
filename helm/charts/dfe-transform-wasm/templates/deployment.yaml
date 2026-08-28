@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  {{- include "dfe-common.replicas" . }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}

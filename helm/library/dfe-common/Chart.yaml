@@ -2,6 +2,8 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.4.0: add _replicas.tpl -- omit `replicas:` when KEDA scales the app, so Argo
+#        selfHeal has no rendered value to revert every scale back to.
 # 0.3.0: add _transformfiles.tpl -- ConfigMap data, volume, mount and
 #        DFE_TRANSFORM_TRANSFORMS_DIR for the transform files dfe-engine writes
 #        into the per-instance overlay.
@@ -15,4 +17,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.3.0
+version: 0.4.0
