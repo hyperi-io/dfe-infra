@@ -59,13 +59,22 @@
 #                        digest is taken over the decoded bytes
 
 apps:
+  # Routing is DERIVED from the source definitions, never hand-set: a source
+  # declares the match rule that identifies it, and the engine compiles every
+  # source into the block below. An edit to it is drift against the sources.
   dfe-receiver:
     multiplicity: single
     scale_deployed: true
+    routing:
+      compiler: receiver
+      values_path: config.routing
 
   dfe-loader:
     multiplicity: single
     scale_deployed: true
+    routing:
+      compiler: loader
+      values_path: config.routing
 
   dfe-archiver:
     multiplicity: single
