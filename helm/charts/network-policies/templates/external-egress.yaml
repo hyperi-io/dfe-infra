@@ -1,0 +1,91 @@
+{{- /*
+  External-service egress, one policy per (purpose, namespace, app).
+
+  A purpose renders ONLY when the deployment declares the matching external
+  dependency, read from the SAME shared values the data charts read. There is no
+  acknowledgement flag: the declaration is the decision (values.yaml header).
+
+  Each declaration is read through `default dict` -- a chart rendered standalone
+  carries none of these keys, and an absent declaration must read as "not
+  external" rather than fail the render.
+*/}}
+{{- $ext := .Values.externalEgress | default dict }}
+{{- $ch := .Values.clickhouse | default dict }}
+{{- $kafka := .Values.kafka | default dict }}
+{{- $oidc := .Values.oidc | default dict }}
+{{- $vault := .Values.vault | default dict }}
+{{- $es := .Values.elasticsearch | default dict }}
+{{- $telemetry := .Values.telemetry | default dict }}
+{{- $otel := .Values.otel | default dict }}
+{{- $declared := dict
+      "clickhouse"    (eq ($ch.mode | default "" | toString) "external")
+      "kafka"         (eq ($kafka.mode | default "" | toString) "external")
+      "oidc"          (eq ($oidc.enabled | default false | toString) "true")
+      "secrets"       (ne ($vault.address | default "" | toString) "")
+      "elasticsearch" (ne ($es.endpoint | default "" | toString) "")
+      "otel"          (or (eq ($telemetry.mode | default "" | toString) "external")
+                          (ne ($otel.endpoint | default "" | toString) ""))
+}}
+{{- /* Fixed order so a re-render diffs cleanly. */}}
+{{- range $purpose := list "clickhouse" "kafka" "oidc" "secrets" "elasticsearch" "otel" }}
+{{- $block := index $ext $purpose | default dict }}
+{{- if and (index $declared $purpose) $block.apps $block.ports }}
+{{- /* Kubernetes rejects an `except` entry outside its own `cidr`, so pinning a
+       purpose to a known endpoint drops the shared cluster-range carve-out --
+       a pinned range does not span pod/service space to begin with. */}}
+{{- $allow := $ext.allowCIDRs }}
+{{- $except := $ext.exceptCIDRs }}
+{{- if $block.allowCIDRs }}
+{{- $allow = $block.allowCIDRs }}
+{{- $except = list }}
+{{- end }}
+{{- if $block.exceptCIDRs }}
+{{- $except = $block.exceptCIDRs }}
+{{- end }}
+{{- /* namespace -> apps: the DFE namespaces take the whole app list, an
+       extraNamespaceApps namespace takes only the apps that run there. */}}
+{{- $nsApps := dict }}
+{{- range $ns := $.Values.dfeNamespaces }}
+{{- $_ := set $nsApps $ns $block.apps }}
+{{- end }}
+{{- range $ns, $apps := ($block.extraNamespaceApps | default dict) }}
+{{- $_ := set $nsApps $ns (concat (index $nsApps $ns | default list) $apps) }}
+{{- end }}
+{{- range $ns, $apps := $nsApps }}
+{{- range $app := $apps }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-external-{{ $purpose }}-egress-{{ if eq $app "*" }}all{{ else }}{{ $app }}{{ end }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    {{- if eq $app "*" }} {}
+    {{- else }}
+    matchLabels:
+      app.kubernetes.io/name: {{ $app }}
+    {{- end }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- range $cidr := $allow }}
+    - to:
+        - ipBlock:
+            cidr: {{ $cidr }}
+            {{- with $except }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        {{- range $block.ports }}
+        - port: {{ .port }}
+          protocol: {{ .protocol | default "TCP" }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

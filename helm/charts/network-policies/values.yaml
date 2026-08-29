@@ -73,3 +73,144 @@ internetEgress:
     - 198.18.0.0/16    # pod CIDR (network-model default)
     - 198.19.0.0/16    # service CIDR (network-model default)
     - 169.254.0.0/16   # link-local (cloud metadata, etc.)
+
+# EXTERNAL-SERVICE egress, DERIVED from the declared service modes. There is no
+# enable flag here and there deliberately never will be: a purpose opens when the
+# deployment DECLARES the matching external dependency, and stays shut otherwise.
+#
+#   clickhouse    <- clickhouse.mode: external
+#   kafka         <- kafka.mode: external
+#   oidc          <- oidc.enabled: true
+#   secrets       <- vault.address non-empty
+#   elasticsearch <- elasticsearch.endpoint non-empty
+#   otel          <- telemetry.mode: external, or otel.endpoint non-empty
+#
+# THE TRADE, stated plainly: setting a data-layer mode to external changes the
+# cluster's network posture as a side effect. Choosing ClickHouse Cloud opens the
+# ClickHouse clients' egress on the ClickHouse ports without a second decision
+# anywhere. That is deliberate. The alternative is a pod that cannot reach the
+# datastore it was just pointed at, crashlooping with nothing in the policy set to
+# explain why, which is the failure this block exists to kill.
+#
+# Each purpose grants ONLY the ports that dependency speaks, so an app never
+# inherits another purpose's ports -- the fetcher does not get ClickHouse ports
+# because the loader needed them. `apps` matches app.kubernetes.io/name, and the
+# single entry "*" means every pod in the namespace.
+#
+# baseline-egress rule 3 (the Kubernetes API allow) carries ports with no `to`,
+# which in NetworkPolicy semantics is EVERY destination, so TCP 443 and 6443 are
+# already open cluster-wide from any DFE or data namespace. The 443 entries below
+# are what keeps a purpose working the day that rule is narrowed to the API
+# server. Only the non-443 ports change reachability today.
+#
+# Only namespaces that ALREADY carry a baseline policy appear here. A
+# NetworkPolicy is the thing that makes a pod default-deny, so adding one to a
+# policy-free namespace (kafbat in `kafka`, the collector in `otel`, ESO, Envoy,
+# cert-manager) would isolate a pod that is currently unrestricted and break it.
+externalEgress:
+  # Shared destination defaults. Any purpose may set its own allowCIDRs or
+  # exceptCIDRs to override these -- an external ClickHouse has ONE known
+  # endpoint, so pinning it is the tighter and better answer:
+  #   externalEgress.clickhouse.allowCIDRs: ["203.0.113.7/32"]
+  # Pinning allowCIDRs drops the shared exceptCIDRs, because Kubernetes rejects an
+  # `except` entry outside its own `cidr`. Set the purpose's own exceptCIDRs to
+  # carve anything out of a pinned range.
+  allowCIDRs:
+    - 0.0.0.0/0
+  # Same lateral-movement carve-out internetEgress uses, applied to every purpose.
+  exceptCIDRs:
+    - 198.18.0.0/16    # pod CIDR (network-model default)
+    - 198.19.0.0/16    # service CIDR (network-model default)
+    - 169.254.0.0/16   # link-local (cloud metadata, etc.)
+
+  # Every chart that resolves clickhouse.host. dfe-schema is the DDL gate and runs
+  # in the `clickhouse` namespace rather than beside the apps
+  # (appsets/layer2-data.yaml), so it is listed under extraNamespaceApps -- an
+  # external ClickHouse it cannot reach fails the deploy before anything else runs.
+  clickhouse:
+    apps:
+      - dfe-loader        # dfe-loader/templates/deployment.yaml
+      - dfe-engine        # dfe-engine/templates/deployment.yaml
+      - dfe-hunt-runner   # dfe-engine/templates/hunt-runner.yaml
+      - dfe-keda-shim     # dfe-engine/templates/keda-shim.yaml
+      - dfe-hyperdx       # hyperdx/templates/deployment.yaml
+    # Apps outside the DFE namespaces, keyed by the namespace they run in. The
+    # namespace must already carry a baseline policy.
+    extraNamespaceApps:
+      clickhouse:
+        - dfe-schema      # dfe-schema/templates/job.yaml
+    # TLS ports only. ClickHouse Cloud publishes 8443 (HTTPS) and 9440 (native
+    # TLS) and answers plain 443 on its own endpoints. A BYO server on plaintext
+    # 8123/9000 is a deployer override, never the default -- credentials cross an
+    # untrusted network here.
+    ports:
+      - { port: 8443, protocol: TCP }   # HTTPS interface
+      - { port: 9440, protocol: TCP }   # native protocol over TLS
+      - { port: 443,  protocol: TCP }   # cloud HTTPS endpoints
+
+  # Every chart that resolves kafka.bootstrapServers. NOT kafbat (namespace
+  # `kafka`) or the collector (namespace `otel`) -- neither namespace carries a
+  # baseline policy, so both already have unrestricted egress and a policy here
+  # would take it away. dfe-engine is absent because it is not a Kafka client:
+  # the engine chart references kafka nowhere.
+  kafka:
+    apps:
+      - dfe-receiver
+      - dfe-loader
+      - dfe-fetcher
+      - dfe-archiver
+      - dfe-transform-vrl
+      - dfe-transform-vector
+      - dfe-transform-elastic
+      - dfe-transform-splack
+      - dfe-transform-wasm
+    # The managed-broker listener range. 9092-9096 covers the SASL_SSL and
+    # SASL_PLAINTEXT listeners Confluent Cloud, MSK and Redpanda Cloud publish
+    # between them, and 9098 is MSK's IAM listener.
+    ports:
+      - { port: 9092, protocol: TCP }
+      - { port: 9093, protocol: TCP }
+      - { port: 9094, protocol: TCP }
+      - { port: 9095, protocol: TCP }
+      - { port: 9096, protocol: TCP }
+      - { port: 9098, protocol: TCP }   # MSK SASL/IAM
+
+  # The engine fetches OIDC discovery and JWKS from the IdP itself. Envoy is not
+  # here: the gateway runs in envoy-gateway-system, which carries no policy.
+  oidc:
+    apps:
+      - dfe-engine
+    ports:
+      - { port: 443, protocol: TCP }
+
+  # OpenBao / cloud KMS, per the secrets seam. ESO is not here -- it runs in
+  # external-secrets with no policy. NOTE the engine chart injects no OpenBao
+  # address today, so this is the policy half of a seam whose app half arrives
+  # with the secrets work. It opens on the declaration, not on the wiring.
+  secrets:
+    apps:
+      - dfe-engine
+    ports:
+      - { port: 8200, protocol: TCP }   # OpenBao / Vault API
+      - { port: 443,  protocol: TCP }   # cloud KMS and secret-manager APIs
+
+  # Live index-server schema import, an engine surface. dfe-transform-elastic is
+  # deliberately NOT here: it is a Kafka-to-Kafka transform with no Elasticsearch
+  # client at all, and its chart exposes no Elasticsearch endpoint, so granting it
+  # these ports would be the port-inheritance this model exists to stop.
+  elasticsearch:
+    apps:
+      - dfe-engine
+    ports:
+      - { port: 9200, protocol: TCP }   # Elasticsearch / OpenSearch HTTP
+      - { port: 443,  protocol: TCP }   # managed endpoints
+
+  # Every DFE pod emits OTLP, so this one is namespace-wide rather than an app
+  # list that would have to be maintained against every new app.
+  otel:
+    apps:
+      - "*"
+    ports:
+      - { port: 4317, protocol: TCP }   # OTLP/gRPC
+      - { port: 4318, protocol: TCP }   # OTLP/HTTP
+      - { port: 443,  protocol: TCP }   # managed collectors behind HTTPS

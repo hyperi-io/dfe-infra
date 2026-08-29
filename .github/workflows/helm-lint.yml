@@ -86,6 +86,11 @@ jobs:
         with:
           version: "4.2.3"
 
+      # An over-wide egress policy renders green and passes a dry-run, so the
+      # derived external-service egress is checked by set equality per mode.
+      - name: External-service egress derives per mode
+        run: python3 scripts/tests/test_external_egress.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

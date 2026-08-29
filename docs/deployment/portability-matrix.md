@@ -92,6 +92,19 @@ managed endpoint.
   only one provider is a bug (architecture.md). The 443/6443 API-egress fix and the
   local-signer-over-OpenBao correction are the kind of on-prem assumption a
   de-hardcoding audit exists to catch.
+- **Choosing an external service changes the cluster's network posture, on
+  purpose.** The baseline is default-deny egress, so `network-policies` derives an
+  egress allow for each external dependency the deployment DECLARES --
+  `clickhouse.mode: external` opens the ClickHouse clients on the ClickHouse ports,
+  `kafka.mode: external` the Kafka clients, and likewise for an external OIDC
+  issuer, secret backend, index server or OTel destination. There is no separate
+  acknowledgement flag and there will not be one: the declaration IS the decision.
+  The trade is accepted -- pointing the loader at ClickHouse Cloud widens egress
+  with no second choice made anywhere -- because the alternative is a pod that
+  cannot reach the datastore it was just pointed at, crashlooping with nothing in
+  the policy set to explain why. Each purpose gets only the ports that dependency
+  speaks, and any purpose pins to a known endpoint CIDR
+  (`externalEgress.<purpose>.allowCIDRs`) where one is fixed.
 
 ## Node autoscaling
 

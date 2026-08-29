@@ -90,6 +90,16 @@ work right -- never "the element rendered" or a logical pass. Every data path is
 proven with real events streamed end to end into ClickHouse and the rows read
 back. Clean up browsers and stray headless chromium after every run.
 
+## <a name="egress"></a>Proving egress, not rendering it
+
+A deployment pointed at an external ClickHouse, Kafka, IdP, secret backend or OTel
+destination has an egress allow derived from that declaration, and a rendered
+NetworkPolicy proves nothing about reachability -- a default-deny drop looks
+exactly like a slow endpoint. `scripts/probe_egress.py` execs a TCP probe in the
+pod the policy selects and reports OK, REFUSED (packets arrived, egress is not the
+fault), TIMEOUT (what a drop looks like) or NO-PROBE. Run it after any deploy that
+declares an external service.
+
 ## <a name="local-dev"></a>Local-dev docs
 
 Each interdependent repo carries a local-dev `.md` (linked from its

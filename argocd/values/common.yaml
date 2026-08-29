@@ -127,6 +127,19 @@ postgresql:
   port: 5432
   database: dfe
 
+# External secret backend (OpenBao / Vault / cloud KMS), per deployment. Set means
+# the deployment has one, and network-policies derives the engine's egress to it
+# from that (helm/charts/network-policies/values.yaml externalEgress).
+vault:
+  address: ""
+
+# External Elasticsearch or OpenSearch index server the engine imports index
+# mappings from. Set means the deployment has one, and network-policies derives
+# the engine's egress to it from that. Not a data-path destination -- no DFE app
+# writes to Elasticsearch.
+elasticsearch:
+  endpoint: ""
+
 receiver:
   listenCIDR: "100.64.0.0/10"
 
