@@ -37,6 +37,14 @@ config:
     size: 1Gi
     storageClass: ""  # empty -> cluster default class
 
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
+  secrets: []     # empty with enabled -> reloader watches everything mounted
+  configmaps: []
+
 clickhouse:
   host: ""
   port: 8123

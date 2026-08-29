@@ -4,6 +4,8 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    {{- include "dfe-common.reloadAnnotations" . | nindent 4 }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- if .Values.config.persistence.enabled }}
