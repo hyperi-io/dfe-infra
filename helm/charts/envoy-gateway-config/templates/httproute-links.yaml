@@ -1,9 +1,9 @@
-{{- if .Values.routes.links.enabled }}
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" . "key" "links") }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: links
-  namespace: {{ .Values.routes.links.backendNamespace | default .Release.Namespace }}
+  name: {{ .Values.routes.links.routeName }}
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" . "key" "links") }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
@@ -13,7 +13,7 @@ spec:
       name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
   hostnames:
-    - "{{ .Values.routes.links.hostname | default .Values.hostnames.links }}.{{ .Values.domain }}"
+    - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "links") }}.{{ .Values.domain }}"
   rules:
     - backendRefs:
         - name: {{ .Values.routes.links.backendService }}

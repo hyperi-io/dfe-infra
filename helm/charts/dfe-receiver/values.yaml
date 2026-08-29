@@ -78,7 +78,7 @@ exposure:
     # internet, on every exposed listener. Every deployment that does not want
     # that supplies its CIDRs here, e.g. ["203.0.113.0/24", "198.51.100.7/32"].
     # The receiver's server.auth.mode defaults to none, so an empty list means
-    # unauthenticated posts to /ingest from anywhere (docs/EDGE-AUTH.md).
+    # unauthenticated posts to /ingest from anywhere (docs/INGEST-EDGE.md).
     loadBalancerSourceRanges: []
   # NetworkPolicy opening the exposed listener ports. The namespace baseline
   # (network-policies chart) admits only the gateway, KEDA, otel and the other

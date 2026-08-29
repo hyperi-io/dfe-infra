@@ -1,36 +1,43 @@
-{{- if and .Values.oidc.enabled .Values.routes.links.enabled }}
-{{- $linksNs := .Values.routes.links.backendNamespace | default .Release.Namespace }}
-{{- range $provider := .Values.oidc.providers }}
+{{- if .Values.oidc.enabled }}
+{{- $policyRoutes := include "envoy-gateway-config.infraPolicyRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- range $key := $policyRoutes }}
+{{- $r := index $.Values.routes $key }}
+{{- $ns := include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
+{{- $host := include "envoy-gateway-config.routeHost" (dict "ctx" $ "key" $key) }}
+{{- range $provider := $.Values.oidc.providers }}
 ---
-# ADMIN-ONLY edge policy for the links page: OIDC login, then the groups
-# claim (from the provider's access token, re-validated against its JWKS)
-# must carry one of oidc.adminGroups -- everyone else gets a 403. Denies by
-# default, so a token with no groups claim is refused, not admitted.
+# Edge RBAC for an infra-class route: OIDC login, then the groups claim -- read
+# from the access token this policy issued and re-validated against the
+# provider's JWKS -- must carry one of oidc.adminGroups. Authentication alone is
+# not enough, and defaultAction Deny means a token with no groups claim is
+# refused rather than admitted.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
-  name: dfe-oidc-{{ $provider.name }}-links-admin
-  namespace: {{ $linksNs }}
+  name: dfe-oidc-{{ $provider.name }}-{{ $r.routeName }}-admin
+  namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      name: links
+      name: {{ $r.routeName }}
   oidc:
     provider:
       issuer: {{ $provider.issuerUrl }}
     clientID: {{ $provider.clientId }}
     clientSecret:
       name: {{ $provider.clientSecretName | default (printf "dfe-oidc-%s" $provider.name) }}
-      namespace: {{ $linksNs }}
+      namespace: {{ $ns }}
     scopes:
       {{- toYaml ($provider.scopes | default (list "openid" "email" "profile" "groups")) | nindent 6 }}
-    redirectURL: "https://{{ $.Values.routes.links.hostname | default $.Values.hostnames.links }}.{{ $.Values.domain }}/oauth2/callback"
+    redirectURL: "https://{{ $host }}.{{ $.Values.domain }}/oauth2/callback"
     logoutPath: "/oauth2/logout"
+    {{- /* One cookie per route: a shared name would let a session minted on one
+           infra host be replayed on another. */}}
     cookieNames:
-      accessToken: dfe-links-access-token
+      accessToken: dfe-{{ $r.routeName }}-access-token
   jwt:
     providers:
       - name: {{ $provider.name }}
@@ -39,7 +46,7 @@ spec:
           uri: {{ $provider.jwksUrl | default (printf "%s/keys" $provider.issuerUrl) }}
         extractFrom:
           cookies:
-            - dfe-links-access-token
+            - dfe-{{ $r.routeName }}-access-token
   authorization:
     defaultAction: Deny
     rules:
@@ -53,5 +60,6 @@ spec:
                 valueType: StringArray
                 values:
                   {{- toYaml $.Values.oidc.adminGroups | nindent 18 }}
+{{- end }}
 {{- end }}
 {{- end }}

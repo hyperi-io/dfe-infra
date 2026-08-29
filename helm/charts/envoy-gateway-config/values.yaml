@@ -121,10 +121,50 @@ appNamespace: ""
 # entry for this deployment only.
 hostnames: {}
 
-# HTTPRoutes — map hostnames to backend services
+# Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
+# the dfe-receiver chart (exposure.mode, its ingest door) because a deployment's
+# cloud overlay feeds both -- one block describes what a deployment exposes, and
+# each chart reads the keys it owns.
+exposure:
+  # THE INFRA KILL SWITCH. false takes EVERY infra-class route off the edge in
+  # one flip and BEATS that route's own `enabled: true` -- it is absolute for
+  # the class, so a lock-down cannot be undone one route at a time.
+  # Product-class routes (dfe-ui, the engine API) are never touched by it:
+  # turning the product off is always its own explicit act. Ingest-class routes
+  # are data plane and unaffected.
+  infraUisExternal: true
+
+# HTTPRoutes -- map hostnames to backend services.
+#
+# Every route carries its CLASSIFICATION as data, and the class decides which
+# switches reach it:
+#   product -- dfe-ui + the engine API it consumes. Only `enabled` disables it.
+#   infra   -- the ops surfaces. exposure.infraUisExternal gates the whole class
+#              first, then `enabled`. Edge RBAC applies (see edgePolicy).
+#   ingest  -- data plane (otel, receiver). No UI switch reaches it.
+#
+# Cascade, in order, first match wins:
+#   1. class infra and exposure.infraUisExternal: false  -> not rendered
+#   2. routes.<name>.enabled: false                      -> not rendered
+#   3. otherwise                                         -> rendered
+#
+# Per-route fields:
+#   class        -- product | infra | ingest (above)
+#   enabled      -- per-route opt-out. Every UI defaults true (D5: externally
+#                   reachable by default); the two ingest routes default false
+#                   because each pairs with a setting in another chart.
+#   routeName    -- the HTTPRoute's metadata.name, and what a SecurityPolicy
+#                   targetRef names. Defined here once, not in the template.
+#   hostnameKey  -- which entry of the canonical `hostnames` map supplies the
+#                   subdomain label. `hostname` overrides it for this deployment.
+#   edgePolicy   -- infra class only: front this route with the OIDC + group
+#                   check (oidc.adminGroups). See the exemptions inline.
 routes:
   dfeUi:
+    class: product
     enabled: true
+    routeName: dfe-ui
+    hostnameKey: dfe
     hostname: ""              # empty = hostnames.dfe from the config SSoT
     backendService: dfe-ui
     backendNamespace: ""      # set via ArgoCD values overlay
@@ -132,7 +172,10 @@ routes:
     pathPrefix: /
 
   dfeEngine:
+    class: product
     enabled: true
+    routeName: dfe-engine
+    hostnameKey: dfe
     hostname: ""
     backendService: dfe-engine
     backendNamespace: ""
@@ -141,38 +184,78 @@ routes:
     # origin (the docker proxy draws the same line).
     pathPrefix: /api/v1
 
+  # Argo CD. common.yaml disables its bundled Dex because the edge owns its
+  # OIDC, so the group check belongs here and Argo's own RBAC maps the same
+  # groups to Argo roles (argocd.rbac.policy).
   argocd:
+    class: infra
     enabled: true
+    edgePolicy: true
+    routeName: argocd
+    hostnameKey: argocd
     hostname: ""
     backendService: argocd-server
     backendNamespace: argocd
     backendPort: 443
 
+  # HyperDX. Class infra, so the kill switch covers it, but NO edge policy: it
+  # is served inside a dfe-ui iframe and an interactive OIDC redirect cannot
+  # complete in a frame the IdP refuses to be framed in. The fork is its own PEP
+  # -- it authenticates from the dfe_token cookie dfe-ui shares across the
+  # domain -- so the group check happens app-side, not at the edge.
   hyperdx:
+    class: infra
     enabled: true
+    edgePolicy: false
+    routeName: hyperdx
+    hostnameKey: hyperdx
     hostname: ""
     backendService: dfe-hyperdx
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
 
-  # Forgejo (in-cluster deploy-repo FALLBACK git host). Infra UI -> default
-  # internal; flip enabled:true to expose. Only deployed when no external git is
-  # supplied (see layer2-deploy-repo appset).
+  # Forgejo (in-cluster deploy-repo FALLBACK git host). Only deployed when no
+  # external git is supplied (see layer2-deploy-repo appset). The edge policy
+  # gates the browser UI; it also blocks git-over-HTTP from OUTSIDE the cluster,
+  # which nothing in the product needs -- Argo and the engine reach it on its
+  # Service DNS.
   forgejo:
-    enabled: false
+    class: infra
+    enabled: true
+    edgePolicy: true
+    routeName: forgejo
+    hostnameKey: git
     hostname: ""
     backendService: dfe-forgejo
     backendNamespace: forgejo
     backendPort: 3000
 
-  # Kafbat (Kafka UI). Infra UI -> default internal; flip enabled:true to expose
-  # (DFE test deployments do). Does its OWN OIDC (not an oidc.targetRoutes edge
-  # policy), so do NOT add it there -- see the integrated-app auth pattern.
+  # Kafbat (Kafka UI). Class infra, so the kill switch covers it, but NO edge
+  # policy: it runs its own OIDC against the same provider (the integrated-app
+  # auth pattern), so the group check happens app-side. Fronting it here as well
+  # would put two interactive redirects in one page load.
   kafbat:
-    enabled: false
+    class: infra
+    enabled: true
+    edgePolicy: false
+    routeName: kafbat
+    hostnameKey: kafbat
     hostname: ""
     backendService: dfe-kafbat
     backendNamespace: kafka
+    backendPort: 8080
+
+  # Deployment links page (bundled chart, ns links). The page has NO auth of
+  # its own, so the edge policy is the only thing in front of it.
+  links:
+    class: infra
+    enabled: true
+    edgePolicy: true
+    routeName: links
+    hostnameKey: links
+    hostname: ""
+    backendService: dfe-links
+    backendNamespace: links
     backendPort: 8080
 
   # dfe-receiver data ingest -- the path dfe-receiver's exposure.mode:
@@ -181,7 +264,10 @@ routes:
   # this route would be a second door. An HTTPRoute carries HTTP, so only the
   # receiver's http listener is routable here.
   receiver:
+    class: ingest
     enabled: false
+    routeName: receiver
+    hostnameKey: receiver
     hostname: ""
     backendService: dfe-receiver
     backendNamespace: ""
@@ -191,23 +277,14 @@ routes:
   # outside the cluster (edge agents, other estates). OTLP/HTTP; in-cluster
   # senders keep the collector's service DNS.
   otel:
+    class: ingest
     enabled: true
+    routeName: otel
+    hostnameKey: otel
     hostname: ""
     backendService: dfe-otel-collector-gateway
     backendNamespace: otel
     backendPort: 4318
-
-  # Deployment links page (bundled chart, ns links). Infra UI -> default
-  # internal; flip enabled:true to expose. The page has NO auth of its own, so
-  # exposing it without oidc.enabled leaves it open to the network -- when OIDC
-  # is on it is fronted by the ADMIN policy (oidc.adminGroups), not the
-  # standard targetRoutes one.
-  links:
-    enabled: false
-    hostname: ""
-    backendService: dfe-links
-    backendNamespace: links
-    backendPort: 8080
 
 # OIDC — disabled by default (local auth is default).
 # Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.
@@ -237,8 +314,8 @@ oidc:
   targetRoutes:
     - name: dfe-engine
       hostname: dfe
-  # Groups whose members may reach the ADMIN surfaces (the links page). The
-  # canonical names come from dfe-engine docs/control-plane/rbac-vocabulary.md.
+  # Groups whose members may reach an infra-class route carrying edgePolicy.
+  # The canonical names come from dfe-engine docs/control-plane/rbac-vocabulary.md.
   adminGroups:
     - dfe-admins
     - dfe-infra

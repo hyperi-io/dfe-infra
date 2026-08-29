@@ -10,7 +10,7 @@
 {{- if $domain }}
 {{- /* Gateway-first: every surface is a name under the deployment's domain. */}}
 {{- $h := .Values.hostnames }}
-{{- $desc = $desc | default "Every web surface this deployment exposes, each on its own hostname. A grey/red dot means that target is not answering; default-internal surfaces serve only once their gateway route is enabled." }}
+{{- $desc = $desc | default "Every web surface this deployment exposes, each on its own hostname. A grey/red dot means that target is not answering; an infra surface also goes dark when exposure.infraUisExternal is off." }}
 {{- $apps := list
       (dict "name" "DFE UI (HyperDX embedded)" "url" (printf "https://%s.%s" $h.dfe $domain)
             "note" "the landing page")
@@ -25,12 +25,12 @@
       (dict "name" "ClickHouse Play" "url" "http://localhost:18124/play"
             "note" (printf "no gateway route -- kubectl -n clickhouse port-forward svc/%s-clickhouse 18124:8123" $p))
       (dict "name" "Kafbat (Kafka UI)" "url" (printf "https://%s.%s" $h.kafbat $domain)
-            "note" "default internal; enable its gateway route to expose") }}
+            "note" "infra surface; its own OIDC guards it") }}
 {{- $gitops := list
       (dict "name" "Argo CD" "url" (printf "https://%s.%s" $h.argocd $domain)
             "note" "GitOps control plane")
       (dict "name" "Forgejo (bundled deploy repo, when present)" "url" (printf "https://%s.%s" $h.git $domain)
-            "note" "default internal; enable its gateway route to expose")
+            "note" "infra surface; admin-gated when OIDC is on")
       (dict "name" "This page" "url" (printf "https://%s.%s" $h.links $domain)
             "note" "admin-gated when OIDC is on") }}
 {{- $defaults = list

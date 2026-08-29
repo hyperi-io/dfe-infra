@@ -1,9 +1,9 @@
-{{- if .Values.routes.forgejo.enabled }}
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" . "key" "forgejo") }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: forgejo
-  namespace: {{ .Values.routes.forgejo.backendNamespace | default .Release.Namespace }}
+  name: {{ .Values.routes.forgejo.routeName }}
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" . "key" "forgejo") }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
@@ -13,7 +13,7 @@ spec:
       name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
   hostnames:
-    - "{{ .Values.routes.forgejo.hostname | default .Values.hostnames.git }}.{{ .Values.domain }}"
+    - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "forgejo") }}.{{ .Values.domain }}"
   rules:
     - backendRefs:
         - name: {{ .Values.routes.forgejo.backendService }}
