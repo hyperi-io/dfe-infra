@@ -21,6 +21,10 @@ spec:
         # only the dir and file PATHS, so editing a transform's CONTENT leaves the
         # config identical and classify_change returns None. Only a roll applies it.
         checksum/transforms: {{ include (print $.Template.BasePath "/transforms-configmap.yaml") . | sha256sum }}
+        # Vector materialises an enrichment table at config load, and its reload
+        # path compares config structs rather than table contents, so an edit
+        # needs a roll.
+        checksum/enrichment: {{ include (print $.Template.BasePath "/enrichment-configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -106,6 +110,7 @@ spec:
               mountPath: /etc/dfe-transform-vector
               readOnly: true
             {{- include "dfe-common.transformFilesMount" . | nindent 12 }}
+            {{- include "dfe-common.enrichmentTablesMount" . | nindent 12 }}
             - name: vector-data
               mountPath: /var/lib/vector
             - name: vector-cache
@@ -141,6 +146,7 @@ spec:
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
         {{- include "dfe-common.transformFilesVolume" . | nindent 8 }}
+        {{- include "dfe-common.enrichmentTablesVolume" . | nindent 8 }}
         - name: vector-data
           emptyDir: {}
         - name: vector-cache

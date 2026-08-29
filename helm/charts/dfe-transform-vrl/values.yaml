@@ -47,6 +47,13 @@ transformFiles: []
 # which outranks the config file, so the app reads what the chart actually mounted.
 transformFilesDir: ""
 
+# Lookup tables the VRL programs read, as a list of {name, content}. The bundled
+# filebeat pipeline needs its timezones table for the ios and meraki branches and
+# errors every event out without it. The app has no flat-env key for these, so the
+# engine writes the matching config.enrichment_tables[].path under the mount below.
+enrichmentTables: []
+enrichmentTablesDir: ""
+
 # OTel service.name for this instance. Empty falls back to the app name, which
 # leaves two instances of one app indistinguishable in the otel tables.
 otelServiceName: ""

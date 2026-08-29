@@ -20,6 +20,9 @@ spec:
         # Same for the .vrl programs: they are compiled once at startup and held
         # immutable for the process lifetime, so an edit needs a roll to apply.
         checksum/transforms: {{ include (print $.Template.BasePath "/transforms-configmap.yaml") . | sha256sum }}
+        # Enrichment tables are materialised once at startup, so an edit needs a
+        # roll for the same reason the programs do.
+        checksum/enrichment: {{ include (print $.Template.BasePath "/enrichment-configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -98,6 +101,7 @@ spec:
               mountPath: /etc/dfe-transform-vrl
               readOnly: true
             {{- include "dfe-common.transformFilesMount" . | nindent 12 }}
+            {{- include "dfe-common.enrichmentTablesMount" . | nindent 12 }}
             # Writable scratch: the container rootfs is read-only
             # (dfe-common.containerSecurityContext), so anything writing /tmp
             # needs this emptyDir.
@@ -127,5 +131,6 @@ spec:
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
         {{- include "dfe-common.transformFilesVolume" . | nindent 8 }}
+        {{- include "dfe-common.enrichmentTablesVolume" . | nindent 8 }}
         - name: tmp
           emptyDir: {}

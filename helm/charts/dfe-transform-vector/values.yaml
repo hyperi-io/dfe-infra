@@ -48,6 +48,12 @@ transformFiles: []
 # which outranks the config file, so the app reads what the chart actually mounted.
 transformFilesDir: ""
 
+# Lookup tables the transforms read, as a list of {name, content}. Vector declares
+# its own enrichment_tables in the config it assembles, so the engine writes those
+# paths under the mount below.
+enrichmentTables: []
+enrichmentTablesDir: ""
+
 # OTel service.name for this instance. Empty falls back to the app name, which
 # leaves two instances of one app indistinguishable in the otel tables.
 otelServiceName: ""

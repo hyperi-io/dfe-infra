@@ -105,6 +105,15 @@ apps:
         suffixes: [".vrl"]
         language: vrl
         reload: roll
+      # Lookup tables the programs read. A second file set rather than a second
+      # mechanism: same {name, content} shape, same library, own mount.
+      - name: enrichment
+        values_path: enrichmentTables
+        links_path: enrichmentTableLinks
+        dir_setting: ""
+        suffixes: [".csv", ".json", ".yaml", ".mmdb"]
+        language: data
+        reload: roll
 
   # Supervises a Vector subprocess. Its reload compares config structs, and the
   # transform config holds only paths, so a content edit needs a roll as well.
@@ -121,6 +130,13 @@ apps:
         dir_setting: config.transforms.dir
         suffixes: [".yaml", ".yml"]
         language: yaml
+        reload: roll
+      - name: enrichment
+        values_path: enrichmentTables
+        links_path: enrichmentTableLinks
+        dir_setting: ""
+        suffixes: [".csv", ".json", ".yaml", ".mmdb"]
+        language: data
         reload: roll
 
   # Selects a compiled-in transform by source.name and reads no authored files.
@@ -147,4 +163,17 @@ kinds:
   wasm:
     language: wasm
     suffixes: [".wasm"]
+    encoding: base64
+
+  # Lookup data a transform reads rather than a program it runs, so no validator
+  # registers under this language.
+  lookup:
+    language: data
+    suffixes: [".csv", ".json", ".yaml"]
+    encoding: text
+
+  # A MaxMind database is binary, so it travels base64-encoded like wasm.
+  mmdb:
+    language: data
+    suffixes: [".mmdb"]
     encoding: base64
