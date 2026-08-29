@@ -1,3 +1,17 @@
+{{- /*
+  Internal mode routes through the cluster Gateway, and the only gateway path
+  the receiver has is an HTTPRoute (envoy-gateway-config, routes.receiver),
+  which serves the listener named `http`. Any OTHER listener marked exposed has
+  no path at all in this mode, so fail the render rather than deploy a listener
+  that silently receives nothing.
+*/}}
+{{- if ne (.Values.exposure.mode | default "public") "public" }}
+{{- range .Values.listeners }}
+{{- if and .exposed (ne .name "http") }}
+{{- fail (printf "dfe-receiver: listener %q (%v/%s) is exposed but exposure.mode is %q, and the cluster Gateway routes only the http listener. Either set exposure.mode: public so it gets a LoadBalancer, or add a dedicated Gateway listener plus a TCPRoute/UDPRoute for it and mark this listener exposed: false." .name .port (.protocol | default "TCP") $.Values.exposure.mode) }}
+{{- end }}
+{{- end }}
+{{- end }}
 # Internal Service (always). ClusterIP -- reachable in-cluster. Carries EVERY
 # configured listener (.Values.listeners) so east-west producers and the health
 # probes hit the same ports the container listens on.
@@ -18,7 +32,7 @@ spec:
     {{- end }}
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
-{{- if eq (.Values.exposure.mode | default "internal") "public" }}
+{{- if eq (.Values.exposure.mode | default "public") "public" }}
 {{- /*
   Public exposure: the receiver is a single-homed airlock -- it ingests
   externally and produces to LOCAL Kafka, which stays private. EVERY listener

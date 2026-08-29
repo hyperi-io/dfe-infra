@@ -36,6 +36,24 @@ envoyGateway:
     type: LoadBalancer
     externalIPs: []
 
+# No LoadBalancer provisioner on this cloud: the gateway's own LB Service stays
+# <pending>, so the receiver's chart default (exposure.mode: public) would render
+# Services that never get an address. Ingest routes through the gateway instead.
+exposure:
+  mode: internal
+
+# The gateway routes HTTP, so grpc drops back to exposed: false here -- left
+# true it fails the receiver render, which is the point of that guard. OTLP/gRPC
+# stays reachable in-cluster on the ClusterIP.
+listeners:
+  - { name: http, port: 8080, protocol: TCP, exposed: true }
+  - { name: grpc, port: 8443, protocol: TCP, exposed: false }
+
+# The receiver's ingest door in internal mode (receiver.{domain}).
+routes:
+  receiver:
+    enabled: true
+
 # devex runs DFE's OWN ClickHouse (single/keeperless interim -- stops the
 # exit-231 crashloop from the prior cluster-mode instance that shared
 # hyperi-keeper). Flip to cluster (with DFE-owned dfe-keeper) or external to

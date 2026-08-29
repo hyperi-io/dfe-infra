@@ -26,6 +26,7 @@ hostnames:
   kafbat: kafbat
   links: links
   otel: otel          # platform OTLP ingest
+  receiver: receiver  # data ingest, used only by exposure.mode: internal
 
 # THE canonical operator-namespace map: network-policies allows data-namespace
 # ingress from these, and otel-collector scrapes their controllers' metrics.

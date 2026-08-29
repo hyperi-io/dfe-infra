@@ -27,13 +27,16 @@ service:
 #   name     -- k8s port name (<=15 chars, lowercase alnum + '-')
 #   port     -- listen port
 #   protocol -- TCP | UDP  (netflow/syslog are UDP; grpc/https/lumberjack are TCP)
-#   exposed  -- include on the PUBLIC LoadBalancer when exposure.mode=public.
-#               health/admin stay false; data-ingest protocols are true.
+#   exposed  -- include on the PUBLIC LoadBalancer when exposure.mode=public,
+#               and open on the ingest NetworkPolicy. Data-ingest protocols are
+#               true; a listener carrying only admin/health surface is false.
 # NOTE: mixed TCP+UDP in one Service is not portable across cloud LBs, so the
 # public path renders ONE LoadBalancer per protocol family that has exposed
 # listeners (see templates/service.yaml).
+# The http listener carries the JSON ingest path and /livez + /readyz, so
+# exposing ingest exposes both probe paths.
 listeners:
-  - { name: http, port: 8080, protocol: TCP, exposed: false }   # health probes + OTLP/HTTP
+  - { name: http, port: 8080, protocol: TCP, exposed: true }     # JSON ingest + OTLP/HTTP + probes
   - { name: grpc, port: 8443, protocol: TCP, exposed: true }     # OTLP/gRPC ingest
   # Enable per the source's protocols via the engine overlay, e.g.:
   # - { name: lumberjack, port: 5044, protocol: TCP, exposed: true }  # Beats/Elastic
@@ -41,24 +44,26 @@ listeners:
   # - { name: syslog-udp, port: 514,  protocol: UDP, exposed: true }  # RFC3164/5424
   # - { name: syslog-tcp, port: 601,  protocol: TCP, exposed: true }  # RFC6587
 
-# Ingress exposure SEAM (design 2026-06-28). The receiver is a single-homed
-# airlock: it ingests externally and produces to LOCAL Kafka, which stays private
-# regardless. This reserves the PUBLIC ingress path so a richer deploy is a values
-# flip, NOT a chart change. The overlay (198.18/15) + Kafka never face the public.
+# Ingress exposure SEAM. The receiver is a single-homed airlock: it ingests
+# externally and produces to LOCAL Kafka, which stays private regardless. The
+# overlay (198.18/15) + Kafka never face the public.
 #
 # mode:
-#   internal (default) -- ClusterIP only. Reach it via the cluster Gateway/LB on
-#     the owned domain; the DEPLOYER applies whatever ingress-path security they
-#     prefer in front (their cloud LB / WAF / mTLS / API gateway). DFE ships a
-#     sensible default public posture LATER; today the choice is the deployer's.
-#   public -- also render a public Service (Phase 4 builds the AWS VPC public
-#     subnet + IGW behind it). serviceType/annotations/loadBalancerSourceRanges
-#     are deployer-supplied so they bring their own edge security.
+#   public (DEFAULT) -- render one LoadBalancer per protocol family carrying the
+#     exposed listeners, plus the NetworkPolicy that lets that traffic reach the
+#     pods. A fresh deploy is therefore INTERNET-FACING on the ingest ports:
+#     loadBalancerSourceRanges below is the allow-list, and it starts EMPTY,
+#     which means every source address on earth. Set it, or bring an edge
+#     (cloud LB / WAF / mTLS / API gateway) that does.
+#   internal -- ClusterIP only, reached through the cluster Gateway. The gateway
+#     path is an HTTPRoute (envoy-gateway-config, routes.receiver), so only the
+#     listener named http has one; any OTHER exposed listener has no path at all
+#     and the chart FAILS the render rather than accept it.
 #
 # A VPN INBOUND path (agents dialling in via the hyperi-vpn server, OpenVPN/
 # WireGuard) is a SEPARATE future addition -- intentionally NOT modelled here yet.
 exposure:
-  mode: internal              # internal | public
+  mode: public                # public | internal
   public:
     serviceType: LoadBalancer
     # SWAPPABLE LB implementation. loadBalancerClass selects WHO fulfils the
@@ -69,7 +74,19 @@ exposure:
     # cloud LB <-> k8s LB with one value, no template change.
     loadBalancerClass: ""
     annotations: {}           # provider-specific LB config (AWS NLB scheme, etc.)
-    loadBalancerSourceRanges: []   # deployer's CIDR allow-list (empty = all)
+    # THE INGRESS ALLOW-LIST. Empty is not "unset" -- it is 0.0.0.0/0, the whole
+    # internet, on every exposed listener. Every deployment that does not want
+    # that supplies its CIDRs here, e.g. ["203.0.113.0/24", "198.51.100.7/32"].
+    # The receiver's server.auth.mode defaults to none, so an empty list means
+    # unauthenticated posts to /ingest from anywhere (docs/EDGE-AUTH.md).
+    loadBalancerSourceRanges: []
+  # NetworkPolicy opening the exposed listener ports. The namespace baseline
+  # (network-policies chart) admits only the gateway, KEDA, otel and the other
+  # DFE namespaces, so external ingest is dropped without this even once the LB
+  # provisions. Renders in public mode only, and carries no client CIDRs --
+  # kube-proxy SNAT hides them, so the allow-list stays the LB's job.
+  networkPolicy:
+    enabled: true
 
 receiver:
   # Bind on all pod interfaces. (Was 100.64.0.1 -- a CGNAT address that both

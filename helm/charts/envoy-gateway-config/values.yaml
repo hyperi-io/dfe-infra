@@ -175,6 +175,18 @@ routes:
     backendNamespace: kafka
     backendPort: 8080
 
+  # dfe-receiver data ingest -- the path dfe-receiver's exposure.mode:
+  # internal depends on, so flip the two together. Off by default because the
+  # receiver chart defaults to public, where it has its own LoadBalancer and
+  # this route would be a second door. An HTTPRoute carries HTTP, so only the
+  # receiver's http listener is routable here.
+  receiver:
+    enabled: false
+    hostname: ""
+    backendService: dfe-receiver
+    backendNamespace: ""
+    backendPort: 8080
+
   # Platform OTLP ingest: the ONE standard DNS door for telemetry from
   # outside the cluster (edge agents, other estates). OTLP/HTTP; in-cluster
   # senders keep the collector's service DNS.
