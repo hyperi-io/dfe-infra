@@ -129,21 +129,72 @@ pinned ClickHouse identity) -- one identity contract end to end. Local
 users carry no groups, so the engine grants their roles through per-user
 bindings instead.
 
+## Route class, and the switches that reach it
+
+Every route carries its class as data (`routes.<name>.class`), and the
+class decides which switch can turn it off.
+
+| Class | Routes | What can disable it |
+|---|---|---|
+| `product` | dfe-ui, dfe-engine | its own `enabled` -- nothing else |
+| `infra` | Argo CD, HyperDX, Forgejo, Kafbat, links | `exposure.infraUisExternal: false` first, then its own `enabled` |
+| `ingest` | otel, receiver | its own `enabled`; no UI switch reaches it |
+
+Every web UI renders by default. The cascade is three lines, first match
+wins: class `infra` plus `exposure.infraUisExternal: false` means not
+rendered, then `routes.<name>.enabled: false` means not rendered, otherwise
+rendered.
+
+**`exposure.infraUisExternal` is the one flip that takes every ops surface
+off the edge**, and it is ABSOLUTE for the class: a route's own
+`enabled: true` does not beat it, so a lock-down cannot be picked apart one
+route at a time, and it withdraws those routes' edge policies with them. It
+never touches dfe-ui or the engine API.
+
+The `exposure:` key is shared with the dfe-receiver chart, which reads
+`exposure.mode` for its ingest door -- one block per deployment, each chart
+reading the keys it owns.
+
 ## Per-surface policy
 
-| Surface | Hostname | Exposed by default | Edge policy |
-|---|---|---|---|
-| dfe-ui (+ HyperDX iframe) | `dfe.{domain}` | yes | local login by default; OIDC when a provider is configured |
-| dfe-engine browser paths | `dfe.{domain}/api` interactive | yes | OIDC when configured; machine paths API-key/JWT, never redirected |
-| Argo CD | `argocd.{domain}` | yes | OIDC + Argo's own RBAC from the same groups |
-| Links page | `links.{domain}` | yes | OIDC + `oidc.adminGroups` only (deny by default) |
-| Kafbat | `kafbat.{domain}` | deployment's call | its own OIDC (integrated-app pattern) |
-| Forgejo (bundled fallback) | `forgejo.{domain}` | no | expose deliberately |
+| Surface | Hostname | Class | Exposed by default | Edge policy |
+|---|---|---|---|---|
+| dfe-ui (+ HyperDX iframe) | `dfe.{domain}` | product | yes | local login by default; OIDC when a provider is configured |
+| dfe-engine browser paths | `dfe.{domain}/api` interactive | product | yes | OIDC when configured; machine paths API-key/JWT, never redirected |
+| Argo CD | `argocd.{domain}` | infra | yes | edge OIDC + group check; Argo's own RBAC maps the same groups to Argo roles |
+| Links page | `links.{domain}` | infra | yes | edge OIDC + group check -- the page has no auth of its own |
+| Forgejo (bundled fallback) | `git.{domain}` | infra | yes | edge OIDC + group check |
+| Kafbat | `kafbat.{domain}` | infra | yes | its own OIDC (integrated-app pattern) -- group check is app-side |
+| HyperDX | `hyperdx.{domain}` | infra | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
+| otel OTLP ingest | `otel.{domain}` | ingest | yes | none -- machine senders hold no browser session |
+| dfe-receiver ingest | `receiver.{domain}` | ingest | no | the receiver's own `server.auth` |
 
-The admin gate is a deny-by-default Envoy `SecurityPolicy`: the `groups`
-claim must carry one of `oidc.adminGroups` (canonical names from
-dfe-engine `docs/control-plane/rbac-vocabulary.md`; default `dfe-admins`,
-`dfe-infra`). A token with no groups claim is refused, not admitted.
+The gate on an infra route is a deny-by-default Envoy `SecurityPolicy`
+carrying three blocks that only work together: `oidc` logs the user in and
+mints a per-route access-token cookie, `jwt` re-validates that cookie
+against the provider's JWKS, and `authorization` requires the `groups`
+claim to carry one of `oidc.adminGroups` (canonical names from dfe-engine
+`docs/control-plane/rbac-vocabulary.md`; default `dfe-admins`,
+`dfe-infra`). Authentication alone is not enough, and a token with no
+groups claim is refused rather than admitted. Per-route cookie names stop a
+session minted on one infra host being replayed on another.
+
+Kafbat and HyperDX are exempt from the EDGE gate and check groups app-side
+instead -- Kafbat runs its own OIDC against the same provider, and HyperDX
+cannot complete an interactive redirect inside the dfe-ui iframe. Both stay
+class `infra`, so the kill switch still covers them.
+
+Gating Forgejo also closes git-over-HTTP from OUTSIDE the cluster. Nothing
+in the product needs that: Argo CD and dfe-engine reach the deploy repo on
+its in-cluster Service DNS.
+
+## The ingest edge
+
+Data ingest is a second door with its own model, and by default it skips
+the Gateway entirely -- `dfe-receiver` renders its own LoadBalancers. A
+default deploy is internet-facing on the ingest ports with an EMPTY
+source-range allow-list and the receiver's own auth off. See
+[INGEST-EDGE.md](INGEST-EDGE.md).
 
 ## The links page
 
