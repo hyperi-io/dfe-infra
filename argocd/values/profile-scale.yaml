@@ -28,8 +28,8 @@ keda:
 # safe with unreplicated tables - that silently splits rows across replicas.
 # Name follows the operator's convention: <clickhouse.name>-clickhouse-headless.
 # mode and storageModel are TIER DEFAULTS: the deploy repo's infra/ overlay is
-# layered after this file, so a deployer reaches external or s3backed there.
-# A deployer who moves mode must move host in the same overlay.
+# layered after this file, so a deployer reaches external, s3backed or tiered
+# there. A deployer who moves mode must move host in the same overlay.
 clickhouse:
   mode: cluster
   host: "dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local"

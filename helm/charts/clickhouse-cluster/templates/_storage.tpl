@@ -7,39 +7,55 @@ render no ClickHouse object at all.
 */}}
 {{- define "dfe-clickhouse.validateStorageModel" -}}
 {{- $model := .Values.clickhouse.storageModel -}}
-{{- if not (has $model (list "local" "s3backed")) -}}
-{{- fail (printf "clickhouse.storageModel must be local or s3backed, got %q" $model) -}}
+{{- if not (has $model (list "local" "s3backed" "tiered")) -}}
+{{- fail (printf "clickhouse.storageModel must be local, s3backed or tiered, got %q" $model) -}}
+{{- end -}}
+{{- if and (ne $model "local") (eq .Values.clickhouse.mode "external") -}}
+{{- fail (printf "clickhouse.storageModel=%s is meaningless with mode=external -- the supplied ClickHouse owns its own storage" $model) -}}
 {{- end -}}
 {{- if eq $model "s3backed" -}}
-{{- if eq .Values.clickhouse.mode "external" -}}
-{{- fail "clickhouse.storageModel=s3backed is meaningless with mode=external -- the supplied ClickHouse owns its own storage" -}}
-{{- end -}}
 {{- if not .Values.clickhouse.s3.endpoint -}}
 {{- fail "clickhouse.storageModel=s3backed needs clickhouse.s3.endpoint (bucket URL with a trailing slash)" -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $model "tiered" -}}
+{{- $cold := .Values.clickhouse.tiered.coldName -}}
+{{- if not $cold -}}
+{{- fail "clickhouse.storageModel=tiered needs clickhouse.tiered.coldName -- it names the PVC, the mount, the disk and the cold volume" -}}
+{{- end -}}
+{{- if eq $cold "default" -}}
+{{- fail "clickhouse.tiered.coldName must not be \"default\" -- that is the hot disk, provisioned from clickhouse.storage" -}}
+{{- end -}}
+{{- /* Volume order is tier priority and the serialised order is alphabetical, so
+a cold name sorting first makes the bulk volume the hot tier with no error. */ -}}
+{{- if ne (index (sortAlpha (list "default" $cold)) 0) "default" -}}
+{{- fail (printf "clickhouse.tiered.coldName %q sorts before \"default\", which silently inverts the tiers -- the bulk volume would become the hot one. Pick a name sorting after \"default\" (e.g. slow, tier2, warm)" $cold) -}}
 {{- end -}}
 {{- end -}}
 {{- end }}
 
 {{/*
-dfe-clickhouse.storageConfiguration -- the server-config fragment that puts
-MergeTree parts on the object store behind a local read-through cache.
+dfe-clickhouse.storageConfiguration -- the server-config fragment that places
+MergeTree parts for the non-local storage models.
 
 ONE definition because two paths consume it: the operator CR's
 settings.extraConfig (cluster mode) and the config.d ConfigMap (single mode). A
 second spelling would give the two modes different on-disk layouts.
 
-Credentials are deliberately absent: use_environment_credentials makes the
-server read AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from its environment,
-which both paths wire from the ESO-materialised Secret.
+s3backed: credentials are deliberately absent -- use_environment_credentials
+makes the server read AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from its
+environment, which both paths wire from the ESO-materialised Secret.
 
-DISK NAMES ARE ORDER-BEARING. ClickHouse builds a cache disk only after the disk
-it wraps, and the operator serialises extraConfig as JSON with SORTED KEYS, so
-the order written here is discarded. The cache must therefore sort AFTER its
-backing disk: `s3_object` then `s3_object_cache`. Naming the cache anything that
-sorts earlier fails the server at startup with BAD_ARGUMENTS "there is no such
-disk (it should be initialized before cache disk)" -- proven live 2026-08-30.
+DISK AND VOLUME NAMES ARE ORDER-BEARING IN BOTH MODELS. The operator serialises
+extraConfig as JSON with SORTED KEYS, so the order written here is discarded.
+ClickHouse builds a cache disk only after the disk it wraps, so the s3backed
+cache must sort AFTER its backing disk: `s3_object` then `s3_object_cache`. A
+cache sorting earlier fails the server at startup with BAD_ARGUMENTS "there is
+no such disk (it should be initialized before cache disk)" -- proven live
+2026-08-30. In tiered, volume order IS tier priority, so the cold volume must
+sort after `default`; validateStorageModel above fails the render otherwise.
 
-Emits nothing unless storageModel is s3backed.
+Emits nothing for storageModel: local.
 */}}
 {{- define "dfe-clickhouse.storageConfiguration" -}}
 {{- if eq .Values.clickhouse.storageModel "s3backed" -}}
@@ -52,6 +68,17 @@ storage_configuration:
       metadata_path: /var/lib/clickhouse/disks/s3_object/
       {{- with .Values.clickhouse.s3.region }}
       region: {{ . | quote }}
+      {{- end }}
+      {{- /* Unset leaves the server defaults, which retry for minutes against an
+      unreachable store. See clickhouse.s3 in values.yaml for the measurements. */ -}}
+      {{- with .Values.clickhouse.s3.retryAttempts }}
+      s3_retry_attempts: {{ . }}
+      {{- end }}
+      {{- with .Values.clickhouse.s3.connectTimeoutMs }}
+      s3_connect_timeout_ms: {{ . }}
+      {{- end }}
+      {{- with .Values.clickhouse.s3.requestTimeoutMs }}
+      s3_request_timeout_ms: {{ . }}
       {{- end }}
     s3_object_cache:
       type: cache
@@ -67,6 +94,32 @@ storage_configuration:
 # per-table storage_policy and the model stays a deploy-time decision.
 merge_tree:
   storage_policy: s3_cached
+{{- else if eq .Values.clickhouse.storageModel "tiered" -}}
+{{- $cold := .Values.clickhouse.tiered.coldName -}}
+storage_configuration:
+  {{- if eq .Values.clickhouse.mode "single" }}
+  # Cluster mode gets this from the operator, which registers a disk for every
+  # additional volume claim at this same path. Single mode runs no operator, so
+  # the cold disk is declared here on the mount the StatefulSet gives it.
+  disks:
+    {{ $cold }}:
+      path: /var/lib/clickhouse/disks/{{ $cold }}/
+  {{- end }}
+  policies:
+    # The hot volume and disk keep the name "default": the server refuses a
+    # policy change that drops a volume name it already loaded. The replace
+    # attribute is load-bearing in cluster mode -- extraConfig lands in
+    # 99-extra-config.yaml, which merges after the operator's
+    # 10-storage-jbod.yaml, whose generated policy STRIPES the cold disk
+    # alongside the hot one instead of ranking them.
+    default:
+      "@replace": "1"
+      move_factor: {{ .Values.clickhouse.tiered.moveFactor }}
+      volumes:
+        default:
+          disk: default
+        {{ $cold }}:
+          disk: {{ $cold }}
 {{- end -}}
 {{- end }}
 

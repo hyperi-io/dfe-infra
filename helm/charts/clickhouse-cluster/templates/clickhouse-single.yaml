@@ -77,8 +77,14 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/users.d/dfe-users.xml
               subPath: dfe-users.xml
-            {{- if eq .Values.clickhouse.storageModel "s3backed" }}
-            # config.d takes YAML as well as XML, so the object-store disks are
+            {{- if eq .Values.clickhouse.storageModel "tiered" }}
+            # The cold tier, on the mount path the disk declaration names. Same
+            # path the operator uses for an additional volume in cluster mode.
+            - name: {{ .Values.clickhouse.tiered.coldName }}
+              mountPath: /var/lib/clickhouse/disks/{{ .Values.clickhouse.tiered.coldName }}
+            {{- end }}
+            {{- if ne .Values.clickhouse.storageModel "local" }}
+            # config.d takes YAML as well as XML, so the disks and policies are
             # the same fragment cluster mode passes through the operator CR.
             - name: custom-config
               mountPath: /etc/clickhouse-server/config.d/dfe-storage.yaml
@@ -103,6 +109,8 @@ spec:
           configMap:
             name: {{ .Values.clickhouse.name }}-custom-config
   volumeClaimTemplates:
+    # storageModel: tiered makes this the HOT tier -- it holds the only copy of
+    # the parts that have not been demoted.
     - metadata:
         name: data
       spec:
@@ -113,6 +121,19 @@ spec:
         resources:
           requests:
             storage: {{ .Values.clickhouse.storage.size }}
+    {{- if eq .Values.clickhouse.storageModel "tiered" }}
+    # The cold tier. Also durable: tiering moves parts rather than copying them.
+    - metadata:
+        name: {{ .Values.clickhouse.tiered.coldName }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with (.Values.clickhouse.tiered.coldStorageClass | default .Values.storageClass) }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.clickhouse.tiered.coldSize }}
+    {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap

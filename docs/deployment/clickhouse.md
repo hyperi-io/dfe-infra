@@ -39,7 +39,7 @@ against it. Treat it as unsupported: its CRDs, defaults, and upgrade
 behaviour differ from the official operator's, and no DFE validation cycle
 has ever run on it.
 
-## Storage model: `local` or `s3backed`
+## Storage model: `local`, `s3backed` or `tiered`
 
 `clickhouse.storageModel` is a separate axis from `clickhouse.mode` and is
 fixed for the life of the deployment. It defaults to `local`, where the PVC
@@ -60,14 +60,23 @@ Credentials are never in the values. The disk sets
 `<project>/<env>/clickhouse/s3` -- the same seam `mode: external` uses for
 its password.
 
+`tiered` needs no object store at all: it claims a second, cheaper volume and
+replaces the default storage policy with a ranked one, so new parts land on
+the fast volume and the oldest are demoted once free space there falls below
+`clickhouse.tiered.moveFactor`. Data MOVES rather than being copied, so both
+volumes must be durable. Full surface, the naming trap that inverts the tiers,
+and the measured demotion evidence: [clickhouse-tiering.md](clickhouse-tiering.md).
+
 Changing the model on a live deployment strands every part already written,
-so the engine holds `clickhouse.storageModel` and `clickhouse.s3.*` as
-protected vars and refuses the edit.
+so the engine holds `clickhouse.storageModel`, `clickhouse.s3.*` and
+`clickhouse.tiered.*` as protected vars and refuses the edit.
 
 ## Where the pieces live
 
 - Chart: `helm/charts/clickhouse-cluster` (modes above; keeper bundled for
   cluster mode).
+- SSD tiering over a bulk volume, opt-in per deployment:
+  [clickhouse-tiering.md](clickhouse-tiering.md).
 - Storage-model assertions: `scripts/tests/test_storage_model.py`.
 - Operator install: `argocd/appsets/layer-scale.yaml` (wave 3, scale tier
   only -- single mode needs no operator).

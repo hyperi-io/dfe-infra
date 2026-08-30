@@ -77,6 +77,10 @@ clickhouse:
   #   s3backed  -> parts live on an object-store disk fronted by a local
   #                read-through cache, so the PVC sizes the cache and the part
   #                metadata rather than the data.
+  #   tiered    -> two local volumes ranked hot then cold. New parts land on the
+  #                fast one and ClickHouse demotes the oldest to the cold one
+  #                once free space there falls below tiered.moveFactor. No
+  #                object store required, and no table DDL changes.
   # Applies to both cluster and single mode; external mode owns its own storage.
   storageModel: local
   # Object store for storageModel: s3backed. Credentials NEVER appear here --
@@ -99,7 +103,40 @@ clickhouse:
     # Field names within that entry.
     accessKeyProperty: access_key_id
     secretKeyProperty: secret_access_key
+    # Bound how long a read blocks when the store is unreachable. Left unset the
+    # server retries for minutes: a read blocked over nine minutes on the rig,
+    # and 1 / 2000 / 5000 brought the same failure down to 10.4 seconds. Those
+    # numbers are a demonstration, not a recommendation -- one retry is
+    # aggressive against real S3, which returns transient 5xx routinely. What
+    # they must not stay is unbounded, because a nine-minute stall on a
+    # dashboard is indistinguishable from an outage.
+    retryAttempts: ""
+    connectTimeoutMs: ""
+    requestTimeoutMs: ""
+  # Cold tier for storageModel: tiered. The HOT tier is clickhouse.storage below
+  # -- point its storageClass at the SSD class and size it for the working set.
+  # Both volumes must be durable: tiering MOVES parts, so the cold volume holds
+  # the only copy of what it carries (unlike the s3backed cache, which is
+  # disposable). Decided at deploy and refused afterwards, like the model itself
+  # -- the operator takes no new disk on an existing ClickHouseCluster, and the
+  # engine holds clickhouse.tiered.* as a protected var. Rationale and the
+  # verification queries: docs/deployment/clickhouse-tiering.md
+  tiered:
+    # Names the PVC template, the mount, the disk and the cold volume. Must sort
+    # after "default": volume order is tier priority and the API server
+    # re-serialises the policy with sorted keys, so a name like "cold" would
+    # silently make the bulk volume the hot tier. The chart fails the render on
+    # a name that does not sort correctly.
+    coldName: slow
+    coldSize: 1Ti
+    coldStorageClass: ""
+    # Free fraction of the HOT volume below which the oldest parts are demoted
+    # to the cold volume. Policy-level, so it needs no per-table DDL. Proven on
+    # two real devices: at a hot free ratio of 0.91, 0.95 demoted and 0.2 did not.
+    moveFactor: 0.2
   storage:
+    # With storageModel: tiered this volume is the HOT tier -- point
+    # storageClass at the SSD class and size it for the working set.
     size: 50Gi
     storageClass: ""
   resources:

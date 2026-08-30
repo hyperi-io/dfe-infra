@@ -28,6 +28,10 @@ spec:
     env:
       {{- include "dfe-clickhouse.s3Env" . | nindent 6 }}
     {{- end }}
+  # Must be durable in every storage model. Under storageModel: tiered this is
+  # the HOT tier and holds the only copy of the parts on it; under s3backed it
+  # holds the map from ClickHouse paths to object blobs, which cannot be rebuilt
+  # from the bucket.
   dataVolumeClaimSpec:
     accessModes: ["ReadWriteOnce"]
     resources:
@@ -36,6 +40,23 @@ spec:
     {{- with (.Values.clickhouse.storage.storageClass | default .Values.storageClass) }}
     storageClassName: {{ . | quote }}
     {{- end }}
+  {{- if eq .Values.clickhouse.storageModel "tiered" }}
+  # The operator mounts each entry at /var/lib/clickhouse/disks/<name> and
+  # registers a ClickHouse disk of the same name, which the ranked policy in
+  # extraConfig then puts behind the hot volume. Fixed at cluster creation: the
+  # CRD does not accept a new disk on an existing ClickHouseCluster.
+  additionalVolumeClaimTemplates:
+    - metadata:
+        name: {{ .Values.clickhouse.tiered.coldName }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.clickhouse.tiered.coldSize }}
+        {{- with (.Values.clickhouse.tiered.coldStorageClass | default .Values.storageClass) }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+  {{- end }}
   keeperClusterRef:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:

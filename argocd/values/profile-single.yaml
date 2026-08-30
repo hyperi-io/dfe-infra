@@ -21,7 +21,8 @@ keda:
 
 # ClickHouse -- single standalone node (keeperless, MergeTree).
 # mode and storageModel are TIER DEFAULTS: the deploy repo's infra/ overlay is
-# layered after this file, so a deployer reaches external or s3backed there.
+# layered after this file, so a deployer reaches external, s3backed or tiered
+# there.
 clickhouse:
   mode: single
   replicas: 1
