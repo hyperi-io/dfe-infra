@@ -31,6 +31,9 @@
 #   DFE_VALIDATE_VALUES   Space-separated values files layered in order.
 #                         Default: argocd/values/common.yaml
 #   DFE_VALIDATE_NS       Namespace to render into. Default: dfe
+#   DFE_VALIDATE_APP_NS   appNamespace helm parameter (the appsets inject this;
+#                         without it the appns-gated templates render nothing).
+#                         Default: DFE_VALIDATE_NS.
 #   DFE_VALIDATE_CHARTS   Space-separated chart names. Default: every chart.
 #   DFE_KUBE_CONTEXT      kubectl context for the server-side dry-run. UNSET =
 #                         render-only (offline; safe in CI with no cluster).
@@ -42,6 +45,9 @@
 #   DFE_KUBE_CONTEXT=<ctx> scripts/validate-charts.sh   # + server-side dry-run
 #   DFE_VALIDATE_VALUES="argocd/values/common.yaml argocd/values/local.yaml" \
 #     DFE_VALIDATE_CHARTS="dfe-receiver dfe-loader" scripts/validate-charts.sh
+#   DFE_KUBE_CONTEXT=<ctx> DFE_VALIDATE_APP_NS=<real app ns> \
+#     scripts/validate-charts.sh   # appns-gated objects need a namespace the
+#                                  # cluster actually has for the dry-run
 #
 # Exit status is non-zero if any chart fails to render or is rejected.
 set -uo pipefail
@@ -51,6 +57,7 @@ cd "${REPO_ROOT}" || exit 1
 
 VALUES_FILES="${DFE_VALIDATE_VALUES:-argocd/values/common.yaml}"
 RENDER_NS="${DFE_VALIDATE_NS:-dfe}"
+APP_NS="${DFE_VALIDATE_APP_NS:-${RENDER_NS}}"
 KUBE_CONTEXT="${DFE_KUBE_CONTEXT:-}"
 
 CLEANUP_OUT=false
@@ -122,6 +129,7 @@ for chart in ${CHARTS}; do
   fi
 
   if ! helm template "${chart}" "${dir}" --namespace "${RENDER_NS}" \
+        --set "appNamespace=${APP_NS}" \
         "${VALUES_ARGS[@]}" > "${OUT}/${chart}.yaml" 2>"${OUT}/${chart}.err"; then
     echo "  [RENDER-FAIL] ${chart}"
     head -5 "${OUT}/${chart}.err" | sed 's/^/      /'
@@ -130,9 +138,11 @@ for chart in ${CHARTS}; do
   fi
 
   # An empty render is not a pass -- it means every template was gated off, so
-  # nothing was actually validated and a silent [PASS] would be a lie.
-  if [ ! -s "${OUT}/${chart}.yaml" ]; then
-    echo "  [EMPTY] ${chart} -- rendered nothing with these values (not validated)"
+  # nothing was actually validated and a silent [PASS] would be a lie. A render
+  # holding only comments and document separators is the same case wearing a
+  # non-zero size, and kubectl rejects it as "no objects passed to apply".
+  if ! grep -q '^kind:' "${OUT}/${chart}.yaml"; then
+    echo "  [EMPTY] ${chart} -- rendered no objects with these values (not validated)"
     continue
   fi
 
