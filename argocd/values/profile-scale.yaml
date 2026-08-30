@@ -27,6 +27,9 @@ keda:
 # CLUSTER, so every node carries the table and the data replicates. It is NOT
 # safe with unreplicated tables - that silently splits rows across replicas.
 # Name follows the operator's convention: <clickhouse.name>-clickhouse-headless.
+# mode and storageModel are TIER DEFAULTS: the deploy repo's infra/ overlay is
+# layered after this file, so a deployer reaches external or s3backed there.
+# A deployer who moves mode must move host in the same overlay.
 clickhouse:
   mode: cluster
   host: "dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local"
@@ -41,6 +44,8 @@ cluster:
 # bootstrapServers MUST be overridden here: common.yaml defaults to the single
 # tier's plain Service name, which does not exist in cluster mode. Strimzi owns the
 # broker Services and names its bootstrap <cluster>-kafka-bootstrap.
+# mode and storageModel are TIER DEFAULTS, overridable from the deploy repo's
+# infra/ overlay; a deployer who moves mode must move bootstrapServers with it.
 kafka:
   mode: cluster
   provider: strimzi

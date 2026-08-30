@@ -50,6 +50,19 @@ spec:
       compression.type: {{ .Values.kafka.config.compressionType }}
       # Durability over availability -- never elect an out-of-sync leader.
       unclean.leader.election.enable: {{ .Values.kafka.config.uncleanLeaderElection }}
+      {{- if eq .Values.kafka.storageModel "tiered" }}
+      # The broker-wide switch; the landing topic carries the per-topic half.
+      remote.log.storage.system.enable: "true"
+      {{- end }}
+    {{- with (include "dfe-kafka.tieredStorage" .) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- if eq .Values.kafka.storageModel "tiered" }}
+    template:
+      kafkaContainer:
+        env:
+          {{- include "dfe-kafka.tieredEnv" . | nindent 10 }}
+    {{- end }}
   entityOperator:
     topicOperator: {}
     userOperator: {}

@@ -69,6 +69,29 @@ clickhouse:
     user: default
     secretName: dfe-clickhouse-external
     secretStoreName: dfe-secret-store
+  # Storage model, decided at deploy and refused afterwards (the engine holds
+  # clickhouse.storageModel as a protected var):
+  #   local     -> parts live on the PVC, which is the capacity ceiling. Growing
+  #                it needs allowVolumeExpansion on the StorageClass and a
+  #                StatefulSet recreate (volumeClaimTemplates are immutable).
+  #   s3backed  -> parts live on an object-store disk fronted by a local
+  #                read-through cache, so the PVC sizes the cache and the part
+  #                metadata rather than the data.
+  # Applies to both cluster and single mode; external mode owns its own storage.
+  storageModel: local
+  # Object store for storageModel: s3backed. Credentials NEVER appear here --
+  # the server reads them from the environment, wired from a Secret the secrets
+  # store materialises (externalsecret-s3.yaml), the same seam mode=external uses.
+  s3:
+    # Full disk endpoint including bucket and path prefix, trailing slash
+    # required, e.g. https://my-bucket.s3.ap-southeast-2.amazonaws.com/clickhouse/
+    endpoint: ""
+    region: ""
+    # Local read-through cache in front of the object store. Sized BELOW
+    # storage.size -- the cache and the part metadata share that PVC.
+    cacheSize: 20Gi
+    secretName: dfe-clickhouse-s3
+    secretStoreName: dfe-secret-store
   storage:
     size: 50Gi
     storageClass: ""

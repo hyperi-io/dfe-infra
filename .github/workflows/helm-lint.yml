@@ -91,6 +91,11 @@ jobs:
       - name: External-service egress derives per mode
         run: python3 scripts/tests/test_external_egress.py
 
+      # storageModel=local must stay a no-op, and the deploy-repo overlay must
+      # keep beating the profile file -- the ordering nothing else asserts.
+      - name: Storage model renders and the cascade holds
+        run: python3 scripts/tests/test_storage_model.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

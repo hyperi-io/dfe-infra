@@ -54,6 +54,10 @@ spec:
               - "../../../argocd/values/common.yaml"
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # The deployer's own common.yaml, read by every appset so
+              # clickhouse.mode / kafka.mode are declared once rather than per
+              # app. Below the instance file, which stays the last word.
+              - '$values/infra/common.yaml'
               - '$values/{{ .path.path }}/{{ .path.filename }}'
             # SSoT for the deploy repo: the engine's WRITE target (gitops.repoUrl/
             # branch) is injected from the SAME config_repo_url/revision annotation

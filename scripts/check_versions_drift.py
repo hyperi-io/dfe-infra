@@ -232,6 +232,16 @@ CHECKS += [
         Path("helm/charts/kafka/values.yaml"),
         r"name: dfe-kafka\n\s*version:\s*\"([^\"]+)\"",
     ),
+    # The kafka chart's own copy of the Strimzi operator version, which gates
+    # kafka.storageModel=tiered at render time (spec.kafka.tieredStorage needs
+    # >= 0.38.0). Helm cannot read the appset, so the pin is duplicated here and
+    # this check is what stops the two diverging.
+    Check(
+        "strimzi operator version (kafka values)",
+        "operators.strimzi-kafka-operator",
+        Path("helm/charts/kafka/values.yaml"),
+        r"operatorVersion:\s*\"([^\"]+)\"",
+    ),
     # kafbat (class D): chart value is tag@digest -- compare the TAG part to SSoT
     Check(
         "kafbat image tag",

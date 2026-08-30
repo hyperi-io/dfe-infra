@@ -47,26 +47,38 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
-      source:
-        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
-        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-        path: 'helm/charts/{{ .app }}'
-        helm:
-          ignoreMissingValueFiles: true
-          valueFiles:
-            - "../../../argocd/values/common.yaml"
-            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-          parameters:
-            # The deployment's own domain, from the cluster fact rather than a
-            # values file -- the tracked overlays carry placeholders only. Every
-            # hostname envoy-gateway-config publishes derives from it.
-            - name: domain
-              value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
-            # Where the DFE apps run, so the network policies name the same
-            # namespace the apps are actually placed in.
-            - name: appNamespace
-              value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+      # Multi-source, the same shape layer2-apps uses: source 1 = the pinned
+      # dfe-infra base chart, source 2 = the deploy repo (ref: values). The
+      # deploy-repo overlay is layered LAST, so a deployer's clickhouse.mode
+      # beats the profile file's tier default without editing dfe-infra.
+      sources:
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+          path: 'helm/charts/{{ .app }}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - "../../../argocd/values/common.yaml"
+              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # infra/common.yaml is the deployer's own common.yaml -- shared
+              # facts declared once and read by every appset; infra/<chart>.yaml
+              # is the per-chart overlay. Both optional.
+              - '$values/infra/common.yaml'
+              - '$values/infra/{{ .app }}.yaml'
+            parameters:
+              # The deployment's own domain, from the cluster fact rather than a
+              # values file -- the tracked overlays carry placeholders only. Every
+              # hostname envoy-gateway-config publishes derives from it.
+              - name: domain
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # Where the DFE apps run, so the network policies name the same
+              # namespace the apps are actually placed in.
+              - name: appNamespace
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+          ref: values
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

@@ -39,12 +39,19 @@ Usage:
 */}}
 {{- define "dfe-kafka.bootstrapTopics" -}}
 {{- $out := list -}}
+{{- $landingConfig := dict -}}
+{{/* Tiered storage is per-topic as well as per-broker: without
+     remote.storage.enable the brokers hold the plugin and move nothing. Only
+     the landing topic gets it -- a DLQ is small and read by a human. */}}
+{{- if eq .Values.kafka.storageModel "tiered" -}}
+{{- $landingConfig = dict "remote.storage.enable" "true" -}}
+{{- end -}}
 {{- if .Values.kafka.defaultTopic.create -}}
 {{- $out = append $out (dict
       "name" .Values.kafka.defaultTopic.name
       "partitions" (int .Values.kafka.defaultTopic.partitions)
       "replicationFactor" (int .Values.kafka.defaultTopic.replicationFactor)
-      "config" (dict)) -}}
+      "config" $landingConfig) -}}
 {{- end -}}
 {{- if .Values.kafka.dlqTopics.create -}}
 {{- range .Values.kafka.dlqTopics.names -}}

@@ -85,38 +85,47 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
-      # SINGLE source: the pinned dfe-infra base chart + profile/cloud values.
-      # Substrate is dfe-infra-STATIC at GA (per the engine<->infra boundary), so it
-      # does NOT depend on the deploy repo. This is deliberate: making substrate
-      # multi-source on the in-cluster Forgejo config repo created a self-dependency
-      # deadlock (Forgejo is itself substrate -> could not render before it was up)
-      # and coupled substrate to a specific git provider. Engine-authored substrate
-      # scaling ($values/infra overlay) is a v+0.1 addition, re-added then gated on
-      # the deploy repo being ready.
-      source:
-        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
-        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-        path: 'helm/charts/{{ .app }}'
-        helm:
-          ignoreMissingValueFiles: true
-          valueFiles:
-            - "../../../argocd/values/common.yaml"
-            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-          parameters:
-            # Where the DFE apps run -- the SAME annotation layer2-apps places them
-            # with, so the data services and apps cannot disagree about the
-            # namespace. kafka and ferretdb read it (each projects a credential
-            # into the app namespace); Helm ignores an unused value, so passing
-            # it to every data chart is harmless.
-            - name: appNamespace
-              value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
-            # The deployment's own domain (bootstrap sets the annotation from
-            # DFE_DOMAIN). The tracked values overlays carry only placeholder
-            # domains; the real one is a cluster fact. Consumed by links for
-            # its gateway-first URLs; harmless elsewhere.
-            - name: domain
-              value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+      # Multi-source, the same shape layer2-apps uses: source 1 = the pinned
+      # dfe-infra base chart, source 2 = the deploy repo (ref: values). The
+      # deploy-repo overlay is layered LAST, so a deployer's clickhouse.mode,
+      # kafka.mode and storage model beat the profile file's tier defaults
+      # without editing dfe-infra.
+      #
+      # Substrate therefore depends on the deploy repo resolving. On a bundled
+      # deploy the git host is layer2-deploy-repo's own single-source Application,
+      # so these report ComparisonError until it is up and then converge.
+      sources:
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+          path: 'helm/charts/{{ .app }}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - "../../../argocd/values/common.yaml"
+              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # infra/common.yaml is the deployer's own common.yaml -- shared
+              # facts declared once and read by every appset; infra/<chart>.yaml
+              # is the per-chart overlay. Both optional.
+              - '$values/infra/common.yaml'
+              - '$values/infra/{{ .app }}.yaml'
+            parameters:
+              # Where the DFE apps run -- the SAME annotation layer2-apps places them
+              # with, so the data services and apps cannot disagree about the
+              # namespace. kafka and ferretdb read it (each projects a credential
+              # into the app namespace); Helm ignores an unused value, so passing
+              # it to every data chart is harmless.
+              - name: appNamespace
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # The deployment's own domain (bootstrap sets the annotation from
+              # DFE_DOMAIN). The tracked values overlays carry only placeholder
+              # domains; the real one is a cluster fact. Consumed by links for
+              # its gateway-first URLs; harmless elsewhere.
+              - name: domain
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+          ref: values
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

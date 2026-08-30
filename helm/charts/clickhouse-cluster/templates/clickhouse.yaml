@@ -24,6 +24,10 @@ spec:
       limits:
         cpu: {{ .Values.clickhouse.resources.limits.cpu }}
         memory: {{ .Values.clickhouse.resources.limits.memory }}
+    {{- if eq .Values.clickhouse.storageModel "s3backed" }}
+    env:
+      {{- include "dfe-clickhouse.s3Env" . | nindent 6 }}
+    {{- end }}
   dataVolumeClaimSpec:
     accessModes: ["ReadWriteOnce"]
     resources:
@@ -52,6 +56,9 @@ spec:
       access_control_improvements:
         select_from_system_db_requires_grant: true
         select_from_information_schema_requires_grant: true
+      {{- with (include "dfe-clickhouse.storageConfiguration" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
     # Server-side async inserts for EVERY writer, via the default settings
     # profile (the base every identity inherits). async_insert is a
     # user/query-scope setting -- there is no table-level form -- so this one

@@ -60,6 +60,9 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
               value: "1"
+            {{- if eq .Values.clickhouse.storageModel "s3backed" }}
+            {{- include "dfe-clickhouse.s3Env" . | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse
@@ -74,6 +77,13 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/users.d/dfe-users.xml
               subPath: dfe-users.xml
+            {{- if eq .Values.clickhouse.storageModel "s3backed" }}
+            # config.d takes YAML as well as XML, so the object-store disks are
+            # the same fragment cluster mode passes through the operator CR.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-storage.yaml
+              subPath: dfe-storage.yaml
+            {{- end }}
           resources:
             {{- toYaml .Values.clickhouse.resources | nindent 12 }}
           readinessProbe:
@@ -142,4 +152,8 @@ data:
         </default>
       </profiles>
     </clickhouse>
+  {{- with (include "dfe-clickhouse.storageConfiguration" .) }}
+  dfe-storage.yaml: |
+    {{- . | nindent 4 }}
+  {{- end }}
 {{- end }}

@@ -1,0 +1,2 @@
+{{/* Renders nothing; exists so the storage-model guard runs in every mode. */}}
+{{- include "dfe-clickhouse.validateStorageModel" . -}}

@@ -39,10 +39,36 @@ against it. Treat it as unsupported: its CRDs, defaults, and upgrade
 behaviour differ from the official operator's, and no DFE validation cycle
 has ever run on it.
 
+## Storage model: `local` or `s3backed`
+
+`clickhouse.storageModel` is a separate axis from `clickhouse.mode` and is
+fixed for the life of the deployment. It defaults to `local`, where the PVC
+is the capacity ceiling.
+
+`s3backed` renders a `storage_configuration` with an `s3` disk, a `cache`
+disk in front of it, and a `s3_cached` policy set as the server-wide
+`merge_tree.storage_policy` -- so the engine's DDL needs no per-table
+`storage_policy` and the PVC then sizes the cache plus the part metadata,
+not the data. The same fragment reaches both modes: `settings.extraConfig`
+on the operator CR for cluster, a `config.d/dfe-storage.yaml` ConfigMap
+entry for single. `external` mode refuses it -- the supplied ClickHouse
+owns its own storage.
+
+Credentials are never in the values. The disk sets
+`use_environment_credentials`, and the chart wires `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY` from a Secret ESO materialises from
+`<project>/<env>/clickhouse/s3` -- the same seam `mode: external` uses for
+its password.
+
+Changing the model on a live deployment strands every part already written,
+so the engine holds `clickhouse.storageModel` and `clickhouse.s3.*` as
+protected vars and refuses the edit.
+
 ## Where the pieces live
 
 - Chart: `helm/charts/clickhouse-cluster` (modes above; keeper bundled for
   cluster mode).
+- Storage-model assertions: `scripts/tests/test_storage_model.py`.
 - Operator install: `argocd/appsets/layer-scale.yaml` (wave 3, scale tier
   only -- single mode needs no operator).
 - Version pins + the operator decision record: `versions.yaml`

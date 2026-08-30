@@ -18,8 +18,7 @@ flowchart TB
   Argo lives in `dfe-system`, scoped to `dfe-*` namespaces so it coexists
   with any host Argo.
 - **Layer 1** (`argocd/appsets/layer2-data.yaml` + `layer1-addons.yaml`):
-  backing services from base charts + profile values only - no deploy-repo
-  dependency, so they come up before any git host exists.
+  backing services from base charts + the deploy repo's `infra/` overlay.
 - **Layer 2** (`argocd/appsets/layer2-apps.yaml`): one Application per
   deploy-repo `values/*-values.yaml`, base chart + `$values` overlay.
 
@@ -31,16 +30,55 @@ values merge in this order (later wins):
 ```
 helm/charts/<app>/values.yaml        chart defaults
 argocd/values/common.yaml            fleet-wide overrides
-argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale)
 argocd/values/<cloud|site>.yaml      per-target overrides
+argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale)
+deploy repo infra/common.yaml        deployment-wide (every appset)
+deploy repo infra/<chart>.yaml       one substrate/platform chart
 deploy repo values/<app>-...yaml     engine-authored overlay (Layer 2 apps)
 ```
+
+Everything from `infra/` down is the DEPLOYER's, and it is last, so
+`clickhouse.mode`, `kafka.mode` and the storage models are reachable
+without editing this repo. The profile file is a tier DEFAULT, not a lock.
+
+Substrate therefore depends on the deploy repo resolving. On a bundled
+deploy (no external git) the git host is `layer2-deploy-repo`'s own
+single-source Application, so the substrate and platform Applications
+report ComparisonError until it is up and then converge.
 
 Tier composition (what each enables by default) is documented suite-side
 in dfe-engine `docs/deployment/index.md` - one home for that table. Kafka
 on tier `single` uses the non-operator single-broker KRaft path
 (`helm/charts/kafka`, `kafka.mode: single`); the Strimzi operator installs
 only on `scale` clusters (`layer-scale.yaml`).
+
+## Storage model - decided at deploy, not after
+
+Both data stores take a `storageModel` that fixes the on-disk layout for
+the life of the deployment. It defaults to `local`, which changes nothing.
+
+| chart | `local` | the alternative |
+|---|---|---|
+| `clickhouse-cluster` | parts on the PVC | `s3backed` - parts on an object-store disk behind a local read-through cache; the PVC sizes the cache and the metadata |
+| `kafka` | every segment on the PVC | `tiered` - closed segments to object storage (KIP-405); the PVC sizes the hot window |
+
+Growing a PVC instead needs `allowVolumeExpansion: true` on the
+StorageClass and a StatefulSet recreate, because `volumeClaimTemplates`
+are immutable. `local-path` cannot resize at all. That is what the storage
+model exists to avoid.
+
+Both alternatives read their object-store credentials from the environment,
+materialised by ESO from `<project>/<env>/clickhouse/s3` and
+`<project>/<env>/kafka/tiered` - never inline in a values file.
+
+`tiered` is cluster mode with the strimzi provider, and Strimzi ships no
+RemoteStorageManager, so the broker image must carry a plugin named in
+`kafka.tiered.className`. `kafka.operatorVersion` gates the render: below
+0.38.0 there is no `spec.kafka.tieredStorage` and the chart fails rather
+than deploying a broker that looks configured and tiers nothing.
+
+The engine holds the models and the modes as protected vars, so the API
+refuses a post-deploy edit. See the deploy repo's `infra/README.md`.
 
 ## Version pins
 

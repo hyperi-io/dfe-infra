@@ -102,6 +102,34 @@ closest to self-hosted (full `server.properties`); MSK Serverless and Confluent
 Cloud hide almost all broker config; Redpanda Cloud sits in between (per-topic
 control, cluster config on the Dedicated tier only).
 
+## Storage model: `local` or `tiered`
+
+`kafka.storageModel` is fixed for the life of the deployment and defaults to
+`local`, where every segment stays on the PVC.
+
+`tiered` turns on KIP-405: closed segments move to object storage, so the PVC
+sizes the hot window only. It renders `spec.kafka.tieredStorage`, the
+broker-wide `remote.log.storage.system.enable`, and the per-topic
+`remote.storage.enable` on the landing topic (DLQ topics stay local).
+
+Three constraints, all enforced at render:
+
+- **Cluster mode, strimzi provider** -- `tieredStorage` is a Strimzi CR field
+  and the single tier runs no operator.
+- **Strimzi >= 0.38.0** -- `kafka.operatorVersion` mirrors the `versions.yaml`
+  pin (`scripts/check_versions_drift.py` holds the two together). Strimzi drops
+  unknown CR fields silently, so an older pin fails the render instead.
+- **A RemoteStorageManager plugin** -- Strimzi supports `type: custom` only and
+  ships no implementation, so `kafka.tiered.className` must name a class the
+  broker image carries, on `kafka.tiered.classPath`.
+
+Plugin settings go in `kafka.tiered.config` verbatim; credentials do not. The
+chart wires `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` into the broker from
+a Secret ESO materialises from `<project>/<env>/kafka/tiered`.
+
+Changing the model on a live cluster strands the segments already written, so
+the engine holds `kafka.storageModel` and `kafka.tiered.*` as protected vars.
+
 ## Wiring a managed cluster back to DFE
 
 1. Stand up the cluster with the guide's Terraform snippet (the right auth for

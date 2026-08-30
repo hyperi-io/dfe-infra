@@ -113,6 +113,30 @@ kafka:
       type: scram
       secretName: dfe-kafka-external
       secretStoreName: dfe-secret-store
+  # Storage model, decided at deploy and refused afterwards (the engine holds
+  # kafka.storageModel as a protected var):
+  #   local   -> every segment stays on the PVC, which is the capacity ceiling.
+  #   tiered  -> closed segments move to object storage (KIP-405) and the PVC
+  #              sizes the hot window only.
+  # tiered is CLUSTER mode with the strimzi provider only: it is a Strimzi Kafka
+  # CR field, and the single tier runs no operator.
+  storageModel: local
+  # Strimzi operator version this deployment runs -- MUST match versions.yaml
+  # strimzi-kafka-operator. spec.kafka.tieredStorage landed in 0.38.0, so a lower
+  # pin fails the render rather than emitting config the operator drops silently.
+  operatorVersion: "0.51.0"
+  # Tiered storage (storageModel: tiered). Strimzi supports type=custom ONLY:
+  # it ships no RemoteStorageManager, so the broker image must carry a plugin
+  # on classPath. Credentials NEVER appear in config -- the plugin reads them
+  # from the environment, wired from an ESO-materialised Secret.
+  tiered:
+    className: ""
+    classPath: ""
+    # Plugin config keys verbatim (bucket, region, chunk size, ...). Secrets here
+    # would be committed to git; use the environment instead.
+    config: {}
+    secretName: dfe-kafka-tiered
+    secretStoreName: dfe-secret-store
   storage:
     type: persistent-claim
     size: 20Gi
