@@ -146,6 +146,73 @@ def test_the_cache_disk_sorts_after_the_disk_it_wraps() -> None:
         )
 
 
+def _external_secret(docs: list[dict], name: str) -> dict:
+    for doc in docs:
+        if doc.get("kind") == "ExternalSecret" and doc["metadata"]["name"] == name:
+            return doc
+    raise SystemExit(f"no ExternalSecret {name} in the render")
+
+
+def test_the_credential_binding_defaults_to_the_dfe_seeded_path() -> None:
+    """Unset values must keep the path every seeded deployment already uses."""
+    for chart, sets, secret, seeded in (
+        ("clickhouse-cluster", S3_SETS, "dfe-clickhouse-s3", "dfe/local/clickhouse/s3"),
+        ("kafka", TIERED_SETS, "dfe-kafka-tiered", "dfe/local/kafka/tiered"),
+    ):
+        entries = _external_secret(render(chart, *sets), secret)["spec"]["data"]
+        expect(
+            f"{chart} defaults the remote key to {seeded}",
+            {e["remoteRef"]["key"] for e in entries} == {seeded},
+            f"got {[e['remoteRef']['key'] for e in entries]}",
+        )
+        expect(
+            f"{chart} defaults the properties to the DFE field names",
+            [e["remoteRef"]["property"] for e in entries] == ["access_key_id", "secret_access_key"],
+            f"got {[e['remoteRef']['property'] for e in entries]}",
+        )
+
+
+def test_the_credential_binding_follows_an_existing_store_entry() -> None:
+    """A deployment reusing an estate credential cannot re-seed it under a DFE
+    path, so the remote key and its field names have to be values."""
+    for chart, sets, prefix, secret in (
+        ("clickhouse-cluster", S3_SETS, "clickhouse.s3", "dfe-clickhouse-s3"),
+        ("kafka", TIERED_SETS, "kafka.tiered", "dfe-kafka-tiered"),
+    ):
+        entries = _external_secret(
+            render(
+                chart,
+                *sets,
+                f"{prefix}.remoteKey=services/minio",
+                f"{prefix}.accessKeyProperty=dfe_storage_tests_access_key",
+                f"{prefix}.secretKeyProperty=dfe_storage_tests_secret_key",
+                f"{prefix}.secretStoreName=openbao",
+            ),
+            secret,
+        )["spec"]
+        expect(
+            f"{chart} binds the supplied remote key",
+            {e["remoteRef"]["key"] for e in entries["data"]} == {"services/minio"},
+            f"got {[e['remoteRef']['key'] for e in entries['data']]}",
+        )
+        expect(
+            f"{chart} binds the supplied field names",
+            [e["remoteRef"]["property"] for e in entries["data"]]
+            == ["dfe_storage_tests_access_key", "dfe_storage_tests_secret_key"],
+            f"got {[e['remoteRef']['property'] for e in entries['data']]}",
+        )
+        expect(
+            f"{chart} binds the store that mounts them",
+            entries["secretStoreRef"]["name"] == "openbao",
+            f"got {entries['secretStoreRef']['name']}",
+        )
+        expect(
+            f"{chart} leaves the local secretKey names alone",
+            [e["secretKey"] for e in entries["data"]] == ["access_key_id", "secret_access_key"],
+            f"got {[e['secretKey'] for e in entries['data']]}",
+        )
+
+
 def test_clickhouse_s3backed_keeps_credentials_out_of_git() -> None:
     docs = render("clickhouse-cluster", *S3_SETS)
     disk = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"][
@@ -269,6 +336,8 @@ def main() -> int:
     test_clickhouse_local_adds_nothing()
     test_clickhouse_s3backed_renders_the_disks()
     test_the_cache_disk_sorts_after_the_disk_it_wraps()
+    test_the_credential_binding_defaults_to_the_dfe_seeded_path()
+    test_the_credential_binding_follows_an_existing_store_entry()
     test_clickhouse_s3backed_keeps_credentials_out_of_git()
     test_clickhouse_s3backed_reaches_single_mode()
     test_clickhouse_storage_model_guards()

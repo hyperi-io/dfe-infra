@@ -137,6 +137,13 @@ kafka:
     config: {}
     secretName: dfe-kafka-tiered
     secretStoreName: dfe-secret-store
+    # Where the credential sits in the store. Empty derives the DFE-seeded path
+    # <project>/<env>/kafka/tiered; set it to reuse an existing entry, e.g.
+    # services/minio on a store mounting kv.
+    remoteKey: ""
+    # Field names within that entry.
+    accessKeyProperty: access_key_id
+    secretKeyProperty: secret_access_key
   storage:
     type: persistent-claim
     size: 20Gi
