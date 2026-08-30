@@ -56,29 +56,29 @@ only on `scale` clusters (`layer-scale.yaml`).
 
 Both data stores take a `storageModel` that fixes the on-disk layout for
 the life of the deployment. It defaults to `local`, which changes nothing.
+Models are named `<family>-<bulk>`: the family says whether data MOVES to
+the bulk store or is COPIED to it, the bulk half says what that store is.
 
-| chart | `local` | the alternative |
+| chart | `local` | the alternatives |
 |---|---|---|
-| `clickhouse-cluster` | parts on the PVC | `s3backed` - parts on an object-store disk behind a local read-through cache; the PVC sizes the cache and the metadata |
-| `kafka` | every segment on the PVC | `tiered` - closed segments to object storage (KIP-405); the PVC sizes the hot window |
+| `clickhouse-cluster` | parts on the PVC | `cached-object` - parts on an object-store disk behind a local read-through cache; `tiered-block` - a hot SSD volume and a cold bulk volume, parts demoted as the hot one fills |
+| `kafka` | every segment on the PVC | `tiered-object` - closed segments to object storage (KIP-405 tiered storage); the PVC sizes the hot window |
 
 Growing a PVC instead needs `allowVolumeExpansion: true` on the
 StorageClass and a StatefulSet recreate, because `volumeClaimTemplates`
 are immutable. `local-path` cannot resize at all. That is what the storage
 model exists to avoid.
 
-Both alternatives read their object-store credentials from the environment,
-materialised by ESO from `<project>/<env>/clickhouse/s3` and
+Every model with an object bulk store reads its credentials from the
+environment, materialised by ESO from `<project>/<env>/clickhouse/s3` and
 `<project>/<env>/kafka/tiered` - never inline in a values file.
-
-`tiered` is cluster mode with the strimzi provider, and Strimzi ships no
-RemoteStorageManager, so the broker image must carry a plugin named in
-`kafka.tiered.className`. `kafka.operatorVersion` gates the render: below
-0.38.0 there is no `spec.kafka.tieredStorage` and the chart fails rather
-than deploying a broker that looks configured and tiers nothing.
 
 The engine holds the models and the modes as protected vars, so the API
 refuses a post-deploy edit. See the deploy repo's `infra/README.md`.
+
+**Every combination, its status and its evidence:
+[storage.md](storage.md)** - the deploy-time matrix, including the cells
+that are refused and the ones not built yet.
 
 ## Version pins
 
@@ -113,6 +113,8 @@ versionCheck:
 ## Related
 
 - [architecture.md](../architecture.md) - where this repo sits in the suite
+- [storage.md](storage.md) - the storage-deploy matrix: service x mode x
+  storage model, with the status and evidence behind every cell
 - [rke2.md](rke2.md) - the default distribution
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
 - [clickhouse.md](clickhouse.md) - CH target matrix (official operator / ClickHouse Cloud / private-cloud swap; Altinity untested) + operator history

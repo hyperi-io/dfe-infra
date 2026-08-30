@@ -43,7 +43,7 @@ Usage:
 {{/* Tiered storage is per-topic as well as per-broker: without
      remote.storage.enable the brokers hold the plugin and move nothing. Only
      the landing topic gets it -- a DLQ is small and read by a human. */}}
-{{- if eq .Values.kafka.storageModel "tiered" -}}
+{{- if eq (include "dfe-kafka.storageBulk" .) "object" -}}
 {{- $landingConfig = dict "remote.storage.enable" "true" -}}
 {{- end -}}
 {{- if .Values.kafka.defaultTopic.create -}}

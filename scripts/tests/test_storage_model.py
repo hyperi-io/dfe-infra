@@ -15,8 +15,10 @@ Three things are checked, and the third is the one that is easy to break:
 1. `local` is the default and renders NOTHING extra, so today's deployments are
    untouched.
 2. Every non-local model renders the disks and the policy it promises --
-   ClickHouse `s3backed` and `tiered`, Kafka `tiered` -- and the object-store
-   models render the credential environment and never a credential literal.
+   ClickHouse `cached-object` and `tiered-block`, Kafka `tiered-object` -- and
+   the models with an object bulk store render the credential environment and
+   never a credential literal. The cells the vocabulary names but no chart
+   builds are refused, not rendered inert.
 3. A deploy-repo overlay layered LAST beats `profile-*.yaml`. That ordering is
    the whole reason a deployer can reach `mode: external` without editing this
    repo, and nothing else asserts it.
@@ -93,17 +95,19 @@ def kinds(docs: list[dict]) -> set[str]:
     return {d.get("kind", "") for d in docs}
 
 
-S3_SETS = (
-    "clickhouse.storageModel=s3backed",
-    "clickhouse.s3.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/parts/",
+# The models are named <family>-<bulk>: the family says whether parts MOVE to
+# the bulk store or are COPIED to it, the bulk half says what that store is.
+CACHED_OBJECT_SETS = (
+    "clickhouse.storageModel=cached-object",
+    "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/parts/",
 )
-TIERED_SETS = (
-    "kafka.storageModel=tiered",
-    "kafka.tiered.className=io.aiven.kafka.tieredstorage.RemoteStorageManager",
+KAFKA_TIERED_SETS = (
+    "kafka.storageModel=tiered-object",
+    "kafka.tieredObject.className=io.aiven.kafka.tieredstorage.RemoteStorageManager",
 )
 # ClickHouse hot/cold on two local volumes. The cold dials keep their defaults
 # except where a test names them, so the defaults stay exercised.
-CH_TIERED_SETS = ("clickhouse.storageModel=tiered",)
+TIERED_BLOCK_SETS = ("clickhouse.storageModel=tiered-block",)
 
 
 def test_clickhouse_local_adds_nothing() -> None:
@@ -119,12 +123,12 @@ def test_clickhouse_local_adds_nothing() -> None:
     )
 
 
-def test_clickhouse_s3backed_renders_the_disks() -> None:
-    docs = render("clickhouse-cluster", *S3_SETS)
+def test_clickhouse_cached_object_renders_the_disks() -> None:
+    docs = render("clickhouse-cluster", *CACHED_OBJECT_SETS)
     extra = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
     disks = extra["storage_configuration"]["disks"]
     expect(
-        "s3backed defines an object disk and a cache disk",
+        "cached-object defines an object disk and a cache disk",
         set(disks) == {"s3_object", "s3_object_cache"},
         f"got {sorted(disks)}",
     )
@@ -137,7 +141,7 @@ def test_the_cache_disk_sorts_after_the_disk_it_wraps() -> None:
     """The operator serialises extraConfig as sorted-key JSON, and ClickHouse
     builds a cache only after its backing disk. Names carry that ordering, so a
     rename that sorts the cache first crashes the server at startup."""
-    docs = render("clickhouse-cluster", *S3_SETS)
+    docs = render("clickhouse-cluster", *CACHED_OBJECT_SETS)
     disks = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"][
         "storage_configuration"
     ]["disks"]
@@ -162,8 +166,8 @@ def _external_secret(docs: list[dict], name: str) -> dict:
 def test_the_credential_binding_defaults_to_the_dfe_seeded_path() -> None:
     """Unset values must keep the path every seeded deployment already uses."""
     for chart, sets, secret, seeded in (
-        ("clickhouse-cluster", S3_SETS, "dfe-clickhouse-s3", "dfe/local/clickhouse/s3"),
-        ("kafka", TIERED_SETS, "dfe-kafka-tiered", "dfe/local/kafka/tiered"),
+        ("clickhouse-cluster", CACHED_OBJECT_SETS, "dfe-clickhouse-s3", "dfe/local/clickhouse/s3"),
+        ("kafka", KAFKA_TIERED_SETS, "dfe-kafka-tiered", "dfe/local/kafka/tiered"),
     ):
         entries = _external_secret(render(chart, *sets), secret)["spec"]["data"]
         expect(
@@ -182,8 +186,8 @@ def test_the_credential_binding_follows_an_existing_store_entry() -> None:
     """A deployment reusing an estate credential cannot re-seed it under a DFE
     path, so the remote key and its field names have to be values."""
     for chart, sets, prefix, secret in (
-        ("clickhouse-cluster", S3_SETS, "clickhouse.s3", "dfe-clickhouse-s3"),
-        ("kafka", TIERED_SETS, "kafka.tiered", "dfe-kafka-tiered"),
+        ("clickhouse-cluster", CACHED_OBJECT_SETS, "clickhouse.objectStore", "dfe-clickhouse-s3"),
+        ("kafka", KAFKA_TIERED_SETS, "kafka.objectStore", "dfe-kafka-tiered"),
     ):
         entries = _external_secret(
             render(
@@ -219,8 +223,8 @@ def test_the_credential_binding_follows_an_existing_store_entry() -> None:
         )
 
 
-def test_clickhouse_s3backed_keeps_credentials_out_of_git() -> None:
-    docs = render("clickhouse-cluster", *S3_SETS)
+def test_clickhouse_cached_object_keeps_credentials_out_of_git() -> None:
+    docs = render("clickhouse-cluster", *CACHED_OBJECT_SETS)
     disk = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"][
         "storage_configuration"]["disks"]["s3_object"]
     expect("the disk takes credentials from the environment",
@@ -238,17 +242,17 @@ def test_the_object_store_timeouts_are_unset_by_default_and_settable() -> None:
     over nine minutes on the rig; 1 / 2000 / 5000 failed the same read in 10.4s.
     The dials must therefore exist, and must change nothing until they are set."""
     bounded = {"s3_retry_attempts", "s3_connect_timeout_ms", "s3_request_timeout_ms"}
-    disk = one(render("clickhouse-cluster", *S3_SETS), "ClickHouseCluster")["spec"]["settings"][
+    disk = one(render("clickhouse-cluster", *CACHED_OBJECT_SETS), "ClickHouseCluster")["spec"]["settings"][
         "extraConfig"]["storage_configuration"]["disks"]["s3_object"]
     expect("the defaults leave the server's own retry behaviour alone",
            not bounded & set(disk), f"got {sorted(disk)}")
     tuned = one(
         render(
             "clickhouse-cluster",
-            *S3_SETS,
-            "clickhouse.s3.retryAttempts=1",
-            "clickhouse.s3.connectTimeoutMs=2000",
-            "clickhouse.s3.requestTimeoutMs=5000",
+            *CACHED_OBJECT_SETS,
+            "clickhouse.objectStore.retryAttempts=1",
+            "clickhouse.objectStore.connectTimeoutMs=2000",
+            "clickhouse.objectStore.requestTimeoutMs=5000",
         ),
         "ClickHouseCluster",
     )["spec"]["settings"]["extraConfig"]["storage_configuration"]["disks"]["s3_object"]
@@ -258,16 +262,16 @@ def test_the_object_store_timeouts_are_unset_by_default_and_settable() -> None:
            f"got {tuned}")
 
 
-def test_clickhouse_tiered_ranks_two_local_volumes() -> None:
+def test_clickhouse_tiered_block_ranks_two_local_volumes() -> None:
     docs = render(
         "clickhouse-cluster",
-        *CH_TIERED_SETS,
-        "clickhouse.tiered.coldStorageClass=nvme-bulk",
-        "clickhouse.tiered.coldSize=4Ti",
+        *TIERED_BLOCK_SETS,
+        "clickhouse.tieredBlock.coldStorageClass=nvme-bulk",
+        "clickhouse.tieredBlock.coldSize=4Ti",
     )
     ch = one(docs, "ClickHouseCluster")
     claims = ch["spec"]["additionalVolumeClaimTemplates"]
-    expect("tiered claims exactly one extra volume", len(claims) == 1, f"got {claims}")
+    expect("tiered-block claims exactly one extra volume", len(claims) == 1, f"got {claims}")
     expect("the claim is named for the cold disk", claims[0]["metadata"]["name"] == "slow",
            f"got {claims[0]['metadata']['name']}")
     expect("the claim carries the requested class",
@@ -289,7 +293,7 @@ def test_the_cold_volume_sorts_after_the_hot_one() -> None:
     """Volume order IS tier priority and the API server re-serialises the policy
     with sorted keys, so a cold volume sorting before `default` would silently
     make the bulk disk the hot tier. Order has to survive the sort, not the render."""
-    policy = one(render("clickhouse-cluster", *CH_TIERED_SETS), "ClickHouseCluster")["spec"][
+    policy = one(render("clickhouse-cluster", *TIERED_BLOCK_SETS), "ClickHouseCluster")["spec"][
         "settings"]["extraConfig"]["storage_configuration"]["policies"]["default"]
     volumes = list(policy["volumes"])
     expect("the hot volume is first once sorted", sorted(volumes)[0] == "default", f"got {volumes}")
@@ -297,23 +301,23 @@ def test_the_cold_volume_sorts_after_the_hot_one() -> None:
            volumes == sorted(volumes), f"got {volumes}")
 
 
-def test_clickhouse_tiered_needs_no_object_store() -> None:
-    docs = render("clickhouse-cluster", *CH_TIERED_SETS)
+def test_clickhouse_tiered_block_needs_no_object_store() -> None:
+    docs = render("clickhouse-cluster", *TIERED_BLOCK_SETS)
     ch = one(docs, "ClickHouseCluster")
-    expect("tiered mints no object-store secret",
+    expect("a block bulk store mints no object-store secret",
            "dfe-clickhouse-s3" not in yaml.safe_dump(docs))
-    expect("tiered wires no credential environment",
+    expect("a block bulk store wires no credential environment",
            "env" not in ch["spec"]["containerTemplate"], f"got {ch['spec']['containerTemplate']}")
     storage = ch["spec"]["settings"]["extraConfig"]["storage_configuration"]
     expect("cluster mode declares no disk of its own -- the operator registers it",
            "disks" not in storage, f"got {sorted(storage)}")
-    expect("tiered sets no server-wide merge_tree policy override",
+    expect("tiered-block sets no server-wide merge_tree policy override",
            "merge_tree" not in ch["spec"]["settings"]["extraConfig"])
 
 
-def test_clickhouse_tiered_reaches_single_mode() -> None:
-    docs = render("clickhouse-cluster", "clickhouse.mode=single", *CH_TIERED_SETS,
-                  "clickhouse.tiered.coldStorageClass=nvme-bulk")
+def test_clickhouse_tiered_block_reaches_single_mode() -> None:
+    docs = render("clickhouse-cluster", "clickhouse.mode=single", *TIERED_BLOCK_SETS,
+                  "clickhouse.tieredBlock.coldStorageClass=nvme-bulk")
     cm = [d for d in docs if d.get("kind") == "ConfigMap"][0]
     fragment = yaml.safe_load(cm["data"]["dfe-storage.yaml"])["storage_configuration"]
     expect("single mode declares the disk the operator would have registered",
@@ -337,26 +341,30 @@ def test_clickhouse_tiered_reaches_single_mode() -> None:
            mounts.get("slow") == "/var/lib/clickhouse/disks/slow", f"got {mounts}")
 
 
-def test_clickhouse_tiered_guards() -> None:
+def test_clickhouse_tiered_block_guards() -> None:
     expect("a cold name sorting before default is refused",
-           "silently inverts the tiers" in render_error("clickhouse-cluster", *CH_TIERED_SETS,
-                                                        "clickhouse.tiered.coldName=cold"))
+           "silently inverts the tiers" in render_error("clickhouse-cluster", *TIERED_BLOCK_SETS,
+                                                        "clickhouse.tieredBlock.coldName=cold"))
     expect('a cold name of "default" is refused',
-           'must not be "default"' in render_error("clickhouse-cluster", *CH_TIERED_SETS,
-                                                   "clickhouse.tiered.coldName=default"))
+           'must not be "default"' in render_error("clickhouse-cluster", *TIERED_BLOCK_SETS,
+                                                   "clickhouse.tieredBlock.coldName=default"))
     expect("an empty cold name is refused",
-           "needs clickhouse.tiered.coldName" in render_error("clickhouse-cluster", *CH_TIERED_SETS,
-                                                              "clickhouse.tiered.coldName="))
-    expect("tiered on an external ClickHouse is refused",
+           "needs clickhouse.tieredBlock.coldName" in render_error(
+               "clickhouse-cluster", *TIERED_BLOCK_SETS, "clickhouse.tieredBlock.coldName="))
+    expect("tiered-block on an external ClickHouse is refused",
            "meaningless with mode=external" in render_error("clickhouse-cluster",
                                                             "clickhouse.mode=external",
-                                                            *CH_TIERED_SETS))
+                                                            *TIERED_BLOCK_SETS))
+    expect("the refusal names the model that was asked for",
+           "clickhouse.storageModel=tiered-block" in render_error("clickhouse-cluster",
+                                                                  "clickhouse.mode=external",
+                                                                  *TIERED_BLOCK_SETS))
     expect("the shipped default cold name passes the guard",
-           render_error("clickhouse-cluster", *CH_TIERED_SETS) == "")
+           render_error("clickhouse-cluster", *TIERED_BLOCK_SETS) == "")
 
 
-def test_clickhouse_s3backed_reaches_single_mode() -> None:
-    docs = render("clickhouse-cluster", "clickhouse.mode=single", *S3_SETS)
+def test_clickhouse_cached_object_reaches_single_mode() -> None:
+    docs = render("clickhouse-cluster", "clickhouse.mode=single", *CACHED_OBJECT_SETS)
     cm = [d for d in docs if d.get("kind") == "ConfigMap"][0]
     expect("single mode ships the same fragment as config.d YAML",
            "dfe-storage.yaml" in cm["data"])
@@ -367,14 +375,44 @@ def test_clickhouse_s3backed_reaches_single_mode() -> None:
 
 def test_clickhouse_storage_model_guards() -> None:
     expect("an unknown model is refused",
-           "must be local, s3backed or tiered" in render_error("clickhouse-cluster",
-                                                               "clickhouse.storageModel=glacier"))
-    expect("s3backed with no endpoint is refused",
-           "needs clickhouse.s3.endpoint" in render_error("clickhouse-cluster",
-                                                          "clickhouse.storageModel=s3backed"))
-    expect("s3backed on an external ClickHouse is refused",
-           "meaningless with mode=external" in render_error("clickhouse-cluster",
-                                                            "clickhouse.mode=external", *S3_SETS))
+           "must be local, cached-object or tiered-block" in render_error(
+               "clickhouse-cluster", "clickhouse.storageModel=glacier"))
+    expect("cached-object with no endpoint is refused",
+           "needs clickhouse.objectStore.endpoint" in render_error(
+               "clickhouse-cluster", "clickhouse.storageModel=cached-object"))
+    expect("cached-object on an external ClickHouse is refused",
+           "meaningless with mode=external" in render_error(
+               "clickhouse-cluster", "clickhouse.mode=external", *CACHED_OBJECT_SETS))
+
+
+def test_the_unclaimed_cells_are_refused_rather_than_rendered_inert() -> None:
+    """tiered-object and cached-block are named in the vocabulary and not built.
+    Accepting either would deploy a ClickHouse that silently ignores the model."""
+    for model in ("tiered-object", "cached-block"):
+        err = render_error("clickhouse-cluster", f"clickhouse.storageModel={model}")
+        expect(f"clickhouse refuses the unbuilt {model}",
+               "must be local, cached-object or tiered-block" in err, f"got {err[:200]}")
+    for model in ("tiered-block", "cached-object", "cached-block"):
+        err = render_error("kafka", f"kafka.storageModel={model}")
+        expect(f"kafka refuses the unbuilt {model}",
+               "must be local or tiered-object" in err, f"got {err[:200]}")
+
+
+def test_the_object_store_batch_delete_switch_is_tri_state() -> None:
+    """GCS rejects the batch-delete call, so a deployment against it needs an
+    explicit false -- which an unset-means-empty dial cannot express."""
+    disk = one(render("clickhouse-cluster", *CACHED_OBJECT_SETS), "ClickHouseCluster")["spec"][
+        "settings"]["extraConfig"]["storage_configuration"]["disks"]["s3_object"]
+    expect("unset leaves the server default alone", "support_batch_delete" not in disk,
+           f"got {sorted(disk)}")
+    for value, rendered in (("false", False), ("true", True)):
+        tuned = one(
+            render("clickhouse-cluster", *CACHED_OBJECT_SETS,
+                   f"clickhouse.objectStore.supportBatchDelete={value}"),
+            "ClickHouseCluster",
+        )["spec"]["settings"]["extraConfig"]["storage_configuration"]["disks"]["s3_object"]
+        expect(f"an explicit {value} reaches the disk",
+               tuned.get("support_batch_delete") is rendered, f"got {tuned}")
 
 
 def test_kafka_local_adds_nothing() -> None:
@@ -387,8 +425,8 @@ def test_kafka_local_adds_nothing() -> None:
            all("remote.storage.enable" not in (t["spec"].get("config") or {}) for t in topics))
 
 
-def test_kafka_tiered_renders_the_plugin_and_the_switches() -> None:
-    docs = render("kafka", *TIERED_SETS)
+def test_kafka_tiered_object_renders_the_plugin_and_the_switches() -> None:
+    docs = render("kafka", *KAFKA_TIERED_SETS)
     spec = one(docs, "Kafka")["spec"]["kafka"]
     expect("tiered storage is Strimzi's custom type", spec["tieredStorage"]["type"] == "custom")
     expect("the plugin class is passed through",
@@ -404,8 +442,8 @@ def test_kafka_tiered_renders_the_plugin_and_the_switches() -> None:
            all("remote.storage.enable" not in t["spec"]["config"] for t in dlq))
 
 
-def test_kafka_tiered_keeps_credentials_out_of_git() -> None:
-    docs = render("kafka", *TIERED_SETS)
+def test_kafka_tiered_object_keeps_credentials_out_of_git() -> None:
+    docs = render("kafka", *KAFKA_TIERED_SETS)
     env = one(docs, "Kafka")["spec"]["kafka"]["template"]["kafkaContainer"]["env"]
     expect("both credential vars come from a secretKeyRef",
            all("secretKeyRef" in e["valueFrom"] for e in env), f"got {env}")
@@ -413,24 +451,28 @@ def test_kafka_tiered_keeps_credentials_out_of_git() -> None:
     expect("an ExternalSecret materialises them", "dfe-kafka-tiered" in names, f"got {sorted(names)}")
 
 
-def test_kafka_tiered_version_gate() -> None:
-    err = render_error("kafka", *TIERED_SETS, "kafka.operatorVersion=0.37.0")
+def test_kafka_tiered_object_version_gate() -> None:
+    err = render_error("kafka", *KAFKA_TIERED_SETS, "kafka.operatorVersion=0.37.0")
     expect("an operator too old for tiered storage fails the render",
            "needs Strimzi >= 0.38.0" in err, f"got {err[:200]}")
     expect("the failure names the version in use", "0.37.0" in err, f"got {err[:200]}")
     expect("the pinned operator version passes the gate",
-           render_error("kafka", *TIERED_SETS) == "")
+           render_error("kafka", *KAFKA_TIERED_SETS) == "")
 
 
-def test_kafka_tiered_other_guards() -> None:
+def test_kafka_tiered_object_other_guards() -> None:
     expect("an unknown model is refused",
-           "must be local or tiered" in render_error("kafka", "kafka.storageModel=glacier"))
-    expect("tiered without a plugin class is refused",
-           "needs kafka.tiered.className" in render_error("kafka", "kafka.storageModel=tiered"))
-    expect("tiered on the single tier is refused",
-           "needs kafka.mode=cluster" in render_error("kafka", *TIERED_SETS, "kafka.mode=single"))
-    expect("tiered on redpanda is refused",
-           "Strimzi Kafka CR field" in render_error("kafka", *TIERED_SETS, "kafka.provider=redpanda"))
+           "must be local or tiered-object" in render_error("kafka", "kafka.storageModel=glacier"))
+    expect("tiered-object without a plugin class is refused",
+           "needs kafka.tieredObject.className" in render_error(
+               "kafka", "kafka.storageModel=tiered-object"))
+    expect("tiered-object on the single tier is refused",
+           "needs kafka.mode=cluster" in render_error("kafka", *KAFKA_TIERED_SETS, "kafka.mode=single"))
+    expect("tiered-object on redpanda is refused",
+           "Strimzi Kafka CR field" in render_error("kafka", *KAFKA_TIERED_SETS, "kafka.provider=redpanda"))
+    expect("each refusal names the model that was asked for",
+           "kafka.storageModel=tiered-object" in render_error(
+               "kafka", *KAFKA_TIERED_SETS, "kafka.mode=single"))
 
 
 def test_deploy_repo_overlay_beats_the_profile() -> None:
@@ -460,18 +502,18 @@ def test_deploy_repo_overlay_beats_the_profile() -> None:
                 and d["metadata"]["name"].startswith("allow-external-clickhouse-egress-")])
 
 
-def test_the_overlay_reaches_the_tiered_dials() -> None:
+def test_the_overlay_reaches_the_tiered_block_dials() -> None:
     """The same cascade, on the dials this change adds. profile-scale.yaml leaves
     the storage model at the chart default, so a deployer with SSD and bulk classes
-    must be able to reach `tiered` from the deploy repo without editing this one."""
+    must reach `tiered-block` from the deploy repo without editing this one."""
     with tempfile.TemporaryDirectory() as tmp:
         overlay = Path(tmp) / "common.yaml"
         overlay.write_text(
             "clickhouse:\n"
-            "  storageModel: tiered\n"
+            "  storageModel: tiered-block\n"
             "  storage:\n"
             "    storageClass: nvme-fast\n"
-            "  tiered:\n"
+            "  tieredBlock:\n"
             "    coldStorageClass: nvme-bulk\n"
             "    moveFactor: 0.15\n",
             encoding="utf-8",
@@ -496,26 +538,28 @@ def test_the_overlay_reaches_the_tiered_dials() -> None:
 
 def main() -> int:
     test_clickhouse_local_adds_nothing()
-    test_clickhouse_s3backed_renders_the_disks()
+    test_clickhouse_cached_object_renders_the_disks()
     test_the_cache_disk_sorts_after_the_disk_it_wraps()
     test_the_credential_binding_defaults_to_the_dfe_seeded_path()
     test_the_credential_binding_follows_an_existing_store_entry()
-    test_clickhouse_s3backed_keeps_credentials_out_of_git()
+    test_clickhouse_cached_object_keeps_credentials_out_of_git()
     test_the_object_store_timeouts_are_unset_by_default_and_settable()
-    test_clickhouse_tiered_ranks_two_local_volumes()
+    test_clickhouse_tiered_block_ranks_two_local_volumes()
     test_the_cold_volume_sorts_after_the_hot_one()
-    test_clickhouse_tiered_needs_no_object_store()
-    test_clickhouse_tiered_reaches_single_mode()
-    test_clickhouse_tiered_guards()
-    test_clickhouse_s3backed_reaches_single_mode()
+    test_clickhouse_tiered_block_needs_no_object_store()
+    test_clickhouse_tiered_block_reaches_single_mode()
+    test_clickhouse_tiered_block_guards()
+    test_clickhouse_cached_object_reaches_single_mode()
     test_clickhouse_storage_model_guards()
+    test_the_unclaimed_cells_are_refused_rather_than_rendered_inert()
+    test_the_object_store_batch_delete_switch_is_tri_state()
     test_kafka_local_adds_nothing()
-    test_kafka_tiered_renders_the_plugin_and_the_switches()
-    test_kafka_tiered_keeps_credentials_out_of_git()
-    test_kafka_tiered_version_gate()
-    test_kafka_tiered_other_guards()
+    test_kafka_tiered_object_renders_the_plugin_and_the_switches()
+    test_kafka_tiered_object_keeps_credentials_out_of_git()
+    test_kafka_tiered_object_version_gate()
+    test_kafka_tiered_object_other_guards()
     test_deploy_repo_overlay_beats_the_profile()
-    test_the_overlay_reaches_the_tiered_dials()
+    test_the_overlay_reaches_the_tiered_block_dials()
     print(f"\n{_failures} failure(s)")
     return 1 if _failures else 0
 

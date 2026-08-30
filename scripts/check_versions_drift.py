@@ -233,7 +233,7 @@ CHECKS += [
         r"name: dfe-kafka\n\s*version:\s*\"([^\"]+)\"",
     ),
     # The kafka chart's own copy of the Strimzi operator version, which gates
-    # kafka.storageModel=tiered at render time (spec.kafka.tieredStorage needs
+    # kafka.storageModel=tiered-object at render time (spec.kafka.tieredStorage needs
     # >= 0.38.0). Helm cannot read the appset, so the pin is duplicated here and
     # this check is what stops the two diverging.
     Check(

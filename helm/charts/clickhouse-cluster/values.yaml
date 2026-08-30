@@ -70,35 +70,48 @@ clickhouse:
     secretName: dfe-clickhouse-external
     secretStoreName: dfe-secret-store
   # Storage model, decided at deploy and refused afterwards (the engine holds
-  # clickhouse.storageModel as a protected var):
-  #   local     -> parts live on the PVC, which is the capacity ceiling. Growing
-  #                it needs allowVolumeExpansion on the StorageClass and a
-  #                StatefulSet recreate (volumeClaimTemplates are immutable).
-  #   s3backed  -> parts live on an object-store disk fronted by a local
-  #                read-through cache, so the PVC sizes the cache and the part
-  #                metadata rather than the data.
-  #   tiered    -> two local volumes ranked hot then cold. New parts land on the
-  #                fast one and ClickHouse demotes the oldest to the cold one
-  #                once free space there falls below tiered.moveFactor. No
-  #                object store required, and no table DDL changes.
+  # clickhouse.storageModel as a protected var). Named <family>-<bulk>: the
+  # family says whether parts MOVE to the bulk store or are COPIED to it, the
+  # bulk half says what that store is. Full matrix: docs/deployment/storage.md
+  #   local          -> parts live on the PVC, which is the capacity ceiling.
+  #                     Growing it needs allowVolumeExpansion on the
+  #                     StorageClass and a StatefulSet recreate
+  #                     (volumeClaimTemplates are immutable).
+  #   cached-object  -> parts live on an object-store disk fronted by a local
+  #                     read-through cache, so the PVC sizes the cache and the
+  #                     part metadata rather than the data. The cache is
+  #                     disposable; the bucket holds the durable copy.
+  #   tiered-block   -> two local volumes ranked hot then cold. New parts land
+  #                     on the fast one and ClickHouse demotes the oldest to the
+  #                     cold one once free space there falls below
+  #                     tieredBlock.moveFactor. No object store required, and no
+  #                     table DDL changes. Both volumes must be durable.
+  # tiered-object and cached-block are named cells this chart does not render
+  # yet; the render fails on either rather than deploying something inert.
   # Applies to both cluster and single mode; external mode owns its own storage.
   storageModel: local
-  # Object store for storageModel: s3backed. Credentials NEVER appear here --
-  # the server reads them from the environment, wired from a Secret the secrets
-  # store materialises (externalsecret-s3.yaml), the same seam mode=external uses.
-  s3:
+  # Object bulk store, for any model whose bulk half is `object`. Credentials
+  # NEVER appear here -- the server reads them from the environment, wired from
+  # a Secret the secrets store materialises (externalsecret-object-store.yaml),
+  # the same seam mode=external uses.
+  objectStore:
     # Full disk endpoint including bucket and path prefix, trailing slash
     # required, e.g. https://my-bucket.s3.ap-southeast-2.amazonaws.com/clickhouse/
     endpoint: ""
     region: ""
-    # Local read-through cache in front of the object store. Sized BELOW
-    # storage.size -- the cache and the part metadata share that PVC.
+    # cached-object only: the local read-through cache in front of the object
+    # store. Sized BELOW storage.size -- the cache and the part metadata share
+    # that PVC.
     cacheSize: 20Gi
+    # Empty leaves the server default. GCS rejects the batch-delete call, so a
+    # deployment against a GCS endpoint sets this false.
+    supportBatchDelete: ""
     secretName: dfe-clickhouse-s3
     secretStoreName: dfe-secret-store
     # Where the credential sits in the store. Empty derives the DFE-seeded path
-    # <project>/<env>/clickhouse/s3; set it to reuse an existing entry, e.g.
-    # services/minio on a store mounting kv.
+    # <project>/<env>/clickhouse/s3, which is frozen: moving it would strand a
+    # deployment that seeded there and never set this. Set it to reuse an
+    # existing entry, e.g. services/minio on a store mounting kv.
     remoteKey: ""
     # Field names within that entry.
     accessKeyProperty: access_key_id
@@ -113,15 +126,15 @@ clickhouse:
     retryAttempts: ""
     connectTimeoutMs: ""
     requestTimeoutMs: ""
-  # Cold tier for storageModel: tiered. The HOT tier is clickhouse.storage below
-  # -- point its storageClass at the SSD class and size it for the working set.
-  # Both volumes must be durable: tiering MOVES parts, so the cold volume holds
-  # the only copy of what it carries (unlike the s3backed cache, which is
-  # disposable). Decided at deploy and refused afterwards, like the model itself
-  # -- the operator takes no new disk on an existing ClickHouseCluster, and the
-  # engine holds clickhouse.tiered.* as a protected var. Rationale and the
+  # Cold tier for storageModel: tiered-block. The HOT tier is clickhouse.storage
+  # below -- point its storageClass at the SSD class and size it for the working
+  # set. Both volumes must be durable: tiering MOVES parts, so the cold volume
+  # holds the only copy of what it carries, unlike the cached-object cache.
+  # Decided at deploy and refused afterwards, like the model itself -- the
+  # operator takes no new disk on an existing ClickHouseCluster, and the engine
+  # holds clickhouse.tieredBlock.* as a protected var. Rationale and the
   # verification queries: docs/deployment/clickhouse-tiering.md
-  tiered:
+  tieredBlock:
     # Names the PVC template, the mount, the disk and the cold volume. Must sort
     # after "default": volume order is tier priority and the API server
     # re-serialises the policy with sorted keys, so a name like "cold" would
@@ -135,7 +148,7 @@ clickhouse:
     # two real devices: at a hot free ratio of 0.91, 0.95 demoted and 0.2 did not.
     moveFactor: 0.2
   storage:
-    # With storageModel: tiered this volume is the HOT tier -- point
+    # With storageModel: tiered-block this volume is the HOT tier -- point
     # storageClass at the SSD class and size it for the working set.
     size: 50Gi
     storageClass: ""

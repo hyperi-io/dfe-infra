@@ -24,12 +24,12 @@ spec:
       limits:
         cpu: {{ .Values.clickhouse.resources.limits.cpu }}
         memory: {{ .Values.clickhouse.resources.limits.memory }}
-    {{- if eq .Values.clickhouse.storageModel "s3backed" }}
+    {{- if eq (include "dfe-clickhouse.storageBulk" .) "object" }}
     env:
-      {{- include "dfe-clickhouse.s3Env" . | nindent 6 }}
+      {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 6 }}
     {{- end }}
-  # Must be durable in every storage model. Under storageModel: tiered this is
-  # the HOT tier and holds the only copy of the parts on it; under s3backed it
+  # Must be durable in every storage model. Under a tiered family this is the HOT
+  # tier and holds the only copy of the parts on it; under a cached family it
   # holds the map from ClickHouse paths to object blobs, which cannot be rebuilt
   # from the bucket.
   dataVolumeClaimSpec:
@@ -40,20 +40,20 @@ spec:
     {{- with (.Values.clickhouse.storage.storageClass | default .Values.storageClass) }}
     storageClassName: {{ . | quote }}
     {{- end }}
-  {{- if eq .Values.clickhouse.storageModel "tiered" }}
+  {{- if eq (include "dfe-clickhouse.storageBulk" .) "block" }}
   # The operator mounts each entry at /var/lib/clickhouse/disks/<name> and
   # registers a ClickHouse disk of the same name, which the ranked policy in
   # extraConfig then puts behind the hot volume. Fixed at cluster creation: the
   # CRD does not accept a new disk on an existing ClickHouseCluster.
   additionalVolumeClaimTemplates:
     - metadata:
-        name: {{ .Values.clickhouse.tiered.coldName }}
+        name: {{ .Values.clickhouse.tieredBlock.coldName }}
       spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: {{ .Values.clickhouse.tiered.coldSize }}
-        {{- with (.Values.clickhouse.tiered.coldStorageClass | default .Values.storageClass) }}
+            storage: {{ .Values.clickhouse.tieredBlock.coldSize }}
+        {{- with (.Values.clickhouse.tieredBlock.coldStorageClass | default .Values.storageClass) }}
         storageClassName: {{ . | quote }}
         {{- end }}
   {{- end }}
