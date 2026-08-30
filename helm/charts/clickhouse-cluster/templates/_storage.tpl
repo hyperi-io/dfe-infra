@@ -32,6 +32,13 @@ Credentials are deliberately absent: use_environment_credentials makes the
 server read AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from its environment,
 which both paths wire from the ESO-materialised Secret.
 
+DISK NAMES ARE ORDER-BEARING. ClickHouse builds a cache disk only after the disk
+it wraps, and the operator serialises extraConfig as JSON with SORTED KEYS, so
+the order written here is discarded. The cache must therefore sort AFTER its
+backing disk: `s3_object` then `s3_object_cache`. Naming the cache anything that
+sorts earlier fails the server at startup with BAD_ARGUMENTS "there is no such
+disk (it should be initialized before cache disk)" -- proven live 2026-08-30.
+
 Emits nothing unless storageModel is s3backed.
 */}}
 {{- define "dfe-clickhouse.storageConfiguration" -}}
@@ -46,16 +53,16 @@ storage_configuration:
       {{- with .Values.clickhouse.s3.region }}
       region: {{ . | quote }}
       {{- end }}
-    s3_cache:
+    s3_object_cache:
       type: cache
       disk: s3_object
-      path: /var/lib/clickhouse/disks/s3_cache/
+      path: /var/lib/clickhouse/disks/s3_object_cache/
       max_size: {{ .Values.clickhouse.s3.cacheSize | quote }}
   policies:
     s3_cached:
       volumes:
         main:
-          disk: s3_cache
+          disk: s3_object_cache
 # Server-wide default for MergeTree tables, so the engine's DDL needs no
 # per-table storage_policy and the model stays a deploy-time decision.
 merge_tree:

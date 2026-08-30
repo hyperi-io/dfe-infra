@@ -117,11 +117,33 @@ def test_clickhouse_s3backed_renders_the_disks() -> None:
     docs = render("clickhouse-cluster", *S3_SETS)
     extra = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
     disks = extra["storage_configuration"]["disks"]
-    expect("s3backed defines an object disk and a cache disk", set(disks) == {"s3_object", "s3_cache"},
-           f"got {sorted(disks)}")
-    expect("the cache fronts the object disk", disks["s3_cache"]["disk"] == "s3_object")
+    expect(
+        "s3backed defines an object disk and a cache disk",
+        set(disks) == {"s3_object", "s3_object_cache"},
+        f"got {sorted(disks)}",
+    )
+    expect("the cache fronts the object disk", disks["s3_object_cache"]["disk"] == "s3_object")
     expect("MergeTree defaults to the cached policy",
            extra["merge_tree"]["storage_policy"] == "s3_cached")
+
+
+def test_the_cache_disk_sorts_after_the_disk_it_wraps() -> None:
+    """The operator serialises extraConfig as sorted-key JSON, and ClickHouse
+    builds a cache only after its backing disk. Names carry that ordering, so a
+    rename that sorts the cache first crashes the server at startup."""
+    docs = render("clickhouse-cluster", *S3_SETS)
+    disks = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"][
+        "storage_configuration"
+    ]["disks"]
+    for name, spec in disks.items():
+        backing = spec.get("disk")
+        if backing is None:
+            continue
+        expect(
+            f"cache disk {name} sorts after its backing disk {backing}",
+            backing < name,
+            f"{backing} does not sort before {name}",
+        )
 
 
 def test_clickhouse_s3backed_keeps_credentials_out_of_git() -> None:
@@ -246,6 +268,7 @@ def test_deploy_repo_overlay_beats_the_profile() -> None:
 def main() -> int:
     test_clickhouse_local_adds_nothing()
     test_clickhouse_s3backed_renders_the_disks()
+    test_the_cache_disk_sorts_after_the_disk_it_wraps()
     test_clickhouse_s3backed_keeps_credentials_out_of_git()
     test_clickhouse_s3backed_reaches_single_mode()
     test_clickhouse_storage_model_guards()
