@@ -1,5 +1,10 @@
 project: dfe
 component: transform-vrl
+# The component the IMAGE is published under. This app runs one deployment per
+# source, so dfe-engine makes `component` instance-unique to keep the object
+# names apart; the image is the app's, not the instance's. Empty falls back to
+# `component`, which is only correct for a single-instance deployment.
+imageComponent: transform-vrl
 env: local
 cloud: local
 
