@@ -1,11 +1,27 @@
 {{/*
 dfe-common.image — constructs the full container image reference.
-Uses global.registry + component name + tag (or Chart.AppVersion).
+Uses global.registry + image component name + tag (or Chart.AppVersion).
 Allows override via image.repository for customers using a different naming convention.
 
 Usage:
   image: {{ include "dfe-common.image" . }}
 */}}
+
+{{/*
+The component the image is published under, which is not always the one the
+Kubernetes objects are named after.
+
+`component` names objects and so must be unique per instance for a multi-instance
+app; the image belongs to the app, not the instance. Defaults to `component`, so
+a single-instance chart renders the same reference as before.
+
+Not derived from `.Chart.Name`: dfe-schema, clickhouse-cluster and
+envoy-gateway-config all publish under a name their chart does not carry.
+*/}}
+{{- define "dfe-common.imageComponent" -}}
+{{- .Values.imageComponent | default .Values.component -}}
+{{- end -}}
+
 {{- define "dfe-common.image" -}}
 {{- /* global is nil (not just its .registry) when a chart carries no global:
        block, e.g. bare `helm lint`; `with` guards that so the else-branch below
@@ -14,11 +30,12 @@ Usage:
 {{- with .Values.global }}{{- $registry = .registry | default "" -}}{{- end -}}
 {{- $repo := .Values.image.repository | default "" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
+{{- $name := include "dfe-common.imageComponent" . -}}
 {{- if $repo -}}
   {{- printf "%s:%s" $repo $tag -}}
 {{- else if $registry -}}
-  {{- printf "%s/dfe-%s:%s" $registry .Values.component $tag -}}
+  {{- printf "%s/dfe-%s:%s" $registry $name $tag -}}
 {{- else -}}
-  {{- printf "dfe-%s:%s" .Values.component $tag -}}
+  {{- printf "dfe-%s:%s" $name $tag -}}
 {{- end -}}
 {{- end }}
