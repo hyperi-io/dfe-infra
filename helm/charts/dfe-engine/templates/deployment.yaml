@@ -113,6 +113,11 @@ spec:
             # gets the PR flow, which is the point.
             - name: DFE_ENV
               value: {{ .Values.env | quote }}
+            # Injected by the deployer, never detected: the engine defaults
+            # deployment.target to "unknown" and refuses every scaling dial
+            # there with 409 scaling_unsupported.
+            - name: DFE_DEPLOYMENT_TARGET
+              value: "kubernetes"
             # Reconcile the CH tenant fence on startup: tier roles, the _org_id row
             # policies, the deny policies over tables without one, and a CH user per
             # org/group. Set false only for a deployment with no tenant isolation.
