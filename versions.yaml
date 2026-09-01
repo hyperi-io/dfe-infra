@@ -1407,11 +1407,11 @@ stacks:
       dfe-engine: "v1.17.13"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Loader routing contract corrected (source_to_table, real table_fields), YAML emitter width pinned so long VRL scalars stop folding, commit-subject budgeting.
       dfe-ui: "v1.4.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.27"      # independent release line
-      dfe-loader: "v1.18.26"        # default event destination -> dfe.default; clippy + startup-timeout test fixes.
+      dfe-loader: "v1.18.27"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.19"
       dfe-fetcher: "v1.4.13"
       dfe-transform-vrl: "v1.1.20"
-      dfe-transform-vector: "v1.0.33"  # argv fix: the supervisor passes vector its config path, so a configured pipeline starts.
+      dfe-transform-vector: "v1.0.34"  # readiness reports the real lifecycle state on the port the probes hit, so a dead transform stops advertising healthy.
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
@@ -1424,11 +1424,11 @@ stacks:
       dfe-engine: "sha256:50c442839c79f3bfdbc2ccf6b45782408e5933656e8444d6c308cdd7550f4d60"
       dfe-ui: "sha256:647fa55da14dfd516ffa2b8721d1393801034754acd4d360469339c7ce5b1e4b"
       dfe-receiver: "sha256:0e9d04354c041d71a6c79eb923f5f59f7926e4ad321eb8dc64f940874b2fdf14"
-      dfe-loader: "sha256:7cc8b56d6682a2cc64677c2617fc98dc477af5683521f4eb73b05f2f6b18d335"
+      dfe-loader: "sha256:1afb85606061dd19249e4129ce6d96c6ceaf953aa8413d5006ba67dbf4d41b38"
       dfe-archiver: "sha256:40eccf53458f21d0ff1415feb2149130106816fb7852f480edeee54df8d42036"
       dfe-fetcher: "sha256:633be4ce4e8ca7d20db30ae9aa211fd65c4582049d279fd58ce8812f7d18fc86"
       dfe-transform-vrl: "sha256:aeb980ffd6f287a537b1f5612ef1b8d5f43cda30767236f1df4ebbae1ad3335c"
-      dfe-transform-vector: "sha256:e51f0944aff8f30d5bea5ad13a1ff91b657c2790ca313fd8e28db1be8605f610"
+      dfe-transform-vector: "sha256:1e7da14a0bfe28ac37cefb968d0dc6b1e159d8f3da8990c3f1c051f3da724e64"
 
     # Digests for the DOCKER-path third-party plain images -- the immutable half
     # of the tag@sha256 pin that `dfe-stack render --target docker` emits. Keyed
