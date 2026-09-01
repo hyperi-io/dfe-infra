@@ -109,6 +109,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -485,6 +486,143 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if args.mode:
         env["DFE_PROFILE"] = args.mode
     return _run_streaming(["bash", str(script)], env=env)
+
+
+# --- acceptance subcommand (the live pytest suite over port-forwards) --------
+def _forward(label: str, kube: list[str], namespace: str, target: str,
+             local: int, remote: int, stop: threading.Event) -> None:
+    """Keep one port-forward alive until the run finishes.
+
+    Supervised rather than started once: a cluster reached through a virtual
+    address drops long-lived streams, and a suite that takes minutes outlives
+    a single forward.
+    """
+    cmd = [*kube, "-n", namespace, "port-forward", target, f"{local}:{remote}"]
+    while not stop.is_set():
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        while not stop.is_set() and proc.poll() is None:
+            time.sleep(1)
+        if proc.poll() is None:
+            proc.terminate()
+            return
+        if not stop.is_set():
+            print(f"  forward {label} died, restarting", file=sys.stderr)
+            time.sleep(2)
+
+
+def _forward_ready(url: str, label: str, timeout: float) -> bool:
+    """Whether a forwarded endpoint answers at all.
+
+    Any HTTP status counts: the endpoint answering proves the tunnel, and the
+    suite judges the response itself.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                response.read()
+                print(f"  forward {label} ready", file=sys.stderr)
+                return True
+        except urllib.error.HTTPError:
+            print(f"  forward {label} ready (answering)", file=sys.stderr)
+            return True
+        except OSError:
+            time.sleep(2)
+    print(f"  forward {label} never became ready: {url}", file=sys.stderr)
+    return False
+
+
+def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
+    """One key out of a cluster secret, or empty when it cannot be read."""
+    done = subprocess.run(
+        [*kube, "-n", namespace, "get", "secret", name, "-o", "json"],
+        capture_output=True,
+    )
+    if done.returncode != 0:
+        return ""
+    raw = json.loads(done.stdout).get("data", {}).get(key)
+    return base64.b64decode(raw).decode("utf-8") if raw else ""
+
+
+def cmd_acceptance(args: argparse.Namespace) -> int:
+    """Run the live acceptance suite against a deployed stack.
+
+    Distinct from `verify`, which wraps the bootstrap smoke tests. This one
+    carries the pytest suite in the engine repository over three supervised
+    port-forwards -- ingest, the datastore for the assertions, and the engine
+    API -- and hands it credentials read from the cluster's own secrets.
+    """
+    settings = dict(os.environ)
+    for env_file in args.env_file:
+        loaded = _parse_env_file(env_file)
+        settings.update(loaded)
+        print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
+
+    context = args.context or settings.get("DFE_KUBE_CONTEXT")
+    namespace = args.namespace or settings.get("DFE_NAMESPACE", "dfe-local")
+    ch_namespace = args.ch_namespace or settings.get("DFE_CH_NAMESPACE", "clickhouse")
+    ch_secret = args.ch_secret or settings.get("DFE_CH_SECRET", "clickhouse-admin-password")
+    server = args.server or settings.get("DFE_KUBE_SERVER")
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    if context:
+        kube += ["--context", context]
+    # A kubeconfig whose server name does not resolve from here still works
+    # when the address is given directly and the certificate covers it.
+    if server:
+        kube += ["--server", server]
+
+    stop = threading.Event()
+    forwards = [
+        ("receiver", namespace, args.receiver_target, args.receiver_port, 8080),
+        ("datastore", ch_namespace, args.ch_target, args.ch_port, 8123),
+        ("engine", namespace, args.engine_target, args.engine_port, 8000),
+    ]
+    for label, ns, target, local, remote in forwards:
+        threading.Thread(
+            target=_forward,
+            args=(label, kube, ns, target, local, remote, stop),
+            daemon=True,
+        ).start()
+
+    ready = _forward_ready(f"http://localhost:{args.receiver_port}/livez", "receiver", 90.0)
+    ready = _forward_ready(f"http://localhost:{args.ch_port}/ping", "datastore", 90.0) and ready
+    # The engine forward only gates the transform class, so a pod mid-roll must
+    # degrade that class to a skip rather than fail the whole run.
+    engine_up = _forward_ready(f"http://localhost:{args.engine_port}/livez", "engine", 45.0)
+    if not ready:
+        stop.set()
+        print("the suite needs ingest and the datastore; neither is optional", file=sys.stderr)
+        return 1
+
+    env = dict(os.environ)
+    env.update({
+        "DFE_E2E_RECEIVER_URL": f"http://localhost:{args.receiver_port}/ingest",
+        "DFE_E2E_CH_HOST": "localhost",
+        "DFE_E2E_CH_PORT": str(args.ch_port),
+        "DFE_E2E_CH_USER": args.ch_user,
+        "DFE_E2E_CH_PASSWORD": _secret_value(kube, namespace, ch_secret, "password"),
+        "DFE_E2E_CH_DB": args.ch_database,
+    })
+    if engine_up:
+        env["DFE_E2E_ENGINE_URL"] = f"http://localhost:{args.engine_port}"
+    else:
+        env.pop("DFE_E2E_ENGINE_URL", None)
+        print("  engine forward down: the transform class will skip", file=sys.stderr)
+
+    pytest_args = args.pytest_args or [
+        "tests/e2e/test_filebeat_pipeline.py", "-m", "live", "-v",
+        "--no-cov", "-p", "no:randomly",
+    ]
+    done = subprocess.run(
+        ["uv", "run", "pytest", *pytest_args], cwd=args.repo, env=env
+    )
+    stop.set()
+    return done.returncode
 
 
 # --- stack-deploy subcommand (the pinned-stack + mode k8s deploy driver) ------
@@ -1356,6 +1494,36 @@ def build_parser() -> argparse.ArgumentParser:
     vf.add_argument("--from-terraform", metavar="TF_DIR",
                     help="read DFE_* outputs from this terraform environment, as the deploy did (supplies DFE_NAMESPACE)")
     vf.set_defaults(func=cmd_verify)
+
+    ac = sub.add_parser(
+        "acceptance",
+        help="run the live pytest acceptance suite over supervised port-forwards",
+        description="Distinct from `verify`, which wraps the bootstrap smoke tests. "
+                    "This carries the engine repository's pytest suite against a "
+                    "deployed stack.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ac.add_argument("--env-file", action="append", default=[], metavar="PATH",
+                    help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
+    ac.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
+    ac.add_argument("--context", default=None, help="kubeconfig context (default: DFE_KUBE_CONTEXT from --env-file)")
+    ac.add_argument("--namespace", default=None, help="namespace the apps run in (default: DFE_NAMESPACE, else dfe-local)")
+    ac.add_argument("--ch-namespace", default=None, help="namespace the datastore runs in (default: DFE_CH_NAMESPACE, else clickhouse)")
+    ac.add_argument("--ch-secret", default=None, help="secret holding the datastore password (default: DFE_CH_SECRET)")
+    ac.add_argument("--server", default=None,
+                    help="API address, for a kubeconfig whose server name does not resolve here (default: DFE_KUBE_SERVER)")
+    ac.add_argument("--receiver-target", default="svc/dfe-receiver", help="port-forward target for ingest")
+    ac.add_argument("--ch-target", default="svc/dfe-clickhouse", help="port-forward target for the datastore")
+    ac.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
+    ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
+    ac.add_argument("--ch-port", type=int, default=18123, help="local port for the datastore")
+    ac.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
+    ac.add_argument("--ch-user", default="default", help="datastore user the suite connects as")
+    ac.add_argument("--ch-database", default="dfe", help="datastore database the assertions read")
+    ac.add_argument("--repo", default="/projects/dfe-engine", help="engine checkout the suite runs from")
+    ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
+                    help="arguments passed through to pytest (default: the live filebeat suite)")
+    ac.set_defaults(func=cmd_acceptance)
 
     # pin -- resolve a version's registry digest and (with --write) set the
     # current stack's digests: in versions.yaml. Registered from resolve_pins.
