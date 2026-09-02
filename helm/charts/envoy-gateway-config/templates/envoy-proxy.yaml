@@ -1,10 +1,12 @@
 # EnvoyProxy -- customises the managed Envoy proxy's front-door Service so the
 # HTTP plane's LB is SWAPPABLE (cloud LB <-> k8s LB) the same way the receiver's
 # L4 LBs are. Referenced by the GatewayClass via parametersRef (see
-# gateway-class.yaml). type + annotations are set directly; loadBalancerClass and
-# loadBalancerSourceRanges go through a StrategicMerge patch so it works across
-# Envoy Gateway versions regardless of dedicated-field availability.
-{{- $svc := .Values.gateway.service }}
+# gateway-class.yaml). type + annotations are set directly; loadBalancerClass,
+# loadBalancerSourceRanges and externalIPs go through a StrategicMerge patch so it
+# works across Envoy Gateway versions regardless of dedicated-field availability.
+# externalIPs is not gated on type -- a cluster with no LB controller reaches the
+# outside through it on a ClusterIP.
+{{- $svc := .Values.envoyGateway.service }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
@@ -22,12 +24,14 @@ spec:
         annotations:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        {{- if eq ($svc.type | default "LoadBalancer") "LoadBalancer" }}
-        {{- if or $svc.loadBalancerClass $svc.loadBalancerSourceRanges }}
+        {{- $isLB := eq ($svc.type | default "LoadBalancer") "LoadBalancer" }}
+        {{- $lbFields := and $isLB (or $svc.loadBalancerClass $svc.loadBalancerSourceRanges) }}
+        {{- if or $lbFields $svc.externalIPs }}
         patch:
           type: StrategicMerge
           value:
             spec:
+              {{- if $lbFields }}
               {{- if $svc.loadBalancerClass }}
               loadBalancerClass: {{ $svc.loadBalancerClass }}
               {{- end }}
@@ -35,5 +39,9 @@ spec:
               loadBalancerSourceRanges:
                 {{- toYaml . | nindent 16 }}
               {{- end }}
-        {{- end }}
+              {{- end }}
+              {{- with $svc.externalIPs }}
+              externalIPs:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
         {{- end }}

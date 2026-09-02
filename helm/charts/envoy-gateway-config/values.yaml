@@ -7,27 +7,39 @@ gateway:
   name: dfe-gateway
   namespace: envoy-gateway-system
   listenerPort: 443
-  # SWAPPABLE front-door LB for the whole HTTP plane (UI, HyperDX, engine API).
-  # Realised via an EnvoyProxy CR referenced by the GatewayClass (parametersRef).
-  # Swap cloud LB <-> k8s LB with the same values the receiver uses:
-  #   type            -- LoadBalancer (cloud/MetalLB) | NodePort (front a HW LB)
-  #   loadBalancerClass -- "" = cluster default CCM; "service.k8s.aws/nlb" for AWS;
-  #                      a MetalLB/kube-vip class on bare metal
-  #   annotations     -- provider LB config (NLB scheme, etc.)
-  #   loadBalancerSourceRanges -- optional CIDR allow-list at the edge
+
+# SWAPPABLE front-door LB for the whole HTTP plane (UI, HyperDX, engine API).
+# Realised via an EnvoyProxy CR referenced by the GatewayClass (parametersRef).
+# Named envoyGateway, not gateway: the shared per-cloud values files are read by
+# every chart in the appset, and otel-collector already owns `gateway`.
+# Swap cloud LB <-> k8s LB with the same values the receiver uses:
+#   type            -- LoadBalancer (cloud/MetalLB) | ClusterIP | NodePort
+#   loadBalancerClass -- "" = cluster default CCM; "service.k8s.aws/nlb" for AWS;
+#                      a MetalLB/kube-vip class on bare metal
+#   annotations     -- provider LB config (NLB scheme, etc.)
+#   loadBalancerSourceRanges -- optional CIDR allow-list at the edge
+#   externalIPs     -- addresses the cluster already answers on, for a cluster
+#                      with no LB controller; pair it with type ClusterIP
+envoyGateway:
   service:
     type: LoadBalancer
     loadBalancerClass: ""
     annotations: {}
     loadBalancerSourceRanges: []
+    externalIPs: []
 
 tls:
   issuerName: dfe-letsencrypt
 
+  # Request the edge wildcard cert with an explicit Certificate instead of the
+  # Gateway's cert-manager annotations, for a cluster whose cert-manager runs
+  # without the gateway-shim (--enable-gateway-api, off by default). Exactly one
+  # of the two issues the cert, so it is never requested twice.
+  wildcardCertificate:
+    enabled: false
+
   # CNSA 2.0: the wildcard leaf cert is ECDSA P-384 / SHA-384 (192-bit),
-  # not cert-manager's RSA-2048/SHA-256 default. Applied via the
-  # cert-manager private-key annotations on the Gateway (gateway-shim
-  # reads them), so the shim-issued dfe-wildcard-tls cert uses this key.
+  # not cert-manager's RSA-2048/SHA-256 default.
   privateKey:
     algorithm: ECDSA        # ECDSA | RSA
     size: 384               # P-384 for ECDSA; 3072+ if RSA is ever forced
