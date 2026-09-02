@@ -1000,6 +1000,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
     Renovate's to move, and several are deliberately held below a ceiling (the
     ClickHouse LTS line, the Kafka version strimzi supports).
 
+    `stack.previous` is DERIVED, not cloned: the source block is by definition
+    the new version's predecessor, so cut re-points it at `--from`.
+
     Refuses rather than guesses -- an app with no published release, or a version
     that already exists, stops the cut.
     """
@@ -1026,6 +1029,10 @@ def cmd_cut(args: argparse.Namespace) -> int:
         if ln.lstrip().startswith("constraints:"):
             block[i] = re.sub(re.escape(from_name), new, ln)
             break
+
+    # The block was cloned from from_name, so from_name is the new predecessor.
+    if not _rewrite_scalar(block, "stack", "previous", from_name):
+        raise SystemExit(f"error: no stack.previous in {from_name} to re-point at the source")
 
     _, from_pins = stack_pins(root, from_name)
     wanted = set(args.apps.split(",")) if args.apps else None

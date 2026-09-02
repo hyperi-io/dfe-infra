@@ -316,6 +316,101 @@ def test_every_stack_constraints_reference_resolves() -> None:
     )
 
 
+_CUT_FIXTURE = """\
+current: "9.9.0-rc.2"
+stacks:
+  9.9.0-rc.1:
+    maturity: "rc"
+    apps:
+      an-app: "v1.0.0"
+    digests:
+      an-app: "sha256:aaa"
+    stack:
+      previous: ""
+      upgrade-order: "an-app"
+  9.9.0-rc.2:
+    maturity: "rc"
+    apps:
+      an-app: "v2.0.0"
+    digests:
+      an-app: "sha256:bbb"
+    stack:
+      previous: "9.9.0-rc.1"
+      upgrade-order: "an-app"
+"""
+
+
+def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
+    """A cut clones the source block, so the source IS the new predecessor.
+
+    Left to the clone, `stack.previous` carries the SOURCE's predecessor
+    forward and every later cut repeats it, so check-upgrade reads a real
+    consecutive upgrade as NOT A VERIFIED PATH.
+    """
+    import argparse
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        (tmp / "versions.yaml").write_text(_CUT_FIXTURE, encoding="utf-8", newline="\n")
+        original_root, original_published = stack.REPO_ROOT, stack._latest_published
+        stack.REPO_ROOT = tmp
+        # Offline: no published release, so every app pin holds and no registry is hit.
+        stack._latest_published = lambda org, app: None
+        try:
+            rc = stack.cmd_cut(
+                argparse.Namespace(
+                    version="9.9.0-rc.3",
+                    from_stack=None,
+                    maturity=None,
+                    apps=None,
+                    org="test-org",
+                    dry_run=False,
+                )
+            )
+        finally:
+            stack.REPO_ROOT, stack._latest_published = original_root, original_published
+
+        expect("the cut writes the file", rc == 0, f"exit {rc}")
+        root = stack.parse_simple_yaml((tmp / "versions.yaml").read_text(encoding="utf-8"))
+        cut = root["stacks"].get("9.9.0-rc.3", {}).get("stack", {})
+        expect(
+            "the new stack's previous is the stack it was cut FROM",
+            cut.get("previous") == "9.9.0-rc.2",
+            f"previous={cut.get('previous')!r} -- inherited the source's own predecessor",
+        )
+        expect(
+            "the source block's previous is left alone",
+            root["stacks"]["9.9.0-rc.2"]["stack"]["previous"] == "9.9.0-rc.1",
+            f"{root['stacks']['9.9.0-rc.2']['stack']['previous']!r}",
+        )
+
+
+def test_every_consecutive_stack_pair_is_a_verified_upgrade_path() -> None:
+    """The repo-level invariant: no gap in the shipped upgrade chain.
+
+    check-upgrade answers from stack.previous alone, so a stale value makes a
+    real consecutive upgrade report NOT A VERIFIED PATH.
+    """
+    import itertools
+
+    root = stack.load_root()
+    broken = []
+    for frm, to in itertools.pairwise(stack.stack_names(root)):
+        declared = [
+            p.strip()
+            for p in root["stacks"][to].get("stack", {}).get("previous", "").split(",")
+            if p.strip()
+        ]
+        if not any(stack._norm_version(p) == stack._norm_version(frm) for p in declared):
+            broken.append(f"{frm} -> {to} (declares {declared or ['']})")
+    expect(
+        "every adjacent stack pair declares a verified path",
+        not broken,
+        f"broken: {broken}",
+    )
+
+
 def main() -> int:
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

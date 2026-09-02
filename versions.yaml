@@ -1037,7 +1037,7 @@ stacks:
       # Versions an environment may upgrade to THIS release from (verified paths).
       # Empty = first release under the graph model. Derived graph:
       # dfe-stack graph walks the `stacks:` keys + each stack's previous.
-      previous: "2.2.0-rc.5"
+      previous: "2.2.0-rc.6"
       # Rollout order between component groups on a stack upgrade (lockstep does
       # not remove ordering -- schemas before the engine that expects them, data
       # plane before the UI that surfaces it).
@@ -1179,7 +1179,7 @@ stacks:
       # Versions an environment may upgrade to THIS release from (verified paths).
       # Empty = first release under the graph model. Derived graph:
       # dfe-stack graph walks the `stacks:` keys + each stack's previous.
-      previous: "2.2.0-rc.5"
+      previous: "2.2.0-rc.7"
       # Rollout order between component groups on a stack upgrade (lockstep does
       # not remove ordering -- schemas before the engine that expects them, data
       # plane before the UI that surfaces it).
@@ -1321,7 +1321,7 @@ stacks:
       # Versions an environment may upgrade to THIS release from (verified paths).
       # Empty = first release under the graph model. Derived graph:
       # dfe-stack graph walks the `stacks:` keys + each stack's previous.
-      previous: "2.2.0-rc.5"
+      previous: "2.2.0-rc.8"
       # Rollout order between component groups on a stack upgrade (lockstep does
       # not remove ordering -- schemas before the engine that expects them, data
       # plane before the UI that surfaces it).
@@ -1463,7 +1463,7 @@ stacks:
       # Versions an environment may upgrade to THIS release from (verified paths).
       # Empty = first release under the graph model. Derived graph:
       # dfe-stack graph walks the `stacks:` keys + each stack's previous.
-      previous: "2.2.0-rc.5"
+      previous: "2.2.0-rc.9"
       # Rollout order between component groups on a stack upgrade (lockstep does
       # not remove ordering -- schemas before the engine that expects them, data
       # plane before the UI that surfaces it).

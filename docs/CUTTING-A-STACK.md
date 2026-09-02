@@ -24,6 +24,10 @@ It clones the `--from` block (default: `current`) as the SHAPE, so a key cannot
 be dropped by omission, then for each DFE-owned app resolves the newest
 published release and repins the matching digest.
 
+`stack.previous` is derived rather than cloned -- the `--from` block is the new
+version's predecessor, so `cut` re-points it there and `check-upgrade` reports
+the consecutive path as verified without a hand edit.
+
 Third-party pins carry over untouched. Those are Renovate's to move, and several
 are deliberately held below a ceiling -- the ClickHouse LTS line, the Kafka
 version strimzi supports. A cut is about OUR components catching up, not about
