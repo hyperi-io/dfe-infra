@@ -1571,6 +1571,9 @@ stacks:
       dfe-fetcher: "sha256:633be4ce4e8ca7d20db30ae9aa211fd65c4582049d279fd58ce8812f7d18fc86"
       dfe-transform-vrl: "sha256:aeb980ffd6f287a537b1f5612ef1b8d5f43cda30767236f1df4ebbae1ad3335c"
       dfe-transform-vector: "sha256:1e7da14a0bfe28ac37cefb968d0dc6b1e159d8f3da8990c3f1c051f3da724e64"
+      # Keyed here rather than under content:, which carries versions and
+      # not digests -- the renderer reads digests.dfe-hyperdx and found none.
+      dfe-hyperdx: "sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca"
 
     # Digests for the DOCKER-path third-party plain images -- the immutable half
     # of the tag@sha256 pin that `dfe-stack render --target docker` emits. Keyed
