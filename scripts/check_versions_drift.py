@@ -256,13 +256,19 @@ CHECKS += [
         Path("argocd/bootstrap/envoy-gateway-app.yaml"),
         r"chart: gateway-helm\n\s*targetRevision:\s*\"([^\"]+)\"",
     ),
-    # links page (class D shape): chart value is tag@digest -- compare the TAG
-    # part to SSoT; appVersion cascades the same pin.
+    # links page (class D shape): the tag floats upstream, so both halves of the
+    # pin are checked; appVersion cascades the tag.
     Check(
         "links image tag",
         "services.nginx-unprivileged",
         Path("helm/charts/links/values.yaml"),
         r"nginx-unprivileged\n\s*tag:\s*\"([^\"@]+)",
+    ),
+    Check(
+        "links image digest",
+        "services-digests.nginx-unprivileged",
+        Path("helm/charts/links/values.yaml"),
+        r'digest:\s*"([^"]+)"',
     ),
     Check(
         "links chart appVersion",
@@ -450,6 +456,22 @@ CHECKS += [
     for app in _APP_CHARTS
 ]
 
+# The other half of the same pin: a registry tag is mutable, so appVersion alone
+# lets a re-pushed tag land bytes other than the ones `dfe-stack verify`
+# certified. dfe-common.image appends image.digest as tag@sha256. Derived from
+# versions.yaml, so an app joins the moment it first publishes a digest and a
+# chart missing the mirror is reported rather than assumed deliberate.
+_DIGEST_MIRRORS = [app for app in _APP_CHARTS if f"digests.{app}" in load_versions()]
+CHECKS += [
+    Check(
+        f"{app} image digest",
+        f"digests.{app}",
+        Path(f"helm/charts/{app}/values.yaml"),
+        r'digest:\s*"([^"]+)"',
+    )
+    for app in _DIGEST_MIRRORS
+]
+
 # The hyperdx chart runs an init container on the ENGINE image to materialise the
 # dashboards the engine owns. Helm cannot read a sibling chart's appVersion, so
 # the engine tag has a second copy here and needs watching like any other.
@@ -478,6 +500,12 @@ CHECKS += [
         Path("helm/charts/dfe-schema/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    Check(
+        "dfe-schema image digest",
+        "digests.dfe-engine",
+        Path("helm/charts/dfe-schema/values.yaml"),
+        r'digest:\s*"([^"]+)"',
+    ),
 ]
 
 
@@ -497,8 +525,8 @@ UNCONSUMED: dict[str, str] = {
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
     "services.envoy-proxy": "docker path only; k8s installs envoy-gateway, which carries its own proxy image",
-    "digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
-    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack",
+    "digests.*": "an app with no chart mirror yet -- a published app is checked against helm/charts/<app>/values.yaml image.digest instead",
+    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",
     "stack.*": "upgrade-graph metadata, not a version pin",
 }

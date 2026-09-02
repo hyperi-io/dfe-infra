@@ -9,13 +9,13 @@ links:
   enabled: true
 
 # nginxinc/nginx-unprivileged -- non-root static file server (uid 101, listens
-# 8080, pid + temp under /tmp). SHA-pinned like kafbat; the 1.31-alpine TAG
-# FLOATS upstream, so the digest is re-resolved on every version refresh.
-# versions.yaml services-digests.nginx-unprivileged pins it, and the drift check
-# compares the TAG only -- keep this digest in step with it by hand.
+# 8080, pid + temp under /tmp). The 1.31-alpine TAG FLOATS upstream, so
+# `dfe-stack refresh-digests` re-resolves the digest on every refresh.
 image:
   repository: nginxinc/nginx-unprivileged
-  tag: "1.31-alpine@sha256:d9083fe47768377ef55dedafd67d4da7c2f2bc2bece7554954f29359deb0dce9"
+  tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
+  # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
+  digest: "sha256:d9083fe47768377ef55dedafd67d4da7c2f2bc2bece7554954f29359deb0dce9"
   pullPolicy: IfNotPresent
   # Public Docker Hub image: suppress the fleet-wide imagePullSecrets.
   public: true

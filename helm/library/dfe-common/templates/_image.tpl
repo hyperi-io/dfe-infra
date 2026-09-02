@@ -1,6 +1,7 @@
 {{/*
-dfe-common.image — constructs the full container image reference.
-Uses global.registry + image component name + tag (or Chart.AppVersion).
+dfe-common.image -- constructs the full container image reference.
+Uses global.registry + image component name + tag (or Chart.AppVersion), with an
+optional image.digest appended as tag@sha256:... .
 Allows override via image.repository for customers using a different naming convention.
 
 Usage:
@@ -31,6 +32,8 @@ envoy-gateway-config all publish under a name their chart does not carry.
 {{- $repo := .Values.image.repository | default "" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
 {{- $name := include "dfe-common.imageComponent" . -}}
+{{- /* Optional, and it wins over the tag it is pulled with: an overlay moving image.tag must move image.digest too. */ -}}
+{{- with .Values.image.digest }}{{- $tag = printf "%s@%s" $tag . -}}{{- end -}}
 {{- if $repo -}}
   {{- printf "%s:%s" $repo $tag -}}
 {{- else if $registry -}}

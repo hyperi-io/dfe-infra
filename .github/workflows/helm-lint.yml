@@ -96,6 +96,11 @@ jobs:
       - name: Storage model renders and the cascade holds
         run: python3 scripts/tests/test_storage_model.py
 
+      # versions.yaml pinning tag@sha256 is worth nothing if the chart renders a
+      # bare tag, and a bare tag is mutable.
+      - name: Rendered images carry the pinned digest
+        run: python3 scripts/tests/test_image_digest_pin.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

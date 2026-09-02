@@ -13,6 +13,9 @@ tenantIsolation:
 image:
   repository: ""     # set from global.registry
   tag: ""
+  # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
+  # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
+  digest: "sha256:50c442839c79f3bfdbc2ccf6b45782408e5933656e8444d6c308cdd7550f4d60"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
