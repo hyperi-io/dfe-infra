@@ -659,12 +659,56 @@ def resolve_digest(ref: str) -> tuple[str | None, str]:
     return (digest, "") if digest.startswith("sha256:") else (None, f"unexpected: {digest!r}")
 
 
+def rewrite_digests(
+    text: str, stack: str, changes: list[tuple[str, str]]
+) -> tuple[str, list[str], list[tuple[str, str]]]:
+    """Set each services-digests key inside ONE stack block.
+
+    Scoped to the target stack, never the whole file: versions.yaml carries every
+    stack's complete pin set, so a pin that has not moved since the first cut
+    appears once per stack and a file-wide substitution would rewrite shipped,
+    immutable records along with the live one.
+
+    Returns (new text, keys written, (key, reason) refusals). A key that does not
+    resolve to exactly one line in the block is refused and the rest still go
+    through -- one unwritable pin must not hold the others back.
+    """
+    lines = text.splitlines(keepends=True)
+    start, end = _block_span(lines, stack)
+    start, end = _sub_block_span(lines, start, end, "services-digests")
+    written: list[str] = []
+    refused: list[tuple[str, str]] = []
+    for key, digest in changes:
+        hits = [
+            i
+            for i in range(start, end)
+            if re.match(rf'^\s+{re.escape(key)}:\s*"[^"]*"', lines[i])
+        ]
+        if len(hits) != 1:
+            refused.append(
+                (
+                    key,
+                    f"stack {stack} holds {len(hits)} services-digests line(s) for it, "
+                    f"expected 1 -- refusing to rewrite ambiguously",
+                )
+            )
+            continue
+        # The value is the first quoted token; any trailing comment survives.
+        lines[hits[0]] = re.sub(r'"[^"]*"', f'"{digest}"', lines[hits[0]], count=1)
+        written.append(key)
+    return "".join(lines), written, refused
+
+
 def cmd_refresh_digests(args: argparse.Namespace) -> int:
     path = REPO_ROOT / "versions.yaml"
     text = path.read_text(encoding="utf-8")
-    _, pins = stack_pins(parse_simple_yaml(text), args.stack)
+    name, pins = stack_pins(parse_simple_yaml(text), args.stack)
     recorded = pins.get("services-digests", {})
-    images = annotated_images(text)
+    # Annotations from the TARGET stack's block: each stack carries its own
+    # `services:` tags, and reading the file whole resolves the last stack's tag.
+    lines = text.splitlines(keepends=True)
+    bstart, bend = _block_span(lines, name)
+    images = annotated_images("".join(lines[bstart:bend]))
 
     missing = sorted(set(recorded) - set(images))
     if missing:
@@ -680,42 +724,42 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
         )
         return 1
 
-    changes: list[tuple[str, str, str]] = []
-    failed = 0
+    changes: list[tuple[str, str]] = []
+    stalled: list[str] = []
     for key in sorted(recorded):
         ref, tag = images[key]
         full = f"{ref}:{tag}"
         digest, err = resolve_digest(full)
         if digest is None:
             print(f"ERROR {key}: {full}: {err}")
-            failed += 1
+            stalled.append(key)
         elif digest != recorded[key]:
             print(f"STALE {key}: {full}\n      {recorded[key]}\n   -> {digest}")
-            changes.append((key, recorded[key], digest))
+            changes.append((key, digest))
         else:
             print(f"ok    {key}: {full}")
 
-    if failed:
-        print(f"\n{failed} image(s) could not be resolved; nothing written.", file=sys.stderr)
+    if args.check:
+        if changes:
+            print(f"\n{len(changes)} digest(s) STALE (--check: nothing written)")
+        stalled += [key for key, _ in changes]
+    elif changes:
+        text, written, refused = rewrite_digests(text, name, changes)
+        if written:
+            path.write_text(text, encoding="utf-8", newline="\n")
+            print(f"\n{len(written)} digest(s) rewritten in versions.yaml (stack {name})")
+        for key, why in refused:
+            print(f"ERROR {key}: {why}", file=sys.stderr)
+        stalled += [key for key, _ in refused]
+
+    if stalled:
+        print(
+            f"\n{len(stalled)} pin(s) NOT refreshed: {', '.join(sorted(stalled))}",
+            file=sys.stderr,
+        )
         return 1
     if not changes:
         print("\nall services-digests match the registries")
-        return 0
-    if args.check:
-        print(f"\n{len(changes)} digest(s) STALE (--check: nothing written)")
-        return 1
-
-    for key, old, new in changes:
-        if text.count(old) != 1:
-            print(
-                f"ERROR {key}: its digest appears {text.count(old)} times in "
-                f"versions.yaml -- refusing to rewrite ambiguously",
-                file=sys.stderr,
-            )
-            return 1
-        text = text.replace(old, new)
-    path.write_text(text, encoding="utf-8", newline="\n")
-    print(f"\n{len(changes)} digest(s) rewritten in versions.yaml")
     return 0
 
 

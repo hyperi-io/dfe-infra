@@ -411,6 +411,107 @@ def test_every_consecutive_stack_pair_is_a_verified_upgrade_path() -> None:
     )
 
 
+_REFRESH_FIXTURE = """\
+current: "9.9.0-rc.2"
+stacks:
+  9.9.0-rc.1:
+    services:
+      # renovate: datasource=docker depName=example/floating
+      floating: "1-alpine"
+      # renovate: datasource=docker depName=example/steady
+      steady: "2.0.0"
+    services-digests:
+      floating: "sha256:aaa"   # example/floating:1-alpine
+      steady: "sha256:bbb"     # example/steady:2.0.0
+  9.9.0-rc.2:
+    services:
+      # renovate: datasource=docker depName=example/floating
+      floating: "1-alpine"
+      # renovate: datasource=docker depName=example/steady
+      steady: "2.0.0"
+    services-digests:
+      floating: "sha256:aaa"   # example/floating:1-alpine
+      steady: "sha256:bbb"     # example/steady:2.0.0
+"""
+
+
+def _run_refresh(tmp: Path, resolver) -> tuple[int, str]:
+    """refresh-digests over the fixture with the registry stubbed out."""
+    import argparse
+
+    (tmp / "versions.yaml").write_text(_REFRESH_FIXTURE, encoding="utf-8", newline="\n")
+    original_root, original_resolve = stack.REPO_ROOT, stack.resolve_digest
+    stack.REPO_ROOT = tmp
+    stack.resolve_digest = resolver
+    try:
+        rc = stack.cmd_refresh_digests(argparse.Namespace(stack=None, check=False))
+    finally:
+        stack.REPO_ROOT, stack.resolve_digest = original_root, original_resolve
+    return rc, (tmp / "versions.yaml").read_text(encoding="utf-8")
+
+
+def test_refresh_rewrites_a_digest_repeated_across_stacks() -> None:
+    """A pin that has not moved since the first cut repeats once per stack.
+
+    Searching the whole file for the old digest literal then finds every copy,
+    and refusing that as ambiguous left the live stack stale for as long as the
+    pin stood still -- which is exactly when it is a floating tag.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        rc, text = _run_refresh(tmp, lambda ref: ("sha256:new", ""))
+        rc1 = text.split("9.9.0-rc.2:")[0]
+        rc2 = text.split("9.9.0-rc.2:")[1]
+
+        expect("a digest repeated across stacks is still written", rc == 0, f"exit {rc}")
+        expect(
+            "both of the current stack's stale digests moved",
+            rc2.count('"sha256:new"') == 2,
+            rc2,
+        )
+        expect(
+            "the shipped stack's record is left alone",
+            'floating: "sha256:aaa"' in rc1 and 'steady: "sha256:bbb"' in rc1,
+            rc1,
+        )
+        expect(
+            "the trailing comment survives the rewrite",
+            "# example/floating:1-alpine" in rc2,
+            rc2,
+        )
+
+
+def test_refresh_writes_the_healthy_pins_when_one_cannot_resolve() -> None:
+    """One unresolvable image used to abort the run with nothing written.
+
+    Every other pin was already resolved by then, so a single bad entry held the
+    whole refresh back and the propagation job never pushed.
+    """
+    import tempfile
+
+    def resolver(ref: str) -> tuple[str | None, str]:
+        return (None, "no such manifest") if "floating" in ref else ("sha256:new", "")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        rc, text = _run_refresh(tmp, resolver)
+        rc2 = text.split("9.9.0-rc.2:")[1]
+
+        expect("the failure is still visible in the exit code", rc == 1, f"exit {rc}")
+        expect(
+            "the pin that DID resolve was written anyway",
+            'steady: "sha256:new"' in rc2,
+            rc2,
+        )
+        expect(
+            "the pin that could not resolve is untouched",
+            'floating: "sha256:aaa"' in rc2,
+            rc2,
+        )
+
+
 def main() -> int:
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -15,7 +15,7 @@ links:
 # compares the TAG only -- keep this digest in step with it by hand.
 image:
   repository: nginxinc/nginx-unprivileged
-  tag: "1.31-alpine@sha256:f972e5322b9797dc2a6b830030094426437b1ae7032e4644496395336ac6fdac"
+  tag: "1.31-alpine@sha256:d9083fe47768377ef55dedafd67d4da7c2f2bc2bece7554954f29359deb0dce9"
   pullPolicy: IfNotPresent
   # Public Docker Hub image: suppress the fleet-wide imagePullSecrets.
   public: true
