@@ -40,7 +40,7 @@ product assumes it.
 One Gateway fronts the whole HTTP plane. Each UI gets a hostname under the
 deployment's `domain`; the route lives in the backend's namespace so only
 the parentRef crosses namespaces (no ReferenceGrant needed). The gateway
-LB type/class is swappable per deployment (`gateway.service` values).
+LB type/class is swappable per deployment (`envoyGateway.service` values).
 
 ```mermaid
 flowchart LR

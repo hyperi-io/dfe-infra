@@ -56,7 +56,7 @@ managed endpoint.
 | Private CA / TLS | cert-manager ClusterIssuer (+ external issuer) | OpenBao PKI | ACME or AWS PCA | ACME or Key Vault | ACME or Google CAS |
 | Kafka | chart mode + `kafka.bootstrapServers` | Strimzi / Redpanda* | MSK | Event Hubs / Confluent | Confluent / Redpanda Cloud |
 | ClickHouse | `clickhouse.mode` + `.host` | in-k8s operator | CH Cloud (pref) / in-k8s | CH Cloud (pref) / in-k8s | CH Cloud (pref) / in-k8s |
-| Edge LoadBalancer | `gateway.service` type=LoadBalancer | MetalLB | NLB | Azure LB | GCP LB |
+| Edge LoadBalancer | `envoyGateway.service` type=LoadBalancer | MetalLB | NLB | Azure LB | GCP LB |
 | Object store | S3-compatible endpoint + creds | MinIO / Ceph RGW | S3 | Blob (S3 API) | GCS (S3 API) |
 | Container registry | `global.registry` + pull secret | Harbor | ECR | ACR | GAR |
 | StorageClass / CSI | `storageClass` (empty -> cluster default) | local-path / Longhorn | EBS | Azure Disk | PD |
@@ -73,7 +73,8 @@ managed endpoint.
 - **One LB, dumb L4.** The only cloud LB per deployment is the `Service
   type=LoadBalancer` fronting the gateway (MetalLB provides it on-prem). Cloud L7
   (routing, WAF, OIDC) is NOT used -- Envoy owns L7 in-cluster, so behaviour is
-  identical everywhere. Cloud-specific LB tuning rides `gateway.service.annotations`.
+  identical everywhere. Cloud-specific LB tuning rides
+  `envoyGateway.service.annotations`.
 - **Workload identity is the credential seam for cloud.** ESO, external-dns and the
   cloud LB controller reach their cloud APIs via IRSA / Workload Identity, annotated
   onto the ServiceAccount. On-prem there is no cloud API -- creds come from OpenBao
