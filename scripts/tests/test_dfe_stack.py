@@ -386,6 +386,47 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
         )
 
 
+def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
+    """An app publishing for the first time has an apps pin and no digests key.
+
+    The tag rewrite succeeds and the digest rewrite has nothing to write, so
+    left unchecked the cut reports MOVED, exits 0, and ships that app unpinned.
+    """
+    import argparse
+    import tempfile
+
+    fixture = _CUT_FIXTURE.replace('      an-app: "sha256:bbb"\n', "")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        (tmp / "versions.yaml").write_text(fixture, encoding="utf-8", newline="\n")
+        original_root, original_published = stack.REPO_ROOT, stack._latest_published
+        stack.REPO_ROOT = tmp
+        # The app has just published, so the tag moves and the digest has no home.
+        stack._latest_published = lambda org, app: ("v3.0.0", "sha256:ccc")
+        try:
+            stack.cmd_cut(
+                argparse.Namespace(
+                    version="9.9.0-rc.3",
+                    from_stack=None,
+                    maturity=None,
+                    apps=None,
+                    org="test-org",
+                    dry_run=False,
+                )
+            )
+        except SystemExit as exc:
+            expect(
+                "it refuses, naming the key to add",
+                "digests.an-app" in str(exc) and "sha256:ccc" in str(exc),
+                f"message={str(exc)!r}",
+            )
+        else:
+            expect("it refuses rather than shipping an unpinned app", False, "cut returned")
+        finally:
+            stack.REPO_ROOT, stack._latest_published = original_root, original_published
+
+
 def test_every_consecutive_stack_pair_is_a_verified_upgrade_path() -> None:
     """The repo-level invariant: no gap in the shipped upgrade chain.
 

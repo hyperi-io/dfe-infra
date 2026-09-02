@@ -1097,7 +1097,14 @@ def cmd_cut(args: argparse.Namespace) -> int:
             continue
         if not _rewrite_scalar(block, "apps", app, tag):
             raise SystemExit(f"error: no apps.{app} pin in {from_name} to rewrite")
-        _rewrite_scalar(block, "digests", app, digest)
+        # An app only reaches here once it has a published release, so a missing
+        # digests key means the tag would move and ship unpinned.
+        if not _rewrite_scalar(block, "digests", app, digest):
+            raise SystemExit(
+                f"error: no digests.{app} key in {from_name} to rewrite -- {app} has "
+                f"published now, so add `{app}: \"{digest}\"` to that stack's digests "
+                f"block and re-run"
+            )
         moved.append(f"{app} {current} -> {tag}")
 
     print(f"cut {new} from {from_name}")
