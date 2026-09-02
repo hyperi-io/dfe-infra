@@ -300,6 +300,12 @@ data:
         # without the table -- or with a different engine. With create_schema off
         # the only SQL it sends is INSERT.
         create_schema: false
+        {{- with .Values.exporters.clickhouse.connectionParams }}
+        connection_params:
+          {{- range $k, $v := . }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+        {{- end }}
         timeout: 10s
         sending_queue:
           queue_size: 1000
