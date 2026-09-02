@@ -27,9 +27,11 @@ DLQ backend. A DLQ write happens AT failure time -- the one moment nothing can
 be creating topics -- so the topic must exist before the first poisoned
 message, not after.
 
-Per-source topics beyond the default stay dynamic -- the receiver creates
-`{source}_land` as sources are defined. This is only the floor that lets a
-bare deploy come up.
+Per-source topics beyond the default stay dynamic -- dfe-engine creates
+`{source}_land` (and `{source}_load` where the source has a transform) when
+the source deploys, via POST /api/v1/sources/{name}/deploy. dfe-receiver has
+no topic-admin code and never creates a topic. This is only the floor that
+lets a bare deploy come up.
 
 CLUSTER mode only: a KafkaTopic CR needs the Strimzi operator to reconcile it,
 and the single tier installs none. That tier creates the same topics with the
