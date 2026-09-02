@@ -1605,8 +1605,6 @@ stacks:
       # Versions an environment may upgrade to THIS release from (verified paths).
       # Empty = first release under the graph model. Derived graph:
       # dfe-stack graph walks the `stacks:` keys + each stack's previous.
-      # `dfe-stack cut` clones the source block and never rewrites this key, so
-      # a new stack inherits its predecessor's value -- set it by hand.
       previous: "2.2.0-rc.10"
       # Rollout order between component groups on a stack upgrade (lockstep does
       # not remove ordering -- schemas before the engine that expects them, data
