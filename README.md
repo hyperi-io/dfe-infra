@@ -1,5 +1,12 @@
 # dfe-infra
 
+[![Helm Lint](https://github.com/hyperi-io/dfe-infra/actions/workflows/helm-lint.yml/badge.svg)](https://github.com/hyperi-io/dfe-infra/actions/workflows/helm-lint.yml)
+[![Stack Release](https://github.com/hyperi-io/dfe-infra/actions/workflows/release.yml/badge.svg)](https://github.com/hyperi-io/dfe-infra/actions/workflows/release.yml)
+
+> One certified pin set stands up the whole stack. `versions.yaml` is the
+> manifest, every image is `tag@sha256`, and the upgrade graph is derived from
+> the file rather than remembered.
+
 The deploy layer for the Data Fusion Engine (DFE) - the GitOps SSoT and deploy
 vehicle that stands a full DFE stack up on any Kubernetes (Rancher/on-prem, AWS,
 GCP, Azure).
