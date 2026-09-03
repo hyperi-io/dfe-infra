@@ -100,4 +100,5 @@ env file), nothing else.
 | `preflight` | read-only kubectl against the target | cluster contract above |
 | `stack-deploy` | offline pin/drift/render preflight, then `bootstrap/bootstrap.sh` (Layer 0/1 + Argo profile sync at the pinned stack) | bounded readiness + the 2 default E2E tests (receiver->CH data path, self-monitoring OTel) |
 | `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration |
+| `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then the dfe-ui Playwright specs tagged `@acceptance` over `--ui-url` or a port-forward | onboarding and the key UI features, on a credential that differs from the build default -- see [ACCEPTANCE-AUTOMATION.md](ACCEPTANCE-AUTOMATION.md) |
 | `teardown` | `bootstrap/destroy.sh` (`--with-terraform` also destroys IaC state) | leaves the cluster as preflight found it |
