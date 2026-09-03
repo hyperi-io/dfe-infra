@@ -88,7 +88,7 @@ dependencies:
     repository: "file://../charts/dfe-engine"
     condition: dfe-engine.enabled
   - name: dfe-ui
-    version: "0.1.0"
+    version: "0.1.1"
     repository: "file://../charts/dfe-ui"
     condition: dfe-ui.enabled
   - name: dfe-receiver

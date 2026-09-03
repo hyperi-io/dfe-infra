@@ -42,7 +42,13 @@ kedaShimPort: 8080
 # scrape target reports up=0 while pushed metrics keep arriving, so the gap
 # looks like a slow endpoint rather than a blocked one.
 otelNamespace: otel
-otelPort: 4317
+# BOTH OTLP doors. The scalo services push gRPC on 4317; dfe-ui pushes
+# http/protobuf on 4318, because @vercel/otel ships no gRPC exporter. A port
+# left out here is dropped by the default-deny baseline as a connect timeout,
+# which an OTLP SDK swallows -- the telemetry just never arrives.
+otelPorts:
+  - 4317
+  - 4318
 
 # Internet EGRESS allow-list. The baseline is default-deny-egress, so apps that
 # must INITIATE outbound to the internet need an explicit policy. fetcher polls

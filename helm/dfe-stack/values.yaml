@@ -212,7 +212,17 @@ dfe-ui:
     # single-namespace install reaches the engine by its short Service name.
     internalApiUrl: "http://dfe-engine:8000"
   resources: *dfeSlimResources
-  telemetry: *dfeTelemetry
+  # NOT *dfeTelemetry: an explicit hyperdxEndpoint wins over the derived one, so
+  # the anchor's :4317 would defeat dfe-ui's otelProtocol. @vercel/otel ships no
+  # gRPC exporter, so this app needs the collector's 4318 door.
+  telemetry:
+    mode: hyperdx
+    hyperdxEndpoint: "dfe-otel-collector-gateway:4318"
+    receiverEndpoint: "dfe-receiver:8443"
+    externalEndpoint: ""
+    prometheus:
+      port: 9090
+      path: /metrics
   # KEDA autoscaling stays off in the trial (no KEDA operator); the product
   # tiers install KEDA via layer1-addons and leave this on.
   keda:

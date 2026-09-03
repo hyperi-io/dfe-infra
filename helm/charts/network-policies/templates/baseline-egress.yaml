@@ -10,7 +10,7 @@
 #   2. DNS (UDP + TCP 53) to the cluster DNS service.
 #   3. Kubernetes API (TCP 443, 6443) — required by operators (CNPG, Strimzi,
 #      ClickHouse operator) and by service-account auth from application pods.
-#   4. OTel Collector (TCP 4317) in the OTel namespace, for telemetry.
+#   4. OTel Collector (TCP 4317 gRPC + 4318 http) in the OTel namespace.
 #
 # Everything else is denied by default (Kubernetes NetworkPolicy semantics).
 # Add per-service egress policies layered on top for specific cross-namespace
@@ -48,12 +48,17 @@ spec:
           protocol: TCP
         - port: 6443
           protocol: TCP
-    # 4. OTel Collector for telemetry
+    # 4. OTel Collector for telemetry. Both OTLP doors: the scalo services push
+    # gRPC on 4317, dfe-ui pushes http/protobuf on 4318 (@vercel/otel ships no
+    # gRPC exporter). A port missing here is dropped by the default-deny
+    # baseline as a connect timeout, which an OTLP SDK swallows silently.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $.Values.otelNamespace }}
       ports:
-        - port: {{ $.Values.otelPort }}
+        {{- range $.Values.otelPorts }}
+        - port: {{ . }}
           protocol: TCP
+        {{- end }}
 {{- end }}
