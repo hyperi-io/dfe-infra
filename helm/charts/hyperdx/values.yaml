@@ -15,6 +15,9 @@ cloud: local
 image:
   repository: ghcr.io/hyperi-io/dfe-hyperdx
   tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
+  # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
+  # digests.dfe-hyperdx (drift-checked). The tag and this must move together.
+  digest: "sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca"
   pullPolicy: IfNotPresent
 
 # TODO(verify-on-publish): the fork image is NOT published yet (ghcr returns
