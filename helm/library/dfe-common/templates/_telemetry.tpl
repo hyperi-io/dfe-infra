@@ -24,6 +24,19 @@ fall back to an OTel default), AND expose /metrics for scrape. Both, always.
 Resolve the OTLP exporter endpoint. An explicit .Values.otel.endpoint wins
 (per-deploy escape hatch); otherwise resolve from telemetry.mode. Returns "" for
 prometheus mode (no OTLP push) -- callers should guard the OTEL env on non-empty.
+
+A chart-declared .Values.otelProtocol picks the port of the DERIVED gateway
+endpoint: grpc (default) 4317, http 4318. Like metricsPort below, the protocol
+is a property of the APP, not of the deployment -- the scalo services export
+over gRPC, while dfe-ui runs @vercel/otel, which ships no gRPC exporter at all
+and speaks only http/protobuf. Handing that a :4317 URL loses every trace with
+nothing logged.
+
+Only the derived endpoint is portted. A deployer-supplied otel.endpoint,
+telemetry.hyperdxEndpoint, receiverEndpoint or externalEndpoint is theirs and
+is left exactly as given -- which does mean a deployer who hand-sets ONE
+endpoint for a fleet that speaks both protocols has to front it with something
+that serves both.
 */}}
 {{- define "dfe-common.otelEndpoint" -}}
 {{- $ep := "" -}}
@@ -34,10 +47,11 @@ prometheus mode (no OTLP push) -- callers should guard the OTEL env on non-empty
 {{- $mode := $t.mode | default "hyperdx" -}}
 {{- if eq $mode "hyperdx" -}}
 {{- $collectorNs := $t.collectorNamespace | default "otel" -}}
+{{- $otlpPort := ternary "4318" "4317" (eq (.Values.otelProtocol | default "grpc") "http") -}}
 {{/* Empty hyperdxEndpoint derives the deploy-layer collector gateway --
      the one OTLP door; its exporters own the write into the tables
      hyperdx reads (the fork image ships no OTLP receiver). */}}
-{{- $ep = $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:4317" .Values.project $collectorNs) -}}
+{{- $ep = $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:%s" .Values.project $collectorNs $otlpPort) -}}
 {{- else if eq $mode "receiver" -}}{{- $ep = $t.receiverEndpoint -}}
 {{- else if eq $mode "external" -}}{{- $ep = $t.externalEndpoint -}}
 {{- end -}}

@@ -2,6 +2,11 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.8.0: otelEndpoint picks the derived gateway port from a chart-declared
+#        .Values.otelProtocol -- grpc (default, unchanged) 4317, http 4318.
+#        dfe-ui runs @vercel/otel, which ships no gRPC exporter, so a :4317 URL
+#        lost every trace silently. Default-preserving: a chart that declares
+#        nothing renders exactly as it did on 0.7.0.
 # 0.7.0: dfe-common.image takes an optional image.digest and renders
 #        tag@sha256:... , so a mutable registry tag cannot land bytes other than
 #        the ones versions.yaml pins. Charts with no digest render unchanged.
@@ -24,4 +29,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.7.0
+version: 0.8.0

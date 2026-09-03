@@ -8,5 +8,7 @@ dependencies:
   - name: dfe-common
     # 0.1.2: prometheusAnnotations honours .Values.metricsPort -- dfe-ui scrapes on
     # 3000 (Next has one listener), not the stack's 9090.
-    version: "0.7.0"
+    # 0.8.0: otelEndpoint honours .Values.otelProtocol -- @vercel/otel has no gRPC
+    # exporter, so this chart takes the gateway's 4318 door.
+    version: "0.8.0"
     repository: "file://../../library/dfe-common"

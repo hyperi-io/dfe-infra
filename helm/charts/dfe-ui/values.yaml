@@ -39,6 +39,11 @@ service:
 # telemetry.prometheus.port.
 metricsPort: 3000
 
+# @vercel/otel ships no gRPC exporter -- only http/protobuf and http/json -- so
+# this app takes the gateway's 4318 door, not the 4317 the scalo services use.
+# Read by dfe-common.otelEndpoint.
+otelProtocol: http
+
 config:
   # Subdomain label the UI serves on; empty = hostnames.dfe from the
   # deploy-config SSoT (argocd/values/common.yaml).

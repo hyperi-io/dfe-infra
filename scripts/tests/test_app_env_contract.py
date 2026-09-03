@@ -276,6 +276,31 @@ def test_no_chart_reads_a_dead_postgresql_dial() -> None:
                "values.yaml still declares postgresql")
 
 
+def _otlp_endpoint(chart: str) -> str:
+    for spec in pod_specs(render(chart, "project=dfe")):
+        for container in spec.get("containers", []):
+            for e in container.get("env", []):
+                if e["name"] == "OTEL_EXPORTER_OTLP_ENDPOINT":
+                    return e.get("value", "")
+    return ""
+
+
+def test_otlp_port_matches_the_exporter_the_app_ships() -> None:
+    """A gRPC port handed to an HTTP-only exporter loses every span, silently.
+
+    dfe-ui runs @vercel/otel, which ships NO gRPC exporter -- only http/protobuf
+    and http/json -- so no configuration of the app could have made :4317 work.
+    The scalo services are the other way round and must stay on 4317.
+    """
+    ui = _otlp_endpoint("dfe-ui")
+    expect("dfe-ui takes the gateway's HTTP OTLP port", ui.endswith(":4318"),
+           f"got {ui!r} -- @vercel/otel has no gRPC exporter")
+
+    for chart in ("dfe-receiver", "dfe-loader", "dfe-archiver"):
+        ep = _otlp_endpoint(chart)
+        expect(f"{chart} keeps the gRPC OTLP port", ep.endswith(":4317"), f"got {ep!r}")
+
+
 def main() -> int:
     test_required_names_render()
     test_retired_names_stay_gone()
@@ -283,6 +308,7 @@ def main() -> int:
     test_sasl_dial_is_honoured_when_cleared()
     test_archiver_s3_secret_is_opt_in_and_wired()
     test_no_chart_reads_a_dead_postgresql_dial()
+    test_otlp_port_matches_the_exporter_the_app_ships()
     print(f"\n{_failures} failure(s)")
     return 1 if _failures else 0
 
