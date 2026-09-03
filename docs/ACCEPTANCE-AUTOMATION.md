@@ -47,7 +47,12 @@ credential from the deployment rather than from a product constant.
 
 ## What "deployed and working" means
 
-1. **k8s**, **dfe-docker on a VM**, and **dfe-docker locally**.
+1. **k8s**, **dfe-docker on a VM**, **dfe-docker locally**, and
+   **developer-local**: the repos a UI developer clones (dfe-engine,
+   dfe-schemas, dfe-deploy, dfe-ui) run from source on one machine, the way
+   the UI is actually developed. Bugs that only show in a packaged deploy are
+   invisible there, and the reverse is just as true, so it is a target in its
+   own right. It also proves the developer docs from a clean checkout.
 2. Playwright drives **onboarding end to end**, then the key UI features.
 3. **Auto-merge on** for the deploy repo, so the gate is not hand-driven.
    The knob exists: `DFE_GITOPS_MODE`, `governance/settings/gitops.yaml`
