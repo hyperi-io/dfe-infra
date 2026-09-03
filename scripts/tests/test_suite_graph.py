@@ -289,6 +289,9 @@ def test_mermaid_and_docs_render() -> None:
     expect("overview groups by role", "subgraph library" in overview and "subgraph service" in overview)
     expect("overview shades by audience", ':::general' in overview and ':::suite' in overview)
     expect("an optional member is labelled as one", 'side-c (optional)' in overview)
+    expect("a block declares only the classes it paints",
+           "classDef producer" not in overview and "classDef suite-optional" not in overview,
+           overview)
     producer = suite_graph.mermaid_producer(g, "lib-a")
     expect("producer diagram labels the edge with plain words -- no quotes, no parentheses",
            "|cargo-dep, potential|" in producer and not any(c in producer.split("\n")[3] for c in '"()'))
@@ -311,6 +314,20 @@ def test_mermaid_and_docs_render() -> None:
 # The two canvases these diagrams are read on.
 CANVASES = {"light": "#FFFFFF", "dark": "#0D1117"}
 
+# A fill has to stand off its canvas by this much to be a plate at all.
+FILL_FLOOR = 2.5
+
+# The (class, canvas) pairs whose fill is deliberately below that floor, with
+# the ratio each one measures. The tertiary stroke carries the boundary there
+# and is asserted in its place. Pinning the ratio catches a fill that drifts to
+# the canvas colour instead of letting it ride on the stroke.
+SOFT_FILLS = {
+    ("general", "light"): 1.55,
+    ("general-optional", "light"): 1.32,
+    ("producer", "dark"): 1.01,
+    ("suite-optional", "light"): 1.72,
+}
+
 
 def _luminance(colour: str) -> float:
     """WCAG relative luminance of a #RRGGBB colour."""
@@ -330,7 +347,7 @@ def contrast(one: str, other: str) -> float:
 def _class_styles() -> dict[str, dict[str, str]]:
     """Each house classDef as {name: {fill, stroke, color, ...}}."""
     styles = {}
-    for line in suite_graph._CLASSES:
+    for line in suite_graph._CLASSES.values():
         _, name, declarations = line.split(" ", 2)
         styles[name] = dict(d.split(":", 1) for d in declarations.split(","))
     return styles
@@ -345,15 +362,28 @@ def test_contrast_on_both_canvases() -> None:
         ratio = contrast(style["color"], style["fill"])
         expect(f"{name} text on its own fill clears 4.5:1", ratio >= 4.5, f"{ratio:.2f}")
         for canvas, background in CANVASES.items():
-            # A soft fill is deliberate; the unfaded stroke carries the boundary there.
-            best = max(contrast(style["fill"], background), contrast(style["stroke"], background))
-            expect(f"{name} still reads on the {canvas} canvas", best >= 2.5, f"{best:.2f}")
+            fill = contrast(style["fill"], background)
+            soft = SOFT_FILLS.get((name, canvas))
+            if soft is None:
+                expect(f"{name} fill stands off the {canvas} canvas",
+                       fill >= FILL_FLOOR, f"{fill:.2f}")
+                continue
+            expect(f"{name} fill is the soft one it is declared to be on the {canvas} canvas",
+                   round(fill, 2) == soft, f"{fill:.2f}, declared {soft:.2f}")
+            edge = contrast(style["stroke"], background)
+            expect(f"{name} stroke carries its boundary on the {canvas} canvas",
+                   edge >= FILL_FLOOR, f"{edge:.2f}")
     navy_fills = [n for n, s in _class_styles().items() if s["fill"] == suite_graph.PALETTE["navy"]]
     expect("navy is a fill for the producer alone", navy_fills == ["producer"], str(navy_fills))
 
 
 def test_brand_palette() -> None:
     """Every colour a diagram draws is a graphics.hyperi.io token or a 0.45 fade of one."""
+    expect("PALETTE is the brand tokens",
+           suite_graph.PALETTE == {"navy": "#000647", "tertiary": "#2EA4F6",
+                                   "accent": "#2DED88", "white": "#FFFFFF",
+                                   "black": "#000000"},
+           str(suite_graph.PALETTE))
     expect("the fade mixes 45 per cent white into the brand tertiary",
            suite_graph.faded("#2EA4F6") == "#8CCDFA", suite_graph.faded("#2EA4F6"))
     expect("fading white leaves white", suite_graph.faded("#FFFFFF") == "#FFFFFF")

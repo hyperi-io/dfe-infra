@@ -377,15 +377,25 @@ _CLASS_FILL = {
 # " (optional)" suffix, so colour is never the only signal.
 # The fade is soft against the light canvas by design, where the unfaded stroke
 # carries the boundary.
-_CLASSES = [
-    f"classDef {name} fill:{fill},stroke:{PALETTE['tertiary']},"
-    f"stroke-width:{width}px,color:{text}"
+_CLASSES = {
+    name: f"classDef {name} fill:{fill},stroke:{PALETTE['tertiary']},"
+          f"stroke-width:{width}px,color:{text}"
     for name, (fill, text, width) in _CLASS_FILL.items()
-] + [
-    f"classDef {audience}-optional fill:{faded(_CLASS_FILL[audience][0])},"
-    f"stroke:{PALETTE['tertiary']},stroke-width:2px,color:{PALETTE['navy']}"
+} | {
+    f"{audience}-optional":
+        f"classDef {audience}-optional fill:{faded(_CLASS_FILL[audience][0])},"
+        f"stroke:{PALETTE['tertiary']},stroke-width:2px,color:{PALETTE['navy']}"
     for audience in AUDIENCES
-]
+}
+
+
+def _classdefs(used: set[str]) -> list[str]:
+    """The classDef lines for the classes a block paints, in one fixed order.
+
+    A block emits only what it references: an unused classDef is a legend entry
+    for a colour that is not on the picture.
+    """
+    return [f"  {line}" for name, line in _CLASSES.items() if name in used]
 
 
 def _label(name: str, node: dict) -> str:
@@ -402,14 +412,16 @@ def mermaid_overview(graph: dict) -> str:
     for name, node in graph["nodes"].items():
         by_role.setdefault(node["role"], []).append(name)
     lines = ["flowchart TB"]
+    used: set[str] = set()
     for role in sorted(by_role):
         lines.append(f'  subgraph {role}["{role}"]')
         lines.append("    direction LR")
         for name in sorted(by_role[role]):
             node = graph["nodes"][name]
+            used.add(_node_class(node))
             lines.append(f'    {_mid(name)}["{_label(name, node)}"]:::{_node_class(node)}')
         lines.append("  end")
-    lines.extend(f"  {c}" for c in _CLASSES)
+    lines.extend(_classdefs(used))
     return "\n".join(lines)
 
 
@@ -418,7 +430,9 @@ _ARROW = {"lockstep": "==>", "potential": "-->", "derived": "-.->"}
 
 def mermaid_producer(graph: dict, producer: str) -> str:
     """One producer and everything a release there puts in motion."""
-    lines = ["flowchart LR", f'  {_mid(producer)}["{producer}"]:::producer']
+    label = _label(producer, graph["nodes"][producer])
+    lines = ["flowchart LR", f'  {_mid(producer)}["{label}"]:::producer']
+    used = {"producer"}
     # Several edges of one kind to one consumer (three copies of a tag, say)
     # draw as one arrow with a count rather than three identical arrows.
     grouped: dict[tuple[str, str, str], int] = {}
@@ -429,12 +443,13 @@ def mermaid_producer(graph: dict, producer: str) -> str:
     for (to, kind, etype), count in sorted(grouped.items()):
         if to not in seen:
             node = graph["nodes"][to]
+            used.add(_node_class(node))
             lines.append(f'  {_mid(to)}["{_label(to, node)}"]:::{_node_class(node)}')
             seen.add(to)
         # Pipe labels take neither quotes nor parentheses, so the label is plain words.
-        label = f"{kind}, {etype}" + (f" x{count}" if count > 1 else "")
-        lines.append(f"  {_mid(producer)} {_ARROW[etype]}|{label}| {_mid(to)}")
-    lines.extend(f"  {c}" for c in _CLASSES)
+        edge_label = f"{kind}, {etype}" + (f" x{count}" if count > 1 else "")
+        lines.append(f"  {_mid(producer)} {_ARROW[etype]}|{edge_label}| {_mid(to)}")
+    lines.extend(_classdefs(used))
     return "\n".join(lines)
 
 
