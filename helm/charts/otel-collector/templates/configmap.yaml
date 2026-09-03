@@ -425,7 +425,11 @@ data:
     receivers:
       filelog:
         include: [/var/log/pods/*/*/*.log]
-        exclude: [/var/log/pods/*/otc-container/*.log]
+        # Must match the container name in daemonset.yaml -- kubelet builds this
+        # path from it. `otc-container` is the UPSTREAM chart's name, so the
+        # exclusion never matched and the collector shipped its own logs,
+        # including an error line per failed export.
+        exclude: [/var/log/pods/*/otel-collector/*.log]
         start_at: beginning
         include_file_path: true
         include_file_name: false
