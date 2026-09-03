@@ -81,6 +81,17 @@ suite, and owns the end-to-end case.
 **dfe-ui** owns the specs and page objects, beside the code they drive, so UI
 authors maintain them and the library grows with the product.
 
+**Two tiers, and a spec has to know which it is in.** dfe-ui's existing suite
+runs against `make e2e-server`: a dev-posture engine that mounts an
+unauthenticated seed API at `/api/e2e/seed-static` (`reset_all`,
+`seed_setup_complete`, `seed_organisation`, accounts with chosen passwords).
+That is fast and hermetic, and it is exactly the build-default stack this
+document says acceptance must not run on. A real deployment never mounts
+that API -- the local docker engine answers 404 -- so any spec that calls
+`e2eClient({ seedScript })` cannot run in the acceptance stage. Acceptance
+specs seed through the product API and the deployment's own credentials, or
+not at all.
+
 The human cycle stays. It moves to what it is uniquely good at: judgement
 about what a screen SHOULD say, rather than whether a button exists.
 
