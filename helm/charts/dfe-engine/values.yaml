@@ -53,12 +53,6 @@ clickhouse:
   port: 8123
   database: dfe
 
-postgresql:
-  host: ""
-  port: 5432
-  database: dfe
-  secretName: dfe-pg-app
-
 otel:
   endpoint: ""
 
@@ -97,7 +91,6 @@ auth:
   # Pin a known key for a deployment that restores from backup or rotates
   # centrally. Empty mints a 64-char random one.
   jwtSecret: ""
-  oidcEnabled: false
   # Trust X-Oidc-Subject / -Email / -Groups as authenticated identity.
   #
   # Only true where the gateway in front of this route STRIPS those headers off

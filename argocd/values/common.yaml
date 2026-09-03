@@ -123,10 +123,10 @@ clickhouse:
   passwordSecretName: clickhouse-admin-password
   passwordSecretKey: password
 
-postgresql:
-  host: ""  # Set per-environment: cnpg-cluster-rw.{namespace}.svc.cluster.local
-  port: 5432
-  database: dfe
+# No postgresql block: nothing consumes one. The engine keeps its state in
+# ClickHouse and its config in the gitops repo, and the CNPG cluster this stack
+# deploys is configured by cnpg-cluster's own values, not from here. A host set
+# here reached no chart -- `.Values.postgresql` was referenced by zero templates.
 
 # External secret backend (OpenBao / Vault / cloud KMS), per deployment. Set means
 # the deployment has one, and network-policies derives the engine's egress to it

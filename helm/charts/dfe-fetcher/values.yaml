@@ -20,6 +20,8 @@ replicaCount: 1
 
 kafka:
   bootstrapServers: ""
+  # Projected into DFE_FETCHER_KAFKA_SASL_USER / _PASSWORD / _MECHANISM. Empty
+  # drops the whole SASL block, for a broker that wants none.
   saslSecretName: dfe-kafka-user
 
 # API credentials are injected via External Secrets Operator

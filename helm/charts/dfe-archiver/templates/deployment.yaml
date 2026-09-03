@@ -41,13 +41,54 @@ spec:
               protocol: TCP
           env:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "ARCHIVER_") | nindent 12 }}
-            - name: KAFKA_BOOTSTRAP_SERVERS
+            # The archiver's only broker key, bare namespace (core config.rs:370).
+            - name: KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if .Values.kafka.saslSecretName }}
+            # The engine masks the password when it authors the config, so env is
+            # the only path a real credential travels. USER, not USERNAME
+            # (config.rs:385-390). The mechanism must come too: normalize()
+            # (config.rs:476-484) otherwise infers PLAIN, which a SCRAM broker
+            # refuses. It rides the same secret so the two cannot drift.
+            - name: KAFKA_SASL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            - name: KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
+            # The archiver derives nothing here: security_protocol defaults to
+            # PLAINTEXT (config.rs:134) and goes straight to librdkafka.
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            {{- end }}
             - name: S3_ENDPOINT
               value: {{ .Values.s3.endpoint | quote }}
             - name: S3_BUCKET
               value: {{ .Values.s3.bucket | quote }}
+            {{- with .Values.s3.secretName }}
+            # Names are config.rs:455-461. Empty secretName means no env at all,
+            # leaving the archiver on the platform's ambient identity.
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.s3.secretAccessKeyIdKey }}
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.s3.secretAccessKeySecretKey }}
+            {{- end }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
             # pre-created by the kafka chart (kafka.dlqTopics); names are the

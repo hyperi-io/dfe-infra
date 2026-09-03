@@ -101,6 +101,12 @@ jobs:
       - name: Rendered images carry the pinned digest
         run: python3 scripts/tests/test_image_digest_pin.py
 
+      # An env var with a name no app reads renders green and dry-runs green; the
+      # app just keeps its default and says nothing. Same for a declared
+      # kafka.saslSecretName that no template mounts.
+      - name: App env names match the apps' flat-env contracts
+        run: python3 scripts/tests/test_app_env_contract.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

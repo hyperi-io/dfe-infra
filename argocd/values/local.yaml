@@ -17,9 +17,6 @@ storageClass: local-path
 imagePullSecrets:
   - ghcr-pull-secret
 
-postgresql:
-  host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
-
 # Target dedicated DFE worker nodes (dfe-k8s-1/2/3).
 # Matches label + tolerates taint applied during node provisioning.
 nodeScheduling:

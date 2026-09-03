@@ -15,7 +15,14 @@ replicaCount: 1
 
 kafka:
   bootstrapServers: ""
+  # Projected into KAFKA_SASL_USER / _PASSWORD / _MECHANISM. Empty drops the whole
+  # SASL block, for a broker that wants none.
   saslSecretName: dfe-kafka-user
+  # Only consulted when saslSecretName is set. SASL_PLAINTEXT matches the listener
+  # this repo's kafka chart stands up (SASL_PLAINTEXT + SCRAM-SHA-512 on 9092 --
+  # helm/charts/kafka/templates/kafka.yaml). A broker on the TLS listener (9093)
+  # wants SASL_SSL. The archiver derives nothing here, so this value IS the setting.
+  securityProtocol: SASL_PLAINTEXT
   # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
   # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
   # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
@@ -26,7 +33,12 @@ kafka:
 s3:
   endpoint: ""
   bucket: dfe-archive
-  secretName: dfe-archiver-s3
+  # Object-store credentials, projected into S3_ACCESS_KEY_ID /
+  # S3_SECRET_ACCESS_KEY. Empty injects nothing and leaves the archiver on the
+  # platform's ambient identity (IRSA, workload identity, instance metadata).
+  secretName: ""
+  secretAccessKeyIdKey: access-key-id
+  secretAccessKeySecretKey: secret-access-key
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created

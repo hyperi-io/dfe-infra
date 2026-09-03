@@ -25,9 +25,6 @@ nodeScheduling: {}
 imagePullSecrets:
   - ghcr-pull-secret
 
-postgresql:
-  host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
-
 envoyGateway:
   service:
     type: LoadBalancer
