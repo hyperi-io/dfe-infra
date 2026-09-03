@@ -154,6 +154,29 @@ def test_the_schema_job_runs_the_pinned_engine_image() -> None:
     )
 
 
+def test_the_hyperdx_dashboards_init_container_carries_the_digest() -> None:
+    """A second copy of the engine pin, in a chart named after another app.
+
+    Its own helper builds the reference, so dfe-common.image's digest branch
+    does not cover it -- this is the only thing that reads the rendered result.
+    """
+    stack = current_stack()
+    want = f"{REGISTRY}/dfe-engine:{stack['apps']['dfe-engine']}@{stack['digests']['dfe-engine']}"
+    rendered = [
+        container["image"]
+        for doc in render("hyperdx", f"global.registry={REGISTRY}")
+        for container in (doc.get("spec", {}).get("template", {}).get("spec", {}) or {}).get(
+            "initContainers"
+        )
+        or []
+    ]
+    expect(
+        "the hyperdx dashboards init container renders the pinned engine digest",
+        rendered and all(i == want for i in rendered),
+        f"wanted {want}, got {rendered}",
+    )
+
+
 def test_a_chart_with_no_digest_renders_what_it_always_did() -> None:
     """The helper is optional: an unpublished app has no digest to carry.
 

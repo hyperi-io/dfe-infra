@@ -43,8 +43,6 @@ spec:
             # makes every credentials login fail before reaching the engine.
             - name: INTERNAL_API_URL
               value: {{ .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project (include "dfe-common.namespace" .)) | quote }}
-            - name: NEXT_PUBLIC_HYPERDX_URL
-              value: {{ .Values.config.nextPublicHyperdxUrl | quote }}
             # Read at request time by the (auth) layout: lights the /observe/*
             # sidebar entries that iframe the chromeless dfe-hyperdx fork.
             - name: HYPERDX_URL

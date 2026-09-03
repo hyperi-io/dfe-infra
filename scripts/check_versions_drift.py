@@ -482,6 +482,14 @@ CHECKS += [
         Path("helm/charts/hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
     ),
+    # The immutable half of that same second copy: the init container pulls the
+    # engine image, so a re-pushed tag lands bytes `dfe-stack verify` never saw.
+    Check(
+        "hyperdx dashboards init-container engine digest",
+        "digests.dfe-engine",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # The chart directory is `hyperdx` while the pin is `apps.dfe-hyperdx`, so it
     # does not fit _APP_CHARTS' name-derived path. Left unchecked it kept upstream
     # HyperDX's own appVersion, which is not a tag the fork ever publishes.

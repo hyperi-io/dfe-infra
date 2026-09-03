@@ -120,6 +120,9 @@ dashboards:
   image:
     repository: ""     # empty -> {{ global.registry }}/dfe-engine
     tag: "v1.17.13"     # == versions.yaml apps.dfe-engine (drift-checked)
+    # The immutable half of the pin; GHCR tags are mutable. This init container
+    # runs the ENGINE image, so it is versions.yaml digests.dfe-engine (drift-checked).
+    digest: "sha256:50c442839c79f3bfdbc2ccf6b45782408e5933656e8444d6c308cdd7550f4d60"
     pullPolicy: IfNotPresent
   resources:
     requests:
