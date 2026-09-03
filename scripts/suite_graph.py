@@ -335,13 +335,65 @@ def _mid(name: str) -> str:
     return name.replace("-", "_").replace(".", "_")
 
 
-# Okabe-Ito colours with an explicit text colour on every class, so the
-# diagrams read on GitHub's dark theme as well as the light one.
+# The HyperI brand tokens, verbatim from https://graphics.hyperi.io/tokens/tokens.css.
+# Every colour the diagrams below draw is one of these or a 0.45 fade of one.
+# `tertiary` is `--hyperi-tertiary`, the ink of the `<lockup>/tertiary/` icon
+# delivery: the one colour that reads on a light background and a dark one, so
+# it is what a diagram outlines with.
+PALETTE = {
+    "navy": "#000647",
+    "tertiary": "#2EA4F6",
+    "accent": "#2DED88",
+    "white": "#FFFFFF",
+    "black": "#000000",
+}
+
+FADE = 0.45
+
+
+def faded(colour: str, ratio: float = FADE) -> str:
+    """A brand colour mixed toward white, which is how an optional member is drawn."""
+    channels = colour.lstrip("#")
+    values = (int(channels[i:i + 2], 16) for i in (0, 2, 4))
+    return "#" + "".join(f"{round(c + (255 - c) * ratio):02X}" for c in values)
+
+
+# Fill, text colour and stroke width per class, against GitHub's light (#FFFFFF)
+# and dark (#0D1117) canvases.
+# Navy is an ink and the one-node emphasis plate rather than a fill for the many,
+# because a navy box is 1.01:1 against the dark canvas.
+# Text is navy on every chromatic or faded fill (6.9:1 or better) and white only
+# on navy (18.8:1).
+_CLASS_FILL = {
+    "general": (PALETTE["accent"], PALETTE["navy"], 2),
+    "suite": (PALETTE["tertiary"], PALETTE["navy"], 2),
+    "producer": (PALETTE["navy"], PALETTE["white"], 3),
+}
+
+# Every class strokes in the tertiary, the one colour that reads on both canvases
+# (2.71 light, 6.99 dark), at 2px because 2.71 is marginal for a hairline.
+# The producer is the single focal node of its diagram, so its outline is 3px.
+# An optional member takes the faded version of its audience's fill and keeps the
+# " (optional)" suffix, so colour is never the only signal.
+# The fade is soft against the light canvas by design, where the unfaded stroke
+# carries the boundary.
 _CLASSES = [
-    "classDef general fill:#009E73,stroke:#333,color:#fff",
-    "classDef suite fill:#999999,stroke:#333,color:#000",
-    "classDef producer fill:#E69F00,stroke:#333,color:#000",
+    f"classDef {name} fill:{fill},stroke:{PALETTE['tertiary']},"
+    f"stroke-width:{width}px,color:{text}"
+    for name, (fill, text, width) in _CLASS_FILL.items()
+] + [
+    f"classDef {audience}-optional fill:{faded(_CLASS_FILL[audience][0])},"
+    f"stroke:{PALETTE['tertiary']},stroke-width:2px,color:{PALETTE['navy']}"
+    for audience in AUDIENCES
 ]
+
+
+def _label(name: str, node: dict) -> str:
+    return name + (" (optional)" if node.get("optional") else "")
+
+
+def _node_class(node: dict) -> str:
+    return node["audience"] + ("-optional" if node.get("optional") else "")
 
 
 def mermaid_overview(graph: dict) -> str:
@@ -355,8 +407,7 @@ def mermaid_overview(graph: dict) -> str:
         lines.append("    direction LR")
         for name in sorted(by_role[role]):
             node = graph["nodes"][name]
-            suffix = " (optional)" if node.get("optional") else ""
-            lines.append(f'    {_mid(name)}["{name}{suffix}"]:::{node["audience"]}')
+            lines.append(f'    {_mid(name)}["{_label(name, node)}"]:::{_node_class(node)}')
         lines.append("  end")
     lines.extend(f"  {c}" for c in _CLASSES)
     return "\n".join(lines)
@@ -377,7 +428,8 @@ def mermaid_producer(graph: dict, producer: str) -> str:
     seen: set[str] = set()
     for (to, kind, etype), count in sorted(grouped.items()):
         if to not in seen:
-            lines.append(f'  {_mid(to)}["{to}"]:::{graph["nodes"][to]["audience"]}')
+            node = graph["nodes"][to]
+            lines.append(f'  {_mid(to)}["{_label(to, node)}"]:::{_node_class(node)}')
             seen.add(to)
         # Pipe labels take neither quotes nor parentheses, so the label is plain words.
         label = f"{kind}, {etype}" + (f" x{count}" if count > 1 else "")

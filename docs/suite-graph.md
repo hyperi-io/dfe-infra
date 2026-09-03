@@ -79,7 +79,7 @@ flowchart TB
   end
   subgraph service["service"]
     direction LR
-    culvert["culvert (optional)"]:::general
+    culvert["culvert (optional)"]:::general-optional
     dfe_archiver["dfe-archiver"]:::suite
     dfe_engine["dfe-engine"]:::suite
     dfe_fetcher["dfe-fetcher"]:::suite
@@ -94,9 +94,11 @@ flowchart TB
     dfe_hyperdx["dfe-hyperdx"]:::suite
     dfe_ui["dfe-ui"]:::suite
   end
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end overview -->
 
@@ -162,9 +164,11 @@ flowchart LR
   dfe_transform_vrl["dfe-transform-vrl"]:::suite
   scalo_rs -->|cargo-dep, potential| dfe_transform_vrl
   scalo_rs ==>|generated-file, lockstep| dfe_transform_vrl
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:scalo-rs -->
 
@@ -179,16 +183,18 @@ which is the lockstep half.
 ```mermaid
 flowchart LR
   scalo_py["scalo-py"]:::producer
-  culvert["culvert"]:::general
+  culvert["culvert (optional)"]:::general-optional
   scalo_py -->|python-dep, potential| culvert
   dfe_engine["dfe-engine"]:::suite
   scalo_py ==>|contract-guard, lockstep| dfe_engine
   scalo_py -->|python-dep, potential| dfe_engine
   vector_vrl["vector-vrl"]:::general
   scalo_py -->|python-dep, potential| vector_vrl
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:scalo-py -->
 
@@ -208,9 +214,11 @@ flowchart LR
   dfe_ui["dfe-ui"]:::suite
   dfe_engine -->|generated-file, potential| dfe_ui
   dfe_engine -->|vendored-file, potential| dfe_ui
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-engine -->
 
@@ -230,9 +238,11 @@ flowchart LR
   dfe_infra -.->|derived-pins, derived| dfe_docker
   dfe_engine["dfe-engine"]:::suite
   dfe_infra ==>|vendored-file, lockstep| dfe_engine
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-infra -->
 
@@ -253,9 +263,11 @@ flowchart LR
   dfe_schemas -->|python-dep, potential| dfe_engine
   dfe_infra["dfe-infra"]:::suite
   dfe_schemas ==>|version-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-schemas -->
 
@@ -271,9 +283,11 @@ flowchart LR
   logreducer["logreducer"]:::producer
   dfe_engine["dfe-engine"]:::suite
   logreducer -->|python-dep-undeclared, potential| dfe_engine
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:logreducer -->
 
@@ -293,9 +307,11 @@ flowchart LR
   dfe_ui["dfe-ui"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_ui ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-ui -->
 
@@ -305,9 +321,11 @@ flowchart LR
   dfe_hyperdx["dfe-hyperdx"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_hyperdx ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-hyperdx -->
 
@@ -322,9 +340,11 @@ flowchart LR
   dfe_deploy["dfe-deploy"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_deploy ==>|version-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-deploy -->
 
@@ -344,9 +364,11 @@ flowchart LR
   dfe_loader -->|mirrored-logic, potential| dfe_engine
   dfe_infra["dfe-infra"]:::suite
   dfe_loader ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-loader -->
 
@@ -358,9 +380,11 @@ flowchart LR
   dfe_receiver -->|mirrored-logic, potential| dfe_engine
   dfe_infra["dfe-infra"]:::suite
   dfe_receiver ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-receiver -->
 
@@ -370,9 +394,11 @@ flowchart LR
   dfe_fetcher["dfe-fetcher"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_fetcher ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-fetcher -->
 
@@ -382,9 +408,11 @@ flowchart LR
   dfe_archiver["dfe-archiver"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_archiver ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-archiver -->
 
@@ -394,9 +422,11 @@ flowchart LR
   dfe_transform_vrl["dfe-transform-vrl"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_transform_vrl ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-transform-vrl -->
 
@@ -406,9 +436,11 @@ flowchart LR
   dfe_transform_vector["dfe-transform-vector"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_transform_vector ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-transform-vector -->
 
@@ -418,9 +450,11 @@ flowchart LR
   dfe_transform_elastic["dfe-transform-elastic"]:::producer
   dfe_infra["dfe-infra"]:::suite
   dfe_transform_elastic ==>|image-pin, lockstep| dfe_infra
-  classDef general fill:#009E73,stroke:#333,color:#fff
-  classDef suite fill:#999999,stroke:#333,color:#000
-  classDef producer fill:#E69F00,stroke:#333,color:#000
+  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef suite-optional fill:#8CCDFA,stroke:#2EA4F6,stroke-width:2px,color:#000647
 ```
 <!-- suite-graph:end producer:dfe-transform-elastic -->
 

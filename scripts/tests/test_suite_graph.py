@@ -308,6 +308,74 @@ def test_mermaid_and_docs_render() -> None:
     expect("an empty pair renders the same as a stale one", filled == rendered)
 
 
+# The two canvases these diagrams are read on.
+CANVASES = {"light": "#FFFFFF", "dark": "#0D1117"}
+
+
+def _luminance(colour: str) -> float:
+    """WCAG relative luminance of a #RRGGBB colour."""
+    total = 0.0
+    for offset, weight in zip((1, 3, 5), (0.2126, 0.7152, 0.0722), strict=True):
+        value = int(colour[offset:offset + 2], 16) / 255
+        total += weight * (value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4)
+    return total
+
+
+def contrast(one: str, other: str) -> float:
+    """WCAG contrast ratio between two #RRGGBB colours."""
+    high, low = sorted((_luminance(one), _luminance(other)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _class_styles() -> dict[str, dict[str, str]]:
+    """Each house classDef as {name: {fill, stroke, color, ...}}."""
+    styles = {}
+    for line in suite_graph._CLASSES:
+        _, name, declarations = line.split(" ", 2)
+        styles[name] = dict(d.split(":", 1) for d in declarations.split(","))
+    return styles
+
+
+def test_contrast_on_both_canvases() -> None:
+    """No class may disappear or go unreadable on either GitHub theme."""
+    expect("the helper reproduces the known ratio for navy on the light canvas",
+           round(contrast("#000647", "#FFFFFF"), 2) == 18.80,
+           str(round(contrast("#000647", "#FFFFFF"), 2)))
+    for name, style in _class_styles().items():
+        ratio = contrast(style["color"], style["fill"])
+        expect(f"{name} text on its own fill clears 4.5:1", ratio >= 4.5, f"{ratio:.2f}")
+        for canvas, background in CANVASES.items():
+            # A soft fill is deliberate; the unfaded stroke carries the boundary there.
+            best = max(contrast(style["fill"], background), contrast(style["stroke"], background))
+            expect(f"{name} still reads on the {canvas} canvas", best >= 2.5, f"{best:.2f}")
+    navy_fills = [n for n, s in _class_styles().items() if s["fill"] == suite_graph.PALETTE["navy"]]
+    expect("navy is a fill for the producer alone", navy_fills == ["producer"], str(navy_fills))
+
+
+def test_brand_palette() -> None:
+    """Every colour a diagram draws is a graphics.hyperi.io token or a 0.45 fade of one."""
+    expect("the fade mixes 45 per cent white into the brand tertiary",
+           suite_graph.faded("#2EA4F6") == "#8CCDFA", suite_graph.faded("#2EA4F6"))
+    expect("fading white leaves white", suite_graph.faded("#FFFFFF") == "#FFFFFF")
+    g = suite_graph.parse_block_yaml(SAMPLE)
+    g["edges"].append({"from": "lib-a", "to": "side-c", "kind": "cargo-dep",
+                       "type": "potential", "evidence": "side-c/pyproject.toml:1"})
+    allowed = set(suite_graph.PALETTE.values()) | {
+        suite_graph.faded(c) for c in suite_graph.PALETTE.values()}
+    for label, block in (("overview", suite_graph.mermaid_overview(g)),
+                         ("producer diagram", suite_graph.mermaid_producer(g, "lib-a"))):
+        found = set(re.findall(r"#[0-9A-Fa-f]{3,6}", block))
+        expect(f"the {label} draws no colour outside the palette and its fades",
+               found <= allowed, str(sorted(found - allowed)))
+        expect(f"every classDef in the {label} carries a text colour",
+               all("color:" in line for line in block.splitlines() if "classDef" in line))
+        expect(f"every classDef in the {label} strokes in the both-modes tertiary",
+               all(f"stroke:{suite_graph.PALETTE['tertiary']}," in line
+                   for line in block.splitlines() if "classDef" in line))
+        expect(f"an optional member is faded AND labelled in the {label}",
+               '["side-c (optional)"]:::general-optional' in block, block)
+
+
 def test_an_unmatched_marker_is_refused() -> None:
     """A begin marker with no end marker can never be rewritten, so it must not read as in sync."""
     g = suite_graph.parse_block_yaml(SAMPLE)
@@ -364,6 +432,8 @@ if __name__ == "__main__":
     test_queries()
     test_unknown_slice_names_what_exists()
     test_mermaid_and_docs_render()
+    test_brand_palette()
+    test_contrast_on_both_canvases()
     test_an_unmatched_marker_is_refused()
     test_live_file()
     test_no_version_literal_in_the_live_file()
