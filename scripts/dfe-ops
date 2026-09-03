@@ -185,7 +185,7 @@ _LOOPBACK_SERVERS = ("https://127.0.0.1:6443", "https://[::1]:6443")
 # --- shared shell helpers ----------------------------------------------------
 def _run_capture(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run a subprocess, capturing output; raise CalledProcessError on failure."""
-    return subprocess.run(  # noqa: S603 - args are built from validated flags
+    return subprocess.run(
         cmd, capture_output=True, check=True
     )
 
@@ -193,7 +193,7 @@ def _run_capture(cmd: list[str]) -> subprocess.CompletedProcess:
 def _run_streaming(cmd: list[str], *, env: dict | None = None) -> int:
     """Run a subprocess inheriting stdio (live output); return its exit code."""
     print(f"==> {' '.join(cmd)}", file=sys.stderr)
-    return subprocess.run(cmd, env=env).returncode  # noqa: S603
+    return subprocess.run(cmd, env=env).returncode
 
 
 # --- kubeconfig subcommand ---------------------------------------------------
@@ -283,7 +283,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
         args.url, data=body, headers=headers, method=args.method.upper()
     )
     try:
-        with urllib.request.urlopen(  # noqa: S310 - explicit URL from flags
+        with urllib.request.urlopen(
             req, timeout=args.timeout, context=ctx
         ) as resp:
             status = resp.status
@@ -347,7 +347,7 @@ def cmd_deploy_values(args: argparse.Namespace) -> int:
     sha = None
     listing = None
     try:
-        with urllib.request.urlopen(  # noqa: S310 - URL from flags
+        with urllib.request.urlopen(
             urllib.request.Request(url, headers=headers), timeout=args.timeout
         ) as resp:
             info = json.loads(resp.read())
@@ -372,7 +372,7 @@ def cmd_deploy_values(args: argparse.Namespace) -> int:
         if sha is None:
             print(f"absent: {args.path}")
             return 1
-        with urllib.request.urlopen(  # noqa: S310
+        with urllib.request.urlopen(
             urllib.request.Request(url, headers=headers), timeout=args.timeout
         ) as resp:
             print(base64.b64decode(json.loads(resp.read())["content"]).decode())
@@ -401,7 +401,7 @@ def cmd_deploy_values(args: argparse.Namespace) -> int:
             method="PUT" if sha else "POST",
         )
     try:
-        with urllib.request.urlopen(req, timeout=args.timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
             print(f"HTTP {resp.status} - {args.action} {args.path}")
     except urllib.error.HTTPError as exc:
         print(f"{args.action} failed: HTTP {exc.code} {exc.read().decode('utf-8', 'replace')[:300]}", file=sys.stderr)
@@ -748,7 +748,7 @@ def _run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
     replacement so a stray non-ASCII byte under LC_ALL=C degrades instead of
     raising UnicodeDecodeError.
     """
-    proc = subprocess.run(  # noqa: S603 - argv is built from validated flags
+    proc = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
