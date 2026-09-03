@@ -274,9 +274,13 @@ def render_block(graph: dict, name: str) -> str:
 
 
 def render_docs(graph: dict, text: str) -> str:
-    """Replace every marked block in a docs page with its freshly generated Mermaid."""
+    """Replace every marked block in a docs page with its freshly generated Mermaid.
+
+    An empty pair of markers is a block too: that is how a page asks for a
+    diagram it has never held.
+    """
     pattern = re.compile(
-        r"<!-- suite-graph:begin (?P<name>[A-Za-z0-9_:.-]+) -->\n.*?\n<!-- suite-graph:end (?P=name) -->",
+        r"<!-- suite-graph:begin (?P<name>[A-Za-z0-9_:.-]+) -->\n(?:.*?\n)?<!-- suite-graph:end (?P=name) -->",
         re.DOTALL,
     )
 

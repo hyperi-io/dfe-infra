@@ -47,6 +47,41 @@ apart: dfe-schemas publishes to PyPI for anyone to install and is useless
 outside DFE.
 
 <!-- suite-graph:begin overview -->
+```mermaid
+flowchart LR
+  subgraph content
+    dfe_deploy["dfe-deploy"]:::suite
+    dfe_schemas["dfe-schemas"]:::suite
+  end
+  subgraph infra
+    dfe_docker["dfe-docker"]:::suite
+    dfe_infra["dfe-infra"]:::suite
+  end
+  subgraph library
+    clickhouse_dfe["clickhouse-dfe"]:::general
+    logreducer["logreducer"]:::general
+    scalo_py["scalo-py"]:::general
+    scalo_rs["scalo-rs"]:::general
+    vector_vrl["vector-vrl"]:::general
+  end
+  subgraph service
+    culvert["culvert (optional)"]:::general
+    dfe_archiver["dfe-archiver"]:::suite
+    dfe_engine["dfe-engine"]:::suite
+    dfe_fetcher["dfe-fetcher"]:::suite
+    dfe_loader["dfe-loader"]:::suite
+    dfe_receiver["dfe-receiver"]:::suite
+    dfe_transform_elastic["dfe-transform-elastic"]:::suite
+    dfe_transform_vector["dfe-transform-vector"]:::suite
+    dfe_transform_vrl["dfe-transform-vrl"]:::suite
+  end
+  subgraph ui
+    dfe_hyperdx["dfe-hyperdx"]:::suite
+    dfe_ui["dfe-ui"]:::suite
+  end
+  classDef general fill:#dff0d8,stroke:#3c763d
+  classDef suite fill:#e8e8e8,stroke:#555
+```
 <!-- suite-graph:end overview -->
 
 ## Reading an edge
@@ -80,6 +115,32 @@ inside it, so a scalo-rs release can change a consumer's image with no Cargo
 range moving. Both edges are walked.
 
 <!-- suite-graph:begin producer:scalo-rs -->
+```mermaid
+flowchart LR
+  scalo_rs["scalo-rs"]:::producer
+  dfe_archiver["dfe-archiver"]
+  scalo_rs -->|cargo-dep (potential)| dfe_archiver
+  scalo_rs ==>|generated-file (lockstep)| dfe_archiver
+  dfe_fetcher["dfe-fetcher"]
+  scalo_rs -->|cargo-dep (potential)| dfe_fetcher
+  scalo_rs ==>|generated-file (lockstep)| dfe_fetcher
+  dfe_loader["dfe-loader"]
+  scalo_rs -->|cargo-dep (potential)| dfe_loader
+  scalo_rs ==>|generated-file (lockstep)| dfe_loader
+  dfe_receiver["dfe-receiver"]
+  scalo_rs -->|cargo-dep (potential)| dfe_receiver
+  scalo_rs ==>|generated-file (lockstep)| dfe_receiver
+  dfe_transform_elastic["dfe-transform-elastic"]
+  scalo_rs -->|cargo-dep (potential)| dfe_transform_elastic
+  scalo_rs ==>|generated-file (lockstep)| dfe_transform_elastic
+  dfe_transform_vector["dfe-transform-vector"]
+  scalo_rs -->|cargo-dep (potential)| dfe_transform_vector
+  scalo_rs ==>|generated-file (lockstep)| dfe_transform_vector
+  dfe_transform_vrl["dfe-transform-vrl"]
+  scalo_rs -->|cargo-dep (potential)| dfe_transform_vrl
+  scalo_rs ==>|generated-file (lockstep)| dfe_transform_vrl
+  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+```
 <!-- suite-graph:end producer:scalo-rs -->
 
 ### scalo-py
@@ -89,6 +150,18 @@ base image it inherits from scalo and guards that with its own test, which is
 the lockstep half.
 
 <!-- suite-graph:begin producer:scalo-py -->
+```mermaid
+flowchart LR
+  scalo_py["scalo-py"]:::producer
+  culvert["culvert"]
+  scalo_py -->|python-dep (potential)| culvert
+  dfe_engine["dfe-engine"]
+  scalo_py ==>|contract-guard (lockstep)| dfe_engine
+  scalo_py -->|python-dep (potential)| dfe_engine
+  vector_vrl["vector-vrl"]
+  scalo_py -->|python-dep (potential)| vector_vrl
+  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+```
 <!-- suite-graph:end producer:scalo-py -->
 
 ### dfe-engine
@@ -99,6 +172,18 @@ and the drift check holds all three. dfe-ui vendors the engine's API spec and
 generates its scopes file from an engine module.
 
 <!-- suite-graph:begin producer:dfe-engine -->
+```mermaid
+flowchart LR
+  dfe_engine["dfe-engine"]:::producer
+  dfe_infra["dfe-infra"]
+  dfe_engine ==>|image-pin (lockstep)| dfe_infra
+  dfe_engine ==>|image-pin (lockstep)| dfe_infra
+  dfe_engine ==>|image-pin (lockstep)| dfe_infra
+  dfe_ui["dfe-ui"]
+  dfe_engine -->|generated-file (potential)| dfe_ui
+  dfe_engine -->|vendored-file (potential)| dfe_ui
+  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+```
 <!-- suite-graph:end producer:dfe-engine -->
 
 ### dfe-infra
@@ -108,11 +193,33 @@ dfe-infra opens a pass as well as closing it. dfe-deploy pins the certified
 stack; dfe-docker renders and holds nothing.
 
 <!-- suite-graph:begin producer:dfe-infra -->
+```mermaid
+flowchart LR
+  dfe_infra["dfe-infra"]:::producer
+  dfe_deploy["dfe-deploy"]
+  dfe_infra -->|version-pin (potential)| dfe_deploy
+  dfe_docker["dfe-docker"]
+  dfe_infra -.->|derived-pins (derived)| dfe_docker
+  dfe_engine["dfe-engine"]
+  dfe_infra ==>|vendored-file (lockstep)| dfe_engine
+  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+```
 <!-- suite-graph:end producer:dfe-infra -->
 
 ### dfe-schemas
 
 <!-- suite-graph:begin producer:dfe-schemas -->
+```mermaid
+flowchart LR
+  dfe_schemas["dfe-schemas"]:::producer
+  dfe_deploy["dfe-deploy"]
+  dfe_schemas ==>|version-pin (lockstep)| dfe_deploy
+  dfe_engine["dfe-engine"]
+  dfe_schemas -->|python-dep (potential)| dfe_engine
+  dfe_infra["dfe-infra"]
+  dfe_schemas ==>|version-pin (lockstep)| dfe_infra
+  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+```
 <!-- suite-graph:end producer:dfe-schemas -->
 
 ## The cycle table

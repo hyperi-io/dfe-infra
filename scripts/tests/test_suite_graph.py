@@ -150,6 +150,10 @@ def test_mermaid_and_docs_render() -> None:
     expect("marked block is replaced", "stale" not in rendered and "```mermaid" in rendered)
     expect("prose outside the block survives", rendered.startswith("intro\n") and rendered.endswith("outtro\n"))
     expect("render is idempotent", suite_graph.render_docs(g, rendered) == rendered)
+    empty = "intro\n<!-- suite-graph:begin producer:lib-a -->\n<!-- suite-graph:end producer:lib-a -->\nouttro\n"
+    filled = suite_graph.render_docs(g, empty)
+    expect("an EMPTY marker pair is rendered too", "```mermaid" in filled and "lib_a" in filled, filled)
+    expect("an empty pair renders the same as a stale one", filled == rendered)
 
 
 def test_live_file() -> None:
