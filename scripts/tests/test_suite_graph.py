@@ -12,9 +12,9 @@
 
 The reader is a hand-written subset parser, so the shapes suite.yaml uses --
 nested maps, block sequences of maps and of scalars, flow lists, quoted strings
-with hashes and colons inside -- are each asserted, and the live file is loaded
-and validated so a shape the reader cannot handle fails here before it fails
-in a tool.
+with hashes and colons inside -- are each asserted, the shapes it REFUSES are
+asserted too, and the live file is loaded and validated so a shape the reader
+cannot handle fails here before it fails in a tool.
 
     python3 scripts/tests/test_suite_graph.py
 
@@ -23,6 +23,8 @@ No third-party deps and no test runner, matching the tools it tests.
 
 from __future__ import annotations
 
+import datetime
+import re
 import sys
 from pathlib import Path
 
@@ -31,6 +33,24 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import suite_graph  # noqa: E402
 
 _failures = 0
+
+# The vocabulary the file documents and the tooling on both sides branches on.
+# A kind added to suite.yaml without a check on the hyperi-ai side is the
+# failure this pins down.
+EDGE_KIND_NAMES = [
+    "cargo-dep",
+    "contract-guard",
+    "derived-pins",
+    "generated-file",
+    "image-pin",
+    "mirrored-logic",
+    "python-dep",
+    "python-dep-undeclared",
+    "vendored-file",
+    "version-pin",
+]
+
+RUNTIME_KIND_NAMES = ["content-provision", "http-api", "management-api"]
 
 
 def expect(name: str, condition: bool, detail: str = "") -> None:
@@ -42,8 +62,24 @@ def expect(name: str, condition: bool, detail: str = "") -> None:
         print(f"FAIL  {name}  {detail}")
 
 
+def expect_raises(name: str, call, needle: str = "") -> None:
+    """The reader must REFUSE a shape, naming it, rather than coerce a value."""
+    global _failures
+    try:
+        call()
+    except ValueError as exc:
+        if needle and needle not in str(exc):
+            _failures += 1
+            print(f"FAIL  {name}  raised without {needle!r}: {exc}")
+        else:
+            print(f"PASS  {name}")
+        return
+    _failures += 1
+    print(f"FAIL  {name}  did not raise")
+
+
 SAMPLE = '''
-schema: 1
+schema: "1"
 tags:
   audience:
     general: "Stands alone: value with a colon # and a hash"
@@ -51,9 +87,13 @@ edge_kinds:
   cargo-dep:
     means: "range"
     gates: [cargo-build, cargo-test]
+runtime_kinds:
+  http-api:
+    means: "The consumer calls the producer's API at run time."
 nodes:
   lib-a:
     repo: org/lib-a
+    package: lib_a
     role: library
     language: rust
     audience: general
@@ -61,6 +101,7 @@ nodes:
     support: standard
     licence: Apache-2.0
     classification: oss
+    classification_source: in-repo
     default_in_pass: true
     artefacts:
       - kind: crate
@@ -76,12 +117,29 @@ nodes:
     support: standard
     licence: BUSL-1.1
     classification: product
+    classification_source: org-property
     default_in_pass: false
     artefacts:
       - kind: container
         registry: ghcr
         public: false
         published: false
+  side-c:
+    repo: org/side-c
+    role: service
+    language: python
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: general-oss
+    classification_source: org-property
+    optional: true
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: true
 edges:
   - from: lib-a
     to: app-b
@@ -89,6 +147,11 @@ edges:
     type: potential
     evidence: "app-b/Cargo.toml:35"
     note: "second range at Cargo.toml:180"
+runtime_edges:
+  - from: app-b
+    to: side-c
+    kind: http-api
+    note: "side-c calls app-b"
 lanes:
   - name: libraries
     members: [lib-a]
@@ -96,6 +159,7 @@ lanes:
   - name: consumers
     members:
       - app-b
+      - side-c
     why: "second"
 '''
 
@@ -112,8 +176,25 @@ def test_reader_shapes() -> None:
         {"kind": "crate", "registry": "crates.io", "public": True}])
     expect("comment between nodes does not end the map", "app-b" in g["nodes"])
     expect("edge map with note", g["edges"][0]["note"] == "second range at Cargo.toml:180")
-    expect("block sequence of scalars", g["lanes"][1]["members"] == ["app-b"])
+    expect("block sequence of scalars", g["lanes"][1]["members"] == ["app-b", "side-c"])
     expect("two lanes", [l["name"] for l in g["lanes"]] == ["libraries", "consumers"])
+    expect("runtime edge with no evidence", g["runtime_edges"][0]["kind"] == "http-api")
+
+
+def test_reader_refuses_what_pyyaml_would_read_differently() -> None:
+    parse = suite_graph.parse_block_yaml
+    expect_raises("a single-quoted scalar is refused",
+                  lambda: parse("role: 'library'\n"), "single-quoted")
+    expect_raises("an escaped quote inside a quoted string is refused",
+                  lambda: parse('note: "he said \\"hi\\" then left"\n'), "escaped quote")
+    expect_raises("a quoted item in a flow list is refused",
+                  lambda: parse('gates: ["a,b", c]\n'), "flow list")
+    expect_raises("a tab indent is refused",
+                  lambda: parse("nodes:\n\ta: 1\n"), "tab")
+    expect_raises("a duplicate key is refused",
+                  lambda: parse("nodes:\n  a:\n    x: 1\n  a:\n    x: 2\n"), "duplicate")
+    expect("only lowercase true and false are booleans",
+           parse("flag: True\nother: yes\n") == {"flag": "True", "other": "yes"})
 
 
 def test_validate_catches_the_obvious() -> None:
@@ -127,15 +208,79 @@ def test_validate_catches_the_obvious() -> None:
     expect("alpha in a default pass is a problem", any("alpha" in p for p in suite_graph.validate(g)))
 
 
+def test_validate_negative_cases() -> None:
+    """One case per branch, each starting from the clean sample."""
+
+    def broken(mutate) -> list[str]:
+        g = suite_graph.parse_block_yaml(SAMPLE)
+        mutate(g)
+        return suite_graph.validate(g)
+
+    def drop_required(g):
+        del g["nodes"]["lib-a"]["support"]
+
+    expect("a missing required field is named",
+           any("missing `support`" in p for p in broken(drop_required)))
+    expect("an unknown edge kind is named", any(
+        "not in edge_kinds" in p
+        for p in broken(lambda g: g["edges"][0].__setitem__("kind", "telepathy"))))
+    expect("an edge citing nothing is named", any(
+        "no evidence" in p
+        for p in broken(lambda g: g["edges"][0].__setitem__("evidence", ""))))
+    expect("a runtime edge into a non-node is named", any(
+        "is not a node" in p
+        for p in broken(lambda g: g["runtime_edges"][0].__setitem__("to", "ghost"))))
+    expect("a runtime kind from the BUILD vocabulary is refused", any(
+        "runtime_kinds" in p
+        for p in broken(lambda g: g["runtime_edges"][0].__setitem__("kind", "cargo-dep"))))
+    expect("a lane member that is not a node is named", any(
+        "member ghost is not a node" in p
+        for p in broken(lambda g: g["lanes"][0]["members"].append("ghost"))))
+    expect("default_in_pass that is not a boolean is named", any(
+        "not true or false" in p
+        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("default_in_pass", "yes"))))
+    expect("an artefact flag that is not a boolean is named", any(
+        "artefact `public`" in p
+        for p in broken(lambda g: g["nodes"]["lib-a"]["artefacts"][0].__setitem__("public", "True"))))
+    expect("an audience outside the vocabulary is named", any(
+        "audience" in p
+        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("audience", "everyone"))))
+    expect("a node in no lane is named", any(
+        "in no lane" in p
+        for p in broken(lambda g: g["lanes"][0]["members"].remove("lib-a"))))
+
+
 def test_queries() -> None:
     g = suite_graph.parse_block_yaml(SAMPLE)
-    rows = suite_graph.cycles(g)
-    expect("cycle table joins the kind", rows[0]["gates"] == ["cargo-build", "cargo-test"])
+    rows = suite_graph.cycle_table(g)
+    expect("the build-cycle table joins the kind", rows[0]["gates"] == ["cargo-build", "cargo-test"])
     s = suite_graph.slice_graph(g, producer="lib-a")
     expect("producer slice keeps producer and consumers", sorted(s["nodes"]) == ["app-b", "lib-a"])
     expect("producer slice keeps only the kinds it uses", list(s["edge_kinds"]) == ["cargo-dep"])
+    s = suite_graph.slice_graph(g, consumer="app-b")
+    expect("consumer slice keeps the consumer and what reaches it",
+           sorted(s["nodes"]) == ["app-b", "lib-a"] and len(s["edges"]) == 1)
+    expect("consumer slice of a node nothing reaches is just the node",
+           list(suite_graph.slice_graph(g, consumer="lib-a")["nodes"]) == ["lib-a"])
     s = suite_graph.slice_graph(g, lane="libraries")
     expect("lane slice keeps only the lane's members", list(s["nodes"]) == ["lib-a"] and s["edges"] == [])
+    expect("in_edges answers what reaches a consumer",
+           [e["from"] for e in suite_graph.in_edges(g, "app-b")] == ["lib-a"])
+
+
+def test_unknown_slice_names_what_exists() -> None:
+    g = suite_graph.parse_block_yaml(SAMPLE)
+    for label, kwargs, needle in (
+        ("an unknown producer", {"producer": "ghost"}, "lib-a"),
+        ("an unknown consumer", {"consumer": "ghost"}, "lib-a"),
+        ("an unknown lane", {"lane": "ghost"}, "libraries"),
+    ):
+        try:
+            suite_graph.slice_graph(g, **kwargs)
+        except KeyError as exc:
+            expect(f"{label} names what exists", needle in exc.args[0], exc.args[0])
+        else:
+            expect(f"{label} names what exists", False, "did not raise")
 
 
 def test_mermaid_and_docs_render() -> None:
@@ -143,6 +288,7 @@ def test_mermaid_and_docs_render() -> None:
     overview = suite_graph.mermaid_overview(g)
     expect("overview groups by role", "subgraph library" in overview and "subgraph service" in overview)
     expect("overview shades by audience", ':::general' in overview and ':::suite' in overview)
+    expect("an optional member is labelled as one", 'side-c (optional)' in overview)
     producer = suite_graph.mermaid_producer(g, "lib-a")
     expect("producer diagram labels the edge with plain words -- no quotes, no parentheses",
            "|cargo-dep, potential|" in producer and not any(c in producer.split("\n")[3] for c in '"()'))
@@ -162,23 +308,65 @@ def test_mermaid_and_docs_render() -> None:
     expect("an empty pair renders the same as a stale one", filled == rendered)
 
 
+def test_an_unmatched_marker_is_refused() -> None:
+    """A begin marker with no end marker can never be rewritten, so it must not read as in sync."""
+    g = suite_graph.parse_block_yaml(SAMPLE)
+    for label, page in (
+        ("no end marker at all",
+         "<!-- suite-graph:begin producer:lib-a -->\nstale\nouttro\n"),
+        ("the end marker names a different block",
+         "<!-- suite-graph:begin producer:lib-a -->\nstale\n"
+         "<!-- suite-graph:end producer:lib_a -->\n"),
+    ):
+        expect_raises(f"{label} raises and names the block",
+                      lambda page=page: suite_graph.render_docs(g, page), "producer:lib-a")
+
+
 def test_live_file() -> None:
     g = suite_graph.load()
     problems = suite_graph.validate(g)
     expect("live suite.yaml validates", problems == [], "; ".join(problems))
     expect("live file has a verified date", bool(g.get("verified")))
-    expect("no version literal in a node", not any(
-        "version" in n for n in g["nodes"].values()))
+    try:
+        datetime.date.fromisoformat(str(g.get("verified")))
+        parsed = True
+    except ValueError:
+        parsed = False
+    expect("the verified date parses as YYYY-MM-DD", parsed, str(g.get("verified")))
     expect("every lane member is a node", all(
         m in g["nodes"] for l in g["lanes"] for m in l["members"]))
+    expect("the edge-kind vocabulary is the documented ten",
+           sorted(g["edge_kinds"]) == EDGE_KIND_NAMES, str(sorted(g["edge_kinds"])))
+    expect("the runtime-kind vocabulary is separate and declared",
+           sorted(g["runtime_kinds"]) == RUNTIME_KIND_NAMES, str(sorted(g.get("runtime_kinds", {}))))
+    expect("every library node names the package it publishes", all(
+        "package" in g["nodes"][e["from"]]
+        for e in g["edges"] if e["kind"] in ("cargo-dep", "python-dep")))
+
+
+def test_no_version_literal_in_the_live_file() -> None:
+    """The rule is about the raw TEXT: a semver token anywhere is a second place to look a pin up."""
+    text = suite_graph.SUITE_FILE.read_text(encoding="utf-8", errors="replace")
+    verified = str(suite_graph.load().get("verified") or "")
+    found = [
+        token
+        for token in re.findall(r"\b\d+\.\d+\.\d+[A-Za-z0-9.+-]*", text)
+        if token != verified
+    ]
+    expect("no version literal anywhere in the raw file", found == [], str(found[:5]))
 
 
 if __name__ == "__main__":
     test_reader_shapes()
+    test_reader_refuses_what_pyyaml_would_read_differently()
     test_validate_catches_the_obvious()
+    test_validate_negative_cases()
     test_queries()
+    test_unknown_slice_names_what_exists()
     test_mermaid_and_docs_render()
+    test_an_unmatched_marker_is_refused()
     test_live_file()
+    test_no_version_literal_in_the_live_file()
     if _failures:
         print(f"\n{_failures} failure(s)")
         raise SystemExit(1)

@@ -37,20 +37,26 @@
 #     values at build time, so there is nothing to drift and nothing to
 #     check. The tooling walks past these.
 #
-# Every edge cites the CONSUMER's own file at a line. An edge nobody can cite
-# from the consumer side is not recorded here.
+# Every edge cites the CONSUMER's own file at a line where a line is
+# meaningful -- a whole-file vendored copy cites the file. An edge nobody can
+# cite from the consumer side is not recorded here.
+#
+# `evidence` is exactly ONE reference, and it is always the consumer's side.
+# Where the producer keeps its own copy of the same content, that copy is the
+# edge's `source`, and it is the only second reference an edge ever carries.
 #
 # The cycle table the tooling walks is `edges` grouped by `from`, joined to
 # `edge_kinds` for the check text and the gates: `dfe-stack suite --cycles`.
 #
 # FILE SHAPE: block style only -- nested maps, block sequences, one-line flow
-# sequences of plain words, and quoted one-line strings. No flow maps and no
-# folded scalars. scripts/suite_graph.py reads exactly this subset with the
-# standard library, so the CI checks run on a bare image without PyYAML, and
-# PyYAML reads it identically.
+# sequences of plain words, and double-quoted one-line strings. No flow maps,
+# no folded scalars, no single quotes. scripts/suite_graph.py reads exactly
+# this subset with the standard library, so the CI checks run on a bare image
+# without PyYAML. PyYAML reads this file too, and the subset is chosen so the
+# two agree on every value once the numerals it uses are quoted.
 # ---------------------------------------------------------------------------
 
-schema: 1
+schema: "1"
 
 # Every node and every edge below was checked against the working copies
 # under /projects on this date.
@@ -85,8 +91,14 @@ tags:
 
   default_in_pass: "True where an unattended suite pass may pick the member up. Always false for alpha and beta, which need naming explicitly every time."
 
-  # `licence` and `classification` record what the repo DECLARES, in the
-  # repo's own words. `none-declared` is a reading, not an omission.
+  package: "The name a library node PUBLISHES under, which is not always the repo name. A cargo-dep or python-dep edge out of that node is only read at a line declaring THAT name."
+
+  classification_source: "Which rung answered `classification`: in-repo for a marker in the repo itself (.hyperi-ci.yaml or .hyperi-classification), org-property for the hyperi-io custom property that answers when the repo declares nothing."
+
+  # `licence` records what the repo DECLARES, in the repo's own words, and
+  # `none-declared` there is a reading rather than an omission in the graph.
+  # `classification` always has an answer, and `classification_source` says
+  # which rung gave it.
 
 # ---------------------------------------------------------------------------
 # EDGE KINDS -- what each kind of edge means, what CHECKING it involves, and
@@ -146,6 +158,23 @@ edge_kinds:
     gates: [not-applicable]
 
 # ---------------------------------------------------------------------------
+# RUNTIME KINDS -- a SEPARATE vocabulary from edge_kinds, because a runtime
+# edge has no check and no gate: nothing is copied, so nothing can drift. A
+# name is legal on a runtime edge only if it is declared here, and a name from
+# edge_kinds is not legal here.
+# ---------------------------------------------------------------------------
+runtime_kinds:
+
+  http-api:
+    means: "The consumer calls the producer's HTTP API at run time."
+
+  content-provision:
+    means: "The producer writes content the consumer's own provisioner reads from a shared directory."
+
+  management-api:
+    means: "The producer drives the consumer through the consumer's management API."
+
+# ---------------------------------------------------------------------------
 # NODES
 # ---------------------------------------------------------------------------
 nodes:
@@ -160,7 +189,8 @@ nodes:
     maturity: ga
     support: standard
     licence: none-declared
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: git-tag
@@ -182,6 +212,7 @@ nodes:
     support: standard
     licence: BUSL-1.1
     classification: product
+    classification_source: in-repo
     default_in_pass: true
     artefacts:
       - kind: git-tag
@@ -199,7 +230,8 @@ nodes:
     maturity: ga
     support: standard
     licence: none-declared
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: git-tag
@@ -218,7 +250,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -237,7 +270,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -252,7 +286,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -267,7 +302,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -282,7 +318,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -299,7 +336,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -314,7 +352,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -330,6 +369,7 @@ nodes:
     support: standard
     licence: BUSL-1.1
     classification: product
+    classification_source: in-repo
     default_in_pass: false
     artefacts:
       - kind: container
@@ -354,7 +394,8 @@ nodes:
     maturity: ga
     support: standard
     licence: BUSL-1.1
-    classification: none-declared
+    classification: product
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -370,7 +411,8 @@ nodes:
     maturity: ga
     support: standard
     licence: MIT
-    classification: none-declared
+    classification: fork
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: container
@@ -386,6 +428,7 @@ nodes:
 
   scalo-rs:
     repo: hyperi-io/scalo-rs
+    package: scalo
     role: library
     language: rust
     audience: general
@@ -393,6 +436,7 @@ nodes:
     support: standard
     licence: Apache-2.0
     classification: oss
+    classification_source: in-repo
     default_in_pass: true
     artefacts:
       - kind: crate
@@ -405,6 +449,7 @@ nodes:
 
   scalo-py:
     repo: hyperi-io/scalo-py
+    package: scalo
     role: library
     language: python
     audience: general
@@ -412,6 +457,7 @@ nodes:
     support: standard
     licence: Apache-2.0
     classification: oss
+    classification_source: in-repo
     default_in_pass: true
     artefacts:
       - kind: package
@@ -422,13 +468,15 @@ nodes:
 
   logreducer:
     repo: hyperi-io/logreducer
+    package: logreducer
     role: library
     language: python
     audience: general
     maturity: ga
     support: standard
     licence: Apache-2.0
-    classification: none-declared
+    classification: general-oss
+    classification_source: org-property
     default_in_pass: true
     artefacts:
       - kind: package
@@ -439,6 +487,7 @@ nodes:
 
   dfe-schemas:
     repo: hyperi-io/dfe-schemas
+    package: dfe-schemas
     role: content
     language: python
     audience: suite
@@ -446,6 +495,7 @@ nodes:
     support: standard
     licence: BUSL-1.1
     classification: product
+    classification_source: in-repo
     default_in_pass: true
     artefacts:
       - kind: package
@@ -459,6 +509,7 @@ nodes:
 
   vector-vrl:
     repo: hyperi-io/vector-vrl
+    package: vector-vrl
     role: library
     language: python
     audience: general
@@ -466,6 +517,7 @@ nodes:
     support: standard
     licence: Apache-2.0
     classification: general-oss
+    classification_source: in-repo
     default_in_pass: true
     artefacts:
       - kind: package
@@ -484,6 +536,7 @@ nodes:
     support: standard
     licence: Apache-2.0
     classification: general-oss
+    classification_source: in-repo
     optional: true
     default_in_pass: true
     artefacts:
@@ -493,10 +546,15 @@ nodes:
     # The optional VPN. The only member with a PUBLIC container, and the only
     # member with no tie to dfe-infra at all: no chart, no pin, no reference
     # anywhere in the deployment layer. Its single suite edge is the scalo-py
-    # dependency. Membership is declared, not shown by any manifest.
+    # dependency. Membership is declared, not shown by any manifest -- the
+    # dfe-vpn chart in this repo is NOT culvert's, so the advisory naming it
+    # is about a chart with no member, not about culvert.
+    # Its in-repo marker states the numeric tier 4, which is the org
+    # property's general-oss.
 
   clickhouse-dfe:
     repo: hyperi-io/clickhouse-dfe
+    package: clickhouse-dfe
     role: library
     language: rust
     audience: general
@@ -504,6 +562,7 @@ nodes:
     support: standard
     licence: Apache-2.0
     classification: oss
+    classification_source: in-repo
     default_in_pass: false
     artefacts:
       - kind: crate
@@ -516,7 +575,8 @@ nodes:
 
 # ---------------------------------------------------------------------------
 # EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the
-# consumer's own file at a line.
+# consumer's own file at a line where a line is meaningful; a whole-file
+# vendored copy cites the file, and names the producer's copy as `source`.
 # ---------------------------------------------------------------------------
 edges:
 

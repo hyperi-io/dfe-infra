@@ -2,8 +2,9 @@
 #  File:         suite_graph.py
 #  Purpose:      Read suite.yaml (membership + build-cycle edges) with the
 #                standard library and answer the questions the tooling asks:
-#                out-edges of a producer, the cycle table, a lane or producer
-#                slice, and the Mermaid blocks docs/suite-graph.md carries.
+#                out-edges of a producer, in-edges of a consumer, the
+#                build-cycle table, a lane / producer / consumer slice, and
+#                the Mermaid blocks docs/suite-graph.md carries.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -11,9 +12,13 @@
 """suite.yaml reader and queries, shared by dfe-stack and check_suite_drift.py.
 
 suite.yaml is written in a block-style subset -- nested maps, block sequences
-of scalars or maps, one-line flow sequences of plain words, quoted one-line
-strings -- so this reader stays small and runs on a bare CI image. PyYAML
-reads the same file identically; nothing here is a second dialect.
+of scalars or maps, one-line flow sequences of plain words, double-quoted
+one-line strings -- so this reader stays small and runs on a bare CI image.
+PyYAML reads the same file; the subset is chosen so the two agree on every
+value once the numerals it uses are quoted. Anything outside the subset that
+the two would read DIFFERENTLY -- a single-quoted scalar, an escaped quote
+inside a quoted string, a quoted item in a flow list, a tab-indented line --
+is rejected here rather than coerced into a value PyYAML would disagree with.
 """
 
 from __future__ import annotations
@@ -25,8 +30,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SUITE_FILE = REPO_ROOT / "suite.yaml"
 
 EDGE_TYPES = ("potential", "lockstep", "derived")
+AUDIENCES = ("general", "suite")
 NODE_REQUIRED = ("repo", "role", "language", "audience", "maturity", "support",
-                 "licence", "classification", "default_in_pass", "artefacts")
+                 "licence", "classification", "classification_source",
+                 "default_in_pass", "artefacts")
+# Fields that are a yes or a no, wherever they appear. Only lowercase
+# `true`/`false` reads as a boolean, so `True` or `yes` lands here as a string
+# and is named rather than silently taken for truth.
+NODE_FLAGS = ("default_in_pass", "optional")
+ARTEFACT_FLAGS = ("public", "published")
 
 BEGIN = "<!-- suite-graph:begin {name} -->"
 END = "<!-- suite-graph:end {name} -->"
@@ -50,22 +62,52 @@ def _strip_comment(text: str) -> str:
 def _scalar(text: str):
     text = _strip_comment(text.strip())
     if text.startswith('"') and text.endswith('"') and len(text) >= 2:
+        if '\\"' in text:
+            raise ValueError(
+                f"suite.yaml: escaped quote in {text!r}; this reader does not "
+                f"unescape, and PyYAML would -- rewrite the value without one"
+            )
         return text[1:-1]
     if text.startswith("[") and text.endswith("]"):
         inner = text[1:-1].strip()
-        return [] if not inner else [_scalar(p) for p in inner.split(",")]
+        if not inner:
+            return []
+        items = [p.strip() for p in inner.split(",")]
+        for item in items:
+            if item.startswith(('"', "'")):
+                raise ValueError(
+                    f"suite.yaml: quoted item {item!r} in the flow list {text!r}; "
+                    f"flow lists take plain words only -- use a block sequence"
+                )
+        return [_scalar(p) for p in items]
+    if text.startswith("'"):
+        raise ValueError(
+            f"suite.yaml: single-quoted scalar {text!r}; this reader keeps the "
+            f"quotes and PyYAML would strip them -- use double quotes"
+        )
     if text in ("true", "false"):
         return text == "true"
     return text
 
 
 def parse_block_yaml(text: str):
-    """Parse the block-style subset suite.yaml is written in."""
+    """Parse the block-style subset suite.yaml is written in.
+
+    Raises:
+        ValueError: On a line outside the subset, or a shape this reader and
+            PyYAML would disagree about.
+    """
     lines: list[tuple[int, str]] = []
-    for raw in text.splitlines():
+    for number, raw in enumerate(text.splitlines(), start=1):
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
-        lines.append((len(raw) - len(raw.lstrip()), raw.strip()))
+        leading = raw[: len(raw) - len(raw.lstrip())]
+        if "\t" in leading:
+            raise ValueError(
+                f"suite.yaml line {number}: indented with a tab; YAML indents "
+                f"with spaces and a tab is not an indent at all"
+            )
+        lines.append((len(leading), raw.strip()))
 
     def parse_at(i: int, indent: int):
         if i >= len(lines):
@@ -83,6 +125,11 @@ def parse_block_yaml(text: str):
             if not m:
                 raise ValueError(f"suite.yaml: cannot read line {content!r}")
             key, rest = m.group(1), m.group(2)
+            if key in out:
+                raise ValueError(
+                    f"suite.yaml: duplicate key {key!r}; the second one would "
+                    f"silently replace the first"
+                )
             if rest is None or not _strip_comment(rest.strip()):
                 if i + 1 < len(lines) and lines[i + 1][0] > indent:
                     out[key], i = parse_at(i + 1, lines[i + 1][0])
@@ -136,12 +183,35 @@ def validate(graph: dict) -> list[str]:
     problems: list[str] = []
     nodes = graph.get("nodes", {})
     kinds = graph.get("edge_kinds", {})
+    runtime_kinds = graph.get("runtime_kinds", {})
+    in_a_lane = {m for lane in graph.get("lanes", []) for m in lane.get("members", [])}
     for name, node in nodes.items():
         for field in NODE_REQUIRED:
             if field not in node:
                 problems.append(f"node {name}: missing `{field}`")
+        for field in NODE_FLAGS:
+            if field in node and not isinstance(node[field], bool):
+                problems.append(
+                    f"node {name}: `{field}` is {node[field]!r}, which is not true or false"
+                )
+        for artefact in node.get("artefacts", []) or []:
+            if not isinstance(artefact, dict):
+                continue
+            for field in ARTEFACT_FLAGS:
+                if field in artefact and not isinstance(artefact[field], bool):
+                    problems.append(
+                        f"node {name}: artefact `{field}` is {artefact[field]!r}, "
+                        f"which is not true or false"
+                    )
+        if "audience" in node and node["audience"] not in AUDIENCES:
+            problems.append(
+                f"node {name}: audience {node['audience']!r} is not one of "
+                f"{', '.join(AUDIENCES)}"
+            )
         if node.get("maturity") in ("alpha", "beta") and node.get("default_in_pass") is True:
             problems.append(f"node {name}: {node['maturity']} members must not be default_in_pass")
+        if name not in in_a_lane:
+            problems.append(f"node {name}: in no lane, so no pass ever reaches it")
     for edge in graph.get("edges", []):
         where = f"edge {edge.get('from')} -> {edge.get('to')}"
         for end in ("from", "to"):
@@ -154,9 +224,15 @@ def validate(graph: dict) -> list[str]:
         if not edge.get("evidence"):
             problems.append(f"{where}: no evidence cited")
     for edge in graph.get("runtime_edges", []):
+        where = f"runtime edge {edge.get('from')} -> {edge.get('to')}"
         for end in ("from", "to"):
             if edge.get(end) not in nodes:
-                problems.append(f"runtime edge {edge.get('from')} -> {edge.get('to')}: `{end}` is not a node")
+                problems.append(f"{where}: `{end}` is not a node")
+        if edge.get("kind") not in runtime_kinds:
+            problems.append(
+                f"{where}: kind {edge.get('kind')!r} is not in runtime_kinds -- "
+                f"the two vocabularies are separate"
+            )
     for lane in graph.get("lanes", []):
         for member in lane.get("members", []):
             if member not in nodes:
@@ -177,8 +253,12 @@ def in_edges(graph: dict, consumer: str) -> list[dict]:
     return [e for e in graph.get("edges", []) if e.get("to") == consumer]
 
 
-def cycles(graph: dict) -> list[dict]:
-    """The cycle table: one row per (producer, kind, type), consumers merged."""
+def cycle_table(graph: dict) -> list[dict]:
+    """The BUILD-CYCLE table -- not graph cycles.
+
+    One row per (producer, kind, type), consumers merged: what a release at
+    the producer puts in motion, and the gates that prove each check.
+    """
     rows: dict[tuple[str, str, str], list[str]] = {}
     for edge in graph.get("edges", []):
         key = (edge["from"], edge["kind"], edge["type"])
@@ -197,11 +277,37 @@ def cycles(graph: dict) -> list[dict]:
     return out
 
 
-def slice_graph(graph: dict, *, producer: str | None = None, lane: str | None = None) -> dict:
-    """The subgraph one task needs: a producer's out-edges, or one lane's members."""
+def slice_graph(
+    graph: dict,
+    *,
+    producer: str | None = None,
+    consumer: str | None = None,
+    lane: str | None = None,
+) -> dict:
+    """The subgraph one task needs.
+
+    A producer's out-edges (what a release there puts in motion), a consumer's
+    in-edges (what reaches it, which is what a person picking up one member
+    wants), or one lane's members and the edges among them.
+
+    Raises:
+        KeyError: If the node or lane is not in the graph, naming what is.
+    """
+    nodes = graph.get("nodes", {})
     if producer:
+        if producer not in nodes:
+            raise KeyError(
+                f"no node named {producer!r}; nodes are {', '.join(sorted(nodes))}"
+            )
         edges = out_edges(graph, producer)
         keep = {producer} | {e["to"] for e in edges}
+    elif consumer:
+        if consumer not in nodes:
+            raise KeyError(
+                f"no node named {consumer!r}; nodes are {', '.join(sorted(nodes))}"
+            )
+        edges = in_edges(graph, consumer)
+        keep = {consumer} | {e["from"] for e in edges}
     elif lane:
         lanes = {l["name"]: l for l in graph.get("lanes", [])}
         if lane not in lanes:
@@ -293,18 +399,38 @@ def render_docs(graph: dict, text: str) -> str:
 
     An empty pair of markers is a block too: that is how a page asks for a
     diagram it has never held.
+
+    Raises:
+        ValueError: If a begin marker has no matching end marker. That block
+            can never be rewritten, so render and check would both report
+            green over content that is stale for good.
     """
     pattern = re.compile(
         r"<!-- suite-graph:begin (?P<name>[A-Za-z0-9_:.-]+) -->\n(?:.*?\n)?<!-- suite-graph:end (?P=name) -->",
         re.DOTALL,
     )
+    replaced: list[str] = []
 
     def replace(m: re.Match) -> str:
         name = m.group("name")
         body = render_block(graph, name)
+        replaced.append(name)
         return f"{BEGIN.format(name=name)}\n```mermaid\n{body}\n```\n{END.format(name=name)}"
 
-    return pattern.sub(replace, text)
+    fresh = pattern.sub(replace, text)
+    unmatched = []
+    pending = list(replaced)
+    for name in doc_block_names(text):
+        if name in pending:
+            pending.remove(name)
+        else:
+            unmatched.append(name)
+    if unmatched:
+        raise ValueError(
+            f"suite-graph block {unmatched[0]!r} has a begin marker and no "
+            f"matching end marker, so it can never be rewritten"
+        )
+    return fresh
 
 
 def doc_block_names(text: str) -> list[str]:

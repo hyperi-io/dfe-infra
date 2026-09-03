@@ -28,12 +28,22 @@ The diagrams on this page are generated from `suite.yaml` by
 `scripts/dfe-stack suite --render-docs` and compared against it by
 `scripts/check_suite_drift.py`. Edit the file, not the diagrams.
 
+That drift check has two halves. The in-repo half - structure, the charts, the
+pins, these diagrams - is binding wherever it runs. The cross-repo half reads
+each member's own file at the cited line, so it is SKIPPED, and says so, on a
+bare checkout with no member clones beside it, which is what CI has. An
+operator running it on a box with the clones on disk gets that half checked,
+and `--strict` there turns a skip into a failure.
+
 ## Reading a node
 
 One repo we own and release. Each declares what it is (`role`), who it is for
 (`audience`), what it ships (`artefacts`, each with its own `public` flag), and
-the licence and classification the repo itself states. `none-declared` is a
-reading of the repo, not an omission in the graph.
+its licence and classification. `licence` is what the repo itself states, and
+`none-declared` there is a reading of the repo rather than an omission in the
+graph. `classification` always has an answer, and `classification_source` says
+which rung gave it: `in-repo` for a marker in the repo itself, `org-property`
+for the hyperi-io custom property that answers when the repo declares nothing.
 
 `audience` is the tag written for the reader we will have at OSS GA:
 
@@ -106,12 +116,19 @@ consumer is CHECKED. Not bumped - checked.
 
 The `kind` says HOW the two are tied, and `edge_kinds` in the file carries the
 check and the gates once per kind. Every edge cites the consumer's own file at
-a line; an edge nobody could cite from the consumer side is not in the file.
+a line where a line is meaningful - a whole-file vendored copy cites the file,
+because no one line of it is the evidence. That citation is `evidence` and it
+is always the consumer's side; where the producer keeps its own copy of the
+same content, that copy is the edge's `source`, and it is the only second
+reference an edge carries. An edge nobody could cite from the consumer side is
+not in the file.
 
 ## The build cycles
 
-One diagram per producer whose release puts something in motion. Thick arrows
-are lockstep, plain arrows are potential, dotted arrows are derived.
+One diagram per producer whose release puts something in motion - every
+producer in the file has one, so a new producer with no block is an advisory
+the drift check raises rather than a gap nobody sees. Thick arrows are
+lockstep, plain arrows are potential, dotted arrows are derived.
 
 ### scalo-rs
 
@@ -153,9 +170,10 @@ flowchart LR
 
 ### scalo-py
 
-dfe-engine and culvert declare it by range. dfe-engine also pins the runtime
-base image it inherits from scalo and guards that with its own test, which is
-the lockstep half.
+dfe-engine, culvert and vector-vrl each declare it by range - vector-vrl in its
+build system rather than in the published wheel. dfe-engine also pins the
+runtime base image it inherits from scalo and guards that with its own test,
+which is the lockstep half.
 
 <!-- suite-graph:begin producer:scalo-py -->
 ```mermaid
@@ -220,6 +238,11 @@ flowchart LR
 
 ### dfe-schemas
 
+dfe-engine takes it as a package dependency by range. The two version pins are
+lockstep by policy rather than by a gate: the content block in `versions.yaml`
+is tagged with the stack release, so the pin here and the one in dfe-deploy
+move with it.
+
 <!-- suite-graph:begin producer:dfe-schemas -->
 ```mermaid
 flowchart LR
@@ -236,11 +259,184 @@ flowchart LR
 ```
 <!-- suite-graph:end producer:dfe-schemas -->
 
-## The cycle table
+### logreducer
+
+dfe-engine imports it and declares no dependency on it, deliberately: the
+sampler degrades with a message when it is absent. There is no range to test,
+so the check is running the tests that cover the named import sites.
+
+<!-- suite-graph:begin producer:logreducer -->
+```mermaid
+flowchart LR
+  logreducer["logreducer"]:::producer
+  dfe_engine["dfe-engine"]:::suite
+  logreducer -->|python-dep-undeclared, potential| dfe_engine
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:logreducer -->
+
+## The build cycles: the deployed members
+
+The other direction. Every deployed member is a producer too, and what its
+release puts in motion is a pin in this repo.
+
+### dfe-ui and dfe-hyperdx
+
+Each moves one image pin in this repo when it releases. dfe-hyperdx also has
+its release tag pinned in the content block.
+
+<!-- suite-graph:begin producer:dfe-ui -->
+```mermaid
+flowchart LR
+  dfe_ui["dfe-ui"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_ui ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-ui -->
+
+<!-- suite-graph:begin producer:dfe-hyperdx -->
+```mermaid
+flowchart LR
+  dfe_hyperdx["dfe-hyperdx"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_hyperdx ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-hyperdx -->
+
+### dfe-deploy
+
+The certified stack's own tag comes back the other way: dfe-deploy is pinned in
+this repo's content block as well as pinning this repo.
+
+<!-- suite-graph:begin producer:dfe-deploy -->
+```mermaid
+flowchart LR
+  dfe_deploy["dfe-deploy"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_deploy ==>|version-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-deploy -->
+
+### The components
+
+Every deployed component is a producer too. A component release moves its image
+pin here - its chart's appVersion and the digest mirror, both held by the drift
+check - and nothing else, with two exceptions: dfe-engine authors the loader's
+and the receiver's configs, so it carries a hand-written copy of each one's
+validation rules that no script can compare.
+
+<!-- suite-graph:begin producer:dfe-loader -->
+```mermaid
+flowchart LR
+  dfe_loader["dfe-loader"]:::producer
+  dfe_engine["dfe-engine"]:::suite
+  dfe_loader -->|mirrored-logic, potential| dfe_engine
+  dfe_infra["dfe-infra"]:::suite
+  dfe_loader ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-loader -->
+
+<!-- suite-graph:begin producer:dfe-receiver -->
+```mermaid
+flowchart LR
+  dfe_receiver["dfe-receiver"]:::producer
+  dfe_engine["dfe-engine"]:::suite
+  dfe_receiver -->|mirrored-logic, potential| dfe_engine
+  dfe_infra["dfe-infra"]:::suite
+  dfe_receiver ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-receiver -->
+
+<!-- suite-graph:begin producer:dfe-fetcher -->
+```mermaid
+flowchart LR
+  dfe_fetcher["dfe-fetcher"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_fetcher ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-fetcher -->
+
+<!-- suite-graph:begin producer:dfe-archiver -->
+```mermaid
+flowchart LR
+  dfe_archiver["dfe-archiver"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_archiver ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-archiver -->
+
+<!-- suite-graph:begin producer:dfe-transform-vrl -->
+```mermaid
+flowchart LR
+  dfe_transform_vrl["dfe-transform-vrl"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_transform_vrl ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-transform-vrl -->
+
+<!-- suite-graph:begin producer:dfe-transform-vector -->
+```mermaid
+flowchart LR
+  dfe_transform_vector["dfe-transform-vector"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_transform_vector ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-transform-vector -->
+
+<!-- suite-graph:begin producer:dfe-transform-elastic -->
+```mermaid
+flowchart LR
+  dfe_transform_elastic["dfe-transform-elastic"]:::producer
+  dfe_infra["dfe-infra"]:::suite
+  dfe_transform_elastic ==>|image-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
+```
+<!-- suite-graph:end producer:dfe-transform-elastic -->
+
+## The build-cycle table
 
 `scripts/dfe-stack suite --cycles` prints it from the file: one row per
 producer and edge kind, the consumers merged, with the check text and the gates
-that prove it. The tooling that walks a release walks that table.
+that prove it. The tooling that walks a release walks that table. It is not a
+listing of cycles in the graph - the graph has one, dfe-infra to dfe-engine and
+back, and the lanes are what resolve it.
+
+## What reaches one member
+
+`scripts/dfe-stack suite --consumer <node>` answers the other direction: the
+in-edges, so someone picking up one member sees every producer whose release
+puts work on their desk.
 
 ## Lanes
 

@@ -68,6 +68,11 @@ jobs:
       - name: suite.yaml reader and queries
         run: python3 scripts/tests/test_suite_graph.py
 
+      # A drift check that has stopped matching prints the same OK as one
+      # that is working, so each of its verdicts gets a case that produces it.
+      - name: Suite drift check failure paths
+        run: python3 scripts/tests/test_check_suite_drift.py
+
       - name: Terraform-output reader
         run: python3 scripts/tests/test_bridge.py
 
@@ -84,7 +89,8 @@ jobs:
 
       # Cross-repo citations are SKIPPED on this bare checkout and said so;
       # the in-repo half (structure, charts, pins, the docs diagrams) is
-      # binding. The release workflow runs it --strict.
+      # binding. --strict belongs to an operator run with the member clones
+      # on disk, which a runner does not have.
       - name: Suite graph drift check (suite.yaml is SSoT)
         run: python3 scripts/check_suite_drift.py
 
