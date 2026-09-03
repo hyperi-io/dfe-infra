@@ -10,8 +10,7 @@ cloud: local
 # change that clearly cannot impact dfe-engine may land directly here; then
 # raise a dfe-engine issue noting it was done, for politeness.
 
-# dfe-hyperdx fork image (combined API + App). CONFIRM the published image
-# name/tag from the fork's CI before first deploy.
+# dfe-hyperdx fork image (combined API + App), published to GHCR by the fork's CI.
 image:
   repository: ghcr.io/hyperi-io/dfe-hyperdx
   tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
@@ -20,11 +19,9 @@ image:
   digest: "sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca"
   pullPolicy: IfNotPresent
 
-# TODO(verify-on-publish): the fork image is NOT published yet (ghcr returns
-# MANIFEST_UNKNOWN), so its runtime UID could not be verified. This falls back to
-# the DFE default 1000. When the fork's CI ships the image, confirm its USER and
-# set podSecurityContext.runAsUser here if it is not 1000, or runAsNonRoot will
-# reject the pod. readOnlyRootFilesystem is off because the App is Next.js-based.
+# The image runs as USER node, which its node:alpine base creates as uid 1000, so
+# the DFE default runAsUser 1000 matches and runAsNonRoot admits the pod.
+# readOnlyRootFilesystem is off because the App is Next.js-based.
 containerSecurityContext:
   readOnlyRootFilesystem: false
 
