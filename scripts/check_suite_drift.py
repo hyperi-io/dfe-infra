@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -118,14 +120,24 @@ def check_app_pins(graph: dict) -> list[str]:
     return warns
 
 
-def check_docs(graph: dict) -> list[str]:
+def check_docs(graph: dict) -> tuple[list[str], list[str]]:
+    """The page's diagrams match the file, and parse where a Mermaid linter is on the host."""
+    rel = DOCS_PAGE.relative_to(REPO_ROOT)
     if not DOCS_PAGE.exists():
-        return [f"{DOCS_PAGE.relative_to(REPO_ROOT)} is missing"]
+        return [f"{rel} is missing"], []
     text = DOCS_PAGE.read_text(encoding="utf-8", errors="replace")
     fresh = suite_graph.render_docs(graph, text)
     if fresh != text:
-        return [f"{DOCS_PAGE.relative_to(REPO_ROOT)} diagrams differ from suite.yaml -- run `dfe-stack suite --render-docs`"]
-    return []
+        return [f"{rel} diagrams differ from suite.yaml -- run `dfe-stack suite --render-docs`"], []
+    maid = shutil.which("maid")
+    if not maid:
+        return [], ["mermaid syntax: `maid` is not on PATH"]
+    proc = subprocess.run([maid, str(DOCS_PAGE)], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        detail = (proc.stdout + proc.stderr).strip().splitlines()
+        return [f"{rel}: maid rejects a diagram -- {detail[0] if detail else 'see `maid`'}"], []
+    return [], []
 
 
 def main() -> int:
@@ -146,14 +158,20 @@ def main() -> int:
         fails += f
         warns += w
         warns += check_app_pins(graph)
-        fails += check_docs(graph)
+        f, s = check_docs(graph)
+        fails += f
+        skipped += s
 
     for line in warns:
         print(f"WARN  {line}")
     for line in fails:
         print(f"FAIL  {line}")
-    if skipped:
-        print(f"SKIPPED  citations into {', '.join(skipped)}: clone not found under {args.repos}")
+    repos_skipped = [s for s in skipped if not s.startswith("mermaid syntax")]
+    for s in skipped:
+        if s.startswith("mermaid syntax"):
+            print(f"SKIPPED  {s}")
+    if repos_skipped:
+        print(f"SKIPPED  citations into {', '.join(repos_skipped)}: clone not found under {args.repos}")
     if fails:
         print(f"FAIL -- {len(fails)} problem(s) in suite.yaml")
         return 1

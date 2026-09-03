@@ -144,7 +144,13 @@ def test_mermaid_and_docs_render() -> None:
     expect("overview groups by role", "subgraph library" in overview and "subgraph service" in overview)
     expect("overview shades by audience", ':::general' in overview and ':::suite' in overview)
     producer = suite_graph.mermaid_producer(g, "lib-a")
-    expect("producer diagram labels the edge", "|cargo-dep (potential)|" in producer)
+    expect("producer diagram labels the edge with plain words -- no quotes, no parentheses",
+           "|cargo-dep, potential|" in producer and not any(c in producer.split("\n")[3] for c in '"()'))
+    expect("every class carries an explicit text colour",
+           all("color:" in line for line in producer.splitlines() if "classDef" in line))
+    g["edges"].append(dict(g["edges"][0], evidence="app-b/other:1"))
+    expect("repeated edges collapse to one arrow with a count",
+           "|cargo-dep, potential x2|" in suite_graph.mermaid_producer(g, "lib-a"))
     page = "intro\n<!-- suite-graph:begin producer:lib-a -->\nstale\n<!-- suite-graph:end producer:lib-a -->\nouttro\n"
     rendered = suite_graph.render_docs(g, page)
     expect("marked block is replaced", "stale" not in rendered and "```mermaid" in rendered)

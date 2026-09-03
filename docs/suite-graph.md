@@ -48,23 +48,27 @@ outside DFE.
 
 <!-- suite-graph:begin overview -->
 ```mermaid
-flowchart LR
-  subgraph content
+flowchart TB
+  subgraph content["content"]
+    direction LR
     dfe_deploy["dfe-deploy"]:::suite
     dfe_schemas["dfe-schemas"]:::suite
   end
-  subgraph infra
+  subgraph infra["infra"]
+    direction LR
     dfe_docker["dfe-docker"]:::suite
     dfe_infra["dfe-infra"]:::suite
   end
-  subgraph library
+  subgraph library["library"]
+    direction LR
     clickhouse_dfe["clickhouse-dfe"]:::general
     logreducer["logreducer"]:::general
     scalo_py["scalo-py"]:::general
     scalo_rs["scalo-rs"]:::general
     vector_vrl["vector-vrl"]:::general
   end
-  subgraph service
+  subgraph service["service"]
+    direction LR
     culvert["culvert (optional)"]:::general
     dfe_archiver["dfe-archiver"]:::suite
     dfe_engine["dfe-engine"]:::suite
@@ -75,12 +79,14 @@ flowchart LR
     dfe_transform_vector["dfe-transform-vector"]:::suite
     dfe_transform_vrl["dfe-transform-vrl"]:::suite
   end
-  subgraph ui
+  subgraph ui["ui"]
+    direction LR
     dfe_hyperdx["dfe-hyperdx"]:::suite
     dfe_ui["dfe-ui"]:::suite
   end
-  classDef general fill:#dff0d8,stroke:#3c763d
-  classDef suite fill:#e8e8e8,stroke:#555
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
 ```
 <!-- suite-graph:end overview -->
 
@@ -118,28 +124,30 @@ range moving. Both edges are walked.
 ```mermaid
 flowchart LR
   scalo_rs["scalo-rs"]:::producer
-  dfe_archiver["dfe-archiver"]
-  scalo_rs -->|cargo-dep (potential)| dfe_archiver
-  scalo_rs ==>|generated-file (lockstep)| dfe_archiver
-  dfe_fetcher["dfe-fetcher"]
-  scalo_rs -->|cargo-dep (potential)| dfe_fetcher
-  scalo_rs ==>|generated-file (lockstep)| dfe_fetcher
-  dfe_loader["dfe-loader"]
-  scalo_rs -->|cargo-dep (potential)| dfe_loader
-  scalo_rs ==>|generated-file (lockstep)| dfe_loader
-  dfe_receiver["dfe-receiver"]
-  scalo_rs -->|cargo-dep (potential)| dfe_receiver
-  scalo_rs ==>|generated-file (lockstep)| dfe_receiver
-  dfe_transform_elastic["dfe-transform-elastic"]
-  scalo_rs -->|cargo-dep (potential)| dfe_transform_elastic
-  scalo_rs ==>|generated-file (lockstep)| dfe_transform_elastic
-  dfe_transform_vector["dfe-transform-vector"]
-  scalo_rs -->|cargo-dep (potential)| dfe_transform_vector
-  scalo_rs ==>|generated-file (lockstep)| dfe_transform_vector
-  dfe_transform_vrl["dfe-transform-vrl"]
-  scalo_rs -->|cargo-dep (potential)| dfe_transform_vrl
-  scalo_rs ==>|generated-file (lockstep)| dfe_transform_vrl
-  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+  dfe_archiver["dfe-archiver"]:::suite
+  scalo_rs -->|cargo-dep, potential| dfe_archiver
+  scalo_rs ==>|generated-file, lockstep| dfe_archiver
+  dfe_fetcher["dfe-fetcher"]:::suite
+  scalo_rs -->|cargo-dep, potential| dfe_fetcher
+  scalo_rs ==>|generated-file, lockstep| dfe_fetcher
+  dfe_loader["dfe-loader"]:::suite
+  scalo_rs -->|cargo-dep, potential| dfe_loader
+  scalo_rs ==>|generated-file, lockstep| dfe_loader
+  dfe_receiver["dfe-receiver"]:::suite
+  scalo_rs -->|cargo-dep, potential| dfe_receiver
+  scalo_rs ==>|generated-file, lockstep| dfe_receiver
+  dfe_transform_elastic["dfe-transform-elastic"]:::suite
+  scalo_rs -->|cargo-dep, potential| dfe_transform_elastic
+  scalo_rs ==>|generated-file, lockstep| dfe_transform_elastic
+  dfe_transform_vector["dfe-transform-vector"]:::suite
+  scalo_rs -->|cargo-dep, potential| dfe_transform_vector
+  scalo_rs ==>|generated-file, lockstep| dfe_transform_vector
+  dfe_transform_vrl["dfe-transform-vrl"]:::suite
+  scalo_rs -->|cargo-dep, potential| dfe_transform_vrl
+  scalo_rs ==>|generated-file, lockstep| dfe_transform_vrl
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
 ```
 <!-- suite-graph:end producer:scalo-rs -->
 
@@ -153,14 +161,16 @@ the lockstep half.
 ```mermaid
 flowchart LR
   scalo_py["scalo-py"]:::producer
-  culvert["culvert"]
-  scalo_py -->|python-dep (potential)| culvert
-  dfe_engine["dfe-engine"]
-  scalo_py ==>|contract-guard (lockstep)| dfe_engine
-  scalo_py -->|python-dep (potential)| dfe_engine
-  vector_vrl["vector-vrl"]
-  scalo_py -->|python-dep (potential)| vector_vrl
-  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+  culvert["culvert"]:::general
+  scalo_py -->|python-dep, potential| culvert
+  dfe_engine["dfe-engine"]:::suite
+  scalo_py ==>|contract-guard, lockstep| dfe_engine
+  scalo_py -->|python-dep, potential| dfe_engine
+  vector_vrl["vector-vrl"]:::general
+  scalo_py -->|python-dep, potential| vector_vrl
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
 ```
 <!-- suite-graph:end producer:scalo-py -->
 
@@ -175,14 +185,14 @@ generates its scopes file from an engine module.
 ```mermaid
 flowchart LR
   dfe_engine["dfe-engine"]:::producer
-  dfe_infra["dfe-infra"]
-  dfe_engine ==>|image-pin (lockstep)| dfe_infra
-  dfe_engine ==>|image-pin (lockstep)| dfe_infra
-  dfe_engine ==>|image-pin (lockstep)| dfe_infra
-  dfe_ui["dfe-ui"]
-  dfe_engine -->|generated-file (potential)| dfe_ui
-  dfe_engine -->|vendored-file (potential)| dfe_ui
-  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+  dfe_infra["dfe-infra"]:::suite
+  dfe_engine ==>|image-pin, lockstep x3| dfe_infra
+  dfe_ui["dfe-ui"]:::suite
+  dfe_engine -->|generated-file, potential| dfe_ui
+  dfe_engine -->|vendored-file, potential| dfe_ui
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
 ```
 <!-- suite-graph:end producer:dfe-engine -->
 
@@ -196,13 +206,15 @@ stack; dfe-docker renders and holds nothing.
 ```mermaid
 flowchart LR
   dfe_infra["dfe-infra"]:::producer
-  dfe_deploy["dfe-deploy"]
-  dfe_infra -->|version-pin (potential)| dfe_deploy
-  dfe_docker["dfe-docker"]
-  dfe_infra -.->|derived-pins (derived)| dfe_docker
-  dfe_engine["dfe-engine"]
-  dfe_infra ==>|vendored-file (lockstep)| dfe_engine
-  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+  dfe_deploy["dfe-deploy"]:::suite
+  dfe_infra -->|version-pin, potential| dfe_deploy
+  dfe_docker["dfe-docker"]:::suite
+  dfe_infra -.->|derived-pins, derived| dfe_docker
+  dfe_engine["dfe-engine"]:::suite
+  dfe_infra ==>|vendored-file, lockstep| dfe_engine
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
 ```
 <!-- suite-graph:end producer:dfe-infra -->
 
@@ -212,13 +224,15 @@ flowchart LR
 ```mermaid
 flowchart LR
   dfe_schemas["dfe-schemas"]:::producer
-  dfe_deploy["dfe-deploy"]
-  dfe_schemas ==>|version-pin (lockstep)| dfe_deploy
-  dfe_engine["dfe-engine"]
-  dfe_schemas -->|python-dep (potential)| dfe_engine
-  dfe_infra["dfe-infra"]
-  dfe_schemas ==>|version-pin (lockstep)| dfe_infra
-  classDef producer fill:#fcf8e3,stroke:#8a6d3b
+  dfe_deploy["dfe-deploy"]:::suite
+  dfe_schemas ==>|version-pin, lockstep| dfe_deploy
+  dfe_engine["dfe-engine"]:::suite
+  dfe_schemas -->|python-dep, potential| dfe_engine
+  dfe_infra["dfe-infra"]:::suite
+  dfe_schemas ==>|version-pin, lockstep| dfe_infra
+  classDef general fill:#009E73,stroke:#333,color:#fff
+  classDef suite fill:#999999,stroke:#333,color:#000
+  classDef producer fill:#E69F00,stroke:#333,color:#000
 ```
 <!-- suite-graph:end producer:dfe-schemas -->
 

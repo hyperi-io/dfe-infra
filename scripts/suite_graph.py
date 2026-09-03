@@ -229,21 +229,30 @@ def _mid(name: str) -> str:
     return name.replace("-", "_").replace(".", "_")
 
 
+# Okabe-Ito colours with an explicit text colour on every class, so the
+# diagrams read on GitHub's dark theme as well as the light one.
+_CLASSES = [
+    "classDef general fill:#009E73,stroke:#333,color:#fff",
+    "classDef suite fill:#999999,stroke:#333,color:#000",
+    "classDef producer fill:#E69F00,stroke:#333,color:#000",
+]
+
+
 def mermaid_overview(graph: dict) -> str:
-    """Nodes only, grouped by role, shaded by audience. Edges are the per-producer diagrams' job."""
+    """Nodes only, grouped by role, coloured by audience. Edges are the per-producer diagrams' job."""
     by_role: dict[str, list[str]] = {}
     for name, node in graph["nodes"].items():
         by_role.setdefault(node["role"], []).append(name)
-    lines = ["flowchart LR"]
+    lines = ["flowchart TB"]
     for role in sorted(by_role):
-        lines.append(f"  subgraph {role}")
+        lines.append(f'  subgraph {role}["{role}"]')
+        lines.append("    direction LR")
         for name in sorted(by_role[role]):
             node = graph["nodes"][name]
             suffix = " (optional)" if node.get("optional") else ""
             lines.append(f'    {_mid(name)}["{name}{suffix}"]:::{node["audience"]}')
         lines.append("  end")
-    lines.append("  classDef general fill:#dff0d8,stroke:#3c763d")
-    lines.append("  classDef suite fill:#e8e8e8,stroke:#555")
+    lines.extend(f"  {c}" for c in _CLASSES)
     return "\n".join(lines)
 
 
@@ -253,15 +262,21 @@ _ARROW = {"lockstep": "==>", "potential": "-->", "derived": "-.->"}
 def mermaid_producer(graph: dict, producer: str) -> str:
     """One producer and everything a release there puts in motion."""
     lines = ["flowchart LR", f'  {_mid(producer)}["{producer}"]:::producer']
+    # Several edges of one kind to one consumer (three copies of a tag, say)
+    # draw as one arrow with a count rather than three identical arrows.
+    grouped: dict[tuple[str, str, str], int] = {}
+    for edge in out_edges(graph, producer):
+        key = (edge["to"], edge["kind"], edge["type"])
+        grouped[key] = grouped.get(key, 0) + 1
     seen: set[str] = set()
-    for edge in sorted(out_edges(graph, producer), key=lambda e: (e["to"], e["kind"])):
-        to = edge["to"]
+    for (to, kind, etype), count in sorted(grouped.items()):
         if to not in seen:
-            lines.append(f'  {_mid(to)}["{to}"]')
+            lines.append(f'  {_mid(to)}["{to}"]:::{graph["nodes"][to]["audience"]}')
             seen.add(to)
-        label = f'{edge["kind"]} ({edge["type"]})'
-        lines.append(f"  {_mid(producer)} {_ARROW[edge['type']]}|{label}| {_mid(to)}")
-    lines.append("  classDef producer fill:#fcf8e3,stroke:#8a6d3b")
+        # Pipe labels take neither quotes nor parentheses, so the label is plain words.
+        label = f"{kind}, {etype}" + (f" x{count}" if count > 1 else "")
+        lines.append(f"  {_mid(producer)} {_ARROW[etype]}|{label}| {_mid(to)}")
+    lines.extend(f"  {c}" for c in _CLASSES)
     return "\n".join(lines)
 
 
