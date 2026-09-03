@@ -72,8 +72,10 @@ spec:
             # proxy and the login round-trip bounces to the wrong origin. The UI
             # serves on {hostname}.{domain} (the gateway routes.dfeUi default),
             # never the apex.
+            {{- with .Values.config.nextauthUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.config.hostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain)) }}
             - name: NEXTAUTH_URL
-              value: {{ .Values.config.nextauthUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.config.hostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain)) | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
