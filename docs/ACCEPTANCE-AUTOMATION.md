@@ -45,7 +45,7 @@ AUTHENTICATES against a deployment that rotated its credential. So the new
 stage rotates the break-glass password before it runs, and reads every
 credential from the deployment rather than from a product constant.
 
-## What "deployed and working" means
+## What "deployed and working" means -- all six, in this order
 
 1. **k8s**, **dfe-docker on a VM**, **dfe-docker locally**, and
    **developer-local**: the repos a UI developer clones (dfe-engine,
@@ -59,6 +59,13 @@ credential from the deployment rather than from a product constant.
    `auto_merge`, `PUT /api/v1/gitops/auto-merge`.
 4. A **filebeat source** with transform-vrl and the shipped filebeat VRL
    ingests real data, and the rows are visible through dfe-ui and HyperDX.
+5. The **subdomain and CIDR** the deployment was configured with are the
+   ones that serve it. A route that renders is not a route that answers.
+6. **OIDC through the estate's identity provider**, last: register it in the
+   wizard's optional step, log in through it, and prove the `X-Oidc-*`
+   header seam carries the identity to the engine. On devex that provider is
+   Dex. This needs the gateway before it: a redirect flow does not survive a
+   port-forwarded UI.
 
 Item 4 spans everything: source creation through the API, routing to a
 dedicated topic, a transform instance, the loader, a typed table, and two
