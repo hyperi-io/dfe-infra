@@ -30,7 +30,7 @@ appVersion: "2.2.0-rc.11"
 dependencies:
   # --- platform (layer2-platform, wave 2) -----------------------------------
   - name: network-policies
-    version: "0.2.1"
+    version: "0.3.0"
     repository: "file://../charts/network-policies"
     condition: network-policies.enabled
   # Default OFF for the trial: the gateway needs the envoy-gateway operator,
@@ -46,7 +46,7 @@ dependencies:
     repository: "file://../charts/cnpg-cluster"
     condition: cnpg-cluster.enabled
   - name: clickhouse-cluster
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/clickhouse-cluster"
     condition: clickhouse-cluster.enabled
   - name: ferretdb
@@ -56,7 +56,7 @@ dependencies:
   # kafka renders NOTHING while kafka.mode=disabled (the slim default); the
   # dependency stays enabled so profiles/single.yaml is a values change only.
   - name: kafka
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/kafka"
     condition: kafka.enabled
   - name: kafbat
