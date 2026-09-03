@@ -1,0 +1,875 @@
+# suite.yaml -- SINGLE SOURCE OF TRUTH for DFE suite membership and the
+# build-cycle dependencies between members.
+#
+# Sibling of versions.yaml and apps.yaml, and deliberately the same shape.
+# The three answer different questions and none of them answers another's:
+#   versions.yaml -- WHICH VERSION of each thing a stack pins.
+#   apps.yaml     -- WHAT KIND of app each deployed workload is.
+#   suite.yaml    -- WHICH REPOS are ours, what each one IS to an outside
+#                    reader, and WHAT MOVES when one of them releases.
+#
+# There is no version literal anywhere in this file, by rule. versions.yaml
+# owns versions; a semver range is the consumer's business and lives in the
+# consumer's own manifest, cited here and never copied.
+#
+# A repo absent from this file is not a member. Membership is DECLARED, never
+# inferred from a directory listing or a name prefix.
+#
+# SCOPE BOUND: the suite is what we control and release. A tracked fork of
+# someone else's project is not a member even when it sits in the org
+# (clickhouse-rs, clickhouse-arrow, tower, the linux patch trees). A
+# dependency on a fork is handled as a dependency by the lane that consumes
+# it. The test is release authority: if we do not cut its releases, it is not
+# a member, and a repo with no release tag fails that test until it has one.
+#
+# ---------------------------------------------------------------------------
+# HOW TO READ AN EDGE. An edge points PRODUCER -> CONSUMER and says: when the
+# producer releases, the consumer must be CHECKED. It does not say the
+# consumer must be bumped.
+#
+#   type: potential -- the default. The consumer declares a range or holds a
+#     copy. A producer release means run the check; most checks pass and
+#     nothing moves.
+#   type: lockstep -- the consumer cannot stay on the old producer. Either a
+#     gate fails the build or the two are tagged together by policy. Every
+#     lockstep edge below carries the evidence for that claim.
+#   type: derived -- the consumer holds NO copy. It renders the producer's
+#     values at build time, so there is nothing to drift and nothing to
+#     check. The tooling walks past these.
+#
+# Every edge cites the CONSUMER's own file at a line. An edge nobody can cite
+# from the consumer side is not recorded here.
+#
+# The cycle table the tooling walks is `edges` grouped by `from`, joined to
+# `edge_kinds` for the check text and the gates: `dfe-stack suite --cycles`.
+#
+# FILE SHAPE: block style only -- nested maps, block sequences, one-line flow
+# sequences of plain words, and quoted one-line strings. No flow maps and no
+# folded scalars. scripts/suite_graph.py reads exactly this subset with the
+# standard library, so the CI checks run on a bare image without PyYAML, and
+# PyYAML reads it identically.
+# ---------------------------------------------------------------------------
+
+schema: 1
+
+# Every node and every edge below was checked against the working copies
+# under /projects on this date.
+verified: "2026-09-03"
+
+# ---------------------------------------------------------------------------
+# TAG VOCABULARY -- defined here so a reader never has to guess, and written
+# for the reader we will have at OSS GA.
+# ---------------------------------------------------------------------------
+tags:
+
+  audience:
+    # Who the artefact is FOR: the tag that answers "can I use this without
+    # running DFE".
+    general: "Stands alone: someone with no DFE deployment can install it and get value. Consumed inside the suite as well, but that is not what it is for."
+    suite: "Only makes sense inside a DFE deployment. Useful to read, not useful to install on its own."
+
+  role:
+    library: "A package another member builds against."
+    service: "A deployed workload that processes data."
+    ui: "A deployed workload a person looks at."
+    infra: "Charts, manifests and the machinery that deploys the rest."
+    content: "Declarative content consumed by a service, not a program."
+    tooling: "Operates the suite; not part of a deployment."
+
+  maturity:
+    # Same ladder as versions.yaml. `support` is the orthogonal stance.
+    ladder: "alpha -> beta -> rc -> ga"
+    support: "standard | lts | eol"
+
+  optional: "True where a complete DFE deployment can omit the member entirely. Anything else is required."
+
+  default_in_pass: "True where an unattended suite pass may pick the member up. Always false for alpha and beta, which need naming explicitly every time."
+
+  # `licence` and `classification` record what the repo DECLARES, in the
+  # repo's own words. `none-declared` is a reading, not an omission.
+
+# ---------------------------------------------------------------------------
+# EDGE KINDS -- what each kind of edge means, what CHECKING it involves, and
+# which gate proves the check. The tooling joins an edge to its kind rather
+# than repeating this text on forty edges.
+# ---------------------------------------------------------------------------
+edge_kinds:
+
+  cargo-dep:
+    means: "The consumer's Cargo.toml declares the producer's crate by range."
+    check: "Does the cited range admit the new version? If yes, `cargo update -p <crate>` and rebuild. If no, widen the range first, then rebuild."
+    gates: [cargo-build, cargo-test, hyperi-ci-check]
+
+  python-dep:
+    means: "The consumer's pyproject.toml declares the producer's distribution by range."
+    check: "Does the cited range admit the new version? If yes, `uv lock --upgrade-package <name>` and run the suite. If no, widen the range first."
+    gates: [pytest, hyperi-ci-check]
+
+  python-dep-undeclared:
+    means: "The consumer imports the producer at runtime but declares no dependency, deliberately, and degrades with a message when it is absent."
+    check: "There is no range to test. Install the new version alongside the consumer and run the tests that exercise the import sites named on the edge."
+    gates: [pytest-named-import-sites]
+
+  generated-file:
+    means: "A file committed in the consumer is written by the producer's generator; the header names the generator and the schema version it emitted."
+    check: "Did the producer release change the generator or its schema version? If yes, regenerate with the command in the file's own header and commit the diff. If no, nothing moves."
+    gates: [regenerate-diff-empty, hyperi-ci-check]
+
+  contract-guard:
+    means: "The producer defines a deployment contract; the consumer's committed file must match it, and a test in the consumer fails when it does not."
+    check: "Run the consumer's contract test against the new producer version. It names the field that diverged when it fails."
+    gates: [consumer-contract-test]
+
+  vendored-file:
+    means: "The consumer commits a byte copy of a file the producer owns. Both copies are tracked, so drift is measurable."
+    check: "Compare `git hash-object` on the two paths. Equal means in sync. Unequal means re-vendor the producer's copy and rebuild whatever is generated from it."
+    gates: [blob-hashes-equal, consumer-build]
+
+  mirrored-logic:
+    means: "The consumer reimplements producer logic by hand. No file is copied, so no mechanical comparison is possible."
+    check: "Read the producer function named on the edge and confirm the consumer's copy still agrees. This is the only check on this list a script cannot perform."
+    gates: [human-read]
+
+  image-pin:
+    means: "The consumer pins the producer's container image, as a tag plus the digest that makes the tag immutable."
+    check: "Bump the tag and re-resolve the digest, then let the drift check confirm the chart's appVersion and the digest mirror agree with the pin."
+    gates: [check_versions_drift.py]
+
+  version-pin:
+    means: "The consumer pins the producer's release tag, with no artefact copied."
+    check: "Move the pin to the new tag and re-run the consumer's own validation."
+    gates: [consumer-validation-script]
+
+  derived-pins:
+    means: "The consumer holds no copy at all. It renders the producer's values at build time, from a local checkout or the signed OCI manifest."
+    check: "Nothing. There is no second copy that can drift. The tooling walks past this edge, and that is the point of recording it."
+    gates: [not-applicable]
+
+# ---------------------------------------------------------------------------
+# NODES
+# ---------------------------------------------------------------------------
+nodes:
+
+  # --- overarching ---------------------------------------------------------
+
+  dfe-infra:
+    repo: hyperi-io/dfe-infra
+    role: infra
+    language: python
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: none-declared
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: git-tag
+        registry: github
+        public: false
+      - kind: oci-manifest
+        registry: ghcr
+        public: false
+    # Owns versions.yaml, apps.yaml and every helm chart. It is both the FIRST
+    # mover in a pass (the app catalogue goes out) and the LAST (it consumes
+    # the new app versions), which is why lanes are declared, not derived.
+
+  dfe-docker:
+    repo: hyperi-io/dfe-docker
+    role: infra
+    language: python
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: product
+    default_in_pass: true
+    artefacts:
+      - kind: git-tag
+        registry: github
+        public: false
+    # Compiles each Rust member FROM SOURCE with its own builder Dockerfile
+    # rather than publishing a builder the members consume, so nothing in any
+    # member repo points back at it.
+
+  dfe-deploy:
+    repo: hyperi-io/dfe-deploy
+    role: content
+    language: none
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: none-declared
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: git-tag
+        registry: github
+        public: false
+    # The template for the customer-owned deploy repo. It pins dfe-infra and
+    # dfe-schemas by reference and vendors neither.
+
+  # --- orchestration -------------------------------------------------------
+
+  dfe-engine:
+    repo: hyperi-io/dfe-engine
+    role: service
+    language: python
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+    # The busiest node in the graph, and the only member carrying a copy of
+    # dfe-infra content (the app catalogue).
+
+  # --- components ----------------------------------------------------------
+
+  dfe-loader:
+    repo: hyperi-io/dfe-loader
+    role: service
+    language: rust
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+
+  dfe-receiver:
+    repo: hyperi-io/dfe-receiver
+    role: service
+    language: rust
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+
+  dfe-fetcher:
+    repo: hyperi-io/dfe-fetcher
+    role: service
+    language: rust
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+
+  dfe-archiver:
+    repo: hyperi-io/dfe-archiver
+    role: service
+    language: rust
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+    # Cargo workspace of three crates; the scalo range is declared once at
+    # the workspace root and inherited.
+
+  dfe-transform-vrl:
+    repo: hyperi-io/dfe-transform-vrl
+    role: service
+    language: rust
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+
+  dfe-transform-vector:
+    repo: hyperi-io/dfe-transform-vector
+    role: service
+    language: rust
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+
+  dfe-transform-elastic:
+    repo: hyperi-io/dfe-transform-elastic
+    role: service
+    language: rust
+    audience: suite
+    maturity: alpha
+    support: standard
+    licence: BUSL-1.1
+    classification: product
+    default_in_pass: false
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+        published: false
+    # Its versions.yaml pin is a placeholder, not a release tag, and it
+    # carries no digest, so the renderer excludes it from every manifest.
+
+  # dfe-transform-wasm and dfe-transform-splack are NOT members: neither has
+  # a release tag, so neither passes the release-authority test. Each joins
+  # when its first tag exists. Their charts and placeholder pins in this repo
+  # predate that test.
+
+  # --- ui ------------------------------------------------------------------
+
+  dfe-ui:
+    repo: hyperi-io/dfe-ui
+    role: ui
+    language: typescript
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+    # npm publish is opted out; only the container ships.
+
+  dfe-hyperdx:
+    repo: hyperi-io/dfe-hyperdx
+    role: ui
+    language: typescript
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: MIT
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: false
+    # Our governed HyperDX fork, a member because we cut its releases. The
+    # ONE member whose licence is inherited from upstream, so it cannot be
+    # relicensed and cannot absorb or be absorbed by a BUSL member.
+    # hyperi-io/hyperdx and hyperi-io/hyperdx-1 are plain mirrors, not
+    # members.
+
+  # --- libraries -----------------------------------------------------------
+
+  scalo-rs:
+    repo: hyperi-io/scalo-rs
+    role: library
+    language: rust
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: oss
+    default_in_pass: true
+    artefacts:
+      - kind: crate
+        registry: crates.io
+        public: true
+    # A private repo publishing a public crate. It also GENERATES each Rust
+    # member's Dockerfile and supplies the runtime base image inside it, so a
+    # scalo-rs release can change a consumer's build with no Cargo range
+    # moving.
+
+  scalo-py:
+    repo: hyperi-io/scalo-py
+    role: library
+    language: python
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: oss
+    default_in_pass: true
+    artefacts:
+      - kind: package
+        registry: pypi
+        public: true
+    # A private repo publishing a public package. Its deployment contract is
+    # enforced in dfe-engine by a test rather than by generation.
+
+  logreducer:
+    repo: hyperi-io/logreducer
+    role: library
+    language: python
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: none-declared
+    default_in_pass: true
+    artefacts:
+      - kind: package
+        registry: pypi
+        public: true
+    # Public repo. Its one suite consumer imports it without declaring it, so
+    # the usual range check does not apply -- see the edge.
+
+  dfe-schemas:
+    repo: hyperi-io/dfe-schemas
+    role: content
+    language: python
+    audience: suite
+    maturity: ga
+    support: standard
+    licence: BUSL-1.1
+    classification: product
+    default_in_pass: true
+    artefacts:
+      - kind: package
+        registry: pypi
+        public: true
+    # The baseline DDL, shipped as package data. It publishes publicly while
+    # being suite-only in audience, which is why those are separate fields.
+    # One build consumer, dfe-engine, as a package dependency; the git
+    # submodule it replaced is gone from every consumer but the engine's
+    # stale gitlink.
+
+  vector-vrl:
+    repo: hyperi-io/vector-vrl
+    role: library
+    language: python
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: general-oss
+    default_in_pass: true
+    artefacts:
+      - kind: package
+        registry: pypi
+        public: true
+    # A maturin wheel over a Rust crate, in a split layout with no manifest
+    # at the repo root. ZERO consumers inside the suite: a member on audience
+    # alone, as something we publish for anyone.
+
+  culvert:
+    repo: hyperi-io/culvert
+    role: service
+    language: python
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: general-oss
+    optional: true
+    default_in_pass: true
+    artefacts:
+      - kind: container
+        registry: ghcr
+        public: true
+    # The optional VPN. The only member with a PUBLIC container, and the only
+    # member with no tie to dfe-infra at all: no chart, no pin, no reference
+    # anywhere in the deployment layer. Its single suite edge is the scalo-py
+    # dependency. Membership is declared, not shown by any manifest.
+
+  clickhouse-dfe:
+    repo: hyperi-io/clickhouse-dfe
+    role: library
+    language: rust
+    audience: general
+    maturity: beta
+    support: standard
+    licence: Apache-2.0
+    classification: oss
+    default_in_pass: false
+    artefacts:
+      - kind: crate
+        registry: crates.io
+        public: true
+    # Our ClickHouse transport crate, published and recently first-tagged.
+    # NO suite member consumes it yet: dfe-loader still reaches ClickHouse
+    # through the upstream crate with a patch onto the clickhouse-rs fork, so
+    # a release here moves nothing until that patch is retired.
+
+# ---------------------------------------------------------------------------
+# EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the
+# consumer's own file at a line.
+# ---------------------------------------------------------------------------
+edges:
+
+  # --- scalo-rs: the crate range -------------------------------------------
+
+  - from: scalo-rs
+    to: dfe-loader
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-loader/Cargo.toml:35"
+  - from: scalo-rs
+    to: dfe-receiver
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-receiver/Cargo.toml:25"
+    note: "A second range for the test-support feature sits at Cargo.toml:180 and must move with it."
+  - from: scalo-rs
+    to: dfe-fetcher
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-fetcher/Cargo.toml:35"
+  - from: scalo-rs
+    to: dfe-archiver
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-archiver/Cargo.toml:45"
+    note: "Workspace root; the three crates inherit it via workspace = true."
+  - from: scalo-rs
+    to: dfe-transform-vrl
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-transform-vrl/Cargo.toml:69"
+    note: "A second range for the dev dependency sits at Cargo.toml:176."
+  - from: scalo-rs
+    to: dfe-transform-vector
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-transform-vector/Cargo.toml:44"
+    note: "A second range for the dev dependency sits at Cargo.toml:109."
+  - from: scalo-rs
+    to: dfe-transform-elastic
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-transform-elastic/Cargo.toml:124"
+    note: "Alpha. Its floor is lower than the other six, so it can resolve an older scalo."
+
+  # --- scalo-rs: the generated Dockerfile ----------------------------------
+  # The Rust members do not hand-write a Dockerfile: scalo generates it, and
+  # the runtime base image is a constant inside scalo. The generated header
+  # carries the emitting schema version, which is the signal to compare.
+
+  - from: scalo-rs
+    to: dfe-loader
+    kind: generated-file
+    type: lockstep
+    evidence: "dfe-loader/Dockerfile:8-12"
+    note: "Regenerate command is in the file header. All seven were emitted at the same schema version when checked."
+  - from: scalo-rs
+    to: dfe-receiver
+    kind: generated-file
+    type: lockstep
+    evidence: "dfe-receiver/Dockerfile:8-12"
+  - from: scalo-rs
+    to: dfe-fetcher
+    kind: generated-file
+    type: lockstep
+    evidence: "dfe-fetcher/Dockerfile:8-12"
+  - from: scalo-rs
+    to: dfe-archiver
+    kind: generated-file
+    type: lockstep
+    evidence: "dfe-archiver/Dockerfile:8-12"
+  - from: scalo-rs
+    to: dfe-transform-vrl
+    kind: generated-file
+    type: lockstep
+    evidence: "dfe-transform-vrl/Dockerfile:8-12"
+  - from: scalo-rs
+    to: dfe-transform-vector
+    kind: generated-file
+    type: lockstep
+    evidence: "dfe-transform-vector/Dockerfile:8-12"
+  - from: scalo-rs
+    to: dfe-transform-elastic
+    kind: generated-file
+    type: lockstep
+    evidence: "dfe-transform-elastic/Dockerfile:8-12"
+
+  # --- scalo-py ------------------------------------------------------------
+
+  - from: scalo-py
+    to: dfe-engine
+    kind: python-dep
+    type: potential
+    evidence: "dfe-engine/pyproject.toml:37"
+    note: "The range has no upper bound, so it admits a future major without complaint."
+  - from: scalo-py
+    to: dfe-engine
+    kind: contract-guard
+    type: lockstep
+    evidence: "dfe-engine/src/dfe_engine/deployment_contract.py:74-78"
+    note: "dfe-engine overrides scalo's runtime base image with its own literal, and its own test fails when the committed Dockerfile stops matching."
+  - from: scalo-py
+    to: culvert
+    kind: python-dep
+    type: potential
+    evidence: "culvert/pyproject.toml:21"
+    note: "A second range for the deployment-contract generators sits at pyproject.toml:44 and is dev-only."
+  - from: scalo-py
+    to: vector-vrl
+    kind: python-dep
+    type: potential
+    evidence: "vector-vrl/build/pyproject.toml:19"
+    note: "Build system only, not the published wheel. The range has no upper bound."
+
+  # --- dfe-schemas ---------------------------------------------------------
+
+  - from: dfe-schemas
+    to: dfe-engine
+    kind: python-dep
+    type: potential
+    evidence: "dfe-engine/pyproject.toml:42"
+    note: "Package data replaced the git submodule. The range has no upper bound."
+  - from: dfe-schemas
+    to: dfe-infra
+    kind: version-pin
+    type: lockstep
+    evidence: "dfe-infra/versions.yaml:1601"
+    note: "Lockstep by policy: the content block is tagged with the stack release, stated at versions.yaml:1597."
+  - from: dfe-schemas
+    to: dfe-deploy
+    kind: version-pin
+    type: lockstep
+    evidence: "dfe-deploy/pins.yaml:17"
+    note: "The pin's own comment calls it a lockstep tag by default."
+
+  # --- logreducer ----------------------------------------------------------
+
+  - from: logreducer
+    to: dfe-engine
+    kind: python-dep-undeclared
+    type: potential
+    evidence: "dfe-engine/src/dfe_engine/sampling/service.py:200"
+    note: "Also imported at service.py:236 and sampling/kafka_reader.py:134. pyproject.toml:109 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
+
+  # --- dfe-engine ----------------------------------------------------------
+
+  - from: dfe-engine
+    to: dfe-ui
+    kind: vendored-file
+    type: potential
+    evidence: "dfe-ui/packages/dfe-engine-types/specs/openapi.json"
+    note: "A committed copy of the engine's own spec, plus the e2e spec beside it; both byte-identical to the engine when checked. Re-vendoring is the manual step at dfe-ui/docs/engine-api-client.md:33-34."
+  - from: dfe-engine
+    to: dfe-ui
+    kind: generated-file
+    type: potential
+    evidence: "dfe-ui/packages/dfe-engine-types/scopes/index.ts:1"
+    note: "The file header names the engine module it was generated from."
+  - from: dfe-engine
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-engine/Chart.yaml:6"
+  - from: dfe-engine
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-schema/values.yaml:14"
+    note: "The dfe-schema chart runs an entry point of the ENGINE image, so it is a second copy of the engine tag and moves with it."
+  - from: dfe-engine
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:122"
+    note: "A third copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
+
+  # --- dfe-infra -----------------------------------------------------------
+
+  - from: dfe-infra
+    to: dfe-engine
+    kind: vendored-file
+    type: lockstep
+    evidence: "dfe-engine/src/dfe_engine/appmgmt/apps.yaml"
+    note: "The app catalogue, byte-identical to dfe-infra's copy when checked; the engine bundles it as the last resort in the three-step resolution order stated in the file header. Lockstep because a catalogue entry the engine does not know about is not reflected by its management API."
+  - from: dfe-infra
+    to: dfe-deploy
+    kind: version-pin
+    type: potential
+    evidence: "dfe-deploy/pins.yaml:12"
+    note: "One pin selects the whole certified stack. dfe-deploy also invokes a dfe-infra script by path at pins.yaml:35."
+  - from: dfe-infra
+    to: dfe-docker
+    kind: derived-pins
+    type: derived
+    evidence: "dfe-docker/scripts/stack.py:17-28"
+    note: "Rendered from a local dfe-infra checkout when one is named, else pulled from the signed OCI stack manifest. Nothing is committed on the dfe-docker side. A second consumer of the same manifest sits at ops/daemon-update/self_update.py:51."
+
+  # --- the components into dfe-infra ---------------------------------------
+  # Each chart's appVersion must equal the versions.yaml pin, and the digest
+  # mirror must equal the digest. The drift check enforces both, which is
+  # what makes these lockstep rather than potential.
+
+  - from: dfe-loader
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-loader/Chart.yaml:6"
+  - from: dfe-receiver
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-receiver/Chart.yaml:6"
+  - from: dfe-fetcher
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-fetcher/Chart.yaml:6"
+  - from: dfe-archiver
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-archiver/Chart.yaml:6"
+  - from: dfe-transform-vrl
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-transform-vrl/Chart.yaml:6"
+  - from: dfe-transform-vector
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-transform-vector/Chart.yaml:6"
+  - from: dfe-transform-elastic
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-transform-elastic/Chart.yaml:6"
+    note: "Placeholder pin, no digest, excluded from every rendered manifest until it first publishes."
+  - from: dfe-ui
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/dfe-ui/Chart.yaml:6"
+  - from: dfe-hyperdx
+    to: dfe-infra
+    kind: image-pin
+    type: lockstep
+    evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:16"
+    note: "The only chart naming a registry literally rather than composing one from the global registry. Its release tag is also pinned in the content block at versions.yaml:1604."
+  - from: dfe-deploy
+    to: dfe-infra
+    kind: version-pin
+    type: lockstep
+    evidence: "dfe-infra/versions.yaml:1603"
+    note: "Lockstep by the same content-block policy at versions.yaml:1597."
+
+  # --- the components into dfe-engine --------------------------------------
+  # dfe-engine authors these apps' configs, so it carries a hand-written copy
+  # of their validation rules. No file is copied, so nothing can compare them.
+
+  - from: dfe-loader
+    to: dfe-engine
+    kind: mirrored-logic
+    type: potential
+    evidence: "dfe-engine/src/dfe_engine/services/plugins_builtin/loader.py:36"
+    note: "Mirrors the loader's own config validation, deliberately scoped by transport. Re-read it whenever the loader's config schema changes."
+  - from: dfe-receiver
+    to: dfe-engine
+    kind: mirrored-logic
+    type: potential
+    evidence: "dfe-engine/src/dfe_engine/services/plugins_builtin/receiver.py:32"
+    note: "Mirrors the receiver's own config validation."
+
+# ---------------------------------------------------------------------------
+# RUNTIME EDGES -- real dependencies between members at run time, recorded so
+# the picture is complete for an outside reader. The tooling does NOT walk
+# these: a release on either side changes no file in the other, so there is
+# nothing for a build-cycle pass to check.
+# ---------------------------------------------------------------------------
+runtime_edges:
+
+  - from: dfe-engine
+    to: dfe-ui
+    kind: http-api
+    note: "The UI calls the engine's API. The build-cycle half of this relationship is the vendored spec above; the calls themselves are runtime."
+  - from: dfe-engine
+    to: dfe-hyperdx
+    kind: content-provision
+    evidence: "dfe-engine/src/dfe_engine/hyperdx/dashboards/__init__.py:16-23"
+    note: "The engine owns the dashboard content and writes it to a directory; HyperDX's own provisioner reads that directory on a cron and upserts. Kubernetes only."
+  - from: dfe-engine
+    to: dfe-loader
+    kind: management-api
+    evidence: "dfe-infra/apps.yaml"
+  - from: dfe-engine
+    to: dfe-receiver
+    kind: management-api
+    evidence: "dfe-infra/apps.yaml"
+  - from: dfe-engine
+    to: dfe-fetcher
+    kind: management-api
+    evidence: "dfe-infra/apps.yaml"
+  - from: dfe-engine
+    to: dfe-archiver
+    kind: management-api
+    evidence: "dfe-infra/apps.yaml"
+  - from: dfe-engine
+    to: dfe-transform-vrl
+    kind: management-api
+    evidence: "dfe-infra/apps.yaml"
+  - from: dfe-engine
+    to: dfe-transform-vector
+    kind: management-api
+    evidence: "dfe-infra/apps.yaml"
+  - from: dfe-engine
+    to: dfe-transform-elastic
+    kind: management-api
+    evidence: "dfe-infra/apps.yaml"
+    note: "The engine drives every catalogued app through its management API; the catalogue is the list."
+
+# ---------------------------------------------------------------------------
+# LANES -- the order a full suite pass runs in. NOT derivable from the edges,
+# because dfe-infra appears at both ends: it feeds the app catalogue out
+# before anything moves, and it consumes the new app versions after
+# everything has. Named rather than numbered, so renumbering cannot silently
+# repoint a member.
+# ---------------------------------------------------------------------------
+lanes:
+
+  - name: toolchain
+    members: [dfe-infra, dfe-docker]
+    why: "They pin the shared toolchain and the app catalogue. The catalogue edge into dfe-engine runs here, before any library moves."
+
+  - name: libraries
+    members: [scalo-rs, scalo-py, dfe-schemas, logreducer, vector-vrl, clickhouse-dfe]
+    why: "A consumer cannot resolve a version that does not exist yet, so the libraries release first."
+
+  - name: consumers
+    members:
+      - dfe-engine
+      - dfe-loader
+      - dfe-receiver
+      - dfe-fetcher
+      - dfe-archiver
+      - dfe-transform-vrl
+      - dfe-transform-vector
+      - dfe-ui
+      - culvert
+      - dfe-hyperdx
+      - dfe-transform-elastic
+    why: "Each is CHECKED against the new library versions, then rebuilt and released only where the check says something moved."
+
+  - name: deployment
+    members: [dfe-infra, dfe-docker, dfe-deploy]
+    why: "The new app versions are pinned, the digests re-resolved and the drift check run. dfe-docker needs nothing done to it: it renders."

@@ -15,6 +15,10 @@ on:
       - 'scripts/check_governance_drift.py'
       - 'scripts/check_namespace_drift.py'
       - 'scripts/check_submodule_drift.py'
+      - 'scripts/check_suite_drift.py'
+      - 'scripts/suite_graph.py'
+      - 'suite.yaml'
+      - 'docs/suite-graph.md'
       - 'scripts/tests/**'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
@@ -30,6 +34,10 @@ on:
       - 'scripts/check_governance_drift.py'
       - 'scripts/check_namespace_drift.py'
       - 'scripts/check_submodule_drift.py'
+      - 'scripts/check_suite_drift.py'
+      - 'scripts/suite_graph.py'
+      - 'suite.yaml'
+      - 'docs/suite-graph.md'
       - 'scripts/tests/**'
       - 'scripts/dfe-stack'
       - '.github/workflows/helm-lint.yml'
@@ -55,6 +63,11 @@ jobs:
       - name: SSoT annotation + Renovate manager contract
         run: python3 scripts/tests/test_dfe_stack.py
 
+      # The suite.yaml reader is a hand-written subset parser: a shape it
+      # cannot read fails here before it fails inside a tool.
+      - name: suite.yaml reader and queries
+        run: python3 scripts/tests/test_suite_graph.py
+
       - name: Terraform-output reader
         run: python3 scripts/tests/test_bridge.py
 
@@ -68,6 +81,12 @@ jobs:
 
       - name: Namespace drift check (common.yaml is SSoT)
         run: python3 scripts/check_namespace_drift.py
+
+      # Cross-repo citations are SKIPPED on this bare checkout and said so;
+      # the in-repo half (structure, charts, pins, the docs diagrams) is
+      # binding. The release workflow runs it --strict.
+      - name: Suite graph drift check (suite.yaml is SSoT)
+        run: python3 scripts/check_suite_drift.py
 
       # Renovate raises the submodule bump; nothing stops one repo sitting on it.
       - name: Shared-submodule drift check
