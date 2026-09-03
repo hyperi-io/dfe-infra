@@ -69,20 +69,21 @@ def check_citations(graph: dict, repos: Path) -> tuple[list[str], list[str]]:
     fails: list[str] = []
     skipped: set[str] = set()
     for edge in graph["edges"] + graph.get("runtime_edges", []):
-        evidence = edge.get("evidence")
-        if not evidence:
-            continue
-        repo, rel, line = _cited(evidence)
-        base = REPO_ROOT if repo == "dfe-infra" else repos / repo
-        if repo != "dfe-infra" and not (base / ".git").exists():
-            skipped.add(repo)
-            continue
-        target = base / rel
-        where = f"{edge['from']} -> {edge['to']} cites {evidence}"
-        if not target.exists():
-            fails.append(f"{where}: file is gone")
-        elif line is not None and _line_count(target) < line:
-            fails.append(f"{where}: file has fewer than {line} lines")
+        for field in ("evidence", "source"):
+            citation = edge.get(field)
+            if not citation:
+                continue
+            repo, rel, line = _cited(citation)
+            base = REPO_ROOT if repo == "dfe-infra" else repos / repo
+            if repo != "dfe-infra" and not (base / ".git").exists():
+                skipped.add(repo)
+                continue
+            target = base / rel
+            where = f"{edge['from']} -> {edge['to']} {field} {citation}"
+            if not target.exists():
+                fails.append(f"{where}: file is gone")
+            elif line is not None and _line_count(target) < line:
+                fails.append(f"{where}: file has fewer than {line} lines")
     return fails, sorted(skipped)
 
 

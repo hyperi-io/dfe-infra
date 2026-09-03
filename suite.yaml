@@ -121,8 +121,8 @@ edge_kinds:
     gates: [consumer-contract-test]
 
   vendored-file:
-    means: "The consumer commits a byte copy of a file the producer owns. Both copies are tracked, so drift is measurable."
-    check: "Compare `git hash-object` on the two paths. Equal means in sync. Unequal means re-vendor the producer's copy and rebuild whatever is generated from it."
+    means: "The consumer commits a byte copy of a file the producer owns. Both copies are tracked, so drift is measurable. The edge names the producer's copy as `source`."
+    check: "Compare `git hash-object` on `evidence` (the consumer's copy) and `source` (the producer's). Equal means in sync. Unequal means re-vendor the producer's copy and rebuild whatever is generated from it."
     gates: [blob-hashes-equal, consumer-build]
 
   mirrored-logic:
@@ -669,7 +669,8 @@ edges:
     kind: vendored-file
     type: potential
     evidence: "dfe-ui/packages/dfe-engine-types/specs/openapi.json"
-    note: "A committed copy of the engine's own spec, plus the e2e spec beside it; both byte-identical to the engine when checked. Re-vendoring is the manual step at dfe-ui/docs/engine-api-client.md:33-34."
+    source: "dfe-engine/openapi-spec/openapi.json"
+    note: "A committed copy of the engine's own spec, plus the e2e spec beside it; both byte-identical to the engine when checked. dfe-engine's Sync dfe-engine-types workflow re-vendors it by PR on a push to main (dfe-engine/docs/control-plane/type-safety-sync.md)."
   - from: dfe-engine
     to: dfe-ui
     kind: generated-file
@@ -701,6 +702,7 @@ edges:
     kind: vendored-file
     type: lockstep
     evidence: "dfe-engine/src/dfe_engine/appmgmt/apps.yaml"
+    source: "dfe-infra/apps.yaml"
     note: "The app catalogue, byte-identical to dfe-infra's copy when checked; the engine bundles it as the last resort in the three-step resolution order stated in the file header. Lockstep because a catalogue entry the engine does not know about is not reflected by its management API."
   - from: dfe-infra
     to: dfe-deploy
