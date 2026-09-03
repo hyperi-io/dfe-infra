@@ -24,6 +24,15 @@
 #   Whether the app carries CPU, memory and KEDA dials at all. Those dials are
 #   reported unsupported off Kubernetes regardless, since Compose has no KEDA.
 #
+# maturity
+#   Where the app sits on the SemVer ladder versions.yaml uses for a stack:
+#   alpha -> beta -> rc -> release. Optional; an app that says nothing is
+#   release. The engine lists an app only when it is at or above the level the
+#   deployment shows (apps.show_maturity, DFE_APPS_SHOW_MATURITY), and that is
+#   release unless a deployment opts in for pre-release testing, so the UI never
+#   sees an app the gate withholds. The level says how far along the app is; it
+#   changes nothing about how the engine deploys it.
+#
 # files[]
 #   A family of files the app reads off disk. Content is carried in the instance's
 #   values overlay, because Helm cannot read a raw file out of an Argo $values
@@ -65,6 +74,7 @@ apps:
   dfe-receiver:
     multiplicity: single
     scale_deployed: true
+    maturity: release
     routing:
       compiler: receiver
       values_path: config.routing
@@ -72,6 +82,7 @@ apps:
   dfe-loader:
     multiplicity: single
     scale_deployed: true
+    maturity: release
     routing:
       compiler: loader
       values_path: config.routing
@@ -79,6 +90,7 @@ apps:
   dfe-archiver:
     multiplicity: single
     scale_deployed: true
+    maturity: release
 
   # A fetcher deployment is 1:1 with one source's fetcher config, so many run side
   # by side, each with its own dedicated settings. It polls its upstream rather
@@ -86,12 +98,14 @@ apps:
   dfe-fetcher:
     multiplicity: per_config
     scale_deployed: false
+    maturity: release
 
   # Compiles every .vrl in its transforms directory into one program at startup
   # and holds it immutable for the process lifetime, so an edit needs a roll.
   dfe-transform-vrl:
     multiplicity: per_config
     scale_deployed: true
+    maturity: release
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
       config.source.topics: ["{source}_land"]
@@ -120,6 +134,7 @@ apps:
   dfe-transform-vector:
     multiplicity: per_config
     scale_deployed: true
+    maturity: release
     # This app derives topics and consumer group from its own dfe_source field.
     source_binding:
       config.dfe_source: "{source}"
@@ -140,9 +155,11 @@ apps:
         reload: roll
 
   # Selects a compiled-in transform by source.name and reads no authored files.
+  # Beta: listed only where a deployment opts in to pre-release apps.
   dfe-transform-elastic:
     multiplicity: per_config
     scale_deployed: true
+    maturity: beta
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
