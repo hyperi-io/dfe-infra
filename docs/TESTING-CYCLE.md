@@ -32,14 +32,22 @@ A reference deploy we keep running is not cycled -- destroying it is the whole
 thing we do not want. Argo already tracks a git ref there, so a `git push` to
 that ref IS the upgrade, and `refresh` is the other half: it hard-refreshes
 every Application so the pushed commit lands now rather than at the next poll,
-then re-proves the deploy with the readiness gate and the same smoke suite
-`verify` runs.
+waits for every Application on a tracked repo to report Synced and Healthy with
+no operation still running, then re-proves the deploy with the readiness gate
+and the same smoke suite `verify` runs. Without that wait the gate exits on its
+first clean poll, which is the old revision's pods.
 
     python3 scripts/dfe-ops refresh --mode slim \
         --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
 
-It deploys nothing itself and tears nothing down. `--skip-verify` stops after
-the gate, which proves the deploy is Ready but not that it works.
+It deploys nothing itself and tears nothing down. `--readiness-timeout` bounds
+the sync wait and the gate separately. `--skip-verify` stops after the gate,
+which proves the deploy is Ready but not that it works.
+
+The smoke stage runs every check inside the app namespace, so `refresh` refuses
+to start when neither `--env-file` (`DFE_NAMESPACE`) nor `--namespace` names one
+-- without it every namespaced suite fails on `namespaces "dfe" not found`.
+`--skip-verify` runs the gate alone and needs no namespace.
 
 ## The env-file contract (how a teammate gets running)
 
@@ -117,4 +125,4 @@ env file), nothing else.
 | `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration |
 | `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then the dfe-ui Playwright specs tagged `@acceptance` over `--ui-url` or a port-forward | onboarding and the key UI features, on a credential that differs from the build default -- see [ACCEPTANCE-AUTOMATION.md](ACCEPTANCE-AUTOMATION.md) |
 | `teardown` | `bootstrap/destroy.sh` (`--with-terraform` also destroys IaC state) | leaves the cluster as preflight found it |
-| `refresh` (not a cycle stage) | a hard-refresh annotation on every Argo Application, then `bootstrap/smoke-test-readiness.sh` and the `verify` suite | the tracked ref landed, then bounded readiness + the full smoke suite (`--skip-verify` stops at the gate) |
+| `refresh` (not a cycle stage) | a hard-refresh annotation on every Argo Application, a bounded wait for those syncs, then `bootstrap/smoke-test-readiness.sh` and the `verify` suite | the tracked ref landed and every tracked Application is Synced + Healthy, then bounded readiness + the full smoke suite (`--skip-verify` stops at the gate) |

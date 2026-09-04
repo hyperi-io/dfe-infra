@@ -20,10 +20,21 @@ PROFILE="$(ann profile)"
 : "${DOMAIN:=<your-domain>}"
 : "${NS:=dfe}"
 
-# Every HTTPRoute hostname on the cluster, one per line. kubectl cannot fetch a
-# named object across all namespaces, so routes are matched by host, not name.
-ROUTE_HOSTS="$(kubectl get httproute -A -o jsonpath='{range .items[*]}{range .spec.hostnames[*]}{@}{"\n"}{end}{end}' 2>/dev/null || true)"
-GATEWAY_ADDR="$(kubectl get gateway -A -o jsonpath='{.items[0].status.addresses[0].value}' 2>/dev/null || true)"
+TAB="$(printf '\t')"
+
+# Every HTTPRoute on the cluster as name/host/path, one per line. The routes are
+# the truth about what is exposed; a hostname composed here from a label is not.
+ROUTES="$(kubectl get httproute -A -o jsonpath="{range .items[*]}{.metadata.name}${TAB}{.spec.hostnames[0]}${TAB}{.spec.rules[0].matches[0].path.value}{\"\n\"}{end}" 2>/dev/null || true)"
+ROUTE_HOSTS="$(printf '%s\n' "${ROUTES}" | cut -f2)"
+
+# The deploy's own Gateway, by name then by class -- a cluster can carry others.
+GATEWAY_NAME="${DFE_GATEWAY_NAME:-dfe-gateway}"
+GATEWAY_CLASS="${DFE_GATEWAY_CLASS:-dfe-envoy}"
+GATEWAYS="$(kubectl get gateway -A -o jsonpath="{range .items[*]}{.metadata.name}${TAB}{.spec.gatewayClassName}${TAB}{.status.addresses[0].value}{\"\n\"}{end}" 2>/dev/null || true)"
+GATEWAY_ADDR="$(printf '%s\n' "${GATEWAYS}" | awk -F'\t' -v n="${GATEWAY_NAME}" '$1 == n {print $3; exit}')"
+if [ -z "${GATEWAY_ADDR}" ]; then
+  GATEWAY_ADDR="$(printf '%s\n' "${GATEWAYS}" | awk -F'\t' -v c="${GATEWAY_CLASS}" '$2 == c {print $3; exit}')"
+fi
 
 # Is a route exposed? (an HTTPRoute carries that exact host)
 exposed() {
@@ -32,6 +43,48 @@ exposed() {
   else
     echo "internal (port-forward)"
   fi
+}
+
+# The human name for an HTTPRoute, falling back to the route's own name so a
+# route added later still gets a row.
+route_label() {
+  case "$1" in
+    dfe-ui) echo "DFE UI (+ embedded HyperDX explore)" ;;
+    dfe-engine) echo "DFE API (engine)" ;;
+    hyperdx) echo "HyperDX" ;;
+    kafbat) echo "Kafbat (Kafka UI)" ;;
+    argocd) echo "Argo CD" ;;
+    forgejo) echo "Deploy-repo git (Forgejo)" ;;
+    links) echo "Links page" ;;
+    receiver) echo "Receiver ingest" ;;
+    otel) echo "OTLP ingest" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# The endpoints table, one row per live HTTPRoute. The hardcoded rows are the
+# fallback for a cluster carrying no routes at all, where nothing is exposed.
+endpoint_rows() {
+  if [ -n "$(printf '%s' "${ROUTE_HOSTS}" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "${ROUTES}" | while IFS="${TAB}" read -r name host path; do
+      [ -z "${host}" ] && continue
+      printf '| %s | https://%s%s | %s |\n' \
+        "$(route_label "${name}")" "${host}" "$(printf '%s' "${path}" | sed 's:^/$::')" \
+        "$(exposed "${host}")"
+    done
+    return
+  fi
+  cat <<ROWS
+| DFE UI (+ embedded HyperDX explore) | https://dfe.${DOMAIN} | $(exposed "dfe.${DOMAIN}") |
+| DFE API (engine) | https://dfe.${DOMAIN}/api/v1 | $(exposed "dfe.${DOMAIN}") |
+| HyperDX | https://hyperdx.${DOMAIN} | $(exposed "hyperdx.${DOMAIN}") |
+| Kafbat (Kafka UI) | https://kafbat.${DOMAIN} | $(exposed "kafbat.${DOMAIN}") |
+| Argo CD | https://argocd.${DOMAIN} | $(exposed "argocd.${DOMAIN}") |
+| Deploy-repo git (Forgejo) | https://git.${DOMAIN} | $(exposed "git.${DOMAIN}") |
+| Links page | https://links.${DOMAIN} | $(exposed "links.${DOMAIN}") |
+| Receiver ingest | https://receiver.${DOMAIN} | $(exposed "receiver.${DOMAIN}") |
+| OTLP ingest | https://otel.${DOMAIN} | $(exposed "otel.${DOMAIN}") |
+ROWS
 }
 
 # Stable named logins seeded + reconciled by the engine every boot (#106). Lists
@@ -66,14 +119,7 @@ otherwise the per-app local **break-glass** account from the secret store.
 
 | What | URL | Reach |
 |------|-----|-------|
-| DFE UI (+ embedded HyperDX explore) | https://dfe.${DOMAIN} | $(exposed "dfe.${DOMAIN}") |
-| DFE API (engine) | https://dfe.${DOMAIN}/api | $(exposed "dfe.${DOMAIN}") |
-| HyperDX | https://hyperdx.${DOMAIN} | $(exposed "hyperdx.${DOMAIN}") |
-| Kafbat (Kafka UI) | https://kafbat.${DOMAIN} | $(exposed "kafbat.${DOMAIN}") |
-| Argo CD | https://argocd.${DOMAIN} | $(exposed "argocd.${DOMAIN}") |
-| Deploy-repo git (Forgejo) | https://git.${DOMAIN} | $(exposed "git.${DOMAIN}") |
-| Links page | https://links.${DOMAIN} | $(exposed "links.${DOMAIN}") |
-| Receiver ingest | https://dfe.${DOMAIN} (or the receiver LB) | data plane |
+$(endpoint_rows)
 
 An "internal" UI is not exposed; reach it with
 \`kubectl -n <ns> port-forward svc/<service> <localport>:<port>\`.

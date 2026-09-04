@@ -20,27 +20,40 @@
 #         READINESS_TIMEOUT   (default 900s) -- backstop; convergence wait ceiling.
 #         READINESS_INTERVAL  (default 15s)  -- poll cadence.
 #         READINESS_RESTART_THRESHOLD (default 10) -- restarts above this fail.
-#         READINESS_IGNORE_NS -- space-separated namespace globs the pod scan
-#                                skips (default: the cluster's own control plane
-#                                and Rancher's namespaces, which the deploy
-#                                neither creates nor can fix).
+#         READINESS_WATCH_NS  -- space-separated namespace globs the gate judges
+#                                (default: the namespaces destroy.sh removes,
+#                                which is what this deploy creates).
 set -uo pipefail
 [ -n "${1:-}" ] && export KUBECONFIG="$1"
 DFE_NS="${DFE_NS:-}"
 TIMEOUT="${READINESS_TIMEOUT:-900}"
 INTERVAL="${READINESS_INTERVAL:-15}"
 THRESH="${READINESS_RESTART_THRESHOLD:-10}"
-IGNORE_NS="${READINESS_IGNORE_NS:-kube-system cattle-* fleet-* local}"
+# Allowlist of the namespaces this deploy creates (destroy.sh's teardown list) --
+# a denylist of the cluster's own is per-distribution and misses calico-system,
+# tigera-operator, longhorn-system and metallb-system.
+WATCH_NS="${READINESS_WATCH_NS:-argocd cert-manager external-secrets envoy-gateway-system keda strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links dfe-*}"
+[ -n "$DFE_NS" ] && WATCH_NS="$WATCH_NS $DFE_NS"
 
-# True when a namespace matches one of the IGNORE_NS globs.
-ignored_ns() {
+# True when a namespace matches one of the WATCH_NS globs.
+watched_ns() {
   local ns="$1" pat
-  for pat in $IGNORE_NS; do
+  for pat in $WATCH_NS; do
     # Unquoted on purpose: the pattern is a glob.
     # shellcheck disable=SC2254
     case "$ns" in $pat) return 0 ;; esac
   done
   return 1
+}
+
+# True when a restart recency is minutes or seconds old, so `5h12m` -- which also
+# ends in `m` -- is not read as live churn.
+recent_restart() {
+  case "$1" in
+    *h*|*d*) return 1 ;;
+    \(*[0-9]s|\(*[0-9]m) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 ISSUES_FILE="$(mktemp)"
 trap 'rm -f "$ISSUES_FILE"' EXIT
@@ -54,18 +67,15 @@ run_check() {
   # lifetime, so only a restart kubectl dates to seconds or minutes ago counts
   # as live churn; a bare count has the AGE column next to it, not a recency.
   while read -r ns name ready status restarts recency _; do
-    ignored_ns "$ns" && continue
+    watched_ns "$ns" || continue
     case "$status" in Completed|Succeeded) continue ;; esac
     local have="${ready%%/*}" want="${ready##*/}"
     if [ "$status" != "Running" ]; then
       echo "pod $ns/$name status=$status (ready=$ready restarts=$restarts)" >> "$ISSUES_FILE"
     elif [ "$have" != "$want" ]; then
       echo "pod $ns/$name NOT READY ($ready)" >> "$ISSUES_FILE"
-    elif [ "${restarts:-0}" -gt "$THRESH" ] 2>/dev/null; then
-      case "$recency" in
-        \(*s|\(*m) echo "pod $ns/$name runaway restarts ($restarts > $THRESH, last $recency ago)" >> "$ISSUES_FILE" ;;
-        *) : ;;
-      esac
+    elif [ "${restarts:-0}" -gt "$THRESH" ] 2>/dev/null && recent_restart "$recency"; then
+      echo "pod $ns/$name runaway restarts ($restarts > $THRESH, last $recency ago)" >> "$ISSUES_FILE"
     fi
   done < <(kubectl get pods -A --no-headers 2>/dev/null)
 
@@ -74,7 +84,7 @@ run_check() {
   for kind in deployment statefulset; do
     while read -r ns name want have; do
       [ -z "$ns" ] && continue
-      ignored_ns "$ns" && continue
+      watched_ns "$ns" || continue
       [ "$want" = "<none>" ] && want=0
       [ "${have:-0}" != "${want:-0}" ] && echo "$kind $ns/$name ${have:-0}/${want:-0} ready" >> "$ISSUES_FILE"
     done < <(kubectl get "$kind" -A --no-headers -o custom-columns=NS:.metadata.namespace,N:.metadata.name,W:.spec.replicas,H:.status.readyReplicas 2>/dev/null)
@@ -82,7 +92,7 @@ run_check() {
   # DaemonSets: numberReady == desiredNumberScheduled.
   while read -r ns name want have; do
     [ -z "$ns" ] && continue
-    ignored_ns "$ns" && continue
+    watched_ns "$ns" || continue
     [ "${have:-0}" != "${want:-0}" ] && echo "daemonset $ns/$name ${have:-0}/${want:-0} ready" >> "$ISSUES_FILE"
   done < <(kubectl get daemonset -A --no-headers -o custom-columns=NS:.metadata.namespace,N:.metadata.name,W:.status.desiredNumberScheduled,H:.status.numberReady 2>/dev/null)
 

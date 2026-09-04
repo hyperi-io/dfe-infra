@@ -13,17 +13,20 @@ The runner reads hunt and rule YAML off disk (dfe_engine.hunt_runner.spec_loader
 on every reload tick), so a directory nothing fills means no hunt has ever run
 (dfe-infra#212). A template that renders is not evidence of that: the values are.
 
-Five things are checked:
+Six things are checked:
 
 1. The sidecar reaches the SAME repo, branch and credential as the engine, off
    `gitops.*`. A second copy of any of the three could point somewhere else.
-2. The runner's DFE_HUNTS_DIR and DFE_HUNTS_RULES_DIR resolve THROUGH git-sync's
+2. The FIRST sync is bounded. The sidecar retries forever, which on its own
+   reproduces #212: a bad credential leaves the link absent and the runner
+   Running with zero hunts, so an init container has to fail the pod instead.
+3. The runner's DFE_HUNTS_DIR and DFE_HUNTS_RULES_DIR resolve THROUGH git-sync's
    link into the synced subtree, on a volume both containers mount.
-3. The sidecar is hardened like the runner: non-root pod context, read-only
-   rootfs, all capabilities dropped.
-4. Disabled, the pod is a single container again and nothing references the
+4. The sidecar is hardened like the runner: non-root pod context, read-only
+   rootfs, all capabilities dropped, and its own HOME rather than the runner's.
+5. Disabled, the pod is a single container again and nothing references the
    deploy repo -- the pre-#212 shape, so the switch is a real off.
-5. No deploy repo (gitops.enabled=false) means no sidecar: there is nothing to
+6. No deploy repo (gitops.enabled=false) means no sidecar: there is nothing to
    sync and the credential Secret does not exist.
 
     python3 scripts/tests/test_hunt_runner_gitsync.py
@@ -87,7 +90,7 @@ def pod(doc: dict) -> dict:
 
 
 def container(doc: dict, name: str) -> dict:
-    for c in pod(doc)["containers"]:
+    for c in pod(doc)["containers"] + (pod(doc).get("initContainers") or []):
         if c["name"] == name:
             return c
     return {}
@@ -163,6 +166,57 @@ def test_the_sidecar_syncs_the_engines_own_deploy_repo() -> None:
         "the sync period is inside the runner's 5-minute reload",
         flag(sidecar, "period") == "30s",
         f"{flag(sidecar, 'period')}",
+    )
+
+
+def test_the_first_sync_is_bounded() -> None:
+    """#212's shape again: retry-forever on the FIRST sync hides a bad credential.
+
+    With only the sidecar the link never appears, the runner loads zero hunts and
+    the pod stays Running, so the init container is what turns that into a pod
+    that never starts.
+    """
+    values = chart_values()
+    gs = values["huntRunner"]["gitSync"]
+    doc = render()
+    init = container(doc, "git-sync-init")
+    expect("an init container renders by default", bool(init), "no git-sync-init")
+    if not init:
+        return
+
+    expect(
+        "it syncs once and exits",
+        "--one-time" in (init.get("args") or []),
+        f"{init.get('args')}",
+    )
+    expect(
+        "its failures are counted, not retried forever",
+        flag(init, "max-failures") == str(gs["initialMaxFailures"])
+        and gs["initialMaxFailures"] > 0,
+        f"{flag(init, 'max-failures')}",
+    )
+    expect(
+        "the sidecar still retries forever, once the first sync landed",
+        flag(container(doc, "git-sync"), "max-failures") == "-1",
+        f"{flag(container(doc, 'git-sync'), 'max-failures')}",
+    )
+    expect(
+        "it seeds the worktree the sidecar and the runner then use",
+        flag(init, "root") == f"{gs['mountPath']}/repo" and flag(init, "link") == gs["link"],
+        f"{flag(init, 'root')} {flag(init, 'link')}",
+    )
+    expect(
+        "off the same repo, ref and credential as the sidecar",
+        flag(init, "repo") == values["gitops"]["repoUrl"]
+        and flag(init, "ref") == values["gitops"]["branch"]
+        and secret_refs(init) == secret_refs(container(doc, "git-sync")),
+        f"{init.get('args')} {secret_refs(init)}",
+    )
+    expect(
+        "and it mounts the volume writable",
+        mount_of(init, "deploy-repo").get("readOnly") is None
+        and mount_of(init, "deploy-repo").get("mountPath") == gs["mountPath"],
+        f"{init.get('volumeMounts')}",
     )
 
 
@@ -250,10 +304,18 @@ def test_the_sidecar_is_hardened_like_the_runner() -> None:
         pod(doc)["securityContext"]["runAsNonRoot"] is True,
         f"{pod(doc)['securityContext']}",
     )
+    home = chart_values()["huntRunner"]["gitSync"]["homePath"]
     expect(
-        "and gets the writable /tmp its read-only rootfs needs for git config",
-        mount_of(sidecar, "tmp").get("mountPath") == "/tmp",
-        f"{sidecar.get('volumeMounts')}",
+        "it writes git config to its OWN HOME volume, not the runner's scratch",
+        env_of(sidecar).get("HOME") == home
+        and mount_of(sidecar, "git-sync-home").get("mountPath") == home
+        and mount_of(sidecar, "tmp") == {},
+        f"{env_of(sidecar).get('HOME')} {sidecar.get('volumeMounts')}",
+    )
+    expect(
+        "and that HOME is a pod-local emptyDir",
+        {"name": "git-sync-home", "emptyDir": {}} in pod(doc)["volumes"],
+        f"{pod(doc)['volumes']}",
     )
 
 
@@ -262,6 +324,11 @@ def test_disabled_restores_the_single_container_pod() -> None:
     doc = render("huntRunner.gitSync.enabled=false")
     names = [c["name"] for c in pod(doc)["containers"]]
     expect("only the runner remains", names == ["hunt-runner"], f"{names}")
+    expect(
+        "and no init container either",
+        not pod(doc).get("initContainers"),
+        f"{pod(doc).get('initContainers')}",
+    )
     expect(
         "no deploy-repo volume is declared",
         "deploy-repo" not in {v["name"] for v in pod(doc)["volumes"]},
@@ -282,8 +349,14 @@ def test_no_deploy_repo_means_no_sidecar() -> None:
     Rendering the sidecar anyway would wedge the pod in
     CreateContainerConfigError on a Secret nothing creates.
     """
-    names = [c["name"] for c in pod(render("gitops.enabled=false"))["containers"]]
+    doc = render("gitops.enabled=false")
+    names = [c["name"] for c in pod(doc)["containers"]]
     expect("the sidecar is not rendered", names == ["hunt-runner"], f"{names}")
+    expect(
+        "nor the init container that would wedge the pod on it",
+        not pod(doc).get("initContainers"),
+        f"{pod(doc).get('initContainers')}",
+    )
 
 
 def main() -> int:
