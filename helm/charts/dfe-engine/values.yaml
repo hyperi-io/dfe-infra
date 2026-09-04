@@ -15,7 +15,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:d37f1396f9e225b19414d361a157f94aa2f0c591d781cc75f756cae5daf37ac0"
+  digest: "sha256:f676f440dcda99fff6de8a0feb43cd52dcdc450ffb9b607a8b93d2748f59bd17"
   pullPolicy: IfNotPresent
 
 replicaCount: 1

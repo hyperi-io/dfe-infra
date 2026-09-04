@@ -1696,7 +1696,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.19.2"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Loader routing contract corrected (source_to_table, real table_fields), YAML emitter width pinned so long VRL scalars stop folding, commit-subject budgeting.
+      dfe-engine: "v1.19.3"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Loader routing contract corrected (source_to_table, real table_fields), YAML emitter width pinned so long VRL scalars stop folding, commit-subject budgeting.
       dfe-ui: "v1.5.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.27"      # independent release line
       dfe-loader: "v1.18.27"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
@@ -1713,7 +1713,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:d37f1396f9e225b19414d361a157f94aa2f0c591d781cc75f756cae5daf37ac0"
+      dfe-engine: "sha256:f676f440dcda99fff6de8a0feb43cd52dcdc450ffb9b607a8b93d2748f59bd17"
       dfe-ui: "sha256:ba84901024cd95bbe5e452874da8ac11d96d921c1c4cc8b78463b21576d2d6b0"
       dfe-receiver: "sha256:0e9d04354c041d71a6c79eb923f5f59f7926e4ad321eb8dc64f940874b2fdf14"
       dfe-loader: "sha256:1afb85606061dd19249e4129ce6d96c6ceaf953aa8413d5006ba67dbf4d41b38"
@@ -1741,7 +1741,7 @@ stacks:
       ferretdb: "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985"            # ghcr.io/ferretdb/ferretdb:2.7.0 (both paths; the hyperdx fork target)
       documentdb-pg: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"       # ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0 (both paths; k8s pins it in helm/charts/ferretdb values + cnpg-cluster values)
       envoy-proxy: "sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66"         # envoyproxy/envoy:v1.39.0 (docker-only; k8s uses envoy-gateway). Resolved 2026-08-18 via buildx imagetools (manifest-list digest, multi-arch safe). Unlike the nginx tag it replaced, an Envoy vX.Y.Z tag is IMMUTABLE, so this only needs re-resolving when the version moves. Verified: dfe-docker config/proxy/envoy.yaml passes `envoy --mode validate` on this image, and it carries bash + grep for the compose healthcheck.
-      nginx-unprivileged: "sha256:d9083fe47768377ef55dedafd67d4da7c2f2bc2bece7554954f29359deb0dce9"   # nginxinc/nginx-unprivileged:1.31-alpine (k8s links page; helm/charts/links values image.digest mirrors this, drift-checked). TAG FLOATS -- upstream rebuilds it in place, so re-resolve on every refresh. Re-resolved by `dfe-stack refresh-digests` via buildx imagetools (manifest-list digest, multi-arch safe).
+      nginx-unprivileged: "sha256:aa8c9087d36d93e9d650c5365f883b421e8214aedbad24ade52b844c583358f1"   # nginxinc/nginx-unprivileged:1.31-alpine (k8s links page; helm/charts/links values image.digest mirrors this, drift-checked). TAG FLOATS -- upstream rebuilds it in place, so re-resolve on every refresh. Re-resolved by `dfe-stack refresh-digests` via buildx imagetools (manifest-list digest, multi-arch safe).
       otel-collector: "sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5"       # otel/opentelemetry-collector-contrib:0.158.0. ADDED 2026-08-18 for the DOCKER path (dfe-docker DFE_OTEL_COLLECTOR_VERSION): k8s reads services.otel-collector through the chart's own image.tag and never needed a digest here, so the version sat pinned with nothing to render. Resolved via buildx imagetools (manifest-list digest, multi-arch safe).
       git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; helm/charts/dfe-engine values huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
 
