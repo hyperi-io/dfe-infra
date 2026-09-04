@@ -20,8 +20,19 @@ PROFILE="$(ann profile)"
 : "${DOMAIN:=<your-domain>}"
 : "${NS:=dfe}"
 
-# Is a route exposed? (HTTPRoute exists for that host)
-exposed() { kubectl get httproute "$1" -A >/dev/null 2>&1 && echo "exposed" || echo "internal (port-forward)"; }
+# Every HTTPRoute hostname on the cluster, one per line. kubectl cannot fetch a
+# named object across all namespaces, so routes are matched by host, not name.
+ROUTE_HOSTS="$(kubectl get httproute -A -o jsonpath='{range .items[*]}{range .spec.hostnames[*]}{@}{"\n"}{end}{end}' 2>/dev/null || true)"
+GATEWAY_ADDR="$(kubectl get gateway -A -o jsonpath='{.items[0].status.addresses[0].value}' 2>/dev/null || true)"
+
+# Is a route exposed? (an HTTPRoute carries that exact host)
+exposed() {
+  if printf '%s\n' "${ROUTE_HOSTS}" | grep -qx -- "$1"; then
+    echo "exposed"
+  else
+    echo "internal (port-forward)"
+  fi
+}
 
 # Stable named logins seeded + reconciled by the engine every boot (#106). Lists
 # the configured seed accounts (username + groups) from the chart-created Secret,
@@ -31,6 +42,7 @@ seed_logins() {
   local json
   json="$(kubectl -n "${NS}" get secret "${SEED_SECRET}" -o jsonpath='{.data.seed-accounts}' 2>/dev/null | base64 -d 2>/dev/null || true)"
   [ -z "$json" ] && { echo "(none configured)"; return; }
+  # shellcheck disable=SC2016
   printf '%s' "$json" | python3 -c 'import sys, json
 try:
     accts = json.load(sys.stdin)
@@ -45,20 +57,22 @@ read -r -d '' BODY <<EOF || true
 
 Deployment tier: **${PROFILE:-unknown}**   |   Domain: **${DOMAIN}**   |   App namespace: **${NS}**
 
-All interactive UIs sit behind the Envoy Gateway on \`*.${DOMAIN}\` (wildcard TLS).
-Auth is the standard pattern: OIDC at the edge when configured, otherwise the
-per-app local **break-glass** account from the secret store.
+All interactive UIs sit behind the Envoy Gateway on \`*.${DOMAIN}\` (wildcard TLS),
+programmed at **${GATEWAY_ADDR:-<no gateway address yet>}**; DNS for that wildcard
+must resolve there. Auth is the standard pattern: OIDC at the edge when configured,
+otherwise the per-app local **break-glass** account from the secret store.
 
 ## Endpoints
 
 | What | URL | Reach |
 |------|-----|-------|
-| DFE UI (+ embedded HyperDX explore) | https://dfe.${DOMAIN} | $(exposed dfe-ui) |
-| DFE API (engine) | https://dfe.${DOMAIN}/api | $(exposed dfe-engine) |
-| HyperDX | https://hyperdx.${DOMAIN} | $(exposed hyperdx) |
-| Kafbat (Kafka UI) | https://kafbat.${DOMAIN} | $(exposed kafbat) |
-| Argo CD | https://argocd.${DOMAIN} | $(exposed argocd) |
-| Deploy-repo git (Forgejo) | https://forgejo.${DOMAIN} | $(exposed forgejo) |
+| DFE UI (+ embedded HyperDX explore) | https://dfe.${DOMAIN} | $(exposed "dfe.${DOMAIN}") |
+| DFE API (engine) | https://dfe.${DOMAIN}/api | $(exposed "dfe.${DOMAIN}") |
+| HyperDX | https://hyperdx.${DOMAIN} | $(exposed "hyperdx.${DOMAIN}") |
+| Kafbat (Kafka UI) | https://kafbat.${DOMAIN} | $(exposed "kafbat.${DOMAIN}") |
+| Argo CD | https://argocd.${DOMAIN} | $(exposed "argocd.${DOMAIN}") |
+| Deploy-repo git (Forgejo) | https://git.${DOMAIN} | $(exposed "git.${DOMAIN}") |
+| Links page | https://links.${DOMAIN} | $(exposed "links.${DOMAIN}") |
 | Receiver ingest | https://dfe.${DOMAIN} (or the receiver LB) | data plane |
 
 An "internal" UI is not exposed; reach it with
