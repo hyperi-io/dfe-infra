@@ -129,6 +129,12 @@ jobs:
       - name: Access summary reads the live routes and this deploy's Gateway
         run: python3 scripts/tests/test_access_summary.py
 
+      # A wrong dex connector does not crash: it authenticates and returns an
+      # empty groups claim, so the RBAC chain the fixture exists to prove is
+      # never exercised. The render is the only place that is caught.
+      - name: Tester IdP renders a dex that emits groups, with no secret in the values
+        run: python3 scripts/tests/test_tester_idp.py
+
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
