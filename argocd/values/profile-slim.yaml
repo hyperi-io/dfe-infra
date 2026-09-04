@@ -45,6 +45,13 @@ kafka:
 kafbat:
   enabled: false
 
+# Its HTTPRoute lives in the kafka namespace, which slim never creates; left on,
+# envoy-gateway-config stays OutOfSync forever on `namespaces "kafka" not found`.
+# `routes:` is a key only that chart carries.
+routes:
+  kafbat:
+    enabled: false
+
 # CNPG -- single instance (no HA).
 cluster:
   instances: 1

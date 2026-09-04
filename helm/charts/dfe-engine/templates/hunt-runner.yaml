@@ -26,9 +26,11 @@ disk on every reload tick, and the engine governs them in that repo.
     secretKeyRef:
       name: {{ .Values.gitops.credentialsSecret }}
       key: password
-# Its own HOME, not the runner's /tmp: git writes its config there and the
-# rootfs is read-only.
+# git-sync writes its gitconfig under TMPDIR and git under HOME; the rootfs is
+# read-only, so both point at the sidecar's own volume.
 - name: HOME
+  value: {{ .Values.huntRunner.gitSync.homePath | quote }}
+- name: TMPDIR
   value: {{ .Values.huntRunner.gitSync.homePath | quote }}
 {{- end }}
 {{- define "dfe-engine.gitSyncMounts" -}}
