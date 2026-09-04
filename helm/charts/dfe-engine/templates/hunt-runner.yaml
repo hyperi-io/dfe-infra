@@ -11,16 +11,44 @@ httpGet probe could hit. A liveness signal would need an app-side surface first
 (scalo would have to serve /livez here); until then a probe would only kill
 healthy pods.
 
-Hunt and rule YAML arrives on a shared volume a git-sync sidecar fills from the
-deploy repo (huntRunner.gitSync) -- the runner reads both off disk on every
-reload tick, and the engine governs them in that repo.
+Hunt and rule YAML arrives on a shared volume a git-sync init container seeds and
+a git-sync sidecar keeps current (huntRunner.gitSync) -- the runner reads both off
+disk on every reload tick, and the engine governs them in that repo.
 */ -}}
+{{- define "dfe-engine.gitSyncEnv" -}}
+- name: GITSYNC_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.gitops.credentialsSecret }}
+      key: username
+- name: GITSYNC_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.gitops.credentialsSecret }}
+      key: password
+# Its own HOME, not the runner's /tmp: git writes its config there and the
+# rootfs is read-only.
+- name: HOME
+  value: {{ .Values.huntRunner.gitSync.homePath | quote }}
+{{- end }}
+{{- define "dfe-engine.gitSyncMounts" -}}
+- name: deploy-repo
+  mountPath: {{ .Values.huntRunner.gitSync.mountPath }}
+- name: git-sync-home
+  mountPath: {{ .Values.huntRunner.gitSync.homePath }}
+{{- end }}
 {{- if .Values.huntRunner.enabled }}
 {{- $gs := .Values.huntRunner.gitSync }}
 {{- /* No deploy repo means nothing to sync, so the sidecar needs both switches. */}}
 {{- $gitSync := and $gs.enabled .Values.gitops.enabled }}
 {{- $gsImage := printf "%s:%s" $gs.image.repository $gs.image.tag }}
 {{- with $gs.image.digest }}{{- $gsImage = printf "%s@%s" $gsImage . }}{{- end }}
+{{- /* Where both git-sync passes agree: same repo, same ref, same worktree.
+       --root is a subdirectory, never the volume root, which git-sync empties. */}}
+{{- $gsArgs := list (printf "--repo=%s" .Values.gitops.repoUrl)
+                    (printf "--ref=%s" .Values.gitops.branch)
+                    (printf "--root=%s/repo" $gs.mountPath)
+                    (printf "--link=%s" $gs.link) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -58,6 +86,28 @@ spec:
       # be applied to every pod in the class.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- if $gitSync }}
+      # The FIRST sync, bounded. The sidecar retries forever, so on its own a bad
+      # credential leaves the link absent and the runner Running with zero hunts
+      # (dfe-infra#212); failing here surfaces it as a pod that never starts.
+      initContainers:
+        - name: git-sync-init
+          image: {{ $gsImage | quote }}
+          imagePullPolicy: {{ $gs.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          args:
+            {{- range $gsArgs }}
+            - {{ . | quote }}
+            {{- end }}
+            - "--one-time"
+            - {{ printf "--max-failures=%v" $gs.initialMaxFailures | quote }}
+          env:
+            {{- include "dfe-engine.gitSyncEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "dfe-engine.gitSyncMounts" . | nindent 12 }}
+          resources:
+            {{- toYaml $gs.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: hunt-runner
           image: {{ include "dfe-common.image" . | quote }}
@@ -133,32 +183,15 @@ spec:
           imagePullPolicy: {{ $gs.image.pullPolicy }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           args:
-            - {{ printf "--repo=%s" .Values.gitops.repoUrl | quote }}
-            - {{ printf "--ref=%s" .Values.gitops.branch | quote }}
-            # A subdirectory, never the volume root: git-sync empties its root,
-            # and a volume root can carry filesystem metadata it cannot remove.
-            - {{ printf "--root=%s/repo" $gs.mountPath | quote }}
-            - {{ printf "--link=%s" $gs.link | quote }}
+            {{- range $gsArgs }}
+            - {{ . | quote }}
+            {{- end }}
             - {{ printf "--period=%s" $gs.period | quote }}
             - {{ printf "--max-failures=%v" $gs.maxFailures | quote }}
           env:
-            - name: GITSYNC_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.gitops.credentialsSecret }}
-                  key: username
-            - name: GITSYNC_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.gitops.credentialsSecret }}
-                  key: password
+            {{- include "dfe-engine.gitSyncEnv" . | nindent 12 }}
           volumeMounts:
-            - name: deploy-repo
-              mountPath: {{ $gs.mountPath }}
-            # The image sets HOME=/tmp and the rootfs is read-only, so git has
-            # nowhere to write its config without this.
-            - name: tmp
-              mountPath: /tmp
+            {{- include "dfe-engine.gitSyncMounts" . | nindent 12 }}
           resources:
             {{- toYaml $gs.resources | nindent 12 }}
         {{- end }}
@@ -172,6 +205,9 @@ spec:
         {{- if $gitSync }}
         # Written by the git-sync sidecar, read by the runner.
         - name: deploy-repo
+          emptyDir: {}
+        # git-sync's HOME, kept off the runner's scratch.
+        - name: git-sync-home
           emptyDir: {}
         {{- end }}
 {{- if .Values.huntRunner.autoscaling.enabled }}
