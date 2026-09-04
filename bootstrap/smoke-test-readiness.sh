@@ -20,12 +20,28 @@
 #         READINESS_TIMEOUT   (default 900s) -- backstop; convergence wait ceiling.
 #         READINESS_INTERVAL  (default 15s)  -- poll cadence.
 #         READINESS_RESTART_THRESHOLD (default 10) -- restarts above this fail.
+#         READINESS_IGNORE_NS -- space-separated namespace globs the pod scan
+#                                skips (default: the cluster's own control plane
+#                                and Rancher's namespaces, which the deploy
+#                                neither creates nor can fix).
 set -uo pipefail
 [ -n "${1:-}" ] && export KUBECONFIG="$1"
 DFE_NS="${DFE_NS:-}"
 TIMEOUT="${READINESS_TIMEOUT:-900}"
 INTERVAL="${READINESS_INTERVAL:-15}"
 THRESH="${READINESS_RESTART_THRESHOLD:-10}"
+IGNORE_NS="${READINESS_IGNORE_NS:-kube-system cattle-* fleet-* local}"
+
+# True when a namespace matches one of the IGNORE_NS globs.
+ignored_ns() {
+  local ns="$1" pat
+  for pat in $IGNORE_NS; do
+    # Unquoted on purpose: the pattern is a glob.
+    # shellcheck disable=SC2254
+    case "$ns" in $pat) return 0 ;; esac
+  done
+  return 1
+}
 ISSUES_FILE="$(mktemp)"
 trap 'rm -f "$ISSUES_FILE"' EXIT
 
@@ -35,10 +51,10 @@ run_check() {
   : > "$ISSUES_FILE"
 
   # Pods: real container readiness, phase, restart sanity. Restart counts are
-  # LIFETIME, so long-lived kube-system statics exceed any threshold forever.
-  # The recency kubectl prints beside the count ("19 (19h ago)") separates
-  # history from live churn: only a seconds/minutes-ago last restart is a fault.
+  # lifetime, so only a restart kubectl dates to seconds or minutes ago counts
+  # as live churn; a bare count has the AGE column next to it, not a recency.
   while read -r ns name ready status restarts recency _; do
+    ignored_ns "$ns" && continue
     case "$status" in Completed|Succeeded) continue ;; esac
     local have="${ready%%/*}" want="${ready##*/}"
     if [ "$status" != "Running" ]; then
@@ -47,8 +63,8 @@ run_check() {
       echo "pod $ns/$name NOT READY ($ready)" >> "$ISSUES_FILE"
     elif [ "${restarts:-0}" -gt "$THRESH" ] 2>/dev/null; then
       case "$recency" in
-        \(*h*|\(*d*|\(*y*) : ;;
-        *) echo "pod $ns/$name runaway restarts ($restarts > $THRESH, last $recency ago)" >> "$ISSUES_FILE" ;;
+        \(*s|\(*m) echo "pod $ns/$name runaway restarts ($restarts > $THRESH, last $recency ago)" >> "$ISSUES_FILE" ;;
+        *) : ;;
       esac
     fi
   done < <(kubectl get pods -A --no-headers 2>/dev/null)
@@ -58,6 +74,7 @@ run_check() {
   for kind in deployment statefulset; do
     while read -r ns name want have; do
       [ -z "$ns" ] && continue
+      ignored_ns "$ns" && continue
       [ "$want" = "<none>" ] && want=0
       [ "${have:-0}" != "${want:-0}" ] && echo "$kind $ns/$name ${have:-0}/${want:-0} ready" >> "$ISSUES_FILE"
     done < <(kubectl get "$kind" -A --no-headers -o custom-columns=NS:.metadata.namespace,N:.metadata.name,W:.spec.replicas,H:.status.readyReplicas 2>/dev/null)
@@ -65,6 +82,7 @@ run_check() {
   # DaemonSets: numberReady == desiredNumberScheduled.
   while read -r ns name want have; do
     [ -z "$ns" ] && continue
+    ignored_ns "$ns" && continue
     [ "${have:-0}" != "${want:-0}" ] && echo "daemonset $ns/$name ${have:-0}/${want:-0} ready" >> "$ISSUES_FILE"
   done < <(kubectl get daemonset -A --no-headers -o custom-columns=NS:.metadata.namespace,N:.metadata.name,W:.status.desiredNumberScheduled,H:.status.numberReady 2>/dev/null)
 
