@@ -1701,7 +1701,7 @@ stacks:
       dfe-receiver: "v1.15.27"      # independent release line
       dfe-loader: "v1.18.27"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.19"
-      dfe-fetcher: "v1.4.14"
+      dfe-fetcher: "v1.4.15"
       dfe-transform-vrl: "v1.1.20"
       dfe-transform-vector: "v1.0.34"  # readiness reports the real lifecycle state on the port the probes hit, so a dead transform stops advertising healthy.
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
@@ -1718,7 +1718,7 @@ stacks:
       dfe-receiver: "sha256:0e9d04354c041d71a6c79eb923f5f59f7926e4ad321eb8dc64f940874b2fdf14"
       dfe-loader: "sha256:1afb85606061dd19249e4129ce6d96c6ceaf953aa8413d5006ba67dbf4d41b38"
       dfe-archiver: "sha256:40eccf53458f21d0ff1415feb2149130106816fb7852f480edeee54df8d42036"
-      dfe-fetcher: "sha256:9d9e00810362f26479fecc4e5f86d65b9c94ee109a96c33de473f5b4080b89b9"
+      dfe-fetcher: "sha256:c729576e8aea248d2452e229b6f9ecfa7b3d8351bcafa068a36d2dd6a5b49f9a"
       dfe-transform-vrl: "sha256:aeb980ffd6f287a537b1f5612ef1b8d5f43cda30767236f1df4ebbae1ad3335c"
       dfe-transform-vector: "sha256:1e7da14a0bfe28ac37cefb968d0dc6b1e159d8f3da8990c3f1c051f3da724e64"
       # Keyed here rather than under content:, which carries versions and
