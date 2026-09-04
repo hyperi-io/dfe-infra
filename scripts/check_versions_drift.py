@@ -506,6 +506,21 @@ CHECKS += [
         Path("helm/charts/dfe-schema/values.yaml"),
         r'digest:\s*"([^"]+)"',
     ),
+    # The git-sync sidecar in the hunt-runner pod: a THIRD-PARTY image in a chart
+    # whose own image is dfe-engine, so both halves are anchored on the repository
+    # line rather than on the file's first tag:/digest: (which are the engine's).
+    Check(
+        "hunt-runner git-sync image tag",
+        "services.git-sync",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r'git-sync/git-sync\n\s*tag:\s*"([^"@]+)"',
+    ),
+    Check(
+        "hunt-runner git-sync image digest",
+        "services-digests.git-sync",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
 ]
 
 

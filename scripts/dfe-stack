@@ -38,6 +38,10 @@ Subcommands:
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
   verify         Re-fetch GHCR digests (gh api) and compare to versions.yaml.
+  suite          Read suite.yaml (membership + build-cycle edges): the whole
+                 graph as JSON, the build-cycle table, a --producer,
+                 --consumer or --lane slice, or (re)render the Mermaid blocks
+                 in docs/suite-graph.md.
 
 Examples:
     python3 scripts/dfe-stack render
@@ -48,8 +52,12 @@ Examples:
     python3 scripts/dfe-stack check-upgrade --from 2.2.0-rc.1 --to 2.2.0
     python3 scripts/dfe-stack resolve --pins ../dfe-deploy/pins.yaml
     python3 scripts/dfe-stack verify
+    python3 scripts/dfe-stack suite --cycles
+    python3 scripts/dfe-stack suite --producer scalo-rs
+    python3 scripts/dfe-stack suite --consumer dfe-engine
+    python3 scripts/dfe-stack suite --render-docs
 
-render/images/graph/check-upgrade/resolve need only python3 + git.
+render/images/graph/check-upgrade/resolve/suite need only python3 + git.
 verify shells out to `gh api` (needs an authenticated gh).
 """
 
@@ -68,6 +76,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Sibling module, imported by path so `python3 scripts/dfe-stack` works from any cwd.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import registry_pins  # noqa: E402
+import suite_graph  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
@@ -383,6 +392,65 @@ def cmd_graph(args: argparse.Namespace) -> int:
             "stack.previous set and the graph populates"
         )
     print(json.dumps(graph, indent=2))
+    return 0
+
+
+def cmd_suite(args: argparse.Namespace) -> int:
+    """suite.yaml queries: JSON, the build-cycle table, a slice, or the docs diagrams."""
+    graph = suite_graph.load()
+    problems = suite_graph.validate(graph)
+    if problems:
+        for p in problems:
+            print(f"error: {p}", file=sys.stderr)
+        return 1
+    page = suite_graph.REPO_ROOT / "docs" / "suite-graph.md"
+    if args.check_docs:
+        # One docs check, in check_suite_drift.py: it also runs the Mermaid
+        # linter where the host has one, and it survives a missing page.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import check_suite_drift  # noqa: PLC0415
+
+        fails, skipped = check_suite_drift.check_docs(graph)
+        for line in skipped:
+            print(f"skipped: {line}")
+        for line in fails:
+            print(f"error: {line}", file=sys.stderr)
+        if fails:
+            return 1
+        text = page.read_text(encoding="utf-8", errors="replace")
+        print(f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) in sync")
+        return 0
+    if args.render_docs:
+        text = page.read_text(encoding="utf-8", errors="replace")
+        try:
+            fresh = suite_graph.render_docs(graph, text)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        page.write_text(fresh, encoding="utf-8", newline="\n")
+        print(f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) rendered")
+        return 0
+    if args.cycles:
+        for row in suite_graph.cycle_table(graph):
+            print(f"{row['producer']} -> {', '.join(row['consumers'])}")
+            print(f"    {row['kind']} ({row['type']}); gates: {', '.join(row['gates'])}")
+            print(f"    check: {row['check']}")
+        return 0
+    if args.mermaid:
+        try:
+            print(suite_graph.render_block(graph, args.mermaid))
+        except KeyError as exc:
+            print(f"error: {exc.args[0]}", file=sys.stderr)
+            return 1
+        return 0
+    try:
+        view = suite_graph.slice_graph(
+            graph, producer=args.producer, consumer=args.consumer, lane=args.lane
+        )
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}", file=sys.stderr)
+        return 1
+    print(json.dumps(view, indent=2))
     return 0
 
 
@@ -1164,6 +1232,16 @@ def main() -> int:
 
     p = sub.add_parser("graph", help="derive the upgrade graph from the in-file stacks")
     p.set_defaults(func=cmd_graph)
+
+    p = sub.add_parser("suite", help="suite.yaml: membership and build-cycle edges")
+    p.add_argument("--cycles", action="store_true", help="print the build-cycle table (producer -> consumers, check, gates)")
+    p.add_argument("--producer", help="JSON slice: this producer and its out-edges")
+    p.add_argument("--consumer", help="JSON slice: this consumer and the in-edges that reach it")
+    p.add_argument("--lane", help="JSON slice: one lane's members and the edges among them")
+    p.add_argument("--mermaid", metavar="BLOCK", help="print one diagram: overview or producer:<node>")
+    p.add_argument("--render-docs", action="store_true", help="rewrite the marked diagram blocks in docs/suite-graph.md")
+    p.add_argument("--check-docs", action="store_true", help="exit 1 if those blocks differ from suite.yaml")
+    p.set_defaults(func=cmd_suite)
 
     p = sub.add_parser("check-upgrade", help="verdict on an upgrade path")
     p.add_argument("--from", dest="frm", required=True, help="source stack version")
