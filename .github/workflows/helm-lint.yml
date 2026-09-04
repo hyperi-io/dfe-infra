@@ -126,6 +126,12 @@ jobs:
       - name: Rendered images carry the pinned digest
         run: python3 scripts/tests/test_image_digest_pin.py
 
+      # The hunt runner read its hunts off an emptyDir nothing wrote for 42
+      # hours while the pod stayed Running (#212), so the paths and the volume
+      # are asserted rather than the sidecar's presence.
+      - name: Hunt runner reads hunts off the synced deploy repo
+        run: python3 scripts/tests/test_hunt_runner_gitsync.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

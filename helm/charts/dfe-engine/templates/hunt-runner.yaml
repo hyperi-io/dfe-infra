@@ -10,8 +10,17 @@ daemon), not a server -- it opens no HTTP listener, so there is no endpoint an
 httpGet probe could hit. A liveness signal would need an app-side surface first
 (scalo would have to serve /livez here); until then a probe would only kill
 healthy pods.
+
+Hunt and rule YAML arrives on a shared volume a git-sync sidecar fills from the
+deploy repo (huntRunner.gitSync) -- the runner reads both off disk on every
+reload tick, and the engine governs them in that repo.
 */ -}}
 {{- if .Values.huntRunner.enabled }}
+{{- $gs := .Values.huntRunner.gitSync }}
+{{- /* No deploy repo means nothing to sync, so the sidecar needs both switches. */}}
+{{- $gitSync := and $gs.enabled .Values.gitops.enabled }}
+{{- $gsImage := printf "%s:%s" $gs.image.repository $gs.image.tag }}
+{{- with $gs.image.digest }}{{- $gsImage = printf "%s@%s" $gsImage . }}{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -76,13 +85,23 @@ spec:
             - name: DFE_CLICKHOUSE_SECURE
               value: "false"
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
-            # Hunt configs + rules + schemas live under the shared config mount.
+            {{- if $gitSync }}
+            # Through git-sync's link, which is swapped atomically, so a reload
+            # never reads a half-written worktree.
+            - name: DFE_HUNTS_DIR
+              value: {{ printf "%s/repo/%s/%s" $gs.mountPath $gs.link $gs.huntsPath | quote }}
+            - name: DFE_HUNTS_RULES_DIR
+              value: {{ printf "%s/repo/%s/%s" $gs.mountPath $gs.link $gs.rulesPath | quote }}
+            {{- else }}
+            # No sync: the directories sit on the pod's own scratch volume, which
+            # nothing fills, so the runner loads no specs.
             - name: DFE_HUNTS_DIR
               value: {{ .Values.config.mountPath }}/hunts
             - name: DFE_HUNTS_RULES_DIR
               value: {{ .Values.config.mountPath }}/rules
-            - name: DFE_SCHEMAS_DIR
-              value: {{ .Values.config.mountPath }}/schemas
+            {{- end }}
+            # No DFE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
+            # ensure_schema() reads the tree the engine image ships.
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
@@ -97,16 +116,64 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            {{- if $gitSync }}
+            # Read-only: the sidecar is the only writer.
+            - name: deploy-repo
+              mountPath: {{ $gs.mountPath }}
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.huntRunner.resources | nindent 12 }}
+        {{- if $gitSync }}
+        # Pulls the deploy repo the engine commits hunts and rules to. Repo,
+        # branch and credential are the engine's own gitops.* values, so the two
+        # cannot end up on different repos and no second credential is minted.
+        - name: git-sync
+          image: {{ $gsImage | quote }}
+          imagePullPolicy: {{ $gs.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          args:
+            - {{ printf "--repo=%s" .Values.gitops.repoUrl | quote }}
+            - {{ printf "--ref=%s" .Values.gitops.branch | quote }}
+            # A subdirectory, never the volume root: git-sync empties its root,
+            # and a volume root can carry filesystem metadata it cannot remove.
+            - {{ printf "--root=%s/repo" $gs.mountPath | quote }}
+            - {{ printf "--link=%s" $gs.link | quote }}
+            - {{ printf "--period=%s" $gs.period | quote }}
+            - {{ printf "--max-failures=%v" $gs.maxFailures | quote }}
+          env:
+            - name: GITSYNC_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitops.credentialsSecret }}
+                  key: username
+            - name: GITSYNC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitops.credentialsSecret }}
+                  key: password
+          volumeMounts:
+            - name: deploy-repo
+              mountPath: {{ $gs.mountPath }}
+            # The image sets HOME=/tmp and the rootfs is read-only, so git has
+            # nowhere to write its config without this.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml $gs.resources | nindent 12 }}
+        {{- end }}
       volumes:
-        # Scratch only -- the runner receives its work over the API/broker,
-        # never from the engine's config store (which is a ReadWriteOnce PVC
-        # the engine pod holds).
+        # Scratch. Whether the runner reads hunts and rules from here or from the
+        # deploy-repo volume is the gitSync branch in the env block above.
         - name: config
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if $gitSync }}
+        # Written by the git-sync sidecar, read by the runner.
+        - name: deploy-repo
+          emptyDir: {}
+        {{- end }}
 {{- if .Values.huntRunner.autoscaling.enabled }}
 ---
 apiVersion: keda.sh/v1alpha1
