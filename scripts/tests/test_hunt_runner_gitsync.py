@@ -317,6 +317,14 @@ def test_the_sidecar_is_hardened_like_the_runner() -> None:
         {"name": "git-sync-home", "emptyDir": {}} in pod(doc)["volumes"],
         f"{pod(doc)['volumes']}",
     )
+    # git-sync creates its gitconfig with os.CreateTemp, which reads TMPDIR and
+    # falls back to /tmp -- read-only here, so the first sync died on it.
+    for name in ("git-sync", "git-sync-init"):
+        expect(
+            f"{name} points TMPDIR at the same writable volume",
+            env_of(container(doc, name)).get("TMPDIR") == home,
+            f"{env_of(container(doc, name)).get('TMPDIR')}",
+        )
 
 
 def test_disabled_restores_the_single_container_pod() -> None:
