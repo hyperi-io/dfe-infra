@@ -39,6 +39,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 REGISTRY = "ghcr.io/hyperi-io"
 
+# Containers in a DFE chart running an upstream image: their pin is a
+# services-digests key, not the chart's own app digest, so the app-wide
+# assertions skip them and each is checked against its own key instead.
+THIRD_PARTY_SIDECARS = frozenset({"git-sync"})
+
 _failures = 0
 
 
@@ -91,8 +96,11 @@ def render(chart: str, *sets: str) -> list[dict]:
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
-def images(docs: list[dict]) -> list[str]:
-    """Every container image a render emits, init containers included."""
+def images(docs: list[dict], want_container: str | None = None) -> list[str]:
+    """Container images a render emits, init containers included.
+
+    Named container, or every container whose name is not a third-party sidecar.
+    """
     found: list[str] = []
     for doc in docs:
         spec = doc.get("spec", {})
@@ -101,7 +109,12 @@ def images(docs: list[dict]) -> list[str]:
             continue
         for key in ("initContainers", "containers"):
             for container in pod.get(key) or []:
-                if container.get("image"):
+                name = container.get("name")
+                if want_container:
+                    wanted = name == want_container
+                else:
+                    wanted = name not in THIRD_PARTY_SIDECARS
+                if wanted and container.get("image"):
                     found.append(container["image"])
     return found
 
@@ -165,6 +178,22 @@ def test_a_chart_with_no_digest_renders_what_it_always_did() -> None:
         "no digest and no global block still renders a plain repo:tag",
         rendered == ["dfe-transform-wasm:2.2.0"],
         f"{rendered}",
+    )
+
+
+def test_the_hunt_runner_git_sync_sidecar_carries_its_own_pin() -> None:
+    """The one upstream image inside a DFE-owned chart; it has its own SSoT key."""
+    stack = current_stack()
+    want = (
+        f"registry.k8s.io/git-sync/git-sync:{stack['services']['git-sync']}"
+        f"@{stack['services-digests']['git-sync']}"
+    )
+    docs = render("dfe-engine", f"global.registry={REGISTRY}", "huntRunner.enabled=true")
+    rendered = images(docs, want_container="git-sync")
+    expect(
+        "the git-sync sidecar renders tag@sha256 from the SSoT",
+        rendered == [want],
+        f"wanted {want}, got {rendered}",
     )
 
 

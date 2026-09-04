@@ -231,6 +231,48 @@ huntRunner:
     cooldownPeriod: 300
     pollingInterval: 30
     shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+  # How hunt and rule YAML REACHES the runner. The runner reads them off disk
+  # (dfe_engine.hunt_runner.spec_loader on every reload tick) and the engine
+  # governs them in the deploy repo, so without this the runner's directories are
+  # an empty volume and no hunt has ever loaded (dfe-infra#212).
+  #
+  # A git-sync sidecar clones the SAME deploy repo the engine writes and Argo
+  # reads -- repo, branch and credential all come from gitops.* above, so the
+  # runner cannot end up watching a different repo, and no second credential is
+  # minted. Renders only when gitops.enabled is also true: with no deploy repo
+  # there is nothing to sync.
+  gitSync:
+    enabled: true
+    # registry.k8s.io/git-sync/git-sync -- upstream Kubernetes sidecar.
+    image:
+      repository: registry.k8s.io/git-sync/git-sync
+      tag: "v4.7.1"      # == versions.yaml services.git-sync (drift-checked)
+      # == versions.yaml services-digests.git-sync (drift-checked).
+      digest: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"
+      pullPolicy: IfNotPresent
+    # Shared emptyDir. git-sync owns <mountPath>/repo and keeps <link> pointing at
+    # the synced worktree; the runner reads through that link. Its own root is
+    # never the volume root, which git-sync requires to be empty or emptiable.
+    mountPath: /deploy-repo
+    link: current
+    # Seconds between fetches. Well inside the runner's own reload cadence (poll
+    # 15s x the CLI's reload-every 20 ticks = 5 min), so a committed hunt is on
+    # disk before the runner next looks for it.
+    period: 30s
+    # Retry forever: the default 0 exits git-sync on the FIRST fetch failure, so a
+    # brief forge outage would take the hunt runner's pod down with it.
+    maxFailures: -1
+    # Where the engine commits hunts and rules in the deploy repo, relative to the
+    # synced worktree.
+    huntsPath: config/hunts
+    rulesPath: config/rules
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
   resources:
     requests:
       cpu: 100m
