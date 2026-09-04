@@ -32,13 +32,9 @@ nodeScheduling:
       effect: NoSchedule
 
 envoyGateway:
-  # No LoadBalancer provisioner on this cluster: a LoadBalancer Service never
-  # gets an address and the Gateway never programs. The cluster VIP already
-  # answers on 10.66.0.200 (eg-gateway is exposed the same way).
   service:
-    type: ClusterIP
-    externalIPs:
-      - 10.66.0.200
+    type: LoadBalancer
+    externalIPs: []
 
 # Edge wildcard-cert issuer. The chart default (dfe-letsencrypt) renders a
 # ClusterIssuer only when tls.acme.email or tls.vault.server is set; with neither
