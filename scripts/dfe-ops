@@ -48,6 +48,12 @@ Subcommands:
                also destroy terraform state.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
                or just the readiness gate.
+  refresh      Upgrade a PERSISTENT deploy in place: hard-refresh every Argo
+               Application so a pushed commit on the tracked ref lands NOW
+               rather than at the next poll, then re-prove the deploy with the
+               readiness gate and the same smoke suite `verify` runs. Deploys
+               nothing itself -- Argo already tracks the ref, so `git push` is
+               the change and this is the "land it and prove it" half.
   pin          Resolve a pinned version (tag) to its current GHCR digest and,
                with --write, set the current stack's digests: in versions.yaml
                (supply-chain cooldown honoured). --check is the read-only "are my
@@ -86,6 +92,10 @@ this file is committed publicly, so substitute your own node):
 
     # THE validation cycle -- clone, get the env file (e.g. via Bitwarden), go:
     python3 scripts/dfe-ops cycle --mode single --kubeconfig .tmp/dfe.kubeconfig \
+        --env-file bootstrap/.env
+
+    # Land a push on the persistent deploy's tracked ref, then re-prove it:
+    python3 scripts/dfe-ops refresh --mode slim --kubeconfig .tmp/dfe.kubeconfig \
         --env-file bootstrap/.env
 
     # Preview a teardown, then run it (also destroying terraform state):
@@ -456,18 +466,13 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     return _run_streaming(tf_cmd, env=env)
 
 
-def cmd_verify(args: argparse.Namespace) -> int:
-    """Run the smoke suite against the SAME env the deploy used.
+def _suite_env(args: argparse.Namespace) -> dict[str, str]:
+    """The deploy's own env for a bootstrap test script: terraform, then env files.
 
-    Without the env files the suite falls back to its compiled-in namespace
-    defaults -- `dfe` rather than the deployed `dfe-local` -- and then reports a
-    healthy stack as broken, one FAIL per namespace-scoped check.
+    Every check in those scripts is namespace-scoped, so without these vars they
+    read the compiled-in default namespace -- `dfe` rather than the deployed
+    `dfe-local` -- and report a healthy stack as broken.
     """
-    name = "smoke-test-readiness.sh" if args.readiness_only else "run-all-smoke-tests.sh"
-    script = _require_script(name)
-    if script is None:
-        return 1
-
     env = dict(os.environ)
     if args.from_terraform:
         sys.path.insert(0, str(BOOTSTRAP))
@@ -486,7 +491,83 @@ def cmd_verify(args: argparse.Namespace) -> int:
         env["KUBECONFIG"] = args.kubeconfig
     if args.mode:
         env["DFE_PROFILE"] = args.mode
-    return _run_streaming(["bash", str(script)], env=env)
+    return env
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Run the smoke suite against the SAME env the deploy used."""
+    name = "smoke-test-readiness.sh" if args.readiness_only else "run-all-smoke-tests.sh"
+    script = _require_script(name)
+    if script is None:
+        return 1
+    return _run_streaming(["bash", str(script)], env=_suite_env(args))
+
+
+# --- refresh subcommand (upgrade a persistent deploy in place) ----------------
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Land the tracked ref on a persistent deploy now, then re-prove it.
+
+    Argo already tracks the git ref, so the push IS the change and this deploys
+    nothing: the hard refresh only decides WHEN the change lands -- now, rather
+    than at the next poll. The gate and the smoke suite then judge what came
+    back, so "updated" never means "annotated and hoped".
+    """
+    env = _suite_env(args)
+    namespace = args.namespace or env.get("DFE_NAMESPACE", "")
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+
+    print(f"\n>>> refresh stage: argo hard-refresh (ns {args.argocd_namespace})",
+          file=sys.stderr)
+    rc, out, err = _run_text([
+        *kube, "-n", args.argocd_namespace, "annotate", "applications.argoproj.io",
+        "--all", "argocd.argoproj.io/refresh=hard", "--overwrite",
+    ])
+    if rc != 0:
+        print(f">>> refresh FAILED at stage argo-refresh (rc {rc}): "
+              f"{_last_line(err) or _last_line(out)}", file=sys.stderr)
+        return rc
+    annotated = len([ln for ln in out.splitlines() if ln.strip()])
+    print(f"    {annotated} Application(s) annotated", file=sys.stderr)
+    if annotated == 0:
+        print(f"    [warn] no Applications in {args.argocd_namespace} -- nothing was "
+              "asked to sync; the stages below judge the deploy as it already is",
+              file=sys.stderr)
+
+    print(f"\n>>> refresh stage: readiness gate (up to {args.readiness_timeout}s)",
+          file=sys.stderr)
+    script = _require_script("smoke-test-readiness.sh")
+    if script is None:
+        return 1
+    gate_env = dict(env)
+    gate_env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
+    # The gate's presence check -- did the deploy produce any workload at all --
+    # is the one check it skips when DFE_NS is empty.
+    if namespace:
+        gate_env["DFE_NS"] = namespace
+    else:
+        print("    [warn] no namespace (DFE_NAMESPACE or --namespace) -- the gate "
+              "cannot tell an empty deploy from a healthy one", file=sys.stderr)
+    rc = _run_streaming(["bash", str(script)], env=gate_env)
+    if rc != 0:
+        print(f">>> refresh FAILED at stage readiness (rc {rc})", file=sys.stderr)
+        return rc
+
+    if args.skip_verify:
+        print("\n>>> refresh OK: the tracked ref landed and the deploy is Ready "
+              "(--skip-verify: the smoke suite did not run)", file=sys.stderr)
+        return 0
+
+    print("\n>>> refresh stage: smoke suite", file=sys.stderr)
+    rc = cmd_verify(args)
+    if rc != 0:
+        print(f">>> refresh FAILED at stage smoke (rc {rc})", file=sys.stderr)
+        return rc
+    print("\n>>> refresh OK: the tracked ref landed, the deploy is Ready and the "
+          "smoke suite passed", file=sys.stderr)
+    return 0
 
 
 # --- acceptance subcommand (the live pytest suite over port-forwards) --------
@@ -1622,6 +1703,35 @@ def build_parser() -> argparse.ArgumentParser:
     vf.add_argument("--from-terraform", metavar="TF_DIR",
                     help="read DFE_* outputs from this terraform environment, as the deploy did (supplies DFE_NAMESPACE)")
     vf.set_defaults(func=cmd_verify)
+
+    # refresh
+    rf = sub.add_parser(
+        "refresh",
+        help="land the tracked git ref on a persistent deploy now, then re-prove it",
+        description="Upgrade-in-place for a persistent deploy: hard-refresh every Argo "
+                    "Application so a pushed commit lands now instead of at the next "
+                    "poll, then run the readiness gate and the same smoke suite "
+                    "`verify` runs. Deploys nothing -- Argo already tracks the ref.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    rf.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    rf.add_argument("--env-file", action="append", default=[], metavar="PATH",
+                    help="DFE_* env file the deploy used (repeatable; later wins) -- supplies DFE_NAMESPACE")
+    rf.add_argument("--from-terraform", default=None, metavar="TF_DIR",
+                    help="read DFE_* outputs from a terraform env dir, as the deploy did (env files win over it)")
+    rf.add_argument("--mode", choices=MODES,
+                    help="deploy profile, so the smoke suite knows whether a broker is expected")
+    rf.add_argument("--namespace", default=None,
+                    help="app namespace the readiness gate asserts workloads in (default: DFE_NAMESPACE from --env-file)")
+    rf.add_argument("--argocd-namespace", default="argocd",
+                    help="namespace holding the Argo Applications to hard-refresh")
+    rf.add_argument("--readiness-timeout", type=int, default=600,
+                    help="bounded readiness wait in seconds (never wait-forever; sets READINESS_TIMEOUT)")
+    rf.add_argument("--skip-verify", action="store_true",
+                    help="stop after the readiness gate (the run then proves Ready, not working)")
+    # cmd_verify runs on this same namespace, so the flag it reads must exist here.
+    rf.set_defaults(func=cmd_refresh, readiness_only=False)
 
     ac = sub.add_parser(
         "acceptance",
