@@ -255,6 +255,9 @@ huntRunner:
     # never the volume root, which git-sync requires to be empty or emptiable.
     mountPath: /deploy-repo
     link: current
+    # git-sync's own HOME, so a read-only rootfs still lets git write its config
+    # without sharing the runner's /tmp.
+    homePath: /git-sync-home
     # Seconds between fetches. Well inside the runner's own reload cadence (poll
     # 15s x the CLI's reload-every 20 ticks = 5 min), so a committed hunt is on
     # disk before the runner next looks for it.
@@ -262,6 +265,10 @@ huntRunner:
     # Retry forever: the default 0 exits git-sync on the FIRST fetch failure, so a
     # brief forge outage would take the hunt runner's pod down with it.
     maxFailures: -1
+    # Attempts the init container gives the FIRST sync before the pod fails. The
+    # sidecar's retry-forever applied to it would hide a bad credential as a
+    # Running runner that loads zero hunts (dfe-infra#212).
+    initialMaxFailures: 3
     # Where the engine commits hunts and rules in the deploy repo, relative to the
     # synced worktree.
     huntsPath: config/hunts

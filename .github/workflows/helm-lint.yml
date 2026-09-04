@@ -113,6 +113,22 @@ jobs:
       - name: dfe-ops compiles
         run: python3 -m py_compile scripts/dfe-ops
 
+      # A refresh that annotated but has not synced would otherwise pass the
+      # readiness gate against the pods the previous revision left behind.
+      - name: refresh waits for its sync and refuses a namespace-less smoke run
+        run: python3 scripts/tests/test_dfe_ops_refresh.py
+
+      # The gate decides whether a deploy is declared up, and both of its ways
+      # of being wrong (a 5h-old restart count, another distribution's
+      # namespaces) fail a healthy deploy.
+      - name: Readiness gate judges the deploy's own namespaces
+        run: python3 scripts/tests/test_readiness_gate.py
+
+      # A hostname is the overlay's to choose, so the summary reads its
+      # endpoints off the live HTTPRoutes rather than composing them.
+      - name: Access summary reads the live routes and this deploy's Gateway
+        run: python3 scripts/tests/test_access_summary.py
+
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:

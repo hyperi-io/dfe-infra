@@ -42,7 +42,7 @@ REGISTRY = "ghcr.io/hyperi-io"
 # Containers in a DFE chart running an upstream image: their pin is a
 # services-digests key, not the chart's own app digest, so the app-wide
 # assertions skip them and each is checked against its own key instead.
-THIRD_PARTY_SIDECARS = frozenset({"git-sync"})
+THIRD_PARTY_SIDECARS = frozenset({"git-sync", "git-sync-init"})
 
 _failures = 0
 
@@ -181,19 +181,25 @@ def test_a_chart_with_no_digest_renders_what_it_always_did() -> None:
     )
 
 
-def test_the_hunt_runner_git_sync_sidecar_carries_its_own_pin() -> None:
-    """The one upstream image inside a DFE-owned chart; it has its own SSoT key."""
+def test_the_hunt_runner_git_sync_images_carry_their_own_pin() -> None:
+    """The one upstream image inside a DFE-owned chart; it has its own SSoT key.
+
+    Both passes run it -- the init container that bounds the first sync and the
+    sidecar that keeps the worktree current -- so both are checked.
+    """
     stack = current_stack()
     want = (
         f"registry.k8s.io/git-sync/git-sync:{stack['services']['git-sync']}"
         f"@{stack['services-digests']['git-sync']}"
     )
     docs = render("dfe-engine", f"global.registry={REGISTRY}", "huntRunner.enabled=true")
-    rendered = images(docs, want_container="git-sync")
+    rendered = images(docs, want_container="git-sync-init") + images(
+        docs, want_container="git-sync"
+    )
     expect(
-        "the git-sync sidecar renders tag@sha256 from the SSoT",
-        rendered == [want],
-        f"wanted {want}, got {rendered}",
+        "both git-sync passes render tag@sha256 from the SSoT",
+        rendered == [want, want],
+        f"wanted {want} twice, got {rendered}",
     )
 
 

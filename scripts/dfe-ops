@@ -50,10 +50,11 @@ Subcommands:
                or just the readiness gate.
   refresh      Upgrade a PERSISTENT deploy in place: hard-refresh every Argo
                Application so a pushed commit on the tracked ref lands NOW
-               rather than at the next poll, then re-prove the deploy with the
-               readiness gate and the same smoke suite `verify` runs. Deploys
-               nothing itself -- Argo already tracks the ref, so `git push` is
-               the change and this is the "land it and prove it" half.
+               rather than at the next poll, WAIT for those syncs to finish,
+               then re-prove the deploy with the readiness gate and the same
+               smoke suite `verify` runs. Deploys nothing itself -- Argo already
+               tracks the ref, so `git push` is the change and this is the
+               "land it and prove it" half.
   pin          Resolve a pinned version (tag) to its current GHCR digest and,
                with --write, set the current stack's digests: in versions.yaml
                (supply-chain cooldown honoured). --check is the read-only "are my
@@ -504,6 +505,110 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 # --- refresh subcommand (upgrade a persistent deploy in place) ----------------
+# Seconds between Application polls while the annotated syncs run.
+_SYNC_POLL_INTERVAL = 10
+# Cluster-secret annotations naming the repos this deploy tracks.
+_TRACKED_REPO_ANNOTATIONS = ("dfe.hyperi.io/repo_url", "dfe.hyperi.io/config_repo_url")
+
+
+def _refresh_failed(stage: str, rc: int, detail: str = "") -> int:
+    """The one shape every refresh stage failure prints; returns the code to exit."""
+    print(f">>> refresh FAILED at stage {stage} (rc {rc})"
+          f"{': ' + detail if detail else ''}", file=sys.stderr)
+    return rc
+
+
+def _refresh_ok(what: str) -> int:
+    """The one shape a finished refresh prints; returns the code to exit."""
+    print(f"\n>>> refresh OK: the tracked ref landed, {what}", file=sys.stderr)
+    return 0
+
+
+def _normalise_repo(url: str) -> str:
+    """A repo URL reduced to what two spellings of the same repo share."""
+    url = url.strip().rstrip("/")
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+    return url.lower()
+
+
+def _tracked_repos(kube: list[str], argocd_namespace: str, env: dict) -> list[str]:
+    """The repo URLs this deploy tracks, off the dfe-cluster secret annotations."""
+    rc, doc, _err = _kubectl_json(
+        [*kube, "-n", argocd_namespace, "get", "secret", "dfe-cluster"], env=env
+    )
+    if rc != 0:
+        return []
+    ann = (doc.get("metadata") or {}).get("annotations") or {}
+    return [_normalise_repo(ann[k]) for k in _TRACKED_REPO_ANNOTATIONS if ann.get(k)]
+
+
+def _app_repos(app: dict) -> list[str]:
+    """Every repo an Application draws from, single-source or multi-source."""
+    spec = app.get("spec") or {}
+    sources = list(spec.get("sources") or [])
+    if spec.get("source"):
+        sources.append(spec["source"])
+    return [_normalise_repo(s["repoURL"]) for s in sources if s.get("repoURL")]
+
+
+def _converging(apps: list[dict], repos: list[str]) -> list[str]:
+    """One `<app> (<why>)` line per tracked Application that has not settled.
+
+    Sync status alone would pass an Application whose operation is still Running,
+    which is the window a gate run straight after the annotate lands in.
+    """
+    pending = []
+    for app in apps:
+        if repos and not any(r in repos for r in _app_repos(app)):
+            continue
+        name = (app.get("metadata") or {}).get("name", "<unnamed>")
+        status = app.get("status") or {}
+        sync = (status.get("sync") or {}).get("status") or "Unknown"
+        health = (status.get("health") or {}).get("status") or "Unknown"
+        phase = (status.get("operationState") or {}).get("phase") or ""
+        if phase == "Running":
+            pending.append(f"{name} (operation Running)")
+        elif sync != "Synced":
+            pending.append(f"{name} (sync {sync})")
+        elif health != "Healthy":
+            pending.append(f"{name} (health {health})")
+    return pending
+
+
+def _wait_for_sync(kube: list[str], argocd_namespace: str, repos: list[str],
+                   timeout: int, env: dict) -> int:
+    """Block until every tracked Application is Synced, Healthy and not operating.
+
+    The readiness gate exits on its FIRST clean poll, so run without this it
+    judges the pods the previous revision left behind.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        rc, doc, err = _kubectl_json(
+            [*kube, "-n", argocd_namespace, "get", "applications.argoproj.io"], env=env
+        )
+        if rc == 0:
+            apps = doc.get("items") or []
+            pending = _converging(apps, repos)
+            if not pending:
+                print(f"    {len(apps)} Application(s) Synced and Healthy",
+                      file=sys.stderr)
+                return 0
+            detail = ", ".join(pending[:8])
+            if len(pending) > 8:
+                detail += f", +{len(pending) - 8} more"
+        else:
+            detail = f"cannot read Applications: {err}"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _refresh_failed(
+                "argo-sync", 1, f"still converging after {timeout}s -- {detail}"
+            )
+        print(f"    still converging: {detail}", file=sys.stderr)
+        time.sleep(min(_SYNC_POLL_INTERVAL, remaining))
+
+
 def cmd_refresh(args: argparse.Namespace) -> int:
     """Land the tracked ref on a persistent deploy now, then re-prove it.
 
@@ -514,6 +619,14 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     """
     env = _suite_env(args)
     namespace = args.namespace or env.get("DFE_NAMESPACE", "")
+    # Every dfe-namespace suite fails on `namespaces "dfe" not found` without
+    # this, so it is refused before anything is annotated.
+    if not namespace and not args.skip_verify:
+        print(">>> refresh REFUSED: the smoke suite needs the app namespace and none "
+              "is known -- pass --env-file (DFE_NAMESPACE) or --namespace. "
+              "--skip-verify runs the gate alone, which needs no namespace.",
+              file=sys.stderr)
+        return 2
 
     kube = ["kubectl"]
     if args.kubeconfig:
@@ -524,17 +637,28 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     rc, out, err = _run_text([
         *kube, "-n", args.argocd_namespace, "annotate", "applications.argoproj.io",
         "--all", "argocd.argoproj.io/refresh=hard", "--overwrite",
-    ])
+    ], env=env)
     if rc != 0:
-        print(f">>> refresh FAILED at stage argo-refresh (rc {rc}): "
-              f"{_last_line(err) or _last_line(out)}", file=sys.stderr)
-        return rc
+        return _refresh_failed("argo-refresh", rc, _last_line(err) or _last_line(out))
     annotated = len([ln for ln in out.splitlines() if ln.strip()])
     print(f"    {annotated} Application(s) annotated", file=sys.stderr)
     if annotated == 0:
         print(f"    [warn] no Applications in {args.argocd_namespace} -- nothing was "
               "asked to sync; the stages below judge the deploy as it already is",
               file=sys.stderr)
+
+    print(f"\n>>> refresh stage: argo sync (up to {args.readiness_timeout}s)",
+          file=sys.stderr)
+    repos = _tracked_repos(kube, args.argocd_namespace, env)
+    if repos:
+        print(f"    tracking {', '.join(repos)}", file=sys.stderr)
+    else:
+        print("    [warn] no dfe-cluster repo annotations -- waiting on every "
+              f"Application in {args.argocd_namespace}", file=sys.stderr)
+    rc = _wait_for_sync(kube, args.argocd_namespace, repos,
+                        args.readiness_timeout, env)
+    if rc != 0:
+        return rc
 
     print(f"\n>>> refresh stage: readiness gate (up to {args.readiness_timeout}s)",
           file=sys.stderr)
@@ -552,22 +676,17 @@ def cmd_refresh(args: argparse.Namespace) -> int:
               "cannot tell an empty deploy from a healthy one", file=sys.stderr)
     rc = _run_streaming(["bash", str(script)], env=gate_env)
     if rc != 0:
-        print(f">>> refresh FAILED at stage readiness (rc {rc})", file=sys.stderr)
-        return rc
+        return _refresh_failed("readiness", rc)
 
     if args.skip_verify:
-        print("\n>>> refresh OK: the tracked ref landed and the deploy is Ready "
-              "(--skip-verify: the smoke suite did not run)", file=sys.stderr)
-        return 0
+        return _refresh_ok("the deploy is Ready "
+                           "(--skip-verify: the smoke suite did not run)")
 
     print("\n>>> refresh stage: smoke suite", file=sys.stderr)
     rc = cmd_verify(args)
     if rc != 0:
-        print(f">>> refresh FAILED at stage smoke (rc {rc})", file=sys.stderr)
-        return rc
-    print("\n>>> refresh OK: the tracked ref landed, the deploy is Ready and the "
-          "smoke suite passed", file=sys.stderr)
-    return 0
+        return _refresh_failed("smoke", rc)
+    return _refresh_ok("the deploy is Ready and the smoke suite passed")
 
 
 # --- acceptance subcommand (the live pytest suite over port-forwards) --------
@@ -944,9 +1063,9 @@ _ADOPT_OR_INSTALL = (
 _LB_CONTROLLER_HINTS = ("metallb", "svclb", "cloud-controller", "cilium-operator", "aws-load-balancer")
 
 
-def _kubectl_json(base: list[str], *argv: str) -> tuple[int, dict, str]:
+def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple[int, dict, str]:
     """Run kubectl ... -o json and parse. Returns (rc, parsed-or-{}, stderr)."""
-    rc, out, err = _run_text([*base, *argv, "-o", "json"])
+    rc, out, err = _run_text([*base, *argv, "-o", "json"], env=env)
     if rc != 0:
         return rc, {}, err.strip()
     try:
@@ -1710,8 +1829,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="land the tracked git ref on a persistent deploy now, then re-prove it",
         description="Upgrade-in-place for a persistent deploy: hard-refresh every Argo "
                     "Application so a pushed commit lands now instead of at the next "
-                    "poll, then run the readiness gate and the same smoke suite "
-                    "`verify` runs. Deploys nothing -- Argo already tracks the ref.",
+                    "poll, wait for every Application on a tracked repo to report "
+                    "Synced and Healthy, then run the readiness gate and the same "
+                    "smoke suite `verify` runs. Deploys nothing -- Argo already "
+                    "tracks the ref. The smoke stage needs the app namespace, so "
+                    "without --env-file or --namespace it refuses unless --skip-verify.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     rf.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
@@ -1727,7 +1849,7 @@ def build_parser() -> argparse.ArgumentParser:
     rf.add_argument("--argocd-namespace", default="argocd",
                     help="namespace holding the Argo Applications to hard-refresh")
     rf.add_argument("--readiness-timeout", type=int, default=600,
-                    help="bounded readiness wait in seconds (never wait-forever; sets READINESS_TIMEOUT)")
+                    help="bounded wait in seconds, applied to the Argo sync and again to the readiness gate (sets READINESS_TIMEOUT)")
     rf.add_argument("--skip-verify", action="store_true",
                     help="stop after the readiness gate (the run then proves Ready, not working)")
     # cmd_verify runs on this same namespace, so the flag it reads must exist here.
