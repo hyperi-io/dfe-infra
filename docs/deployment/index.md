@@ -33,7 +33,7 @@ argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides
 argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale)
 deploy repo infra/common.yaml        deployment-wide (every appset)
-deploy repo infra/<chart>.yaml       one substrate/platform chart
+deploy repo infra/<chart>.yaml       one data-layer or platform chart
 deploy repo values/<app>-...yaml     engine-authored overlay (Layer 2 apps)
 ```
 
@@ -41,9 +41,9 @@ Everything from `infra/` down is the DEPLOYER's, and it is last, so
 `clickhouse.mode`, `kafka.mode` and the storage models are reachable
 without editing this repo. The profile file is a tier DEFAULT, not a lock.
 
-Substrate therefore depends on the deploy repo resolving. On a bundled
+The data layer therefore depends on the deploy repo resolving. On a bundled
 deploy (no external git) the git host is `layer2-deploy-repo`'s own
-single-source Application, so the substrate and platform Applications
+single-source Application, so the data-layer and platform Applications
 report ComparisonError until it is up and then converge.
 
 Tier composition (what each enables by default) is documented suite-side
@@ -79,6 +79,19 @@ refuses a post-deploy edit. See the deploy repo's `infra/README.md`.
 **Every combination, its status and its evidence:
 [storage.md](storage.md)** - the deploy-time matrix, including the cells
 that are refused and the ones not built yet.
+
+## Upgrading onto the generated JWT signing key
+
+Releases before the ESO-generated key minted `dfe-engine-jwt` from the chart
+template. On the first upgrade past that, the ExternalSecret adopts the
+existing Secret (`creationPolicy: Owner`) and writes a new key into it, so
+every token issued before the upgrade stops verifying and the engine rolls
+once - operators and any machine caller log in again, and nothing else is
+affected. `refreshPolicy: CreatedOnce` then holds that key for the life of the
+deployment: on the rc.12 deployment the Secret's `resourceVersion` moved on
+that first reconcile and held across the two renders after it. A deployment
+that cannot take even one invalidation sets `auth.jwtSecret` to the key it
+already has, which renders a plain Secret and no generator.
 
 ## Version pins
 

@@ -16,7 +16,7 @@ is what makes `WHERE json.response_code = 200` a typed integer comparison instea
 of a string match against a blob. It replaces the deprecated experimental
 `Object('json')` / old `JSON` implementation entirely.
 
-**Current as of ClickHouse 25.3+** (production-ready release).
+**Current as of ClickHouse 25.3+**, the release that marked the type GA.
 
 ## Why it exists (vs the old `Object('json')`)
 

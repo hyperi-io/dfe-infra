@@ -3,8 +3,9 @@
 #  File:         check_suite_drift.py
 #  Purpose:      Keep suite.yaml honest: structurally sound, every in-repo
 #                edge citation still there and still naming the producer's
-#                package, every chart and app pin matched to a member, and
-#                docs/suite-graph.md carrying the diagrams the file
+#                package, every chart and app pin matched to a member or to a
+#                declared non-member, and docs/suite-graph.md carrying the
+#                diagrams the file
 #                generates. The docs check is MARKERS-DRIVEN -- it renders
 #                the blocks the page already carries -- so a producer with no
 #                diagram block is an advisory rather than a failure.
@@ -20,12 +21,13 @@
 
 FAIL (exit 1): a structural problem, an in-repo citation that no longer exists
 or no longer names the producer's package, a chart or pin that suite.yaml says
-exists and does not, or a docs diagram that differs from what the file
-generates.
+exists and does not, a `non_members` entry that is also a node or that names
+nothing, or a docs diagram that differs from what the file generates.
 
 WARN (exit 0): a chart or versions.yaml app pin with no member, or a producer
 with out-edges and no diagram block on the docs page -- advisory, because a
-repo joins the suite when it tags and its chart may exist first.
+repo joins the suite when it tags and its chart may exist first. A name listed
+under `non_members` raises no advisory: the reason is recorded there instead.
 
 SKIPPED: a citation into a member repo that is not on disk. Exit 0 by default
 so the helm-lint job stays green on a bare checkout; exit 2 under --strict so
@@ -52,7 +54,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import suite_graph  # noqa: E402
+import suite_graph
 
 REPO_ROOT = suite_graph.REPO_ROOT
 DOCS_PAGE = REPO_ROOT / "docs" / "suite-graph.md"
@@ -148,10 +150,15 @@ def check_citations(graph: dict, repos: Path) -> tuple[list[str], list[str]]:
     return fails, sorted(skipped)
 
 
-def check_charts(graph: dict) -> tuple[list[str], list[str]]:
-    """Every chart an edge cites exists; every dfe-* chart has a member (advisory)."""
+def check_charts(graph: dict) -> tuple[list[str], list[str], set[str]]:
+    """Every chart an edge cites exists; every dfe-* chart has a member (advisory).
+
+    Returns the chart names it looked at, so a `non_members` entry naming none
+    of them can be reported as stale.
+    """
     fails: list[str] = []
     warns: list[str] = []
+    declared = graph.get("non_members") or {}
     cited_charts: set[str] = set()
     for edge in graph["edges"]:
         m = re.match(r"^dfe-infra/helm/charts/([^/]+)/", edge.get("evidence", ""))
@@ -159,13 +166,14 @@ def check_charts(graph: dict) -> tuple[list[str], list[str]]:
             cited_charts.add(m.group(1))
             if not (CHARTS / m.group(1)).is_dir():
                 fails.append(f"{edge['from']} -> {edge['to']}: chart {m.group(1)} is gone")
-    for chart in sorted(p.name for p in CHARTS.iterdir() if p.is_dir() and p.name.startswith("dfe-")):
-        if chart not in cited_charts:
+    charts = {p.name for p in CHARTS.iterdir() if p.is_dir() and p.name.startswith("dfe-")}
+    for chart in sorted(charts):
+        if chart not in cited_charts and chart not in declared:
             warns.append(f"chart {chart} has no member in suite.yaml")
-    return fails, warns
+    return fails, warns, charts
 
 
-def check_app_pins(graph: dict) -> tuple[list[str], list[str]]:
+def check_app_pins(graph: dict) -> tuple[list[str], list[str], set[str]]:
     """versions.yaml apps: keys with no member -- advisory, the pin may predate the tag.
 
     A versions.yaml this cannot read at all is a FAIL, not an advisory: with no
@@ -175,16 +183,38 @@ def check_app_pins(graph: dict) -> tuple[list[str], list[str]]:
     text = VERSIONS.read_text(encoding="utf-8", errors="replace")
     current = re.search(r'^current:\s*"([^"]+)"', text, re.MULTILINE)
     if not current:
-        return ["versions.yaml has no `current:` pointer"], []
+        return ["versions.yaml has no `current:` pointer"], [], set()
     block = re.search(rf"^  {re.escape(current.group(1))}:\n(.*?)(?=^  [0-9]|\Z)", text, re.MULTILINE | re.DOTALL)
     apps = re.search(r"^    apps:\n(.*?)(?=^    [a-z]|\Z)", block.group(1), re.MULTILINE | re.DOTALL) if block else None
     if not apps:
-        return [f"versions.yaml stack {current.group(1)} has no apps: block"], []
+        return [f"versions.yaml stack {current.group(1)} has no apps: block"], [], set()
+    declared = graph.get("non_members") or {}
     warns = []
-    for key in re.findall(r"^      ([A-Za-z0-9_.-]+):", apps.group(1), re.MULTILINE):
-        if key not in graph["nodes"]:
+    keys = set(re.findall(r"^      ([A-Za-z0-9_.-]+):", apps.group(1), re.MULTILINE))
+    for key in sorted(keys):
+        if key not in graph["nodes"] and key not in declared:
             warns.append(f"versions.yaml apps.{key} has no member in suite.yaml")
-    return [], warns
+    return [], warns, keys
+
+
+def check_non_members(graph: dict, named: set[str]) -> list[str]:
+    """A silenced advisory must still be about something that exists.
+
+    An entry that is also a node contradicts the file, and one matching no
+    chart and no app pin silences an advisory nothing can raise any more.
+    """
+    fails: list[str] = []
+    for name, why in sorted((graph.get("non_members") or {}).items()):
+        if not isinstance(why, str) or not why.strip():
+            fails.append(f"non_members {name}: no reason recorded")
+        if name in graph["nodes"]:
+            fails.append(f"non_members {name}: is also a node, so the file disagrees with itself")
+        elif name not in named:
+            fails.append(
+                f"non_members {name}: names no chart and no versions.yaml app pin -- "
+                f"the entry has outlived the advisory it silences"
+            )
+    return fails
 
 
 def check_producer_diagrams(graph: dict) -> list[str]:
@@ -247,12 +277,13 @@ def main() -> int:
     if not fails:
         f, repos_skipped = check_citations(graph, args.repos.resolve())
         fails += f
-        f, w = check_charts(graph)
+        f, w, charts = check_charts(graph)
         fails += f
         warns += w
-        f, w = check_app_pins(graph)
+        f, w, pins = check_app_pins(graph)
         fails += f
         warns += w
+        fails += check_non_members(graph, charts | pins)
         warns += check_producer_diagrams(graph)
         f, s = check_docs(graph)
         fails += f

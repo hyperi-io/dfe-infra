@@ -528,12 +528,6 @@ def _refresh_failed(stage: str, rc: int, detail: str = "") -> int:
     return rc
 
 
-def _refresh_ok(what: str) -> int:
-    """The one shape a finished refresh prints; returns the code to exit."""
-    print(f"\n>>> refresh OK: the tracked ref landed, {what}", file=sys.stderr)
-    return 0
-
-
 def _normalise_repo(url: str) -> str:
     """A repo URL reduced to what two spellings of the same repo share."""
     url = url.strip().rstrip("/")
@@ -542,15 +536,19 @@ def _normalise_repo(url: str) -> str:
     return url.lower()
 
 
-def _tracked_repos(kube: list[str], argocd_namespace: str, env: dict) -> list[str]:
-    """The repo URLs this deploy tracks, off the dfe-cluster secret annotations."""
-    rc, doc, _err = _kubectl_json(
+def _tracked_repos(kube: list[str], argocd_namespace: str, env: dict) -> tuple[list[str], str]:
+    """The repos this deploy tracks, as (repo URLs, read error).
+
+    A secret that cannot be read is an error rather than an empty list, which
+    would silently widen the wait to every Application on the cluster.
+    """
+    rc, doc, err = _kubectl_json(
         [*kube, "-n", argocd_namespace, "get", "secret", "dfe-cluster"], env=env
     )
     if rc != 0:
-        return []
+        return [], _last_line(err) or f"kubectl exited {rc}"
     ann = (doc.get("metadata") or {}).get("annotations") or {}
-    return [_normalise_repo(ann[k]) for k in _TRACKED_REPO_ANNOTATIONS if ann.get(k)]
+    return [_normalise_repo(ann[k]) for k in _TRACKED_REPO_ANNOTATIONS if ann.get(k)], ""
 
 
 def _app_repos(app: dict) -> list[str]:
@@ -659,7 +657,11 @@ def cmd_refresh(args: argparse.Namespace) -> int:
 
     print(f"\n>>> refresh stage: argo sync (up to {args.readiness_timeout}s)",
           file=sys.stderr)
-    repos = _tracked_repos(kube, args.argocd_namespace, env)
+    repos, repo_err = _tracked_repos(kube, args.argocd_namespace, env)
+    if repo_err:
+        return _refresh_failed(
+            "argo-sync", 1, f"cannot read the dfe-cluster secret: {repo_err}"
+        )
     if repos:
         print(f"    tracking {', '.join(repos)}", file=sys.stderr)
     else:
@@ -689,14 +691,17 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         return _refresh_failed("readiness", rc)
 
     if args.skip_verify:
-        return _refresh_ok("the deploy is Ready "
-                           "(--skip-verify: the smoke suite did not run)")
+        print("\n>>> refresh OK: the tracked ref landed, the deploy is Ready "
+              "(--skip-verify: the smoke suite did not run)", file=sys.stderr)
+        return 0
 
     print("\n>>> refresh stage: smoke suite", file=sys.stderr)
     rc = cmd_verify(args)
     if rc != 0:
         return _refresh_failed("smoke", rc)
-    return _refresh_ok("the deploy is Ready and the smoke suite passed")
+    print("\n>>> refresh OK: the tracked ref landed, the deploy is Ready and the "
+          "smoke suite passed", file=sys.stderr)
+    return 0
 
 
 # --- acceptance subcommand (the live pytest suite over port-forwards) --------

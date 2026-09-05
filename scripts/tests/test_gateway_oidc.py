@@ -78,6 +78,14 @@ def of_kind(docs: list[dict], kind: str) -> list[dict]:
     return [d for d in docs if d.get("kind") == kind]
 
 
+def gateway_egress(docs: list[dict]) -> list[dict]:
+    """The NetworkPolicy that lets a DFE pod reach its own gateway."""
+    return [
+        d for d in of_kind(docs, "NetworkPolicy")
+        if d["metadata"]["name"] == "allow-gateway-egress"
+    ]
+
+
 def login_policies(docs: list[dict]) -> list[dict]:
     """The per-provider interactive-login policies, not the infra group checks."""
     return [
@@ -144,11 +152,7 @@ def test_no_dead_oidc_switch_survives() -> None:
 
 
 def test_gateway_egress_names_the_listener_port() -> None:
-    docs = render(POLICIES)
-    policies = [
-        d for d in of_kind(docs, "NetworkPolicy")
-        if d["metadata"]["name"] == "allow-gateway-egress"
-    ]
+    policies = gateway_egress(render(POLICIES))
     expect("every DFE namespace gets a gateway egress policy", len(policies) == 1,
            f"got {len(policies)}")
     rule = policies[0]["spec"]["egress"][0]
@@ -159,12 +163,7 @@ def test_gateway_egress_names_the_listener_port() -> None:
 
 
 def test_gateway_egress_selects_the_proxy_pods() -> None:
-    docs = render(POLICIES)
-    policies = [
-        d for d in of_kind(docs, "NetworkPolicy")
-        if d["metadata"]["name"] == "allow-gateway-egress"
-    ]
-    to = policies[0]["spec"]["egress"][0]["to"][0]
+    to = gateway_egress(render(POLICIES))[0]["spec"]["egress"][0]["to"][0]
     expect("the destination is the gateway namespace",
            to["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
            == "envoy-gateway-system", f"got {to}")
@@ -176,11 +175,7 @@ def test_gateway_egress_selects_the_proxy_pods() -> None:
 
 
 def test_gateway_egress_can_be_turned_off() -> None:
-    docs = render(POLICIES, "gatewayEgress.enabled=false")
-    policies = [
-        d for d in of_kind(docs, "NetworkPolicy")
-        if d["metadata"]["name"] == "allow-gateway-egress"
-    ]
+    policies = gateway_egress(render(POLICIES, "gatewayEgress.enabled=false"))
     expect("gatewayEgress.enabled=false renders nothing", policies == [],
            f"got {len(policies)}")
 

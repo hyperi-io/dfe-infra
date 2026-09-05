@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 GATE = REPO_ROOT / "bootstrap" / "smoke-test-readiness.sh"
+DESTROY = REPO_ROOT / "bootstrap" / "destroy.sh"
 
 # Answers kubectl's four read shapes off FAKE_KUBECTL_FIXTURE; an absent key is
 # an empty result, which is what a cluster with none of that kind returns.
@@ -218,6 +220,50 @@ def test_an_unready_workload_in_an_owned_namespace_fails() -> None:
         "a deployment short of desired replicas fails",
         out.returncode != 0 and "deployment dfe-local/dfe-ui 1/2 ready" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def destroyed_namespaces() -> set[str]:
+    """Every namespace destroy.sh removes, off its own delete calls."""
+    text = DESTROY.read_text(encoding="utf-8", errors="replace")
+    names: set[str] = set()
+    for line in text.splitlines():
+        listed = re.search(r"^for ns in (.+); do$", line.strip())
+        if listed:
+            names.update(listed.group(1).split())
+            continue
+        single = re.search(r"delete ns \"?([A-Za-z0-9-]+)\"?\s", line)
+        if single:
+            names.add(single.group(1))
+    if 'grep "namespace/dfe-"' in text:
+        names.add("dfe-*")
+    return names
+
+
+def watched_namespaces() -> set[str]:
+    """The gate's default allowlist, off its own WATCH_NS assignment."""
+    text = GATE.read_text(encoding="utf-8", errors="replace")
+    default = re.search(r'WATCH_NS="\$\{READINESS_WATCH_NS:-(.+?)\}"', text)
+    return set(default.group(1).split()) if default else set()
+
+
+def test_the_gate_watches_exactly_what_the_teardown_removes() -> None:
+    """The allowlist is a hand copy of destroy.sh's lists and drifts silently.
+
+    A namespace added to the teardown but not here is created by the deploy and
+    never judged, so the gate passes a deploy whose workloads are crashlooping.
+    """
+    destroyed, watched = destroyed_namespaces(), watched_namespaces()
+    expect("both lists parse", bool(destroyed) and bool(watched), f"{destroyed} / {watched}")
+    expect(
+        "every namespace the teardown removes is judged",
+        destroyed - watched == set(),
+        f"unwatched: {sorted(destroyed - watched)}",
+    )
+    expect(
+        "and the gate judges nothing the teardown leaves behind",
+        watched - destroyed == set(),
+        f"undestroyed: {sorted(watched - destroyed)}",
     )
 
 
