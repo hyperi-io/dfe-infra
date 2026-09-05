@@ -55,6 +55,12 @@ Subcommands:
                smoke suite `verify` runs. Deploys nothing itself -- Argo already
                tracks the ref, so `git push` is the change and this is the
                "land it and prove it" half.
+  idp          Stand up (or tear down) a throwaway Dex + glauth tester IdP in
+               the deployment's own cluster, routed on its own gateway, so
+               external-OIDC login can be exercised end to end without editing
+               a shared provider's redirect URIs or restarting it. Users,
+               groups, hostname, gateway and redirect URIs are all flags;
+               passwords are generated per deploy into a 0600 file.
   pin          Resolve a pinned version (tag) to its current GHCR digest and,
                with --write, set the current stack's digests: in versions.yaml
                (supply-chain cooldown honoured). --check is the read-only "are my
@@ -140,6 +146,10 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 # the standalone tool and `dfe-ops pin` are one code path (dfe-infra#116).
 sys.path.insert(0, str(SCRIPTS))
 from resolve_pins import add_pin_subparser  # noqa: E402
+
+# `idp` (the throwaway Dex + glauth tester IdP) lives in tester_idp for the same
+# reason: the render functions are unit-testable without a cluster.
+from tester_idp import add_idp_subparser  # noqa: E402
 
 # The deploy MODES (== the appset profile value each selects). One lever --
 # DFE_PROFILE -- drives the whole stack: the cluster secret's label (which gates
@@ -1915,6 +1925,10 @@ def build_parser() -> argparse.ArgumentParser:
     # pin -- resolve a version's registry digest and (with --write) set the
     # current stack's digests: in versions.yaml. Registered from resolve_pins.
     add_pin_subparser(sub)
+
+    # idp -- a throwaway Dex + glauth IdP on the deployment's own gateway, so an
+    # external-OIDC login can be proven without borrowing a shared provider.
+    add_idp_subparser(sub)
 
     return ap
 
