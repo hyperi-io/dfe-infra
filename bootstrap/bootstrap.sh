@@ -140,6 +140,10 @@ required_vars=(
 # the cluster-secret annotation renders blank (kafka-dependent apps are gated off
 # in slim anyway).
 export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
+# external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
+# "none" deploys no external-dns, because its own default provider is aws and an
+# uncredentialled install crash-loops against Route 53 forever (#223).
+export DFE_DNS_PROVIDER="${DFE_DNS_PROVIDER:-none}"
 # devex/local enforces DFE onto its dedicated workers via a HARD nodeSelector
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is
 # satisfiable; a shared/customer cluster labels its own nodes at provisioning.

@@ -101,7 +101,14 @@ auth:
   # Pin a known key for a deployment that restores from backup or rotates
   # centrally. Set -> a plain Secret carrying it, and no generator.
   jwtSecret: ""
-  oidcEnabled: false
+  # There is no auth.oidcEnabled and deliberately no engine-side equivalent: the
+  # engine has no OIDC on/off setting, it reads whatever provider YAML is under
+  # <config.mountPath>/auth/oidc-providers. Turning OIDC on is three separate
+  # statements, each with its own value here -- authConfig.providersConfigMap
+  # supplies the provider definitions, oidc.enabled + oidc.providers mount their
+  # client credentials, and auth.trustProxyHeaders says whether the gateway's
+  # X-Oidc-* headers are believed (dfe-infra #222).
+  #
   # Trust X-Oidc-Subject / -Email / -Groups as authenticated identity.
   #
   # Only true where the gateway in front of this route STRIPS those headers off

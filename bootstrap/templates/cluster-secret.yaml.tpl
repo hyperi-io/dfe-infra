@@ -14,6 +14,9 @@ metadata:
     # fallback (gated in appsets/layer2-deploy-repo.yaml). External GitHub/GitLab
     # deploys set "false" and no in-cluster git server is created.
     dfe.hyperi.io/bundled-deploy-repo: "${DFE_BUNDLED_DEPLOY_REPO}"
+    # external-dns provider, "none" for a deployment that publishes no records;
+    # layer1-addons deploys the controller only for a value other than none.
+    dfe.hyperi.io/dns-provider: "${DFE_DNS_PROVIDER}"
   annotations:
     # Identity
     dfe.hyperi.io/env: "${DFE_ENV}"

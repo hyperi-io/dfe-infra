@@ -1,4 +1,5 @@
-# Layer 1 addons: external-dns, KEDA, metrics-server, Reloader, CNPG operator.
+# Layer 1 addons: KEDA, metrics-server, Reloader, CNPG operator, and
+# external-dns where the cluster declares a DNS provider.
 # Chart versions MUST match versions.yaml (the SSOT).
 # Envoy Gateway uses OCI and is deployed as a standalone app in bootstrap/.
 #
@@ -31,13 +32,8 @@ spec:
                 # owns them (see header). Adding them here re-introduces the dup.
                 # chartValues is merged into helm.valuesObject below. goTemplate
                 # runs with missingkey=error, so every element must carry the key.
-                - chart: external-dns
-                  repo: https://kubernetes-sigs.github.io/external-dns/
-                  version: "1.21.1"
-                  namespace: external-dns
-                  wave: "2"
-                  appProject: infra
-                  chartValuesYaml: ""
+                # external-dns is absent too, and gated below on the cluster's
+                # declared DNS provider.
                 - chart: keda
                   repo: https://kedacore.github.io/charts
                   version: "2.20.1"
@@ -88,6 +84,34 @@ spec:
                 # (clickhouse.com CRDs) are cluster-only operators: deployed in the
                 # scale profile via appsets/layer-scale.yaml (cluster-label gated).
                 # slim + single CH use a plain StatefulSet -- no operator.
+    # external-dns, deployed ONLY where the cluster declares a DNS provider it has
+    # credentials for. The chart's own default provider is aws, so an
+    # unconfigured install runs a controller that fails every minute against
+    # Route 53 and publishes nothing (#223). Exists AND NotIn: a cluster secret
+    # with no dns-provider label is excluded, because NotIn alone matches an
+    # absent key.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/dns-provider
+                    operator: Exists
+                  - key: dfe.hyperi.io/dns-provider
+                    operator: NotIn
+                    values: ["none", ""]
+          - list:
+              elements:
+                - chart: external-dns
+                  repo: https://kubernetes-sigs.github.io/external-dns/
+                  version: "1.21.1"
+                  namespace: external-dns
+                  wave: "2"
+                  appProject: infra
+                  chartValuesYaml: ""
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -110,6 +134,10 @@ spec:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
               cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+            {{- if eq .chart "external-dns" }}
+            provider:
+              name: '{{ index .metadata.labels "dfe.hyperi.io/dns-provider" }}'
+            {{- end }}
             {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:
         server: '{{ .server }}'
