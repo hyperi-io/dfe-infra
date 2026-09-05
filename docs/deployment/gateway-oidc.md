@@ -89,7 +89,8 @@ The way out is the engine reading the ID token itself rather than trusting a
 header the gateway cannot produce. Until that exists, edge OIDC gives you
 authentication and no authorization.
 
-Two more things in the same path that do not currently meet:
+Two more things in the same path that do not meet at the Envoy Gateway this
+repo pins (`versions.yaml`, `envoy-gateway`):
 
 - The `EnvoyPatchPolicy`'s `jwt_authn` filter takes the token from an
   `Authorization: Bearer` header. An interactive OIDC login leaves the browser
