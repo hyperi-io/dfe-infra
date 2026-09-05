@@ -33,7 +33,7 @@ argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides
 argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale)
 deploy repo infra/common.yaml        deployment-wide (every appset)
-deploy repo infra/<chart>.yaml       one substrate/platform chart
+deploy repo infra/<chart>.yaml       one data-layer or platform chart
 deploy repo values/<app>-...yaml     engine-authored overlay (Layer 2 apps)
 ```
 
@@ -41,9 +41,9 @@ Everything from `infra/` down is the DEPLOYER's, and it is last, so
 `clickhouse.mode`, `kafka.mode` and the storage models are reachable
 without editing this repo. The profile file is a tier DEFAULT, not a lock.
 
-Substrate therefore depends on the deploy repo resolving. On a bundled
+The data layer therefore depends on the deploy repo resolving. On a bundled
 deploy (no external git) the git host is `layer2-deploy-repo`'s own
-single-source Application, so the substrate and platform Applications
+single-source Application, so the data-layer and platform Applications
 report ComparisonError until it is up and then converge.
 
 Tier composition (what each enables by default) is documented suite-side

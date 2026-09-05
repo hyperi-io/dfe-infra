@@ -379,10 +379,8 @@ nodes:
     # Its versions.yaml pin is a placeholder, not a release tag, and it
     # carries no digest, so the renderer excludes it from every manifest.
 
-  # dfe-transform-wasm and dfe-transform-splack are NOT members: neither has
-  # a release tag, so neither passes the release-authority test. Each joins
-  # when its first tag exists. Their charts and placeholder pins in this repo
-  # predate that test.
+  # dfe-transform-wasm and dfe-transform-splack are NOT members -- see
+  # non_members below, which is where the reason is recorded machine-readably.
 
   # --- ui ------------------------------------------------------------------
 
@@ -572,6 +570,24 @@ nodes:
     # NO suite member consumes it yet: dfe-loader still reaches ClickHouse
     # through the upstream crate with a patch onto the clickhouse-rs fork, so
     # a release here moves nothing until that patch is retired.
+
+# ---------------------------------------------------------------------------
+# NON-MEMBERS -- names this repo carries a chart or a versions.yaml app pin for
+# that are deliberately NOT members. Without them the drift check raises an
+# advisory per name on every run, and an advisory nobody can act on trains the
+# reader to ignore the ones that mean something.
+#
+# The declaration is not free. check_suite_drift.py FAILS when an entry here is
+# also a node, and when an entry matches no chart and no app pin -- so a name
+# joins the graph or loses its chart and this block cannot go stale silently.
+# ---------------------------------------------------------------------------
+non_members:
+
+  dfe-transform-wasm: "No release tag, so it fails the release-authority test above. Its chart and placeholder app pin predate that test; it becomes a node when it first tags."
+
+  dfe-transform-splack: "No release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
+
+  dfe-vpn: "The VPN chart, superseded by culvert. culvert is a member and this chart is not its chart, so the chart's own name has no member and never will."
 
 # ---------------------------------------------------------------------------
 # EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the
