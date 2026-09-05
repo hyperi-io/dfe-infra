@@ -318,7 +318,7 @@ def test_clickhouse_tiered_block_needs_no_object_store() -> None:
 def test_clickhouse_tiered_block_reaches_single_mode() -> None:
     docs = render("clickhouse-cluster", "clickhouse.mode=single", *TIERED_BLOCK_SETS,
                   "clickhouse.tieredBlock.coldStorageClass=nvme-bulk")
-    cm = [d for d in docs if d.get("kind") == "ConfigMap"][0]
+    cm = next(d for d in docs if d.get("kind") == "ConfigMap")
     fragment = yaml.safe_load(cm["data"]["dfe-storage.yaml"])["storage_configuration"]
     expect("single mode declares the disk the operator would have registered",
            list(fragment["disks"]) == ["slow"], f"got {fragment.get('disks')}")
@@ -365,7 +365,7 @@ def test_clickhouse_tiered_block_guards() -> None:
 
 def test_clickhouse_cached_object_reaches_single_mode() -> None:
     docs = render("clickhouse-cluster", "clickhouse.mode=single", *CACHED_OBJECT_SETS)
-    cm = [d for d in docs if d.get("kind") == "ConfigMap"][0]
+    cm = next(d for d in docs if d.get("kind") == "ConfigMap")
     expect("single mode ships the same fragment as config.d YAML",
            "dfe-storage.yaml" in cm["data"])
     fragment = yaml.safe_load(cm["data"]["dfe-storage.yaml"])

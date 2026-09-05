@@ -11,17 +11,12 @@ on:
       - 'versions.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
-      - 'scripts/check_versions_drift.py'
-      - 'scripts/check_governance_drift.py'
-      - 'scripts/check_namespace_drift.py'
-      - 'scripts/check_submodule_drift.py'
-      - 'scripts/check_suite_drift.py'
-      - 'scripts/suite_graph.py'
+      # Whole tree: the job now lints every file under scripts/, not only the
+      # handful it runs.
+      - 'scripts/**'
+      - 'ruff.toml'
       - 'suite.yaml'
       - 'docs/suite-graph.md'
-      - 'scripts/tests/**'
-      - 'scripts/dfe-stack'
-      - 'scripts/dfe-ops'
       - '.github/workflows/helm-lint.yml'
   pull_request:
     paths:
@@ -31,17 +26,12 @@ on:
       - 'versions.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
-      - 'scripts/check_versions_drift.py'
-      - 'scripts/check_governance_drift.py'
-      - 'scripts/check_namespace_drift.py'
-      - 'scripts/check_submodule_drift.py'
-      - 'scripts/check_suite_drift.py'
-      - 'scripts/suite_graph.py'
+      # Whole tree: the job now lints every file under scripts/, not only the
+      # handful it runs.
+      - 'scripts/**'
+      - 'ruff.toml'
       - 'suite.yaml'
       - 'docs/suite-graph.md'
-      - 'scripts/tests/**'
-      - 'scripts/dfe-stack'
-      - 'scripts/dfe-ops'
       - '.github/workflows/helm-lint.yml'
   # A push made with GITHUB_TOKEN triggers no workflow, so the propagate job's
   # write-back leaves its own head commit unchecked. workflow_dispatch is the
@@ -54,6 +44,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Nothing ran ruff on scripts/ until now, so six findings sat in files
+      # nobody had reason to open. The version is pinned so a ruff release
+      # cannot fail a PR that changed nothing.
+      #
+      # `ruff format --check` is deliberately NOT here: the scripts are wrapped
+      # by hand at the 100 columns ruff.toml sets, and the formatter rewrites
+      # 2673 lines across 11 of them. Adopting a formatter for this tree is a
+      # decision of its own, not a side effect of clearing a lint backlog.
+      - name: Ruff (scripts/)
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          version: "0.15.22"
+          args: check
+          src: scripts
 
       # Runs first: a drift check whose patterns have stopped matching prints
       # the same OK as one that is working.
@@ -198,22 +203,51 @@ jobs:
             python3 -c "import yaml,sys; list(yaml.safe_load_all(open('$f')))" && echo "OK: $f"
           done
 
+  # Whether the drift guard below can reach dfe-deploy at all. It is a job of
+  # its own because a job-level `if:` cannot read the secrets context, and the
+  # guard has to be able to come out SKIPPED: a job that checked nothing while
+  # reporting `pass` is what #200 is about, and a warning on every run is how
+  # the warnings that mean something get scrolled past.
+  governance-drift-precondition:
+    name: governance drift preconditions
+    runs-on: ubuntu-latest
+    outputs:
+      can_check: ${{ steps.gate.outputs.can_check }}
+    steps:
+      - name: Can this run reach dfe-deploy
+        id: gate
+        env:
+          # A pull_request from a fork is handed no secrets at all, so a skip
+          # there is the event's doing rather than a gap in this repo.
+          EVENT_CARRIES_SECRETS: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
+        run: |
+          if [[ "$HAS_DEPLOY_TOKEN" == "true" ]]; then
+            echo "can_check=true" >> "$GITHUB_OUTPUT"
+            echo "DFE_DEPLOY_TOKEN is present -- the drift guard runs."
+            exit 0
+          fi
+          echo "can_check=false" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_CARRIES_SECRETS" == "true" ]]; then
+            echo "::notice::governance drift not checked -- this repo has no DFE_DEPLOY_TOKEN secret (read on hyperi-io/dfe-deploy). Tracked in #200. The guard is skipped rather than reported as a pass."
+          else
+            echo "::notice::governance drift not checked -- a fork pull request is handed no secrets. The push to main checks the same commit."
+          fi
+
   # Drift guard (#22): the dfe-deploy template's governance actions dial chart
   # values by dot-path; a chart renaming a dial var would orphan an action
   # silently. dfe-deploy's own CI validates action STRUCTURE and leaves the
-  # chart side to us. dfe-deploy is PRIVATE, so this needs a repo secret
-  # DFE_DEPLOY_TOKEN (read access to hyperi-io/dfe-deploy); without it the job
-  # reports a LOUD skip rather than a silent green.
+  # chart side to us. dfe-deploy is PRIVATE, so the checkout needs the
+  # DFE_DEPLOY_TOKEN secret; where the run has it, drift FAILS the job.
   governance-drift:
     name: governance actions vs chart values
+    needs: governance-drift-precondition
+    if: needs.governance-drift-precondition.outputs.can_check == 'true'
     runs-on: ubuntu-latest
-    env:
-      HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Checkout dfe-deploy template
-        if: env.HAS_DEPLOY_TOKEN == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hyperi-io/dfe-deploy
@@ -221,9 +255,4 @@ jobs:
           path: .dfe-deploy
 
       - name: Governance drift check
-        if: env.HAS_DEPLOY_TOKEN == 'true'
         run: python3 scripts/check_governance_drift.py --deploy-root .dfe-deploy --require
-
-      - name: Governance drift check SKIPPED
-        if: env.HAS_DEPLOY_TOKEN != 'true'
-        run: echo "::warning::governance drift NOT checked -- no DFE_DEPLOY_TOKEN secret (needs read on hyperi-io/dfe-deploy)"

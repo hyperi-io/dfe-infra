@@ -1,4 +1,4 @@
-# Deployment Log: {environment} — {date}
+# Deployment Log: {environment} -- {date}
 
 ## Environment
 - **Target:** {cluster description}
@@ -32,7 +32,7 @@
 | KEDA | | |
 
 ## Issues Found + Fixes
-1. {issue} → {fix} ({commit sha})
+1. {issue} -> {fix} ({commit sha})
 
 ## Images Pending
 - [ ] {service}: image not yet built

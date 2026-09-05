@@ -329,6 +329,24 @@ def main() -> int:
         stale_docs=False,
         no_app_b_block=True,
     )
+    _one_case(
+        "a chart declared a non-member raises no advisory",
+        0,
+        "0 advisory",
+        suite=SUITE + 'non_members:\n  dfe-orphan: "no release tag yet"\n',
+    )
+    _one_case(
+        "a non-member that is also a node FAILs",
+        1,
+        "is also a node",
+        suite=SUITE + 'non_members:\n  app-b: "no release tag yet"\n',
+    )
+    _one_case(
+        "a non-member naming no chart and no pin FAILs as stale",
+        1,
+        "outlived the advisory",
+        suite=SUITE + 'non_members:\n  dfe-gone: "no release tag yet"\n',
+    )
     if _failures:
         print(f"\n{_failures} failure(s)")
         return 1

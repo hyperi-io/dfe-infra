@@ -309,7 +309,7 @@ def slice_graph(
         edges = in_edges(graph, consumer)
         keep = {consumer} | {e["from"] for e in edges}
     elif lane:
-        lanes = {l["name"]: l for l in graph.get("lanes", [])}
+        lanes = {entry["name"]: entry for entry in graph.get("lanes", [])}
         if lane not in lanes:
             raise KeyError(f"no lane named {lane!r}; lanes are {', '.join(lanes)}")
         keep = set(lanes[lane]["members"])

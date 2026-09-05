@@ -177,7 +177,7 @@ def test_reader_shapes() -> None:
     expect("comment between nodes does not end the map", "app-b" in g["nodes"])
     expect("edge map with note", g["edges"][0]["note"] == "second range at Cargo.toml:180")
     expect("block sequence of scalars", g["lanes"][1]["members"] == ["app-b", "side-c"])
-    expect("two lanes", [l["name"] for l in g["lanes"]] == ["libraries", "consumers"])
+    expect("two lanes", [lane["name"] for lane in g["lanes"]] == ["libraries", "consumers"])
     expect("runtime edge with no evidence", g["runtime_edges"][0]["kind"] == "http-api")
 
 
@@ -432,7 +432,7 @@ def test_live_file() -> None:
         parsed = False
     expect("the verified date parses as YYYY-MM-DD", parsed, str(g.get("verified")))
     expect("every lane member is a node", all(
-        m in g["nodes"] for l in g["lanes"] for m in l["members"]))
+        m in g["nodes"] for lane in g["lanes"] for m in lane["members"]))
     expect("the edge-kind vocabulary is the documented ten",
            sorted(g["edge_kinds"]) == EDGE_KIND_NAMES, str(sorted(g["edge_kinds"])))
     expect("the runtime-kind vocabulary is separate and declared",
