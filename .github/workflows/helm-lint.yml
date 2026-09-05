@@ -160,6 +160,11 @@ jobs:
       - name: Rendered images carry the pinned digest
         run: python3 scripts/tests/test_image_digest_pin.py
 
+      # Argo renders with `helm template`, so a template that mints a value
+      # produces a different secret on every sync (#224).
+      - name: A chart render is reproducible
+        run: python3 scripts/tests/test_render_stable.py
+
       # The hunt runner read its hunts off an emptyDir nothing wrote for 42
       # hours while the pod stayed Running (#212), so the paths and the volume
       # are asserted rather than the sidecar's presence.

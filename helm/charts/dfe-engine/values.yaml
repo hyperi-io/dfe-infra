@@ -89,13 +89,17 @@ hyperdx:
   baseUrl: ""     # set to bypass the derivation entirely
 
 auth:
-  # Every dfe-engine pod reads the signing key from this Secret. The chart
-  # generates it when absent and ADOPTS it when present, so supplying it from
-  # ESO or a sealed secret is just a matter of creating it under this name first.
+  # Every dfe-engine pod reads the signing key from this Secret. ESO's Password
+  # generator writes it ONCE (refreshPolicy CreatedOnce), so re-rendering the
+  # chart never changes it -- the render is stateless under Argo, and a key that
+  # moves logs every operator out and rolls the engine (#224).
   jwtSecretName: dfe-engine-jwt
   jwtSecretKey: jwt-secret
+  # false when the deployment supplies this Secret from its own sealed secret or
+  # its own ExternalSecret under jwtSecretName; the chart then creates nothing.
+  jwtSecretCreate: true
   # Pin a known key for a deployment that restores from backup or rotates
-  # centrally. Empty mints a 64-char random one.
+  # centrally. Set -> a plain Secret carrying it, and no generator.
   jwtSecret: ""
   # There is no auth.oidcEnabled and deliberately no engine-side equivalent: the
   # engine has no OIDC on/off setting, it reads whatever provider YAML is under

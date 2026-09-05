@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         test_render_stable.py
+#  Purpose:      Prove a chart render is reproducible, so Argo re-rendering an
+#                app cannot change a generated secret out from under live pods.
+#  Language:     Python
+#
+#  License:      BUSL-1.1
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""Render determinism for charts that carry a generated secret.
+
+Argo renders with `helm template`, never `helm install`, so `lookup` always
+returns nil and a lookup-guarded `randAlphaNum` mints a NEW value on every
+render. That is what re-minted the dfe-engine JWT signing key on every sync,
+rolled the engine through Reloader, and killed every issued token (#224). The
+render is the thing that has to be stable, so the assertion is byte equality
+across two independent renders of the same inputs.
+
+    python3 scripts/tests/test_render_stable.py
+
+Needs `helm` on PATH. No test runner, matching the other checks here.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+CHARTS = REPO_ROOT / "helm" / "charts"
+ENGINE = CHARTS / "dfe-engine"
+
+# A mint function guarded by a cluster read: the pairing that only works under
+# `helm install`, and silently re-mints under every `helm template`.
+MINTERS = re.compile(r"\brand(AlphaNum|Alpha|Numeric|Ascii|Bytes)\b")
+
+_failures = 0
+
+
+def expect(name: str, condition: bool, detail: str = "") -> None:
+    global _failures
+    if condition:
+        print(f"PASS  {name}")
+    else:
+        _failures += 1
+        print(f"FAIL  {name}  {detail}")
+
+
+def render(chart: Path, *sets: str) -> str:
+    cmd = ["helm", "template", chart.name, str(chart)]
+    for s in sets:
+        cmd += ["--set", s]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if out.returncode != 0:
+        raise SystemExit(f"helm template failed for {chart.name} {sets}:\n{out.stderr}")
+    return out.stdout
+
+
+def docs(text: str) -> list[dict]:
+    return [d for d in yaml.safe_load_all(text) if d]
+
+
+def named(text: str, kind: str, name: str) -> list[dict]:
+    return [d for d in docs(text) if d.get("kind") == kind and d["metadata"]["name"] == name]
+
+
+def test_engine_renders_identically_twice() -> None:
+    """The whole chart, not just the Secret -- any drift here rolls a pod."""
+    first = render(ENGINE)
+    second = render(ENGINE)
+    expect("dfe-engine renders byte-identically twice", first == second,
+           "two renders of the same inputs differ")
+
+
+def test_jwt_key_is_not_minted_by_the_template() -> None:
+    """A template-minted key is a new key per render; ESO writes one once."""
+    out = render(ENGINE)
+    gens = named(out, "Password", "dfe-engine-jwt-gen")
+    es = named(out, "ExternalSecret", "dfe-engine-jwt")
+    plain = named(out, "Secret", "dfe-engine-jwt")
+    expect("the default renders the ESO generator", len(gens) == 1, f"got {len(gens)}")
+    expect("the default renders the ExternalSecret", len(es) == 1, f"got {len(es)}")
+    expect("the default renders no template-minted Secret", plain == [], "a Secret rendered")
+    if es:
+        spec = es[0]["spec"]
+        expect("the key is written once, not refreshed",
+               spec.get("refreshPolicy") == "CreatedOnce", f"got {spec.get('refreshPolicy')}")
+        expect("no refresh interval reopens the generator",
+               str(spec.get("refreshInterval")) == "0", f"got {spec.get('refreshInterval')}")
+
+
+def test_a_pinned_key_renders_that_key_and_nothing_else() -> None:
+    out = render(ENGINE, "auth.jwtSecret=pinned-key-value")
+    plain = named(out, "Secret", "dfe-engine-jwt")
+    gens = named(out, "Password", "dfe-engine-jwt-gen")
+    expect("a pinned key renders one plain Secret", len(plain) == 1, f"got {len(plain)}")
+    expect("a pinned key renders no generator", gens == [], "a generator rendered")
+    if plain:
+        expect("the pinned key is the one rendered",
+               plain[0]["stringData"]["jwt-secret"] == "pinned-key-value",
+               f"got {plain[0]['stringData']}")
+
+
+def test_creation_can_be_handed_to_the_deployment() -> None:
+    """A deployment supplying the Secret itself must get nothing from the chart."""
+    out = render(ENGINE, "auth.jwtSecretCreate=false")
+    expect("jwtSecretCreate=false renders no generator",
+           named(out, "Password", "dfe-engine-jwt-gen") == [], "a generator rendered")
+    expect("jwtSecretCreate=false renders no ExternalSecret",
+           named(out, "ExternalSecret", "dfe-engine-jwt") == [], "an ExternalSecret rendered")
+    expect("jwtSecretCreate=false renders no Secret",
+           named(out, "Secret", "dfe-engine-jwt") == [], "a Secret rendered")
+
+
+def test_no_chart_mints_a_secret_behind_a_lookup() -> None:
+    """The #224 shape, repo-wide: a cluster read cannot guard a render-time mint."""
+    offenders = []
+    for template in CHARTS.glob("*/templates/**/*.yaml"):
+        body = template.read_text(encoding="utf-8", errors="replace")
+        code = "\n".join(
+            line for line in body.splitlines() if "{{" in line or "{{-" in line
+        )
+        if MINTERS.search(code):
+            offenders.append(str(template.relative_to(REPO_ROOT)))
+    expect("no chart template mints a value at render time", offenders == [],
+           f"got {offenders}")
+
+
+def main() -> int:
+    test_engine_renders_identically_twice()
+    test_jwt_key_is_not_minted_by_the_template()
+    test_a_pinned_key_renders_that_key_and_nothing_else()
+    test_creation_can_be_handed_to_the_deployment()
+    test_no_chart_mints_a_secret_behind_a_lookup()
+    print(f"\n{_failures} failure(s)")
+    return 1 if _failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
