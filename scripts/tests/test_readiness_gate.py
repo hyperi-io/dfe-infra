@@ -12,9 +12,9 @@
 
 The gate decides whether a deploy is declared up, so both of its ways of being
 wrong cost a real run: a healthy pod whose lifetime restart count is hours old
-was reported as live churn (`5h12m` ends in `m`), and a denylist of the
-cluster's own namespaces failed the gate on whatever the distribution ships
-that kube-system does not cover.
+was reported as live churn (`5h12m` ends in `m`, and so does `164m`), and a
+denylist of the cluster's own namespaces failed the gate on whatever the
+distribution ships that kube-system does not cover.
 
 A fake `kubectl` first on PATH answers every query from a JSON fixture, so the
 gate's own decisions are what is under test and no cluster is involved.
@@ -114,6 +114,32 @@ def test_an_hours_old_restart_count_is_not_live_churn() -> None:
     expect(
         "a pod last restarted 5h12m ago passes",
         out.returncode == 0,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_a_restart_hours_ago_in_minutes_is_not_live_churn() -> None:
+    """kubectl prints `(164m ago)` for a restart under three hours old.
+
+    After an overnight control-plane outage, cnpg-operator, envoy-gateway and
+    keda-operator carried 80-104 lifetime restarts and had been stable for 164
+    minutes, and the gate still called that live churn.
+    """
+    out = run_gate({"pods": ["cnpg cnpg-operator-0 1/1 Running 104 (164m ago) 6d"]})
+    expect(
+        "a pod last restarted 164m ago passes",
+        out.returncode == 0,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_the_churn_window_is_a_knob() -> None:
+    """A deployment that wants a wider window sets one, and it is obeyed."""
+    pods = {"pods": ["cnpg cnpg-operator-0 1/1 Running 104 (164m ago) 6d"]}
+    out = run_gate(pods, READINESS_CHURN_MINUTES="200")
+    expect(
+        "164m is live churn once the window is 200 minutes",
+        out.returncode != 0 and "runaway restarts" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
 

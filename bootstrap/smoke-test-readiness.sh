@@ -20,6 +20,8 @@
 #         READINESS_TIMEOUT   (default 900s) -- backstop; convergence wait ceiling.
 #         READINESS_INTERVAL  (default 15s)  -- poll cadence.
 #         READINESS_RESTART_THRESHOLD (default 10) -- restarts above this fail.
+#         READINESS_CHURN_MINUTES (default 15) -- a restart older than this is
+#                                history, not live churn, whatever the count.
 #         READINESS_WATCH_NS  -- space-separated namespace globs the gate judges
 #                                (default: the namespaces destroy.sh removes,
 #                                which is what this deploy creates).
@@ -29,6 +31,7 @@ DFE_NS="${DFE_NS:-}"
 TIMEOUT="${READINESS_TIMEOUT:-900}"
 INTERVAL="${READINESS_INTERVAL:-15}"
 THRESH="${READINESS_RESTART_THRESHOLD:-10}"
+CHURN_MINUTES="${READINESS_CHURN_MINUTES:-15}"
 # Allowlist of the namespaces this deploy creates (destroy.sh's teardown list) --
 # a denylist of the cluster's own is per-distribution and misses calico-system,
 # tigera-operator, longhorn-system and metallb-system.
@@ -46,12 +49,19 @@ watched_ns() {
   return 1
 }
 
-# True when a restart recency is minutes or seconds old, so `5h12m` -- which also
-# ends in `m` -- is not read as live churn.
+# True when a restart is recent enough to be live churn: seconds always, minutes
+# only inside CHURN_MINUTES, and an `h`/`d` recency -- `5h12m` also ends in `m`
+# -- never.
 recent_restart() {
+  local mins
   case "$1" in
     *h*|*d*) return 1 ;;
-    \(*[0-9]s|\(*[0-9]m) return 0 ;;
+    \(*[0-9]s) return 0 ;;
+    \(*[0-9]m)
+      mins="${1#\(}"
+      # A non-numeric recency leaves `[` failing, which reads as not churn.
+      [ "${mins%m}" -lt "$CHURN_MINUTES" ] 2>/dev/null
+      ;;
     *) return 1 ;;
   esac
 }
@@ -64,8 +74,8 @@ run_check() {
   : > "$ISSUES_FILE"
 
   # Pods: real container readiness, phase, restart sanity. Restart counts are
-  # lifetime, so only a restart kubectl dates to seconds or minutes ago counts
-  # as live churn; a bare count has the AGE column next to it, not a recency.
+  # lifetime, so only a restart kubectl dates inside the churn window counts as
+  # live churn; a bare count has the AGE column next to it, not a recency.
   while read -r ns name ready status restarts recency _; do
     watched_ns "$ns" || continue
     case "$status" in Completed|Succeeded) continue ;; esac
