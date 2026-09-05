@@ -115,6 +115,8 @@ versionCheck:
 - [architecture.md](../architecture.md) - where this repo sits in the suite
 - [storage.md](storage.md) - the storage-deploy matrix: service x mode x
   storage model, with the status and evidence behind every cell
+- [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on,
+  the private-CA IdP shape, and what Envoy Gateway cannot do with a groups claim
 - [rke2.md](rke2.md) - the default distribution
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
 - [clickhouse.md](clickhouse.md) - CH target matrix (official operator / ClickHouse Cloud / private-cloud swap; Altinity untested) + operator history

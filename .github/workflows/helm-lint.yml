@@ -150,10 +150,20 @@ jobs:
       - name: Storage model renders and the cascade holds
         run: python3 scripts/tests/test_storage_model.py
 
+      # An issuer-only OIDC policy and a 443 egress rule both render green and
+      # then fail at admission or drop every packet (#222, #223).
+      - name: Gateway OIDC and gateway egress render the working shape
+        run: python3 scripts/tests/test_gateway_oidc.py
+
       # versions.yaml pinning tag@sha256 is worth nothing if the chart renders a
       # bare tag, and a bare tag is mutable.
       - name: Rendered images carry the pinned digest
         run: python3 scripts/tests/test_image_digest_pin.py
+
+      # Argo renders with `helm template`, so a template that mints a value
+      # produces a different secret on every sync (#224).
+      - name: A chart render is reproducible
+        run: python3 scripts/tests/test_render_stable.py
 
       # The hunt runner read its hunts off an emptyDir nothing wrote for 42
       # hours while the pod stayed Running (#212), so the paths and the volume

@@ -32,6 +32,23 @@ operatorNamespaces:
 # Envoy Gateway namespace (source of ingress traffic)
 gatewayNamespace: envoy-gateway-system
 
+# Egress from the DFE app namespaces BACK to the gateway, for a pod that has to
+# reach another component through the deployment's public hostname.
+gatewayEgress:
+  enabled: true
+  # Envoy Gateway's managed proxy pods, so the policy does not open the whole
+  # gateway namespace.
+  podLabels:
+    app.kubernetes.io/managed-by: envoy-gateway
+    app.kubernetes.io/component: proxy
+  # The proxy's CONTAINER ports, which is what NetworkPolicy sees after DNAT --
+  # not the Service's 443/80. Envoy Gateway offsets a privileged listener port by
+  # 10000 unless EnvoyProxy sets useListenerPortAsContainerPort, which would make
+  # these 443 and 80.
+  ports:
+    - { port: 10443, protocol: TCP }
+    - { port: 10080, protocol: TCP }
+
 # Autoscaler namespace. KEDA polls the in-namespace keda-shim for the pressure
 # metric, so without this the metrics-api scaler times out and nothing scales.
 kedaNamespace: keda
