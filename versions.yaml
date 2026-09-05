@@ -1696,7 +1696,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.19.5"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Loader routing contract corrected (source_to_table, real table_fields), YAML emitter width pinned so long VRL scalars stop folding, commit-subject budgeting.
+      dfe-engine: "v1.19.6"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Loader routing contract corrected (source_to_table, real table_fields), YAML emitter width pinned so long VRL scalars stop folding, commit-subject budgeting.
       dfe-ui: "v1.5.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.27"      # independent release line
       dfe-loader: "v1.18.30"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
@@ -1713,7 +1713,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:b34ec3963ce3d024a6c88c324d50faf7f3a84bf824e01baf98e9fd8b818efd75"
+      dfe-engine: "sha256:ad40fbdde915b74e38337bad579c55e2d4fabe87f314d3f8871c2c5507587da4"
       dfe-ui: "sha256:ba84901024cd95bbe5e452874da8ac11d96d921c1c4cc8b78463b21576d2d6b0"
       dfe-receiver: "sha256:0e9d04354c041d71a6c79eb923f5f59f7926e4ad321eb8dc64f940874b2fdf14"
       dfe-loader: "sha256:168bb9760b040fe7862d0024639f0aef3c944da2dff133f5d932eaa4fee9b52b"
