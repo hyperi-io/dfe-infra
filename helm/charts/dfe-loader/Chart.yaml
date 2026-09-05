@@ -3,7 +3,7 @@ name: dfe-loader
 description: DFE Rust Kafka consumer — async ClickHouse writer
 type: application
 version: 0.1.0
-appVersion: "v1.18.30"   # == versions.yaml apps.dfe-loader (drift-checked)
+appVersion: "v1.18.31"   # == versions.yaml apps.dfe-loader (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.7.0"

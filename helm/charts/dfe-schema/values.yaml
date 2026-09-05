@@ -18,7 +18,7 @@ image:
   tag: ""            # empty -> Chart.AppVersion
   # The immutable half of the pin; GHCR tags are mutable. This Job runs the ENGINE
   # image, so it is versions.yaml digests.dfe-engine (drift-checked).
-  digest: "sha256:ad40fbdde915b74e38337bad579c55e2d4fabe87f314d3f8871c2c5507587da4"
+  digest: "sha256:b9351f1d934ab359638fbd1cf258204cbc600ad9cf1a4bcd74f321d19a582e14"
   pullPolicy: IfNotPresent
 
 # Seconds the Job keeps retrying the ClickHouse connection before failing. A
