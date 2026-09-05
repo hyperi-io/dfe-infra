@@ -158,6 +158,31 @@ def _ops():
     return _ops_module
 
 
+def run_failing_deploy(failing: str, **overrides) -> tuple[SystemExit | None, Path]:
+    """A deploy whose `failing` tool exits non-zero. Returns (the exit, secrets file)."""
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "users.toml").write_text(USERS, encoding="utf-8", newline="\n")
+    args = deploy_args(tmp, **overrides)
+    with FakeCluster() as cluster:
+        (cluster.dir / failing).write_text(
+            FAKE_TOOL.replace("sys.exit(0)", "sys.exit(1)"), encoding="utf-8", newline="\n"
+        )
+        (cluster.dir / failing).chmod(0o755)
+        saved_env, saved_out, saved_err = dict(os.environ), sys.stdout, sys.stderr
+        os.environ.update(cluster.env)
+        sys.stdout = sys.stderr = io.StringIO()
+        raised: SystemExit | None = None
+        try:
+            tester_idp.cmd_idp_deploy(args)
+        except SystemExit as exc:
+            raised = exc
+        finally:
+            sys.stdout, sys.stderr = saved_out, saved_err
+            os.environ.clear()
+            os.environ.update(saved_env)
+        return raised, tmp / "idp.env"
+
+
 def run_deploy(**overrides) -> tuple[int, list[dict], Path]:
     """A full `idp deploy` against fake tools. Returns (rc, calls, secrets file).
 
@@ -446,6 +471,55 @@ def test_the_secrets_file_is_private() -> None:
     _, _, env_file = run_deploy()
     mode = stat.S_IMODE(env_file.stat().st_mode)
     expect("the secrets file is 0600", mode == 0o600, oct(mode))
+
+
+def test_a_helm_timeout_still_leaves_the_credentials_on_disk() -> None:
+    """The apply puts dex-secrets in the cluster, so helm is not the first writer.
+
+    A `helm upgrade --wait` that times out raises SystemExit, and with the file
+    written afterwards the run left live credentials nobody had a copy of.
+    """
+    raised, env_file = run_failing_deploy("helm")
+    expect("the helm failure still stops the deploy", raised is not None, f"{raised}")
+    expect("but the secrets file exists", env_file.is_file(), f"{env_file}")
+    if env_file.is_file():
+        env = dict(
+            ln.split("=", 1)
+            for ln in env_file.read_text(encoding="utf-8").splitlines()
+            if "=" in ln and not ln.startswith("#")
+        )
+        expect(
+            "carrying the client secret the cluster now holds",
+            len(env.get("TESTER_IDP_CLIENT_SECRET", "")) >= 32,
+            f"{sorted(env)}",
+        )
+        expect(
+            "and it is still 0600",
+            stat.S_IMODE(env_file.stat().st_mode) == 0o600,
+            oct(stat.S_IMODE(env_file.stat().st_mode)),
+        )
+
+
+def test_reuse_secrets_on_an_older_file_is_an_input_error() -> None:
+    """A file written before a key existed used to raise a bare KeyError."""
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "users.toml").write_text(USERS, encoding="utf-8", newline="\n")
+    (tmp / "idp.env").write_text(
+        "TESTER_IDP_ISSUER=https://dex.example.com\n", encoding="utf-8", newline="\n"
+    )
+    args = deploy_args(tmp, reuse_secrets=True)
+    saved_out, saved_err = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = captured = io.StringIO()
+    try:
+        rc = tester_idp.cmd_idp_deploy(args)
+    finally:
+        sys.stdout, sys.stderr = saved_out, saved_err
+    expect("it returns the input-error code", rc == 2, f"rc={rc}")
+    expect(
+        "naming the key that is missing",
+        "TESTER_IDP_CLIENT_SECRET" in captured.getvalue(),
+        captured.getvalue(),
+    )
 
 
 def test_the_generated_password_matches_the_hash_in_the_cluster_secret() -> None:

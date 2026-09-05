@@ -2,8 +2,8 @@
 #  Project:      dfe-infra
 #  File:         test_access_summary.py
 #  Purpose:      Prove the access summary reads its endpoints off the live
-#                HTTPRoutes and picks THIS deploy's Gateway, rather than
-#                composing hostnames from labels and taking items[0].
+#                HTTPRoutes, reports the Reach the gateway actually granted
+#                each one, and picks THIS deploy's Gateway.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -11,11 +11,13 @@
 """Behaviour tests for bootstrap/access-summary.sh.
 
 The summary is what an operator is handed after a deploy, so a wrong row sends
-them to a URL that does not answer. Two ways it was wrong: hostnames were
+them to a URL that does not answer. Three ways it was wrong: hostnames were
 composed here from hardcoded labels while envoy-gateway-config takes every
 hostname from the overlay, so a renamed label reported an exposed route as
-internal; and the Gateway address came from `items[0]`, which is whichever
-Gateway the API happened to list first (dfe-vpn ships a second).
+internal; the Reach column tested each route's hostname against the list of
+hostnames it was itself taken from, so every row read "exposed" and a second
+hostname was dropped; and the Gateway address came from `items[0]`, which is
+whichever Gateway the API happened to list first (dfe-vpn ships a second).
 
 A fake `kubectl` first on PATH answers every query from a JSON fixture.
 
@@ -36,8 +38,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SUMMARY = REPO_ROOT / "bootstrap" / "access-summary.sh"
 
-# Answers the summary's four read shapes off FAKE_KUBECTL_FIXTURE. The two
-# tab-separated listings are emitted the way the jsonpath ranges do.
+# Answers the summary's four read shapes off FAKE_KUBECTL_FIXTURE, emitting each
+# listing with the separator its jsonpath uses.
 FAKE_KUBECTL = """#!/usr/bin/env python3
 import base64, json, os, sys
 
@@ -47,7 +49,7 @@ with open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8") as fh:
 
 if "httproute" in args:
     for row in fixture.get("httproutes") or []:
-        print("\\t".join(row))
+        print("|".join(row))
 elif "gateway" in args:
     for row in fixture.get("gateways") or []:
         print("\\t".join(row))
@@ -63,6 +65,19 @@ elif "dfe-engine-seed-accounts" in args:
 """
 
 DOMAIN = "example.com"
+
+
+def route(
+    name: str,
+    *hosts: str,
+    path: str = "",
+    accepted: str = "True=Accepted",
+    resolved: str = "True=ResolvedRefs",
+) -> list[str]:
+    """One HTTPRoute in the five fields the summary's jsonpath emits."""
+    return [name, path, f"{accepted} ", f"{resolved} ", " ".join(hosts) + " "]
+
+
 BASE_FIXTURE = {
     "annotations": {"domain": DOMAIN, "dfe_namespace": "dfe-local", "profile": "scale"},
     "gateways": [["dfe-gateway", "dfe-envoy", "192.0.2.10"]],
@@ -134,9 +149,9 @@ def test_the_endpoints_come_from_the_live_routes() -> None:
     """
     text = run_summary(
         httproutes=[
-            ["dfe-ui", f"console.{DOMAIN}", "/"],
-            ["dfe-engine", f"console.{DOMAIN}", "/api/v1"],
-            ["hyperdx", f"hyperdx.{DOMAIN}", ""],
+            route("dfe-ui", f"console.{DOMAIN}", path="/"),
+            route("dfe-engine", f"console.{DOMAIN}", path="/api/v1"),
+            route("hyperdx", f"hyperdx.{DOMAIN}"),
         ]
     )
     rows = endpoints(text)
@@ -162,8 +177,8 @@ def test_the_ingest_routes_are_listed_like_the_others() -> None:
     rows = endpoints(
         run_summary(
             httproutes=[
-                ["receiver", f"receiver.{DOMAIN}", ""],
-                ["otel", f"otel.{DOMAIN}", ""],
+                route("receiver", f"receiver.{DOMAIN}"),
+                route("otel", f"otel.{DOMAIN}"),
             ]
         )
     )
@@ -181,10 +196,80 @@ def test_the_ingest_routes_are_listed_like_the_others() -> None:
 
 def test_a_route_added_later_still_gets_a_row() -> None:
     """The label map is a courtesy, so an unknown route falls back to its name."""
-    rows = endpoints(run_summary(httproutes=[["grafana", f"grafana.{DOMAIN}", "/"]]))
+    rows = endpoints(run_summary(httproutes=[route("grafana", f"grafana.{DOMAIN}", path="/")]))
     expect(
         "an unmapped route is named after itself",
         f"| grafana | https://grafana.{DOMAIN} | exposed |" in rows,
+        f"{rows}",
+    )
+
+
+def test_a_route_the_gateway_refused_is_not_exposed() -> None:
+    """Reach was tested against the hostnames it was taken from, so it was a constant.
+
+    A route the gateway did not accept answers nothing, and the operator needs
+    the reason on the row rather than a URL that times out.
+    """
+    rows = endpoints(
+        run_summary(
+            httproutes=[
+                route("dfe-ui", f"dfe.{DOMAIN}", accepted="False=NoMatchingListenerHostname"),
+                route("hyperdx", f"hyperdx.{DOMAIN}"),
+            ]
+        )
+    )
+    expect(
+        "the refused route reads not accepted, with the gateway's reason",
+        f"| DFE UI (+ embedded HyperDX explore) | https://dfe.{DOMAIN} | "
+        "not accepted (NoMatchingListenerHostname) |" in rows,
+        f"{rows}",
+    )
+    expect(
+        "and the accepted route beside it still reads exposed",
+        f"| HyperDX | https://hyperdx.{DOMAIN} | exposed |" in rows,
+        f"{rows}",
+    )
+
+
+def test_a_route_with_unresolvable_backends_is_not_exposed() -> None:
+    """Accepted says the listener took the hostname, not that a backend exists."""
+    rows = endpoints(
+        run_summary(httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", resolved="False=BackendNotFound")])
+    )
+    expect(
+        "an accepted route with no backend reads refs unresolved",
+        f"| DFE UI (+ embedded HyperDX explore) | https://dfe.{DOMAIN} | "
+        "refs unresolved (BackendNotFound) |" in rows,
+        f"{rows}",
+    )
+
+
+def test_a_route_with_no_status_yet_is_not_exposed() -> None:
+    """A route the gateway has not reached is not a reachable URL."""
+    rows = endpoints(
+        run_summary(httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", accepted="", resolved="")])
+    )
+    expect(
+        "an unprogrammed route says so",
+        f"| DFE UI (+ embedded HyperDX explore) | https://dfe.{DOMAIN} | "
+        "not accepted (no gateway status) |" in rows,
+        f"{rows}",
+    )
+
+
+def test_every_hostname_of_a_route_gets_a_row() -> None:
+    """hostnames is a list; taking [0] hides every alias the overlay declares."""
+    rows = endpoints(
+        run_summary(httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", f"console.{DOMAIN}", path="/")])
+    )
+    expect(
+        "the two-hostname route yields two rows",
+        len(rows) == 2,
+        f"{rows}",
+    )
+    expect(
+        "and the second hostname is one of them",
+        any(f"https://console.{DOMAIN} " in row for row in rows),
         f"{rows}",
     )
 

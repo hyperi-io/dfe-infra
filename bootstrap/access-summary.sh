@@ -22,10 +22,11 @@ PROFILE="$(ann profile)"
 
 TAB="$(printf '\t')"
 
-# Every HTTPRoute on the cluster as name/host/path, one per line. The routes are
-# the truth about what is exposed; a hostname composed here from a label is not.
-ROUTES="$(kubectl get httproute -A -o jsonpath="{range .items[*]}{.metadata.name}${TAB}{.spec.hostnames[0]}${TAB}{.spec.rules[0].matches[0].path.value}{\"\n\"}{end}" 2>/dev/null || true)"
-ROUTE_HOSTS="$(printf '%s\n' "${ROUTES}" | cut -f2)"
+# Every HTTPRoute on the cluster, one line of name|path|Accepted|ResolvedRefs|
+# hostnames -- the route's own status is what says the gateway programmed it.
+# Pipe-separated, not tab: an empty path or an unprogrammed route leaves a field
+# empty, which a tab IFS collapses away.
+ROUTES="$(kubectl get httproute -A -o jsonpath="{range .items[*]}{.metadata.name}|{.spec.rules[0].matches[0].path.value}|{range .status.parents[*]}{range .conditions[?(@.type==\"Accepted\")]}{.status}={.reason}{\" \"}{end}{end}|{range .status.parents[*]}{range .conditions[?(@.type==\"ResolvedRefs\")]}{.status}={.reason}{\" \"}{end}{end}|{range .spec.hostnames[*]}{@}{\" \"}{end}{\"\n\"}{end}" 2>/dev/null || true)"
 
 # The deploy's own Gateway, by name then by class -- a cluster can carry others.
 GATEWAY_NAME="${DFE_GATEWAY_NAME:-dfe-gateway}"
@@ -36,55 +37,72 @@ if [ -z "${GATEWAY_ADDR}" ]; then
   GATEWAY_ADDR="$(printf '%s\n' "${GATEWAYS}" | awk -F'\t' -v c="${GATEWAY_CLASS}" '$2 == c {print $3; exit}')"
 fi
 
-# Is a route exposed? (an HTTPRoute carries that exact host)
-exposed() {
-  if printf '%s\n' "${ROUTE_HOSTS}" | grep -qx -- "$1"; then
-    echo "exposed"
-  else
-    echo "internal (port-forward)"
-  fi
-}
+# The routes a default deploy carries, as <name>|<host label>|<path>|<human name>.
+# One list, so the label map and the no-routes fallback cannot drift apart.
+KNOWN_ROUTES="dfe-ui|dfe||DFE UI (+ embedded HyperDX explore)
+dfe-engine|dfe|/api/v1|DFE API (engine)
+hyperdx|hyperdx||HyperDX
+kafbat|kafbat||Kafbat (Kafka UI)
+argocd|argocd||Argo CD
+forgejo|git||Deploy-repo git (Forgejo)
+links|links||Links page
+receiver|receiver||Receiver ingest
+otel|otel||OTLP ingest"
 
 # The human name for an HTTPRoute, falling back to the route's own name so a
 # route added later still gets a row.
 route_label() {
-  case "$1" in
-    dfe-ui) echo "DFE UI (+ embedded HyperDX explore)" ;;
-    dfe-engine) echo "DFE API (engine)" ;;
-    hyperdx) echo "HyperDX" ;;
-    kafbat) echo "Kafbat (Kafka UI)" ;;
-    argocd) echo "Argo CD" ;;
-    forgejo) echo "Deploy-repo git (Forgejo)" ;;
-    links) echo "Links page" ;;
-    receiver) echo "Receiver ingest" ;;
-    otel) echo "OTLP ingest" ;;
-    *) echo "$1" ;;
-  esac
+  local name host path label
+  while IFS='|' read -r name host path label; do
+    if [ "${name}" = "$1" ]; then
+      echo "${label}"
+      return
+    fi
+  done <<KNOWN
+${KNOWN_ROUTES}
+KNOWN
+  echo "$1"
 }
 
-# The endpoints table, one row per live HTTPRoute. The hardcoded rows are the
-# fallback for a cluster carrying no routes at all, where nothing is exposed.
+# The Reach of one route, from the conditions the gateway wrote on it: a route
+# it refused, or whose backends it could not resolve, answers nothing.
+route_reach() {
+  local accepted="$1" resolved="$2" cond
+  if [ -z "${accepted//[[:space:]]/}" ]; then
+    echo "not accepted (no gateway status)"
+    return
+  fi
+  for cond in ${accepted}; do
+    [ "${cond%%=*}" = "True" ] || { echo "not accepted (${cond#*=})"; return; }
+  done
+  for cond in ${resolved}; do
+    [ "${cond%%=*}" = "True" ] || { echo "refs unresolved (${cond#*=})"; return; }
+  done
+  echo "exposed"
+}
+
+# The endpoints table, one row per hostname of every live HTTPRoute. The known
+# routes are the fallback for a cluster carrying none, where nothing is exposed.
 endpoint_rows() {
-  if [ -n "$(printf '%s' "${ROUTE_HOSTS}" | tr -d '[:space:]')" ]; then
-    printf '%s\n' "${ROUTES}" | while IFS="${TAB}" read -r name host path; do
-      [ -z "${host}" ] && continue
-      printf '| %s | https://%s%s | %s |\n' \
-        "$(route_label "${name}")" "${host}" "$(printf '%s' "${path}" | sed 's:^/$::')" \
-        "$(exposed "${host}")"
+  local name path accepted resolved hosts reach host label
+  if [ -n "${ROUTES//[[:space:]]/}" ]; then
+    printf '%s\n' "${ROUTES}" | while IFS='|' read -r name path accepted resolved hosts; do
+      [ -z "${hosts//[[:space:]]/}" ] && continue
+      reach="$(route_reach "${accepted}" "${resolved}")"
+      for host in ${hosts}; do
+        printf '| %s | https://%s%s | %s |\n' \
+          "$(route_label "${name}")" "${host}" \
+          "$(printf '%s' "${path}" | sed 's:^/$::')" "${reach}"
+      done
     done
     return
   fi
-  cat <<ROWS
-| DFE UI (+ embedded HyperDX explore) | https://dfe.${DOMAIN} | $(exposed "dfe.${DOMAIN}") |
-| DFE API (engine) | https://dfe.${DOMAIN}/api/v1 | $(exposed "dfe.${DOMAIN}") |
-| HyperDX | https://hyperdx.${DOMAIN} | $(exposed "hyperdx.${DOMAIN}") |
-| Kafbat (Kafka UI) | https://kafbat.${DOMAIN} | $(exposed "kafbat.${DOMAIN}") |
-| Argo CD | https://argocd.${DOMAIN} | $(exposed "argocd.${DOMAIN}") |
-| Deploy-repo git (Forgejo) | https://git.${DOMAIN} | $(exposed "git.${DOMAIN}") |
-| Links page | https://links.${DOMAIN} | $(exposed "links.${DOMAIN}") |
-| Receiver ingest | https://receiver.${DOMAIN} | $(exposed "receiver.${DOMAIN}") |
-| OTLP ingest | https://otel.${DOMAIN} | $(exposed "otel.${DOMAIN}") |
-ROWS
+  while IFS='|' read -r name host path label; do
+    printf '| %s | https://%s.%s%s | internal (port-forward) |\n' \
+      "${label}" "${host}" "${DOMAIN}" "${path}"
+  done <<KNOWN
+${KNOWN_ROUTES}
+KNOWN
 }
 
 # Stable named logins seeded + reconciled by the engine every boot (#106). Lists

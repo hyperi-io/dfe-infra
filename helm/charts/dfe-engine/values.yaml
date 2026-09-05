@@ -93,6 +93,11 @@ auth:
   # generator writes it ONCE (refreshPolicy CreatedOnce), so re-rendering the
   # chart never changes it -- the render is stateless under Argo, and a key that
   # moves logs every operator out and rolls the engine (#224).
+  # UPGRADING from a release that minted this Secret from the template: the
+  # ExternalSecret adopts it (creationPolicy Owner) and overwrites the key on its
+  # first reconcile, so every token issued before the upgrade dies once and the
+  # engine rolls once. The key is stable from that reconcile on. See
+  # docs/deployment/index.md.
   jwtSecretName: dfe-engine-jwt
   jwtSecretKey: jwt-secret
   # false when the deployment supplies this Secret from its own sealed secret or
