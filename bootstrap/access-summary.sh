@@ -132,6 +132,13 @@ creds_block() {
     || printf 'Run `python3 scripts/dfe-ops creds` for the fetch commands.\n'
 }
 
+# Which CA signed the edge, and whether the root survives a rebuild (#238).
+ca_block() {
+  # shellcheck disable=SC2016
+  python3 "${REPO_ROOT}/scripts/dfe-ops" ca --status 2>/dev/null \
+    || printf 'Run `python3 scripts/dfe-ops ca --status` for the issuer mode.\n'
+}
+
 read -r -d '' BODY <<EOF || true
 # DFE access -- where everything is
 
@@ -159,6 +166,24 @@ An "internal" UI is not exposed; reach it with
   \`breakglass\`; neither is a shipped default, so fetch them from the store:
 
 $(creds_block)
+
+## Trusting the DFE certificate
+
+\`\`\`
+$(ca_block)
+\`\`\`
+
+A self-signed deployment signs \`*.${DOMAIN}\` with its own private root, so a
+browser warns and the embedded HyperDX iframe fails outright -- an iframe cannot
+show the interstitial. Trust it once per box:
+
+\`\`\`sh
+python3 scripts/dfe-ops ca             # the root PEM + the install lines
+python3 scripts/dfe-ops ca --install   # writes .tmp/dfe-internal-ca.crt, does the non-root half
+\`\`\`
+
+With root persistence on, that survives a rebuild. A deployment chaining to an
+estate PKI (\`tls.vault\` in the gateway overlay) has nothing to install.
 
 ## Stable named logins (#106)
 
