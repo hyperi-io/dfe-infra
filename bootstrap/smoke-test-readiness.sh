@@ -135,6 +135,21 @@ with urllib.request.urlopen("http://localhost:8000/api/v1/auth/setup-status", ti
   esac
 }
 
+# The edge issuer mode and, in self-signed mode, whether the root was restored or
+# newly minted (#238). Informational: a fresh root is a working deploy, so it
+# never fails the gate. `dfe-ops ca --status` owns the wording.
+report_issuer_mode() {
+  local repo_root
+  repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+  local report
+  report="$(python3 "${repo_root}/scripts/dfe-ops" ca --status 2>/dev/null)"
+  if [ -z "$report" ]; then
+    echo "  [warn] issuer mode: dfe-ops ca --status could not read the cluster"
+    return 0
+  fi
+  printf '%s\n' "$report" | sed 's/^/  [info] /'
+}
+
 ISSUES_FILE="$(mktemp)"
 trap 'rm -f "$ISSUES_FILE"' EXIT
 
@@ -198,6 +213,7 @@ while :; do
     # Ready is not the same as safe: a healthy stack on the shipped admin
     # password is open, so the credential verdict decides the exit code too.
     check_default_credentials || exit 1
+    report_issuer_mode
     echo "=== READINESS GATE PASSED: every pod Ready, every workload at desired ==="
     exit 0
   fi

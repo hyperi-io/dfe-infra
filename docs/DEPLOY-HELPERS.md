@@ -82,6 +82,79 @@ neither is a shipped default and neither rotates under a live session.
 logins (#106). A deployment still reading `{.data.admin-password}` off the seed
 Secret gets nothing back; use `dfe-ops creds`.
 
+## Trusting the DFE certificate
+
+A DFE deploy terminates TLS for `*.<domain>` at the Envoy Gateway. Which CA
+signed that certificate is a per-deployment choice, and the two modes ask
+different things of a developer box. One command says which is live, and the
+readiness gate and access summary print the same block:
+
+    python3 scripts/dfe-ops ca --status --kubeconfig .tmp/kubeconfig-dfe-b
+
+### Self-signed mode (the product default)
+
+`tls.issuerName: dfe-internal-ca` -- cert-manager's self-signed bootstrap Issuer
+mints a `CN=dfe-internal-ca` root (ECDSA P-384, ten years) and the
+`dfe-internal-ca` ClusterIssuer signs the edge wildcard. No DNS-01, no external
+credential, and it works on a split-horizon name public ACME cannot validate.
+
+The cost is trust: a browser warns, and the embedded HyperDX iframe fails
+outright because an iframe cannot show the interstitial. Trust the root once:
+
+    python3 scripts/dfe-ops ca             # the PEM plus the install lines
+    python3 scripts/dfe-ops ca --install   # writes the file, does the non-root half
+
+`--install` writes `.tmp/dfe-internal-ca.crt` and adds it to the Chromium-family
+NSS store at `~/.pki/nssdb` (Brave and Chrome read that, not the system store;
+it needs `libnss3-tools`). It prints the rest rather than running them: on Linux
+`sudo cp <file> /usr/local/share/ca-certificates/` then `sudo
+update-ca-certificates`, on macOS `sudo security add-trusted-cert -d -r
+trustRoot -k /Library/Keychains/System.keychain <file>`.
+
+**The root PERSISTS across a rebuild** (#238), so that trust is a one-off. The
+gateway chart pushes the minted root to the deployment's secret store once
+(`PushSecret`, `updatePolicy: IfNotExists`) and restores it before cert-manager
+can mint (`ExternalSecret`, `refreshPolicy: CreatedOnce`); bootstrap.sh renders
+that same pair ahead of Argo, so the restore is ordered before the Certificate
+rather than racing it. The root is reused; the leaf lifetimes rotate.
+
+| Setting | Where | Effect |
+|---|---|---|
+| `tls.internalCA.persist.enabled` | gateway chart values | Off renders neither half: the root does not survive a rebuild. |
+| `tls.internalCA.persist.secretStoreName` | gateway chart values | The store both halves use (default `dfe-secret-store`). |
+| `DFE_CA_PERSIST` | bootstrap env | Whether bootstrap pre-applies the restore. Defaults on when `DFE_VAULT_SECRET_ID` is set. |
+| `DFE_CA_RESTORE_TIMEOUT` | bootstrap env | Seconds to wait for the restore (default 60). A first bootstrap times out by design. |
+
+The store path is `<project>/<env>/pki/internal-ca`, with the properties
+`tls_crt` and `tls_key` -- underscored, because the Vault provider reads a
+property as a gjson path and a dot means nesting.
+
+### Estate-PKI mode (`tls.vault`)
+
+In an estate that already runs a PKI, point the edge issuer at it and every
+client trusts the certificate already -- nothing to install, no root to persist.
+Set it in the deploy repo's own overlay (`infra/envoy-gateway-config.yaml`),
+never in a tracked dfe-infra values file:
+
+```yaml
+tls:
+  issuerName: dfe-estate-pki
+  vault:
+    server: https://vault.example.com:8200
+    path: pki_tls/sign/<role>          # the sign role the AppRole policy grants
+    caBundle: <base64 PEM chain that verifies the server's own TLS>
+    appRole:
+      roleId: <the cert-manager AppRole role_id>
+```
+
+The AppRole SecretID is the one piece bootstrap seeds, from
+`DFE_CERTMANAGER_SECRET_ID` into Secret `cert-manager-approle`. The sign role
+must allow the deployment's wildcard and match the chart's key type
+(`tls.privateKey`, ECDSA P-384 by default).
+
+`tls.acme.email` and `tls.vault.server` are exclusive; the chart fails the render
+when both are set.
+
 ## The end-to-end release + deploy recipe
 
 Ordered. The clean end state is a GHCR digest-pinned deploy -- never a `:dev`
