@@ -16,7 +16,13 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 #
 #  Usage: ./smoke-test-readiness.sh [kubeconfig]
-#  Env:   DFE_NS              -- the app namespace; empty skips the presence check.
+#  Env:   DFE_NS              -- the app namespace; empty skips the presence check
+#                                and the default-credentials check.
+#         DFE_ENV             -- the deployment's posture; a dev posture (dev,
+#                                development, local, test, ci) is the only one
+#                                allowed to run the shipped admin password.
+#         READINESS_ENGINE_TARGET (default deploy/dfe-engine) -- what the
+#                                default-credentials check asks setup-status.
 #         READINESS_TIMEOUT   (default 900s) -- backstop; convergence wait ceiling.
 #         READINESS_INTERVAL  (default 15s)  -- poll cadence.
 #         READINESS_RESTART_THRESHOLD (default 10) -- restarts above this fail.
@@ -32,6 +38,10 @@ TIMEOUT="${READINESS_TIMEOUT:-900}"
 INTERVAL="${READINESS_INTERVAL:-15}"
 THRESH="${READINESS_RESTART_THRESHOLD:-10}"
 CHURN_MINUTES="${READINESS_CHURN_MINUTES:-15}"
+DFE_ENV="${DFE_ENV:-}"
+ENGINE_TARGET="${READINESS_ENGINE_TARGET:-deploy/dfe-engine}"
+# The postures the engine's is_dev_posture accepts (dfe-engine #300).
+DEV_POSTURES="dev development local test ci"
 # Allowlist of the namespaces this deploy creates (destroy.sh's teardown list) --
 # a denylist of the cluster's own is per-distribution and misses calico-system,
 # tigera-operator, longhorn-system and metallb-system.
@@ -65,6 +75,47 @@ recent_restart() {
     *) return 1 ;;
   esac
 }
+
+# The engine's own answer to "is this deployment running the shipped admin
+# password" (#233, dfe-engine #300). Only a dev posture may be, so a non-dev
+# deploy reporting it fails here. An engine that does not serve the field warns:
+# the check cannot judge what it cannot read.
+check_default_credentials() {
+  local posture answer
+  if [ -z "$DFE_NS" ]; then
+    echo "  [skip] default-credentials check: no DFE_NS"
+    return 0
+  fi
+  for posture in $DEV_POSTURES; do
+    if [ "$DFE_ENV" = "$posture" ]; then
+      echo "  [skip] default-credentials check: DFE_ENV=$DFE_ENV is a dev posture"
+      return 0
+    fi
+  done
+  answer="$(kubectl -n "$DFE_NS" exec "$ENGINE_TARGET" -- python3 -c \
+    'import json,urllib.request
+with urllib.request.urlopen("http://localhost:8000/api/v1/auth/setup-status", timeout=10) as r:
+    print(json.load(r).get("default_credentials", "unknown"))' 2>/dev/null | tr -d '\r' | tail -1)"
+  case "$answer" in
+    True|true)
+      echo "=== READINESS GATE FAILED: the engine reports default_credentials on"
+      echo "  [FAIL] setup-status with DFE_ENV='${DFE_ENV:-unset}' -- this deploy is"
+      echo "  [FAIL] serving the shipped admin password. Mint one:"
+      echo "  [FAIL]   helm value dfe-engine.auth.adminSecretName (ESO Password generator)"
+      return 1
+      ;;
+    False|false)
+      echo "  [pass] the engine reports a minted admin password"
+      return 0
+      ;;
+    *)
+      echo "  [warn] default-credentials check: the engine did not answer"
+      echo "         setup-status with default_credentials (pre-#300 image?)"
+      return 0
+      ;;
+  esac
+}
+
 ISSUES_FILE="$(mktemp)"
 trap 'rm -f "$ISSUES_FILE"' EXIT
 
@@ -125,6 +176,9 @@ SECONDS=0
 while :; do
   n="$(run_check)"
   if [ "$n" -eq 0 ]; then
+    # Ready is not the same as safe: a healthy stack on the shipped admin
+    # password is open, so the credential verdict decides the exit code too.
+    check_default_credentials || exit 1
     echo "=== READINESS GATE PASSED: every pod Ready, every workload at desired ==="
     exit 0
   fi

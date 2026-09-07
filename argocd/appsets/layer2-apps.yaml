@@ -74,6 +74,13 @@ spec:
               # carry placeholders). dfe-ui derives NEXTAUTH_URL from it.
               - name: domain
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # The deployment's posture, from the same annotation the cluster
+              # label carries, so DFE_ENV cannot drift from what the deploy
+              # declared. Left at the chart's `local` default, every deployment
+              # self-identifies as dev -- which is what the engine's gitcrud
+              # commit policy and the default-admin-password check gate on (#233).
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

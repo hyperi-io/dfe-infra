@@ -49,6 +49,19 @@ to start when neither `--env-file` (`DFE_NAMESPACE`) nor `--namespace` names one
 -- without it every namespaced suite fails on `namespaces "dfe" not found`.
 `--skip-verify` runs the gate alone and needs no namespace.
 
+## What the readiness gate refuses
+
+Beyond pod readiness and replica counts, the gate asks the engine's
+`/api/v1/auth/setup-status` whether the deployment is running the shipped admin
+password, and FAILS the deploy when it is and `DFE_ENV` names anything but a dev
+posture (`dev`, `development`, `local`, `test`, `ci`). Ready is not the same as
+safe: the deploy mints `admin` and `breakglass` through ESO Password generators,
+so a stack still on the default has not taken them.
+
+An engine too old to serve `default_credentials` warns instead of failing -- the
+check cannot judge what it cannot read. `dfe-ops creds` prints where each minted
+credential is fetched from.
+
 ## The env-file contract (how a teammate gets running)
 
 Everything estate-specific -- addresses, domains, storage class, secrets

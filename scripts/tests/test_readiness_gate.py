@@ -44,6 +44,14 @@ FAKE_KUBECTL = """#!/usr/bin/env python3
 import json, os, sys
 
 args = sys.argv[1:]
+if "exec" in args:
+    answer = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8")).get(
+        "setup_status"
+    )
+    if answer is None:
+        sys.exit(1)
+    print(answer)
+    sys.exit(0)
 if "pods" in args:
     key = "pods"
 elif "deployment,statefulset" in args:
@@ -86,6 +94,7 @@ def run_gate(fixture: dict, **env_overrides: str) -> subprocess.CompletedProcess
 
         env = dict(os.environ)
         env.pop("DFE_NS", None)
+        env.pop("DFE_ENV", None)
         env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
         env["FAKE_KUBECTL_FIXTURE"] = str(fixture_file)
         # One pass: a fixed reading never converges, so a poll loop would only
@@ -245,6 +254,69 @@ def test_an_unready_workload_in_an_owned_namespace_fails() -> None:
     expect(
         "a deployment short of desired replicas fails",
         out.returncode != 0 and "deployment dfe-local/dfe-ui 1/2 ready" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+# A converged single-pod deploy: every other check passes, so the credential
+# verdict is the only thing left to decide the exit code.
+HEALTHY = {
+    "pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"],
+    "ns_workloads": ["dfe-engine 1/1 1 1 6d"],
+}
+
+
+def test_default_credentials_fail_a_non_dev_deploy() -> None:
+    """A healthy stack on the shipped admin password is open, not up (#233).
+
+    The engine only reaches this state in a dev posture, so a deploy declaring
+    any other posture and still reporting it has not taken the minted password.
+    """
+    out = run_gate({**HEALTHY, "setup_status": "True"}, DFE_NS="dfe-local", DFE_ENV="production")
+    expect(
+        "default_credentials in a production posture fails the gate",
+        out.returncode != 0 and "default_credentials" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_a_dev_posture_may_run_the_default() -> None:
+    """Tyre-kicking a dev deploy on a known password is the point of the exception."""
+    out = run_gate({**HEALTHY, "setup_status": "True"}, DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "a dev posture on the default passes, and says it skipped",
+        out.returncode == 0 and "dev posture" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_a_minted_password_passes_in_any_posture() -> None:
+    """The check judges the credential, not the posture."""
+    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="production")
+    expect(
+        "default_credentials false passes",
+        out.returncode == 0 and "minted admin password" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_an_engine_that_cannot_answer_warns_rather_than_fails() -> None:
+    """An image older than dfe-engine #300 serves no such field, and blocking
+    every deploy on a check it cannot run would be worse than saying so."""
+    out = run_gate(HEALTHY, DFE_NS="dfe-local", DFE_ENV="production")
+    expect(
+        "an unanswerable check warns and passes",
+        out.returncode == 0 and "did not answer" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_the_credential_check_needs_the_namespace() -> None:
+    """Without DFE_NS there is no engine to ask, the same as the presence check."""
+    out = run_gate({**HEALTHY, "setup_status": "True"}, DFE_ENV="production")
+    expect(
+        "no namespace skips the credential check",
+        out.returncode == 0 and "no DFE_NS" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
 

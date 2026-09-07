@@ -47,24 +47,18 @@ The links page lists every surface in this layout:
 Send yourself data: point any OTLP exporter at http://localhost:4317
 (gRPC) while the receiver forward runs, then query it in the console.
 
-LOGGING IN (the break-glass credential)
----------------------------------------
+LOGGING IN (the admin credential)
+--------------------------------
 Local login, user `admin`:
-{{- if (index .Values "dfe-engine").seedAuth }}
-{{- if (index .Values "dfe-engine").seedAuth.adminPassword }}
-  - Password: the value you set in dfe-engine.seedAuth.adminPassword, held in
-    Secret dfe-engine-seed-accounts (key admin-password):
-      kubectl -n {{ .Release.Namespace }} get secret dfe-engine-seed-accounts -o jsonpath='{.data.admin-password}' | base64 -d
+{{- $engineAuth := (index .Values "dfe-engine").auth | default dict }}
+{{- if $engineAuth.adminSecretName }}
+  - Password: minted into Secret {{ $engineAuth.adminSecretName }} (key {{ $engineAuth.adminSecretKey | default "admin-password" }}):
+      kubectl -n {{ .Release.Namespace }} get secret {{ $engineAuth.adminSecretName }} -o jsonpath='{.data.{{ $engineAuth.adminSecretKey | default "admin-password" }}}' | base64 -d
 {{- else }}
-  - Password: the engine seeds its break-glass default `changeme` on first
-    boot; the setup flow forces a rotation at first login. Set
-    dfe-engine.seedAuth.adminPassword before install for a stable credential
-    (it lands in Secret dfe-engine-seed-accounts, key admin-password).
-{{- end }}
-{{- else }}
-  - Password: the engine seeds its break-glass default `changeme` on first
-    boot; the setup flow forces a rotation at first login. Set
-    dfe-engine.seedAuth.adminPassword before install for a stable credential.
+  - Password: the trial names no admin Secret, so the engine runs on its
+    shipped default and says so on the login page. That is legal only because
+    this profile's env is a dev posture. Set dfe-engine.auth.adminSecretName
+    and dfe-engine.auth.adminPassword for a stable credential.
 {{- end }}
 
 THIS IS A TRIAL PROFILE

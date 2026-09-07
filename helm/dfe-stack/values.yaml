@@ -203,9 +203,14 @@ dfe-engine:
     enabled: false
   resources: *dfeSlimResources
   telemetry: *dfeTelemetry
-  # A stable break-glass admin password for the trial can be set here
-  # (seedAuth.adminPassword); empty keeps the engine's own seeding -- NOTES.txt
-  # explains where the credential comes from.
+  # The trial has no external-secrets operator, so the ESO generators that mint
+  # the admin and break-glass passwords on a real deploy cannot run here. Naming
+  # no Secret leaves the engine on its dev default, legal only because the chart's
+  # env stays `local`. Set auth.adminSecretName + auth.adminPassword for a stable
+  # trial login.
+  auth:
+    adminSecretName: ""
+    breakglassSecretName: ""
 
 dfe-ui:
   enabled: true

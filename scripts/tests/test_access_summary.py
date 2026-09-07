@@ -62,6 +62,11 @@ elif "dfe-engine-seed-accounts" in args:
     if accts is None:
         sys.exit(1)
     sys.stdout.write(base64.b64encode(json.dumps(accts).encode()).decode())
+elif "secret" in args and "-o" in args and "name" in args:
+    # `dfe-ops creds` presence probe: every secret it asks about is absent
+    # unless the fixture lists it.
+    name = args[args.index("secret") + 1]
+    sys.exit(0 if name in (fixture.get("secrets") or []) else 1)
 """
 
 DOMAIN = "example.com"
@@ -83,6 +88,7 @@ BASE_FIXTURE = {
     "gateways": [["dfe-gateway", "dfe-envoy", "192.0.2.10"]],
     "httproutes": [],
     "seed_accounts": None,
+    "secrets": ["dfe-engine-admin", "dfe-engine-breakglass"],
 }
 
 _failures = 0
@@ -331,6 +337,46 @@ def test_the_seed_logins_are_still_listed() -> None:
         "and none configured says so",
         "(none configured)" in run_summary(),
         "",
+    )
+
+
+def test_the_credential_block_names_the_minted_secrets() -> None:
+    """The summary carries the fetch lines `dfe-ops creds` owns (#233).
+
+    A hand-written copy here named `dfe-engine-admin` key `password` and the
+    seed-accounts `admin-password` at the same time, and both were wrong once the
+    deploy started minting.
+    """
+    text = run_summary()
+    expect(
+        "the minted admin secret is the one fetched",
+        "get secret dfe-engine-admin -o jsonpath='{.data.admin-password}'" in text,
+        text,
+    )
+    expect(
+        "the break-glass secret is fetched too",
+        "get secret dfe-engine-breakglass -o jsonpath='{.data.breakglass-password}'" in text,
+        text,
+    )
+    expect(
+        "and the admin password is no longer read out of the seed-accounts Secret",
+        "dfe-engine-seed-accounts -o jsonpath='{.data.admin-password}'" not in text,
+        text,
+    )
+
+
+def test_a_credential_the_cluster_lacks_is_marked_not_dropped() -> None:
+    """A deploy that turned break-glass off has to read as off, not as missing."""
+    text = run_summary(secrets=["dfe-engine-admin"])
+    expect(
+        "the absent secret is still listed, and marked",
+        "# DFE break-glass (user `breakglass`)   [not on this cluster]" in text,
+        text,
+    )
+    expect(
+        "and the present one is not marked",
+        "# DFE admin (user `admin`)\n" in text,
+        text,
     )
 
 
