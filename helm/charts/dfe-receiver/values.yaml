@@ -69,6 +69,11 @@ exposure:
   mode: public                # public | internal
   public:
     serviceType: LoadBalancer
+    # The address the ingest door must answer on, when a DNS record already names
+    # it. Empty lets the pool/CCM choose, so a rebuild can land on a different
+    # address than the one senders are configured with. It pins the TCP LB alone:
+    # the UDP LB is a separate Service and cannot hold the same address.
+    loadBalancerIP: ""
     # SWAPPABLE LB implementation. loadBalancerClass selects WHO fulfils the
     # Service: leave "" for the cluster default (cloud CCM -- AWS NLB / GCP / Azure
     # via annotations), or set a class to target a specific provider, e.g.

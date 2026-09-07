@@ -81,6 +81,10 @@ spec:
               # commit policy and the default-admin-password check gate on (#233).
               - name: env
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              # The ingest door's address, for the same reason the gateway has
+              # one. Only dfe-receiver reads it; the other charts ignore it.
+              - name: exposure.public.loadBalancerIP
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/receiver_address" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

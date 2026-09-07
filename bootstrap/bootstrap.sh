@@ -18,7 +18,8 @@
 #   DFE_ENV                  dev | stg | prod | local
 #   DFE_CLOUD                aws | gcp | az | local
 #   DFE_REGION               e.g. us-east-1, local
-#   DFE_DOMAIN               e.g. dfe.example.com
+#   DFE_DOMAIN               e.g. dfe.example.com; derived as
+#                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
 #   DFE_PROFILE              slim | single | scale
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
@@ -39,6 +40,13 @@
 #   DFE_REGISTRY_TOKEN       JFrog API token
 #
 # Optional:
+#   DFE_BASE_DOMAIN          estate domain the profile tag is prefixed to when
+#                            DFE_DOMAIN is unset (one cluster, one profile at a
+#                            time, three sets of hostnames)
+#   DFE_GATEWAY_IP           address the Envoy Gateway's LoadBalancer must take;
+#                            empty lets the pool choose
+#   DFE_RECEIVER_IP          address the receiver's public TCP LoadBalancer must
+#                            take; empty lets the pool choose
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
 #   DFE_POST=full            Power-on self test run after the deploy converges:
 #                              full       readiness gate + CORE e2e (default)
@@ -148,6 +156,15 @@ export DFE_DNS_PROVIDER="${DFE_DNS_PROVIDER:-none}"
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is
 # satisfiable; a shared/customer cluster labels its own nodes at provisioning.
 DFE_LABEL_WORKLOAD_NODES="${DFE_LABEL_WORKLOAD_NODES:-$([[ "${DFE_CLOUD:-}" == "local" ]] && echo true || echo false)}"
+# Front-door addresses; empty renders a blank annotation and the pool chooses.
+export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
+export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
+# One cluster runs one profile at a time, so the profile tags the domain and the
+# three deployments never publish the same hostname. An explicit DFE_DOMAIN wins.
+if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" && -n "${DFE_PROFILE:-}" ]]; then
+  export DFE_DOMAIN="${DFE_PROFILE}.${DFE_BASE_DOMAIN}"
+  echo "Domain derived from DFE_BASE_DOMAIN: ${DFE_DOMAIN}"
+fi
 # Registry vars are optional — skip regcred if not set
 # DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 missing=()
