@@ -45,9 +45,11 @@ import json, os, sys
 
 args = sys.argv[1:]
 if "exec" in args:
-    answer = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8")).get(
-        "setup_status"
-    )
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    if "exec_error" in fixture:
+        print(fixture["exec_error"], file=sys.stderr)
+        sys.exit(fixture.get("exec_rc", 1))
+    answer = fixture.get("setup_status")
     if answer is None:
         sys.exit(1)
     print(answer)
@@ -284,8 +286,20 @@ def test_a_dev_posture_may_run_the_default() -> None:
     """Tyre-kicking a dev deploy on a known password is the point of the exception."""
     out = run_gate({**HEALTHY, "setup_status": "True"}, DFE_NS="dfe-local", DFE_ENV="local")
     expect(
-        "a dev posture on the default passes, and says it skipped",
+        "a dev posture on the default passes, and says why",
         out.returncode == 0 and "dev posture" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_an_answer_with_surrounding_whitespace_is_still_read() -> None:
+    """The engine strips before comparing; an exact compare here would not match."""
+    out = run_gate(
+        {**HEALTHY, "setup_status": "  True  "}, DFE_NS="dfe-local", DFE_ENV="production"
+    )
+    expect(
+        "a padded True still fails a production posture",
+        out.returncode != 0 and "default_credentials" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
 
@@ -300,15 +314,61 @@ def test_a_minted_password_passes_in_any_posture() -> None:
     )
 
 
-def test_an_engine_that_cannot_answer_warns_rather_than_fails() -> None:
-    """An image older than dfe-engine #300 serves no such field, and blocking
-    every deploy on a check it cannot run would be worse than saying so."""
-    out = run_gate(HEALTHY, DFE_NS="dfe-local", DFE_ENV="production")
+def test_an_engine_that_serves_no_such_field_warns_rather_than_fails() -> None:
+    """An image older than dfe-engine #300 answers 200 without the field.
+
+    The probe RAN, so the gate knows the engine is reachable and only the
+    contract is missing; blocking every deploy on that would be worse.
+    """
+    out = run_gate({**HEALTHY, "setup_status": "unknown"}, DFE_NS="dfe-local", DFE_ENV="production")
     expect(
-        "an unanswerable check warns and passes",
+        "a missing field warns and passes",
         out.returncode == 0 and "did not answer" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
+
+
+# The probe cannot run: an RBAC denial on exec, a wrong READINESS_ENGINE_TARGET,
+# and a non-200 from setup-status all reach the gate as a non-zero exec.
+UNRUNNABLE = {
+    "rbac denial": 'Error from server (Forbidden): pods "dfe-engine-0" is forbidden',
+    "wrong target": 'Error from server (NotFound): deployments.apps "dfe-engine" not found',
+    "a non-200 from setup-status": "urllib.error.HTTPError: HTTP Error 503: Service Unavailable",
+}
+
+
+def test_a_probe_that_cannot_run_fails_a_non_dev_deploy() -> None:
+    """The fail-open the gate shipped with: an unrunnable check passed as a warn.
+
+    A production deploy on the shipped password passed whenever the probe could
+    not run, which is every case the probe exists to catch.
+    """
+    for cause, message in UNRUNNABLE.items():
+        out = run_gate(
+            {**HEALTHY, "exec_error": message, "exec_rc": 1},
+            DFE_NS="dfe-local",
+            DFE_ENV="production",
+        )
+        expect(
+            f"{cause} fails a production posture",
+            out.returncode != 0 and "could not RUN" in out.stdout,
+            f"rc={out.returncode} {out.stdout}",
+        )
+
+
+def test_a_probe_that_cannot_run_only_warns_in_a_dev_posture() -> None:
+    """A dev deploy may run the shipped password, so it may also fail to prove it."""
+    for cause, message in UNRUNNABLE.items():
+        out = run_gate(
+            {**HEALTHY, "exec_error": message, "exec_rc": 1},
+            DFE_NS="dfe-local",
+            DFE_ENV="local",
+        )
+        expect(
+            f"{cause} warns in a dev posture",
+            out.returncode == 0 and "could not ask" in out.stdout,
+            f"rc={out.returncode} {out.stdout}",
+        )
 
 
 def test_the_credential_check_needs_the_namespace() -> None:
