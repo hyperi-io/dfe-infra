@@ -1703,7 +1703,7 @@ stacks:
       dfe-archiver: "v1.7.19"
       dfe-fetcher: "v1.4.17"
       dfe-transform-vrl: "v1.1.20"
-      dfe-transform-vector: "v1.0.35"  # readiness reports the real lifecycle state on the port the probes hit, so a dead transform stops advertising healthy.
+      dfe-transform-vector: "v1.0.36"  # readiness reports the real lifecycle state on the port the probes hit, so a dead transform stops advertising healthy.
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
@@ -1720,7 +1720,7 @@ stacks:
       dfe-archiver: "sha256:40eccf53458f21d0ff1415feb2149130106816fb7852f480edeee54df8d42036"
       dfe-fetcher: "sha256:18bef367f23e1602018ffc615c32455a792b70f70e02362eea7b39e0e840ee62"
       dfe-transform-vrl: "sha256:aeb980ffd6f287a537b1f5612ef1b8d5f43cda30767236f1df4ebbae1ad3335c"
-      dfe-transform-vector: "sha256:3637a822e0611837868353c0280255b29e56745bb9944ece9efa2e3262087901"
+      dfe-transform-vector: "sha256:ebf82befba965d4c199d77894a810ab8d8a04c876daa30acc665b4fb9be1ddfc"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
       dfe-hyperdx: "sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca"
