@@ -64,6 +64,24 @@ any secret the cluster does not carry. It never prints a value, so the output is
 safe in a log. `bootstrap/access-summary.sh` prints the same block, so a deploy
 hands the operator exactly these lines.
 
+Both Secret names are helm values (`auth.adminSecretName`,
+`auth.breakglassSecretName`), and `creds` reads the names the live engine
+Deployment carries, so a renamed Secret still prints a fetch line that works.
+
+### Moved: the admin password (#234)
+
+`dfe-engine-seed-accounts` no longer carries an `admin-password` key. Two
+Secrets each claiming to be the admin password is what #234 collapsed.
+
+- `admin` -> Secret `dfe-engine-admin`, key `admin-password`.
+- `breakglass` -> Secret `dfe-engine-breakglass`, key `breakglass-password`.
+
+Both are minted in-cluster by an ESO Password generator with `CreatedOnce`, so
+neither is a shipped default and neither rotates under a live session.
+`dfe-engine-seed-accounts` keeps only its `seed-accounts` key -- the named team
+logins (#106). A deployment still reading `{.data.admin-password}` off the seed
+Secret gets nothing back; use `dfe-ops creds`.
+
 ## The end-to-end release + deploy recipe
 
 Ordered. The clean end state is a GHCR digest-pinned deploy -- never a `:dev`

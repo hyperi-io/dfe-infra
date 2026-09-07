@@ -58,9 +58,18 @@ posture (`dev`, `development`, `local`, `test`, `ci`). Ready is not the same as
 safe: the deploy mints `admin` and `breakglass` through ESO Password generators,
 so a stack still on the default has not taken them.
 
-An engine too old to serve `default_credentials` warns instead of failing -- the
-check cannot judge what it cannot read. `dfe-ops creds` prints where each minted
-credential is fetched from.
+An engine too old to serve `default_credentials` answers without the field, and
+that warns instead of failing -- the probe reached the engine and only the
+contract is missing.
+
+A probe that could not RUN at all is a different verdict and FAILS outside a dev
+posture: an RBAC denial on `kubectl exec`, a wrong `READINESS_ENGINE_TARGET`, and
+a non-200 from setup-status all leave the gate unable to say whether the shipped
+password is in use, and passing on that is how a production deploy on the default
+gets declared up. In a dev posture the same thing warns.
+
+`dfe-ops creds` prints where each minted credential is fetched from, reading both
+Secret names off the live engine Deployment.
 
 ## The env-file contract (how a teammate gets running)
 
