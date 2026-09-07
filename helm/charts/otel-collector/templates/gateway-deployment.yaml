@@ -27,8 +27,11 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["--config=/etc/otel/gateway-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
-          {{- if or .Values.exporters.clickhouse.enabled .Values.clusterTelemetry.clickhouse.enabled .Values.clusterTelemetry.kafka.sasl.enabled }}
           env:
+            # The Go runtime otherwise sizes its heap against the NODE, not this
+            # container's limit, and collects too late to stay under it.
+            - name: GOMEMLIMIT
+              value: {{ include "otel-collector.goMemLimit" (include "otel-collector.gatewayMemory" .) | quote }}
             {{- if or .Values.exporters.clickhouse.enabled .Values.clusterTelemetry.clickhouse.enabled }}
             # Expanded by the collector config (${env:CLICKHOUSE_PASSWORD});
             # the clickhouse-cluster chart projects the secret into this
@@ -48,7 +51,6 @@ spec:
                   name: {{ .Values.clusterTelemetry.kafka.sasl.passwordSecretName }}
                   key: {{ .Values.clusterTelemetry.kafka.sasl.passwordSecretKey }}
             {{- end }}
-          {{- end }}
           ports:
             - name: otlp-grpc
               containerPort: 4317

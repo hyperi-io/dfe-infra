@@ -250,9 +250,14 @@ data:
       batch:
         timeout: 5s
         send_batch_size: 1024
+      # Derived from gateway.resources.limits.memory, so resizing the container
+      # resizes what it is allowed to buffer.
       memory_limiter:
         check_interval: 5s
-        limit_mib: 1536
+        limit_mib: {{ include "otel-collector.limitMib" (include "otel-collector.gatewayMemory" .) }}
+        # Headroom for what arrives between two checks; without it the limiter
+        # only notices the overshoot after the runtime has already taken it.
+        spike_limit_mib: {{ include "otel-collector.spikeMib" (include "otel-collector.gatewayMemory" .) }}
       {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
       # k8s_cluster emits no service.name, so its metrics would land in the same
       # unattributed bucket as anything else missing one.
@@ -283,6 +288,11 @@ data:
         endpoint: {{ required "exporters.hyperdx.endpoint is required when enabled" .Values.exporters.hyperdx.endpoint }}
         tls:
           insecure: true
+        # An unreachable destination drops after this instead of retrying for
+        # ever behind a full queue: self-monitoring degrades to loss, not a crash.
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: {{ .Values.gateway.export.maxElapsedTime }}
       {{- end }}
       {{- if .Values.exporters.clickhouse.enabled }}
       clickhouse:
@@ -303,8 +313,11 @@ data:
         timeout: 10s
         sending_queue:
           queue_size: 1000
+        # Bounded, so a ClickHouse that has gone (a deleted Service, a rebuild)
+        # costs the queued batches rather than backing the whole gateway up.
         retry_on_failure:
           enabled: true
+          max_elapsed_time: {{ .Values.gateway.export.maxElapsedTime }}
       {{- end }}
       prometheus:
         endpoint: 0.0.0.0:{{ .Values.gateway.service.prometheusPort }}
@@ -421,12 +434,24 @@ data:
     extensions:
       health_check:
         endpoint: 0.0.0.0:{{ .Values.healthCheckPort }}
+      # filelog read offsets, on a node directory so they outlive the pod.
+      file_storage/filelog:
+        directory: {{ .Values.daemonset.checkpoint.mountPath }}
+        # The collector refuses to start on a missing directory, so it makes its
+        # own rather than depending on the volume type having pre-created it.
+        create_directory: true
+        timeout: 10s
 
     receivers:
       filelog:
         include: [/var/log/pods/*/*/*.log]
         exclude: [/var/log/pods/*/otc-container/*.log]
-        start_at: beginning
+        # Checkpointed, so a restart resumes at the offset it stopped at.
+        storage: file_storage/filelog
+        # First run only -- the checkpoint decides every later start. A fresh
+        # node's whole back-history is more than this container can buffer, and
+        # re-ingesting it is what turned one restart into an OOM loop.
+        start_at: end
         include_file_path: true
         include_file_name: false
         operators:
@@ -567,6 +592,15 @@ data:
     processors:
       batch:
         timeout: 5s
+        # Pinned rather than left to the default 8192: the queue below is sized
+        # in batches, so an unbounded batch makes that bound meaningless.
+        send_batch_size: 1024
+      # Derived from daemonset.resources.limits.memory. Without it the pipeline
+      # has no back pressure of its own and the kernel is the only limit.
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: {{ include "otel-collector.limitMib" (include "otel-collector.daemonsetMemory" .) }}
+        spike_limit_mib: {{ include "otel-collector.spikeMib" (include "otel-collector.daemonsetMemory" .) }}
       k8sattributes:
         auth_type: serviceAccount
         extract:
@@ -600,13 +634,23 @@ data:
         endpoint: {{ include "dfe-common.fullname" . }}-gateway.{{ .Release.Namespace }}.svc.cluster.local:4317
         tls:
           insecure: true
+        # Bounded in batches against this container's own memory limit; the
+        # default 1000 batches is more than the container can hold.
+        sending_queue:
+          enabled: true
+          queue_size: {{ include "otel-collector.queueSize" (include "otel-collector.daemonsetMemory" .) }}
+        # A gateway refusing data (its own memory_limiter) or gone drops after
+        # this rather than being retried until the queue fills the container.
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: {{ .Values.daemonset.export.maxElapsedTime }}
 
     service:
-      extensions: [health_check]
+      extensions: [health_check, file_storage/filelog]
       pipelines:
         logs:
           receivers: [filelog]
-          processors: [k8sattributes, transform/log_service_name, batch]
+          processors: [memory_limiter, k8sattributes, transform/log_service_name, batch]
           exporters: [otlp/gateway]
         metrics:
           receivers:
@@ -614,5 +658,5 @@ data:
             {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
             - kubeletstats
             {{- end }}
-          processors: [k8sattributes, resource/node, batch]
+          processors: [memory_limiter, k8sattributes, resource/node, batch]
           exporters: [otlp/gateway]
