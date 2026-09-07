@@ -485,6 +485,20 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     return _run_streaming(tf_cmd, env=env)
 
 
+def _apply_domain(env: dict[str, str], mode: str | None) -> dict[str, str]:
+    """Tag the domain with the profile when the deploy declares only a base one.
+
+    One cluster runs one profile at a time, so slim/single/scale each publish
+    <profile>.<base> and a rebuild in another mode cannot claim the hostnames the
+    previous one's DNS still names. An explicit DFE_DOMAIN wins.
+    """
+    if env.get("DFE_DOMAIN") or not env.get("DFE_BASE_DOMAIN") or not mode:
+        return env
+    env["DFE_DOMAIN"] = f"{mode}.{env['DFE_BASE_DOMAIN']}"
+    print(f"  domain derived from DFE_BASE_DOMAIN: {env['DFE_DOMAIN']}", file=sys.stderr)
+    return env
+
+
 def _suite_env(args: argparse.Namespace) -> dict[str, str]:
     """The deploy's own env for a bootstrap test script: terraform, then env files.
 
@@ -510,7 +524,7 @@ def _suite_env(args: argparse.Namespace) -> dict[str, str]:
         env["KUBECONFIG"] = args.kubeconfig
     if args.mode:
         env["DFE_PROFILE"] = args.mode
-    return env
+    return _apply_domain(env, args.mode)
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -1612,6 +1626,7 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
     env["DFE_PROFILE"] = args.mode
+    _apply_domain(env, args.mode)
     if args.target_revision:
         env["DFE_TARGET_REVISION"] = args.target_revision
     if args.kubeconfig:
@@ -1665,6 +1680,7 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print("=== stack-deploy ===", file=sys.stderr)
     print(f"  Stack:      {args.stack}", file=sys.stderr)
     print(f"  Mode:       {args.mode} (DFE_PROFILE={env['DFE_PROFILE']})", file=sys.stderr)
+    print(f"  Domain:     {env.get('DFE_DOMAIN')}", file=sys.stderr)
     print(f"  Namespace:  {env.get('DFE_NAMESPACE')}", file=sys.stderr)
     print(f"  Cloud/env:  {env.get('DFE_CLOUD')}/{env.get('DFE_ENV')}", file=sys.stderr)
     print(f"  Git ref:    {env.get('DFE_TARGET_REVISION')}", file=sys.stderr)

@@ -14,6 +14,10 @@ gateway:
 # every chart in the appset, and otel-collector already owns `gateway`.
 # Swap cloud LB <-> k8s LB with the same values the receiver uses:
 #   type            -- LoadBalancer (cloud/MetalLB) | ClusterIP | NodePort
+#   loadBalancerIP  -- the address the edge must answer on, when a DNS record
+#                      already names it. Empty lets the pool/CCM choose, which is
+#                      what a rebuild then re-rolls -- and every published
+#                      hostname points at whatever it held before.
 #   loadBalancerClass -- "" = cluster default CCM; "service.k8s.aws/nlb" for AWS;
 #                      a MetalLB/kube-vip class on bare metal
 #   annotations     -- provider LB config (NLB scheme, etc.)
@@ -23,6 +27,7 @@ gateway:
 envoyGateway:
   service:
     type: LoadBalancer
+    loadBalancerIP: ""
     loadBalancerClass: ""
     annotations: {}
     loadBalancerSourceRanges: []
