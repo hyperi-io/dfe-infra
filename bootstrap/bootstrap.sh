@@ -330,7 +330,10 @@ echo "==> [4a/7] Internal CA root: restore from the secret store before cert-man
 # lands before cert-manager sees the Certificate rather than racing it.
 # cert-manager then adopts a root that already satisfies the spec.
 # Without a secret store nothing can hold the root between rebuilds.
-DFE_CA_PERSIST="${DFE_CA_PERSIST:-$([[ -n "${DFE_VAULT_SECRET_ID:-}" ]] && echo true || echo false)}"
+if [[ -z "${DFE_CA_PERSIST:-}" ]]; then
+  # A deployment with no store SecretID has nowhere to hold the root.
+  if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then DFE_CA_PERSIST="true"; else DFE_CA_PERSIST="false"; fi
+fi
 if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
   echo "  Vault/OpenBao issuer mode seeded -- the estate PKI owns the root, nothing to persist"
 elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
