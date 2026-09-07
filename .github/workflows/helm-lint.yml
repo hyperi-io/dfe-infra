@@ -170,6 +170,12 @@ jobs:
       - name: A chart render is reproducible
         run: python3 scripts/tests/test_render_stable.py
 
+      # A rebuild that mints a new private root costs every developer box a
+      # re-trust and breaks the HyperDX iframe outright (#238), and a chart
+      # rendering only one half of the save/restore pair loses the root silently.
+      - name: The private root persists, and dfe-ops ca exports it
+        run: python3 scripts/tests/test_internal_ca.py
+
       # An unpinned front door takes whatever the LB pool hands out, so a
       # rebuild leaves every published hostname on the previous address.
       - name: Front-door addresses pin and the domain carries the profile

@@ -47,6 +47,19 @@
 #                            empty lets the pool choose
 #   DFE_RECEIVER_IP          address the receiver's public TCP LoadBalancer must
 #                            take; empty lets the pool choose
+#   DFE_CERTMANAGER_SECRET_ID  AppRole SecretID cert-manager authenticates to the
+#                            estate Vault/OpenBao PKI with, for the gateway
+#                            chart's tls.vault issuer mode. Set it and the edge
+#                            certificate chains to a root every client already
+#                            trusts; leave it unset and the deploy signs the edge
+#                            with its own private root.
+#   DFE_CA_PERSIST           true|false (default: true when DFE_VAULT_SECRET_ID
+#                            is set) -- save the private root to the deployment's
+#                            secret store and restore it on the next bootstrap,
+#                            so a rebuild reuses it and no client re-trusts.
+#   DFE_CA_SECRET_STORE      ClusterSecretStore the root is saved to and restored
+#                            from (default dfe-secret-store).
+#   DFE_CA_RESTORE_TIMEOUT   seconds to wait for the restore (default 60).
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
 #   DFE_POST=full            Power-on self test run after the deploy converges:
 #                              full       readiness gate + CORE e2e (default)
@@ -307,6 +320,53 @@ else
     kubectl patch clustersecretstore dfe-secret-store --type merge \
       -p "{\"spec\":{\"provider\":{\"vault\":{\"caBundle\":\"${DFE_VAULT_CA_BUNDLE}\"}}}}"
     echo "  Patched OpenBao CA into the ESO store"
+  fi
+fi
+
+echo "==> [4a/7] Internal CA root: restore from the secret store before cert-manager mints"
+# A rebuild that mints a new root costs every client a re-trust, and the HyperDX
+# iframe fails outright because it cannot show the interstitial (#238).
+# Rendered from the gateway chart's ONE definition, ahead of Argo, so the restore
+# lands before cert-manager sees the Certificate rather than racing it.
+# cert-manager then adopts a root that already satisfies the spec.
+# Without a secret store nothing can hold the root between rebuilds.
+if [[ -z "${DFE_CA_PERSIST:-}" ]]; then
+  # A deployment with no store SecretID has nowhere to hold the root.
+  if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then DFE_CA_PERSIST="true"; else DFE_CA_PERSIST="false"; fi
+fi
+if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
+  echo "  Vault/OpenBao issuer mode seeded -- the estate PKI owns the root, nothing to persist"
+elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
+  echo "  SKIPPED (DFE_CA_PERSIST=${DFE_CA_PERSIST}): this deploy mints a fresh root and every"
+  echo "  client must trust it again after a rebuild. Set DFE_VAULT_SECRET_ID so the deployment"
+  echo "  has a working secret store, or DFE_CA_PERSIST=true to force it."
+elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+  echo "[DRY-RUN] helm template envoy-gateway-config -s templates/internal-ca-persist.yaml | kubectl apply -f -"
+else
+  kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -
+  helm template dfe-internal-ca "${REPO_ROOT}/helm/charts/envoy-gateway-config" \
+    --namespace cert-manager \
+    --show-only templates/internal-ca-persist.yaml \
+    --set "env=${DFE_ENV}" \
+    --set "cloud=${DFE_CLOUD}" \
+    --set "tls.internalCA.persist.secretStoreName=${DFE_CA_SECRET_STORE:-dfe-secret-store}" \
+    | kubectl apply -f -
+  # A poll, not `kubectl wait --for=create`: that needs kubectl >= 1.31.
+  # A first bootstrap has nothing to restore, so the timeout is expected.
+  ca_deadline=$(( SECONDS + ${DFE_CA_RESTORE_TIMEOUT:-60} ))
+  ca_restored=false
+  while [[ "${SECONDS}" -lt "${ca_deadline}" ]]; do
+    if kubectl -n cert-manager get secret dfe-internal-ca-tls >/dev/null 2>&1; then
+      ca_restored=true
+      break
+    fi
+    sleep 3
+  done
+  if [[ "${ca_restored}" == "true" ]]; then
+    echo "  Root RESTORED from the secret store into cert-manager/dfe-internal-ca-tls"
+  else
+    echo "  No stored root (first bootstrap, or the store does not hold one yet):"
+    echo "  cert-manager will mint one and the PushSecret will save it."
   fi
 fi
 

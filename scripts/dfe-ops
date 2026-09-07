@@ -49,6 +49,11 @@ Subcommands:
                ClickHouse, Kafbat -- and mark any secret the cluster does not
                carry. Never prints a value. The access summary prints the same
                block, so there is one list of credentials, not two.
+  ca           Print the deployment's edge ROOT certificate (public half) and the
+               lines that install it into a Linux or macOS trust store, so a
+               developer box trusts a self-signed deploy once instead of after
+               every rebuild. --install does the non-root half; --status is the
+               issuer-mode report the readiness gate and access summary carry.
   teardown     Tear the deployment down (wraps bootstrap/destroy.sh); optionally
                also destroy terraform state.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
@@ -113,6 +118,10 @@ this file is committed publicly, so substitute your own node):
     # Where does each login come from on this cluster?
     python3 scripts/dfe-ops creds --kubeconfig .tmp/dfe.kubeconfig
 
+    # Trust this deployment's edge certificate on a developer box:
+    python3 scripts/dfe-ops ca --kubeconfig .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops ca --install --kubeconfig .tmp/dfe.kubeconfig
+
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
     python3 scripts/dfe-ops teardown --force --with-terraform
@@ -129,6 +138,7 @@ import argparse
 import base64
 import json
 import os
+import platform
 import secrets
 import shutil
 import ssl
@@ -1022,6 +1032,227 @@ def cmd_creds(args: argparse.Namespace) -> int:
         print("```")
     else:
         print("\n".join(lines))
+    return 0
+
+
+# --- ca subcommand (export + trust the deployment's edge root) ----------------
+# The two Secrets the edge trust chain lives in, and the internal-CA issuer the
+# self-signed mode uses. Names are flags; these are the chart defaults.
+_INTERNAL_CA_NS = "cert-manager"
+_INTERNAL_CA_SECRET = "dfe-internal-ca-tls"
+_INTERNAL_CA_ISSUER = "dfe-internal-ca"
+_WILDCARD_NS = "envoy-gateway-system"
+_WILDCARD_SECRET = "dfe-wildcard-tls"
+_RESTORE_EXTERNALSECRET = "dfe-internal-ca-restore"
+
+
+def _secret_key(kube: list[str], namespace: str, secret: str, key: str) -> str:
+    """One base64 Secret key, decoded. Empty when the Secret or key is absent."""
+    rc, doc, _ = _kubectl_json([*kube, "-n", namespace, "get", "secret", secret])
+    if rc != 0:
+        return ""
+    raw = (doc.get("data") or {}).get(key)
+    if not raw:
+        return ""
+    return base64.b64decode(raw).decode("utf-8", "replace")
+
+
+def _first_pem(text: str) -> str:
+    """The FIRST certificate of a PEM bundle -- the leaf, or a lone CA."""
+    marker = "-----END CERTIFICATE-----"
+    head, sep, _ = text.partition(marker)
+    return f"{head}{sep}\n" if sep else ""
+
+
+def _cert_field(pem: str, *openssl_args: str) -> str:
+    """One openssl x509 field of a PEM, or empty when openssl cannot read it."""
+    if not shutil.which("openssl") or not pem:
+        return ""
+    proc = subprocess.run(
+        ["openssl", "x509", "-noout", *openssl_args],
+        input=pem,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _issuer_mode(kube: list[str], issuer_name: str) -> tuple[str, str]:
+    """(mode, issuer) for the edge wildcard: 'self-signed' | 'vault' | 'acme'.
+
+    Read off the ClusterIssuer the wildcard Certificate actually names, not off a
+    values file -- a deployment sets the mode in its own overlay, so the cluster
+    is the only honest answer.
+    """
+    rc, doc, _ = _kubectl_json(
+        [*kube, "-n", _WILDCARD_NS, "get", "certificate", _WILDCARD_SECRET]
+    )
+    named = ((doc.get("spec") or {}).get("issuerRef") or {}).get("name", "") if rc == 0 else ""
+    if not named:
+        return "unknown", ""
+    if named == issuer_name:
+        return "self-signed", named
+    rc, doc, _ = _kubectl_json([*kube, "get", "clusterissuer", named])
+    spec = doc.get("spec") or {} if rc == 0 else {}
+    if "vault" in spec:
+        return "vault", named
+    if "acme" in spec:
+        return "acme", named
+    return "unknown", named
+
+
+def _ca_status_lines(kube: list[str], args: argparse.Namespace) -> list[str]:
+    """The issuer-mode report the readiness gate and the access summary print."""
+    mode, issuer = _issuer_mode(kube, args.issuer)
+    out = [f"edge TLS issuer mode: {mode} (ClusterIssuer {issuer or 'none'})"]
+    if mode == "self-signed":
+        root = _secret_key(kube, args.namespace, args.secret, "tls.crt")
+        if not root:
+            out.append(f"  the root Secret {args.namespace}/{args.secret} is not on this cluster")
+            return out
+        # Restored vs newly minted: the restore ExternalSecret is the only
+        # component that can have written this Secret from the store.
+        rc, doc, _ = _kubectl_json(
+            [*kube, "-n", args.namespace, "get", "externalsecret", args.restore]
+        )
+        if rc != 0:
+            origin = (
+                "newly minted, and NOT persisted -- the next rebuild mints another root. "
+                "Turn on tls.internalCA.persist.enabled where the deployment has a secret store"
+            )
+        else:
+            conditions = (doc.get("status") or {}).get("conditions") or []
+            ready = next((c for c in conditions if c.get("type") == "Ready"), {})
+            if ready.get("status") == "True":
+                origin = "RESTORED from the secret store"
+            else:
+                origin = (
+                    "newly minted; the restore ExternalSecret is not Ready "
+                    f"({ready.get('reason', 'no status')}) -- the store does not hold the root yet"
+                )
+        out.append(f"  root: {origin}")
+        out.append(f"  {_cert_field(root, '-subject') or 'subject unavailable (no openssl)'}")
+        out.append(f"  {_cert_field(root, '-fingerprint', '-sha256') or ''}".rstrip())
+        out.append(f"  {_cert_field(root, '-dates') or ''}".rstrip().replace('\n', ' '))
+        out.append("  export it for a developer box with: dfe-ops ca")
+    elif mode in ("vault", "acme"):
+        chain = _secret_key(kube, _WILDCARD_NS, _WILDCARD_SECRET, "ca.crt") or _secret_key(
+            kube, _WILDCARD_NS, _WILDCARD_SECRET, "tls.crt"
+        )
+        subject = _cert_field(_first_pem(chain), "-subject")
+        out.append(f"  issuing CA: {subject or 'unavailable'}")
+        if mode == "vault":
+            out.append("  clients trust the estate PKI already -- nothing to install")
+    return [line for line in out if line.strip()]
+
+
+def _ca_install_lines(path: str, name: str, system: str | None = None) -> list[str]:
+    """The root install commands that need root, for one OS or for both.
+
+    `system` is a platform.system() value. None prints both, which is what an
+    operator reading the export wants; a value prints only that OS's, which is
+    what --install has to print after doing the rest.
+    """
+    linux = [
+        "# Linux (system trust store -- curl, python, the JVM):",
+        f"sudo cp {path} /usr/local/share/ca-certificates/{name}.crt",
+        "sudo update-ca-certificates",
+        "",
+        "# Chromium-family browsers (Brave, Chrome, Edge) read their OWN NSS store,",
+        "# not the system one. Needs libnss3-tools (apt install libnss3-tools):",
+        f"certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n {name} -i {path}",
+    ]
+    # macOS Chrome and Safari read the system keychain, so there is no NSS step.
+    darwin = [
+        "# macOS (system keychain -- covers Safari and Chrome):",
+        f"sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain {path}",
+    ]
+    if system == "Darwin":
+        return darwin
+    if system is not None:
+        return linux
+    return [*linux, "", *darwin]
+
+
+def _ca_nonroot_install(
+    path: Path, name: str, system: str, nssdb: Path | None = None
+) -> list[str]:
+    """Do the install steps that do not need root, and report what happened.
+
+    Linux only: the NSS store at ~/.pki/nssdb is what Chromium-family browsers
+    read there. macOS Chrome and Safari read the system keychain, which is the
+    sudo step, so there is nothing to do without root. `nssdb` is a parameter so
+    the branch is testable off whatever the running machine happens to have.
+    """
+    if system == "Darwin":
+        return ["macOS trusts through the system keychain, so nothing runs without root"]
+    nssdb = nssdb or Path.home() / ".pki" / "nssdb"
+    if not shutil.which("certutil"):
+        return ["certutil not found -- install libnss3-tools for the browser store"]
+    if not nssdb.is_dir():
+        return [f"no NSS store at {nssdb} -- start a Chromium-family browser once, then re-run"]
+    rc, _, err = _run_text(
+        ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", name, "-i", str(path)]
+    )
+    if rc == 0:
+        return [f"trusted in the browser NSS store at {nssdb}"]
+    return [f"certutil failed: {err.strip()}"]
+
+
+def cmd_ca(args: argparse.Namespace) -> int:
+    """Export the deployment's edge root so a developer box can trust it (#238).
+
+    Prints the PUBLIC half only. The private key stays in the cluster and in the
+    deployment's secret store; nothing here can print it.
+    """
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    if args.context:
+        kube += ["--context", args.context]
+
+    if args.status:
+        print("\n".join(_ca_status_lines(kube, args)))
+        return 0
+
+    mode, issuer = _issuer_mode(kube, args.issuer)
+    if mode == "vault":
+        print(
+            f"# This deployment issues its edge certificate from {issuer}, a Vault/OpenBao\n"
+            "# PKI. Its root is the estate's, so trust it the way the estate publishes it\n"
+            "# -- there is no deployment-specific root to install.",
+            file=sys.stderr,
+        )
+        return 3
+
+    root = _secret_key(kube, args.namespace, args.secret, "tls.crt")
+    if not root:
+        print(
+            f"no root certificate in {args.namespace}/{args.secret} "
+            "(wrong cluster, or the deployment is not in self-signed mode)",
+            file=sys.stderr,
+        )
+        return 1
+
+    out_path = Path(args.out_dir) / f"{args.name}.crt"
+    if args.install:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(root, encoding="utf-8", newline="\n")
+        print(f"wrote {out_path}")
+        system = platform.system()
+        print("\n".join(_ca_nonroot_install(out_path, args.name, system)))
+        print("\n# Still to run yourself -- these need root:")
+        print("\n".join(_ca_install_lines(str(out_path), args.name, system)))
+        return 0
+
+    print(root, end="" if root.endswith("\n") else "\n")
+    print(f"\n# Save the block above as {out_path}, then:")
+    print("\n".join(_ca_install_lines(str(out_path), args.name)))
+    print("\n# Or let dfe-ops do the non-root half: dfe-ops ca --install")
     return 0
 
 
@@ -2136,6 +2367,36 @@ def build_parser() -> argparse.ArgumentParser:
     cr.add_argument("--engine-deployment", default="dfe-engine",
                     help="engine Deployment the admin and break-glass Secret names are read from")
     cr.set_defaults(func=cmd_creds)
+
+    ca = sub.add_parser(
+        "ca",
+        help="print the deployment's edge root certificate and how to trust it",
+        description="A self-signed deployment serves its edge from its own "
+                    "private root, so a developer box must trust it once. This "
+                    "prints the PUBLIC half plus the install lines for Linux and "
+                    "macOS; --install writes the file and runs the steps that do "
+                    "not need root. A Vault/OpenBao deployment chains to the "
+                    "estate PKI and has nothing to install.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ca.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    ca.add_argument("--context", default=None, help="kubeconfig context")
+    ca.add_argument("--namespace", default=_INTERNAL_CA_NS,
+                    help="namespace the root Secret lives in (cert-manager's cluster-resource-namespace)")
+    ca.add_argument("--secret", default=_INTERNAL_CA_SECRET, help="Secret holding the root")
+    ca.add_argument("--issuer", default=_INTERNAL_CA_ISSUER,
+                    help="the internal-CA ClusterIssuer name, which identifies self-signed mode")
+    ca.add_argument("--restore", default=_RESTORE_EXTERNALSECRET,
+                    help="the restore ExternalSecret, whose Ready condition says the root was restored")
+    ca.add_argument("--name", default="dfe-internal-ca",
+                    help="file basename and trust-store nickname")
+    ca.add_argument("--out-dir", default=".tmp", help="where --install writes the certificate")
+    ca.add_argument("--install", action="store_true",
+                    help="write the file and run the non-root install steps, printing the rest")
+    ca.add_argument("--status", action="store_true",
+                    help="one-block issuer-mode report (what the readiness gate and access summary print)")
+    ca.set_defaults(func=cmd_ca)
 
     # pin -- resolve a version's registry digest and (with --write) set the
     # current stack's digests: in versions.yaml. Registered from resolve_pins.
