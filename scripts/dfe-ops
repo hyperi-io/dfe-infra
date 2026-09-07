@@ -1119,9 +1119,11 @@ def _ca_status_lines(kube: list[str], args: argparse.Namespace) -> list[str]:
         rc, doc, _ = _kubectl_json(
             [*kube, "-n", args.namespace, "get", "externalsecret", args.restore]
         )
-        origin = "newly minted (not persisted -- a rebuild mints another root)"
         if rc != 0:
-            origin = "newly minted (no restore ExternalSecret: persistence is off)"
+            origin = (
+                "newly minted, and NOT persisted -- the next rebuild mints another root. "
+                "Turn on tls.internalCA.persist.enabled where the deployment has a secret store"
+            )
         else:
             conditions = (doc.get("status") or {}).get("conditions") or []
             ready = next((c for c in conditions if c.get("type") == "Ready"), {})
@@ -1176,16 +1178,19 @@ def _ca_install_lines(path: str, name: str, system: str | None = None) -> list[s
     return [*linux, "", *darwin]
 
 
-def _ca_nonroot_install(path: Path, name: str, system: str) -> list[str]:
+def _ca_nonroot_install(
+    path: Path, name: str, system: str, nssdb: Path | None = None
+) -> list[str]:
     """Do the install steps that do not need root, and report what happened.
 
     Linux only: the NSS store at ~/.pki/nssdb is what Chromium-family browsers
     read there. macOS Chrome and Safari read the system keychain, which is the
-    sudo step, so there is nothing to do without root.
+    sudo step, so there is nothing to do without root. `nssdb` is a parameter so
+    the branch is testable off whatever the running machine happens to have.
     """
     if system == "Darwin":
         return ["macOS trusts through the system keychain, so nothing runs without root"]
-    nssdb = Path.home() / ".pki" / "nssdb"
+    nssdb = nssdb or Path.home() / ".pki" / "nssdb"
     if not shutil.which("certutil"):
         return ["certutil not found -- install libnss3-tools for the browser store"]
     if not nssdb.is_dir():
