@@ -69,6 +69,10 @@ metadata:
   {{- end }}
 spec:
   type: {{ $pub.serviceType | default "LoadBalancer" }}
+  {{- /* The TCP door only: a second Service cannot hold the same address. */}}
+  {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerIP }}
+  loadBalancerIP: {{ $pub.loadBalancerIP }}
+  {{- end }}
   {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
   loadBalancerClass: {{ $pub.loadBalancerClass }}
   {{- end }}

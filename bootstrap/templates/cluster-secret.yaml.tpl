@@ -24,6 +24,10 @@ metadata:
     dfe.hyperi.io/region: "${DFE_REGION}"
     dfe.hyperi.io/domain: "${DFE_DOMAIN}"
     dfe.hyperi.io/profile: "${DFE_PROFILE}"
+    # Front-door addresses this deployment's DNS already names. Empty leaves the
+    # choice to the LB pool, which is what re-rolls them on a rebuild.
+    dfe.hyperi.io/gateway_address: "${DFE_GATEWAY_IP}"
+    dfe.hyperi.io/receiver_address: "${DFE_RECEIVER_IP}"
     # GitOps source
     dfe.hyperi.io/repo_url: "${DFE_REPO_URL}"
     dfe.hyperi.io/target_revision: "${DFE_TARGET_REVISION}"

@@ -26,10 +26,14 @@ domain, gateway or user set it is being pointed at.
 
     python3 scripts/dfe-ops idp deploy \\
         --kubeconfig .tmp/dfe.kubeconfig \\
-        --domain dfe.example.com \\
+        --domain slim.dfe.example.com \\
         --gateway envoy-gateway-system/dfe-gateway \\
-        --redirect-uri https://dfe.dfe.example.com/api/v1/auth/oidc/dex/callback \\
+        --base-domain dfe.example.com \\
         --secrets-out .tmp/tester-idp.env
+
+--base-domain registers a redirect URI per deploy profile, so the client keeps
+working when the cluster is rebuilt in another mode; --redirect-uri (repeatable)
+replaces the derived set outright.
 
     python3 scripts/dfe-ops idp status --kubeconfig .tmp/dfe.kubeconfig \\
         --domain dfe.example.com
@@ -89,6 +93,13 @@ DEFAULT_RELEASE = "dex"
 # canonical role name for the external OIDC issuer in the hostnames SSoT, but a
 # tester IdP is deliberately named for what it is.
 DEFAULT_HOST_LABEL = "dex"
+# Provider name the engine registers this IdP under; it is a path segment of the
+# OIDC callback, so the redirect URIs and `wire-engine` must agree on it.
+DEFAULT_PROVIDER = "dex"
+# Host label the engine and the UI are published on (the hostnames SSoT's `dfe`).
+APP_HOST_LABEL = "dfe"
+# Deploy profiles a cluster is rebuilt through, each with its own domain tag.
+DEFAULT_PROFILES = ("slim", "single", "scale")
 
 GLAUTH_LDAP_PORT = 3893
 DEX_HTTP_PORT = 5556
@@ -443,6 +454,28 @@ def render_secret(name: str, namespace: str, data: dict[str, str]) -> dict:
     }
 
 
+def default_redirect_uris(
+    *,
+    hostname: str,
+    host_label: str,
+    base_domain: str = "",
+    profiles: list[str] | tuple[str, ...] = DEFAULT_PROFILES,
+    provider: str = DEFAULT_PROVIDER,
+) -> list[str]:
+    """The engine callbacks to register when the caller named none.
+
+    A base domain registers one per profile, so the same client still works after
+    the cluster is rebuilt in another mode on <profile>.<base> hostnames.
+    """
+    path = f"/api/v1/auth/oidc/{provider}/callback"
+    if base_domain:
+        return [
+            f"https://{APP_HOST_LABEL}.{profile}.{base_domain}{path}"
+            for profile in profiles or DEFAULT_PROFILES
+        ]
+    return [f"https://{hostname.replace(host_label, APP_HOST_LABEL, 1)}{path}"]
+
+
 def resolve_hostname(args: argparse.Namespace) -> str:
     """--hostname wins; otherwise <label>.<domain>."""
     if args.hostname:
@@ -517,9 +550,13 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
         print(f"ERROR: {users_file} is not a usable directory: {exc}", file=sys.stderr)
         return 2
 
-    redirect_uris = list(args.redirect_uri) or [
-        f"{issuer.replace(args.host_label, 'dfe', 1)}/api/v1/auth/oidc/dex/callback"
-    ]
+    redirect_uris = list(args.redirect_uri) or default_redirect_uris(
+        hostname=hostname,
+        host_label=args.host_label,
+        base_domain=args.base_domain,
+        profiles=args.profile,
+        provider=args.provider,
+    )
 
     secrets_out = Path(args.secrets_out)
     reused = args.reuse_secrets and secrets_out.is_file()
@@ -901,6 +938,14 @@ def add_idp_subparser(sub) -> None:
     )
     _add_common(dep)
     dep.add_argument("--domain", default=None, help="deployment domain; the IdP lands on <label>.<domain>")
+    dep.add_argument("--base-domain", default="", metavar="DOMAIN",
+                     help="estate domain under which each profile publishes "
+                          "<profile>.<base>; registers one redirect URI per profile")
+    dep.add_argument("--profile", action="append", default=[], metavar="NAME",
+                     help=f"profile to register a redirect URI for with --base-domain "
+                          f"(repeatable; default {', '.join(DEFAULT_PROFILES)})")
+    dep.add_argument("--provider", default=DEFAULT_PROVIDER,
+                     help="provider name in the engine's callback path")
     dep.add_argument("--host-label", default=DEFAULT_HOST_LABEL, help="host label prepended to --domain")
     dep.add_argument("--hostname", default=None, help="full IdP hostname (overrides --domain)")
     dep.add_argument("--gateway", default=DEFAULT_GATEWAY, metavar="NS/NAME",
@@ -936,7 +981,7 @@ def add_idp_subparser(sub) -> None:
     _add_common(we)
     we.add_argument("--secrets-file", default=".tmp/tester-idp.env",
                     help="the 0600 file `idp deploy` wrote")
-    we.add_argument("--provider", default="dex", help="provider name the engine registers it under")
+    we.add_argument("--provider", default=DEFAULT_PROVIDER, help="provider name the engine registers it under")
     we.add_argument("--display-name", default="Dex (tester IdP)", help="label shown on the login page")
     we.add_argument("--secret-name", default="dfe-oidc-dex", help="Secret to create the credentials in")
     we.add_argument("--providers-configmap", default="dfe-oidc-providers",
