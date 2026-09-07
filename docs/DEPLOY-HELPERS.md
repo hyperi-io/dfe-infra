@@ -119,8 +119,8 @@ rather than racing it. The root is reused; the leaf lifetimes rotate.
 
 | Setting | Where | Effect |
 |---|---|---|
-| `tls.internalCA.persist.enabled` | gateway chart values | Off renders neither half: the root does not survive a rebuild. |
-| `tls.internalCA.persist.secretStoreName` | gateway chart values | The store both halves use (default `dfe-secret-store`). |
+| `tls.internalCA.persist.enabled` | gateway chart values | **Off by default.** An ExternalSecret against a store the deployment does not have is Degraded forever, which fails the Argo sync of a working deploy. Turn it on where there is a store. |
+| `tls.internalCA.persist.secretStoreName` | gateway chart values | The store both halves use (default `dfe-secret-store`); empty renders neither. |
 | `DFE_CA_PERSIST` | bootstrap env | Whether bootstrap pre-applies the restore. Defaults on when `DFE_VAULT_SECRET_ID` is set. |
 | `DFE_CA_RESTORE_TIMEOUT` | bootstrap env | Seconds to wait for the restore (default 60). A first bootstrap times out by design. |
 

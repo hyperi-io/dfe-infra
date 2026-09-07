@@ -190,9 +190,12 @@ def run_ca(*argv: str, **overrides) -> str:
         return out.stdout + out.stderr
 
 
+PERSIST_ON = "tls.internalCA.persist.enabled=true"
+
+
 def test_self_signed_mode_renders_both_halves_against_one_path() -> None:
     """Save and restore must name the SAME store path, or a rebuild mints again."""
-    docs = render()
+    docs = render(PERSIST_ON)
     pushes = by_kind(docs, "PushSecret")
     restores = [
         d for d in by_kind(docs, "ExternalSecret")
@@ -240,7 +243,7 @@ def test_self_signed_mode_renders_both_halves_against_one_path() -> None:
 
 def test_the_store_properties_carry_no_dot() -> None:
     """The Vault provider reads a property as a gjson path, where a dot nests."""
-    docs = render()
+    docs = render(PERSIST_ON)
     push = by_kind(docs, "PushSecret")[0]
     props = {d["match"]["remoteRef"]["property"] for d in push["spec"]["data"]}
     expect(
@@ -253,6 +256,7 @@ def test_the_store_properties_carry_no_dot() -> None:
 def test_vault_mode_renders_neither_half() -> None:
     """The estate PKI owns its root, so persisting a local one is meaningless."""
     docs = render(
+        PERSIST_ON,
         "tls.vault.server=https://bao.example.com:8200",
         "tls.vault.path=pki_tls/sign/example-service",
         "tls.vault.appRole.roleId=00000000-0000-0000-0000-000000000000",
@@ -268,14 +272,25 @@ def test_vault_mode_renders_neither_half() -> None:
     expect("and the edge issuer is the Vault-backed one", len(issuers) == 1, f"{len(issuers)}")
 
 
-def test_persistence_off_renders_neither_half() -> None:
-    """A deployment with no secret store has nowhere to hold the root."""
-    docs = render("tls.internalCA.persist.enabled=false")
-    expect("no PushSecret with persistence off", not by_kind(docs, "PushSecret"), "")
+def test_persistence_is_off_by_default_so_a_storeless_deploy_stays_healthy() -> None:
+    """An ExternalSecret against a store that is not there is Degraded forever.
+
+    That failed the Argo sync of an otherwise working deploy, so the default is
+    off and a deployment that HAS a store turns it on.
+    """
+    docs = render()
+    expect("no PushSecret by default", not by_kind(docs, "PushSecret"), "")
     expect(
-        "no restore ExternalSecret with persistence off",
+        "no restore ExternalSecret by default",
         not [d for d in by_kind(docs, "ExternalSecret")
              if d["metadata"]["name"] == "dfe-internal-ca-restore"],
+        "",
+    )
+    expect(
+        "and an empty store name renders neither either",
+        not by_kind(
+            render(PERSIST_ON, "tls.internalCA.persist.secretStoreName="), "PushSecret"
+        ),
         "",
     )
 
@@ -317,7 +332,12 @@ def test_status_says_newly_minted_without_a_restore() -> None:
     """A root nothing saved is one every client re-trusts after the next rebuild."""
     text = run_ca("--status")
     expect("the mode is reported", "issuer mode: self-signed" in text, text)
-    expect("the root reads newly minted", "newly minted" in text, text)
+    expect("the root reads newly minted", "newly minted, and NOT persisted" in text, text)
+    expect(
+        "and names the value that turns persistence on",
+        "tls.internalCA.persist.enabled" in text,
+        text,
+    )
     expect("the fingerprint is reported", "sha256 Fingerprint=" in text, text)
 
 
@@ -367,7 +387,10 @@ def test_status_names_the_issuing_ca_in_vault_mode() -> None:
         secrets={"dfe-wildcard-tls": secret_doc("ca.crt", ROOT_PEM)},
     )
     expect("the mode is vault", "issuer mode: vault" in text, text)
-    expect("the issuing CA subject is named", "issuing CA: subject=CN=dfe-internal-ca" in text, text)
+    # openssl spaces the subject differently across versions, so the CN is the
+    # assertion rather than the formatting.
+    issuing = next((line for line in text.splitlines() if "issuing CA:" in line), "")
+    expect("the issuing CA is named", "dfe-internal-ca" in issuing, text)
     expect("and nothing is asked of the client", "nothing to install" in text, text)
 
 
@@ -399,21 +422,30 @@ def test_the_root_install_lines_branch_on_the_operating_system() -> None:
 
 
 def test_the_non_root_step_runs_nothing_linux_only_on_a_mac() -> None:
-    """certutil is not on a Mac, and the keychain step needs root."""
+    """certutil is not on a Mac, and the keychain step needs root.
+
+    The NSS directory is injected, so the verdict does not depend on whether the
+    machine running this has ever opened a Chromium-family browser.
+    """
     calls: list[list[str]] = []
     original_run, original_which = dfe_ops._run_text, dfe_ops.shutil.which
     dfe_ops._run_text = lambda cmd, env=None: (calls.append(cmd), (0, "", ""))[1]
     dfe_ops.shutil.which = lambda _name: "/usr/bin/certutil"
     try:
-        darwin = dfe_ops._ca_nonroot_install(Path("/x/ca.crt"), "dfe-internal-ca", "Darwin")
-        expect("nothing is executed on Darwin", calls == [], f"{calls}")
-        expect("and it says why", "system keychain" in darwin[0], f"{darwin}")
-        dfe_ops._ca_nonroot_install(Path("/x/ca.crt"), "dfe-internal-ca", "Linux")
-        expect(
-            "while Linux runs certutil into the NSS store",
-            [c[0] for c in calls] == ["certutil"] and "sql:" in calls[0][2],
-            f"{calls}",
-        )
+        with tempfile.TemporaryDirectory() as nssdb:
+            darwin = dfe_ops._ca_nonroot_install(
+                Path("/x/ca.crt"), "dfe-internal-ca", "Darwin", Path(nssdb)
+            )
+            expect("nothing is executed on Darwin", calls == [], f"{calls}")
+            expect("and it says why", "system keychain" in darwin[0], f"{darwin}")
+            dfe_ops._ca_nonroot_install(
+                Path("/x/ca.crt"), "dfe-internal-ca", "Linux", Path(nssdb)
+            )
+            expect(
+                "while Linux runs certutil into the NSS store",
+                [c[0] for c in calls] == ["certutil"] and calls[0][2] == f"sql:{nssdb}",
+                f"{calls}",
+            )
     finally:
         dfe_ops._run_text, dfe_ops.shutil.which = original_run, original_which
 

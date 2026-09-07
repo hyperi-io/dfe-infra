@@ -110,11 +110,13 @@ tls:
     # deployment's secret store once (PushSecret, IfNotExists) and restored
     # before cert-manager can mint (ExternalSecret, CreatedOnce); the leaf
     # lifetimes are what rotate.
-    # A deployment with no secret store sets enabled: false and accepts a new
-    # root per rebuild; leaving it on and unsynced says the root is not safe.
+    # OFF by default: an ExternalSecret pointed at a store the deployment does
+    # not have is Degraded forever, which fails the Argo sync of a deploy that is
+    # otherwise working. Turn it on where there IS a store. `dfe-ops ca --status`
+    # says which of the two a deployment is in.
     # Vault issuer mode renders none of it -- the estate PKI owns the root.
     persist:
-      enabled: true
+      enabled: false
       secretStoreName: dfe-secret-store
       secretStoreKind: ClusterSecretStore
       # KV path, the same {project}/{env}/<area>/<name> convention every other
