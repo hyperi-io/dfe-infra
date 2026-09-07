@@ -195,6 +195,12 @@ def test_a_non_dev_posture_cannot_render_without_minting() -> None:
         "the render succeeded",
     )
     expect(
+        "and a padded default too, since the engine trims before comparing",
+        "shipped default" in render_fails(ENGINE, "env=production",
+                                          "auth.adminPassword=  changeme  "),
+        "the render succeeded",
+    )
+    expect(
         "a dev posture may still tyre-kick on a known password",
         render_fails(ENGINE, "env=local", "auth.adminPassword=changeme") == "",
         "a dev render was refused",

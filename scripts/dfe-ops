@@ -854,14 +854,66 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
 # _APP_NS resolves to the deployment's own app namespace. The SSoT for the set:
 # bootstrap/access-summary.sh prints this rather than keeping its own copy.
 _APP_NS = "\0app\0"
-_CREDENTIALS = (
-    ("DFE admin (user `admin`)", _APP_NS, "dfe-engine-admin", ("admin-password",)),
-    ("DFE break-glass (user `breakglass`)", _APP_NS, "dfe-engine-breakglass", ("breakglass-password",)),
+# helm/charts/dfe-engine/values.yaml auth.* defaults, used when the engine
+# Deployment cannot be read; both names are values, so neither is a constant.
+_ENGINE_ADMIN = ("dfe-engine-admin", "admin-password")
+_ENGINE_BREAKGLASS = ("dfe-engine-breakglass", "breakglass-password")
+_CLUSTER_CREDENTIALS = (
     ("Argo CD initial admin", "argocd", "argocd-initial-admin-secret", ("password",)),
     ("Deploy-repo git admin (Forgejo)", "forgejo", "dfe-forgejo-admin", ("username", "password")),
     ("ClickHouse admin", "clickhouse", "clickhouse-admin-password", ("password",)),
     ("Kafbat break-glass admin", "kafka", "dfe-kafbat-breakglass", ("username", "password")),
 )
+
+
+def credential_rows(
+    admin: tuple[str, str] = _ENGINE_ADMIN,
+    breakglass: tuple[str, str] = _ENGINE_BREAKGLASS,
+) -> tuple[tuple[str, str, str, tuple[str, ...]], ...]:
+    """Every login this deploy carries, with the engine's two names resolved."""
+    return (
+        ("DFE admin (user `admin`)", _APP_NS, admin[0], (admin[1],)),
+        ("DFE break-glass (user `breakglass`)", _APP_NS, breakglass[0], (breakglass[1],)),
+        *_CLUSTER_CREDENTIALS,
+    )
+
+
+def engine_secret_names(
+    kube: list[str], namespace: str, deployment: str = "dfe-engine"
+) -> tuple[tuple[str, str], tuple[str, str]]:
+    """The admin and break-glass (secret, key) the live engine actually reads.
+
+    A renamed Secret is a values edit, so the chart defaults would print a fetch
+    line for a Secret that is not there and mark it absent.
+    """
+    rc, doc, _ = _kubectl_json([*kube, "-n", namespace, "get", "deployment", deployment])
+    if rc != 0:
+        return _ENGINE_ADMIN, _ENGINE_BREAKGLASS
+    spec = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+    env: dict[str, dict] = {}
+    for container in spec.get("containers") or []:
+        for item in container.get("env") or []:
+            if item.get("name"):
+                env[item["name"]] = item
+
+    def ref(name: str) -> dict:
+        return ((env.get(name) or {}).get("valueFrom") or {}).get("secretKeyRef") or {}
+
+    admin_ref = ref("DFE_AUTH_LOCAL_ADMIN_PASSWORD")
+    admin = (
+        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") or {}).get("value")
+        or admin_ref.get("name")
+        or _ENGINE_ADMIN[0],
+        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_KEY") or {}).get("value")
+        or admin_ref.get("key")
+        or _ENGINE_ADMIN[1],
+    )
+    breakglass_ref = ref("DFE_AUTH_BREAKGLASS_PASSWORD")
+    breakglass = (
+        breakglass_ref.get("name") or _ENGINE_BREAKGLASS[0],
+        breakglass_ref.get("key") or _ENGINE_BREAKGLASS[1],
+    )
+    return admin, breakglass
 
 
 def _cluster_annotation(kube: list[str], name: str) -> str:
@@ -890,7 +942,11 @@ def _fetch_line(namespace: str, secret: str, key: str) -> str:
     )
 
 
-def creds_lines(app_namespace: str, present: dict[str, bool] | None = None) -> list[str]:
+def creds_lines(
+    app_namespace: str,
+    present: dict[str, bool] | None = None,
+    rows: tuple[tuple[str, str, str, tuple[str, ...]], ...] | None = None,
+) -> list[str]:
     """The credential block, as commented fetch commands. Never a value.
 
     `present` maps "<namespace>/<secret>" to whether it was found; a missing one
@@ -898,7 +954,7 @@ def creds_lines(app_namespace: str, present: dict[str, bool] | None = None) -> l
     off instead of as an omission.
     """
     out: list[str] = []
-    for label, namespace, secret, keys in _CREDENTIALS:
+    for label, namespace, secret, keys in rows or credential_rows():
         ns = app_namespace if namespace == _APP_NS else namespace
         status = ""
         if present is not None:
@@ -914,6 +970,9 @@ def cmd_creds(args: argparse.Namespace) -> int:
     The deploy mints the admin and break-glass passwords (#233), so each
     deployment's credentials live only in its own secret store. This prints the
     fetch command for each, never the value, so the output is safe in a log.
+
+    Both Secret names come off the live engine Deployment, since a deployment
+    may rename either through auth.adminSecretName / auth.breakglassSecretName.
     """
     settings = dict(os.environ)
     for env_file in args.env_file:
@@ -933,14 +992,16 @@ def cmd_creds(args: argparse.Namespace) -> int:
         or "dfe"
     )
 
+    rows = credential_rows()
     present: dict[str, bool] | None = None
     if not args.no_cluster:
+        rows = credential_rows(*engine_secret_names(kube, namespace, args.engine_deployment))
         present = {}
-        for _, ns, secret, _keys in _CREDENTIALS:
+        for _, ns, secret, _keys in rows:
             resolved = namespace if ns == _APP_NS else ns
             present[f"{resolved}/{secret}"] = _secret_exists(kube, resolved, secret)
 
-    lines = creds_lines(namespace, present)
+    lines = creds_lines(namespace, present, rows)
     if args.markdown:
         print("```sh")
         print("\n".join(lines))
@@ -2056,6 +2117,8 @@ def build_parser() -> argparse.ArgumentParser:
     cr.add_argument("--markdown", action="store_true", help="wrap the block in a Markdown sh fence, for the access summary")
     cr.add_argument("--no-cluster", action="store_true",
                     help="do not read the cluster; print the commands without the present/absent marks")
+    cr.add_argument("--engine-deployment", default="dfe-engine",
+                    help="engine Deployment the admin and break-glass Secret names are read from")
     cr.set_defaults(func=cmd_creds)
 
     # pin -- resolve a version's registry digest and (with --write) set the

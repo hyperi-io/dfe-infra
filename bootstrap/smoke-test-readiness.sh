@@ -22,7 +22,8 @@
 #                                development, local, test, ci) is the only one
 #                                allowed to run the shipped admin password.
 #         READINESS_ENGINE_TARGET (default deploy/dfe-engine) -- what the
-#                                default-credentials check asks setup-status.
+#                                default-credentials check asks setup-status; a
+#                                probe that cannot run fails outside a dev posture.
 #         READINESS_TIMEOUT   (default 900s) -- backstop; convergence wait ceiling.
 #         READINESS_INTERVAL  (default 15s)  -- poll cadence.
 #         READINESS_RESTART_THRESHOLD (default 10) -- restarts above this fail.
@@ -77,27 +78,45 @@ recent_restart() {
 }
 
 # The engine's own answer to "is this deployment running the shipped admin
-# password" (#233, dfe-engine #300). Only a dev posture may be, so a non-dev
-# deploy reporting it fails here. An engine that does not serve the field warns:
-# the check cannot judge what it cannot read.
+# password" (#233, dfe-engine #300). Three verdicts, kept apart: a probe that
+# could not run (exec exit non-zero) fails outside a dev posture, a missing
+# field warns, and default credentials outside a dev posture fail.
 check_default_credentials() {
-  local posture answer
+  local posture answer rc dev=0
   if [ -z "$DFE_NS" ]; then
     echo "  [skip] default-credentials check: no DFE_NS"
     return 0
   fi
   for posture in $DEV_POSTURES; do
-    if [ "$DFE_ENV" = "$posture" ]; then
-      echo "  [skip] default-credentials check: DFE_ENV=$DFE_ENV is a dev posture"
-      return 0
-    fi
+    [ "$DFE_ENV" = "$posture" ] && dev=1
   done
   answer="$(kubectl -n "$DFE_NS" exec "$ENGINE_TARGET" -- python3 -c \
     'import json,urllib.request
 with urllib.request.urlopen("http://localhost:8000/api/v1/auth/setup-status", timeout=10) as r:
-    print(json.load(r).get("default_credentials", "unknown"))' 2>/dev/null | tr -d '\r' | tail -1)"
+    print(json.load(r).get("default_credentials", "unknown"))' 2>/dev/null)"
+  rc=$?
+  # Strip surrounding whitespace before comparing, the way the engine does.
+  answer="$(printf '%s' "$answer" | tail -1 | tr -d '[:space:]')"
+  if [ "$rc" -ne 0 ]; then
+    if [ "$dev" -eq 1 ]; then
+      echo "  [warn] default-credentials check: could not ask $ENGINE_TARGET"
+      echo "         (kubectl exec exit $rc); DFE_ENV=$DFE_ENV is a dev posture"
+      return 0
+    fi
+    echo "=== READINESS GATE FAILED: the default-credentials check could not RUN"
+    echo "  [FAIL] kubectl exec $ENGINE_TARGET in $DFE_NS exited $rc -- an RBAC denial,"
+    echo "  [FAIL] a wrong READINESS_ENGINE_TARGET, or setup-status not answering 200."
+    echo "  [FAIL] DFE_ENV='${DFE_ENV:-unset}' is not a dev posture, so the shipped"
+    echo "  [FAIL] admin password cannot be left unchecked."
+    return 1
+  fi
   case "$answer" in
     True|true)
+      if [ "$dev" -eq 1 ]; then
+        echo "  [warn] the engine reports default_credentials, allowed here:"
+        echo "         DFE_ENV=$DFE_ENV is a dev posture"
+        return 0
+      fi
       echo "=== READINESS GATE FAILED: the engine reports default_credentials on"
       echo "  [FAIL] setup-status with DFE_ENV='${DFE_ENV:-unset}' -- this deploy is"
       echo "  [FAIL] serving the shipped admin password. Mint one:"

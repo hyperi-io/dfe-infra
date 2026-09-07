@@ -62,6 +62,14 @@ elif "dfe-engine-seed-accounts" in args:
     if accts is None:
         sys.exit(1)
     sys.stdout.write(base64.b64encode(json.dumps(accts).encode()).decode())
+elif "deployment" in args:
+    # `dfe-ops creds` reads the two engine Secret names off the live Deployment.
+    env = fixture.get("engine_env")
+    if env is None:
+        sys.exit(1)
+    json.dump(
+        {"spec": {"template": {"spec": {"containers": [{"env": env}]}}}}, sys.stdout
+    )
 elif "secret" in args and "-o" in args and "name" in args:
     # `dfe-ops creds` presence probe: every secret it asks about is absent
     # unless the fixture lists it.
@@ -83,12 +91,32 @@ def route(
     return [name, path, f"{accepted} ", f"{resolved} ", " ".join(hosts) + " "]
 
 
+def engine_env(
+    admin: tuple[str, str] = ("dfe-engine-admin", "admin-password"),
+    breakglass: tuple[str, str] = ("dfe-engine-breakglass", "breakglass-password"),
+) -> list[dict]:
+    """The engine Deployment's auth env, as the chart writes it."""
+    return [
+        {
+            "name": "DFE_AUTH_LOCAL_ADMIN_PASSWORD",
+            "valueFrom": {"secretKeyRef": {"name": admin[0], "key": admin[1]}},
+        },
+        {"name": "DFE_AUTH_LOCAL_ADMIN_SECRET_NAME", "value": admin[0]},
+        {"name": "DFE_AUTH_LOCAL_ADMIN_SECRET_KEY", "value": admin[1]},
+        {
+            "name": "DFE_AUTH_BREAKGLASS_PASSWORD",
+            "valueFrom": {"secretKeyRef": {"name": breakglass[0], "key": breakglass[1]}},
+        },
+    ]
+
+
 BASE_FIXTURE = {
     "annotations": {"domain": DOMAIN, "dfe_namespace": "dfe-local", "profile": "scale"},
     "gateways": [["dfe-gateway", "dfe-envoy", "192.0.2.10"]],
     "httproutes": [],
     "seed_accounts": None,
     "secrets": ["dfe-engine-admin", "dfe-engine-breakglass"],
+    "engine_env": engine_env(),
 }
 
 _failures = 0
@@ -361,6 +389,51 @@ def test_the_credential_block_names_the_minted_secrets() -> None:
     expect(
         "and the admin password is no longer read out of the seed-accounts Secret",
         "dfe-engine-seed-accounts -o jsonpath='{.data.admin-password}'" not in text,
+        text,
+    )
+
+
+def test_a_renamed_secret_is_fetched_by_the_name_the_engine_reads() -> None:
+    """Both names are helm values, so hardcoding them prints a wrong command.
+
+    A renamed Secret was printed under the chart default and marked "not on this
+    cluster", which reads as break-glass turned off rather than as a rename.
+    """
+    admin = ("acme-dfe-admin", "password")
+    breakglass = ("acme-dfe-breakglass", "password")
+    text = run_summary(
+        engine_env=engine_env(admin, breakglass),
+        secrets=[admin[0], breakglass[0]],
+    )
+    expect(
+        "the renamed admin Secret and key are the ones fetched",
+        f"get secret {admin[0]} -o jsonpath='{{.data.{admin[1]}}}'" in text,
+        text,
+    )
+    expect(
+        "the renamed break-glass Secret is fetched too",
+        f"get secret {breakglass[0]} -o jsonpath='{{.data.{breakglass[1]}}}'" in text,
+        text,
+    )
+    expect(
+        "and neither engine row is marked absent, since both are on the cluster",
+        "# DFE admin (user `admin`)\n" in text
+        and "# DFE break-glass (user `breakglass`)\n" in text,
+        text,
+    )
+    expect(
+        "and the chart defaults appear nowhere",
+        "dfe-engine-admin" not in text and "dfe-engine-breakglass" not in text,
+        text,
+    )
+
+
+def test_an_unreadable_engine_falls_back_to_the_chart_defaults() -> None:
+    """A deploy still converging has no Deployment to read, and still needs a block."""
+    text = run_summary(engine_env=None)
+    expect(
+        "the chart-default admin Secret is fetched",
+        "get secret dfe-engine-admin -o jsonpath='{.data.admin-password}'" in text,
         text,
     )
 
