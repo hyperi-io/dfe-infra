@@ -138,6 +138,7 @@ import argparse
 import base64
 import json
 import os
+import platform
 import secrets
 import shutil
 import ssl
@@ -1147,9 +1148,14 @@ def _ca_status_lines(kube: list[str], args: argparse.Namespace) -> list[str]:
     return [line for line in out if line.strip()]
 
 
-def _ca_install_lines(path: str, name: str) -> list[str]:
-    """The trust-store install commands, per OS. Printed, never run for the user."""
-    return [
+def _ca_install_lines(path: str, name: str, system: str | None = None) -> list[str]:
+    """The root install commands that need root, for one OS or for both.
+
+    `system` is a platform.system() value. None prints both, which is what an
+    operator reading the export wants; a value prints only that OS's, which is
+    what --install has to print after doing the rest.
+    """
+    linux = [
         "# Linux (system trust store -- curl, python, the JVM):",
         f"sudo cp {path} /usr/local/share/ca-certificates/{name}.crt",
         "sudo update-ca-certificates",
@@ -1157,10 +1163,39 @@ def _ca_install_lines(path: str, name: str) -> list[str]:
         "# Chromium-family browsers (Brave, Chrome, Edge) read their OWN NSS store,",
         "# not the system one. Needs libnss3-tools (apt install libnss3-tools):",
         f"certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n {name} -i {path}",
-        "",
+    ]
+    # macOS Chrome and Safari read the system keychain, so there is no NSS step.
+    darwin = [
         "# macOS (system keychain -- covers Safari and Chrome):",
         f"sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain {path}",
     ]
+    if system == "Darwin":
+        return darwin
+    if system is not None:
+        return linux
+    return [*linux, "", *darwin]
+
+
+def _ca_nonroot_install(path: Path, name: str, system: str) -> list[str]:
+    """Do the install steps that do not need root, and report what happened.
+
+    Linux only: the NSS store at ~/.pki/nssdb is what Chromium-family browsers
+    read there. macOS Chrome and Safari read the system keychain, which is the
+    sudo step, so there is nothing to do without root.
+    """
+    if system == "Darwin":
+        return ["macOS trusts through the system keychain, so nothing runs without root"]
+    nssdb = Path.home() / ".pki" / "nssdb"
+    if not shutil.which("certutil"):
+        return ["certutil not found -- install libnss3-tools for the browser store"]
+    if not nssdb.is_dir():
+        return [f"no NSS store at {nssdb} -- start a Chromium-family browser once, then re-run"]
+    rc, _, err = _run_text(
+        ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", name, "-i", str(path)]
+    )
+    if rc == 0:
+        return [f"trusted in the browser NSS store at {nssdb}"]
+    return [f"certutil failed: {err.strip()}"]
 
 
 def cmd_ca(args: argparse.Namespace) -> int:
@@ -1203,23 +1238,10 @@ def cmd_ca(args: argparse.Namespace) -> int:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(root, encoding="utf-8", newline="\n")
         print(f"wrote {out_path}")
-        nssdb = Path.home() / ".pki" / "nssdb"
-        if not shutil.which("certutil"):
-            print("certutil not found -- install libnss3-tools for the browser store")
-        elif not nssdb.is_dir():
-            print(f"no NSS store at {nssdb} -- start a Chromium-family browser once, then re-run")
-        else:
-            rc, _, err = _run_text(
-                ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,",
-                 "-n", args.name, "-i", str(out_path)]
-            )
-            print(
-                f"trusted in the browser NSS store at {nssdb}"
-                if rc == 0
-                else f"certutil failed: {err.strip()}"
-            )
+        system = platform.system()
+        print("\n".join(_ca_nonroot_install(out_path, args.name, system)))
         print("\n# Still to run yourself -- these need root:")
-        print("\n".join(_ca_install_lines(str(out_path), args.name)))
+        print("\n".join(_ca_install_lines(str(out_path), args.name, system)))
         return 0
 
     print(root, end="" if root.endswith("\n") else "\n")

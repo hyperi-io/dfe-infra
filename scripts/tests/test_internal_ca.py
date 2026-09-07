@@ -20,17 +20,23 @@ asserted here, because each fails silently:
 - `dfe-ops ca` prints the PUBLIC half and the install lines for both operating
   systems, and never the private key;
 - `dfe-ops ca --status` distinguishes a restored root from a newly minted one,
-  which is the line the readiness gate and the access summary carry.
+  which is the line the readiness gate and the access summary carry;
+- the install branch follows `platform.system()`, so a Mac never runs a
+  Linux-only step and a Linux box is never told about the keychain.
 
     python3 scripts/tests/test_internal_ca.py
+    python3 -m pytest scripts/tests/test_internal_ca.py
 
 Needs `helm` on PATH. A fake `kubectl` first on PATH answers the cluster reads
-from a JSON fixture. No third-party test runner, matching the other checks here.
+from a JSON fixture. Runs standalone the way CI drives the other checks here,
+and under pytest, where a failed expectation raises rather than counting.
 """
 
 from __future__ import annotations
 
 import base64
+import importlib.machinery
+import importlib.util
 import json
 import os
 import subprocess
@@ -43,6 +49,20 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHART = REPO_ROOT / "helm" / "charts" / "envoy-gateway-config"
 DFE_OPS = REPO_ROOT / "scripts" / "dfe-ops"
+
+
+def _load_dfe_ops():
+    """Import dfe-ops as a module -- it has no .py extension, so no import finds it."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    spec = importlib.util.spec_from_loader(
+        "dfe_ops", importlib.machinery.SourceFileLoader("dfe_ops", str(DFE_OPS))
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+dfe_ops = _load_dfe_ops()
 
 STORE_PATH = "dfe/local/pki/internal-ca"
 
@@ -96,9 +116,12 @@ def expect(name: str, condition: bool, detail: str = "") -> None:
     global _failures
     if condition:
         print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
+        return
+    _failures += 1
+    print(f"FAIL  {name}  {detail}")
+    # Under pytest a counter nobody reads is a green run, so raise there.
+    if "pytest" in sys.modules:
+        raise AssertionError(f"{name}: {detail}")
 
 
 def render(*sets: str) -> list[dict]:
@@ -346,6 +369,70 @@ def test_status_names_the_issuing_ca_in_vault_mode() -> None:
     expect("the mode is vault", "issuer mode: vault" in text, text)
     expect("the issuing CA subject is named", "issuing CA: subject=CN=dfe-internal-ca" in text, text)
     expect("and nothing is asked of the client", "nothing to install" in text, text)
+
+
+def test_the_root_install_lines_branch_on_the_operating_system() -> None:
+    """A Mac has no NSS store and no update-ca-certificates; Linux has no keychain."""
+    darwin = "\n".join(dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca", "Darwin"))
+    linux = "\n".join(dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca", "Linux"))
+    both = "\n".join(dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca"))
+    expect(
+        "Darwin gets the keychain line and neither Linux step",
+        "security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain"
+        in darwin
+        and "update-ca-certificates" not in darwin
+        and "certutil" not in darwin,
+        darwin,
+    )
+    expect(
+        "Linux gets the system store and the NSS store, and no keychain line",
+        "update-ca-certificates" in linux
+        and "certutil -d sql:$HOME/.pki/nssdb -A -t C,," in linux
+        and "security add-trusted-cert" not in linux,
+        linux,
+    )
+    expect(
+        "and the export with no platform prints both",
+        "update-ca-certificates" in both and "security add-trusted-cert" in both,
+        both,
+    )
+
+
+def test_the_non_root_step_runs_nothing_linux_only_on_a_mac() -> None:
+    """certutil is not on a Mac, and the keychain step needs root."""
+    calls: list[list[str]] = []
+    original_run, original_which = dfe_ops._run_text, dfe_ops.shutil.which
+    dfe_ops._run_text = lambda cmd, env=None: (calls.append(cmd), (0, "", ""))[1]
+    dfe_ops.shutil.which = lambda _name: "/usr/bin/certutil"
+    try:
+        darwin = dfe_ops._ca_nonroot_install(Path("/x/ca.crt"), "dfe-internal-ca", "Darwin")
+        expect("nothing is executed on Darwin", calls == [], f"{calls}")
+        expect("and it says why", "system keychain" in darwin[0], f"{darwin}")
+        dfe_ops._ca_nonroot_install(Path("/x/ca.crt"), "dfe-internal-ca", "Linux")
+        expect(
+            "while Linux runs certutil into the NSS store",
+            [c[0] for c in calls] == ["certutil"] and "sql:" in calls[0][2],
+            f"{calls}",
+        )
+    finally:
+        dfe_ops._run_text, dfe_ops.shutil.which = original_run, original_which
+
+
+def test_install_reads_the_platform_rather_than_assuming_linux() -> None:
+    """The branch is chosen by platform.system(), so it holds on either machine."""
+    original = dfe_ops.platform.system
+    dfe_ops.platform.system = lambda: "Darwin"
+    try:
+        chosen = "\n".join(
+            dfe_ops._ca_install_lines("/x/ca.crt", "n", dfe_ops.platform.system())
+        )
+    finally:
+        dfe_ops.platform.system = original
+    expect(
+        "a Darwin platform.system selects the keychain branch",
+        "security add-trusted-cert" in chosen and "update-ca-certificates" not in chosen,
+        chosen,
+    )
 
 
 def main() -> int:
