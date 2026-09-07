@@ -33,6 +33,14 @@ gateway:
   # same drain-safety gating as dfe-common.pdb. maxUnavailable defaults to 1.
   pdb:
     enabled: true
+  export:
+    # Retry ceiling on the gateway's own exporters. A destination that has gone
+    # (a deleted ClickHouse Service, a rebuild) drops after this instead of
+    # being retried behind a full queue until the gateway itself dies.
+    maxElapsedTime: 120s
+  # limits.memory is the ONE number the gateway's memory dials come from:
+  # memory_limiter limit_mib is 80% of it, spike_limit_mib 20%, and GOMEMLIMIT
+  # matches the 80%. Resize this and the config resizes with it.
   resources:
     requests:
       cpu: 200m
@@ -46,6 +54,21 @@ gateway:
     prometheusPort: 8889
 
 daemonset:
+  export:
+    # Retry ceiling on the push to the gateway. A gateway refusing data because
+    # of its own memory_limiter, or gone entirely, costs the queued batches
+    # rather than a collector that retries until it is OOMKilled.
+    maxElapsedTime: 60s
+  # Where the filelog receiver keeps its read offsets. On the NODE, because they
+  # have to survive the pod: without a checkpoint every restart re-ingests every
+  # pod log on the node from the start, which floods the export queue and OOMs
+  # the collector into the next restart.
+  checkpoint:
+    hostPath: /var/lib/dfe-otel-collector
+    mountPath: /var/lib/otelcol/storage
+  # limits.memory is the ONE number the daemonset's memory dials come from:
+  # memory_limiter limit_mib is 80% of it, spike_limit_mib 20%, GOMEMLIMIT
+  # matches the 80%, and the export queue holds a batch per 4 MiB of it.
   resources:
     requests:
       cpu: 100m
