@@ -44,6 +44,11 @@ Subcommands:
                stack-deploy (+ the 2 default E2E tests) -> full smoke suite ->
                destroy. Every estate-specific value comes from --env-file;
                --keep skips the destroy for dev-cluster debugging.
+  creds        Print the fetch command for every login this deploy carries --
+               admin, break-glass, Argo CD, the deploy-repo git host,
+               ClickHouse, Kafbat -- and mark any secret the cluster does not
+               carry. Never prints a value. The access summary prints the same
+               block, so there is one list of credentials, not two.
   teardown     Tear the deployment down (wraps bootstrap/destroy.sh); optionally
                also destroy terraform state.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
@@ -104,6 +109,9 @@ this file is committed publicly, so substitute your own node):
     # Land a push on the persistent deploy's tracked ref, then re-prove it:
     python3 scripts/dfe-ops refresh --mode slim --kubeconfig .tmp/dfe.kubeconfig \
         --env-file bootstrap/.env
+
+    # Where does each login come from on this cluster?
+    python3 scripts/dfe-ops creds --kubeconfig .tmp/dfe.kubeconfig
 
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
@@ -839,6 +847,107 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     )
     stop.set()
     return done.returncode
+
+
+# --- creds subcommand (where every login of this deploy comes from) ----------
+# One row per login this deploy carries: (label, namespace, secret, keys).
+# _APP_NS resolves to the deployment's own app namespace. The SSoT for the set:
+# bootstrap/access-summary.sh prints this rather than keeping its own copy.
+_APP_NS = "\0app\0"
+_CREDENTIALS = (
+    ("DFE admin (user `admin`)", _APP_NS, "dfe-engine-admin", ("admin-password",)),
+    ("DFE break-glass (user `breakglass`)", _APP_NS, "dfe-engine-breakglass", ("breakglass-password",)),
+    ("Argo CD initial admin", "argocd", "argocd-initial-admin-secret", ("password",)),
+    ("Deploy-repo git admin (Forgejo)", "forgejo", "dfe-forgejo-admin", ("username", "password")),
+    ("ClickHouse admin", "clickhouse", "clickhouse-admin-password", ("password",)),
+    ("Kafbat break-glass admin", "kafka", "dfe-kafbat-breakglass", ("username", "password")),
+)
+
+
+def _cluster_annotation(kube: list[str], name: str) -> str:
+    """One dfe-cluster annotation, or empty when the secret cannot be read."""
+    rc, doc, _ = _kubectl_json([*kube, "-n", "argocd", "get", "secret", "dfe-cluster"])
+    if rc != 0:
+        return ""
+    return ((doc.get("metadata") or {}).get("annotations") or {}).get(
+        f"dfe.hyperi.io/{name}", ""
+    )
+
+
+def _secret_exists(kube: list[str], namespace: str, name: str) -> bool:
+    """Whether a Secret is readable. Never reads its values."""
+    rc, _, _ = _run_text(
+        [*kube, "-n", namespace, "get", "secret", name, "-o", "name"]
+    )
+    return rc == 0
+
+
+def _fetch_line(namespace: str, secret: str, key: str) -> str:
+    """One credential's fetch command, in the shape setup-status serves the login page."""
+    return (
+        f"kubectl -n {namespace} get secret {secret} "
+        f"-o jsonpath='{{.data.{key}}}' | base64 -d; echo"
+    )
+
+
+def creds_lines(app_namespace: str, present: dict[str, bool] | None = None) -> list[str]:
+    """The credential block, as commented fetch commands. Never a value.
+
+    `present` maps "<namespace>/<secret>" to whether it was found; a missing one
+    is marked rather than dropped, so a turned-off break-glass reads as turned
+    off instead of as an omission.
+    """
+    out: list[str] = []
+    for label, namespace, secret, keys in _CREDENTIALS:
+        ns = app_namespace if namespace == _APP_NS else namespace
+        status = ""
+        if present is not None:
+            status = "" if present.get(f"{ns}/{secret}") else "   [not on this cluster]"
+        out.append(f"# {label}{status}")
+        out.extend(_fetch_line(ns, secret, key) for key in keys)
+    return out
+
+
+def cmd_creds(args: argparse.Namespace) -> int:
+    """Print where every login of this deploy comes from.
+
+    The deploy mints the admin and break-glass passwords (#233), so each
+    deployment's credentials live only in its own secret store. This prints the
+    fetch command for each, never the value, so the output is safe in a log.
+    """
+    settings = dict(os.environ)
+    for env_file in args.env_file:
+        settings.update(_parse_env_file(env_file))
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    context = args.context or settings.get("DFE_KUBE_CONTEXT")
+    if context:
+        kube += ["--context", context]
+
+    namespace = (
+        args.namespace
+        or settings.get("DFE_NAMESPACE")
+        or _cluster_annotation(kube, "dfe_namespace")
+        or "dfe"
+    )
+
+    present: dict[str, bool] | None = None
+    if not args.no_cluster:
+        present = {}
+        for _, ns, secret, _keys in _CREDENTIALS:
+            resolved = namespace if ns == _APP_NS else ns
+            present[f"{resolved}/{secret}"] = _secret_exists(kube, resolved, secret)
+
+    lines = creds_lines(namespace, present)
+    if args.markdown:
+        print("```sh")
+        print("\n".join(lines))
+        print("```")
+    else:
+        print("\n".join(lines))
+    return 0
 
 
 # --- ui subcommand (the dfe-ui Playwright acceptance specs over port-forwards) -
@@ -1926,6 +2035,28 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("playwright_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to playwright test")
     ui.set_defaults(func=cmd_ui)
+
+    cr = sub.add_parser(
+        "creds",
+        help="print the fetch command for every login this deploy carries (never a value)",
+        description="The deploy mints its admin and break-glass passwords, so "
+                    "each deployment's credentials live only in its own secret "
+                    "store. This prints one fetch command per login and marks "
+                    "any secret the cluster does not carry. The access summary "
+                    "prints the same block.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    cr.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    cr.add_argument("--context", default=None, help="kubeconfig context (default: DFE_KUBE_CONTEXT from --env-file)")
+    cr.add_argument("--namespace", default=None,
+                    help="app namespace (default: DFE_NAMESPACE, else the dfe-cluster annotation, else dfe)")
+    cr.add_argument("--env-file", action="append", default=[], metavar="PATH",
+                    help="DFE_* env file supplying defaults (repeatable; later wins)")
+    cr.add_argument("--markdown", action="store_true", help="wrap the block in a Markdown sh fence, for the access summary")
+    cr.add_argument("--no-cluster", action="store_true",
+                    help="do not read the cluster; print the commands without the present/absent marks")
+    cr.set_defaults(func=cmd_creds)
 
     # pin -- resolve a version's registry digest and (with --write) set the
     # current stack's digests: in versions.yaml. Registered from resolve_pins.

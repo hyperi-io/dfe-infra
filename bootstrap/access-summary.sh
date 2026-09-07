@@ -123,6 +123,15 @@ for a in accts:
     print("- `%s`  groups=[%s]" % (a.get("username", ""), ", ".join(a.get("groups", []))))'
 }
 
+# The credential block comes from `dfe-ops creds`, which owns the list of logins
+# this deploy carries. A second copy here drifted from the charts twice.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+creds_block() {
+  # shellcheck disable=SC2016
+  python3 "${REPO_ROOT}/scripts/dfe-ops" creds --markdown --namespace "${NS}" 2>/dev/null \
+    || printf 'Run `python3 scripts/dfe-ops creds` for the fetch commands.\n'
+}
+
 read -r -d '' BODY <<EOF || true
 # DFE access -- where everything is
 
@@ -146,35 +155,20 @@ An "internal" UI is not exposed; reach it with
 
 - **OIDC configured:** log in with your IdP; RBAC role (ro/rw/admin) comes from
   your OIDC group. No password to fetch.
-- **Local break-glass (no OIDC / recovery):** fetch from the secret store:
+- **Local login (no OIDC / recovery):** the deploy MINTS \`admin\` and
+  \`breakglass\`; neither is a shipped default, so fetch them from the store:
 
-\`\`\`sh
-# DFE UI / engine admin (initial local account)
-kubectl -n ${NS} get secret dfe-engine-admin -o jsonpath='{.data.password}' | base64 -d; echo
-# Kafbat break-glass admin
-kubectl -n kafka get secret dfe-kafbat-breakglass -o jsonpath='{.data.username}' | base64 -d; echo
-kubectl -n kafka get secret dfe-kafbat-breakglass -o jsonpath='{.data.password}' | base64 -d; echo
-# Argo CD initial admin
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
-# Forgejo admin (deploy-repo)
-kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' | base64 -d; echo
-# ClickHouse admin
-kubectl -n clickhouse get secret clickhouse-admin-password -o jsonpath='{.data.password}' | base64 -d; echo
-\`\`\`
+$(creds_block)
 
 ## Stable named logins (#106)
 
 Seeded from config and RECONCILED on every boot, so a teardown+rebuild restores
-the same shared team logins -- unlike the random-on-first-boot break-glass admin.
-Configured on this deployment:
+the same shared team logins. The \`admin\` account is not one of these -- it is
+minted above. Configured on this deployment:
 
 $(seed_logins)
 
-Fetch their passwords (and the stable admin password) from the seed-accounts Secret:
-
 \`\`\`sh
-# Stable break-glass admin password
-kubectl -n ${NS} get secret dfe-engine-seed-accounts -o jsonpath='{.data.admin-password}' | base64 -d; echo
 # Named seed accounts (username -> password -> groups), as configured
 kubectl -n ${NS} get secret dfe-engine-seed-accounts -o jsonpath='{.data.seed-accounts}' | base64 -d | jq -r '.[] | "\(.username)\t\(.password)\t[\(.groups | join(","))]"'
 \`\`\`

@@ -126,15 +126,48 @@ auth:
   # until a deployment states otherwise.
   trustProxyHeaders: false
 
+  # THE admin credential. ESO's Password generator mints it ONCE
+  # (refreshPolicy CreatedOnce) into this Secret, the engine reads it from there
+  # and reasserts it on every boot, and the engine REFUSES TO START on an unset
+  # or `changeme` password unless `env` is a dev posture. Nothing here ever
+  # renders a default, so a production deploy has no guessable login to leak.
+  # This one Secret replaced the two that each claimed to be the admin password
+  # (dfe-infra #233); the named seed accounts below are unchanged.
+  # Fetch it with `dfe-ops creds`.
+  #
+  # EMPTY means this deployment mints nothing and the engine falls back to its
+  # shipped default -- refused at render time unless `env` is a dev posture.
+  adminSecretName: dfe-engine-admin
+  adminSecretKey: admin-password
+  # false when the deployment supplies this Secret from its own sealed secret or
+  # its own ExternalSecret under adminSecretName; the chart then creates nothing.
+  adminSecretCreate: true
+  # Pin a known admin password (a restore, or a dev tyre-kick). Set -> a plain
+  # Secret carrying it, and no generator. `changeme` outside a dev posture is
+  # refused at render time.
+  adminPassword: ""
+  # scalo.secrets path this deployment sources the admin password from. Set it
+  # and the engine's rotate-password endpoint writes through the secrets seam;
+  # empty and that endpoint answers 501 with the kubectl patch command instead.
+  # Empty by default: on k8s the Secret IS the store.
+  adminSecretPath: ""
+  # The break-glass recovery admin (username `breakglass`). Minted the same way,
+  # but the engine hashes it ONCE into the deploy repo at
+  # governance/settings/auth.yaml, so the account survives losing the engine, the
+  # UI and this Secret. Empty name = no break-glass account at all.
+  breakglassSecretName: dfe-engine-breakglass
+  breakglassSecretKey: breakglass-password
+  breakglassSecretCreate: true
+  breakglassPassword: ""
+
 # Stable named local logins (dfe-infra #106). The engine reconciles these on
 # every boot -- the configured password and groups WIN -- so a teardown+rebuild
-# restores the exact shared team logins unchanged, instead of the random-on-
-# first-boot break-glass admin. The chart creates seedAuth.secretName from these
-# values and wires the two env vars the engine reads.
+# restores the exact shared team logins unchanged. The `admin` account is NOT one
+# of these: it is minted under auth.adminSecretName above (#233).
 #
-# DEFAULT-OFF: empty adminPassword + empty seedAccounts => no Secret, no env, a
-# vanilla deploy is unaffected and the engine mints its usual random admin. This
-# is a PRODUCT; devex is one deployment, so the default stays inert.
+# DEFAULT-OFF: empty seedAccounts => no Secret, no env, a vanilla deploy is
+# unaffected. This is a PRODUCT; devex is one deployment, so the default stays
+# inert.
 #
 # Real values NEVER live here (this chart ships publicly). Set them in the
 # gitignored .env / the deploy-repo overlay. Each seed account is
@@ -142,20 +175,17 @@ auth:
 # (dfe-admins, dfe-analysts, dfe-viewers, dfe-infra) -- the engine skips unknown
 # groups. Example:
 #   seedAuth:
-#     adminPassword: "<stable break-glass admin password>"
 #     seedAccounts:
 #       - username: alice
 #         password: "<strong password>"
 #         groups: [dfe-analysts]
 seedAuth:
-  # Chart-created Secret holding seed-accounts (JSON) + admin-password.
+  # Chart-created Secret holding the seed-accounts JSON.
   secretName: dfe-engine-seed-accounts
-  # Stable break-glass admin password. Empty -> engine mints a random one on
-  # first boot. Seeded only into an empty store (sets the initial credential),
-  # NOT reconciled every boot, so an operator's later rotation still wins.
-  adminPassword: ""
   # Named accounts reconciled on every boot (config wins). Empty -> no seeding.
   seedAccounts: []
+  # Set anywhere -> a render-time failure naming auth.adminPassword (#233).
+  adminPassword: ""
 
 # OIDC provider credentials — mounted as env vars from K8s Secrets.
 # dfe-engine is the SSoT: it writes provider secrets to Vault and renders this

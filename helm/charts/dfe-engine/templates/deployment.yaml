@@ -208,16 +208,41 @@ spec:
                   name: {{ .Values.seedAuth.secretName }}
                   key: seed-accounts
             {{- end }}
-            {{- if .Values.seedAuth.adminPassword }}
-            # Stable break-glass admin password. Seeded only into an EMPTY store,
-            # so a fresh install/rebuild gets a known admin login instead of a
-            # random one; a rotated password persisted to the deploy repo still
-            # wins over this on later boots. Empty -> engine mints a random admin.
+            {{- if .Values.auth.adminSecretName }}
+            # The MINTED admin password (#233). The engine reasserts it on every
+            # boot and refuses to start on an unset or `changeme` value unless
+            # env is a dev posture. An empty adminSecretName is the dev-only
+            # no-Secret case.
             - name: DFE_AUTH_LOCAL_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.seedAuth.secretName }}
-                  key: admin-password
+                  name: {{ .Values.auth.adminSecretName }}
+                  key: {{ .Values.auth.adminSecretKey }}
+            # The engine composes the login page's credential-fetch command from
+            # these and the namespace below.
+            - name: DFE_AUTH_LOCAL_ADMIN_SECRET_NAME
+              value: {{ .Values.auth.adminSecretName | quote }}
+            - name: DFE_AUTH_LOCAL_ADMIN_SECRET_KEY
+              value: {{ .Values.auth.adminSecretKey | quote }}
+            {{- end }}
+            - name: DFE_DEPLOYMENT_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- with .Values.auth.adminSecretPath }}
+            # Set = the rotate-password endpoint writes through the scalo secrets
+            # seam instead of answering 501 with the kubectl patch command.
+            - name: DFE_AUTH_LOCAL_ADMIN_PASSWORD_SECRET_PATH
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.auth.breakglassSecretName }}
+            # First-boot break-glass password: the engine hashes it into the
+            # deploy repo once and ignores it afterwards.
+            - name: DFE_AUTH_BREAKGLASS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.breakglassSecretName }}
+                  key: {{ .Values.auth.breakglassSecretKey }}
             {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved

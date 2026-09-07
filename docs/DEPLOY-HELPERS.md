@@ -53,6 +53,17 @@ Requires a port-forward of the forgejo service to `localhost:13000`.
 `kubeconfig`, `preflight`, and `cycle` for k8s create/amend/teardown -- see
 docs/TESTING-CYCLE.md for the cycle.
 
+## Where each login comes from
+
+    python3 scripts/dfe-ops creds --kubeconfig .tmp/kubeconfig-dfe-b
+
+Prints one fetch command per login the deploy carries -- `admin` and
+`breakglass` (both minted by an ESO Password generator, so neither is a shipped
+default), Argo CD, the deploy-repo git host, ClickHouse and Kafbat -- and marks
+any secret the cluster does not carry. It never prints a value, so the output is
+safe in a log. `bootstrap/access-summary.sh` prints the same block, so a deploy
+hands the operator exactly these lines.
+
 ## The end-to-end release + deploy recipe
 
 Ordered. The clean end state is a GHCR digest-pinned deploy -- never a `:dev`
