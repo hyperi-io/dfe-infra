@@ -116,6 +116,91 @@ def test_creation_can_be_handed_to_the_deployment() -> None:
            named(out, "Secret", "dfe-engine-jwt") == [], "a Secret rendered")
 
 
+def render_fails(chart: Path, *sets: str) -> str:
+    """The stderr of a render expected to be refused, or "" when it succeeded."""
+    cmd = ["helm", "template", chart.name, str(chart)]
+    for s in sets:
+        cmd += ["--set", s]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return out.stderr if out.returncode != 0 else ""
+
+
+def test_the_admin_password_is_minted_once_like_the_signing_key() -> None:
+    """The deploy mints the admin login now (#233), by the same mechanism.
+
+    A template-minted password is a new password on every Argo sync, which locks
+    the operator out of the account they were handed.
+    """
+    out = render(ENGINE)
+    for secret, key in (
+        ("dfe-engine-admin", "admin-password"),
+        ("dfe-engine-breakglass", "breakglass-password"),
+    ):
+        gens = named(out, "Password", f"{secret}-gen")
+        es = named(out, "ExternalSecret", secret)
+        expect(f"{secret} renders the ESO generator", len(gens) == 1, f"got {len(gens)}")
+        expect(f"{secret} renders the ExternalSecret", len(es) == 1, f"got {len(es)}")
+        expect(f"{secret} renders no template-minted Secret",
+               named(out, "Secret", secret) == [], "a Secret rendered")
+        if es:
+            spec = es[0]["spec"]
+            expect(f"{secret} is written once, not refreshed",
+                   spec.get("refreshPolicy") == "CreatedOnce", f"got {spec.get('refreshPolicy')}")
+            expect(f"{secret} carries the key the engine reads",
+                   key in (spec["target"]["template"]["data"]), f"got {spec['target']}")
+
+
+def test_the_seed_accounts_secret_no_longer_claims_the_admin_password() -> None:
+    """Two Secrets each claiming to be the admin password is what #233 collapsed."""
+    out = render(ENGINE, "seedAuth.seedAccounts[0].username=alice",
+                 "seedAuth.seedAccounts[0].password=s3cret")
+    seed = named(out, "Secret", "dfe-engine-seed-accounts")
+    expect("the seed-accounts Secret still renders", len(seed) == 1, f"got {len(seed)}")
+    if seed:
+        expect("and carries only the named accounts",
+               list(seed[0]["stringData"]) == ["seed-accounts"], f"got {seed[0]['stringData']}")
+
+
+def test_the_engine_reads_the_minted_secret() -> None:
+    """The chart wires what dfe-engine #300 reads, or the engine refuses to start."""
+    deployment = named(render(ENGINE), "Deployment", "dfe-engine")[0]
+    env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+    ref = env["DFE_AUTH_LOCAL_ADMIN_PASSWORD"]["valueFrom"]["secretKeyRef"]
+    expect("the admin password comes from the minted Secret",
+           (ref["name"], ref["key"]) == ("dfe-engine-admin", "admin-password"), f"got {ref}")
+    expect("the Secret is named for the login page's fetch command",
+           env["DFE_AUTH_LOCAL_ADMIN_SECRET_NAME"]["value"] == "dfe-engine-admin",
+           f"got {env.get('DFE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
+    expect("the namespace comes off the pod, so the command is complete",
+           env["DFE_DEPLOYMENT_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"]
+           == "metadata.namespace", f"got {env.get('DFE_DEPLOYMENT_NAMESPACE')}")
+    bg = env["DFE_AUTH_BREAKGLASS_PASSWORD"]["valueFrom"]["secretKeyRef"]
+    expect("the break-glass password comes from its own Secret",
+           (bg["name"], bg["key"]) == ("dfe-engine-breakglass", "breakglass-password"),
+           f"got {bg}")
+
+
+def test_a_non_dev_posture_cannot_render_without_minting() -> None:
+    """The production half of the model: refuse at render, not at first login."""
+    expect(
+        "a production posture minting nothing is refused",
+        "adminSecretName is empty" in render_fails(ENGINE, "env=production",
+                                                   "auth.adminSecretName="),
+        "the render succeeded",
+    )
+    expect(
+        "and the shipped default pinned outside dev is refused",
+        "shipped default" in render_fails(ENGINE, "env=production",
+                                          "auth.adminPassword=changeme"),
+        "the render succeeded",
+    )
+    expect(
+        "a dev posture may still tyre-kick on a known password",
+        render_fails(ENGINE, "env=local", "auth.adminPassword=changeme") == "",
+        "a dev render was refused",
+    )
+
+
 def test_no_chart_mints_a_secret_behind_a_lookup() -> None:
     """The #224 shape, repo-wide: a cluster read cannot guard a render-time mint."""
     offenders = []
@@ -135,6 +220,10 @@ def main() -> int:
     test_jwt_key_is_not_minted_by_the_template()
     test_a_pinned_key_renders_that_key_and_nothing_else()
     test_creation_can_be_handed_to_the_deployment()
+    test_the_admin_password_is_minted_once_like_the_signing_key()
+    test_the_seed_accounts_secret_no_longer_claims_the_admin_password()
+    test_the_engine_reads_the_minted_secret()
+    test_a_non_dev_posture_cannot_render_without_minting()
     test_no_chart_mints_a_secret_behind_a_lookup()
     print(f"\n{_failures} failure(s)")
     return 1 if _failures else 0

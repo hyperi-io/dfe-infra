@@ -574,8 +574,11 @@ echo "  POST: DFE_POST=${DFE_POST} (readiness=${POST_READINESS}, integration=${P
 echo ""
 if [ "${POST_READINESS}" = "true" ]; then
   # DFE_NS names the namespace the apps land in; without it the gate cannot tell
-  # an empty deploy from a healthy one.
-  if ! DFE_NS="${DFE_NAMESPACE}" "${SCRIPT_DIR}/smoke-test-readiness.sh" "${KUBECONFIG:-}"; then
+  # an empty deploy from a healthy one. DFE_ENV decides whether the deployment is
+  # allowed to be running the shipped admin password.
+  if ! DFE_NS="${DFE_NAMESPACE}" \
+       DFE_ENV="${DFE_ENV}" \
+       "${SCRIPT_DIR}/smoke-test-readiness.sh" "${KUBECONFIG:-}"; then
     echo ""
     echo "  DEPLOY NOT HEALTHY -- see the readiness failures above."
     echo "  Fix them and re-run, or set DFE_POST=off to stand up without verifying."

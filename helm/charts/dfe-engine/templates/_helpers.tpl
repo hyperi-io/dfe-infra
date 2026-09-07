@@ -31,6 +31,17 @@ Usage:
 {{- end }}
 
 {{/*
+dfe-engine.isDevPosture -- non-empty when `env` is one of the postures the
+engine treats as dev.
+
+The SAME list the engine's is_dev_posture uses (dfe-engine #300), which gates
+the refuse-on-default-password check and gitops auto-merge.
+*/}}
+{{- define "dfe-engine.isDevPosture" -}}
+{{- if has .Values.env (list "dev" "development" "local" "test" "ci") }}true{{ end }}
+{{- end -}}
+
+{{/*
 An explicit hyperdx.baseUrl wins, for a fork outside the cluster. Otherwise it
 is derived from the fork's API service, defaulting to this release's namespace
 so a co-deployed fork needs no configuration at all.
