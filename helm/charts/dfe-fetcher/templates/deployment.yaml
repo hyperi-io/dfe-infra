@@ -5,7 +5,14 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  {{- include "dfe-common.replicas" . }}
+  {{- if not (and .Values.keda .Values.keda.enabled) }}
+  # PINNED at 1, deliberately not dfe-common.replicas: a fetcher is a producer
+  # bound to one external source, so N replicas of one config are N duplicate
+  # polls, and the profile files set replicaCount globally (scale sets 2).
+  # Coverage grows by adding fetcher configs; a config whose fetch mechanism does
+  # support competing consumers opts in via keda (see values.yaml).
+  replicas: 1
+  {{- end }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
