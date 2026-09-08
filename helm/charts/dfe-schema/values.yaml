@@ -44,6 +44,13 @@ clickhouse:
   passwordSecretName: ""
   passwordSecretKey: password
 
+# Days every time-series table the apply creates or reconciles keeps rows.
+# 0 disables the default TTL.
+# A source or a dfe-schemas definition that declares its own TTL overrides it.
+# Keep equal to the dfe-engine chart's retention.defaultTtlDays.
+retention:
+  defaultTtlDays: 90
+
 resources:
   requests:
     cpu: 50m

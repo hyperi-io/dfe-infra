@@ -187,6 +187,12 @@ jobs:
       - name: Hunt runner reads hunts off the synced deploy repo
         run: python3 scripts/tests/test_hunt_runner_gitsync.py
 
+      # The engine and the schema Job each render the TTL, and the value has to
+      # travel env file -> cluster secret -> appset -> chart, or a deployment's
+      # retention silently stays at the shipped default.
+      - name: Default retention reaches the engine and the schema apply
+        run: python3 scripts/tests/test_default_ttl.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

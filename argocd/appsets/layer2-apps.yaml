@@ -85,6 +85,10 @@ spec:
               # one. Only dfe-receiver reads it; the other charts ignore it.
               - name: exposure.public.loadBalancerIP
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/receiver_address" }}'
+              # Deployment-wide retention; layer2-data hands the dfe-schema Job the
+              # same annotation. A cluster secret without it falls back to 90.
+              - name: retention.defaultTtlDays
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_default_ttl_days" | default "90" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values
