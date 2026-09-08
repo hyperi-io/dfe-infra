@@ -82,6 +82,40 @@ neither is a shipped default and neither rotates under a live session.
 logins (#106). A deployment still reading `{.data.admin-password}` off the seed
 Secret gets nothing back; use `dfe-ops creds`.
 
+## Adding a second OIDC provider
+
+A provider is a NAME, and the name is what everything keys off -- the callback
+path `/api/v1/auth/oidc/<name>/callback`, the login route
+`/api/v1/auth/oidc/<name>/login`, the entry the console's provider picker shows,
+and the env var pair the engine reads its client credentials from. Nothing about
+the vendor is special-cased, so a second provider is the same four objects the
+tester IdP already uses, with a different name:
+
+1. A Secret in the app namespace holding `client-id` and `client-secret` for the
+   RP client registered at that IdP -- an ExternalSecret pulling from the
+   estate's secret store where the `ClusterSecretStore` is ready, otherwise the
+   Secret directly.
+2. A key `<name>.yaml` added to the providers ConfigMap named by
+   `authConfig.providersConfigMap` -- the same ConfigMap every provider shares,
+   one key each. It carries `issuer`, `client_id_env`, `client_secret_env`,
+   `scopes` and the `groups` block; `type` picks the directory adapter and
+   `groups.mode: token_claim` means the id_token's claim IS the answer.
+3. An entry under `oidc.providers` in the deployment's engine values, mapping
+   those two env var names onto the Secret's keys.
+4. The callback URI registered at the IdP. It has to be the URI the engine
+   actually emits, which is why `api.forwardedAllowIps` matters: the gateway
+   terminates TLS and forwards plain http, so unless its peer address is
+   believed the engine builds `http://` callbacks and a hosted IdP refuses to
+   register them.
+
+Two things bite on a private-CA deployment. `authConfig.caBundleConfigMap` sets
+`SSL_CERT_FILE`, which REPLACES the trust store rather than adding to it -- the
+chart's init container merges the image's public roots in for that reason, so a
+deployment can reach a hosted IdP and its own private-CA IdP at once. And the
+bundle has to hold the CA that signed the CURRENT gateway certificate: a
+reissued CA leaves a stale bundle behind, and the failure reads as an HTTP 500
+on `/login` whose log line is `certificate verify failed`.
+
 ## Trusting the DFE certificate
 
 Which CA signed the gateway's `*.<domain>` certificate is a per-deployment

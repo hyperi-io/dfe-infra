@@ -46,7 +46,7 @@ spec:
       # the deploy was pinned to v1.10.3, BEHIND the setting that collides.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap }}
+      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap .Values.authConfig.caBundleConfigMap }}
       initContainers:
         # Seed auth config into the writable config volume; a direct nested
         # mount leaves kubelet-created root-owned dirs the engine cannot
@@ -60,6 +60,7 @@ spec:
             - -c
             - |
               import shutil
+              import ssl
               from pathlib import Path
               for src, dst in (
                   ("/seed/oidc-providers", "{{ .Values.config.mountPath }}/auth/oidc-providers"),
@@ -74,6 +75,20 @@ spec:
                       if f.is_file():
                           shutil.copyfile(f, d / f.name)
                           print("seeded", d / f.name)
+              # SSL_CERT_FILE REPLACES the trust store, it does not add to it, so a
+              # private-CA bundle on its own fails every PUBLIC TLS peer -- a hosted
+              # IdP's discovery fetch dies on certificate_verify_failed. Merge the
+              # image's own roots in and point SSL_CERT_FILE at the result.
+              ca = Path("/seed/ca/ca-bundle.pem")
+              if ca.is_file():
+                  merged = Path("{{ .Values.config.mountPath }}/auth/ca-bundle.pem")
+                  merged.parent.mkdir(parents=True, exist_ok=True)
+                  text = ca.read_text(encoding="utf-8")
+                  roots = Path(ssl.get_default_verify_paths().openssl_cafile or "")
+                  if roots.is_file():
+                      text += "\n" + roots.read_text(encoding="utf-8")
+                  merged.write_text(text, encoding="utf-8", newline="\n")
+                  print("merged", merged)
           volumeMounts:
             - name: config
               mountPath: {{ .Values.config.mountPath }}
@@ -85,6 +100,11 @@ spec:
             {{- if .Values.authConfig.groupsConfigMap }}
             - name: auth-groups
               mountPath: /seed/groups
+              readOnly: true
+            {{- end }}
+            {{- if .Values.authConfig.caBundleConfigMap }}
+            - name: ca-bundle
+              mountPath: /seed/ca
               readOnly: true
             {{- end }}
       {{- end }}
@@ -174,6 +194,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
+            {{- if .Values.api.forwardedAllowIps }}
+            # The peers whose X-Forwarded-Proto is believed. An OIDC redirect URI
+            # is built from that scheme, so an unset value sends the IdP an http
+            # callback and a hosted IdP refuses to register one.
+            - name: DFE_API_FORWARDED_ALLOW_IPS
+              value: {{ .Values.api.forwardedAllowIps | quote }}
+            {{- end }}
             # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
             # the WRITABLE config mount. The default ./.secrets resolves to
             # /app/.secrets on the root-owned WORKDIR (non-writable) -> the engine
@@ -298,9 +325,11 @@ spec:
           {{- end }}
           {{- end }}
           {{- if .Values.authConfig.caBundleConfigMap }}
-            # Private-CA IdPs and datastores verify against this bundle.
+            # Private-CA IdPs and datastores verify against this bundle. It is the
+            # init container's MERGE of the configured CA and the image's public
+            # roots, not the ConfigMap itself -- see the seed script.
             - name: SSL_CERT_FILE
-              value: /etc/dfe-ca/ca-bundle.pem
+              value: {{ .Values.config.mountPath }}/auth/ca-bundle.pem
           {{- end }}
           volumeMounts:
             # Config is WRITABLE: the engine is a git-native config control plane
@@ -322,11 +351,6 @@ spec:
             {{- if .Values.gitops.enabled }}
             - name: deploy-repo
               mountPath: {{ dir .Values.gitops.localPath }}
-            {{- end }}
-            {{- if .Values.authConfig.caBundleConfigMap }}
-            - name: ca-bundle
-              mountPath: /etc/dfe-ca
-              readOnly: true
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
