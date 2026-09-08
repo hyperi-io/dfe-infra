@@ -15,7 +15,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:50c442839c79f3bfdbc2ccf6b45782408e5933656e8444d6c308cdd7550f4d60"
+  digest: "sha256:96b1637a305791f70262474f4a6961c42f783c4f53b5653046e38392760c3178"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -215,7 +215,18 @@ oidc:
 # ConfigMap the deployment provides; empty leaves the engine's writable
 # defaults (group CRUD via the API needs groupsConfigMap left empty).
 # caBundleConfigMap (key ca-bundle.pem) also sets SSL_CERT_FILE for
-# deployments whose IdP or datastores use a private CA.
+# deployments whose IdP or datastores use a private CA. It is MERGED with the
+# image's public roots first, so a private-CA deployment can still reach a
+# hosted IdP -- SSL_CERT_FILE replaces the trust store rather than adding to it.
+# Peer addresses or CIDRs whose X-Forwarded-Proto and X-Forwarded-For the engine
+# believes, or "*" for any peer. The cluster's pod CIDR is the usual value: the
+# TLS-terminating gateway is the peer, and the engine builds its OIDC redirect
+# URIs from the scheme this decides. Empty leaves the engine's loopback-only
+# default, which makes every callback URI http:// -- Okta and Entra refuse to
+# register those, so external OIDC cannot complete.
+api:
+  forwardedAllowIps: ""
+
 authConfig:
   providersConfigMap: ""
   groupsConfigMap: ""
