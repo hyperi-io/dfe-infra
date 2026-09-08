@@ -19,15 +19,41 @@ image:
 replicaCount: 1
 
 kafka:
+  # "disabled" (set by the no-kafka profiles) drops every kafka env + secret ref
+  # and sends the fetched records straight to the receiver over gRPC instead.
+  mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
+  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
+  # confluent-cloud | msk_iam | plaintext). Empty = unset. When set, scalo's
+  # KafkaConfig DERIVES security_protocol + sasl_mechanism from it.
+  provider: ""
+
+# Receiver PushEvents target for the no-kafka profiles (kafka.mode: disabled):
+# the receiver Service name + its pushgrpc listener port. Same-namespace short
+# name on purpose. A URI, unlike the receiver's own host:port loaderGrpcAddress
+# -- scalo's GrpcConfig.endpoint is parsed as one.
+receiverGrpcAddress: "http://dfe-receiver:6000"
 
 # API credentials are injected via External Secrets Operator
-# ESO creates dfe-fetcher-api-creds from vault/cloud secret store
+# ESO creates dfe-fetcher-api-creds from vault/cloud secret store. The refs are
+# optional in the deployment: an instance whose credentials are vault:/env:
+# references inside its own stanza has no such Secret.
 apiCredentials:
   secretName: dfe-fetcher-api-creds
   apiKeyKey: api-key
   apiSecretKey: api-secret
+
+# Cursor store. The fetcher records the window each connection resumed from at
+# cursor.file_path (/var/lib/dfe-fetcher/cursors.json by default) and the rootfs
+# is read-only, so that directory is a volume either way. Default emptyDir: the
+# slim tier is not guaranteed a StorageClass, and a lost cursor re-fetches the
+# default window rather than losing data. Turn this on where a re-fetch is
+# expensive (rate-limited or metered upstreams).
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: ""
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created
@@ -37,18 +63,29 @@ dlq:
   topic: dfe_fetcher_dlq
   mode: kafka_only
 
-# The app's scalo config, mounted VERBATIM at /etc/dfe/fetcher.yaml (the image's
-# CMD path -- dfe-fetcher Dockerfile:43). This is an OPAQUE passthrough blob: the
-# engine is the config authority and publishes it as the per-instance Argo
-# multi-source $values overlay (values/dfe-fetcher-<instance>-values.yaml), so the
-# chart never needs to know the per-app keys. Empty here on purpose -- baking
-# defaults in would put deployment-specific addresses in a product chart, and
-# Helm's map merge would silently leave stale keys behind when the engine's
-# overlay does not overwrite them.
+# The app's scalo config, mounted at /etc/dfe/fetcher.yaml (the image's CMD path
+# -- dfe-fetcher Dockerfile:43). Passthrough EXCEPT the transport: the configmap
+# derives the broker list, or the receiver gRPC output, from the values above,
+# because a deployment address authored into the engine's overlay would be wrong
+# for every other deployment of the product. Empty here on purpose -- baking
+# defaults in and letting Helm's map merge run leaves stale keys behind when the
+# engine's overlay does not overwrite them.
 #
 # A fetcher instance is 1:1 with a DFE source's fetcher config, so this blob is
-# what makes two fetcher Applications different from each other.
+# what makes two fetcher Applications different from each other. The engine
+# writes it as the per-instance Argo multi-source $values overlay
+# (values/dfe-fetcher-<source>-values.yaml) and carries:
+#   config.sources     the bound source's per-type stanza (apps.yaml routing,
+#                      compiler fetcher, scope instance)
+#   config.instance_id the source name, which keys the cursor store
+#                      (apps.yaml source_binding)
+#   otelServiceName    below
+#   component          instance-unique, to keep the objects and telemetry apart
 config: {}
+
+# OTel service.name for this instance. Empty falls back to the app name, which
+# leaves two instances of one app indistinguishable in the otel tables.
+otelServiceName: ""
 
 otel:
   endpoint: ""
