@@ -14,13 +14,14 @@ data:
   fetcher.yaml: |
     {{- $cfg := deepCopy (.Values.config | default dict) }}
     {{- if eq (default "" .Values.kafka.mode) "disabled" }}
-    {{- /* No-kafka profile: push straight to the receiver's PushEvents door.
+    {{- /* No-kafka profile: push straight to the loader's scalo Push listener,
+           the only gRPC door that speaks the fetcher's client protocol.
            `endpoint` is a URI (scalo GrpcConfig), NOT the host:port the
            receiver's own loader.address takes -- do not copy that spelling.
            The kafka section goes with the broker: validate() only demands
            brokers while output.type includes kafka (config/mod.rs:252), and
            topic_suffix falls back to its own _land default (mod.rs:3681). */}}
-    {{- $grpc := mergeOverwrite (default dict (dig "output" "grpc" dict $cfg)) (dict "endpoint" .Values.receiverGrpcAddress) }}
+    {{- $grpc := mergeOverwrite (default dict (dig "output" "grpc" dict $cfg)) (dict "endpoint" .Values.loaderGrpcAddress) }}
     {{- $_ := set $cfg "output" (mergeOverwrite (default dict (get $cfg "output")) (dict "type" "grpc" "grpc" $grpc)) }}
     {{- $_ := unset $cfg "kafka" }}
     {{- else }}
