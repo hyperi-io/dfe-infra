@@ -1915,6 +1915,11 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  Namespace:  {env.get('DFE_NAMESPACE')}", file=sys.stderr)
     print(f"  Cloud/env:  {env.get('DFE_CLOUD')}/{env.get('DFE_ENV')}", file=sys.stderr)
     print(f"  Git ref:    {env.get('DFE_TARGET_REVISION')}", file=sys.stderr)
+    print(
+        f"  Retention:  {env.get('DFE_CLICKHOUSE_DEFAULT_TTL_DAYS') or '90'} day(s), "
+        "every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)",
+        file=sys.stderr,
+    )
     print(f"  Kubeconfig: {env.get('KUBECONFIG', '(current context)')}", file=sys.stderr)
     print(f"  Readiness:  bounded at {env['READINESS_TIMEOUT']}s", file=sys.stderr)
     print(f"  E2E tests:  {'SKIPPED' if args.skip_e2e else 'ON (data path + self-monitoring)'}", file=sys.stderr)
