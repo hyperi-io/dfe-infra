@@ -36,4 +36,11 @@ data:
     {{- $_ := set $cfg "kafka" $kafka }}
     {{- end }}
     {{- end }}
+    {{- /* The cursor store lives on the mounted volume; unset, the fetcher falls
+           back to the read-only config directory and persists nothing. */}}
+    {{- $cursor := default dict (get $cfg "cursor") }}
+    {{- if not (get $cursor "directory") }}
+    {{- $_ := set $cursor "directory" "/var/lib/dfe-fetcher" }}
+    {{- $_ := set $cfg "cursor" $cursor }}
+    {{- end }}
     {{- toYaml $cfg | nindent 4 }}
