@@ -110,6 +110,13 @@ secrets:
 ## Blank in the committed template; its value points at a private repo.
 overlay: ""
 
+## RETENTION -- the deployment-wide TTL for every time-series table DFE deploys,
+## the OTel tables included. Whole days; 0 disables the default TTL. A source, or
+## a dfe-schemas definition, that declares its own TTL overrides it. Read by both
+## substrates: k8s -> DFE_CLICKHOUSE_DEFAULT_TTL_DAYS, docker-vm the same key.
+retention:
+  default_ttl_days: 90
+
 ## ---------------------------------------------------------------------------
 ## docker-vm SLICE -- consumed by dfe-docker's render_dial. Field names match
 ## that repo's dial exactly, so one maintained dial slices to both substrates.

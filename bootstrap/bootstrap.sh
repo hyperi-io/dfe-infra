@@ -47,6 +47,10 @@
 #                            empty lets the pool choose
 #   DFE_RECEIVER_IP          address the receiver's public TCP LoadBalancer must
 #                            take; empty lets the pool choose
+#   DFE_CLICKHOUSE_DEFAULT_TTL_DAYS  days every time-series table keeps rows, the
+#                            OTel tables included (default 90; 0 = no default
+#                            TTL). A source or a dfe-schemas definition with its
+#                            own TTL overrides it.
 #   DFE_CERTMANAGER_SECRET_ID  AppRole SecretID cert-manager authenticates to the
 #                            estate Vault/OpenBao PKI with, for the gateway
 #                            chart's tls.vault issuer mode. Set it and the edge
@@ -172,6 +176,14 @@ DFE_LABEL_WORKLOAD_NODES="${DFE_LABEL_WORKLOAD_NODES:-$([[ "${DFE_CLOUD:-}" == "
 # Front-door addresses; empty renders a blank annotation and the pool chooses.
 export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
 export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
+# Deployment-wide retention, defaulted so the annotation always renders and the
+# operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
+export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"
+if ! [[ "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS must be a whole number of days (got '${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}')" >&2
+  exit 1
+fi
+echo "Default retention: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS} day(s) for every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)"
 # One cluster runs one profile at a time, so the profile tags the domain and the
 # three deployments never publish the same hostname. An explicit DFE_DOMAIN wins.
 if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" && -n "${DFE_PROFILE:-}" ]]; then

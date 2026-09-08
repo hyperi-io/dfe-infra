@@ -45,6 +45,9 @@ metadata:
     dfe.hyperi.io/clickhouse_host: "${DFE_CLICKHOUSE_HOST}"
     dfe.hyperi.io/kafka_bootstrap: "${DFE_KAFKA_BOOTSTRAP}"
     dfe.hyperi.io/otel_endpoint: "${DFE_OTEL_ENDPOINT}"
+    # Deployment-wide retention; layer2-apps and layer2-data inject it into the
+    # dfe-engine and dfe-schema charts as retention.defaultTtlDays.
+    dfe.hyperi.io/clickhouse_default_ttl_days: "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}"
     # Workload identity annotations JSON (from tf-iam output)
     dfe.hyperi.io/workload_identity_annotations: '${DFE_WORKLOAD_IDENTITY_ANNOTATIONS}'
 type: Opaque
