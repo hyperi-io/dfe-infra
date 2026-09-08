@@ -79,12 +79,14 @@ spec:
             {{- toYaml .Values.documentdb.resources | nindent 12 }}
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", {{ .Values.documentdb.auth.username | quote }}]
+              # -d names the real database: without it libpq dials one named after the user.
+              command: ["pg_isready", "-U", {{ .Values.documentdb.auth.username | quote }}, "-d", {{ .Values.documentdb.database | quote }}]
             initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", {{ .Values.documentdb.auth.username | quote }}]
+              # -d names the real database: without it libpq dials one named after the user.
+              command: ["pg_isready", "-U", {{ .Values.documentdb.auth.username | quote }}, "-d", {{ .Values.documentdb.database | quote }}]
             initialDelaySeconds: 30
             periodSeconds: 15
   volumeClaimTemplates:
