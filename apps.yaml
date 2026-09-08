@@ -39,6 +39,20 @@
 #                  roll   a pod roll applies it; the chart checksums the files
 #                  restart needs a manual restart
 #
+# routing
+#   Present when the app's routing block is DERIVED from the source definitions
+#   rather than hand-set, so an edit to it is drift the engine re-syncs. Fields:
+#     compiler     names the function in the engine that builds the block
+#     values_path  dot-path in the overlay the compiled block is written to
+#     scope        stack     compiled from EVERY source in the stack (default)
+#                  instance  compiled from the ONE source the instance is bound
+#                            to, so each instance carries only its own source
+#
+# source_types
+#   The source families the app can fetch natively. The engine validates a
+#   source's declared fetcher.source_type against this allow-list, so a family
+#   the app cannot fetch is refused at the API rather than at the pod.
+#
 # source_binding
 #   Present when an instance of this app IS a DFE source's processing step, which
 #   makes the instance name the source name. Maps a dot-path in the overlay to a
@@ -86,6 +100,37 @@ apps:
   dfe-fetcher:
     multiplicity: per_config
     scale_deployed: false
+    # instance_id keys the cursor store, so it has to be stable per source: a
+    # changed id re-fetches the default window instead of resuming.
+    source_binding:
+      config.instance_id: "{source}"
+    # Instance scope: one source's fetcher stanza, not the whole stack's.
+    routing:
+      compiler: fetcher
+      values_path: config.sources
+      scope: instance
+    # The families dfe-fetcher ships, from its docs/capability-catalog.yaml.
+    # Each name is also the config key its stanza sits under in config.sources.
+    source_types:
+      - aws
+      - azure
+      - m365
+      - gcp
+      - github
+      - okta
+      - cloudflare
+      - onepassword
+      - crowdstrike
+      - slack
+      - bitwarden
+      - duo
+      - google_workspace
+      - salesforce
+      - pypi
+      - crates_io
+      - go_modules
+      - gcp_pubsub
+      - object_store
 
   # Compiles every .vrl in its transforms directory into one program at startup
   # and holds it immutable for the process lifetime, so an edit needs a roll.

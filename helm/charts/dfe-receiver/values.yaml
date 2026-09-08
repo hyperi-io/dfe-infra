@@ -41,6 +41,12 @@ service:
 listeners:
   - { name: http, port: 8080, protocol: TCP, exposed: true }     # JSON ingest + OTLP/HTTP + probes
   - { name: grpc, port: 8443, protocol: TCP, exposed: true }     # OTLP/gRPC ingest
+  # The PushEvents door for in-cluster producers -- dfe-fetcher sends here when
+  # kafka.mode is disabled. NEVER exposed: it is unauthenticated by default and
+  # the namespace baseline admits only the other DFE namespaces. Present in this
+  # list is what switches the receiver's grpc server on (see the configmap), so
+  # removing the entry closes the door.
+  - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false } # scalo Push RPC from in-cluster producers
   # Enable per the source's protocols via the engine overlay, e.g.:
   # - { name: lumberjack, port: 5044, protocol: TCP, exposed: true }  # Beats/Elastic
   # - { name: netflow,    port: 2055, protocol: UDP, exposed: true }  # NetFlow/IPFIX

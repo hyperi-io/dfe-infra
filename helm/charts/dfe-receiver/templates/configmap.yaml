@@ -1,8 +1,9 @@
-# The app's scalo config file, rendered VERBATIM from the .Values.config blob.
-# Layer B of the engine's values contract (dfe-engine helm/models.py): the engine
-# is the config authority and emits `config` as an OPAQUE passthrough -- this
-# chart never interprets the per-app keys, it only writes them to the path the
-# image's CMD reads (/etc/dfe-receiver/config.yaml -- dfe-receiver Dockerfile:43).
+# The app's scalo config file, rendered from the .Values.config blob (Layer B of
+# the engine's values contract, dfe-engine helm/models.py). The engine is the
+# config authority for everything except the keys derived below: those are
+# deployment facts with no flat-env key, so the ConfigMap is their only seam.
+# Written to the path the image's CMD reads (/etc/dfe-receiver/config.yaml --
+# dfe-receiver Dockerfile:43).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,5 +20,16 @@ data:
            the one seam that can set them. grpc_endpoint derives from address. */}}
     {{- $_ := set $cfg "destinations" (mergeOverwrite (default dict (get $cfg "destinations")) (dict "default" "loader")) }}
     {{- $_ := set $cfg "loader" (mergeOverwrite (default dict (get $cfg "loader")) (dict "address" .Values.loaderGrpcAddress "transport" "grpc")) }}
+    {{- end }}
+    {{- /* The PushEvents server. grpc.enabled defaults to FALSE (config/mod.rs:742)
+           and the receiver has no flat-env key for it, so this is the only seam
+           that opens it. Driven off .Values.listeners, which is this chart's SSoT
+           for ports: the entry named pushgrpc both opens the container port and
+           the Service port and switches the server on, so the two can never
+           disagree. TLS and auth under config.grpc are the overlay's to set. */}}
+    {{- range .Values.listeners }}
+    {{- if eq .name "pushgrpc" }}
+    {{- $_ := set $cfg "grpc" (mergeOverwrite (default dict (get $cfg "grpc")) (dict "enabled" true "bind_address" (printf "0.0.0.0:%v" .port))) }}
+    {{- end }}
     {{- end }}
     {{- toYaml $cfg | nindent 4 }}
