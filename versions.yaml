@@ -1845,8 +1845,8 @@ stacks:
     # == the pin here.
     apps:
       dfe-engine: "v1.19.12"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Loader routing contract corrected (source_to_table, real table_fields), YAML emitter width pinned so long VRL scalars stop folding, commit-subject budgeting.
-      dfe-ui: "v1.5.3"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
-      dfe-receiver: "v1.15.28"      # independent release line
+      dfe-ui: "v1.5.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
+      dfe-receiver: "v1.15.29"      # independent release line
       dfe-loader: "v1.18.31"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.19"
       dfe-fetcher: "v1.4.18"
@@ -1862,8 +1862,8 @@ stacks:
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
       dfe-engine: "sha256:db17db2c8b2c2badb23fef65afbaf6553a089aedecc87a3970d3fb9f93e0b2a6"
-      dfe-ui: "sha256:20ef7a8c80e88247dc148bb3124348198eef797d66ef35356dbf0dc3145cca6f"
-      dfe-receiver: "sha256:de98e4713bd6aece0bb2b6052d9360b4d06f2c6849155bc0dd9238a30d6d5a2c"
+      dfe-ui: "sha256:e6701db25a98a072dcd7d9b4d2649c8394ee5cc03e86c70177e9f75a430ef4a5"
+      dfe-receiver: "sha256:553e7835dc5dcd4bcdb0642f23fa740a577083c291edb359f401b57c90feddc1"
       dfe-loader: "sha256:38711e8dae47e68f9a58227dea02018952db269885b9aaba3bd4b6b2f261de62"
       dfe-archiver: "sha256:40eccf53458f21d0ff1415feb2149130106816fb7852f480edeee54df8d42036"
       dfe-fetcher: "sha256:1b275ce59fbe4de85f4a7aa3799a5b871aa7eef4c42402700b2e02e3d00cde61"
