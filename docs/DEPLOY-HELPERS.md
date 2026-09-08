@@ -147,9 +147,27 @@ tls:
 ```
 
 Bootstrap seeds the AppRole SecretID from `DFE_CERTMANAGER_SECRET_ID` into
-Secret `cert-manager-approle`. The sign role must allow the deployment's
-wildcard and match `tls.privateKey` (ECDSA P-384 by default). `tls.acme.email`
-and `tls.vault.server` are exclusive; the chart fails the render on both.
+Secret `cert-manager-approle` (key `secretId`), namespace `cert-manager`. The
+sign role must allow the deployment's wildcard and match `tls.privateKey` (ECDSA
+P-384 by default). `tls.acme.email` and `tls.vault.server` are exclusive; the
+chart fails the render on both.
+
+Three things about the values that are easy to get wrong:
+
+- `issuerName` must NOT be `tls.internalCA.issuerName` -- that name already
+  belongs to the internal mesh CA's ClusterIssuer, and `dfe-ops ca --status`
+  reads the wildcard's `issuerRef` against it to decide the mode.
+- `caBundle` is the chain that verifies the PKI SERVER's own HTTPS, not the CA
+  the PKI issues from. Take it off the handshake:
+  `openssl s_client -connect <host>:<port> -showcerts`, keep every certificate
+  after the leaf, base64 the concatenation onto one line.
+- Nothing needs deleting to flip an existing deployment. The gateway-shim owns
+  the `dfe-wildcard-tls` Certificate, so changing `tls.issuerName` rewrites its
+  `issuerRef` and cert-manager re-issues in place; the new leaf's `notBefore`
+  is the proof it went round again.
+
+Vault signs from the CSR's SANs, so the leaf carries an empty subject and a
+critical `subjectAltName`. That is correct, not a truncated certificate.
 
 ## The end-to-end release + deploy recipe
 
