@@ -156,11 +156,18 @@ spec:
             # (settings.py: DFE_KAFKA_*; the provider derives the mechanism).
             - name: DFE_KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
-            {{- if .Values.kafka.provider }}
-            - name: DFE_KAFKA_PROVIDER
-              value: {{ .Values.kafka.provider | quote }}
-            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
+            # The profiles point every app at the broker's internal plain
+            # listener, so the protocol and the mechanism are set the way the
+            # data-plane charts set them (the provider contract would derive
+            # SASL_SSL and fail the handshake -- dfe-engine#332).
+            - name: DFE_KAFKA_SECURITY_PROTOCOL
+              value: "SASL_PLAINTEXT"
+            - name: DFE_KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
             - name: DFE_KAFKA_SASL_USERNAME
               valueFrom:
                 secretKeyRef:
