@@ -211,6 +211,18 @@ kubectl -n ${NS} get secret dfe-engine-seed-accounts -o jsonpath='{.data.seed-ac
 curl -fsS https://dfe.${DOMAIN}/api/v1/system/health   # engine health
 kubectl -n ${NS} get pods                              # everything Running
 \`\`\`
+
+## Next steps
+
+1. Finish the first-run wizard in the console -- your organisation, your first
+   user, and your identity provider if you have one.
+2. Retire the bootstrap admin from the wizard's last step (or
+   \`POST /api/v1/auth/setup/retire-admin\`) once your own admin exists, then
+   delete the admin Secret named in the block above. The engine stops
+   reasserting the account, and the deploy repo records the retirement so a
+   rebuild does not bring it back.
+3. Keep the break-glass password offline, delete its plaintext, and delete this
+   file -- the engine keeps only the hash.
 EOF
 
 printf '%s\n' "$BODY" | tee "$OUT"
