@@ -61,7 +61,9 @@ a CULVERT_ key twice and the deployment carries no hand-written env block.
 {{- end -}}
 {{- $protocol := "both" -}}
 {{- if not $wg -}}{{- $protocol = "openvpn" -}}{{- else if not $udp -}}{{- $protocol = "wireguard" -}}{{- end -}}
-{{- $routes := join "," .Values.routes.destinations -}}
+{{- /* Unset destinations fall back to the deployment-wide service range. */ -}}
+{{- $destinations := .Values.routes.destinations | default (list (.Values.networkModel).serviceCIDR) -}}
+{{- $routes := join "," (compact $destinations) -}}
 {{- /* The name clients dial, off the canonical hostname map + the deployment's
      own domain, so it cannot drift from what the certificate is issued for. */ -}}
 {{- $cn := .Values.vpn.serverCN -}}

@@ -103,10 +103,14 @@ tuning: {}
 # so it is exact regardless of addressing, and it is what stops the culvert pod
 # (and therefore any client behind it) reaching the engine, ClickHouse or Kafka.
 routes:
-  # The cluster's service range. Narrow it to the receiver Service address
-  # where the deployment pins one.
-  destinations:
-    - "198.19.0.0/16"
+  # Unset, it is the networkModel service range. Narrow it to the receiver
+  # Service address where the deployment pins one.
+  destinations: ~
+
+# SSoT is argocd/values/common.yaml `networkModel`; this is a chart default for
+# a standalone render only.
+networkModel:
+  serviceCIDR: "198.19.0.0/16"
 
 # The stage a tunnel exists to reach. The NetworkPolicy is written from this,
 # so pointing culvert at a differently named receiver is one edit. NOT named
@@ -193,12 +197,16 @@ persistence:
 
 # The VPN data plane runs as root with NET_ADMIN: OpenVPN and wg-quick create
 # the tun device and program routing and NAT, so the DFE non-root floor cannot
-# apply. The chart writes the pod securityContext itself (see deployment.yaml),
-# which is what `enabled: false` hands it. A cluster enforcing restricted
-# PodSecurity admission rejects this pod unless its namespace is labelled
+# apply. The ids go through the shared helper (dfe-common >= 0.9.1 renders an
+# explicit 0), so the seccomp profile and the rest of the hardening stay the
+# ones every other DFE pod gets. A cluster enforcing restricted PodSecurity
+# admission rejects this pod unless its namespace is labelled
 # pod-security.kubernetes.io/enforce=privileged.
 podSecurityContext:
-  enabled: false
+  runAsNonRoot: false
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
   seccompProfileType: RuntimeDefault
 
 containerSecurityContext:
