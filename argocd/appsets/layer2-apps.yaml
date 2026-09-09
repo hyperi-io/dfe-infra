@@ -94,6 +94,11 @@ spec:
               # dfe-engine reads it; the other charts ignore it.
               - name: stackVersion
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+              # The tier, from the same annotation that picks the profile values
+              # file above -- so what the engine reports and what the charts were
+              # rendered with are one value. Only dfe-engine reads it.
+              - name: profile
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values
