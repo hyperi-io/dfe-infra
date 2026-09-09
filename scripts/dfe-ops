@@ -1155,11 +1155,12 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 runner += ["--resolve", pair]
             rc = subprocess.run(runner, env=env).returncode
         else:
-            # Serial: every source the flow suite writes rolls the receiver, so
-            # parallel workers would post into a pod that is restarting.
-            pytest_args = args.pytest_args or [
+            # Serial (-n 0, since the repo's addopts pin -n): every source the
+            # flow suite writes rolls the receiver, so parallel workers would
+            # post into a pod that is restarting.
+            pytest_args = [a for a in args.pytest_args if a != "--"] or [
                 *_PYTEST_SUITES[step], "-m", "live", "-v", "--no-cov",
-                "-p", "no:randomly", "-p", "no:xdist",
+                "-p", "no:randomly", "-n", "0",
             ]
             rc = subprocess.run(["uv", "run", "pytest", *pytest_args], cwd=args.repo, env=env).returncode
         if rc != 0:
