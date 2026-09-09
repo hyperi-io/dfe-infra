@@ -149,6 +149,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -161,6 +162,10 @@ DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
 NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 
 # Sibling modules, so each shared mechanism has one implementation:
+#   access_summary -- the launcher's login file, rendered by the deploy and read
+#                   back by the acceptance suites that sign in with it.
+#   capacity     -- resource.Quantity parsing and the memory readings the lane
+#                   gate and the pre-flight capacity check both judge.
 #   composition  -- which apps a profile deploys by default, from apps.yaml.
 #   envfile      -- every tool parses an operator's env file the same way.
 #   profiles     -- the deploy MODES and what follows from one (broker, substrate
@@ -170,6 +175,8 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #                   path (dfe-infra#116).
 #   tester_idp   -- `idp`, whose render functions are unit-testable cluster-free.
 sys.path.insert(0, str(SCRIPTS))
+import access_summary as access_summary_file  # noqa: E402
+import capacity  # noqa: E402
 import composition  # noqa: E402
 import envfile  # noqa: E402
 import profiles  # noqa: E402
@@ -921,6 +928,35 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
     return 1 if failures else 0
 
 
+# The engine-repo paths each pytest suite lives at. The onboarding suite is not
+# one of them: it drives the console in a browser and lives in this repo.
+_PYTEST_SUITES = {
+    "filebeat": ("tests/e2e/test_filebeat_pipeline.py",),
+    "flows": ("tests/e2e/flows",),
+}
+ONBOARDING_SUITE = "onboarding"
+ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
+
+# `all` runs onboarding FIRST: a deployment nobody could have onboarded has
+# failed whatever the data path then does. The flow suite creates and deletes
+# sources, so it follows the one that only reads what is already there.
+SUITES = (ONBOARDING_SUITE, "filebeat", "flows", "all")
+
+
+def suite_steps(suite: str) -> tuple[str, ...]:
+    """The suites one --suite value runs, in order.
+
+    Args:
+        suite: One of SUITES.
+
+    Returns:
+        The individual suite names.
+    """
+    if suite == "all":
+        return (ONBOARDING_SUITE, "filebeat", "flows")
+    return (suite,)
+
+
 def cmd_acceptance(args: argparse.Namespace) -> int:
     """Run the live acceptance suite against a deployed stack.
 
@@ -953,12 +989,15 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     if server:
         kube += ["--server", server]
 
+    steps = suite_steps(args.suite)
     stop = threading.Event()
     forwards = [
         ("receiver", namespace, args.receiver_target, args.receiver_port, 8080),
         ("datastore", ch_namespace, args.ch_target, args.ch_port, 8123),
         ("engine", namespace, args.engine_target, args.engine_port, 8000),
     ]
+    if ONBOARDING_SUITE in steps:
+        forwards.append(("ui", namespace, args.ui_target, args.ui_port, 3000))
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
@@ -999,19 +1038,59 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     })
     if engine_up:
         env["DFE_E2E_ENGINE_URL"] = f"http://localhost:{args.engine_port}"
+        # Both suites authenticate as the deploy's own minted admin: the flow
+        # suite writes sources, and the onboarding suite signs in as a human.
+        try:
+            user, password = admin_credential(
+                "k8s",
+                kube=kube,
+                namespace=namespace,
+                settings=settings,
+                user=args.engine_user,
+                access_summary=Path(args.access_summary) if args.access_summary else None,
+            )
+        except CredentialNotFoundError as exc:
+            stop.set()
+            print(f"acceptance: {exc}", file=sys.stderr)
+            return 1
+        env["DFE_E2E_ENGINE_USER"] = user
+        env["DFE_E2E_ENGINE_PASSWORD"] = password
+        env["DFE_E2E_ADMIN_PASSWORD"] = password
     else:
         env.pop("DFE_E2E_ENGINE_URL", None)
         print("  engine forward down: the transform class will skip", file=sys.stderr)
+        if steps != ("filebeat",):
+            stop.set()
+            print(
+                "every suite but filebeat goes through the engine, so none of them can "
+                "run without it; re-run with --suite filebeat to prove the read-only half",
+                file=sys.stderr,
+            )
+            return 1
 
-    pytest_args = args.pytest_args or [
-        "tests/e2e/test_filebeat_pipeline.py", "-m", "live", "-v",
-        "--no-cov", "-p", "no:randomly",
-    ]
-    done = subprocess.run(
-        ["uv", "run", "pytest", *pytest_args], cwd=args.repo, env=env
-    )
+    rc = 0
+    for step in steps:
+        print(f"\n>>> acceptance suite: {step}", file=sys.stderr)
+        if step == ONBOARDING_SUITE:
+            rc = subprocess.run(
+                [
+                    "python3", str(ONBOARDING_RUNNER),
+                    "--ui-url", f"http://localhost:{args.ui_port}",
+                    "--engine-url", f"http://localhost:{args.engine_port}",
+                    "--shots-dir", args.shots_dir,
+                ],
+                env=env,
+            ).returncode
+        else:
+            pytest_args = args.pytest_args or [
+                *_PYTEST_SUITES[step], "-m", "live", "-v", "--no-cov", "-p", "no:randomly",
+            ]
+            rc = subprocess.run(["uv", "run", "pytest", *pytest_args], cwd=args.repo, env=env).returncode
+        if rc != 0:
+            # A deployment nobody could onboard is not one to keep testing.
+            break
     stop.set()
-    return done.returncode
+    return rc
 
 
 # --- creds subcommand (where every login of this deploy comes from) ----------
@@ -1079,6 +1158,178 @@ def engine_secret_names(
         breakglass_ref.get("key") or _ENGINE_BREAKGLASS[1],
     )
     return admin, breakglass
+
+
+# Where docker's `make init` writes the minted admin login. Kubernetes keeps the
+# same pair in a Secret, so the two lanes differ only in where they are read from.
+DOCKER_ADMIN_USER_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
+DOCKER_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+# A password the caller fed the deploy, so a test run knows it without reading
+# anything back.
+FED_ADMIN_PASSWORD_VAR = "DFE_E2E_ADMIN_PASSWORD"
+
+ADMIN_USER = "admin"
+BREAKGLASS_USER = "breakglass"
+
+
+class CredentialNotFoundError(RuntimeError):
+    """The lane carries no admin password to authenticate with."""
+
+
+def admin_credential(
+    lane: str,
+    *,
+    kube: list[str] | None = None,
+    namespace: str = "",
+    settings: Mapping[str, str] | None = None,
+    user: str = "",
+    access_summary: Path | None = None,
+) -> tuple[str, str]:
+    """The admin login of the deployment under test, for whichever lane runs it.
+
+    Every deploy MINTS this password, so there is no default to fall back on and
+    nothing may carry a literal. One function because both lanes and every suite
+    need the same answer: a second reader would drift the moment a chart renamed
+    a Secret or docker moved a key.
+
+    The access summary is read FIRST so a test signs in with exactly what the
+    person who ran the deploy is holding - if that file is wrong, the suite finds
+    out rather than quietly using a better source.
+
+    Args:
+        lane: ``k8s`` reads the engine Deployment's own Secret reference; ``docker``
+            reads the key ``make init`` wrote into the stack's env file.
+        kube: kubectl argv prefix, for the k8s lane.
+        namespace: Namespace the engine runs in, for the k8s lane.
+        settings: Env-file values merged over os.environ, for the docker lane and
+            for a fed password.
+        user: Username override.
+        access_summary: The launcher's summary file, when one was written.
+
+    Returns:
+        (username, password).
+
+    Raises:
+        CredentialNotFoundError: The lane has no password to hand over.
+        ValueError: The lane is not one of the two.
+    """
+    values = dict(settings or os.environ)
+    if access_summary and Path(access_summary).is_file():
+        rows = access_summary_file.parse(Path(access_summary).read_text(encoding="utf-8"))
+        row = rows.get(access_summary_file.ADMIN_LABEL)
+        if row:
+            return (user or row[0]), row[1]
+        raise CredentialNotFoundError(
+            f"{access_summary} carries no admin row, so the deploy's own summary "
+            f"cannot say how to sign in"
+        )
+    name = user or values.get(DOCKER_ADMIN_USER_KEY) or ADMIN_USER
+    if lane == "docker":
+        password = values.get(DOCKER_ADMIN_PASSWORD_KEY) or values.get(FED_ADMIN_PASSWORD_VAR, "")
+        if not password:
+            raise CredentialNotFoundError(
+                f"the docker stack mints its admin password into its env file as "
+                f"{DOCKER_ADMIN_PASSWORD_KEY}; pass --env-file, or feed one in as "
+                f"{FED_ADMIN_PASSWORD_VAR}"
+            )
+        return name, password
+    if lane != "k8s":
+        raise ValueError(f"lane must be docker or k8s, got {lane!r}")
+    secret, key = engine_secret_names(kube or ["kubectl"], namespace)[0]
+    password = _secret_value(kube or ["kubectl"], namespace, secret, key)
+    if not password:
+        password = values.get(FED_ADMIN_PASSWORD_VAR, "")
+    if not password:
+        raise CredentialNotFoundError(
+            f"the deploy mints its admin password into {namespace}/{secret} key {key}, "
+            f"and it could not be read; feed one in as {FED_ADMIN_PASSWORD_VAR} instead"
+        )
+    return name, password
+
+
+def _console_urls(kube: list[str], namespace: str) -> tuple[str, str]:
+    """(console, engine API) for this deployment, from its own cluster annotation."""
+    domain = _cluster_annotation(kube, "domain")
+    if not domain:
+        return (
+            f"http://localhost:3000 (no domain annotation; port-forward svc/dfe-ui in {namespace})",
+            f"http://localhost:8000 (port-forward svc/dfe-engine in {namespace})",
+        )
+    return f"https://dfe.{domain}", f"https://dfe.{domain}/api/v1"
+
+
+def emit_access_summary(
+    kube: list[str], namespace: str, out: Path
+) -> tuple[Path, dict[str, tuple[str, str]]]:
+    """Write the launcher's access summary and say where it went.
+
+    The ONE implementation: stack-deploy, cycle and bootstrap.sh all end here, so
+    a deploy started any of the three ways hands the same file to the same person.
+
+    Args:
+        kube: kubectl argv prefix, carrying the kubeconfig the deploy ran with.
+        namespace: The app namespace.
+        out: Where to write the file.
+
+    Returns:
+        (path written, the logins it carries).
+
+    Raises:
+        CredentialNotFoundError: Neither minted password could be read back.
+    """
+    admin_ref, breakglass_ref = engine_secret_names(kube, namespace)
+    admin = (ADMIN_USER, _secret_value(kube, namespace, admin_ref[0], admin_ref[1]))
+    breakglass = (
+        BREAKGLASS_USER,
+        _secret_value(kube, namespace, breakglass_ref[0], breakglass_ref[1]),
+    )
+    if not admin[1] and not breakglass[1]:
+        raise CredentialNotFoundError(
+            f"neither {namespace}/{admin_ref[0]} nor {namespace}/{breakglass_ref[0]} could be "
+            f"read with this kubeconfig, so the deploy cannot hand over a login"
+        )
+    console, engine = _console_urls(kube, namespace)
+    access_summary_file.write(
+        out, access_summary_file.render(console, engine, admin, breakglass)
+    )
+    return out, {
+        access_summary_file.ADMIN_LABEL: admin,
+        access_summary_file.BREAKGLASS_LABEL: breakglass,
+    }
+
+
+def cmd_access_summary(args: argparse.Namespace) -> int:
+    """Write the launcher's copy of this deployment's two minted logins."""
+    settings = dict(os.environ)
+    envfile.load_env_files(args.env_file, settings)
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    context = args.context or settings.get("DFE_KUBE_CONTEXT")
+    if context:
+        kube += ["--context", context]
+    namespace = (
+        args.namespace
+        or settings.get("DFE_NAMESPACE")
+        or _cluster_annotation(kube, "dfe_namespace")
+        or "dfe"
+    )
+    out = Path(args.out) if args.out else (
+        access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode) / access_summary_file.FILENAME
+    )
+    try:
+        path, logins = emit_access_summary(kube, namespace, out)
+    except CredentialNotFoundError as exc:
+        print(f"access-summary: {exc}", file=sys.stderr)
+        return 1
+    # To a terminal only, the same rule dfe-docker's `make creds` follows: a
+    # redirected run leaves the values in the file and nowhere else.
+    if sys.stdout.isatty():
+        for label, (user, password) in logins.items():
+            print(f"  {label}: {user} / {password}")
+    print(f"==> access summary written to {path} (mode 0600) -- delete it once recorded")
+    return 0
 
 
 def _cluster_annotation(kube: list[str], name: str) -> str:
@@ -1561,45 +1812,83 @@ def _resolve_stack(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- capacity-check subcommand (the lane gate, before and during a deploy) ----
+def _docker_reading(host: str | None) -> capacity.Reading:
+    """The docker lane's memory, from the daemon's host.
+
+    Read over ssh when a host is named, else from this machine - the daemon may
+    be remote, and gating on the wrong machine's memory is worse than no gate.
+    /proc/meminfo first because it is the kernel's own estimate; `free -b` is the
+    fallback for a host that will not hand the file over.
+    """
+    remote = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host] if host else []
+    rc, out, err = _run_text([*remote, "cat", "/proc/meminfo"] if remote else ["cat", "/proc/meminfo"])
+    if rc == 0:
+        return capacity.meminfo_available(out)
+    rc, out, free_err = _run_text([*remote, "free", "-b"] if remote else ["free", "-b"])
+    if rc != 0:
+        raise RuntimeError(f"could not read the docker host's memory: {err.strip() or free_err.strip()}")
+    return capacity.free_output_available(out)
+
+
+def _k8s_reading(kube: list[str]) -> capacity.Reading:
+    """The Kubernetes lane's headroom: allocatable minus what is already requested."""
+    rc, nodes, err = _kubectl_json(kube, "get", "nodes")
+    if rc != 0:
+        raise RuntimeError(f"could not list nodes: {err or 'kubectl failed'}")
+    rc, pods, err = _kubectl_json(kube, "get", "pods", "-A")
+    if rc != 0:
+        raise RuntimeError(f"could not list pods: {err or 'kubectl failed'}")
+    return capacity.node_headroom(nodes, pods)
+
+
+def _lane_reading(args: argparse.Namespace) -> capacity.Reading:
+    if args.lane == "docker":
+        return _docker_reading(args.docker_host)
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    if args.context:
+        kube += ["--context", args.context]
+    return _k8s_reading(kube)
+
+
+def cmd_capacity_check(args: argparse.Namespace) -> int:
+    """Refuse a lane the host cannot carry, and abort it if the host runs out.
+
+    The docker and Kubernetes lanes share one hypervisor, so the second lane to
+    start is the one that decides whether the host swaps. --watch is the same
+    check on a timer: it returns non-zero the moment the floor is breached, so
+    the caller running the NEWER lane brings it down rather than the host taking
+    both.
+    """
+    floor = args.floor_bytes if args.floor_bytes else profiles.lane_floor(args.mode)
+    deadline = time.monotonic() + args.watch if args.watch else None
+
+    while True:
+        try:
+            reading = _lane_reading(args)
+        except (RuntimeError, ValueError) as exc:
+            print(f"capacity-check: {exc}", file=sys.stderr)
+            return 2
+        ok, line = capacity.verdict(reading, floor)
+        print(f"  {line}", file=sys.stderr)
+        if not ok:
+            print(
+                f"capacity-check: the {args.lane} lane may not run here - free "
+                f"{reading.free / 1024**3:.1f}Gi, floor {floor / 1024**3:.1f}Gi",
+                file=sys.stderr,
+            )
+            return 1
+        if deadline is None:
+            return 0
+        if time.monotonic() >= deadline:
+            print(f"capacity-check: {args.lane} held the floor for the whole watch", file=sys.stderr)
+            return 0
+        time.sleep(args.interval)
+
+
 # --- preflight subcommand (ONLINE, read-only cluster-contract check) ----------
-def _parse_cpu(q: str) -> float:
-    """Parse a Kubernetes CPU quantity ('4', '3500m', '1500000000n') to cores."""
-    q = q.strip()
-    if q.endswith("n"):
-        return float(q[:-1]) / 1_000_000_000.0
-    if q.endswith("u"):
-        return float(q[:-1]) / 1_000_000.0
-    if q.endswith("m"):
-        return float(q[:-1]) / 1000.0
-    return float(q)
-
-
-# BinarySI + DecimalSI suffixes (k8s resource.Quantity). DecimalSI kilo is
-# LOWERCASE k; the uppercase forms are kept liberally for hand-written values.
-_MEM_SUFFIX = {
-    "Ki": 1024,
-    "Mi": 1024**2,
-    "Gi": 1024**3,
-    "Ti": 1024**4,
-    "k": 1000,
-    "K": 1000,
-    "M": 1000**2,
-    "G": 1000**3,
-    "T": 1000**4,
-}
-
-
-def _parse_mem(q: str) -> int:
-    """Parse a Kubernetes memory quantity ('16Gi', '104857600k', '2000000') to bytes."""
-    q = q.strip()
-    if q.endswith("m"):  # milli-bytes -- rare but a legal Quantity emission
-        return int(float(q[:-1]) / 1000)
-    for suffix in ("Ki", "Mi", "Gi", "Ti", "k", "K", "M", "G", "T"):
-        if q.endswith(suffix):
-            return int(float(q[: -len(suffix)]) * _MEM_SUFFIX[suffix])
-    return int(float(q))
-
-
 # Cluster-singleton operators bootstrap detect-or-installs. (name, CRD, deploy
 # name substring) -- deploy is matched by substring across ALL namespaces
 # because an adopted operator may live anywhere.
@@ -1724,8 +2013,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     # degrade to a warning -- never a traceback in a tool that promises a
     # verdict for every check.
     try:
-        cpu = sum(_parse_cpu(n["status"]["allocatable"].get("cpu", "0")) for n in ready_nodes)
-        mem = sum(_parse_mem(n["status"]["allocatable"].get("memory", "0")) for n in ready_nodes)
+        cpu = sum(capacity.parse_cpu(n["status"]["allocatable"].get("cpu", "0")) for n in ready_nodes)
+        mem = sum(capacity.parse_mem(n["status"]["allocatable"].get("memory", "0")) for n in ready_nodes)
     except ValueError as exc:
         warn(f"could not parse node allocatable quantities ({exc}) -- capacity check skipped")
     else:
@@ -1983,6 +2272,12 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         env["KUBECONFIG"] = args.kubeconfig
     env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
     env["DFE_ACCESS_OUT"] = args.access_out
+    # The launcher's own copy: bootstrap.sh calls `dfe-ops access-summary --out`
+    # with this, so a deploy started by hand or through the cycle writes the
+    # same file to the same place.
+    env["DFE_ACCESS_SUMMARY_OUT"] = str(
+        access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode) / access_summary_file.FILENAME
+    )
     if args.skip_e2e:
         env["DFE_SKIP_INTEGRATION_TESTS"] = "true"
     if args.dry_run:
@@ -2064,6 +2359,11 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     if not args.skip_e2e:
         print("  Two default E2E tests passed (receiver->CH data path + self-monitoring OTel).", file=sys.stderr)
     print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    print(
+        f"  Your logins are in {env['DFE_ACCESS_SUMMARY_OUT']} (mode 0600, plaintext) "
+        "-- record them and delete it.",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -2104,6 +2404,12 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         stage_env["KUBECONFIG"] = str(Path(args.kubeconfig).resolve())
 
     stages: list[tuple[str, list[str]]] = []
+    # Before anything is deployed: the other lane may already hold the host.
+    if not args.skip_capacity_check:
+        stages.append((
+            "capacity",
+            [*self_cmd, "capacity-check", "--lane", "k8s", "--mode", args.mode, *passthrough_kube],
+        ))
     if not args.skip_preflight:
         preflight_cmd = [
             *self_cmd, "preflight", "--mode", args.mode,
@@ -2343,6 +2649,8 @@ def build_parser() -> argparse.ArgumentParser:
     cy.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix")
     cy.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="node label the preflight must find (repeatable)")
     cy.add_argument("--skip-preflight", action="store_true", help="skip the online cluster preflight stage")
+    cy.add_argument("--skip-capacity-check", action="store_true",
+                    help="deploy without asking whether the host can carry this lane beside the other one")
     cy.add_argument("--keep", action="store_true", help="do NOT destroy at the end (dev-cluster debugging only; cloud cycles must destroy)")
     cy.add_argument("--ui-repo", default=None, metavar="DIR",
                     help="dfe-ui checkout; given, the ui stage runs after smoke (needs node + a browser)")
@@ -2416,6 +2724,49 @@ def build_parser() -> argparse.ArgumentParser:
     # cmd_verify runs on this same namespace, so the flag it reads must exist here.
     rf.set_defaults(func=cmd_refresh, readiness_only=False)
 
+    asum = sub.add_parser(
+        "access-summary",
+        help="write the launcher's copy of this deployment's two minted logins",
+        description="The person who ran the deploy has to get in, and every other "
+                    "route to these passwords needs a cluster login they do not "
+                    "have yet. Writes them in plaintext, mode 0600, outside the "
+                    "cluster, with what to do next. Delete it once recorded.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    asum.add_argument("--out", default="", help="where to write it (default: .tmp/<stack>-<mode>/access-summary.md)")
+    asum.add_argument("--stack", default="current", help="stack version, for the default path")
+    asum.add_argument("--mode", default="slim", choices=list(MODES), help="deploy mode, for the default path")
+    asum.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig the deploy ran with")
+    asum.add_argument("--context", default=None, help="kubeconfig context")
+    asum.add_argument("--namespace", default=None, help="app namespace (default: the cluster annotation)")
+    asum.add_argument("--env-file", action="append", default=[], metavar="FILE", help="env file (repeatable)")
+    asum.set_defaults(func=cmd_access_summary)
+
+    cc = sub.add_parser(
+        "capacity-check",
+        help="refuse a lane the host cannot carry, or watch one that is running",
+        description="The docker and Kubernetes lanes share a hypervisor, so each "
+                    "asks before it deploys and again while it runs. --watch "
+                    "returns non-zero at the floor, so the caller running the "
+                    "newer lane aborts it rather than the host swapping.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    cc.add_argument("--lane", required=True, choices=("docker", "k8s"),
+                    help="which lane is asking; docker reads its host's memory, k8s the node headroom")
+    cc.add_argument("--mode", default="slim", choices=list(MODES),
+                    help="deploy mode, which sets the floor from scripts/profiles.py")
+    cc.add_argument("--floor-bytes", type=int, default=0,
+                    help="override the mode's floor (bytes); 0 keeps the profile's")
+    cc.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the k8s lane")
+    cc.add_argument("--context", default=None, help="kubeconfig context for the k8s lane")
+    cc.add_argument("--docker-host", default=os.environ.get("DFE_DOCKER_HOST"),
+                    help="ssh target running the docker daemon (default: $DFE_DOCKER_HOST, else this machine)")
+    cc.add_argument("--watch", type=float, default=0.0, metavar="SECONDS",
+                    help="keep checking for this long, returning non-zero at the first breach")
+    cc.add_argument("--interval", type=float, default=30.0, help="seconds between --watch readings")
+    cc.set_defaults(func=cmd_capacity_check)
+
     ac = sub.add_parser(
         "acceptance",
         help="run the live pytest acceptance suite over supervised port-forwards",
@@ -2450,6 +2801,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="local port the idle check forwards each app's metrics server onto, one at a time")
     ac.add_argument("--transport", default=None, choices=("grpc", "kafka", "both"),
                     help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
+    ac.add_argument("--suite", default="all", choices=SUITES,
+                    help="onboarding drives the wizard and the console in a browser; filebeat reads what the deployment already carries; flows creates every source shape and removes it again; all runs onboarding first")
+    ac.add_argument("--engine-user", default="",
+                    help="engine login the suites authenticate as (default: the deploy's own minted admin)")
+    ac.add_argument("--access-summary", default="", metavar="FILE",
+                    help="the deploy's access summary, so the suites sign in with exactly what its launcher holds")
+    ac.add_argument("--ui-target", default="svc/dfe-ui", help="console port-forward target for the onboarding suite")
+    ac.add_argument("--ui-port", type=int, default=3300, help="local port for the console forward")
+    ac.add_argument("--shots-dir", default=".tmp/onboarding",
+                    help="where the onboarding suite writes its per-step screenshots")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest (default: the live filebeat suite)")
     ac.set_defaults(func=cmd_acceptance)

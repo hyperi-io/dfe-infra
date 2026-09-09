@@ -167,6 +167,13 @@ An "internal" UI is not exposed; reach it with
 
 $(creds_block)
 
+Read both with the access you deployed with -- the kubeconfig for the two Secrets
+here, the host \`.env\` on docker. Rotate the admin password through that same
+Secret or \`.env\` key and never delete it, because the engine reasserts that value
+on every boot. The break-glass plaintext MAY be deleted once you have recorded it
+offline: the engine hashed it into the deploy repo on first boot and reconciles
+the account from that hash.
+
 ## Trusting the DFE certificate
 
 \`\`\`

@@ -32,6 +32,7 @@ and `single`, which is what `compose_profile` records.
     profiles.has_kafka("scale-mesh")  # False
     profiles.substrate("single")      # ('clickhouse-cluster', 'kafka')
     profiles.capacity("scale")        # (6.0, 12884901888, 3)
+    profiles.lane_floor("slim")       # 6442450944
 
 Shell callers get the same answer from a GENERATED fragment rather than a second
 hand-written copy:
@@ -80,6 +81,10 @@ class Profile:
     # Guidance floor (cores, bytes, ready nodes) of allocatable capacity.
     # Operating experience, not a published minimum: a breach WARNs, never FAILs.
     capacity_floor: tuple[float, int, int] = (0.0, 0, 0)
+    # Memory that must stay free for a lane of this mode to start and keep
+    # running. Unlike capacity_floor a breach REFUSES: the two lanes share a
+    # hypervisor, and driving it into swap takes the running lane down too.
+    lane_floor: int = 0
     # The appset profile values file the cluster annotation selects.
     argocd_values: str = ""
     # The values file that shapes the same tier under the dfe-stack umbrella.
@@ -98,6 +103,7 @@ PROFILES: dict[str, Profile] = {
         has_kafka=False,
         substrate_charts=("clickhouse-cluster",),
         capacity_floor=(2.0, 4 * 1024**3, 1),
+        lane_floor=6 * 1024**3,
         argocd_values="argocd/values/profile-slim.yaml",
         umbrella_profile="helm/dfe-stack/values.yaml",
         description="one node of everything, gRPC transport, no broker",
@@ -107,6 +113,7 @@ PROFILES: dict[str, Profile] = {
         has_kafka=True,
         substrate_charts=("clickhouse-cluster", "kafka"),
         capacity_floor=(4.0, 8 * 1024**3, 1),
+        lane_floor=10 * 1024**3,
         argocd_values="argocd/values/profile-single.yaml",
         umbrella_profile="helm/dfe-stack/profiles/single.yaml",
         description="one node of everything WITH a non-operator broker",
@@ -116,6 +123,7 @@ PROFILES: dict[str, Profile] = {
         has_kafka=True,
         substrate_charts=("clickhouse-cluster", "kafka"),
         capacity_floor=(6.0, 12 * 1024**3, 3),
+        lane_floor=16 * 1024**3,
         argocd_values="argocd/values/profile-scale.yaml",
         umbrella_profile="helm/dfe-stack/profiles/scale.yaml",
         description="HA replicas, operator ClickHouse cluster and Strimzi Kafka",
@@ -126,6 +134,7 @@ PROFILES: dict[str, Profile] = {
         # Same HA sizing as scale: dropping the broker does not shrink the apps.
         substrate_charts=("clickhouse-cluster",),
         capacity_floor=(6.0, 12 * 1024**3, 3),
+        lane_floor=16 * 1024**3,
         argocd_values="argocd/values/profile-scale-mesh.yaml",
         umbrella_profile="helm/dfe-stack/profiles/scale-mesh.yaml",
         description="scale's HA sizing and ClickHouse cluster, gRPC transport, no broker",
@@ -186,6 +195,21 @@ def substrate(mode: str) -> tuple[str, ...]:
     return PROFILES[mode].substrate_charts
 
 
+def lane_floor(mode: str) -> int:
+    """Memory that must stay free for a lane of this mode.
+
+    Args:
+        mode: A deploy mode name.
+
+    Returns:
+        Bytes.
+
+    Raises:
+        KeyError: The mode is not one of MODES.
+    """
+    return PROFILES[mode].lane_floor
+
+
 def capacity(mode: str) -> tuple[float, int, int]:
     """The mode's guidance capacity floor.
 
@@ -240,17 +264,19 @@ def emit_shell() -> str:
 
 def _table() -> str:
     """One line per profile -- the table this module exists to declare, printed."""
-    rows = ["profile       broker  substrate charts                floor (cpu/mem/nodes)"]
+    rows = ["profile       broker  substrate charts                floor (cpu/mem/nodes)  lane"]
     for name in PROFILE_NAMES:
         p = PROFILES[name]
         cpu, mem, nodes = p.capacity_floor
         # Compose has no cluster to hold a floor against, so those columns are
         # blank rather than a zero that reads as a measured value.
         floor = f"{cpu:g}/{mem // 1024**3}Gi/{nodes}" if nodes else "-"
+        # Same reason as the floor columns: a compose profile holds no lane.
+        lane = f"{p.lane_floor // 1024**3}Gi free" if p.lane_floor else "-"
         rows.append(
             f"{name:<13} {'yes' if p.has_kafka else 'no':<7} "
             f"{','.join(p.substrate_charts) or '-':<31} "
-            f"{floor}"
+            f"{floor:<22} {lane}"
         )
         rows.append(f"{'':<14}{p.description}")
     return "\n".join(rows) + "\n"
