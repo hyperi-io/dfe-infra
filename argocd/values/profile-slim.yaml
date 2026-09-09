@@ -63,3 +63,18 @@ clusterTelemetry:
     enabled: false
   kafka:
     enabled: false
+
+# BEGIN seeded apps -- rendered by `python3 scripts/composition.py --write-seed`
+# The apps this tier deploys by default. Derived from apps.yaml's
+# `default_in`, which is where the default composition is declared; edit
+# the manifest, then re-render. A Helm list is replaced rather than merged,
+# so this states the whole set.
+deployRepo:
+  seedApps:
+    - dfe-archiver
+    - dfe-engine
+    - dfe-loader
+    - dfe-receiver
+    - dfe-ui
+    - hyperdx
+# END seeded apps

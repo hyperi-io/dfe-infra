@@ -83,7 +83,9 @@ SCRIPTS = Path(__file__).resolve().parent
 
 # Sibling modules, imported by path so `python3 scripts/dfe-stack` works from any cwd.
 sys.path.insert(0, str(SCRIPTS))
+import composition  # noqa: E402
 import envfile  # noqa: E402
+import profiles  # noqa: E402
 import registry_pins  # noqa: E402
 import suite_graph  # noqa: E402
 
@@ -318,10 +320,23 @@ def render_docker(v: dict, registry: str, label: str) -> str:
 # Docker PROFILE projection (dfe-docker's service_profiles.yaml block)
 # ---------------------------------------------------------------------------
 
-# The docker profiles that are projections of a Kubernetes tier. dfe-docker's
-# other profiles are hand-crafted data-plane shapes with no k8s counterpart, and
-# this tool never touches them.
-DOCKER_PROFILES = ("slim", "single")
+# The docker profiles that are projections of a Kubernetes tier, keyed by the
+# name dfe-docker writes them under. dfe-docker's other profiles are
+# hand-crafted data-plane shapes with no k8s counterpart, and this tool never
+# touches them.
+DOCKER_PROFILES = {
+    profiles.PROFILES[name].compose_profile: name for name in profiles.COMPOSE_MODES
+}
+
+# Apps that are a compose FOOTPRINT KEY rather than a service entry: compose
+# starts them from a named group, not from a per-app config file. Everything
+# else in the manifest that a profile deploys becomes one `services:` entry.
+DOCKER_FOOTPRINT_KEYS = {
+    "dfe-engine": "core",
+    "dfe-ui": "core",
+    "hyperdx": "hyperdx",
+}
+
 
 def _profile_values(mode: str) -> dict:
     """The k8s profile's values: argocd/values/common.yaml under profile-<mode>."""
@@ -352,39 +367,50 @@ def render_docker_profile(mode: str) -> str:
 
       transport   kafka.mode: `disabled` is grpc, any other mode is kafka
       clickhouse  the tier deploys a warehouse (every k8s profile does)
-      core        the tier deploys the engine and the UI (every k8s profile does)
       kafbat      kafbat.enabled, and only on the kafka transport
       otel        the tier deploys the collector (every k8s profile does)
-      services    receiver and loader, config_path <app>/<transport>.yaml
+
+    WHICH apps run is apps.yaml's `default_in` for the matching compose
+    profile, never a list here. An app that compose starts from a named group
+    rather than a config file sets its footprint key (DOCKER_FOOTPRINT_KEYS);
+    every other one becomes a `services:` entry reading
+    `config/<app>/<transport>.yaml`.
     """
     if mode not in DOCKER_PROFILES:
         raise SystemExit(
-            f"error: {mode!r} is not a projected profile (have: {', '.join(DOCKER_PROFILES)})"
+            f"error: {mode!r} is not a projected profile "
+            f"(have: {', '.join(DOCKER_PROFILES)})"
         )
+    profile = DOCKER_PROFILES[mode]
     values = _profile_values(mode)
     kafka_mode = str(values.get("kafka", {}).get("mode", "")).strip()
     transport = "grpc" if kafka_mode == "disabled" else "kafka"
     kafbat = _truthy(values.get("kafbat", {}).get("enabled", "true"))
 
+    deployed = composition.default_apps(profile)
+    footprint = {DOCKER_FOOTPRINT_KEYS[a] for a in deployed if a in DOCKER_FOOTPRINT_KEYS}
+    services = [a for a in deployed if a not in DOCKER_FOOTPRINT_KEYS]
+
     lines = [
         f"  # Mirrors the Kubernetes {mode} tier: {transport} transport"
-        f"{'' if transport == 'kafka' else ', no broker'}, the receiver/loader",
-        "  # ingest path, the warehouse, the core surface and self-monitoring.",
+        f"{'' if transport == 'kafka' else ', no broker'}, the warehouse,",
+        "  # self-monitoring, and the apps apps.yaml makes default there.",
         f"  {mode}:",
         f"    transport: {transport}",
         "    clickhouse: true",
-        "    core: true",
     ]
+    if "core" in footprint:
+        lines.append("    core: true")
+    if "hyperdx" in footprint:
+        lines.append("    hyperdx: true")
     if transport == "kafka" and kafbat:
         lines.append("    kafbat: true")
-    lines += [
-        "    otel: true",
-        "    services:",
-        "      dfe-loader:",
-        f"        config_path: loader/{transport}.yaml",
-        "      dfe-receiver:",
-        f"        config_path: receiver/{transport}.yaml",
-    ]
+    lines.append("    otel: true")
+    lines.append("    services:")
+    for app in services:
+        component = app.removeprefix("dfe-")
+        lines.append(f"      {app}:")
+        lines.append(f"        config_path: {component}/{transport}.yaml")
     return "\n".join(lines) + "\n"
 
 
