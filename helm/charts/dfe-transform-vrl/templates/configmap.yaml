@@ -1,9 +1,14 @@
-# The app's scalo config file, rendered VERBATIM from the .Values.config blob.
-# Layer B of the engine's values contract (dfe-engine helm/models.py): the engine
-# is the config authority and emits `config` as an OPAQUE passthrough -- this
-# chart never interprets the per-app keys, it only writes them to the path the
-# image's CMD reads (/etc/dfe-transform-vrl/config.yaml -- dfe-transform-vrl
-# Dockerfile:43).
+# The app's scalo config file, rendered from the .Values.config blob (dfe-engine
+# helm/models.py Layer B) with the TRANSPORT derived here. The engine is the
+# config authority for what this instance transforms; which transport carries
+# the records is a deployment fact, so a broker list or a loader address in the
+# engine's overlay would be wrong for every other deployment of the product.
+# Written to the path the image's CMD reads (/etc/dfe-transform-vrl/config.yaml
+# -- dfe-transform-vrl Dockerfile:43).
+#
+# The four keys below are the same four dfe-transform-vector's ConfigMap sets,
+# and deliberately so: the engine has ONE `transform` routing compiler and it
+# treats the two apps identically. Change one, change the other.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -12,4 +17,22 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- $cfg := deepCopy (.Values.config | default dict) }}
+    {{- $transport := include "dfe-common.transport" . }}
+    {{- $source := dict "transport" $transport }}
+    {{- $sink := dict "transport" $transport }}
+    {{- if eq $transport "direct" }}
+    {{- /* Accept records on this stage's Push listener and push the transformed
+           ones to the loader's. `endpoint` is a URI (scalo GrpcConfig), NOT the
+           host:port the receiver's own loader.address takes -- do not copy that
+           spelling. sink.topic is NOT dropped: on direct it is the routing key
+           the loader picks its table by, as the topic name was on the bus. */}}
+    {{- $_ := set $source "listen" (printf "0.0.0.0:%s" (include "dfe-common.pushPort" .)) }}
+    {{- $_ := set $sink "endpoint" .Values.loaderGrpcAddress }}
+    {{- end }}
+    {{- /* On the bus the brokers, topics and credentials reach the app through
+           the DFE_TRANSFORM_* env contract on the Deployment, which outranks
+           this file, so only the transport itself is derived here. */}}
+    {{- $_ := set $cfg "source" (mergeOverwrite (default dict (get $cfg "source")) $source) }}
+    {{- $_ := set $cfg "sink" (mergeOverwrite (default dict (get $cfg "sink")) $sink) }}
+    {{- toYaml $cfg | nindent 4 }}
