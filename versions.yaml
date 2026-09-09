@@ -1855,8 +1855,8 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.19.17"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
-      dfe-ui: "v1.5.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
+      dfe-engine: "v1.19.21"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
+      dfe-ui: "v1.5.7"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.31"      # independent release line
       dfe-loader: "v1.18.34"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.20"
@@ -1880,8 +1880,8 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:f679488d1828aa9a478d8afd2e518812a40b4367472451c4896b458afa66ce16"
-      dfe-ui: "sha256:e6701db25a98a072dcd7d9b4d2649c8394ee5cc03e86c70177e9f75a430ef4a5"
+      dfe-engine: "sha256:59ec3b78f509ff930449e7bcaa2a04c833f9594852afe62c8e3239ee43163a59"
+      dfe-ui: "sha256:febb760af2cae63b42de7dc3fcfcbefcf3a938388319466dbb3556a17ba34e74"
       dfe-receiver: "sha256:e8cdf1da1bfdaeee46abe3c4ca97837ccb156199b5f9561b31aab81ccf674c17"
       dfe-loader: "sha256:630a0a578f54836ca991e25ec5167dc5558b587cc2ba9fa63f8dcb97eb7b437c"
       dfe-archiver: "sha256:eb33faa5f817a4e1f20d0da9b003c0d56cc6ecce93dd35e2a2c4d545c1d98585"
