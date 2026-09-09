@@ -161,6 +161,7 @@ DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
 NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 
 # Sibling modules, so each shared mechanism has one implementation:
+#   composition  -- which apps a profile deploys by default, from apps.yaml.
 #   envfile      -- every tool parses an operator's env file the same way.
 #   profiles     -- the deploy MODES and what follows from one (broker, substrate
 #                   charts, capacity floor); the bootstrap smoke tests read the
@@ -169,6 +170,7 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #                   path (dfe-infra#116).
 #   tester_idp   -- `idp`, whose render functions are unit-testable cluster-free.
 sys.path.insert(0, str(SCRIPTS))
+import composition  # noqa: E402
 import envfile  # noqa: E402
 import profiles  # noqa: E402
 from profiles import MODES  # noqa: E402
@@ -811,6 +813,114 @@ def _acceptance_transport(args: argparse.Namespace) -> str:
     return "both"
 
 
+def _metrics_gauge(url: str, name: str) -> float | None:
+    """One bare gauge's value from a Prometheus exposition, or None if absent."""
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except (OSError, urllib.error.HTTPError):
+        return None
+    for line in body.splitlines():
+        if line.startswith("#"):
+            continue
+        key, _, value = line.partition(" ")
+        if key == name:
+            try:
+                return float(value)
+            except ValueError:
+                return None
+    return None
+
+
+def _health_component(url: str, name: str) -> dict | None:
+    """One component's entry from scalo's /healthz body, or None if absent."""
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            body = json.loads(response.read().decode("utf-8", errors="replace"))
+    except (OSError, urllib.error.HTTPError, json.JSONDecodeError):
+        return None
+    components = body.get("components")
+    if isinstance(components, dict):
+        entry = components.get(name)
+        return entry if isinstance(entry, dict) else None
+    if isinstance(components, list):
+        for entry in components:
+            if isinstance(entry, dict) and entry.get("name") == name:
+                return entry
+    return None
+
+
+def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int:
+    """Every app the profile deploys by default is Ready, and one with nothing
+    to do says so coherently.
+
+    A deployed-but-unconfigured app is the normal state of a fresh profile --
+    the archiver has no destination until an operator names one -- so the
+    assertion is not "it is working" but "it is Ready, and its idle gauge and
+    its health component agree about whether it has work". An app that reports
+    idle without a reason, or a reason without the gauge, is the failure this
+    catches: a readiness gate alone cannot tell the two apart.
+
+    Args:
+        kube: The kubectl invocation prefix, context and server already applied.
+        namespace: Where the apps run.
+        profile: The deploy profile, which decides the expected app set.
+        port: Local port to forward each app's metrics server onto, in turn.
+
+    Returns:
+        0 when every default app is Ready and coherent, 1 otherwise.
+    """
+    apps = composition.default_apps(profile)
+    print(f"  idle check: {profile} deploys {', '.join(apps)}", file=sys.stderr)
+    failures: list[str] = []
+
+    for app in apps:
+        name = composition.deployment_name(app)
+        out = _run([*kube, "-n", namespace, "get", "deploy", name,
+                    "-o", "jsonpath={.status.readyReplicas}"])
+        ready = (out.stdout or "").strip()
+        if out.returncode != 0 or not ready or ready == "0":
+            failures.append(f"{name}: no ready replica (kubectl said {ready or 'nothing'!r})")
+            continue
+        print(f"  {name}: {ready} ready", file=sys.stderr)
+
+    for app in apps:
+        if not composition.idle_when(app):
+            continue
+        name = composition.deployment_name(app)
+        stop = threading.Event()
+        threading.Thread(
+            target=_forward,
+            args=("idle", kube, namespace, f"deploy/{name}", port, 9090, stop),
+            daemon=True,
+        ).start()
+        try:
+            if not _forward_ready(f"http://localhost:{port}/livez", name, 45.0):
+                failures.append(f"{name}: metrics port never answered")
+                continue
+            gauge = _metrics_gauge(f"http://localhost:{port}/metrics", "pipeline_idle")
+            work = _health_component(f"http://localhost:{port}/healthz", "work_config")
+            idle = gauge == 1.0
+            reason = (work or {}).get("message") or (work or {}).get("detail") or ""
+            if idle and not reason:
+                failures.append(
+                    f"{name}: pipeline_idle is 1 but /healthz names no work_config reason"
+                )
+            elif not idle and work and work.get("status", "").lower() == "degraded":
+                failures.append(
+                    f"{name}: /healthz says work_config is Degraded but pipeline_idle is not 1"
+                )
+            else:
+                state = f"idle -- {reason}" if idle else "working"
+                print(f"  {name}: {state}", file=sys.stderr)
+        finally:
+            stop.set()
+
+    for failure in failures:
+        print(f"  IDLE CHECK FAILED {failure}", file=sys.stderr)
+    return 1 if failures else 0
+
+
 def cmd_acceptance(args: argparse.Namespace) -> int:
     """Run the live acceptance suite against a deployed stack.
 
@@ -864,6 +974,17 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     if not ready:
         stop.set()
         print("the suite needs ingest and the datastore; neither is optional", file=sys.stderr)
+        return 1
+
+    # Before the data path: every app the profile deploys by default is up, and
+    # one with nothing to do says so on both surfaces. The readiness gate
+    # passes an idle app by design, so nothing else catches an app that is
+    # Ready and silently doing nothing. Without --mode there is no expected app
+    # set to check against.
+    if args.mode is None:
+        print("  no --mode: skipping the idle check (no expected app set)", file=sys.stderr)
+    elif _idle_check(kube, namespace, args.mode, args.idle_port) != 0:
+        stop.set()
         return 1
 
     env = dict(os.environ)
@@ -2324,7 +2445,9 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--repo", default=engine_repo, required=engine_repo is None,
                     help="engine checkout the suite runs from (default: $DFE_ENGINE_REPO, else the dfe-engine checkout beside this repo; required when there is neither)")
     ac.add_argument("--mode", default=None, choices=list(MODES),
-                    help="deploy profile the stack runs, which sets the default --transport")
+                    help="deploy profile the stack runs, which sets the default --transport and the app set the idle check expects")
+    ac.add_argument("--idle-port", type=int, default=19090,
+                    help="local port the idle check forwards each app's metrics server onto, one at a time")
     ac.add_argument("--transport", default=None, choices=("grpc", "kafka", "both"),
                     help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,

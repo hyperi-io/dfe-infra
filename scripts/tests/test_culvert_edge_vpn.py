@@ -40,6 +40,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 VALUES = REPO_ROOT / "argocd" / "values"
 
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import composition  # noqa: E402
+import profiles  # noqa: E402
+
 # RFC 6598. Every tunnel subnet has to sit inside it, so a client address can
 # never collide with the cluster's pod or service ranges.
 RESERVED = ipaddress.ip_network("100.64.0.0/10")
@@ -241,10 +245,13 @@ def test_the_receiver_gains_a_third_exposure_rendering() -> None:
 
 def test_the_vpn_is_not_seeded_into_any_deployment() -> None:
     """Opt-in means a values file an operator adds, never a seeded default."""
-    forgejo = yaml.safe_load(
-        (CHARTS / "forgejo" / "values.yaml").read_text(encoding="utf-8"))
-    seeded = forgejo["deployRepo"]["seedApps"]
-    expect("culvert is not in the seeded app set", "culvert" not in seeded, f"got {seeded}")
+    for profile in profiles.PROFILE_NAMES:
+        seeded = composition.default_apps(profile)
+        expect(
+            f"culvert is not in {profile}'s default composition",
+            "culvert" not in seeded,
+            f"got {seeded}",
+        )
 
 
 def main() -> int:

@@ -66,10 +66,25 @@ def test_the_fragment_answers_no_for_an_unset_profile() -> None:
     assert done.returncode == 1
 
 
-def test_every_mode_has_both_profile_files() -> None:
-    for mode, profile in profiles.PROFILES.items():
+def test_every_kubernetes_mode_has_both_profile_files() -> None:
+    for mode in profiles.MODES:
+        profile = profiles.PROFILES[mode]
         assert (REPO_ROOT / profile.argocd_values).is_file(), mode
         assert (REPO_ROOT / profile.umbrella_profile).is_file(), mode
+
+
+def test_every_compose_profile_mirrors_a_kubernetes_one() -> None:
+    """A compose profile is a projection, so it has a tier to project from."""
+    for mode in profiles.COMPOSE_MODES:
+        profile = profiles.PROFILES[mode]
+        assert profile.mirrors in profiles.MODES, mode
+        assert profile.compose_profile, mode
+        assert profile.has_kafka == profiles.has_kafka(profile.mirrors), mode
+
+
+def test_the_two_platforms_partition_the_profile_names() -> None:
+    assert profiles.MODES + profiles.COMPOSE_MODES == profiles.PROFILE_NAMES
+    assert not set(profiles.MODES) & set(profiles.COMPOSE_MODES)
 
 
 def test_the_brokerless_modes_deploy_no_kafka_substrate() -> None:
@@ -93,7 +108,10 @@ def test_scale_mesh_is_sized_like_scale() -> None:
 
 
 def test_dfe_ops_reads_the_one_table() -> None:
+    """A compose profile is not a cluster deploy mode, so `--mode` refuses it."""
     assert dfeops.MODES == profiles.MODES
+    for mode in profiles.COMPOSE_MODES:
+        assert mode not in dfeops.MODES
 
 
 def test_the_tester_idp_registers_a_callback_for_every_mode() -> None:
