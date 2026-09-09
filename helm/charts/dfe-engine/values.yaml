@@ -27,6 +27,19 @@ replicaCount: 1
 # guess.
 stackVersion: ""
 
+# The tier this deployment was stood up as. The appset passes the cluster
+# secret's dfe.hyperi.io/profile annotation -- the same value that selects
+# argocd/values/profile-<x>.yaml, so the engine's answer cannot drift from the
+# values the charts were rendered with. Empty = report nothing rather than
+# guess, and every optional app is then listed as offered.
+profile: ""
+
+# The dfe-ui version this deployment renders, so GET /api/v1/system/deployment
+# names it. Helm cannot read a sibling chart's appVersion, so this is a second
+# copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
+# stops the two diverging.
+uiVersion: "v1.5.1"
+
 # The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set;
 # this chart has no broker settings of its own, and dfe-common.transport reads a
 # missing map as the bus default.
