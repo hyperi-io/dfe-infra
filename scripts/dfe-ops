@@ -752,7 +752,8 @@ def _forward(label: str, kube: list[str], namespace: str, target: str,
     while not stop.is_set():
         started = time.monotonic()
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace",
         )
         _FORWARDS.append(proc)
         while not stop.is_set() and proc.poll() is None:
@@ -762,13 +763,14 @@ def _forward(label: str, kube: list[str], namespace: str, target: str,
             return
         if stop.is_set():
             return
-        # A forward that cannot bind exits at once, every time; restarting it
-        # only hides a previous run's forward still holding the port.
+        # A forward that cannot bind or has no target exits at once, every
+        # time; restarting it only hides the reason kubectl printed.
         early_exits = early_exits + 1 if time.monotonic() - started < 3 else 0
         if early_exits >= 3:
+            reason = _last_line((proc.stderr.read() if proc.stderr else "") or "")
             print(
-                f"  forward {label} exits immediately: is local port {local} held by an "
-                f"earlier run's port-forward? (pgrep -af port-forward)",
+                f"  forward {label} ({target} -> :{local}) exits immediately: "
+                f"{reason or 'no reason printed'}",
                 file=sys.stderr,
             )
             return
@@ -1044,9 +1046,10 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
 
     steps = suite_steps(args.suite)
     stop = threading.Event()
+    ch_target = args.ch_target or _profile_clickhouse_target(args.mode)
     forwards = [
         ("receiver", namespace, args.receiver_target, args.receiver_port, 8080),
-        ("datastore", ch_namespace, args.ch_target, args.ch_port, 8123),
+        ("datastore", ch_namespace, ch_target, args.ch_port, 8123),
         ("engine", namespace, args.engine_target, args.engine_port, 8000),
     ]
     # The onboarding suite goes through the gateway, never a forward to the
@@ -1407,6 +1410,25 @@ def cmd_access_summary(args: argparse.Namespace) -> int:
             print(f"  {label}: {user} / {password}")
     print(f"==> access summary written to {path} (mode 0600) -- delete it once recorded")
     return 0
+
+
+def _profile_clickhouse_target(mode: str | None) -> str:
+    """The datastore Service a profile's apps talk to, as a port-forward target.
+
+    The operator-managed cluster tiers name the service after the operator's
+    convention, so the profile values are the one place the name is written.
+    """
+    from ruamel.yaml import YAML
+
+    yaml = YAML(typ="safe")
+    host = ""
+    files = [ARGO_VALUES / "common.yaml"]
+    if mode:
+        files.append(REPO_ROOT / profiles.PROFILES[mode].argocd_values)
+    for path in files:
+        doc = yaml.load(path.read_text(encoding="utf-8")) or {}
+        host = ((doc.get("clickhouse") or {}).get("host") or host) if isinstance(doc, dict) else host
+    return f"svc/{host.split('.')[0]}" if host else "svc/dfe-clickhouse"
 
 
 def _gateway_address(kube: list[str]) -> str:
@@ -2903,7 +2925,8 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--server", default=None,
                     help="API address, for a kubeconfig whose server name does not resolve here (default: DFE_KUBE_SERVER)")
     ac.add_argument("--receiver-target", default="svc/dfe-receiver", help="port-forward target for ingest")
-    ac.add_argument("--ch-target", default="svc/dfe-clickhouse", help="port-forward target for the datastore")
+    ac.add_argument("--ch-target", default=None,
+                    help="port-forward target for the datastore (default: the service the --mode profile's clickhouse.host names, else svc/dfe-clickhouse)")
     ac.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
     ac.add_argument("--ch-port", type=int, default=18123, help="local port for the datastore")
