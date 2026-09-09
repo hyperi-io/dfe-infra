@@ -2452,7 +2452,14 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     )
     if not args.skip_e2e:
         print("  Two default E2E tests passed (receiver->CH data path + self-monitoring OTel).", file=sys.stderr)
-    print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    if Path(args.access_out).is_file():
+        print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    else:
+        print(
+            f"  Access summary NOT written to {args.access_out}: bootstrap/access-summary.sh "
+            "did not run (see above)",
+            file=sys.stderr,
+        )
     print(
         f"  Your logins are in {env['DFE_ACCESS_SUMMARY_OUT']} (mode 0600, plaintext) "
         "-- record them and delete it.",
