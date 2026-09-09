@@ -69,6 +69,10 @@ kafbat:
         bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
         credentialsSecretName: dfe-kafka-user
 
+links:
+  # A broker runs here, so the landing page lists the Kafka UI.
+  kafka: *scaleKafka
+
 dfe-engine:
   # The operator cluster emits only a headless client Service.
   clickhouse:

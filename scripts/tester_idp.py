@@ -64,6 +64,9 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from profiles import MODES
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_USERS_FILE = REPO_ROOT / "bootstrap" / "fixtures" / "tester-idp-users.toml"
 
@@ -98,8 +101,9 @@ DEFAULT_HOST_LABEL = "dex"
 DEFAULT_PROVIDER = "dex"
 # Host label the engine and the UI are published on (the hostnames SSoT's `dfe`).
 APP_HOST_LABEL = "dfe"
-# Deploy profiles a cluster is rebuilt through, each with its own domain tag.
-DEFAULT_PROFILES = ("slim", "single", "scale")
+# Deploy profiles a cluster is rebuilt through, each with its own domain tag --
+# every mode in the one table, so a new mode registers its callback too.
+DEFAULT_PROFILES = MODES
 
 GLAUTH_LDAP_PORT = 3893
 DEX_HTTP_PORT = 5556

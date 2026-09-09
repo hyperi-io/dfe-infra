@@ -30,6 +30,8 @@ from pathlib import Path
 
 import yaml
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 ENGINE = CHARTS / "dfe-engine"
@@ -37,17 +39,6 @@ ENGINE = CHARTS / "dfe-engine"
 # A mint function guarded by a cluster read: the pairing that only works under
 # `helm install`, and silently re-mints under every `helm template`.
 MINTERS = re.compile(r"\brand(AlphaNum|Alpha|Numeric|Ascii|Bytes)\b")
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def render(chart: Path, *sets: str) -> str:
@@ -222,17 +213,17 @@ def test_no_chart_mints_a_secret_behind_a_lookup() -> None:
 
 
 def main() -> int:
-    test_engine_renders_identically_twice()
-    test_jwt_key_is_not_minted_by_the_template()
-    test_a_pinned_key_renders_that_key_and_nothing_else()
-    test_creation_can_be_handed_to_the_deployment()
-    test_the_admin_password_is_minted_once_like_the_signing_key()
-    test_the_seed_accounts_secret_no_longer_claims_the_admin_password()
-    test_the_engine_reads_the_minted_secret()
-    test_a_non_dev_posture_cannot_render_without_minting()
-    test_no_chart_mints_a_secret_behind_a_lookup()
-    print(f"\n{_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        test_engine_renders_identically_twice()
+        test_jwt_key_is_not_minted_by_the_template()
+        test_a_pinned_key_renders_that_key_and_nothing_else()
+        test_creation_can_be_handed_to_the_deployment()
+        test_the_admin_password_is_minted_once_like_the_signing_key()
+        test_the_seed_accounts_secret_no_longer_claims_the_admin_password()
+        test_the_engine_reads_the_minted_secret()
+        test_a_non_dev_posture_cannot_render_without_minting()
+        test_no_chart_mints_a_secret_behind_a_lookup()
+        return summary()
 
 
 if __name__ == "__main__":

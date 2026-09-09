@@ -58,7 +58,14 @@ Examples:
     python3 scripts/dfe-stack suite --render-docs
 
 render/images/graph/check-upgrade/resolve/suite need only python3 + git.
-verify shells out to `gh api` (needs an authenticated gh).
+verify and cut read GHCR through `gh api`, which needs the `read:packages` scope
+a developer's own `gh login` usually lacks -- pass `--env-file PATH` and the
+GHCR_TOKEN (or GH_TOKEN) in that file authenticates gh for this process:
+
+    python3 scripts/dfe-stack --env-file bootstrap/.env verify
+
+refresh-digests reads the registry through `docker buildx imagetools`, which
+authenticates from the docker credential store instead.
 """
 
 from __future__ import annotations
@@ -72,9 +79,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS = Path(__file__).resolve().parent
 
-# Sibling module, imported by path so `python3 scripts/dfe-stack` works from any cwd.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Sibling modules, imported by path so `python3 scripts/dfe-stack` works from any cwd.
+sys.path.insert(0, str(SCRIPTS))
+import envfile  # noqa: E402
 import registry_pins  # noqa: E402
 import suite_graph  # noqa: E402
 
@@ -407,8 +416,8 @@ def cmd_suite(args: argparse.Namespace) -> int:
     if args.check_docs:
         # One docs check, in check_suite_drift.py: it also runs the Mermaid
         # linter where the host has one, and it survives a missing page.
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import check_suite_drift  # noqa: PLC0415
+        # Imported here, not at the top: only --check-docs needs it.
+        import check_suite_drift
 
         fails, skipped = check_suite_drift.check_docs(graph)
         for line in skipped:
@@ -564,10 +573,13 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 def cmd_verify(args: argparse.Namespace) -> int:
     _, v = stack_pins(load_root(), args.stack)
     apps, digests = v.get("apps", {}), v.get("digests", {})
+    # The HyperDX fork is versioned under content:, so an apps-only lookup finds
+    # no tag and reports a correct pin as "(tag not found)".
+    content = v.get("content", {})
     org = args.registry.split("/", 1)[1] if "/" in args.registry else args.registry
     bad = 0
     for name, digest in sorted(digests.items()):
-        tag = apps.get(name)
+        tag = apps.get(name) or content.get(name)
         out = _run(
             [
                 "gh", "api", "--paginate",
@@ -1215,6 +1227,15 @@ def main() -> int:
         default=DEFAULT_REGISTRY,
         help=f"image registry prefix (default {DEFAULT_REGISTRY})",
     )
+    parser.add_argument(
+        "--env-file",
+        action="append",
+        metavar="PATH",
+        help=(
+            "KEY=VALUE file; GHCR_TOKEN or GH_TOKEN in it authenticates gh for "
+            "the registry reads; repeatable, later wins"
+        ),
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("render", help="render the k8s manifest or the docker .env pin set")
@@ -1324,6 +1345,8 @@ def main() -> int:
     p.set_defaults(func=cmd_release_gate)
 
     args = parser.parse_args()
+    # Every gh call below goes through _run/registry_pins, which inherit os.environ.
+    envfile.apply_gh_token(args.env_file)
     return args.func(args)
 
 

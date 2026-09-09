@@ -53,7 +53,7 @@ spec:
           env:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_LOADER_") | nindent 12 }}
             {{- if eq (default "" .Values.kafka.mode) "disabled" }}
-            # No-kafka profile (slim): receiver -> loader direct gRPC on the
+            # Brokerless profiles (slim, scale-mesh): receiver -> loader direct gRPC on the
             # service grpcPort; the DLQ's kafka backend is gone with the broker.
             # grpc.listen has NO default and is required in grpc mode
             # (GrpcConfig, dfe-loader src/config/kafka.rs).

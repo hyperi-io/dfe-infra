@@ -46,6 +46,8 @@ from pathlib import Path
 
 import yaml
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHART = REPO_ROOT / "helm" / "charts" / "envoy-gateway-config"
 DFE_OPS = REPO_ROOT / "scripts" / "dfe-ops"
@@ -108,20 +110,6 @@ elif "secret" in args:
 else:
     sys.exit(1)
 """
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-        return
-    _failures += 1
-    print(f"FAIL  {name}  {detail}")
-    # Under pytest a counter nobody reads is a green run, so raise there.
-    if "pytest" in sys.modules:
-        raise AssertionError(f"{name}: {detail}")
 
 
 def render(*sets: str) -> list[dict]:
@@ -468,11 +456,11 @@ def test_install_reads_the_platform_rather_than_assuming_linux() -> None:
 
 
 def main() -> int:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print(f"\n{'FAILED' if _failures else 'ALL PASSED'} -- {_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
 
 
 if __name__ == "__main__":

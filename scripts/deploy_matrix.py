@@ -47,6 +47,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import profiles
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 WAIT_BUDGET_SECONDS = 600
@@ -90,12 +93,31 @@ class Cell:
         return f"mtx{pre}-{self.chart}"
 
 
-# Curated matrix for a Rancher/devex target. Cluster modes are heavier (operator
+def matrix_profiles() -> tuple[str, ...]:
+    """The profiles worth a cell: the single-node tier and the multi-node one.
+
+    Every cell --sets the chart's own mode, so a profile contributes only its
+    values cascade -- and on the substrate charts the four modes collapse to two
+    shapes. slim and single both size ClickHouse single/1; scale-mesh sizes it
+    cluster/3 exactly as scale does, differing only in the broker the cell's
+    --set already varies. Running all four would double a live cluster matrix for
+    no distinct cell.
+    """
+    def nodes(mode: str) -> int:
+        return profiles.capacity(mode)[2]
+
+    return (
+        next(m for m in profiles.MODES if nodes(m) == 1),
+        next(m for m in profiles.MODES if nodes(m) > 1),
+    )
+
+
+# Curated matrix for a Rancher target. Cluster modes are heavier (operator
 # + multi-node); single/external/disabled are the light first cells. external
 # only renders (it deploys nothing -- it connects to a supplied instance).
-def devex_matrix() -> list[Cell]:
+def default_matrix() -> list[Cell]:
     cells: list[Cell] = []
-    for profile in ("slim", "scale"):
+    for profile in matrix_profiles():
         cells.append(Cell("clickhouse-cluster", "single", profile))
         cells.append(Cell("clickhouse-cluster", "cluster", profile))
         cells.append(Cell("clickhouse-cluster", "external", profile, deploys=False))
@@ -187,8 +209,9 @@ def _mode_flag(cell: Cell) -> list[str]:
     """Helm value args: the profile valueFile (so profiles differ) + mode --sets."""
     key = "clickhouse.mode" if cell.chart == "clickhouse-cluster" else "kafka.mode"
     flags: list[str] = []
-    profile_file = REPO_ROOT / "argocd" / "values" / f"profile-{cell.profile}.yaml"
-    if profile_file.exists():
+    declared = profiles.PROFILES.get(cell.profile)
+    profile_file = REPO_ROOT / declared.argocd_values if declared else None
+    if profile_file and profile_file.exists():
         flags += ["-f", str(profile_file)]
     # --set wins over the profile file, so the cell's mode is authoritative.
     for s in [f"{key}={cell.mode}", *cell.extra_sets]:
@@ -661,7 +684,7 @@ def run_cell(cell: Cell, *, do_apply: bool) -> CellResult:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Substrate create-test-teardown matrix.")
-    p.add_argument("--cloud", default="devex", help="matrix preset (devex)")
+    p.add_argument("--preset", default="default", help="matrix preset named in the report header")
     p.add_argument("--chart", help="filter to one chart")
     p.add_argument("--mode", help="filter to one mode")
     p.add_argument("--profile", help="filter to one profile")
@@ -693,7 +716,7 @@ def main() -> int:
         if local_kubeconfig.is_file():
             os.environ["KUBECONFIG"] = str(local_kubeconfig)
 
-    cells = devex_matrix()
+    cells = default_matrix()
     if args.chart:
         cells = [c for c in cells if c.chart == args.chart]
     if args.mode:
@@ -709,7 +732,7 @@ def main() -> int:
     overall_failures = 0
     for i in range(rounds):
         tag = f" round {i + 1}/{rounds}" if rounds > 1 else ""
-        print(f"Deployment matrix [{args.cloud}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n")
+        print(f"Deployment matrix [{args.preset}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n")
         results = [run_cell(c, do_apply=args.apply) for c in cells]
         failures = [r for r in results if not r.ok]
         overall_failures += len(failures)

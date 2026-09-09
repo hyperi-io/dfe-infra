@@ -29,6 +29,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "check_versions_drift.py"
 
@@ -38,17 +40,6 @@ drift = importlib.util.module_from_spec(spec)
 # module must be registered before exec_module rather than after.
 sys.modules["drift"] = drift
 spec.loader.exec_module(drift)
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def test_sweep_is_clean_as_committed() -> None:
@@ -334,11 +325,11 @@ def test_regressed_appversions_are_caught() -> None:
 
 
 def main() -> int:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print(f"\n{'FAILED' if _failures else 'ALL PASSED'} -- {_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
 
 
 if __name__ == "__main__":

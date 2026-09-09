@@ -2,7 +2,7 @@ apiVersion: v2
 name: links
 description: Deployment links page -- one well-known URL that answers "where is everything?". A static index.html rendered by Helm from the deploy repo's values and served by nginx-unprivileged, so the same GitOps sync that moves a service URL re-renders the page. See dfe-infra#75.
 type: application
-version: 0.1.1
+version: 0.1.2
 appVersion: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
 dependencies:
   - name: dfe-common

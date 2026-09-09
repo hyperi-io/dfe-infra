@@ -61,6 +61,11 @@ NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
 # brokerless tier may skip it. Empty = unknown -> fall back to probing for a broker.
 PROFILE="${DFE_PROFILE:-}"
 
+# profile_has_kafka() -- generated from scripts/profiles.py, the one mode table.
+# An unset profile answers no, leaving the CORE 3 broker probe to decide.
+# shellcheck source-path=SCRIPTDIR source=scripts/profiles.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/profiles.sh"
+
 # Contract names (SSoT defaults; override per deployment if reconfigured).
 CH_DATA_TABLE="${DFE_CH_DATA_TABLE:-dfe.default}"
 KAFKA_TOPIC="${DFE_KAFKA_TOPIC:-default_land}"
@@ -213,8 +218,8 @@ check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FR
 echo ""
 echo "=== CORE 2: data path (receiver -> [kafka ->] loader -> ClickHouse) ==="
 # Post a unique event to the receiver, then poll the CH default table for it.
-# Covers gRPC-direct (slim) and kafka (single/scale): same two endpoints either
-# way -- event IN at the receiver, row OUT in dfe.default.
+# Covers gRPC-direct (slim, scale-mesh) and kafka (single/scale): same two endpoints
+# either way -- event IN at the receiver, row OUT in dfe.default.
 # _source `default` (not `smoke`): the receiver derives the topic as
 # <default_source><topic_suffix> = default_land, which is the topic the loader
 # auto-discovers and the broker ships. A _source the deploy does not know about
@@ -267,8 +272,8 @@ check "_raw is populated on the API ingest path (full payload captured for this 
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== CORE 3: kafka seam (default_land created + produced + consumed) ==="
-# Only the kafka-based tiers (single/scale) run a broker. In slim the receiver
-# feeds the loader directly, so there is no topic to assert -> SKIP, not FAIL.
+# Only the kafka-based tiers (single/scale) run a broker. On slim and scale-mesh the
+# receiver feeds the loader directly, so there is no topic to assert -> SKIP, not FAIL.
 if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods --no-headers 2>/dev/null | grep -qiE 'kafka|redpanda'; then
   # Pick the broker CLI by image: redpanda -> rpk, apache/strimzi -> kafka CLI.
   KPOD="$(kubectl -n "$NS_KAFKA" get pods --no-headers -o custom-columns=N:.metadata.name 2>/dev/null | grep -iE 'kafka|redpanda' | head -n1)"
@@ -352,7 +357,7 @@ KSH
         "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
     fi
   fi
-elif [ "$PROFILE" = "single" ] || [ "$PROFILE" = "scale" ]; then
+elif profile_has_kafka; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would
   # report the brokerless-tier story for a broken kafka deploy -- the exact false
   # reassurance this gate exists to prevent.

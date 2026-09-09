@@ -145,6 +145,12 @@ jobs:
         with:
           version: "4.2.3"
 
+      # Every file under scripts/tests runs here, including the ones no step
+      # above names; the named steps stay for the failure paths they document.
+      - name: scripts/tests under pytest
+        run: python3 -m pip install --quiet --require-hashes -r scripts/tests/requirements-ci.txt
+      - run: python3 -m pytest scripts/tests -q -p no:cacheprovider
+
       # An over-wide egress policy renders green and passes a dry-run, so the
       # derived external-service egress is checked by set equality per mode.
       - name: External-service egress derives per mode

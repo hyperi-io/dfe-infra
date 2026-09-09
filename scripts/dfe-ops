@@ -28,8 +28,8 @@ Subcommands:
   deploy       Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
                terraform -> bridge -> bootstrap -> Argo).
   stack-deploy Drive one END-TO-END deploy of a PINNED stack version in a chosen
-               MODE (slim|single|scale) onto an EXISTING cluster: offline
-               pre-flight (pins resolve, no drift, mode charts render) ->
+               MODE (slim|single|scale|scale-mesh) onto an EXISTING cluster:
+               offline pre-flight (pins resolve, no drift, mode charts render) ->
                bootstrap (Layer 0/1 + Argo sync of the mode's profile at the
                SSoT-pinned versions) -> bounded readiness gate -> the two default
                E2E tests -> access summary. Provisions NOTHING (deploy ONTO, not
@@ -160,28 +160,27 @@ DFE_STACK = SCRIPTS / "dfe-stack"
 DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
 NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 
-# `pin` (version -> registry digest resolve/check/write) lives in resolve_pins so
-# the standalone tool and `dfe-ops pin` are one code path (dfe-infra#116).
+# Sibling modules, so each shared mechanism has one implementation:
+#   envfile      -- every tool parses an operator's env file the same way.
+#   profiles     -- the deploy MODES and what follows from one (broker, substrate
+#                   charts, capacity floor); the bootstrap smoke tests read the
+#                   same table through a generated shell fragment.
+#   resolve_pins -- `pin`, so the standalone tool and `dfe-ops pin` are one code
+#                   path (dfe-infra#116).
+#   tester_idp   -- `idp`, whose render functions are unit-testable cluster-free.
 sys.path.insert(0, str(SCRIPTS))
+import envfile  # noqa: E402
+import profiles  # noqa: E402
+from profiles import MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
-
-# `idp` (the throwaway Dex + glauth tester IdP) lives in tester_idp for the same
-# reason: the render functions are unit-testable without a cluster.
 from tester_idp import add_idp_subparser  # noqa: E402
 
-# The deploy MODES (== the appset profile value each selects). One lever --
-# DFE_PROFILE -- drives the whole stack: the cluster secret's label (which gates
-# the scale-only operator appsets) AND its annotation (which selects
-# argocd/values/profile-<mode>.yaml). slim = gRPC, no Kafka, single-node CH;
-# single = one node of everything WITH Kafka (non-operator broker); scale = HA,
-# operator ClickHouse cluster + Strimzi Kafka.
-MODES = ("slim", "single", "scale")
 DEFAULT_STACK = "2.2.0-rc.1"
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
 # bootstrap.sh's required env (validated up-front so a missing var fails the
 # driver before it touches the cluster, not mid-run). DFE_KAFKA_BOOTSTRAP is
-# intentionally omitted -- it is empty in slim (gRPC transport).
+# intentionally omitted -- it is empty in the brokerless modes (gRPC transport).
 BOOTSTRAP_REQUIRED = (
     "DFE_ENV",
     "DFE_CLOUD",
@@ -199,16 +198,8 @@ BOOTSTRAP_REQUIRED = (
     "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
 )
 
-# Substrate charts each mode actually deploys -- drives the offline helm-render
-# pre-flight. slim: single-node ClickHouse only (no Kafka). single/scale: also
-# Kafka (single renders a non-operator StatefulSet; scale renders the Strimzi CR,
-# whose operator layer-scale.yaml installs). A representative set of app charts is
-# always rendered too, so an app-side profile break is caught before deploy.
-_MODE_SUBSTRATE = {
-    "slim": ("clickhouse-cluster",),
-    "single": ("clickhouse-cluster", "kafka"),
-    "scale": ("clickhouse-cluster", "kafka"),
-}
+# A representative set of app charts is rendered alongside the mode's substrate
+# charts, so an app-side profile break is caught before deploy.
 _PREFLIGHT_APPS = ("dfe-receiver", "dfe-loader", "dfe-engine")
 
 # --- kubeconfig defaults -----------------------------------------------------
@@ -498,7 +489,7 @@ def cmd_teardown(args: argparse.Namespace) -> int:
 def _apply_domain(env: dict[str, str], mode: str | None) -> dict[str, str]:
     """Tag the domain with the profile when the deploy declares only a base one.
 
-    One cluster runs one profile at a time, so slim/single/scale each publish
+    One cluster runs one profile at a time, so each mode publishes
     <profile>.<base> and a rebuild in another mode cannot claim the hostnames the
     previous one's DNS still names. An explicit DFE_DOMAIN wins.
     """
@@ -527,7 +518,7 @@ def _suite_env(args: argparse.Namespace) -> dict[str, str]:
         print(f"  loaded {len(tf)} DFE_* var(s) from terraform {args.from_terraform}",
               file=sys.stderr)
     for env_file in args.env_file:
-        loaded = _parse_env_file(env_file)
+        loaded = envfile.parse_env_file(Path(env_file))
         env.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
     if args.kubeconfig:
@@ -794,6 +785,33 @@ def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
     return base64.b64decode(raw).decode("utf-8") if raw else ""
 
 
+def _sibling_repo(name: str, env_var: str) -> str | None:
+    """Where a companion checkout lives, without hardcoding one developer's tree.
+
+    Args:
+        name: Repository directory name, e.g. dfe-engine.
+        env_var: Environment variable that overrides the location.
+
+    Returns:
+        The env var when set, else the sibling checkout beside this repo when it
+        exists, else None -- which makes the flag required.
+    """
+    override = os.environ.get(env_var)
+    if override:
+        return override
+    sibling = REPO_ROOT.parent / name
+    return str(sibling) if sibling.is_dir() else None
+
+
+def _acceptance_transport(args: argparse.Namespace) -> str:
+    """The data path the flow suite must prove: explicit, else derived from the mode."""
+    if args.transport:
+        return args.transport
+    if args.mode:
+        return "kafka" if profiles.has_kafka(args.mode) else "grpc"
+    return "both"
+
+
 def cmd_acceptance(args: argparse.Namespace) -> int:
     """Run the live acceptance suite against a deployed stack.
 
@@ -804,7 +822,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     """
     settings = dict(os.environ)
     for env_file in args.env_file:
-        loaded = _parse_env_file(env_file)
+        loaded = envfile.parse_env_file(Path(env_file))
         settings.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
@@ -813,6 +831,8 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     ch_namespace = args.ch_namespace or settings.get("DFE_CH_NAMESPACE", "clickhouse")
     ch_secret = args.ch_secret or settings.get("DFE_CH_SECRET", "clickhouse-admin-password")
     server = args.server or settings.get("DFE_KUBE_SERVER")
+    transport = _acceptance_transport(args)
+    print(f"  data path the suite must prove: {transport}", file=sys.stderr)
 
     kube = ["kubectl"]
     if args.kubeconfig:
@@ -855,6 +875,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         "DFE_E2E_CH_USER": args.ch_user,
         "DFE_E2E_CH_PASSWORD": _secret_value(kube, namespace, ch_secret, "password"),
         "DFE_E2E_CH_DB": args.ch_database,
+        "DFE_E2E_TRANSPORT": transport,
     })
     if engine_up:
         env["DFE_E2E_ENGINE_URL"] = f"http://localhost:{args.engine_port}"
@@ -999,8 +1020,7 @@ def cmd_creds(args: argparse.Namespace) -> int:
     may rename either through auth.adminSecretName / auth.breakglassSecretName.
     """
     settings = dict(os.environ)
-    for env_file in args.env_file:
-        settings.update(_parse_env_file(env_file))
+    envfile.load_env_files(args.env_file, settings)
 
     kube = ["kubectl"]
     if args.kubeconfig:
@@ -1301,7 +1321,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
     """
     settings = dict(os.environ)
     for env_file in args.env_file:
-        loaded = _parse_env_file(env_file)
+        loaded = envfile.parse_env_file(Path(env_file))
         settings.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
@@ -1401,37 +1421,6 @@ def _current_stack() -> str:
     return out.strip() if rc == 0 else ""
 
 
-def _parse_env_file(path: str) -> dict[str, str]:
-    """Parse a flat KEY=VALUE env file into a dict.
-
-    Handles the ``KEY="value"`` shape of bootstrap/local.env.example (optional
-    ``export`` prefix, ``#`` comments, surrounding single/double quotes stripped).
-    Deliberately NOT a shell interpreter: no ``$VAR`` expansion or command
-    substitution -- it is a pin file, not a script.
-
-    Args:
-        path: Path to the env file.
-
-    Returns:
-        Mapping of variable name to value.
-    """
-    out: dict[str, str] = {}
-    for raw in Path(path).read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
-        if "=" not in line:
-            continue
-        key, val = line.split("=", 1)
-        key, val = key.strip(), val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
-        out[key] = val
-    return out
-
-
 # --- preflight subcommand (ONLINE, read-only cluster-contract check) ----------
 def _parse_cpu(q: str) -> float:
     """Parse a Kubernetes CPU quantity ('4', '3500m', '1500000000n') to cores."""
@@ -1470,15 +1459,6 @@ def _parse_mem(q: str) -> int:
             return int(float(q[: -len(suffix)]) * _MEM_SUFFIX[suffix])
     return int(float(q))
 
-
-# Guidance capacity floors per mode -- allocatable across READY nodes. These are
-# operating-experience numbers (the 3-node dev cluster runs `scale`
-# comfortably), not published minimums: breach -> WARN, never FAIL.
-_MODE_CAPACITY = {
-    "slim": (2.0, 4 * 1024**3, 1),
-    "single": (4.0, 8 * 1024**3, 1),
-    "scale": (6.0, 12 * 1024**3, 3),
-}
 
 # Cluster-singleton operators bootstrap detect-or-installs. (name, CRD, deploy
 # name substring) -- deploy is matched by substring across ALL namespaces
@@ -1522,8 +1502,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         from bridge import get_tf_outputs
 
         file_env.update({k: v for k, v in get_tf_outputs(args.from_terraform).items() if k.startswith("DFE_")})
-    for env_file in args.env_file:
-        file_env.update(_parse_env_file(env_file))
+    envfile.load_env_files(args.env_file, file_env)
     namespace = args.namespace or file_env.get("DFE_NAMESPACE") or "dfe-local"
     storage_class = args.storage_class or file_env.get("DFE_STORAGE_CLASS") or ""
     context = args.context or file_env.get("DFE_KUBE_CONTEXT") or ""
@@ -1610,7 +1589,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     except ValueError as exc:
         warn(f"could not parse node allocatable quantities ({exc}) -- capacity check skipped")
     else:
-        min_cpu, min_mem, min_nodes = _MODE_CAPACITY[args.mode]
+        min_cpu, min_mem, min_nodes = profiles.capacity(args.mode)
         cap = f"allocatable {cpu:.1f} CPU / {mem / 1024**3:.1f}Gi across {len(ready_nodes)} Ready node(s)"
         if cpu >= min_cpu and mem >= min_mem and len(ready_nodes) >= min_nodes:
             ok(f"{cap} (guidance floor for {args.mode}: {min_cpu:.0f} CPU / {min_mem / 1024**3:.0f}Gi / {min_nodes} node(s))")
@@ -1796,14 +1775,14 @@ def _offline_preflight(args: argparse.Namespace) -> int:
         print("  [warn] helm not on PATH -- skipping the chart-render pre-flight.", file=sys.stderr)
     else:
         common = ARGO_VALUES / "common.yaml"
-        profile = ARGO_VALUES / f"profile-{args.mode}.yaml"
+        profile = REPO_ROOT / profiles.PROFILES[args.mode].argocd_values
         # appNamespace is an estate value the appset supplies at deploy from the
         # cluster's dfe.hyperi.io/dfe_namespace annotation; scale's kafka chart
         # fail-fasts without it (fromSecretsStore needs a target namespace to
         # project the credential into). Offline there is no annotation, so feed a
         # synthetic one -- this is a structural render check, the output is
         # discarded, and the fail-fast still guards real deploys.
-        for chart in (*_MODE_SUBSTRATE[args.mode], *_PREFLIGHT_APPS):
+        for chart in (*profiles.substrate(args.mode), *_PREFLIGHT_APPS):
             tmp = tempfile.mkdtemp(prefix=f"dfe-render-{chart}-")
             try:
                 rc, _out, err = _run_text(
@@ -1835,8 +1814,8 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     The forced overrides are the whole point of the driver: DFE_PROFILE = the
     chosen mode (the single lever that selects the deploy profile end to end) and,
     optionally, the Argo git ref for the pinned charts. Later sources win, so a
-    terraform-supplied DFE_PROFILE (one of slim|single|scale) is always replaced
-    by the requested mode.
+    terraform-supplied DFE_PROFILE (one of MODES) is always replaced by the
+    requested mode.
     """
     env = dict(os.environ)
 
@@ -1852,7 +1831,7 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         print(f"  loaded {len(dfe)} DFE_* var(s) from terraform {args.from_terraform}", file=sys.stderr)
 
     for env_file in args.env_file:
-        loaded = _parse_env_file(env_file)
+        loaded = envfile.parse_env_file(Path(env_file))
         env.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
@@ -2138,7 +2117,7 @@ def build_parser() -> argparse.ArgumentParser:
     # stack-deploy
     sd = sub.add_parser(
         "stack-deploy",
-        help="deploy a pinned stack version in a mode (slim|single|scale) + run the 2 default E2E tests",
+        help=f"deploy a pinned stack version in a mode ({'|'.join(MODES)}) + run the 2 default E2E tests",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     sd.add_argument("--stack", default=DEFAULT_STACK, help="versions.yaml stack version to deploy/validate")
@@ -2146,7 +2125,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         required=True,
         choices=list(MODES),
-        help="deploy profile: slim (gRPC, no Kafka), single (1 node + Kafka), scale (HA + operators)",
+        help="deploy profile -- "
+        + "; ".join(f"{m}: {p.description}" for m, p in profiles.PROFILES.items()),
     )
     sd.add_argument(
         "--kubeconfig",
@@ -2317,7 +2297,13 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
     ac.add_argument("--ch-user", default="default", help="datastore user the suite connects as")
     ac.add_argument("--ch-database", default="dfe", help="datastore database the assertions read")
-    ac.add_argument("--repo", default="/projects/dfe-engine", help="engine checkout the suite runs from")
+    engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
+    ac.add_argument("--repo", default=engine_repo, required=engine_repo is None,
+                    help="engine checkout the suite runs from (default: $DFE_ENGINE_REPO, else the dfe-engine checkout beside this repo; required when there is neither)")
+    ac.add_argument("--mode", default=None, choices=list(MODES),
+                    help="deploy profile the stack runs, which sets the default --transport")
+    ac.add_argument("--transport", default=None, choices=("grpc", "kafka", "both"),
+                    help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest (default: the live filebeat suite)")
     ac.set_defaults(func=cmd_acceptance)
@@ -2342,7 +2328,9 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
     ui.add_argument("--ui-port", type=int, default=13000, help="local port for the UI forward")
     ui.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
-    ui.add_argument("--ui-repo", default="/projects/dfe-ui", help="dfe-ui checkout the suite runs from")
+    ui_repo = _sibling_repo("dfe-ui", "DFE_UI_REPO")
+    ui.add_argument("--ui-repo", default=ui_repo, required=ui_repo is None,
+                    help="dfe-ui checkout the suite runs from (default: $DFE_UI_REPO, else the dfe-ui checkout beside this repo; required when there is neither)")
     ui.add_argument("--grep", default="@acceptance", help="Playwright --grep selecting the acceptance-tier specs")
     ui.add_argument("--no-rotate", action="store_true", help="skip the break-glass rotation (the run then proves less)")
     ui.add_argument("playwright_args", nargs=argparse.REMAINDER,

@@ -32,12 +32,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import suite_graph  # noqa: E402
-
-_failures = 0
 
 SUITE = '''\
 schema: "1"
@@ -154,15 +154,6 @@ liba = { version = ">=1.0, <2" }
 PAGE_HEAD = "# page\n\n"
 
 
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
-
-
 def build(
     root: Path,
     *,
@@ -243,115 +234,112 @@ def _one_case(name: str, expect_code: int, needle: str, **kwargs) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="suite-drift-") as tmp:
-        root = Path(tmp)
-        infra = build(root)
-        repos = str(root / "repos")
+    with standalone():
+        with tempfile.TemporaryDirectory(prefix="suite-drift-") as tmp:
+            root = Path(tmp)
+            infra = build(root)
+            repos = str(root / "repos")
 
-        code, output = check(infra, "--repos", repos)
-        expect("a sound tree with the clones present is OK",
-               code == 0 and "OK -- suite.yaml" in output, f"exit {code}\n{output}")
-        expect("a chart with no member is advisory, not a failure",
-               "WARN  chart dfe-orphan" in output, output)
-        expect("maid missing is reported, not swallowed",
-               "SKIPPED  mermaid syntax" in output, output)
+            code, output = check(infra, "--repos", repos)
+            expect("a sound tree with the clones present is OK",
+                   code == 0 and "OK -- suite.yaml" in output, f"exit {code}\n{output}")
+            expect("a chart with no member is advisory, not a failure",
+                   "WARN  chart dfe-orphan" in output, output)
+            expect("maid missing is reported, not swallowed",
+                   "SKIPPED  mermaid syntax" in output, output)
 
-        code, output = check(infra, "--repos", repos, "--strict")
-        expect("--strict with maid absent and the clones present still exits 0",
-               code == 0, f"exit {code}\n{output}")
-        expect("maid absent is not counted as a repo skip",
-               "0 repo(s) skipped" in output, output)
+            code, output = check(infra, "--repos", repos, "--strict")
+            expect("--strict with maid absent and the clones present still exits 0",
+                   code == 0, f"exit {code}\n{output}")
+            expect("maid absent is not counted as a repo skip",
+                   "0 repo(s) skipped" in output, output)
 
-        code, output = check(infra, "--repos", str(root / "nowhere"), "--strict")
-        expect("--strict with the clones absent exits 2",
-               code == 2 and "never checked" in output, f"exit {code}\n{output}")
+            code, output = check(infra, "--repos", str(root / "nowhere"), "--strict")
+            expect("--strict with the clones absent exits 2",
+                   code == 2 and "never checked" in output, f"exit {code}\n{output}")
 
-        code, output = check(infra, "--repos", str(root / "nowhere"))
-        expect("without --strict the same skip exits 0 and says so",
-               code == 0 and "SKIPPED  citations into app-b" in output,
-               f"exit {code}\n{output}")
+            code, output = check(infra, "--repos", str(root / "nowhere"))
+            expect("without --strict the same skip exits 0 and says so",
+                   code == 0 and "SKIPPED  citations into app-b" in output,
+                   f"exit {code}\n{output}")
 
-    _one_case(
-        "an in-repo citation whose file is gone FAILs",
-        1,
-        "file is gone",
-        suite=SUITE.replace(
-            'evidence: "dfe-infra/helm/charts/dfe-app-b/Chart.yaml:6"',
-            'evidence: "dfe-infra/helm/charts/dfe-app-b/values.yaml:6"',
-        ),
-    )
-    _one_case(
-        "a citation past the end of its file FAILs",
-        1,
-        "fewer than 99 lines",
-        suite=SUITE.replace("Cargo.toml:6", "Cargo.toml:99"),
-    )
-    _one_case(
-        "a cited line that declares another package FAILs",
-        1,
-        "does not declare liba",
-        cargo=CARGO.replace('liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'),
-    )
-    _one_case(
-        "a commented-out declaration is not a declaration",
-        1,
-        "does not declare liba",
-        cargo=CARGO.replace("liba =", "# liba ="),
-    )
-    _one_case(
-        "a producer with no package declared FAILs rather than guessing",
-        1,
-        "declares no `package`",
-        suite=SUITE.replace("    package: liba\n", ""),
-    )
-    _one_case(
-        "docs diagrams out of sync FAIL",
-        1,
-        "diagrams differ from suite.yaml",
-        stale_docs=True,
-    )
-    _one_case(
-        "a versions.yaml with no apps block is a failure, not an advisory",
-        1,
-        "has no apps: block",
-        versions='current: "1.0.0"\nstacks:\n  1.0.0:\n    images:\n      x: "y"\n',
-    )
-    _one_case(
-        "a versions.yaml app with no member is advisory",
-        0,
-        "WARN  versions.yaml apps.ghost",
-        versions=VERSIONS + "      ghost:\n        tag: \"v1\"\n",
-    )
-    _one_case(
-        "a producer with no diagram block is advisory",
-        0,
-        "has out-edges and no diagram block",
-        stale_docs=False,
-        no_app_b_block=True,
-    )
-    _one_case(
-        "a chart declared a non-member raises no advisory",
-        0,
-        "0 advisory",
-        suite=SUITE + 'non_members:\n  dfe-orphan: "no release tag yet"\n',
-    )
-    _one_case(
-        "a non-member that is also a node FAILs",
-        1,
-        "is also a node",
-        suite=SUITE + 'non_members:\n  app-b: "no release tag yet"\n',
-    )
-    _one_case(
-        "a non-member naming no chart and no pin FAILs as stale",
-        1,
-        "outlived the advisory",
-        suite=SUITE + 'non_members:\n  dfe-gone: "no release tag yet"\n',
-    )
-    if _failures:
-        print(f"\n{_failures} failure(s)")
-        return 1
-    print("\nall passed")
-    return 0
+        _one_case(
+            "an in-repo citation whose file is gone FAILs",
+            1,
+            "file is gone",
+            suite=SUITE.replace(
+                'evidence: "dfe-infra/helm/charts/dfe-app-b/Chart.yaml:6"',
+                'evidence: "dfe-infra/helm/charts/dfe-app-b/values.yaml:6"',
+            ),
+        )
+        _one_case(
+            "a citation past the end of its file FAILs",
+            1,
+            "fewer than 99 lines",
+            suite=SUITE.replace("Cargo.toml:6", "Cargo.toml:99"),
+        )
+        _one_case(
+            "a cited line that declares another package FAILs",
+            1,
+            "does not declare liba",
+            cargo=CARGO.replace('liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'),
+        )
+        _one_case(
+            "a commented-out declaration is not a declaration",
+            1,
+            "does not declare liba",
+            cargo=CARGO.replace("liba =", "# liba ="),
+        )
+        _one_case(
+            "a producer with no package declared FAILs rather than guessing",
+            1,
+            "declares no `package`",
+            suite=SUITE.replace("    package: liba\n", ""),
+        )
+        _one_case(
+            "docs diagrams out of sync FAIL",
+            1,
+            "diagrams differ from suite.yaml",
+            stale_docs=True,
+        )
+        _one_case(
+            "a versions.yaml with no apps block is a failure, not an advisory",
+            1,
+            "has no apps: block",
+            versions='current: "1.0.0"\nstacks:\n  1.0.0:\n    images:\n      x: "y"\n',
+        )
+        _one_case(
+            "a versions.yaml app with no member is advisory",
+            0,
+            "WARN  versions.yaml apps.ghost",
+            versions=VERSIONS + "      ghost:\n        tag: \"v1\"\n",
+        )
+        _one_case(
+            "a producer with no diagram block is advisory",
+            0,
+            "has out-edges and no diagram block",
+            stale_docs=False,
+            no_app_b_block=True,
+        )
+        _one_case(
+            "a chart declared a non-member raises no advisory",
+            0,
+            "0 advisory",
+            suite=SUITE + 'non_members:\n  dfe-orphan: "no release tag yet"\n',
+        )
+        _one_case(
+            "a non-member that is also a node FAILs",
+            1,
+            "is also a node",
+            suite=SUITE + 'non_members:\n  app-b: "no release tag yet"\n',
+        )
+        _one_case(
+            "a non-member naming no chart and no pin FAILs as stale",
+            1,
+            "outlived the advisory",
+            suite=SUITE + 'non_members:\n  dfe-gone: "no release tag yet"\n',
+        )
+        return summary()
 
 
 if __name__ == "__main__":

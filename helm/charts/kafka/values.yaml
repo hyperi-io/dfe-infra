@@ -20,12 +20,13 @@ appNamespace: ""
 # shape, so clients authenticate identically regardless of provider.
 kafka:
   # Deployment mode (DFE owns its substrate; deploy unless external given):
-  #   disabled -> no broker (slim tier uses gRPC transport)
+  #   disabled -> no broker (the brokerless tiers slim + scale-mesh use gRPC)
   #   single   -> 1 broker, NON-OPERATOR standalone StatefulSet (single tier),
   #               like ClickHouse-single -> no Strimzi/Redpanda operator needed.
   #   cluster  -> multi-broker via the OPERATOR (scale tier); replicas below.
   #   external -> deploy nothing; connect to a supplied bootstrap (BYO/Confluent/MSK)
-  # Profile sets the default (slim->disabled, single->single, scale->cluster).
+  # Profile sets the default (slim + scale-mesh -> disabled, single -> single,
+  # scale -> cluster).
   mode: disabled
   # Broker provider when deployed: strimzi (default, Apache-2.0) or redpanda
   # (opt-in, BSL -- see docs/REDPANDA-LIMITATIONS.md; requires redpanda.acceptLicense).

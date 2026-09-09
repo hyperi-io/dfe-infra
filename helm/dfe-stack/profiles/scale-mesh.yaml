@@ -1,0 +1,94 @@
+# Profile overlay: SCALE-MESH -- HA replicas and a ClickHouse cluster with NO
+# Kafka; the receiver feeds the loader over direct gRPC.
+# Source: argocd/values/profile-scale-mesh.yaml, mapped onto the umbrella's
+# per-subchart keys (endpoints shortened for the single-namespace install).
+#
+# EXTRA prerequisites over slim/single (pins: versions.yaml `operators:`):
+#   - clickhouse-operator 0.0.7    (ClickHouseCluster + KeeperCluster CRs)
+#   - keda 2.20.1                  (the app charts' ScaledObjects)
+# NOT strimzi-kafka-operator: this profile runs no broker.
+# At this tier the ArgoCD product path (argocd/appsets/) is the right vehicle;
+# this overlay exists so the umbrella's composition can be exercised end to end.
+# Usage: helm template dfe helm/dfe-stack -n dfe -f helm/dfe-stack/profiles/scale-mesh.yaml
+
+x-scale-mesh-shared:
+  # Source: argocd/values/profile-scale-mesh.yaml `resources:`.
+  resources: &scaleMeshResources
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  # No broker: the receiver's default destination is the loader's gRPC address.
+  kafka: &scaleMeshKafka
+    mode: disabled
+  # Source: argocd/values/profile-scale-mesh.yaml `keda:`.
+  keda: &scaleMeshKeda
+    enabled: true
+    minReplicaCount: 2
+    maxReplicaCount: 10
+
+clickhouse-cluster:
+  clickhouse:
+    # Source: argocd/values/profile-scale-mesh.yaml `clickhouse:` -- operator
+    # cluster with DFE-owned Keeper, ReplicatedMergeTree.
+    mode: cluster
+    replicas: 3
+    shardsCount: 1
+
+cnpg-cluster:
+  cluster:
+    # Source: argocd/values/profile-scale-mesh.yaml `cluster.instances` (HA).
+    instances: 3
+
+# Source: argocd/values/profile-scale-mesh.yaml `kafbat.enabled` (no Kafka to manage).
+kafbat:
+  enabled: false
+
+dfe-engine:
+  # The operator cluster emits only a headless client Service.
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *scaleMeshResources
+
+dfe-ui:
+  replicaCount: 2
+  resources: *scaleMeshResources
+  keda: *scaleMeshKeda
+
+dfe-receiver:
+  replicaCount: 2
+  kafka: *scaleMeshKafka
+  resources: *scaleMeshResources
+  keda: *scaleMeshKeda
+
+dfe-loader:
+  replicaCount: 2
+  kafka: *scaleMeshKafka
+  # The operator cluster emits only a headless client Service.
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *scaleMeshResources
+  keda: *scaleMeshKeda
+
+dfe-hyperdx:
+  replicaCount: 2
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *scaleMeshResources
+
+dfe-schema:
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+
+otel-collector:
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  # Source: argocd/values/profile-scale-mesh.yaml `clusterTelemetry:` -- no broker
+  # to scrape.
+  clusterTelemetry:
+    kubeletStats:
+      enabled: true
+    kafka:
+      enabled: false

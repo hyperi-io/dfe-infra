@@ -35,6 +35,8 @@ from pathlib import Path
 
 import yaml
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 REGISTRY = "ghcr.io/hyperi-io"
@@ -43,17 +45,6 @@ REGISTRY = "ghcr.io/hyperi-io"
 # services-digests key, not the chart's own app digest, so the app-wide
 # assertions skip them and each is checked against its own key instead.
 THIRD_PARTY_SIDECARS = frozenset({"git-sync", "git-sync-init"})
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def _parse_nested(text: str) -> dict:
@@ -220,11 +211,11 @@ def test_the_links_page_keeps_its_third_party_digest() -> None:
 
 
 def main() -> int:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print(f"\n{'FAILED' if _failures else 'ALL PASSED'} -- {_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
 
 
 if __name__ == "__main__":

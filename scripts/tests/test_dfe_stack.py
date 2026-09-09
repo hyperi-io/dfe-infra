@@ -27,6 +27,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "dfe-stack"
 
@@ -37,17 +39,6 @@ spec = importlib.util.spec_from_loader(
 stack = importlib.util.module_from_spec(spec)
 sys.modules["dfe_stack"] = stack
 spec.loader.exec_module(stack)
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def test_both_annotation_forms_parse() -> None:
@@ -111,6 +102,19 @@ def test_every_recorded_digest_has_an_annotation() -> None:
         not missing,
         f"missing: {missing}",
     )
+
+
+def test_every_app_digest_has_a_tag_verify_can_resolve() -> None:
+    """`verify` needs a tag per digest; a digest with none reports a false DRIFT.
+
+    dfe-hyperdx is versioned under content:, not apps:, so an apps-only lookup
+    called a correct pin "(tag not found)".
+    """
+    text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
+    _, pins = stack.stack_pins(stack.parse_simple_yaml(text), None)
+    tags = {**pins.get("apps", {}), **pins.get("content", {})}
+    missing = sorted(name for name in pins.get("digests", {}) if not tags.get(name))
+    expect("every digests: key has a tag to resolve", not missing, f"missing: {missing}")
 
 
 def test_renovate_custom_manager_matches_the_annotations() -> None:
@@ -553,12 +557,90 @@ def test_refresh_writes_the_healthy_pins_when_one_cannot_resolve() -> None:
         )
 
 
+# --- --env-file -> GH_TOKEN (authenticating gh for the registry reads) --------
+_FAKE_TOKEN = "ghp_scopedtokenvalue"
+
+
+def _run_stack_main(argv: list[str]) -> tuple[int, str, str]:
+    """dfe-stack main() with argv replaced, capturing both streams."""
+    import contextlib
+    import io
+
+    out, err = io.StringIO(), io.StringIO()
+    original_argv = sys.argv
+    sys.argv = argv
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = stack.main()
+    finally:
+        sys.argv = original_argv
+    return rc, out.getvalue(), err.getvalue()
+
+
+def _with_env_file(body: str, ambient: str | None) -> tuple[int, str, str, str | None]:
+    """Run `dfe-stack --env-file <body> current`, returning the resulting GH_TOKEN."""
+    import os
+    import tempfile
+
+    previous = os.environ.pop("GH_TOKEN", None)
+    if ambient is not None:
+        os.environ["GH_TOKEN"] = ambient
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "creds.env"
+            path.write_text(body, encoding="utf-8", newline="\n")
+            rc, out, err = _run_stack_main(["dfe-stack", "--env-file", str(path), "current"])
+        return rc, out, err, os.environ.get("GH_TOKEN")
+    finally:
+        os.environ.pop("GH_TOKEN", None)
+        if previous is not None:
+            os.environ["GH_TOKEN"] = previous
+
+
+def test_env_file_ghcr_token_authenticates_gh() -> None:
+    """The scoped token lives in a git-ignored env file, not in `gh login`."""
+    rc, out, err, token = _with_env_file(f'GHCR_TOKEN="{_FAKE_TOKEN}"\n', None)
+    expect("the subcommand still runs", rc == 0, f"exit {rc}")
+    expect("GHCR_TOKEN becomes GH_TOKEN", token == _FAKE_TOKEN, f"{token!r}")
+    expect("the token is never printed", _FAKE_TOKEN not in out + err, out + err)
+
+
+def test_env_file_gh_token_is_used_directly() -> None:
+    rc, _, _, token = _with_env_file(f"GH_TOKEN={_FAKE_TOKEN}\n", None)
+    expect("GH_TOKEN in the file is used as-is", token == _FAKE_TOKEN, f"{token!r}")
+    expect("the subcommand still runs", rc == 0, f"exit {rc}")
+
+
+def test_ambient_gh_token_is_not_overwritten() -> None:
+    """The file is the fallback for a host missing read:packages, not an override."""
+    _, _, _, token = _with_env_file(f'GHCR_TOKEN="{_FAKE_TOKEN}"\n', "ghp_ambient")
+    expect("an ambient GH_TOKEN wins", token == "ghp_ambient", f"{token!r}")
+
+
+def test_env_file_without_a_token_sets_nothing() -> None:
+    _, _, _, token = _with_env_file("DFE_NAMESPACE=dfe\n", None)
+    expect("a token-free env file leaves GH_TOKEN unset", token is None, f"{token!r}")
+
+
+def test_no_env_file_leaves_the_environment_alone() -> None:
+    import os
+
+    previous = os.environ.pop("GH_TOKEN", None)
+    try:
+        rc, _, _ = _run_stack_main(["dfe-stack", "current"])
+        expect("the subcommand still runs without --env-file", rc == 0, f"exit {rc}")
+        expect("nothing is set", "GH_TOKEN" not in os.environ, "GH_TOKEN was set")
+    finally:
+        if previous is not None:
+            os.environ["GH_TOKEN"] = previous
+
+
 def main() -> int:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print(f"\n{'FAILED' if _failures else 'ALL PASSED'} -- {_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
 
 
 if __name__ == "__main__":

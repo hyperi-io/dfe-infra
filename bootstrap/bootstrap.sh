@@ -20,7 +20,7 @@
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
-#   DFE_PROFILE              slim | single | scale
+#   DFE_PROFILE              slim | single | scale | scale-mesh
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
 #   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
@@ -42,7 +42,7 @@
 # Optional:
 #   DFE_BASE_DOMAIN          estate domain the profile tag is prefixed to when
 #                            DFE_DOMAIN is unset (one cluster, one profile at a
-#                            time, three sets of hostnames)
+#                            time, one set of hostnames per profile)
 #   DFE_GATEWAY_IP           address the Envoy Gateway's LoadBalancer must take;
 #                            empty lets the pool choose
 #   DFE_RECEIVER_IP          address the receiver's public TCP LoadBalancer must
@@ -160,10 +160,10 @@ required_vars=(
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
-# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim profile is gRPC (kafka disabled),
-# so it is empty there; only set when kafka.mode != disabled. Defaulted empty so
-# the cluster-secret annotation renders blank (kafka-dependent apps are gated off
-# in slim anyway).
+# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim and scale-mesh profiles are gRPC (kafka
+# disabled), so it is empty there; only set when kafka.mode != disabled. Defaulted
+# empty so the cluster-secret annotation renders blank (kafka-dependent apps are
+# gated off on a brokerless profile anyway).
 export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
 # external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
 # "none" deploys no external-dns, because its own default provider is aws and an
@@ -184,8 +184,8 @@ if ! [[ "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 echo "Default retention: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS} day(s) for every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)"
-# One cluster runs one profile at a time, so the profile tags the domain and the
-# three deployments never publish the same hostname. An explicit DFE_DOMAIN wins.
+# One cluster runs one profile at a time, so the profile tags the domain and no
+# two deployments publish the same hostname. An explicit DFE_DOMAIN wins.
 if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" && -n "${DFE_PROFILE:-}" ]]; then
   export DFE_DOMAIN="${DFE_PROFILE}.${DFE_BASE_DOMAIN}"
   echo "Domain derived from DFE_BASE_DOMAIN: ${DFE_DOMAIN}"

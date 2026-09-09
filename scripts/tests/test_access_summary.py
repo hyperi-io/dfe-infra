@@ -35,6 +35,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SUMMARY = REPO_ROOT / "bootstrap" / "access-summary.sh"
 
@@ -118,17 +120,6 @@ BASE_FIXTURE = {
     "secrets": ["dfe-engine-admin", "dfe-engine-breakglass"],
     "engine_env": engine_env(),
 }
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def run_summary(**overrides) -> str:
@@ -454,11 +445,11 @@ def test_a_credential_the_cluster_lacks_is_marked_not_dropped() -> None:
 
 
 def main() -> int:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print(f"\n{'FAILED' if _failures else 'ALL PASSED'} -- {_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
 
 
 if __name__ == "__main__":
