@@ -42,6 +42,41 @@ the refuse-on-default-password check and gitops auto-merge.
 {{- end -}}
 
 {{/*
+dfe-engine.contentRoot -- where one content entry's files land, from its role.
+
+The role is the destination, the kind is the vehicle, and the two are
+independent: an image and an asset can each carry either sort of file.
+*/}}
+{{- define "dfe-engine.contentRoot" -}}
+{{- $mount := .ctx.Values.content.mountPath -}}
+{{- if eq (.entry.role | default "library") "catalogue" -}}
+{{ printf "%s/catalogue" $mount }}
+{{- else -}}
+{{ printf "%s/library" $mount }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.catalogueFile -- the mounted source catalogue, or empty when this
+deployment materialises none.
+
+Empty is the answer for most deployments, and the engine offers no catalogue
+sources rather than failing: DFE_SOURCE_CATALOGUE_FILE naming a file nothing
+wrote is a deployment that meant to mount one and did not.
+*/}}
+{{- define "dfe-engine.catalogueFile" -}}
+{{- $found := "" -}}
+{{- range .Values.content.entries -}}
+{{- if eq (.role | default "library") "catalogue" -}}
+{{- $found = "yes" -}}
+{{- end -}}
+{{- end -}}
+{{- if $found -}}
+{{ printf "%s/catalogue/%s" .Values.content.mountPath .Values.content.catalogueFile }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 An explicit hyperdx.baseUrl wins, for a fork outside the cluster. Otherwise it
 is derived from the fork's API service, defaulting to this release's namespace
 so a co-deployed fork needs no configuration at all.

@@ -48,8 +48,67 @@ spec:
       # the deploy was pinned to v1.10.3, BEHIND the setting that collides.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap .Values.authConfig.caBundleConfigMap }}
+      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap .Values.authConfig.caBundleConfigMap .Values.content.entries }}
       initContainers:
+        {{- range $entry := .Values.content.entries }}
+        {{- $root := include "dfe-engine.contentRoot" (dict "ctx" $ "entry" $entry) }}
+        # One container per content pin, running the vehicle that carries the
+        # files, so a pin moves without touching this template.
+        - name: content-{{ $entry.name }}
+          {{- if eq $entry.kind "asset" }}
+          # The engine image, for its python3: an asset is a download, and no DFE
+          # image is guaranteed to carry curl.
+          image: {{ include "dfe-common.image" $ | quote }}
+          {{- else }}
+          image: {{ $entry.ref | quote }}
+          {{- end }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" $ | nindent 10 }}
+          {{- if eq $entry.kind "asset" }}
+          command:
+            - python3
+            - -c
+            - |
+              import urllib.request
+              from pathlib import Path
+              {{- range $f := $entry.files }}
+              dst = Path("{{ $root }}/{{ $f.to }}")
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              # A private release needs a credential the pod does not carry, so
+              # the URL has to be reachable as it stands.
+              with urllib.request.urlopen("{{ $entry.ref }}/{{ $f.from }}") as r:
+                  dst.write_bytes(r.read())
+              print("content: fetched", dst)
+              {{- end }}
+          {{- else }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              {{- range $f := $entry.files }}
+              src="{{ $f.from }}"
+              dst="{{ $root }}/{{ $f.to }}"
+              # An app that has not shipped its files yet must not wedge the
+              # engine's pod: report the absence and let the seed find nothing.
+              if [ -d "$src" ]; then
+                mkdir -p "$dst"
+                cp -R "$src/." "$dst/"
+                echo "content: copied $src to $dst"
+              elif [ -f "$src" ]; then
+                mkdir -p "$(dirname "$dst")"
+                cp "$src" "$dst"
+                echo "content: copied $src to $dst"
+              else
+                echo "content: {{ $entry.ref }} carries no $src; nothing seeded" >&2
+              fi
+              {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: content
+              mountPath: {{ $.Values.content.mountPath }}
+        {{- end }}
+      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap .Values.authConfig.caBundleConfigMap }}
         # Seed auth config into the writable config volume; a direct nested
         # mount leaves kubelet-created root-owned dirs the engine cannot
         # write beside, and copies keep group CRUD writable.
@@ -109,6 +168,7 @@ spec:
               mountPath: /seed/ca
               readOnly: true
             {{- end }}
+      {{- end }}
       {{- end }}
       containers:
         - name: engine
@@ -212,6 +272,16 @@ spec:
             # changed app reflects without an engine release.
             - name: DFE_APP_CATALOGUE_FILE
               value: /etc/dfe-engine/catalogue/apps.yaml
+            {{- end }}
+            # Unconditional because an absent directory is a no-op in the
+            # engine, so a content entry added later needs no env change.
+            - name: DFE_LIBRARY_SEED_DIR
+              value: {{ .Values.content.mountPath }}/library
+            {{- with (include "dfe-engine.catalogueFile" .) }}
+            # Set only where a content entry materialises one: a path naming a
+            # file nothing wrote is refused rather than answered with no sources.
+            - name: DFE_SOURCE_CATALOGUE_FILE
+              value: {{ . | quote }}
             {{- end }}
             - name: DFE_SCHEMAS_DIR
               value: {{ .Values.config.mountPath }}/schemas
@@ -385,6 +455,11 @@ spec:
               mountPath: /etc/dfe-engine/catalogue
               readOnly: true
             {{- end }}
+            # Read-only here, writable in the init containers that fill it: the
+            # engine reads this content, the pins own it.
+            - name: content
+              mountPath: {{ .Values.content.mountPath }}
+              readOnly: true
             {{- if .Values.gitops.enabled }}
             - name: deploy-repo
               mountPath: {{ dir .Values.gitops.localPath }}
@@ -414,6 +489,10 @@ spec:
           emptyDir: {}
           {{- end }}
         - name: tmp
+          emptyDir: {}
+        # Pod-local: the content is re-materialised from the pins on every start,
+        # so there is nothing here worth surviving the pod.
+        - name: content
           emptyDir: {}
         {{- if .Values.appCatalogue }}
         - name: app-catalogue

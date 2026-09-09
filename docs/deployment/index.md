@@ -127,6 +127,17 @@ tag certifies the whole set as one stack version (`stack:` metadata +
 lockstep `content:` repo tags); the full release model is in dfe-docs
 `deployment/stack-versioning.md`.
 
+`content:` also pins the authored files an app ships and the engine serves -
+the reference transform pipelines, and the source catalogue a transform ships.
+The engine chart's `content.entries` turns each pin into one init container
+that fills `/etc/dfe-engine/content` from the pinned app image or the release
+asset, and the engine reads that directory through `DFE_LIBRARY_SEED_DIR` and
+`DFE_SOURCE_CATALOGUE_FILE`. The files never travel through a value or a
+ConfigMap: the elastic catalogue alone is 344 KB, and either form
+re-serialises it into etcd on every Argo sync. `entries` is empty while no
+release carries its files as an asset and no Dockerfile copies them into the
+image; each app that ships its files makes its entry live.
+
 ## Version check
 
 Every DFE service boots with an opt-out release check: one POST of
