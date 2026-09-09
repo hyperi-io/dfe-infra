@@ -36,4 +36,17 @@ Admin credentials come from the bootstrap-created secret (admin.secretName).
       key: password
 - name: GITEA_ADMIN_EMAIL
   value: {{ .Values.admin.email | quote }}
+{{- if .Values.webhook.enabled }}
+# Webhook delivery is blocked by default to anything that is not a public
+# unicast address (webhook.ALLOWED_HOST_LIST defaults to `external`), and Argo
+# CD's Service address is a cluster-private one -- so without this the hook is
+# created, looks configured, and every delivery is refused before it leaves the
+# process. Scoped to the one host it must reach, not opened to `private`.
+- name: GITEA__webhook__ALLOWED_HOST_LIST
+  value: {{ .Values.webhook.argocdHost | quote }}
+# argocd-server terminates TLS with its own self-signed certificate, which no
+# trust store in this cluster carries. The hop is in-cluster to a named Service.
+- name: GITEA__webhook__SKIP_TLS_VERIFY
+  value: "true"
+{{- end }}
 {{- end -}}

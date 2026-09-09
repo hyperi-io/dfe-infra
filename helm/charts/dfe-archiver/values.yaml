@@ -13,7 +13,16 @@ image:
 
 replicaCount: 1
 
+# Internal Service for the scalo Push listener, rendered on the direct transport
+# only (dfe-common.pushService). 6000 is the DFE gRPC convention.
+service:
+  pushPort: 6000
+
 kafka:
+  # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
+  # values. Templates read it through dfe-common.transport, never by comparing
+  # this string themselves.
+  mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
   # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
@@ -23,6 +32,10 @@ kafka:
   # DFE Kafka credential contract (dfe-engine#98).
   provider: ""
 
+# Archive destination. Both keys are rendered as env (S3_ENDPOINT / S3_BUCKET,
+# the archiver's flat-env contract) and env BEATS the config file, so a value set
+# here overrides whatever the engine's overlay authored. Empty endpoint = the
+# provider's own default, and the env is omitted rather than sent blank.
 s3:
   endpoint: ""
   bucket: dfe-archive

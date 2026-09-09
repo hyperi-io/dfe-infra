@@ -6,6 +6,7 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   {{- include "dfe-common.replicas" . }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
@@ -14,8 +15,10 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
-        # Roll the pods when the config blob changes -- the app reads the file at
-        # startup only, so a ConfigMap update alone would not take effect.
+        # Roll the pods on ANY config change. One delivery mechanism for every
+        # key, so nothing depends on whether the app's own reloader would have
+        # caught it; dfe-common.rollout makes that roll a surge-first rolling
+        # update, so the ingest door never goes away while it happens.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
@@ -49,12 +52,12 @@ spec:
             {{- end }}
           env:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_RECEIVER_") | nindent 12 }}
-            {{- if ne (default "" .Values.kafka.mode) "disabled" }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
             # Same flat-env contract as the SASL block below (mod.rs:261, prefix
             # DFE_RECEIVER at :35). A bare KAFKA_BOOTSTRAP_SERVERS is read by
             # nothing, leaving the receiver to fail on "kafka.brokers is required
             # when using Kafka destination" until the engine authors a config file.
-            # In the no-kafka profile this whole block is absent: the loader gRPC
+            # On the direct transport this whole block is absent: the loader gRPC
             # destination comes from the config blob (see the configmap).
             - name: DFE_RECEIVER_KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
@@ -114,8 +117,8 @@ spec:
               value: {{ printf "%s:%v" $bindHost .port | quote }}
             {{- end }}
             {{- end }}
-            {{- if eq (default "" .Values.kafka.mode) "disabled" }}
-            # No-kafka profile: the DLQ's kafka backend is gone with the broker.
+            {{- if eq (include "dfe-common.transport" .) "direct" }}
+            # Direct transport: the DLQ's kafka backend is gone with the broker.
             # The receiver's mode vocabulary has no "disabled" word (unlike the
             # loader); DLQ_ENABLED=false is its off-switch (config/mod.rs).
             - name: DFE_RECEIVER_DLQ_ENABLED

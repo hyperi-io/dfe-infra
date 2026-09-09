@@ -89,6 +89,11 @@ spec:
               # same annotation. A cluster secret without it falls back to 90.
               - name: retention.defaultTtlDays
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_default_ttl_days" | default "90" }}'
+              # The stack the base charts above are pinned at, so the engine can
+              # report it when the deploy repo's pins name no base. Only
+              # dfe-engine reads it; the other charts ignore it.
+              - name: stackVersion
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

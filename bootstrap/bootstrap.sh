@@ -436,6 +436,28 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
     --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
     --dry-run=client -o yaml | kubectl apply -f -
   echo "  Forgejo admin secret (forgejo ns) + engine write cred dfe-deploy-repo-auth (${DFE_NAMESPACE}) ready"
+
+  # The Forgejo -> Argo push webhook's shared secret. Forgejo signs the delivery
+  # with it and Argo verifies against argocd-secret's webhook.gogs.secret, so
+  # both ends carry the one value; minted once and reused, like the password
+  # above. argocd-secret is PATCHED, never applied over: it also holds Argo's
+  # server signing key and admin hash, adopted install or not.
+  if kubectl -n forgejo get secret dfe-argo-webhook >/dev/null 2>&1; then
+    ARGO_WEBHOOK_SECRET=$(kubectl -n forgejo get secret dfe-argo-webhook -o jsonpath='{.data.secret}' | base64 -d)
+  else
+    ARGO_WEBHOOK_SECRET=$(openssl rand -hex 24)
+  fi
+  kubectl -n forgejo create secret generic dfe-argo-webhook \
+    --from-literal=secret="${ARGO_WEBHOOK_SECRET}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  if kubectl -n argocd patch secret argocd-secret --type merge \
+      -p "{\"stringData\":{\"webhook.gogs.secret\":\"${ARGO_WEBHOOK_SECRET}\"}}" >/dev/null 2>&1; then
+    echo "  Argo push webhook secret ready (forgejo ns + argocd-secret)"
+  else
+    echo "  WARNING: could not patch argocd-secret with webhook.gogs.secret."
+    echo "           Forgejo will still register the hook, Argo will reject every"
+    echo "           delivery, and a source write waits out the 300s poll instead."
+  fi
 elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   # EXTERNAL git (GitHub/GitLab/self-hosted): register the Argo READ credential so
   # Argo can pull the deploy repo -- EITHER HTTPS+token (DFE_CONFIG_REPO_USER +

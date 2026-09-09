@@ -19,8 +19,10 @@ image:
 replicaCount: 1
 
 kafka:
-  # "disabled" (set by the no-kafka profiles) drops every kafka env + secret ref
-  # and sends the fetched records straight to the loader over gRPC instead.
+  # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
+  # values: it drops every kafka env + secret ref and sends the fetched records
+  # straight to the loader over gRPC instead. Templates read it through
+  # dfe-common.transport, never by comparing this string themselves.
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
@@ -29,7 +31,7 @@ kafka:
   # KafkaConfig DERIVES security_protocol + sasl_mechanism from it.
   provider: ""
 
-# gRPC target for the no-kafka profiles (kafka.mode: disabled): the LOADER's
+# gRPC target on the direct transport (kafka.mode: disabled): the LOADER's
 # Service name + grpcPort. The fetcher's gRPC output is a scalo Transport/Push
 # client, which the loader serves and the receiver does not (its :6000 speaks
 # the Vector protocol), and the loader picks the table from the `_source` the

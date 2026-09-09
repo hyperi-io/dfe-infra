@@ -6,6 +6,7 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   {{- include "dfe-common.replicas" . }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}

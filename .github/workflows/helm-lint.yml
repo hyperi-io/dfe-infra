@@ -199,6 +199,17 @@ jobs:
       - name: Default retention reaches the engine and the schema apply
         run: python3 scripts/tests/test_default_ttl.py
 
+      # Every config change rolls the pod, so the roll is what has to be safe:
+      # the k8s default tears a single-replica stage down before its replacement
+      # is Ready.
+      - name: App pods replace surge-first and carry a disruption budget
+        run: python3 scripts/tests/test_rollout.py
+
+      # One kafka.mode, read through one helper: the branch this replaced was
+      # repeated in three charts' templates and drifted from the profile files.
+      - name: Bus or direct is derived once, for every chart
+        run: python3 scripts/tests/test_transport.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

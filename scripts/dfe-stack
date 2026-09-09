@@ -314,6 +314,80 @@ def render_docker(v: dict, registry: str, label: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Docker PROFILE projection (dfe-docker's service_profiles.yaml block)
+# ---------------------------------------------------------------------------
+
+# The docker profiles that are projections of a Kubernetes tier. dfe-docker's
+# other profiles are hand-crafted data-plane shapes with no k8s counterpart, and
+# this tool never touches them.
+DOCKER_PROFILES = ("slim", "single")
+
+def _profile_values(mode: str) -> dict:
+    """The k8s profile's values: argocd/values/common.yaml under profile-<mode>."""
+    merged: dict = {}
+    for name in ("common.yaml", f"profile-{mode}.yaml"):
+        path = REPO_ROOT / "argocd" / "values" / name
+        if not path.is_file():
+            raise SystemExit(f"error: {path} not found")
+        for key, value in parse_simple_yaml(path.read_text()).items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key].update(value)
+            else:
+                merged[key] = value
+    return merged
+
+
+def _truthy(value: str) -> bool:
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def render_docker_profile(mode: str) -> str:
+    """One dfe-docker service_profiles.yaml profile block, projected from k8s.
+
+    dfe-docker's `slim` and `single` are the compose renderings of the k8s tiers
+    of the same names, so the k8s profile is the master and this is the only
+    thing that writes them. Compose has no KEDA and no operators, so what
+    survives the projection is WHICH components run, not how many of each:
+
+      transport   kafka.mode: `disabled` is grpc, any other mode is kafka
+      clickhouse  the tier deploys a warehouse (every k8s profile does)
+      core        the tier deploys the engine and the UI (every k8s profile does)
+      kafbat      kafbat.enabled, and only on the kafka transport
+      otel        the tier deploys the collector (every k8s profile does)
+      services    receiver and loader, config_path <app>/<transport>.yaml
+    """
+    if mode not in DOCKER_PROFILES:
+        raise SystemExit(
+            f"error: {mode!r} is not a projected profile (have: {', '.join(DOCKER_PROFILES)})"
+        )
+    values = _profile_values(mode)
+    kafka_mode = str(values.get("kafka", {}).get("mode", "")).strip()
+    transport = "grpc" if kafka_mode == "disabled" else "kafka"
+    kafbat = _truthy(values.get("kafbat", {}).get("enabled", "true"))
+
+    lines = [
+        f"  # Mirrors the Kubernetes {mode} tier: {transport} transport"
+        f"{'' if transport == 'kafka' else ', no broker'}, the receiver/loader",
+        "  # ingest path, the warehouse, the core surface and self-monitoring.",
+        f"  {mode}:",
+        f"    transport: {transport}",
+        "    clickhouse: true",
+        "    core: true",
+    ]
+    if transport == "kafka" and kafbat:
+        lines.append("    kafbat: true")
+    lines += [
+        "    otel: true",
+        "    services:",
+        "      dfe-loader:",
+        f"        config_path: loader/{transport}.yaml",
+        "      dfe-receiver:",
+        f"        config_path: receiver/{transport}.yaml",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def render_manifest(v: dict, registry: str, label: str) -> str:
     """The certified k8s manifest for a stack (the readable pin set)."""
     prev = [p.strip() for p in v.get("stack", {}).get("previous", "").split(",") if p.strip()]
@@ -347,6 +421,14 @@ def render_manifest(v: dict, registry: str, label: str) -> str:
 
 
 def cmd_render(args: argparse.Namespace) -> int:
+    if args.docker_profile:
+        text = render_docker_profile(args.docker_profile)
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8", newline="\n")
+            print(f"docker profile {args.docker_profile} written to {args.out}")
+        else:
+            sys.stdout.write(text)
+        return 0
     if args.tag and args.stack:
         raise SystemExit("error: pass either --tag or --stack, not both")
     root = load_root(args.tag)
@@ -1241,6 +1323,9 @@ def main() -> int:
     p = sub.add_parser("render", help="render the k8s manifest or the docker .env pin set")
     p.add_argument("--target", choices=["k8s", "docker"], default="k8s",
                    help="k8s = certified manifest (default); docker = dfe-docker .env fragment")
+    p.add_argument("--docker-profile", choices=list(DOCKER_PROFILES),
+                   help="project a k8s profile into dfe-docker's service_profiles.yaml block "
+                        "(ignores --target/--stack: profiles are not versioned pins)")
     p.add_argument("--stack", help="stack version to render (default: `current`)")
     p.add_argument("--tag", help="git tag to render from (git show versions.yaml@tag)")
     p.add_argument("--out", help="write to a file instead of stdout")

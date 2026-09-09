@@ -14,8 +14,10 @@ image:
 replicaCount: 1
 
 kafka:
-  # "disabled" (set by the no-kafka profiles) drops every kafka env + secret ref
-  # and flips the transport to receiver -> loader direct gRPC. Empty = kafka on.
+  # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
+  # values: it drops every kafka env + secret ref and flips the transport to
+  # receiver -> loader direct gRPC. Empty = the bus carries it. Templates read
+  # it through dfe-common.transport, never by comparing this string themselves.
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user

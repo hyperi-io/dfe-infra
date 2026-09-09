@@ -20,6 +20,19 @@ image:
 
 replicaCount: 1
 
+# The certified stack version this deployment runs. The appset passes the cluster
+# secret's dfe.hyperi.io/target_revision annotation, the same string Argo pins the
+# base charts at, so the engine reports the stack the cluster is actually on when
+# the deploy repo's pins.yaml names no base. Empty = report nothing rather than
+# guess.
+stackVersion: ""
+
+# The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set;
+# this chart has no broker settings of its own, and dfe-common.transport reads a
+# missing map as the bus default.
+kafka:
+  mode: ""
+
 service:
   type: ClusterIP
   port: 8000

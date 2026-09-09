@@ -24,6 +24,29 @@
 #   Whether the app carries CPU, memory and KEDA dials at all. Those dials are
 #   reported unsupported off Kubernetes regardless, since Compose has no KEDA.
 #
+# transports
+#   Which transports the app can carry a source's records on. Defaults to [bus]
+#   when absent.
+#     bus     a broker holds records between this stage and the next
+#     direct  point to point over gRPC, nothing stored between stages
+#   The engine refuses a source whose transport an app in its flow does not
+#   list, so an app gains a transport by shipping the listener and being edited
+#   HERE -- never by a condition in engine code.
+#
+# hot_reload
+#   Whether the app can apply a config change without a restart at all.
+#   INFORMATIONAL: it tells the engine and the console what the app is capable
+#   of, and it does not decide how a change is delivered. Every config change
+#   rolls the pod as a rolling update -- one deployment mechanism, no per-key
+#   exceptions -- so an app whose reloader would also have caught the change
+#   simply gets the new file on a fresh pod.
+#
+# endpoints
+#   Named listener ports, ONLY where the app deviates from the platform default
+#   (the scalo Push service on 6000). The engine builds a stage's endpoint from
+#   the app's Service name and this port, so a chart that moves its listener is
+#   a manifest edit rather than an engine release.
+#
 # files[]
 #   A family of files the app reads off disk. Content is carried in the instance's
 #   values overlay, because Helm cannot read a raw file out of an Argo $values
@@ -79,6 +102,10 @@ apps:
   dfe-receiver:
     multiplicity: single
     scale_deployed: true
+    transports: [bus, direct]
+    # A reload rebuilds the router and the validator and nothing else; the sinks
+    # and the listeners are built once at startup.
+    hot_reload: true
     routing:
       compiler: receiver
       values_path: config.routing
@@ -86,13 +113,21 @@ apps:
   dfe-loader:
     multiplicity: single
     scale_deployed: true
+    transports: [bus, direct]
+    # Watching is opt-in per deployment (config.hot_reload.enabled) and off by
+    # default, so the rolling update is what actually applies a change.
+    hot_reload: true
     routing:
       compiler: loader
       values_path: config.routing
 
+  # Reads the LANDING topic, so it keeps the record as it arrived and has
+  # nothing to read on a deployment with no bus.
   dfe-archiver:
     multiplicity: single
     scale_deployed: true
+    transports: [bus]
+    hot_reload: false
 
   # A fetcher deployment is 1:1 with one source's fetcher config, so many run side
   # by side, each with its own dedicated settings. It polls its upstream rather
@@ -100,6 +135,11 @@ apps:
   dfe-fetcher:
     multiplicity: per_config
     scale_deployed: false
+    transports: [bus, direct]
+    # Its reloader re-reads a per-source filter and the poll interval; the rest
+    # of a stanza binds a connection or a semaphore at startup
+    # (src/config/mod.rs:46-65).
+    hot_reload: true
     # instance_id keys the cursor store, so it has to be stable per source: a
     # changed id re-fetches the default window instead of resuming.
     source_binding:
@@ -137,6 +177,10 @@ apps:
   dfe-transform-vrl:
     multiplicity: per_config
     scale_deployed: true
+    # Bus only until its Push listener ships; adding `direct` here is the whole
+    # change that lets a direct source name it.
+    transports: [bus]
+    hot_reload: false
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
       config.source.topics: ["{source}_land"]
@@ -160,11 +204,15 @@ apps:
         language: data
         reload: roll
 
-  # Supervises a Vector subprocess. Its reload compares config structs, and the
-  # transform config holds only paths, so a content edit needs a roll as well.
+  # Supervises a Vector subprocess. It watches the transform files and SIGHUPs
+  # Vector when only those changed; any other config difference is a roll.
   dfe-transform-vector:
     multiplicity: per_config
     scale_deployed: true
+    # Bus only until its Push listener ships; adding `direct` here is the whole
+    # change that lets a direct source name it.
+    transports: [bus]
+    hot_reload: true
     # This app derives topics and consumer group from its own dfe_source field.
     source_binding:
       config.dfe_source: "{source}"
@@ -175,7 +223,7 @@ apps:
         dir_setting: config.transforms.dir
         suffixes: [".yaml", ".yml"]
         language: yaml
-        reload: roll
+        reload: hot
       - name: enrichment
         values_path: enrichmentTables
         links_path: enrichmentTableLinks
@@ -188,6 +236,10 @@ apps:
   dfe-transform-elastic:
     multiplicity: per_config
     scale_deployed: true
+    # Bus only until its gRPC listener ships (dfe-transform-elastic#19); adding
+    # `direct` here is the whole change that lets a direct source name it.
+    transports: [bus]
+    hot_reload: true
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
