@@ -135,6 +135,7 @@ VAULT_* env, ...). stack-deploy's pre-flight needs only python3 + helm.
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import json
 import os
@@ -745,18 +746,46 @@ def _forward(label: str, kube: list[str], namespace: str, target: str,
     a single forward.
     """
     cmd = [*kube, "-n", namespace, "port-forward", target, f"{local}:{remote}"]
+    early_exits = 0
     while not stop.is_set():
+        started = time.monotonic()
         proc = subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
+        _FORWARDS.append(proc)
         while not stop.is_set() and proc.poll() is None:
             time.sleep(1)
         if proc.poll() is None:
             proc.terminate()
             return
-        if not stop.is_set():
-            print(f"  forward {label} died, restarting", file=sys.stderr)
-            time.sleep(2)
+        if stop.is_set():
+            return
+        # A forward that cannot bind exits at once, every time; restarting it
+        # only hides a previous run's forward still holding the port.
+        early_exits = early_exits + 1 if time.monotonic() - started < 3 else 0
+        if early_exits >= 3:
+            print(
+                f"  forward {label} exits immediately: is local port {local} held by an "
+                f"earlier run's port-forward? (pgrep -af port-forward)",
+                file=sys.stderr,
+            )
+            return
+        print(f"  forward {label} died, restarting", file=sys.stderr)
+        time.sleep(2)
+
+
+# Every port-forward this process starts, so a run that dies on an exception
+# does not leave them holding the ports for the next run.
+_FORWARDS: list[subprocess.Popen] = []
+
+
+def _stop_forwards() -> None:
+    for proc in _FORWARDS:
+        if proc.poll() is None:
+            proc.terminate()
+
+
+atexit.register(_stop_forwards)
 
 
 def _forward_ready(url: str, label: str, timeout: float) -> bool:
