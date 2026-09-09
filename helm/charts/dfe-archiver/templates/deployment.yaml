@@ -50,12 +50,11 @@ spec:
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- else }}
             # Receive on the scalo Push listener the Service fronts instead of a
-            # landing topic. Rendered on the direct transport ONLY, which
-            # apps.yaml refuses for this app until the listener ships -- so the
-            # dial exists for that release without an env nothing reads today.
+            # landing topic. Single underscore: this app reads its own flat-env
+            # contract, not figment's nested cascade.
             - name: ARCHIVER_TRANSPORT
               value: "grpc"
-            - name: ARCHIVER_GRPC__LISTEN
+            - name: ARCHIVER_GRPC_LISTEN
               value: {{ printf "0.0.0.0:%v" (include "dfe-common.pushPort" .) | quote }}
             {{- end }}
             {{- with .Values.s3.endpoint }}

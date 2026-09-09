@@ -75,4 +75,4 @@ contract before it is true.
 
 Prerequisites the suite assumes (the deploy provides them): an auth-mode
 hyperdx seeded via DEFAULT_CONNECTIONS/DEFAULT_SOURCES, and the demo rows in
-`dfe.default` (3 nerk, 2 acme).
+`dfe.main` (3 nerk, 2 acme).

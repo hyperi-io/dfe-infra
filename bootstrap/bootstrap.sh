@@ -660,7 +660,7 @@ echo "=========================================="
 #   integration -- readiness proves pods are Ready; THIS proves the two DEFAULT
 #                  ingest pipelines are actually STREAMING DATA end to end:
 #                  (1) infra self-telemetry OTel -> HyperDX -> ClickHouse,
-#                  (2) receiver -> [kafka default_land ->] loader -> dfe.default.
+#                  (2) receiver -> [kafka main_land ->] loader -> dfe.main.
 #                  "The service is up so it must be working" is the trap this closes.
 # Choosing a lighter POST is legitimate (a preview, or a stand-up that runs the
 # POST separately) -- but whatever we do not run we say we did NOT verify, so a
@@ -723,3 +723,12 @@ fi
 echo ""
 "${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${DFE_ACCESS_OUT:-dfe-access.md}" || \
   echo "  (access-summary skipped -- run bootstrap/access-summary.sh manually)"
+
+# The launcher's own copy: the two minted passwords in plaintext, 0600, on the
+# machine that ran the deploy. The summary above gives fetch commands, which
+# need a cluster login the operator does not have yet.
+echo ""
+python3 "$(cd "${SCRIPT_DIR}/.." && pwd)/scripts/dfe-ops" access-summary \
+  --out "${DFE_ACCESS_SUMMARY_OUT:-.tmp/access-summary.md}" \
+  --namespace "${DFE_NAMESPACE:-}" || \
+  echo "  (login summary skipped -- run scripts/dfe-ops access-summary manually)"

@@ -34,11 +34,13 @@ kafka:
 
 # Archive destination. Both keys are rendered as env (S3_ENDPOINT / S3_BUCKET,
 # the archiver's flat-env contract) and env BEATS the config file, so a value set
-# here overrides whatever the engine's overlay authored. Empty endpoint = the
-# provider's own default, and the env is omitted rather than sent blank.
+# here would override whatever the engine's overlay authored. Both are EMPTY for
+# that reason -- the engine is the config authority, and a chart default here is
+# an override nobody asked for. Empty is omitted rather than sent blank, so a
+# deployment that sets one in its own values still wins.
 s3:
   endpoint: ""
-  bucket: dfe-archive
+  bucket: ""
   secretName: dfe-archiver-s3
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS

@@ -24,17 +24,29 @@
 #   Whether the app carries CPU, memory and KEDA dials at all. Those dials are
 #   reported unsupported off Kubernetes regardless, since Compose has no KEDA.
 #
-# optional
-#   Whether a deployment runs without this app. An optional app is absent until
-#   an operator enables it, which is a values file appearing in the deploy repo
-#   -- the same mechanism that deploys every other app, so nothing else gates
-#   it. Defaults to false: the core data path is not optional.
-#
 # profiles
-#   The deployment profiles this app is OFFERED in, for the console to list.
-#   Absent means every profile. It is an offer, not a gate: a profile is a set
-#   of values in the cascade rather than a name a chart can read, so the deploy
-#   repo remains the only thing that decides what is deployed.
+#   The deployment profiles this app MAY be deployed in. Absent means every
+#   profile. It is an offer, not a gate: a profile is a set of values in the
+#   cascade rather than a name a chart can read, so the deploy repo remains the
+#   only thing that decides what is deployed. The six names are the ones
+#   scripts/profiles.py declares -- four Kubernetes tiers and two Compose ones,
+#   because an app can be default on a cluster and opt-in on a laptop.
+#
+# default_in
+#   The profiles this app IS deployed in when nobody says otherwise -- the
+#   DEFAULT COMPOSITION, and the only place it is written down. Absent means
+#   the same set as `profiles`; an empty list means the app is deployed on
+#   demand and never seeded. scripts/composition.py derives the seeded app set
+#   for each profile from this, so adding an app to the default path is an edit
+#   HERE rather than a hand-composed list per tier.
+#
+# idle_when
+#   The config dot-paths whose emptiness means the app has NO WORK. It declares
+#   what unconfigured looks like, for the engine, the charts, the docs and
+#   `dfe-ops acceptance` -- the Rust apps never read this file, they carry the
+#   same predicate in their own `work_state`. An app listed here starts, stays
+#   Ready and idles rather than refusing to boot, so it can be deployed before
+#   anything has given it work. Absent means the app always has work.
 #
 # transports
 #   Which transports the app can carry a source's records on. Defaults to [bus]
@@ -100,6 +112,23 @@
 #   The source families the app can fetch natively. The engine validates a
 #   source's declared fetcher.source_type against this allow-list, so a family
 #   the app cannot fetch is refused at the API rather than at the pod.
+#
+# catalogue_packages
+#   family -> the source-catalogue packages that family polls, for the families
+#   whose name and the catalogue's name for the same vendor differ. An exact
+#   name match needs no entry, so this is the exceptions list and never a second
+#   copy of source_types. Every key must be one of the app's own source_types.
+#
+# catalogue
+#   Present when the app SHIPS a catalogue of sources it already handles, which
+#   the engine offers through the API so a source can be created from an entry
+#   rather than typed. The file is the app's, so its conventions are declared
+#   here rather than known by the engine. Fields:
+#     file             filename the app publishes the catalogue under; a mounted
+#                      copy is matched to its owning app by this name
+#     entries_key      top-level key in that file holding the entries
+#     variant_pattern  how an entry becomes transform.variant, with {entry} and
+#                      {transform} substituted
 #
 # source_binding
 #   Present when an instance of this app IS a DFE source's processing step, which
@@ -168,14 +197,28 @@ apps:
       compiler: loader
       values_paths:
         routing: config.routing
+    # No idle_when: a bound listener always has work, and on the bus an empty
+    # topic list is auto-discovery, so a topic appearing gives the loader work
+    # with no config change for the gate to wake on.
 
-  # Reads the LANDING topic, so it keeps the record as it arrived and has
-  # nothing to read on a deployment with no bus.
+  # Keeps the record as it arrived: on the bus it reads the LANDING topics
+  # (discovered, so a source added later is archived without a restart), and on
+  # the direct transport the sender fans the record out to it beside the loader.
   dfe-archiver:
     multiplicity: single
     scale_deployed: true
-    transports: [bus]
+    transports: [bus, direct]
+    endpoints:
+      push: {port: 6000}
     hot_reload: false
+    # Deployed everywhere by default and idle until an operator names a
+    # destination, rather than absent until someone remembers to add it. The
+    # topic pair is one condition: on the bus, neither an explicit list nor a
+    # discovery pattern means nothing to read.
+    idle_when:
+      - config.archive.destination
+      - config.kafka.topics
+      - config.kafka.topic_include
 
   # A fetcher deployment is 1:1 with one source's fetcher config, so many run side
   # by side, each with its own dedicated settings. It polls its upstream rather
@@ -184,6 +227,16 @@ apps:
     multiplicity: per_config
     scale_deployed: false
     transports: [bus, direct]
+    # One instance per fetcher source, written by the engine when the source is
+    # written, so no profile seeds one.
+    default_in: []
+    # Anything that can produce a record is work. The ingest listener defaults
+    # ON, so a deployment wanting the gate to turn on sources alone sets
+    # config.ingest.enabled false.
+    idle_when:
+      - config.sources
+      - config.extractors.containers
+      - config.ingest.enabled
     # A per-source filter and the scheduler intervals are re-read in place; the
     # rest of the stanza binds a connection, a topic or the concurrency
     # semaphore, all established once at startup (its config.example.yaml).
@@ -222,6 +275,16 @@ apps:
       - go_modules
       - gcp_pubsub
       - object_store
+    # Where a family and a source catalogue spell the same vendor apart. Each
+    # pairing is the same product under two names, taken from the fetcher's own
+    # docs/capability-catalog.yaml description; a package whose family only
+    # looks similar is deliberately left out, because offering it would compile
+    # a fetcher stanza that cannot poll the source.
+    catalogue_packages:
+      onepassword: [1password]
+      duo: [cisco_duo]
+      go_modules: [golang]
+      m365: [o365]
 
   # Compiles every .vrl in its transforms directory into one program at startup
   # and holds it immutable for the process lifetime, so an edit needs a roll.
@@ -234,6 +297,9 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: false
+    # A transform instance IS a source's processing step, so it arrives with the
+    # source rather than with the profile.
+    default_in: []
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
       config.source.topics: ["{source}_land"]
@@ -273,6 +339,7 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: true
+    default_in: []
     # This app derives topics and consumer group from its own dfe_source field.
     source_binding:
       config.dfe_source: "{source}"
@@ -309,10 +376,20 @@ apps:
     transports: [bus]
     # endpoints:
     #   push: {port: 6000}          # dfe-transform-elastic#19
+    # Default composition waits on the published image
+    # (dfe-transform-elastic#17); until then a deployment adds it by hand.
+    # default_in: [single, scale, docker-single]   # dfe-transform-elastic#17
     # Its batch size and scaling section take effect on the next batch.
     hot_reload: true
+    default_in: []
     # It ships a catalogue of compiled-in transforms and selects one by name.
     variant_path: config.source.name
+    # The catalogue reaches a deployment as a release asset from that repo
+    # (dfe-transform-elastic#18), mounted where DFE_SOURCE_CATALOGUE_FILE says.
+    catalogue:
+      file: sources.yaml
+      entries_key: sources
+      variant_pattern: "filebeat.{entry}.{transform}"
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
@@ -332,8 +409,32 @@ apps:
   culvert:
     multiplicity: single
     scale_deployed: false
-    optional: true
     profiles: [scale, scale-mesh]
+    default_in: []
+    transports: []
+    hot_reload: false
+
+  # The config control plane and the console. They carry no records, so they
+  # have no transport, no source binding and no routing to compile -- but they
+  # are deployed apps with a values file like every other, and the default
+  # composition has to be able to name them.
+  dfe-engine:
+    multiplicity: single
+    scale_deployed: true
+    transports: []
+    hot_reload: false
+
+  dfe-ui:
+    multiplicity: single
+    scale_deployed: true
+    transports: []
+    hot_reload: false
+
+  # The observability console dfe-ui embeds in an iframe. Deployed wherever the
+  # UI is, because the UI's observe pages are blank without it.
+  hyperdx:
+    multiplicity: single
+    scale_deployed: false
     transports: []
     hot_reload: false
 

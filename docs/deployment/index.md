@@ -46,11 +46,12 @@ deploy (no external git) the git host is `layer2-deploy-repo`'s own
 single-source Application, so the data-layer and platform Applications
 report ComparisonError until it is up and then converge.
 
-Tier composition (what each enables by default) is documented suite-side
-in dfe-engine `docs/deployment/index.md` - one home for that table. Kafka
-on tier `single` uses the non-operator single-broker KRaft path
+Kafka on tier `single` uses the non-operator single-broker KRaft path
 (`helm/charts/kafka`, `kafka.mode: single`); the Strimzi operator installs
 only on `scale` clusters (`layer-scale.yaml`).
+
+Which APPS a tier deploys is `apps.yaml`'s, not the profile file's --
+[composition.md](composition.md) has the table and the derivation.
 
 `scale-mesh` is `scale` without a broker: the stages hand records to each
 other over gRPC. That makes two things its own. `mesh.enabled` puts a
@@ -102,6 +103,19 @@ that first reconcile and held across the two renders after it. A deployment
 that cannot take even one invalidation sets `auth.jwtSecret` to the key it
 already has, which renders a plain Secret and no generator.
 
+## Upgrading onto the `main` landing table
+
+The landing table and the catch-all source are both named `main`. A deployment
+cut before that rename landed has a `default` table holding its rows, and
+nothing moves or drops it: the engine's DDL writer creates `main` alongside it,
+the receiver stamps an unmatched record `_source: main`, and the loader writes
+new records to `main`. Query the old table directly for anything older than the
+upgrade, and drop it once nothing needs it.
+
+The Kafka landing topic moves with the source name, from `default_land` to
+`main_land`. The kafka chart pre-creates the new one; the old topic keeps
+whatever it already holds until it is deleted.
+
 ## Version pins
 
 `versions.yaml` is the single source for chart, operator, and image
@@ -135,6 +149,9 @@ versionCheck:
 ## Related
 
 - [architecture.md](../architecture.md) - where this repo sits in the suite
+- [composition.md](composition.md) - which apps a profile deploys by default,
+  how apps.yaml's `default_in` reaches Argo and Compose, and what an app with
+  nothing to do does instead of crash-looping
 - [storage.md](storage.md) - the storage-deploy matrix: service x mode x
   storage model, with the status and evidence behind every cell
 - [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on,
