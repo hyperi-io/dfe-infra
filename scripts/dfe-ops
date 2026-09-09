@@ -2440,6 +2440,19 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  Dry run:    {'yes (no cluster changes)' if args.dry_run else 'no'}", file=sys.stderr)
     print("", file=sys.stderr)
 
+    # A bus profile takes the Kafka user's password from the secrets store, and
+    # on the OpenBao path ESO reaches the store only with the AppRole SecretID:
+    # without it the whole data plane sits in CreateContainerConfigError after a
+    # 25-minute readiness wait.
+    if profiles.has_kafka(args.mode) and env.get("DFE_VAULT_ADDR") and not env.get("DFE_VAULT_SECRET_ID"):
+        print(
+            f"  [FAIL] --mode {args.mode} runs a broker whose credential comes from the "
+            f"secrets store at {env['DFE_VAULT_ADDR']}, and DFE_VAULT_SECRET_ID (the ESO "
+            "AppRole SecretID) is unset: pass it in an --env-file or via --from-terraform",
+            file=sys.stderr,
+        )
+        return 1
+
     rc = _run_streaming(["bash", str(script)], env=env)
     if rc != 0:
         print(
