@@ -1,0 +1,67 @@
+# Profile: scale-mesh -- HA on the gRPC transport, NO Kafka; ClickHouse cluster,
+# KEDA autoscaling.
+# Merged after common.yaml + <cloud>.yaml (third in the valueFiles cascade).
+# Keys unknown to a given chart are ignored by Helm.
+
+# DFE service deployments.
+replicaCount: 2
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+keda:
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pressure:
+    targetValue: 70
+
+# ClickHouse -- operator cluster (own Keeper, ReplicatedMergeTree).
+# host MUST be overridden here: common.yaml defaults to the single-mode service
+# name, which does not exist in cluster mode (the operator owns the services and
+# emits ONLY a headless one -- confirmed live 2026-07-16, there is no non-headless
+# client service to prefer). Round-robin across the headless service is correct
+# because the engine senses the cluster and creates ReplicatedMergeTree ON
+# CLUSTER, so every node carries the table and the data replicates. It is NOT
+# safe with unreplicated tables - that silently splits rows across replicas.
+# Name follows the operator's convention: <clickhouse.name>-clickhouse-headless.
+# mode and storageModel are TIER DEFAULTS: the deploy repo's infra/ overlay is
+# layered after this file, so a deployer reaches external, cached-object or
+# tiered-block there. A deployer who moves mode must move host in the same overlay.
+clickhouse:
+  mode: cluster
+  host: "dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local"
+  replicas: 3
+  shardsCount: 1
+
+# CNPG -- HA.
+cluster:
+  instances: 3
+
+# Kafka -- DISABLED. scale-mesh uses gRPC transport (receiver -> loader direct).
+kafka:
+  mode: disabled
+
+# Kafbat -- not deployed (no Kafka to manage). Scoped under `kafbat:` so it gates
+# ONLY the kafbat chart; a bare top-level `enabled` would apply to every chart in
+# this cascade (this file is merged into every chart's values).
+kafbat:
+  enabled: false
+
+# Its HTTPRoute lives in the kafka namespace, which this profile never creates;
+# left on, envoy-gateway-config stays OutOfSync forever on
+# `namespaces "kafka" not found`. `routes:` is a key only that chart carries.
+routes:
+  kafbat:
+    enabled: false
+
+# Observability collection -- container-level kubelet series scale with the node
+# count here; measure before widening metricGroups. No broker to scrape.
+clusterTelemetry:
+  kubeletStats:
+    enabled: true
+  kafka:
+    enabled: false

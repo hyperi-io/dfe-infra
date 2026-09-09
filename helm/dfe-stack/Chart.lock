@@ -1,7 +1,7 @@
 dependencies:
 - name: network-policies
   repository: file://../charts/network-policies
-  version: 0.2.1
+  version: 0.3.0
 - name: envoy-gateway-config
   repository: file://../charts/envoy-gateway-config
   version: 0.1.1
@@ -10,13 +10,13 @@ dependencies:
   version: 0.1.0
 - name: clickhouse-cluster
   repository: file://../charts/clickhouse-cluster
-  version: 0.1.0
+  version: 0.2.0
 - name: ferretdb
   repository: file://../charts/ferretdb
   version: 0.2.0
 - name: kafka
   repository: file://../charts/kafka
-  version: 0.1.0
+  version: 0.2.0
 - name: kafbat
   repository: file://../charts/kafbat
   version: 0.1.1
@@ -28,7 +28,7 @@ dependencies:
   version: 0.1.0
 - name: links
   repository: file://../charts/links
-  version: 0.1.1
+  version: 0.1.2
 - name: forgejo
   repository: file://../charts/forgejo
   version: 0.1.0
@@ -43,9 +43,9 @@ dependencies:
   version: 0.1.0
 - name: dfe-loader
   repository: file://../charts/dfe-loader
-  version: 0.1.0
+  version: 0.1.1
 - name: hyperdx
   repository: file://../charts/hyperdx
   version: 0.2.0
-digest: sha256:b9ae07798994b7a4acb7a167c58b4e79331a1fae4a0f7992fb4d194a0c95dca5
-generated: "2026-08-27T18:19:01.804655613+10:00"
+digest: sha256:80e5a0d3811cfcc125679f6f505afb703c104777ea27b5f45677417f866b079c
+generated: "2026-09-09T10:04:15.100346065+10:00"

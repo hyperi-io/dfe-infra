@@ -131,6 +131,10 @@ versionCheck:
 - [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on,
   the private-CA IdP shape, and what Envoy Gateway cannot do with a groups claim
 - [rke2.md](rke2.md) - the default distribution
+- [DEPLOY-HELPERS.md](../DEPLOY-HELPERS.md) - the release and deploy-overlay
+  helpers, the logins a deploy carries, and the end-to-end recipe
+- [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) - which CA signs the gateway
+  certificate: the self-signed default, estate PKI, and trusting the root once
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
 - [clickhouse.md](clickhouse.md) - CH target matrix (official operator / ClickHouse Cloud / private-cloud swap; Altinity untested) + operator history
 - [deployment-logs/](deployment-logs/TEMPLATE.md) - record every deploy

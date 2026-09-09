@@ -28,11 +28,11 @@ import re
 import sys
 from pathlib import Path
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import suite_graph  # noqa: E402
-
-_failures = 0
 
 # The vocabulary the file documents and the tooling on both sides branches on.
 # A kind added to suite.yaml without a check on the hyperi-ai side is the
@@ -53,29 +53,14 @@ EDGE_KIND_NAMES = [
 RUNTIME_KIND_NAMES = ["content-provision", "http-api", "management-api"]
 
 
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
-
-
 def expect_raises(name: str, call, needle: str = "") -> None:
     """The reader must REFUSE a shape, naming it, rather than coerce a value."""
-    global _failures
     try:
         call()
     except ValueError as exc:
-        if needle and needle not in str(exc):
-            _failures += 1
-            print(f"FAIL  {name}  raised without {needle!r}: {exc}")
-        else:
-            print(f"PASS  {name}")
+        expect(name, not needle or needle in str(exc), f"raised without {needle!r}: {exc}")
         return
-    _failures += 1
-    print(f"FAIL  {name}  did not raise")
+    expect(name, False, "did not raise")
 
 
 SAMPLE = '''
@@ -454,20 +439,22 @@ def test_no_version_literal_in_the_live_file() -> None:
     expect("no version literal anywhere in the raw file", found == [], str(found[:5]))
 
 
+def main() -> int:
+    with standalone():
+        test_reader_shapes()
+        test_reader_refuses_what_pyyaml_would_read_differently()
+        test_validate_catches_the_obvious()
+        test_validate_negative_cases()
+        test_queries()
+        test_unknown_slice_names_what_exists()
+        test_mermaid_and_docs_render()
+        test_brand_palette()
+        test_contrast_on_both_canvases()
+        test_an_unmatched_marker_is_refused()
+        test_live_file()
+        test_no_version_literal_in_the_live_file()
+        return summary()
+
+
 if __name__ == "__main__":
-    test_reader_shapes()
-    test_reader_refuses_what_pyyaml_would_read_differently()
-    test_validate_catches_the_obvious()
-    test_validate_negative_cases()
-    test_queries()
-    test_unknown_slice_names_what_exists()
-    test_mermaid_and_docs_render()
-    test_brand_palette()
-    test_contrast_on_both_canvases()
-    test_an_unmatched_marker_is_refused()
-    test_live_file()
-    test_no_version_literal_in_the_live_file()
-    if _failures:
-        print(f"\n{_failures} failure(s)")
-        raise SystemExit(1)
-    print("\nall passed")
+    raise SystemExit(main())

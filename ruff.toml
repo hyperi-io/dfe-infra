@@ -37,6 +37,11 @@ ignore = [
     "N814",  # a deliberate short local alias for a long ruamel class
 ]
 
+[lint.isort]
+# _expect is the shared check helper sitting beside the tests that import it,
+# so it belongs in the first-party group rather than beside PyPI packages.
+known-first-party = ["_expect"]
+
 [lint.per-file-ignores]
 # Test helpers load the script under test by path, which needs the import
 # machinery rather than a module import.

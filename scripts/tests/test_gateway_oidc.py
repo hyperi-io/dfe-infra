@@ -29,6 +29,8 @@ from pathlib import Path
 
 import yaml
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 GATEWAY = CHARTS / "envoy-gateway-config"
@@ -49,17 +51,6 @@ PRIVATE_CA_PROVIDER = [
     "oidc.providers[0].backendRefs[0].port=5556",
     "oidc.providers[0].backendSettings.timeout.tcp.connectTimeout=10s",
 ]
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def render(chart: Path, *sets: str, values: Path | None = COMMON) -> list[dict]:
@@ -206,16 +197,16 @@ def test_external_dns_is_gated_on_a_declared_provider() -> None:
 
 
 def main() -> int:
-    test_issuer_only_stays_issuer_only()
-    test_private_ca_provider_skips_discovery()
-    test_private_ca_provider_keeps_the_token_exchange_in_cluster()
-    test_no_dead_oidc_switch_survives()
-    test_gateway_egress_names_the_listener_port()
-    test_gateway_egress_selects_the_proxy_pods()
-    test_gateway_egress_can_be_turned_off()
-    test_external_dns_is_gated_on_a_declared_provider()
-    print(f"\n{_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        test_issuer_only_stays_issuer_only()
+        test_private_ca_provider_skips_discovery()
+        test_private_ca_provider_keeps_the_token_exchange_in_cluster()
+        test_no_dead_oidc_switch_survives()
+        test_gateway_egress_names_the_listener_port()
+        test_gateway_egress_selects_the_proxy_pods()
+        test_gateway_egress_can_be_turned_off()
+        test_external_dns_is_gated_on_a_declared_provider()
+        return summary()
 
 
 if __name__ == "__main__":

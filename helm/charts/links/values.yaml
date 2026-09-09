@@ -47,6 +47,12 @@ domain: ""
 # (argocd/values/common.yaml) -- never redefined here.
 hostnames: {}
 
+# Read-only here: the same kafka.mode every other chart branches on, so the page
+# lists Kafbat only where a broker is deployed. The profile cascade supplies it
+# (the umbrella maps it under `links:`); disabled matches the brokerless default.
+kafka:
+  mode: disabled
+
 # The page content. The chart renders a DEFAULT page covering every standard
 # stack surface: gateway https URLs derived from `domain` + `hostnames` when
 # a domain is set, else the localhost port-forward layout (true on any

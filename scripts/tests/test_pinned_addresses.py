@@ -30,6 +30,8 @@ from pathlib import Path
 
 import yaml
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 GATEWAY = CHARTS / "envoy-gateway-config"
@@ -44,17 +46,6 @@ _spec = importlib.util.spec_from_loader("dfeops", _loader)
 dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops"] = dfeops
 _loader.exec_module(dfeops)
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def render(chart: Path, *sets: str) -> list[dict]:
@@ -253,6 +244,7 @@ def test_the_tester_idp_registers_every_profile_hostname() -> None:
                "https://dfe.slim.dfe.example.com/api/v1/auth/oidc/dex/callback",
                "https://dfe.single.dfe.example.com/api/v1/auth/oidc/dex/callback",
                "https://dfe.scale.dfe.example.com/api/v1/auth/oidc/dex/callback",
+               "https://dfe.scale-mesh.dfe.example.com/api/v1/auth/oidc/dex/callback",
            ], f"got {uris}")
 
     plain = tester_idp.default_redirect_uris(
@@ -280,26 +272,26 @@ def test_the_idp_cli_still_parses() -> None:
 
 
 def main() -> int:
-    test_an_unset_gateway_address_leaves_the_pool_to_choose()
-    test_a_set_gateway_address_reaches_the_generated_service()
-    test_the_address_is_not_pinned_on_a_service_that_has_none()
-    test_the_address_does_not_displace_the_other_lb_fields()
-    test_an_unset_receiver_address_leaves_the_pool_to_choose()
-    test_a_set_receiver_address_reaches_the_public_service()
-    test_the_udp_door_takes_its_own_address()
-    test_an_internal_receiver_renders_no_public_service_at_all()
-    test_the_cluster_secret_carries_both_addresses()
-    test_the_appsets_pass_the_addresses_to_the_charts()
-    test_the_env_contract_documents_the_new_keys()
-    test_a_base_domain_is_tagged_with_the_profile()
-    test_an_explicit_domain_wins()
-    test_no_base_domain_derives_nothing()
-    test_a_modeless_run_derives_nothing()
-    test_bootstrap_derives_the_same_domain_without_the_driver()
-    test_the_tester_idp_registers_every_profile_hostname()
-    test_the_idp_cli_still_parses()
-    print(f"\n{_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        test_an_unset_gateway_address_leaves_the_pool_to_choose()
+        test_a_set_gateway_address_reaches_the_generated_service()
+        test_the_address_is_not_pinned_on_a_service_that_has_none()
+        test_the_address_does_not_displace_the_other_lb_fields()
+        test_an_unset_receiver_address_leaves_the_pool_to_choose()
+        test_a_set_receiver_address_reaches_the_public_service()
+        test_the_udp_door_takes_its_own_address()
+        test_an_internal_receiver_renders_no_public_service_at_all()
+        test_the_cluster_secret_carries_both_addresses()
+        test_the_appsets_pass_the_addresses_to_the_charts()
+        test_the_env_contract_documents_the_new_keys()
+        test_a_base_domain_is_tagged_with_the_profile()
+        test_an_explicit_domain_wins()
+        test_no_base_domain_derives_nothing()
+        test_a_modeless_run_derives_nothing()
+        test_bootstrap_derives_the_same_domain_without_the_driver()
+        test_the_tester_idp_registers_every_profile_hostname()
+        test_the_idp_cli_still_parses()
+        return summary()
 
 
 if __name__ == "__main__":

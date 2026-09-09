@@ -1,8 +1,8 @@
 # Release + deploy helpers
 
-Two scripts drive a DFE app from a pushed branch to a digest-pinned deploy on
-the devex k8s cluster. Both wrap their `git`/`gh`/`kubectl` calls inside a
-single `python3` process so an unattended (AFK) run does not stall.
+Two scripts drive a DFE app from a pushed branch to a digest-pinned deploy on a
+target k8s cluster. Both wrap their `git`/`gh`/`kubectl` calls inside a single
+`python3` process so an unattended (AFK) run does not stall.
 
 ## Why wrap in python3 (the AFK note)
 
@@ -15,21 +15,29 @@ around operations that would otherwise prompt.
 
 ## scripts/dfe-release.py -- scoped GHCR release driver
 
-Opens/merges the PR, dispatches the CI release, waits for it, and resolves the
-published image digest. `--repo` is checked against a fixed allowlist of
-hyperi-io DFE app repos (dfe-engine, dfe-ui, dfe-hyperdx, and the six Rust
-fleet apps: dfe-receiver, dfe-loader, dfe-archiver, dfe-fetcher,
-dfe-transform-vrl, dfe-transform-vector). It cannot touch another org, delete a
-repo, or change settings.
+`--repo` is checked against a fixed allowlist of hyperi-io DFE app repos
+(dfe-engine, dfe-ui, dfe-hyperdx, and the six Rust fleet apps: dfe-receiver,
+dfe-loader, dfe-archiver, dfe-fetcher, dfe-transform-vrl,
+dfe-transform-vector). It cannot touch another org, delete a repo, or change
+settings.
 
 | Subcommand | What it does |
 |---|---|
 | `open --repo <r> --head <branch> --title <t> --body-file <f>` | Create the PR for a pushed branch; prints the PR number. Idempotent -- prints the existing PR if one is already open. `--base` defaults to `main`. |
 | `merge --repo <r> --pr <n> [--admin] [--delete-branch]` | Merge to main with `--merge`, preserving the typed feat/fix commits so semantic-release sees them. `--admin` bypasses required checks on an authorised run. |
 | `merge ... --publish [--subject <s>] [--note <n>]` | Squash-merge instead, stamping `Publish: true` on the squash message so the merge itself releases -- no separate `dispatch`. The squash subject is what `check-commits` validates on main, so its description must start lowercase; `--subject` overrides the PR title when it does not. |
-| `dispatch --repo <r> [--workflow CI] [--ref main]` | Trigger the CI workflow with `from-head=true`, which runs semantic-release plus the GHCR image build/publish. |
+| `dispatch --repo <r> [--workflow CI] [--ref main]` | Trigger the CI workflow with `from-head=true`, which runs semantic-release plus the GHCR image build/publish. It releases from head, so it skips the commit-message gate. |
 | `wait --repo <r> [--workflow CI] [--interval 20] [--timeout 1800]` | Poll the latest CI run to completion; prints its conclusion. Long-running -- run it backgrounded. |
 | `digest --repo <r> --version <v>` | Resolve the sha256 digest GHCR published for a version tag, via `gh api /orgs/hyperi-io/packages/container/<r>/versions`. |
+| `ship --repo <r> --branch <b> --title <t> [--publish] [--body-file <f>]` | The whole chain: open/reuse the PR, merge, wait for CI, resolve the digest. Prints `SHIPPED <repo> <tag> <digest>`, progress on stderr. Long-running, like `wait`. |
+
+The GHCR reads need a `read:packages` token, which `gh login` usually lacks.
+`--env-file PATH` (repeatable, later wins) takes it from a flat KEY=VALUE file's
+`GHCR_TOKEN` or `GH_TOKEN` -- ambient `GH_TOKEN` wins, and the value is never
+printed. It precedes the subcommand; `dfe-stack` takes it too:
+
+    python3 scripts/dfe-release.py --env-file bootstrap/.env digest --repo <r> --version <v>
+    python3 scripts/dfe-stack --env-file bootstrap/.env verify
 
 ## scripts/dfe-ops deploy-values -- deploy-repo overlay CRUD
 
@@ -119,111 +127,21 @@ on `/login` whose log line is `certificate verify failed`.
 ## Trusting the DFE certificate
 
 Which CA signed the gateway's `*.<domain>` certificate is a per-deployment
-choice, and the two modes ask different things of a developer box. One command
-says which is live, and the readiness gate and access summary print it too:
-
-    python3 scripts/dfe-ops ca --status --kubeconfig .tmp/kubeconfig-dfe-b
-
-### Self-signed mode (the product default)
-
-`tls.issuerName: dfe-internal-ca` -- cert-manager mints a `CN=dfe-internal-ca`
-root (ECDSA P-384, ten years) and its ClusterIssuer signs the edge wildcard. No
-DNS-01, no external credential, and it works on a split-horizon name public ACME
-cannot validate. The cost is trust: a browser warns, and the HyperDX iframe
-fails outright because it cannot show the interstitial. Trust the root once:
-
-    python3 scripts/dfe-ops ca             # the PEM plus the install lines
-    python3 scripts/dfe-ops ca --install   # writes the file, does the non-root half
-
-`--install` writes `.tmp/dfe-internal-ca.crt` and branches on
-`platform.system()`. On Linux it adds the certificate to the Chromium-family NSS
-store at `~/.pki/nssdb` (Brave and Chrome read that, not the system store; needs
-`libnss3-tools`) and prints `sudo cp <file>
-/usr/local/share/ca-certificates/` plus `sudo update-ca-certificates`. On macOS
-Chrome and Safari read the system keychain, so nothing runs without root and the
-one line printed is `sudo security add-trusted-cert -d -r trustRoot -k
-/Library/Keychains/System.keychain <file>`. Plain `dfe-ops ca` prints both.
-
-**The root PERSISTS across a rebuild** (#238), so that trust is a one-off. The
-gateway chart pushes the minted root to the deployment's secret store once
-(`PushSecret`, `updatePolicy: IfNotExists`) and restores it before cert-manager
-can mint (`ExternalSecret`, `refreshPolicy: CreatedOnce`); bootstrap.sh renders
-that same pair ahead of Argo, so the restore is ordered before the Certificate
-rather than racing it. The root is reused; the leaf lifetimes rotate.
-
-| Setting | Where | Effect |
-|---|---|---|
-| `tls.internalCA.persist.enabled` | gateway chart values | **Off by default.** An ExternalSecret against a store the deployment does not have is Degraded forever, which fails the Argo sync of a working deploy. Turn it on where there is a store. |
-| `tls.internalCA.persist.secretStoreName` | gateway chart values | The store both halves use (default `dfe-secret-store`); empty renders neither. |
-| `DFE_CA_PERSIST` | bootstrap env | Whether bootstrap pre-applies the restore. Defaults on when `DFE_VAULT_SECRET_ID` is set. |
-| `DFE_CA_RESTORE_TIMEOUT` | bootstrap env | Seconds to wait for the restore (default 60). A first bootstrap times out by design. |
-
-The store path is `<project>/<env>/pki/internal-ca`, properties `tls_crt` and
-`tls_key` -- underscored, because the Vault provider reads a property as a gjson
-path and a dot means nesting.
-
-### Estate-PKI mode (`tls.vault`)
-
-In an estate that already runs a PKI, point the edge issuer at it and every
-client trusts the certificate already -- nothing to install, no root to persist.
-Set it in the deploy repo's own overlay (`infra/envoy-gateway-config.yaml`),
-never in a tracked dfe-infra values file:
-
-```yaml
-tls:
-  issuerName: dfe-estate-pki
-  vault:
-    server: https://vault.example.com:8200
-    path: pki_tls/sign/<role>          # the sign role the AppRole policy grants
-    caBundle: <base64 PEM chain that verifies the server's own TLS>
-    appRole:
-      roleId: <the cert-manager AppRole role_id>
-```
-
-Bootstrap seeds the AppRole SecretID from `DFE_CERTMANAGER_SECRET_ID` into
-Secret `cert-manager-approle` (key `secretId`), namespace `cert-manager`. The
-sign role must allow the deployment's wildcard and match `tls.privateKey` (ECDSA
-P-384 by default). `tls.acme.email` and `tls.vault.server` are exclusive; the
-chart fails the render on both.
-
-Three things about the values that are easy to get wrong:
-
-- `issuerName` must NOT be `tls.internalCA.issuerName` -- that name already
-  belongs to the internal mesh CA's ClusterIssuer, and `dfe-ops ca --status`
-  reads the wildcard's `issuerRef` against it to decide the mode.
-- `caBundle` is the chain that verifies the PKI SERVER's own HTTPS, not the CA
-  the PKI issues from. Take it off the handshake:
-  `openssl s_client -connect <host>:<port> -showcerts`, keep every certificate
-  after the leaf, base64 the concatenation onto one line.
-- Nothing needs deleting to flip an existing deployment. The gateway-shim owns
-  the `dfe-wildcard-tls` Certificate, so changing `tls.issuerName` rewrites its
-  `issuerRef` and cert-manager re-issues in place; the new leaf's `notBefore`
-  is the proof it went round again.
-
-Vault signs from the CSR's SANs, so the leaf carries an empty subject and a
-critical `subjectAltName`. That is correct, not a truncated certificate.
+choice. [DEPLOY-TLS-TRUST.md](DEPLOY-TLS-TRUST.md) covers both modes -- the
+self-signed default and estate PKI -- and what each asks of a developer box.
 
 ## The end-to-end release + deploy recipe
 
 Ordered. The clean end state is a GHCR digest-pinned deploy -- never a `:dev`
 tag.
 
-1. Push the branch with typed commits, then release it:
+1. Push the branch with typed commits, then ship it:
 
-       python3 scripts/dfe-release.py open --repo <r> --head <branch> --title <t> --body-file <f>
-       python3 scripts/dfe-release.py merge --repo <r> --pr <n> --publish --delete-branch
+       python3 scripts/dfe-release.py ship --repo <r> --branch <b> --title <t> --publish --body-file <f>
 
-   `--publish` lands and ships in one step. Without it, merge and then dispatch
-   separately -- which is also the recovery path when a squash message fails the
-   commit-message gate, since `dispatch` releases from head and skips it:
-
-       python3 scripts/dfe-release.py merge --repo <r> --pr <n> --admin --delete-branch
-       python3 scripts/dfe-release.py dispatch --repo <r>
-
-   Then wait for CI (backgrounded -- it is long-running), and resolve the digest:
-
-       python3 scripts/dfe-release.py wait --repo <r>
-       python3 scripts/dfe-release.py digest --repo <r> --version <v>
+   Exit 3 means a publish is in flight on main for that repo -- merging now
+   would cancel it, so wait and re-run. Recover a failed gate with `merge
+   --admin` then `dispatch`.
 
 2. Point the overlay at the new release. Port-forward forgejo to
    `localhost:13000` first, then:
