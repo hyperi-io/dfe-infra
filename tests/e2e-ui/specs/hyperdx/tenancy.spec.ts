@@ -8,7 +8,7 @@
 // The browser-level half of the tenancy proof: the seeded "nerk events" source
 // renders exactly the nerk rows, "acme events" exactly the acme rows. Requires
 // an auth-mode hyperdx seeded via DEFAULT_CONNECTIONS/DEFAULT_SOURCES and the
-// 3+2 demo rows in dfe.default.
+// 3+2 demo rows in dfe.main.
 //
 // Sources are resolved to ids via the API and selected by URL: driving the
 // picker resets the time window to Live Tail, which hides seeded rows.

@@ -660,7 +660,7 @@ echo "=========================================="
 #   integration -- readiness proves pods are Ready; THIS proves the two DEFAULT
 #                  ingest pipelines are actually STREAMING DATA end to end:
 #                  (1) infra self-telemetry OTel -> HyperDX -> ClickHouse,
-#                  (2) receiver -> [kafka default_land ->] loader -> dfe.default.
+#                  (2) receiver -> [kafka main_land ->] loader -> dfe.main.
 #                  "The service is up so it must be working" is the trap this closes.
 # Choosing a lighter POST is legitimate (a preview, or a stand-up that runs the
 # POST separately) -- but whatever we do not run we say we did NOT verify, so a
