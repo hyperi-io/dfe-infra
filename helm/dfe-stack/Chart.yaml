@@ -21,9 +21,8 @@ appVersion: "2.2.0-rc.12"
 # backing-service connections, which is what the waves ordered.
 #
 # Deliberately NOT dependencies (they are not in a slim deployment either):
-#   - dfe-archiver / dfe-fetcher / dfe-transform-* -- per-source, opt-in apps;
-#     the deploy repo enables them (see appsets/layer-scale.yaml header).
-#   - dfe-vpn -- separate workstream, not in the release set.
+#   - dfe-archiver / dfe-fetcher / dfe-transform-* / culvert -- per-source or
+#     opt-in apps; the deploy repo enables them (appsets/layer-scale.yaml).
 #   - argocd / keda / metrics-server / reloader / external-dns / the operators
 #     -- cluster addons the bootstrap or layer1-addons installs; the trial
 #     needs only the prerequisites named in README.md.

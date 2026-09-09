@@ -541,12 +541,10 @@ nodes:
       - kind: container
         registry: ghcr
         public: true
-    # The optional VPN. The only member with a PUBLIC container, and the only
-    # member with no tie to dfe-infra at all: no chart, no pin, no reference
-    # anywhere in the deployment layer. Its single suite edge is the scalo-py
-    # dependency. Membership is declared, not shown by any manifest -- the
-    # dfe-vpn chart in this repo is NOT culvert's, so the advisory naming it
-    # is about a chart with no member, not about culvert.
+    # The optional edge-fleet VPN, and the only member with a PUBLIC container.
+    # It publishes no Helm chart, so helm/charts/culvert is dfe-infra's own --
+    # the same arrangement as every other app here -- and versions.yaml pins
+    # its image like any other. Its only suite edge is the scalo-py dependency.
     # Its in-repo marker states the numeric tier 4, which is the org
     # property's general-oss.
 
@@ -586,8 +584,6 @@ non_members:
   dfe-transform-wasm: "No release tag, so it fails the release-authority test above. Its chart and placeholder app pin predate that test; it becomes a node when it first tags."
 
   dfe-transform-splack: "No release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
-
-  dfe-vpn: "The VPN chart, superseded by culvert. culvert is a member and this chart is not its chart, so the chart's own name has no member and never will."
 
 # ---------------------------------------------------------------------------
 # EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the

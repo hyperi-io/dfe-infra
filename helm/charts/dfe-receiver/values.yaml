@@ -72,11 +72,15 @@ listeners:
 #     path is an HTTPRoute (envoy-gateway-config, routes.receiver), so only the
 #     listener named http has one; any OTHER exposed listener has no path at all
 #     and the chart FAILS the render rather than accept it.
-#
-# A VPN INBOUND path (agents dialling in via the hyperi-vpn server, OpenVPN/
-# WireGuard) is a SEPARATE future addition -- intentionally NOT modelled here yet.
+#   vpn -- ClusterIP only, reached over the edge-fleet tunnel. Senders dial the
+#     VPN's LoadBalancer instead of the receiver's, so the receiver itself has
+#     no public address at all and EVERY exposed listener is reachable, not
+#     just http. The ingest NetworkPolicy then admits the VPN pods rather than
+#     the world. The tunnel is the culvert chart, which is opt-in per
+#     deployment: setting this mode without deploying it leaves the receiver
+#     with no external path at all.
 exposure:
-  mode: public                # public | internal
+  mode: public                # public | internal | vpn
   public:
     serviceType: LoadBalancer
     # The address the ingest door must answer on, when a DNS record already names
@@ -98,19 +102,25 @@ exposure:
     # The receiver's server.auth.mode defaults to none, so an empty list means
     # unauthenticated posts to /ingest from anywhere (docs/INGEST-EDGE.md).
     loadBalancerSourceRanges: []
+  # The tunnel that reaches this receiver in vpn mode.
+  vpn:
+    # Selector label of the VPN pods -- dfe-common.selectorLabels on the culvert
+    # chart, i.e. {project}-{component}.
+    podLabel: dfe-culvert
   # NetworkPolicy opening the exposed listener ports. The namespace baseline
   # (network-policies chart) admits only the gateway, KEDA, otel and the other
   # DFE namespaces, so external ingest is dropped without this even once the LB
-  # provisions. Renders in public mode only, and carries no client CIDRs --
-  # kube-proxy SNAT hides them, so the allow-list stays the LB's job.
+  # provisions. In public mode it carries no client CIDRs -- kube-proxy SNAT
+  # hides them, so the allow-list stays the LB's job; in vpn mode it names the
+  # tunnel pods, which is exact. Not rendered in internal mode: the baseline
+  # already admits the gateway.
   networkPolicy:
     enabled: true
 
 receiver:
-  # Bind on all pod interfaces. (Was 100.64.0.1 -- a CGNAT address that both
-  # contradicts the "100.64/10 is hyperi-vpn only" rule and cannot bind in a
-  # normal pod. The pod's network identity / exposure is handled by the Services
-  # + LBs above, not by binding a specific address.)
+  # Bind on all pod interfaces. Not a CGNAT address: 100.64/10 is reserved for
+  # VPN clients (argocd/values/common.yaml vpn.clientCIDR) and cannot bind in a
+  # normal pod anyway. The pod's exposure is the Services and LBs above.
   listenAddress: "0.0.0.0"
 
   # What the receiver holds while the next stage is not taking records. On the

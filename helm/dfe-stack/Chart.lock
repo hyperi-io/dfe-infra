@@ -48,4 +48,4 @@ dependencies:
   repository: file://../charts/hyperdx
   version: 0.2.0
 digest: sha256:63fccec536209a44f328844efbc53fbbf6da7b7b61c535e240b7ca591d2dbba0
-generated: "2026-09-09T14:41:19.807315641+10:00"
+generated: "2026-09-09T17:41:36.61027488+10:00"

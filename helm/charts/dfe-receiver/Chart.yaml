@@ -1,6 +1,6 @@
 apiVersion: v2
 name: dfe-receiver
-description: DFE Rust ingest service — listens on 100.64.x.x, Kafka producer
+description: DFE Rust ingest service -- the stack's one external door, Kafka producer
 type: application
 version: 0.3.0
 appVersion: "v1.15.27"   # == versions.yaml apps.dfe-receiver (drift-checked)

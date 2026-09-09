@@ -29,6 +29,14 @@ operatorNamespaces:
   strimzi: strimzi
   clickhouse: clickhouse-operator-system
 
+# Pod label that takes a workload OUT of the namespace-wide egress baseline.
+# NetworkPolicies are additive: a pod the baseline selects can always reach the
+# whole namespace, and nothing added later narrows that. A workload whose
+# egress must be narrower carries this label and its own chart then states its
+# WHOLE egress surface -- DNS and telemetry included, because it has no
+# baseline left. Set it empty to select every pod as before.
+egressScopedLabel: dfe.hyperi.io/egress-scoped
+
 # Envoy Gateway namespace (source of ingress traffic)
 gatewayNamespace: envoy-gateway-system
 
