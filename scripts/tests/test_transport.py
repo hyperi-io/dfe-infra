@@ -73,7 +73,22 @@ def docs(text: str) -> list[dict]:
     return [d for d in yaml.safe_load_all(text) if d]
 
 
+def build_harness_deps() -> None:
+    # The harness vendors dfe-common under charts/, which is not committed.
+    if (LIBRARY_HARNESS / "charts").is_dir():
+        return
+    out = subprocess.run(
+        ["helm", "dependency", "build", str(LIBRARY_HARNESS)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"helm dependency build failed for the harness:\n{out.stderr}")
+
+
 def harness(*args: str) -> dict:
+    build_harness_deps()
     text = render(LIBRARY_HARNESS, "lt", *args)
     for doc in docs(text):
         if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"].endswith("-transport"):
