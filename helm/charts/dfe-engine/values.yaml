@@ -27,11 +27,15 @@ replicaCount: 1
 # guess.
 stackVersion: ""
 
-# The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set;
-# this chart has no broker settings of its own, and dfe-common.transport reads a
-# missing map as the bus default.
+# The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
+# and dfe-common.transport reads a missing map as the bus default. On the bus
+# the engine creates each source's _land/_load topics, so it needs the broker
+# address and the same SASL credential the data-plane apps use.
 kafka:
   mode: ""
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+  provider: ""
 
 service:
   type: ClusterIP

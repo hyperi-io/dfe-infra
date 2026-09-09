@@ -2713,9 +2713,9 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--stack", default="", help="versions.yaml stack version to deploy/validate (default: its `current` pointer)")
     sd.add_argument(
         "--mode",
-        required=True,
+        default=DEFAULT_MODE,
         choices=list(MODES),
-        help="deploy profile -- "
+        help=f"deploy profile (default: {DEFAULT_MODE}) -- "
         + "; ".join(f"{m}: {p.description}" for m, p in profiles.PROFILES.items()),
     )
     sd.add_argument(

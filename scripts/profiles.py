@@ -161,7 +161,10 @@ MODES: tuple[str, ...] = tuple(name for name, p in PROFILES.items() if p.platfor
 """The Kubernetes deploy modes -- what `dfe-ops --mode` and DFE_PROFILE accept."""
 
 DEFAULT_MODE = "scale"
-"""The mode a test cycle or a capacity check runs when none is named: the HA tier on the bus. A deploy names its mode."""
+"""The mode a Kubernetes deploy, cycle or check runs when none is named: the HA tier on the bus."""
+
+DEFAULT_COMPOSE_MODE = "docker-slim"
+"""The profile a Compose deploy runs when none is named: dfe-docker's service_profiles.yaml active_profile mirrors it."""
 
 COMPOSE_MODES: tuple[str, ...] = tuple(
     name for name, p in PROFILES.items() if p.platform == COMPOSE

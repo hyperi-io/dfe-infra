@@ -150,6 +150,29 @@ spec:
               value: {{ include "dfe-common.transport" . | quote }}
             - name: DFE_TRANSPORT_BUS_PRESENT
               value: {{ ternary "true" "false" (eq (include "dfe-common.transport" .) "bus") | quote }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
+            # On the bus the engine creates each source's _land/_load topics, so
+            # it dials the broker with the same SASL user the data plane uses
+            # (settings.py: DFE_KAFKA_*; the provider derives the mechanism).
+            - name: DFE_KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- if .Values.kafka.provider }}
+            - name: DFE_KAFKA_PROVIDER
+              value: {{ .Values.kafka.provider | quote }}
+            {{- end }}
+            {{- if .Values.kafka.saslSecretName }}
+            - name: DFE_KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            {{- end }}
+            {{- end }}
             # Whether the stage pools sit behind a listener here, and where that
             # listener lives. The engine compiles a sender's destination, so it
             # has to address the pool the same way the charts front it -- the

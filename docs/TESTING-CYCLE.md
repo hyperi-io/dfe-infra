@@ -14,10 +14,16 @@ flowchart LR
     DS -.->|"repeat per change"| CC
 ```
 
-One command runs the whole loop:
+One command runs the whole loop (the mode defaults to `scale`, the tier a
+Kubernetes deploy also defaults to; a Compose deploy defaults to `slim`):
 
     python3 scripts/dfe-ops cycle --mode single \
         --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
+
+The DFE deployment on a dev/test cluster is ephemeral by design: create it,
+test it, destroy it, redeploy it in another mode, without asking anyone. The one
+exception is a resident reference deployment (ghostburner), which is pinned to a
+version and updated only explicitly after an extended stable-release period.
 
 Each stage self-executes as its own `dfe-ops` subcommand (`capacity-check`,
 `preflight`, `stack-deploy`, `verify`, `teardown`), so the cycle and the hand-run commands

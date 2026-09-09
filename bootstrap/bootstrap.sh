@@ -20,7 +20,7 @@
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
-#   DFE_PROFILE              slim | single | scale | scale-mesh
+#   DFE_PROFILE              slim | single | scale | scale-mesh (default: scale)
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
 #   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
@@ -186,7 +186,9 @@ fi
 echo "Default retention: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS} day(s) for every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)"
 # One cluster runs one profile at a time, so the profile tags the domain and no
 # two deployments publish the same hostname. An explicit DFE_DOMAIN wins.
-if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" && -n "${DFE_PROFILE:-}" ]]; then
+# A Kubernetes deploy that names no profile gets the HA tier on the bus.
+export DFE_PROFILE="${DFE_PROFILE:-scale}"
+if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" ]]; then
   export DFE_DOMAIN="${DFE_PROFILE}.${DFE_BASE_DOMAIN}"
   echo "Domain derived from DFE_BASE_DOMAIN: ${DFE_DOMAIN}"
 fi
