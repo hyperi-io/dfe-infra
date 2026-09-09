@@ -103,6 +103,19 @@ that first reconcile and held across the two renders after it. A deployment
 that cannot take even one invalidation sets `auth.jwtSecret` to the key it
 already has, which renders a plain Secret and no generator.
 
+## Upgrading onto the `main` landing table
+
+The landing table and the catch-all source are both named `main`. A deployment
+cut before that rename landed has a `default` table holding its rows, and
+nothing moves or drops it: the engine's DDL writer creates `main` alongside it,
+the receiver stamps an unmatched record `_source: main`, and the loader writes
+new records to `main`. Query the old table directly for anything older than the
+upgrade, and drop it once nothing needs it.
+
+The Kafka landing topic moves with the source name, from `default_land` to
+`main_land`. The kafka chart pre-creates the new one; the old topic keeps
+whatever it already holds until it is deleted.
+
 ## Version pins
 
 `versions.yaml` is the single source for chart, operator, and image

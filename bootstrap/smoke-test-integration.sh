@@ -13,12 +13,12 @@
 #                     Proves the instrumentation configs AND the self-telemetry
 #                     ingest pipeline are live (fresh rows, not stale).
 #                  2. DATA PATH: a themed, mixed-type NDJSON fixture POSTed to the
-#                     receiver lands in dfe.default on ClickHouse. Proves the
+#                     receiver lands in dfe.main on ClickHouse. Proves the
 #                     customer-data ingest pipeline is live AND that structured
 #                     _json ingest works -- a typed sub-column read (_json.answer)
 #                     and a populated _raw are asserted, not just row presence.
 #                  3. KAFKA SEAM (single/scale tiers only): the default landing
-#                     topic `default_land` is created, PRODUCED to (receiver) and
+#                     topic `main_land` is created, PRODUCED to (receiver) and
 #                     CONSUMED from (loader). Slim has no kafka -> skipped.
 #                Ancillary sub-chains (ferretdb->PG, hyperdx->ferretdb) are
 #                diagnostics that localise a CORE failure; add more per ancillary
@@ -31,8 +31,8 @@
 #  Usage: ./smoke-test-integration.sh [kubeconfig]
 #  Namespaces default to the standard layout; override via env (DFE_NS etc.).
 #  Contract names (env-overridable) default to the SSoT:
-#    dfe.default        -- dfe-schemas common-header + loader default
-#    default_land       -- receiver default_source `default` + topic_suffix `_land`
+#    dfe.main           -- dfe-schemas common-header + loader default
+#    main_land          -- receiver default_source `main` + topic_suffix `_land`
 #    dfe.otel_logs      -- dfe-hyperdx fork otel source (otel tables in the dfe db)
 #  NOTE: chain commands (curl/CLI paths) are first-cut and may need tuning to the
 #  exact image tooling on first live run -- the PRINCIPLE is fixed: assert the
@@ -67,8 +67,8 @@ PROFILE="${DFE_PROFILE:-}"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/profiles.sh"
 
 # Contract names (SSoT defaults; override per deployment if reconfigured).
-CH_DATA_TABLE="${DFE_CH_DATA_TABLE:-dfe.default}"
-KAFKA_TOPIC="${DFE_KAFKA_TOPIC:-default_land}"
+CH_DATA_TABLE="${DFE_CH_DATA_TABLE:-dfe.main}"
+KAFKA_TOPIC="${DFE_KAFKA_TOPIC:-main_land}"
 OTEL_DB="${DFE_OTEL_DB:-dfe}"
 OTEL_LOGS_TABLE="${DFE_OTEL_LOGS_TABLE:-otel_logs}"
 # Freshness window (seconds): a CORE pipeline must show data NEWER than this, so
@@ -217,11 +217,11 @@ check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FR
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== CORE 2: data path (receiver -> [kafka ->] loader -> ClickHouse) ==="
-# Post a unique event to the receiver, then poll the CH default table for it.
+# Post a unique event to the receiver, then poll the CH landing table for it.
 # Covers gRPC-direct (slim, scale-mesh) and kafka (single/scale): same two endpoints
-# either way -- event IN at the receiver, row OUT in dfe.default.
-# _source `default` (not `smoke`): the receiver derives the topic as
-# <default_source><topic_suffix> = default_land, which is the topic the loader
+# either way -- event IN at the receiver, row OUT in dfe.main.
+# _source `main` (not `smoke`): the receiver derives the topic as
+# <default_source><topic_suffix> = main_land, which is the topic the loader
 # auto-discovers and the broker ships. A _source the deploy does not know about
 # would route to smoke_land -- a topic nobody consumes -- and the row would never
 # arrive, failing the CORE data path for a reason that is purely the test's.
@@ -271,7 +271,7 @@ check "_raw is populated on the API ingest path (full payload captured for this 
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== CORE 3: kafka seam (default_land created + produced + consumed) ==="
+echo "=== CORE 3: kafka seam (main_land created + produced + consumed) ==="
 # Only the kafka-based tiers (single/scale) run a broker. On slim and scale-mesh the
 # receiver feeds the loader directly, so there is no topic to assert -> SKIP, not FAIL.
 if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods --no-headers 2>/dev/null | grep -qiE 'kafka|redpanda'; then
@@ -304,7 +304,7 @@ if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods
     # itself contains double quotes -- through `check`'s eval and a nested sh -c. The
     # quoting did not survive, so every CORE 3 check failed on mangled args while the
     # seam underneath was fine (live-proven 2026-07-17: the same commands run by hand
-    # listed default_land immediately). One layer of quoting, one place to get right.
+    # listed main_land immediately). One layer of quoting, one place to get right.
     KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
     kafka_cli() {
       kubectl -n "$NS_KAFKA" exec -i "$KPOD" -- sh -s <<KSH 2>/dev/null
