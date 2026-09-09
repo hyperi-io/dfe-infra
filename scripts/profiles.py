@@ -160,6 +160,9 @@ PROFILE_NAMES: tuple[str, ...] = tuple(PROFILES)
 MODES: tuple[str, ...] = tuple(name for name, p in PROFILES.items() if p.platform == KUBERNETES)
 """The Kubernetes deploy modes -- what `dfe-ops --mode` and DFE_PROFILE accept."""
 
+DEFAULT_MODE = "scale"
+"""The mode a test cycle or a capacity check runs when none is named: the HA tier on the bus. A deploy names its mode."""
+
 COMPOSE_MODES: tuple[str, ...] = tuple(
     name for name, p in PROFILES.items() if p.platform == COMPOSE
 )

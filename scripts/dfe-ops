@@ -183,7 +183,7 @@ import capacity  # noqa: E402
 import composition  # noqa: E402
 import envfile  # noqa: E402
 import profiles  # noqa: E402
-from profiles import MODES  # noqa: E402
+from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
 
@@ -2761,7 +2761,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="READ-ONLY check: is this cluster right for a DFE deployment?",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    pf.add_argument("--mode", default="single", choices=list(MODES), help="deploy profile the cluster is being sized for")
+    pf.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy profile the cluster is being sized for")
     pf.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
     pf.add_argument("--context", default=None, help="kubeconfig context name (default: DFE_KUBE_CONTEXT from --env-file, else current)")
     pf.add_argument("--namespace", default=None, help="target app namespace (default: DFE_NAMESPACE from --env-file, else dfe-local)")
@@ -2780,7 +2780,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="THE validation cycle: preflight -> stack-deploy+E2E -> smoke suite -> destroy",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    cy.add_argument("--mode", required=True, choices=list(MODES), help="deploy profile to cycle")
+    cy.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy profile to cycle")
     cy.add_argument("--stack", default="", help="versions.yaml stack version to deploy (default: its `current` pointer)")
     cy.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
     cy.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
@@ -2875,7 +2875,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     asum.add_argument("--out", default="", help="where to write it (default: .tmp/<stack>-<mode>/access-summary.md)")
     asum.add_argument("--stack", default="current", help="stack version, for the default path")
-    asum.add_argument("--mode", default="slim", choices=list(MODES), help="deploy mode, for the default path")
+    asum.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy mode, for the default path")
     asum.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig the deploy ran with")
     asum.add_argument("--context", default=None, help="kubeconfig context")
     asum.add_argument("--namespace", default=None, help="app namespace (default: the cluster annotation)")
@@ -2893,7 +2893,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cc.add_argument("--lane", required=True, choices=("docker", "k8s"),
                     help="which lane is asking; docker reads its host's memory, k8s the node headroom")
-    cc.add_argument("--mode", default="slim", choices=list(MODES),
+    cc.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES),
                     help="deploy mode, which sets the floor from scripts/profiles.py")
     cc.add_argument("--floor-bytes", type=int, default=0,
                     help="override the mode's floor (bytes); 0 keeps the profile's")
