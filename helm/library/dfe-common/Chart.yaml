@@ -2,6 +2,10 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.9.1: dfe-common.podSecurityContext reads runAsUser/runAsGroup/fsGroup with
+#        hasKey. `default 1000` claimed an explicit 0, so a chart could not put
+#        a workload on uid 0 through the helper and had to write its own
+#        securityContext -- a second copy of the hardening.
 # 0.9.0: add _mesh.tpl (dfe-common.poolListener -- the alias Service and
 #        GRPCRoute that put a per-request balancer in front of one stage pool on
 #        the direct transport, plus meshEnabled / meshAlias / meshHost).
@@ -38,4 +42,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.9.0
+version: 0.9.1

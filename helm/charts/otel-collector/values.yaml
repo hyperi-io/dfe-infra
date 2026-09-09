@@ -8,9 +8,9 @@ image:
   tag: "0.158.0"  # 2026-07-22 (7-day-compliant). Pinned explicitly, not via appVersion.
   pullPolicy: IfNotPresent
 
-# The contrib image ships USER 10001 (numeric, verified via crane), so
-# runAsNonRoot is satisfiable. The daemonset already runs as 10001 today and
-# reads /var/log/pods fine at that uid; this just makes it explicit + hardened.
+# The GATEWAY's pod securityContext. The contrib image ships USER 10001
+# (numeric, verified via crane), so runAsNonRoot is satisfiable. The daemonset
+# is the exception and carries its own ids under daemonset.podSecurityContext.
 podSecurityContext:
   runAsUser: 10001
   runAsGroup: 10001
@@ -54,6 +54,14 @@ gateway:
     prometheusPort: 8889
 
 daemonset:
+  # Root, unlike every other DFE pod: node pod-log files are root-owned (0640),
+  # so a non-root filelog receiver silently opens zero files. Rootfs stays
+  # read-only and all capabilities stay dropped (containerSecurityContext).
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    runAsGroup: 0
+    fsGroup: 0
   export:
     # Retry ceiling on the push to the gateway. A gateway refusing data because
     # of its own memory_limiter, or gone entirely, costs the queued batches

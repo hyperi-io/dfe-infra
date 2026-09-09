@@ -9,6 +9,9 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The app catalogue is data the composition and profile tests read, so an
+      # edit to it alone used to merge with nothing run (dfe-infra#255).
+      - 'apps.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
       # Whole tree: the job now lints every file under scripts/, not only the
@@ -24,6 +27,9 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The app catalogue is data the composition and profile tests read, so an
+      # edit to it alone used to merge with nothing run (dfe-infra#255).
+      - 'apps.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
       # Whole tree: the job now lints every file under scripts/, not only the

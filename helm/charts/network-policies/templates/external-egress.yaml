@@ -34,7 +34,7 @@
        purpose to a known endpoint drops the shared cluster-range carve-out --
        a pinned range does not span pod/service space to begin with. */}}
 {{- $allow := $ext.allowCIDRs }}
-{{- $except := $ext.exceptCIDRs }}
+{{- $except := $ext.exceptCIDRs | default (include "network-policies.internalCIDRs" $ | fromYamlArray) }}
 {{- if $block.allowCIDRs }}
 {{- $allow = $block.allowCIDRs }}
 {{- $except = list }}
