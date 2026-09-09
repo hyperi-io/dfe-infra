@@ -44,8 +44,9 @@
 #   direct-transport stage sends records to, and declaring it is ALSO how the
 #   engine knows the app has one: an app with no entry cannot be sent to, and
 #   nothing invents a port for it. The engine renders the entry two ways - the
-#   sender dials http://<Service>:<port>, the app itself binds 0.0.0.0:<port> -
-#   so a chart that moves its listener is a manifest edit. Fields:
+#   sender dials http://<Service>:<port> (or the pool's listener alias, see
+#   `mesh` below), the app itself binds 0.0.0.0:<port> - so a chart that moves
+#   its listener is a manifest edit. Fields:
 #     port     the port the listener answers on
 #     service  Kubernetes Service, ONLY where the chart's is not named after the
 #              app; a per-config app's instances answer on dfe-<app>-<source>
@@ -106,6 +107,24 @@
 #     encoding   text    the content is stored and transported verbatim
 #                base64  the content is transported base64-encoded, and the
 #                        digest is taken over the decoded bytes
+#
+# mesh
+#   How a sender addresses a stage on a deployment that balances its pools behind
+#   a listener. There is nothing per-app about it, so it is declared once rather
+#   than repeated under every endpoint: the charts render one listener alias per
+#   pool from the same rule, and a sender that dialled the pool's own Service
+#   instead would pin itself to whichever pod its first connection landed on.
+#     host_pattern  The SHAPE of that address, and only the shape. {instance} is
+#                   the name the pool's own chart renders it under - the app's
+#                   Service for a stack-wide app, dfe-<app>-<source> for a
+#                   per-config one. {mesh_namespace} is where the deployment put
+#                   its listeners, which is the deploy config's to say (it
+#                   reaches the engine as an env var), never this file's - a
+#                   namespace written here would be a second copy of it that
+#                   nothing keeps in step.
+
+mesh:
+  host_pattern: "{instance}-mesh.{mesh_namespace}.svc.cluster.local"
 
 apps:
   # Routing is DERIVED from the source definitions, never hand-set: a source
@@ -194,15 +213,14 @@ apps:
 
   # Compiles every .vrl in its transforms directory into one program at startup
   # and holds it immutable for the process lifetime, so an edit needs a roll.
+  # The first transform to run a Push listener beside its bus consumer, so it is
+  # the one a direct source can name.
   dfe-transform-vrl:
     multiplicity: per_config
     scale_deployed: true
-    # Bus only until its Push listener ships; adding `direct` here and
-    # uncommenting the endpoint below is the whole change that lets a direct
-    # source name it.
-    transports: [bus]
-    # endpoints:
-    #   push: {port: 6000}
+    transports: [bus, direct]
+    endpoints:
+      push: {port: 6000}
     hot_reload: false
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
@@ -238,12 +256,10 @@ apps:
   dfe-transform-vector:
     multiplicity: per_config
     scale_deployed: true
-    # Bus only until its Push listener ships; adding `direct` here and
-    # uncommenting the endpoint below is the whole change that lets a direct
-    # source name it.
-    transports: [bus]
-    # endpoints:
-    #   push: {port: 6000}
+    # The supervisor's Push listener bridges into Vector's own vector source.
+    transports: [bus, direct]
+    endpoints:
+      push: {port: 6000}
     hot_reload: true
     # This app derives topics and consumer group from its own dfe_source field.
     source_binding:

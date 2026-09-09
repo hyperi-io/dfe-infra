@@ -162,6 +162,41 @@ def test_the_push_service_renders_on_direct_only() -> None:
                    [(p["name"], p["port"]) for p in ports] == [("push", 6000)], f"got {ports!r}")
 
 
+def test_the_transform_config_names_the_transport() -> None:
+    """The Service is not enough: the app has to be TOLD which transport it is on.
+
+    Both transform apps default to the bus, so a brokerless deploy whose
+    ConfigMap said nothing would start a Kafka consumer against localhost and
+    report healthy while carrying no records.
+
+    Asserting on both is the point of the assertion: the engine has ONE
+    `transform` routing compiler, so the four keys have to mean the same thing
+    in both charts.
+    """
+
+    def config(chart: str, *args: str) -> dict:
+        doc = next(
+            d for d in docs(render(CHARTS / chart, chart, *args))
+            if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("-config")
+        )
+        return yaml.safe_load(doc["data"]["config.yaml"]) or {}
+
+    for chart in ("dfe-transform-vrl", "dfe-transform-vector"):
+        bus = config(chart)
+        expect(f"{chart} on the bus says bus", bus["source"]["transport"] == "bus",
+               f"got {bus['source']!r}")
+        expect(f"{chart} sink on the bus says bus", bus["sink"]["transport"] == "bus",
+               f"got {bus['sink']!r}")
+
+        direct = config(chart, "--set", "kafka.mode=disabled")
+        expect(f"{chart} on direct says direct", direct["source"]["transport"] == "direct",
+               f"got {direct['source']!r}")
+        expect(f"{chart} binds the push port", direct["source"]["listen"] == "0.0.0.0:6000",
+               f"got {direct['source']!r}")
+        expect(f"{chart} dials the loader", direct["sink"]["endpoint"] == "http://dfe-loader:6000",
+               f"got {direct['sink']!r}")
+
+
 def test_no_chart_derives_the_transport_itself() -> None:
     offenders = [
         str(t.relative_to(REPO_ROOT))
@@ -178,6 +213,7 @@ def main() -> int:
         test_a_chart_with_no_kafka_values_still_renders()
         test_the_engine_follows_the_profile()
         test_the_push_service_renders_on_direct_only()
+        test_the_transform_config_names_the_transport()
         test_no_chart_derives_the_transport_itself()
         return summary()
 
