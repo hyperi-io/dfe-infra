@@ -33,6 +33,23 @@ envoyGateway:
     loadBalancerSourceRanges: []
     externalIPs: []
 
+# Pool balancer for the direct transport. `enabled`, `gateway` and `port` are
+# the deploy-config SSoT's (argocd/values/common.yaml `mesh:`) because every
+# pool chart reads them too; only the two dials below are this chart's, so they
+# are the only mesh keys declared here.
+mesh:
+  proxy:
+    # Every record on a brokerless profile crosses this proxy, so it is sized
+    # like a stage rather than like an edge.
+    replicas: 2
+  loadBalancer:
+    # RoundRobin | LeastRequest | Random | RingHash | Maglev | ConsistentHash.
+    type: RoundRobin
+  # HTTP/2 PING keepalive, both sides of the proxy.
+  keepalive:
+    interval: 30s
+    timeout: 10s
+
 tls:
   issuerName: dfe-letsencrypt
 

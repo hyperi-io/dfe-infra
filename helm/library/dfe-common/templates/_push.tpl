@@ -31,6 +31,10 @@ spec:
       targetPort: push
       protocol: TCP
       name: push
+      # Cleartext HTTP/2, the protocol gRPC runs on. A proxy in front of the
+      # pool reads this to decide how to speak to it, and without it Envoy
+      # Gateway dials the pool as HTTP/1.1 and every request resets.
+      appProtocol: kubernetes.io/h2c
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
 {{- end -}}

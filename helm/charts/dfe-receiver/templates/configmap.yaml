@@ -1,7 +1,10 @@
 # The app's scalo config file, rendered from the .Values.config blob (Layer B of
 # the engine's values contract, dfe-engine helm/models.py). The engine is the
-# config authority for everything except the keys derived below: those are
-# deployment facts with no flat-env key, so the ConfigMap is their only seam.
+# config authority for the blocks it compiles (apps.yaml routing.values_paths);
+# the keys derived below are the chart's, because each is the same fact as a
+# Kubernetes object this chart also renders -- the listener that opens a
+# container port, the spool directory that needs a volume -- and deriving both
+# from one value is what stops them disagreeing.
 # Written to the path the image's CMD reads (/etc/dfe-receiver/config.yaml --
 # dfe-receiver Dockerfile:43).
 apiVersion: v1
@@ -13,14 +16,17 @@ metadata:
 data:
   config.yaml: |
     {{- $cfg := deepCopy (.Values.config | default dict) }}
-    {{- if eq (include "dfe-common.transport" .) "direct" }}
-    {{- /* Direct transport: route the default destination to the loader over
-           gRPC. The receiver has no flat-env keys for loader.transport
-           or destinations.default (config/mod.rs apply_flat_env), so this is
-           the one seam that can set them. grpc_endpoint derives from address. */}}
-    {{- $_ := set $cfg "destinations" (mergeOverwrite (default dict (get $cfg "destinations")) (dict "default" "loader")) }}
-    {{- $_ := set $cfg "loader" (mergeOverwrite (default dict (get $cfg "loader")) (dict "address" .Values.loaderGrpcAddress "transport" "grpc")) }}
+    {{- /* Buffering, from .Values.receiver.buffer -- the same block the
+           deployment reads to decide whether to mount a spool volume and
+           where, so the directory the app opens and the volume it lands on
+           cannot disagree. Key names here are the app's own (config/mod.rs
+           BufferConfig). */}}
+    {{- $buf := .Values.receiver.buffer }}
+    {{- $rendered := dict "memory_limit" $buf.memoryLimit }}
+    {{- if $buf.spillover.enabled }}
+    {{- $_ := set $rendered "spillover" (dict "enabled" true "path" $buf.spillover.path) }}
     {{- end }}
+    {{- $_ := set $cfg "buffer" (mergeOverwrite (default dict (get $cfg "buffer")) $rendered) }}
     {{- /* The PushEvents server. grpc.enabled defaults to FALSE (config/mod.rs:742)
            and the receiver has no flat-env key for it, so this is the only seam
            that opens it. Driven off .Values.listeners, which is this chart's SSoT

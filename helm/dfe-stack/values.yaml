@@ -229,8 +229,8 @@ dfe-ui:
 
 dfe-receiver:
   enabled: true
-  # Source: argocd/values/profile-slim.yaml `kafka.mode` -- routes the default
-  # destination to the loader over direct gRPC (loaderGrpcAddress default).
+  # Source: argocd/values/profile-slim.yaml `kafka.mode` -- the receiver hands
+  # records straight to the next stage, at the address the engine compiles.
   kafka:
     mode: disabled
   resources: *dfeSlimResources

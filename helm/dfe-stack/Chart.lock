@@ -1,10 +1,10 @@
 dependencies:
 - name: network-policies
   repository: file://../charts/network-policies
-  version: 0.3.0
+  version: 0.4.0
 - name: envoy-gateway-config
   repository: file://../charts/envoy-gateway-config
-  version: 0.1.1
+  version: 0.2.0
 - name: cnpg-cluster
   repository: file://../charts/cnpg-cluster
   version: 0.1.0
@@ -34,18 +34,18 @@ dependencies:
   version: 0.2.0
 - name: dfe-engine
   repository: file://../charts/dfe-engine
-  version: 0.2.0
+  version: 0.3.0
 - name: dfe-ui
   repository: file://../charts/dfe-ui
   version: 0.1.1
 - name: dfe-receiver
   repository: file://../charts/dfe-receiver
-  version: 0.2.0
+  version: 0.3.0
 - name: dfe-loader
   repository: file://../charts/dfe-loader
-  version: 0.2.0
+  version: 0.3.0
 - name: hyperdx
   repository: file://../charts/hyperdx
   version: 0.2.0
-digest: sha256:99cdea2ce6958fb82e59ceb2a2c44a7d026677c22000d17f3cf7fe745d765733
-generated: "2026-09-09T12:11:37.795671688+10:00"
+digest: sha256:63fccec536209a44f328844efbc53fbbf6da7b7b61c535e240b7ca591d2dbba0
+generated: "2026-09-09T14:41:19.807315641+10:00"

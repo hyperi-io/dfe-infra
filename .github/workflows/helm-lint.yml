@@ -210,6 +210,11 @@ jobs:
       - name: Bus or direct is derived once, for every chart
         run: python3 scripts/tests/test_transport.py
 
+      # A Service balances per connection and gRPC holds one open, so without a
+      # listener in front of it a stage pool's extra replicas take nothing.
+      - name: Every stage pool gets the same listener, on the one profile that asks
+        run: python3 scripts/tests/test_pool_listener.py
+
       - name: Lint library charts via test charts
         run: |
           set -e

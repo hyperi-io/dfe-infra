@@ -11,16 +11,24 @@
 # this overlay exists so the umbrella's composition can be exercised end to end.
 # Usage: helm template dfe helm/dfe-stack -n dfe -f helm/dfe-stack/profiles/scale-mesh.yaml
 
+# NO POOL BALANCER HERE. The argocd path turns `mesh.enabled` on; this one
+# cannot, because the umbrella installs the apps alone into one namespace and
+# the Gateway the pool listeners attach to belongs to the platform layer
+# (envoy-gateway-config) that the umbrella does not carry. What the umbrella
+# exercises is the composition, not the edge.
+
 x-scale-mesh-shared:
-  # Source: argocd/values/profile-scale-mesh.yaml `resources:`.
+  # Source: argocd/values/profile-scale-mesh.yaml `resources:` -- 4Gi rather
+  # than scale's 2Gi because no broker holds records between stages here.
   resources: &scaleMeshResources
     requests:
       cpu: 500m
-      memory: 512Mi
+      memory: 1Gi
     limits:
       cpu: "2"
-      memory: 2Gi
-  # No broker: the receiver's default destination is the loader's gRPC address.
+      memory: 4Gi
+  # No broker: each stage hands records to the next over gRPC, at the address
+  # the engine compiles into that stage's overlay.
   kafka: &scaleMeshKafka
     mode: disabled
   # Source: argocd/values/profile-scale-mesh.yaml `keda:`.
@@ -62,6 +70,15 @@ dfe-receiver:
   kafka: *scaleMeshKafka
   resources: *scaleMeshResources
   keda: *scaleMeshKeda
+  receiver:
+    # Source: argocd/values/profile-scale-mesh.yaml `receiver.buffer` -- with no
+    # broker downstream this is the only slack in the chain, so 3 GiB of the
+    # pod's 4Gi plus 20 GiB of spool.
+    buffer:
+      memoryLimit: 3221225472
+      spillover:
+        enabled: true
+        sizeLimit: 20Gi
 
 dfe-loader:
   replicaCount: 2
