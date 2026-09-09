@@ -7,8 +7,17 @@
 # pod is refused by the kernel, 10443 never arrives (#223).
 #
 # Anything that has to use a public hostname rather than a Service name makes
-# this hop; the engine's OIDC discovery fetch is the first.
+# this hop; the engine's OIDC discovery fetch is the first. On a deployment that
+# balances its stage pools behind a listener, the whole data plane makes it too:
+# every stage dials the next one at the mesh proxy rather than at the pool.
 {{- $gw := .Values.gatewayEgress }}
+{{- $ports := $gw.ports }}
+{{- if and .Values.mesh .Values.mesh.enabled }}
+{{- /* The mesh listener's port is unprivileged, so Envoy Gateway does not
+       offset it the way it offsets 443 and 80 -- the container port is the
+       listener port, and this rule is what makes the pool reachable at all. */}}
+{{- $ports = append $ports (dict "port" .Values.mesh.port "protocol" "TCP") }}
+{{- end }}
 {{- if $gw.enabled }}
 {{- range .Values.dfeNamespaces }}
 ---
@@ -34,6 +43,6 @@ spec:
             matchLabels:
               {{- toYaml $gw.podLabels | nindent 14 }}
       ports:
-        {{- toYaml $gw.ports | nindent 8 }}
+        {{- toYaml $ports | nindent 8 }}
 {{- end }}
 {{- end }}

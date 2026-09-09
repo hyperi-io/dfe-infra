@@ -94,6 +94,26 @@
 #     encoding   text    the content is stored and transported verbatim
 #                base64  the content is transported base64-encoded, and the
 #                        digest is taken over the decoded bytes
+#
+# mesh
+#   How a sender addresses a stage on a deployment that balances its pools
+#   behind a listener (dfe-infra `mesh.enabled`; the scale-mesh profile). There
+#   is nothing per-app about it, so it is declared once rather than repeated
+#   under every endpoint: the chart renders one alias per pool from the same
+#   rule, and a sender that dialled the pool's own Service instead would pin
+#   itself to whichever pod it landed on.
+#     host_pattern  The SHAPE of that address, and only the shape. {instance} is
+#                   the same name a stage's endpoint already uses -- the app's
+#                   own Service name for a stack-wide app, dfe-<app>-<source>
+#                   for a per-config one. {mesh_namespace} is where the
+#                   deployment put its listener, which is the deploy config's to
+#                   say (dfe-infra argocd/values/common.yaml
+#                   mesh.gateway.namespace, reaching the engine as an env var),
+#                   never this file's -- a namespace written here would be a
+#                   second copy of it that nothing keeps in step.
+
+mesh:
+  host_pattern: "{instance}-mesh.{mesh_namespace}.svc.cluster.local"
 
 apps:
   # Routing is DERIVED from the source definitions, never hand-set: a source

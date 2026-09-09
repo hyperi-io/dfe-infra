@@ -175,7 +175,6 @@ from profiles import MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
 
-DEFAULT_STACK = "2.2.0-rc.1"
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
 # bootstrap.sh's required env (validated up-front so a missing var fails the
@@ -1421,6 +1420,26 @@ def _current_stack() -> str:
     return out.strip() if rc == 0 else ""
 
 
+def _resolve_stack(args: argparse.Namespace) -> int:
+    """Fill in an unset --stack from versions.yaml, which owns that pointer.
+
+    A literal default here is a second copy of it, and it goes stale the moment
+    the stack moves: every deploy that does not pass --stack then aims at
+    whatever version the copy was written against.
+    """
+    if args.stack:
+        return 0
+    args.stack = _current_stack()
+    if not args.stack:
+        print(
+            "cannot read versions.yaml `current` (scripts/dfe-stack current), so there is "
+            "no stack to deploy; pass --stack explicitly",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
 # --- preflight subcommand (ONLINE, read-only cluster-contract check) ----------
 def _parse_cpu(q: str) -> float:
     """Parse a Kubernetes CPU quantity ('4', '3500m', '1500000000n') to cores."""
@@ -1855,6 +1874,8 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     if args.mode not in MODES:
         print(f"--mode must be one of {', '.join(MODES)}", file=sys.stderr)
         return 2
+    if _resolve_stack(args) != 0:
+        return 2
 
     if _offline_preflight(args) != 0:
         return 1
@@ -1942,6 +1963,8 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     interactive debugging on a dev cluster. A FAILED deploy still destroys,
     so a broken run never strands a half-stack.
     """
+    if _resolve_stack(args) != 0:
+        return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
     passthrough_kube = ["--kubeconfig", args.kubeconfig] if args.kubeconfig else []
     passthrough_env = [flag for f in args.env_file for flag in ("--env-file", f)]
@@ -2120,7 +2143,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"deploy a pinned stack version in a mode ({'|'.join(MODES)}) + run the 2 default E2E tests",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    sd.add_argument("--stack", default=DEFAULT_STACK, help="versions.yaml stack version to deploy/validate")
+    sd.add_argument("--stack", default="", help="versions.yaml stack version to deploy/validate (default: its `current` pointer)")
     sd.add_argument(
         "--mode",
         required=True,
@@ -2191,7 +2214,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     cy.add_argument("--mode", required=True, choices=list(MODES), help="deploy profile to cycle")
-    cy.add_argument("--stack", default=DEFAULT_STACK, help="versions.yaml stack version to deploy")
+    cy.add_argument("--stack", default="", help="versions.yaml stack version to deploy (default: its `current` pointer)")
     cy.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
     cy.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
     cy.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* outputs from a terraform env dir")

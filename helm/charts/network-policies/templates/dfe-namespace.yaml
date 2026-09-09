@@ -12,7 +12,11 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # Allow from Envoy Gateway
+    # Allow from Envoy Gateway. This is also what lets the pool balancer reach a
+    # stage on a deployment that runs one: the mesh Gateway's proxy pods live
+    # here, so a stage's Push listener is reachable from them and from nowhere
+    # outside these namespaces. Narrowing this rule to the edge's proxy alone
+    # would cut the data plane on the brokerless scale profile.
     - from:
         - namespaceSelector:
             matchLabels:

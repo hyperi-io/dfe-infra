@@ -31,15 +31,6 @@ kafka:
   # KafkaConfig DERIVES security_protocol + sasl_mechanism from it.
   provider: ""
 
-# gRPC target on the direct transport (kafka.mode: disabled): the LOADER's
-# Service name + grpcPort. The fetcher's gRPC output is a scalo Transport/Push
-# client, which the loader serves and the receiver does not (its :6000 speaks
-# the Vector protocol), and the loader picks the table from the `_source` the
-# fetcher stamps -- the same hop the receiver takes on this profile. A URI,
-# unlike the receiver's host:port loaderGrpcAddress: scalo's GrpcConfig.endpoint
-# is parsed as one.
-loaderGrpcAddress: "http://dfe-loader:6000"
-
 # API credentials are injected via External Secrets Operator
 # ESO creates dfe-fetcher-api-creds from vault/cloud secret store. The refs are
 # optional in the deployment: an instance whose credentials are vault:/env:

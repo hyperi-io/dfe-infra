@@ -33,6 +33,10 @@ service:
 #   exposed  -- include on the PUBLIC LoadBalancer when exposure.mode=public,
 #               and open on the ingest NetworkPolicy. Data-ingest protocols are
 #               true; a listener carrying only admin/health surface is false.
+#   appProtocol -- optional L7 hint on the Service port, for a proxy that has to
+#               decide how to speak to this listener. Set on the east-west gRPC
+#               door only: an L4 LoadBalancer never reads it, and some cloud LB
+#               controllers act on it, so the public ports leave it unset.
 # NOTE: mixed TCP+UDP in one Service is not portable across cloud LBs, so the
 # public path renders ONE LoadBalancer per protocol family that has exposed
 # listeners (see templates/service.yaml).
@@ -46,7 +50,7 @@ listeners:
   # the namespace baseline admits only the other DFE namespaces. Present in this
   # list is what switches the receiver's grpc server on (see the configmap), so
   # removing the entry closes the door.
-  - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false } # scalo Push RPC from in-cluster producers
+  - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false, appProtocol: kubernetes.io/h2c } # scalo Push RPC from in-cluster producers
   # Enable per the source's protocols via the engine overlay, e.g.:
   # - { name: lumberjack, port: 5044, protocol: TCP, exposed: true }  # Beats/Elastic
   # - { name: netflow,    port: 2055, protocol: UDP, exposed: true }  # NetFlow/IPFIX
@@ -109,9 +113,27 @@ receiver:
   # + LBs above, not by binding a specific address.)
   listenAddress: "0.0.0.0"
 
-# Loader gRPC target on the direct transport (kafka.mode: disabled): the loader
-# Service name + its grpcPort. Same-namespace short name on purpose.
-loaderGrpcAddress: "dfe-loader:6000"
+  # What the receiver holds while the next stage is not taking records. On the
+  # bus the broker is that slack; on the direct transport nothing downstream
+  # stores anything, so this IS the slack in the whole chain and a profile
+  # without a broker raises it. The keys map onto the app's own config.buffer,
+  # and the chart writes them there -- the engine compiles routing, not
+  # buffering, so this block is the one source for both the config file and the
+  # spool volume the deployment mounts.
+  buffer:
+    # Bytes the buffers may hold. 0 = the app's auto-detect, which takes 85% of
+    # the pod's memory limit and back-pressures at 80% of that.
+    memoryLimit: 0
+    spillover:
+      # Spill to disk instead of dropping when memory fills. The trade belongs
+      # in the values file that turns it on: an outage shorter than the buffer
+      # is invisible to senders, a longer one back-pressures them.
+      enabled: false
+      path: /var/spool/dfe-receiver
+      # How large the spool volume may grow. Kubernetes' cap on the emptyDir,
+      # with no key on the app's side -- the app spills until its own
+      # max_usage_percent of whatever filesystem it was given.
+      sizeLimit: 10Gi
 
 kafka:
   # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile

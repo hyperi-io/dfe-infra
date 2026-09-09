@@ -3,15 +3,19 @@
 # Merged after common.yaml + <cloud>.yaml (third in the valueFiles cascade).
 # Keys unknown to a given chart are ignored by Helm.
 
-# DFE service deployments.
+# DFE service deployments. Replicas and KEDA floors are scale's; the memory is
+# not. On scale nothing between stages holds a record for long because the
+# broker does, so 2Gi is ample. Here every stage carries what the next one has
+# not taken yet, so each gets 4Gi and the receiver -- the stage with senders it
+# cannot pause -- spends most of that on its buffer (see `receiver:` below).
 replicaCount: 2
 resources:
   requests:
     cpu: 500m
-    memory: 512Mi
+    memory: 1Gi
   limits:
     cpu: "2"
-    memory: 2Gi
+    memory: 4Gi
 
 keda:
   minReplicaCount: 2
@@ -44,6 +48,34 @@ cluster:
 # Kafka -- DISABLED. scale-mesh uses gRPC transport (receiver -> loader direct).
 kafka:
   mode: disabled
+
+# Pool balancer ON. A Kubernetes Service balances per connection and gRPC holds
+# one, so without this every sender pins itself to one pod of the pool it dials
+# and the replicas above buy nothing.
+mesh:
+  enabled: true
+
+# Scoped under `receiver:`, a key only the dfe-receiver chart carries -- this
+# file is merged into every chart, so a bare `buffer:` would reach all of them.
+receiver:
+  # THE SLACK IN THE WHOLE CHAIN. There is no broker here, so what the receiver
+  # holds is the only thing standing between a loader outage and the senders.
+  # The trade, plainly: an outage shorter than the buffer is invisible to
+  # senders, a longer one back-pressures them (503) until the loader returns.
+  #
+  # 3 GiB of the pod's 4Gi limit, stated rather than left to the app's
+  # auto-detect, which would take 85% (3.4 GiB) and leave too little for the
+  # request path and the spool writer under exactly the pressure this is for.
+  # Back-pressure starts at 80% of it, so 2.4 GiB.
+  #
+  # Then 20 GiB of node-local spool per replica. Worked example for the shape of
+  # it: two replicas holding 23 GiB each, taking 10 MiB/s each, ride out about
+  # 39 minutes of loader outage before a sender sees a 503.
+  buffer:
+    memoryLimit: 3221225472
+    spillover:
+      enabled: true
+      sizeLimit: 20Gi
 
 # Kafbat -- not deployed (no Kafka to manage). Scoped under `kafbat:` so it gates
 # ONLY the kafbat chart; a bare top-level `enabled` would apply to every chart in

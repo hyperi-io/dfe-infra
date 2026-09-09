@@ -2,6 +2,12 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.9.0: add _mesh.tpl (dfe-common.poolListener -- the alias Service and
+#        GRPCRoute that put a per-request balancer in front of one stage pool on
+#        the direct transport, plus meshEnabled / meshAlias / meshHost).
+#        dfe-common.pushService now declares appProtocol kubernetes.io/h2c on
+#        the push port, without which a proxy fronting the pool dials it as
+#        HTTP/1.1 and every gRPC request resets.
 # 0.8.0: add _transport.tpl (dfe-common.transport / transportIsBus -- kafka.mode
 #        derived to bus|direct once, for every chart), _rollout.tpl
 #        (dfe-common.rollout -- the surge-first rolling update every app
@@ -32,4 +38,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.8.0
+version: 0.9.0
