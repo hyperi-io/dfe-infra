@@ -78,10 +78,11 @@ Deployment carries, so a renamed Secret still prints a fetch line that works.
 
 Read both with the access you deployed with -- the kubeconfig for the two Secrets
 on Kubernetes, the host `.env` on docker. Rotate the admin password through that
-same Secret or `.env` key and never delete it, because the engine reasserts that
-value on every boot. The break-glass plaintext may be deleted once you have
-recorded it offline: the engine hashed it into the deploy repo on first boot and
-reconciles the account from that hash.
+same Secret or `.env` key: while the account is live the engine reasserts that
+value on every boot, so deleting it just puts the shipped default back. Retiring
+the admin is what ends that. The break-glass plaintext may be deleted once you
+have recorded it offline: the engine hashed it into the deploy repo on first boot
+and reconciles the account from that hash.
 
 ### First login: the summary on your own machine
 
@@ -94,6 +95,14 @@ passwords in PLAINTEXT, because a fetch command is no use to someone who has not
 logged in yet. It also names the console, the engine API, and the three things to
 do next. Record the values and delete the file; it is gitignored and must never
 be committed or copied into the cluster.
+
+### Getting off the minted admin
+
+Once your own admin exists, retire the bootstrap one from the console wizard's
+last step or `POST /api/v1/auth/setup/retire-admin`, then delete the admin Secret
+`creds` names. The engine stops reasserting the account, it stays disabled, and
+the fact is recorded in the deploy repo (`governance/settings/auth.yaml`,
+`admin_retired`), so a rebuild does not bring it back.
 
 ### Moved: the admin password (#234)
 
