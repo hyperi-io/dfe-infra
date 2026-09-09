@@ -76,6 +76,25 @@ Both Secret names are helm values (`auth.adminSecretName`,
 `auth.breakglassSecretName`), and `creds` reads the names the live engine
 Deployment carries, so a renamed Secret still prints a fetch line that works.
 
+Read both with the access you deployed with -- the kubeconfig for the two Secrets
+on Kubernetes, the host `.env` on docker. Rotate the admin password through that
+same Secret or `.env` key and never delete it, because the engine reasserts that
+value on every boot. The break-glass plaintext may be deleted once you have
+recorded it offline: the engine hashed it into the deploy repo on first boot and
+reconciles the account from that hash.
+
+### First login: the summary on your own machine
+
+    python3 scripts/dfe-ops access-summary --kubeconfig .tmp/kubeconfig-dfe-b
+
+`stack-deploy`, `cycle` and `bootstrap/bootstrap.sh` all end here, so a deploy
+started any of the three ways writes `.tmp/<stack>-<mode>/access-summary.md` on
+the machine that ran it, mode 0600. Unlike everything above it carries the two
+passwords in PLAINTEXT, because a fetch command is no use to someone who has not
+logged in yet. It also names the console, the engine API, and the three things to
+do next. Record the values and delete the file; it is gitignored and must never
+be committed or copied into the cluster.
+
 ### Moved: the admin password (#234)
 
 `dfe-engine-seed-accounts` no longer carries an `admin-password` key. Two

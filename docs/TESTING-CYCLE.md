@@ -7,10 +7,11 @@ so the committed repo runs the same cycle everywhere.
 
 ```mermaid
 flowchart LR
-    PF["preflight\n(read-only cluster check)"] --> SD["stack-deploy\nbootstrap + Argo sync\n+ readiness gate + 2 E2E"]
+    CC["capacity-check\n(may this lane start?)"] --> PF["preflight\n(read-only cluster check)"]
+    PF --> SD["stack-deploy\nbootstrap + Argo sync\n+ readiness gate + 2 E2E"]
     SD --> SM["verify\nfull smoke suite"]
     SM --> DS["teardown\n(destroy; --keep to skip)"]
-    DS -.->|"repeat per change"| PF
+    DS -.->|"repeat per change"| CC
 ```
 
 One command runs the whole loop:
@@ -18,8 +19,8 @@ One command runs the whole loop:
     python3 scripts/dfe-ops cycle --mode single \
         --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
 
-Each stage self-executes as its own `dfe-ops` subcommand (`preflight`,
-`stack-deploy`, `verify`, `teardown`), so the cycle and the hand-run commands
+Each stage self-executes as its own `dfe-ops` subcommand (`capacity-check`,
+`preflight`, `stack-deploy`, `verify`, `teardown`), so the cycle and the hand-run commands
 can never drift -- and the cycle exports `--kubeconfig` as `KUBECONFIG` to
 every stage, so all four aim at the SAME cluster (running `verify`/`teardown`
 by hand uses your current context; check it first). A failed deploy still
@@ -142,9 +143,11 @@ env file), nothing else.
 
 | Stage | Wraps | Gate |
 | --- | --- | --- |
+| `capacity-check` | `--lane k8s` reads allocatable minus scheduled requests; `--lane docker` reads the daemon host's available memory | the mode's `lane_floor` in `scripts/profiles.py`; a breach REFUSES, and `--watch` keeps checking while a lane runs so the newer lane aborts instead of the host swapping |
 | `preflight` | read-only kubectl against the target | cluster contract above |
 | `stack-deploy` | offline pin/drift/render preflight, then `bootstrap/bootstrap.sh` (Layer 0/1 + Argo profile sync at the pinned stack) | bounded readiness + the 2 default E2E tests (receiver->CH data path, self-monitoring OTel) |
 | `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration |
+| `acceptance` | `--suite onboarding` drives the setup wizard and the first console session in Chrome; `filebeat` and `flows` are the engine repo's live pytest suites over port-forwards | `all` runs onboarding FIRST and stops on it -- a deployment nobody could have onboarded has failed whatever the data path then does. The wizard's screens come from the engine's own `auth/setup-status`, so a screen the deployment no longer asks for is a failure rather than a variation |
 | `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then the dfe-ui Playwright specs tagged `@acceptance` over `--ui-url` or a port-forward | onboarding and the key UI features, on a credential that differs from the build default -- see [ACCEPTANCE-AUTOMATION.md](ACCEPTANCE-AUTOMATION.md) |
 | `teardown` | `bootstrap/destroy.sh` (`--with-terraform` also destroys IaC state) | leaves the cluster as preflight found it |
 | `refresh` (not a cycle stage) | a hard-refresh annotation on every Argo Application, a bounded wait for those syncs, then `bootstrap/smoke-test-readiness.sh` and the `verify` suite | the tracked ref landed and every tracked Application is Synced + Healthy, then bounded readiness + the full smoke suite (`--skip-verify` stops at the gate) |
