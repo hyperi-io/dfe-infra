@@ -990,8 +990,9 @@ ONBOARDING_SUITE = "onboarding"
 ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
 
 # `all` runs onboarding FIRST: a deployment nobody could have onboarded has
-# failed whatever the data path then does. The flow suite creates and deletes
-# sources, so it follows the one that only reads what is already there.
+# failed whatever the data path then does. The flow suite creates every source
+# shape and removes it again, so it proves a fresh deploy; filebeat reads a
+# source the deployment must already carry, so it is asked for by name.
 SUITES = (ONBOARDING_SUITE, "filebeat", "flows", "all")
 
 
@@ -1005,7 +1006,7 @@ def suite_steps(suite: str) -> tuple[str, ...]:
         The individual suite names.
     """
     if suite == "all":
-        return (ONBOARDING_SUITE, "filebeat", "flows")
+        return (ONBOARDING_SUITE, "flows")
     return (suite,)
 
 
@@ -2895,7 +2896,7 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--transport", default=None, choices=("grpc", "kafka", "both"),
                     help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
     ac.add_argument("--suite", default="all", choices=SUITES,
-                    help="onboarding drives the wizard and the console in a browser; filebeat reads what the deployment already carries; flows creates every source shape and removes it again; all runs onboarding first")
+                    help="onboarding drives the wizard and the console in a browser; flows creates every source shape and removes it again; filebeat reads a filebeat source the deployment must already carry; all runs onboarding then flows")
     ac.add_argument("--engine-user", default="",
                     help="engine login the suites authenticate as (default: the deploy's own minted admin)")
     ac.add_argument("--access-summary", default="", metavar="FILE",

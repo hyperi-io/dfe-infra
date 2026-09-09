@@ -198,8 +198,11 @@ class TestSuiteOrder:
     def test_all_runs_onboarding_first(self):
         assert ops.suite_steps("all")[0] == ops.ONBOARDING_SUITE
 
-    def test_all_runs_every_suite(self):
-        assert set(ops.suite_steps("all")) == set(ops.SUITES) - {"all"}
+    def test_all_proves_a_fresh_deploy_without_the_seeded_source(self):
+        assert ops.suite_steps("all") == (ops.ONBOARDING_SUITE, "flows")
+
+    def test_filebeat_is_asked_for_by_name(self):
+        assert ops.suite_steps("filebeat") == ("filebeat",)
 
     def test_a_named_suite_runs_only_itself(self):
         assert ops.suite_steps("flows") == ("flows",)
