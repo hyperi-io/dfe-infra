@@ -1,0 +1,82 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+  THE receiver-only rule. NetworkPolicies are additive, so this list is the
+  culvert pods' whole egress surface ONLY because the pod template carries
+  dfe.hyperi.io/egress-scoped, which takes them out of the namespace-wide
+  allow-baseline-egress policy (network-policies chart). Without that label the
+  baseline grants them the entire namespace and nothing here narrows anything.
+
+  Client traffic is SNATed to the pod address on its way out of the tunnel, so
+  what the pod may reach is what a client may reach. culvert's own iptables
+  chain (CULVERT_ROUTING_CONTROL_ENABLED, routes.destinations) is the second
+  layer: it filters by CIDR inside the pod, where this policy selects the
+  receiver by label and needs no addressing at all.
+
+  Ingress carries no client CIDRs: kube-proxy SNATs external traffic to a node
+  address under the default externalTrafficPolicy, so an ipBlock would match
+  the node rather than the client. exposure.loadBalancerSourceRanges is where
+  the client allow-list belongs.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        {{- range .Values.listeners }}
+        {{- if .exposed }}
+        - protocol: {{ .protocol | default "TCP" }}
+          port: {{ .port }}
+        {{- end }}
+        {{- end }}
+    # The collector scrapes /metrics; discovery is by pod annotation, so the
+    # source is the namespace and the port is this chart's own.
+    {{- if .Values.networkPolicy.otelNamespace }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.otelNamespace }}
+    {{- end }}
+  egress:
+    # The receiver's ingest listeners, and nothing else in the namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.ingest.podLabel }}
+      ports:
+        {{- range .Values.ingest.ports }}
+        - protocol: {{ .protocol | default "TCP" }}
+          port: {{ .port }}
+        {{- end }}
+    # Cluster DNS. The tunnel pushes public resolvers to its clients, so this
+    # is the server's own resolution only.
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- with (include "dfe-common.otelEndpoint" .) }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.networkPolicy.otelNamespace }}
+      ports:
+        - port: {{ $.Values.networkPolicy.otelPort }}
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.extraEgress }}
+    # External PKI or an OIDC issuer outside the cluster: named here because
+    # the pods take no baseline egress at all.
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

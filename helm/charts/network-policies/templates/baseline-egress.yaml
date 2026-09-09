@@ -15,7 +15,15 @@
 # Everything else is denied by default (Kubernetes NetworkPolicy semantics).
 # Add per-service egress policies layered on top for specific cross-namespace
 # flows (e.g. DFE app egress to CNPG, ClickHouse, Kafka).
+#
+# THE OPT-OUT. Policies are additive, so a pod this one selects can always
+# reach the whole namespace and no later policy can take that back. A workload
+# whose egress must be narrower than the namespace therefore has to be OUTSIDE
+# this policy, and it says so with the label below; its own chart then carries
+# its WHOLE egress surface, DNS and telemetry included. Used by the edge-fleet
+# VPN, whose tunnel clients may reach the receiver and nothing else.
 {{- $allNamespaces := concat .Values.dfeNamespaces .Values.dataNamespaces }}
+{{- $optOut := .Values.egressScopedLabel }}
 {{- range $allNamespaces }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -26,7 +34,14 @@ metadata:
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
+  {{- if $optOut }}
+  podSelector:
+    matchExpressions:
+      - key: {{ $optOut }}
+        operator: DoesNotExist
+  {{- else }}
   podSelector: {}
+  {{- end }}
   policyTypes:
     - Egress
   egress:

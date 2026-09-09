@@ -24,6 +24,18 @@
 #   Whether the app carries CPU, memory and KEDA dials at all. Those dials are
 #   reported unsupported off Kubernetes regardless, since Compose has no KEDA.
 #
+# optional
+#   Whether a deployment runs without this app. An optional app is absent until
+#   an operator enables it, which is a values file appearing in the deploy repo
+#   -- the same mechanism that deploys every other app, so nothing else gates
+#   it. Defaults to false: the core data path is not optional.
+#
+# profiles
+#   The deployment profiles this app is OFFERED in, for the console to list.
+#   Absent means every profile. It is an offer, not a gate: a profile is a set
+#   of values in the cascade rather than a name a chart can read, so the deploy
+#   repo remains the only thing that decides what is deployed.
+#
 # transports
 #   Which transports the app can carry a source's records on. Defaults to [bus]
 #   when absent.
@@ -311,6 +323,19 @@ apps:
         source: config.source
         sink: config.sink
       scope: instance
+
+  # The edge-fleet VPN. It carries no records of its own -- it is the door an
+  # appliance dials before it posts to the receiver -- so it has no transport,
+  # no source binding and no routing to compile. It holds at one deployment
+  # because WireGuard mints its server key in the pod, and at one replica for
+  # the same reason (helm/charts/culvert refuses more).
+  culvert:
+    multiplicity: single
+    scale_deployed: false
+    optional: true
+    profiles: [scale, scale-mesh]
+    transports: []
+    hot_reload: false
 
 kinds:
   vrl:

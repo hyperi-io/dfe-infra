@@ -1707,6 +1707,14 @@ stacks:
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
+      # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
+      # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
+      # repo, so it takes the 7-day supply-chain cooldown like a third party
+      # rather than the internal exemption above: v2.1.14 released 2026-08-31,
+      # verified via `gh api repos/hyperi-io/culvert/releases`. v2.1.15
+      # (2026-09-09) is inside the cooldown. No LTS line. culvert publishes no
+      # Helm chart, so the chart here is dfe-infra's, as for every other app.
+      culvert: "v2.1.14"
 
     # Image DIGESTS for the published DFE-owned apps -- the immutable half of the
     # tag@sha256 pin (the tag lives in apps: so chart appVersion checks keep
@@ -1724,6 +1732,9 @@ stacks:
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
       dfe-hyperdx: "sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca"
+      # ghcr.io/hyperi-io/culvert:v2.1.14. Manifest-LIST digest (amd64 + arm64),
+      # read off the ghcr v2 API with an anonymous pull token.
+      culvert: "sha256:b8b3f8c5450cc8eaa761a5b2de81128d1adc3022fa7aa9746c4c676e4fafd7d3"
 
     # Digests for the DOCKER-path third-party plain images -- the immutable half
     # of the tag@sha256 pin that `dfe-stack render --target docker` emits. Keyed

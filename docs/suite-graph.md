@@ -446,10 +446,9 @@ either side changes no file in the other, so a build pass has nothing to check.
 
 dfe-transform-wasm and dfe-transform-splack are not members: neither has a
 release tag. Their charts and placeholder pins in this repo predate that test,
-and each joins the file when its first tag exists. The dfe-vpn chart is not a
-member either - culvert superseded it, and culvert has its own membership.
+and each joins the file when its first tag exists.
 
-Those three are listed under `non_members` with the reason, because a chart or
+Both are listed under `non_members` with the reason, because a chart or
 a pin with no member is otherwise an advisory on every drift-check run, and an
 advisory nobody can act on trains the reader to skip the ones that mean
 something. The listing is checked rather than trusted: `check_suite_drift.py`

@@ -139,6 +139,8 @@ versionCheck:
   storage model, with the status and evidence behind every cell
 - [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on,
   the private-CA IdP shape, and what Envoy Gateway cannot do with a groups claim
+- [edge-vpn.md](edge-vpn.md) - the opt-in tunnel a field appliance dials in on:
+  the two ports, the reserved client range, and how it reaches receivers only
 - [rke2.md](rke2.md) - the default distribution
 - [DEPLOY-HELPERS.md](../DEPLOY-HELPERS.md) - the release and deploy-overlay
   helpers, the logins a deploy carries, and the end-to-end recipe

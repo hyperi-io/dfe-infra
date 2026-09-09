@@ -454,6 +454,9 @@ _APP_CHARTS = [
     "dfe-transform-wasm",
     "dfe-transform-elastic",
     "dfe-transform-splack",
+    # The one app whose image is not published under the dfe- prefix; the chart
+    # spells its repository out, so only the tag and digest halves are checked.
+    "culvert",
 ]
 CHECKS += [
     Check(
@@ -617,11 +620,6 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "helm/charts/forgejo/values.yaml",
         "image ref",
         "curl for the PostSync setup Job; the tools block was deliberately dropped, and Renovate's infra-pins group watches helm-values",
-    ),
-    (
-        "helm/charts/dfe-vpn/Chart.yaml",
-        "appVersion",
-        "first-party chart with no upstream image -- appVersion is its own version",
     ),
     (
         "helm/charts/envoy-gateway-config/Chart.yaml",

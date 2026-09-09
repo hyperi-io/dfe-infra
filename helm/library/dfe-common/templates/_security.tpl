@@ -9,7 +9,8 @@ is rejected by the kubelet under runAsNonRoot unless runAsUser is set numericall
 here — so ferretdb (uid 1000) and kafbat (uid 100) MUST carry an explicit runAsUser.
 
 Set .Values.podSecurityContext.enabled=false for a privileged workload that
-manages its own securityContext (dfe-vpn).
+manages its own securityContext (culvert). Note that runAsUser 0 cannot be set
+THROUGH this helper: 0 is falsy, so `default 1000` claims it.
 
 Usage:
   spec:
@@ -39,7 +40,7 @@ Override via .Values.containerSecurityContext:
   - readOnlyRootFilesystem: false — for a workload that writes its rootfs (add an
     emptyDir for scratch instead where possible).
   - capabilities.add: [NET_ADMIN] — for a workload that legitimately needs a
-    capability (dfe-vpn). ALL is still dropped first, so only the listed caps
+    capability (culvert). ALL is still dropped first, so only the listed caps
     remain; this is how SYS_MODULE gets removed — by not listing it.
 
 Usage:

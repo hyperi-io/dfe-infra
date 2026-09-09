@@ -27,6 +27,7 @@ hostnames:
   links: links
   otel: otel          # platform OTLP ingest
   receiver: receiver  # data ingest, used only by exposure.mode: internal
+  vpn: vpn            # edge-fleet tunnel door; culvert's server certificate CN
 
 # THE canonical operator-namespace map: network-policies allows data-namespace
 # ingress from these, and otel-collector scrapes their controllers' metrics.
@@ -172,8 +173,13 @@ vault:
 elasticsearch:
   endpoint: ""
 
-receiver:
-  listenCIDR: "100.64.0.0/10"
+# Edge-fleet VPN (the culvert chart). clientCIDR is the CGNAT range (RFC 6598)
+# reserved for tunnel clients and never for pod or service ranges, so an
+# appliance's own LAN and the cluster cannot collide with it; the chart carves
+# one /24 per tunnel out of it. Declared here because the reservation binds the
+# whole deployment's addressing, not just the app that consumes it.
+vpn:
+  clientCIDR: "100.64.0.0/10"
 
 # Key names mirror the ScaledObject spec fields the library helper writes; the
 # earlier minReplicas/maxReplicas spelling matched nothing and never applied.

@@ -17,7 +17,8 @@ hostname from the overlay, so a renamed label reported an exposed route as
 internal; the Reach column tested each route's hostname against the list of
 hostnames it was itself taken from, so every row read "exposed" and a second
 hostname was dropped; and the Gateway address came from `items[0]`, which is
-whichever Gateway the API happened to list first (dfe-vpn ships a second).
+whichever Gateway the API happened to list first, and a cluster the deployment
+shares carries Gateways that are not this deployment's.
 
 A fake `kubectl` first on PATH answers every query from a JSON fixture.
 
@@ -315,10 +316,10 @@ def test_no_routes_falls_back_to_the_composed_rows() -> None:
 
 
 def test_the_gateway_is_chosen_by_name() -> None:
-    """items[0] is whichever Gateway the API listed first; dfe-vpn ships a second."""
+    """items[0] is whichever Gateway the API listed first, ours or not."""
     text = run_summary(
         gateways=[
-            ["dfe-vpn-gateway", "dfe-vpn", "192.0.2.99"],
+            ["estate-gateway", "estate-envoy", "192.0.2.99"],
             ["dfe-gateway", "dfe-envoy", "192.0.2.10"],
         ]
     )
@@ -333,7 +334,7 @@ def test_the_gateway_falls_back_to_its_class() -> None:
     """A deployment may rename the Gateway; the GatewayClass is the other handle."""
     text = run_summary(
         gateways=[
-            ["dfe-vpn-gateway", "dfe-vpn", "192.0.2.99"],
+            ["estate-gateway", "estate-envoy", "192.0.2.99"],
             ["edge", "dfe-envoy", "192.0.2.10"],
         ]
     )
