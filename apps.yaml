@@ -31,21 +31,29 @@
 #     direct  point to point over gRPC, nothing stored between stages
 #   The engine refuses a source whose transport an app in its flow does not
 #   list, so an app gains a transport by shipping the listener and being edited
-#   HERE -- never by a condition in engine code.
+#   HERE - never by a condition in engine code.
 #
 # hot_reload
-#   Whether the app can apply a config change without a restart at all.
-#   INFORMATIONAL: it tells the engine and the console what the app is capable
-#   of, and it does not decide how a change is delivered. Every config change
-#   rolls the pod as a rolling update -- one deployment mechanism, no per-key
-#   exceptions -- so an app whose reloader would also have caught the change
-#   simply gets the new file on a fresh pod.
+#   Whether the app can apply a config change in place, without a restart. A
+#   FACT about the app, reported to the console and nothing more: every chart
+#   checksums the whole config into its pod template, so any change rolls the
+#   pods as a rolling update either way.
 #
 # endpoints
-#   Named listener ports, ONLY where the app deviates from the platform default
-#   (the scalo Push service on 6000). The engine builds a stage's endpoint from
-#   the app's Service name and this port, so a chart that moves its listener is
-#   a manifest edit rather than an engine release.
+#   The listeners the app runs, by name. `push` is the scalo Push service a
+#   direct-transport stage sends records to, and declaring it is ALSO how the
+#   engine knows the app has one: an app with no entry cannot be sent to, and
+#   nothing invents a port for it. The engine renders the entry two ways - the
+#   sender dials http://<Service>:<port>, the app itself binds 0.0.0.0:<port> -
+#   so a chart that moves its listener is a manifest edit. Fields:
+#     port     the port the listener answers on
+#     service  Kubernetes Service, ONLY where the chart's is not named after the
+#              app; a per-config app's instances answer on dfe-<app>-<source>
+#
+# variant_path
+#   The app's own config key naming the compiled-in program an instance runs,
+#   where the app ships a catalogue of them. The engine writes a source's
+#   transform.variant there without knowing which app it is.
 #
 # files[]
 #   A family of files the app reads off disk. Content is carried in the instance's
@@ -65,8 +73,12 @@
 # routing
 #   Present when the app's routing block is DERIVED from the source definitions
 #   rather than hand-set, so an edit to it is drift the engine re-syncs. Fields:
-#     compiler     names the function in the engine that builds the block
-#     values_path  dot-path in the overlay the compiled block is written to
+#     compiler     names the function in the engine that builds the blocks
+#     values_paths block name -> dot-path in the overlay it is written to. Each
+#                  block is owned WHOLE, so a block the compile no longer emits
+#                  is removed rather than left beside the new one - which is how
+#                  changing a source's transport clears the other transport's
+#                  keys.
 #     scope        stack     compiled from EVERY source in the stack (default)
 #                  instance  compiled from the ONE source the instance is bound
 #                            to, so each instance carries only its own source
@@ -103,23 +115,28 @@ apps:
     multiplicity: single
     scale_deployed: true
     transports: [bus, direct]
-    # A reload rebuilds the router and the validator and nothing else; the sinks
-    # and the listeners are built once at startup.
+    # A reload rebuilds the router and the validator in place; the sinks and the
+    # listeners are built once at startup.
     hot_reload: true
     routing:
       compiler: receiver
-      values_path: config.routing
+      values_paths:
+        # Which source a record belongs to, and where a matched record goes.
+        routing: config.routing
+        destinations: config.destinations
 
   dfe-loader:
     multiplicity: single
     scale_deployed: true
     transports: [bus, direct]
-    # Watching is opt-in per deployment (config.hot_reload.enabled) and off by
-    # default, so the rolling update is what actually applies a change.
+    # Watching is opt-in per deployment (config.hot_reload.enabled).
     hot_reload: true
+    endpoints:
+      push: {port: 6000}
     routing:
       compiler: loader
-      values_path: config.routing
+      values_paths:
+        routing: config.routing
 
   # Reads the LANDING topic, so it keeps the record as it arrived and has
   # nothing to read on a deployment with no bus.
@@ -136,9 +153,9 @@ apps:
     multiplicity: per_config
     scale_deployed: false
     transports: [bus, direct]
-    # Its reloader re-reads a per-source filter and the poll interval; the rest
-    # of a stanza binds a connection or a semaphore at startup
-    # (src/config/mod.rs:46-65).
+    # A per-source filter and the scheduler intervals are re-read in place; the
+    # rest of the stanza binds a connection, a topic or the concurrency
+    # semaphore, all established once at startup (its config.example.yaml).
     hot_reload: true
     # instance_id keys the cursor store, so it has to be stable per source: a
     # changed id re-fetches the default window instead of resuming.
@@ -147,7 +164,10 @@ apps:
     # Instance scope: one source's fetcher stanza, not the whole stack's.
     routing:
       compiler: fetcher
-      values_path: config.sources
+      values_paths:
+        # What it polls, and where the records it pulls are sent.
+        sources: config.sources
+        output: config.output
       scope: instance
     # The families dfe-fetcher ships, from its docs/capability-catalog.yaml.
     # Each name is also the config key its stanza sits under in config.sources.
@@ -177,15 +197,24 @@ apps:
   dfe-transform-vrl:
     multiplicity: per_config
     scale_deployed: true
-    # Bus only until its Push listener ships; adding `direct` here is the whole
-    # change that lets a direct source name it.
+    # Bus only until its Push listener ships; adding `direct` here and
+    # uncommenting the endpoint below is the whole change that lets a direct
+    # source name it.
     transports: [bus]
+    # endpoints:
+    #   push: {port: 6000}
     hot_reload: false
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
       config.source.group_id: "dfe-transform-vrl-{source}"
+    routing:
+      compiler: transform
+      values_paths:
+        source: config.source
+        sink: config.sink
+      scope: instance
     files:
       - name: transforms
         values_path: transformFiles
@@ -209,13 +238,23 @@ apps:
   dfe-transform-vector:
     multiplicity: per_config
     scale_deployed: true
-    # Bus only until its Push listener ships; adding `direct` here is the whole
-    # change that lets a direct source name it.
+    # Bus only until its Push listener ships; adding `direct` here and
+    # uncommenting the endpoint below is the whole change that lets a direct
+    # source name it.
     transports: [bus]
+    # endpoints:
+    #   push: {port: 6000}
     hot_reload: true
     # This app derives topics and consumer group from its own dfe_source field.
     source_binding:
       config.dfe_source: "{source}"
+    routing:
+      compiler: transform
+      values_paths:
+        dfe_source: config.dfe_source
+        source: config.source
+        sink: config.sink
+      scope: instance
     files:
       - name: transforms
         values_path: transformFiles
@@ -237,13 +276,25 @@ apps:
     multiplicity: per_config
     scale_deployed: true
     # Bus only until its gRPC listener ships (dfe-transform-elastic#19); adding
-    # `direct` here is the whole change that lets a direct source name it.
+    # `direct` here and uncommenting the endpoint below is the whole change that
+    # lets a direct source name it.
     transports: [bus]
+    # endpoints:
+    #   push: {port: 6000}          # dfe-transform-elastic#19
+    # Its batch size and scaling section take effect on the next batch.
     hot_reload: true
+    # It ships a catalogue of compiled-in transforms and selects one by name.
+    variant_path: config.source.name
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
       config.source.group_id: "dfe-transform-elastic-{source}"
+    routing:
+      compiler: transform
+      values_paths:
+        source: config.source
+        sink: config.sink
+      scope: instance
 
 kinds:
   vrl:
