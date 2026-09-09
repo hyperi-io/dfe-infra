@@ -839,12 +839,23 @@ def _metrics_gauge(url: str, name: str) -> float | None:
     return None
 
 
-def _health_component(url: str, name: str) -> dict | None:
-    """One component's entry from scalo's /healthz body, or None if absent."""
+def _health_body(url: str) -> dict | None:
+    """scalo's /healthz body, or None when the app's scalo serves no such route.
+
+    scalo 2.12 registers the health components but serves only /livez and
+    /readyz (scalo-rs#66), so an absent body means the surface is missing, not
+    that the app has nothing to report.
+    """
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
-            body = json.loads(response.read().decode("utf-8", errors="replace"))
+            return json.loads(response.read().decode("utf-8", errors="replace"))
     except (OSError, urllib.error.HTTPError, json.JSONDecodeError):
+        return None
+
+
+def _health_component(body: dict | None, name: str) -> dict | None:
+    """One component's entry from a /healthz body, or None if absent."""
+    if body is None:
         return None
     components = body.get("components")
     if isinstance(components, dict):
@@ -883,8 +894,10 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
 
     for app in apps:
         name = composition.deployment_name(app)
-        out = _run([*kube, "-n", namespace, "get", "deploy", name,
-                    "-o", "jsonpath={.status.readyReplicas}"])
+        out = subprocess.run(
+            [*kube, "-n", namespace, "get", "deploy", name, "-o", "jsonpath={.status.readyReplicas}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
         ready = (out.stdout or "").strip()
         if out.returncode != 0 or not ready or ready == "0":
             failures.append(f"{name}: no ready replica (kubectl said {ready or 'nothing'!r})")
@@ -906,10 +919,18 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
                 failures.append(f"{name}: metrics port never answered")
                 continue
             gauge = _metrics_gauge(f"http://localhost:{port}/metrics", "pipeline_idle")
-            work = _health_component(f"http://localhost:{port}/healthz", "work_config")
+            body = _health_body(f"http://localhost:{port}/healthz")
+            work = _health_component(body, "work_config")
             idle = gauge == 1.0
             reason = (work or {}).get("message") or (work or {}).get("detail") or ""
-            if idle and not reason:
+            if gauge is None:
+                failures.append(f"{name}: /metrics carries no pipeline_idle gauge")
+            elif body is None:
+                # The gauge is the only surface this scalo serves; the reason it
+                # would otherwise name is in the app's log.
+                state = "idle (gauge only: /healthz not served)" if idle else "working"
+                print(f"  {name}: {state}", file=sys.stderr)
+            elif idle and not reason:
                 failures.append(
                     f"{name}: pipeline_idle is 1 but /healthz names no work_config reason"
                 )

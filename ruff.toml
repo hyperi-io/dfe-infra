@@ -11,6 +11,13 @@
 line-length = 100
 target-version = "py312"
 
+# The two CLIs carry no .py suffix, so without this ruff never reads them and an
+# undefined name reaches a live run.
+extend-include = [
+    "scripts/dfe-ops",
+    "scripts/dfe-stack",
+]
+
 extend-exclude = [
     ".tmp",
     "helm",
