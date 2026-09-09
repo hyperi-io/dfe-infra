@@ -104,6 +104,14 @@ spec:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: sasl.mechanism
             {{- end }}
+            {{- end }}
+            {{- /* The DLQ writes to the bus, so it follows the INSTANCE's compiled
+                   output rather than the deployment's transport: on a bus deploy
+                   the engine still compiles a direct source's fetcher to
+                   output.type grpc, and the fetcher refuses kafka_only with no
+                   kafka output. */}}
+            {{- $output := default dict (get (default dict .Values.config) "output") }}
+            {{- if and (include "dfe-common.transportIsBus" .) (ne (toString (default "kafka" (get $output "type"))) "grpc") }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
             # pre-created by the kafka chart (kafka.dlqTopics); names are the
@@ -113,8 +121,8 @@ spec:
             - name: DFE_FETCHER_DLQ_MODE
               value: {{ .Values.dlq.mode | quote }}
             {{- else }}
-            # Direct transport: the DLQ's kafka backend is gone with the broker,
-            # and the fetcher's mode vocabulary has no "disabled" word.
+            # No bus behind this instance's output, and the fetcher's mode
+            # vocabulary has no "disabled" word.
             - name: DFE_FETCHER_DLQ_ENABLED
               value: "false"
             {{- end }}
