@@ -1855,9 +1855,9 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.19.22"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
+      dfe-engine: "v1.19.24"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
       dfe-ui: "v1.5.7"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
-      dfe-receiver: "v1.15.31"      # independent release line
+      dfe-receiver: "v1.15.32"      # independent release line
       dfe-loader: "v1.18.34"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.20"
       dfe-fetcher: "v1.4.19"
@@ -1880,9 +1880,9 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:c5c90caea89c912fe3641e41a7cf57a04de05359de25982cd8eac6b2bdbced50"
+      dfe-engine: "sha256:a3b467846249aaf0a0825b5aa2da9dd9315b394d6f17aa5598cfafa15ce14f55"
       dfe-ui: "sha256:febb760af2cae63b42de7dc3fcfcbefcf3a938388319466dbb3556a17ba34e74"
-      dfe-receiver: "sha256:e8cdf1da1bfdaeee46abe3c4ca97837ccb156199b5f9561b31aab81ccf674c17"
+      dfe-receiver: "sha256:378d60b23ca4407e4fd583232372b92d49db6a63c7eea39b4898eb8002686385"
       dfe-loader: "sha256:630a0a578f54836ca991e25ec5167dc5558b587cc2ba9fa63f8dcb97eb7b437c"
       dfe-archiver: "sha256:eb33faa5f817a4e1f20d0da9b003c0d56cc6ecce93dd35e2a2c4d545c1d98585"
       dfe-fetcher: "sha256:65366c085b20bd1da7eb4415e341f64188a2125d047f136a84a22597c2d08b8b"
