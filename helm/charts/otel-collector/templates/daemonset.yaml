@@ -18,14 +18,11 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
     spec:
-      # Root, unlike every other DFE pod: node pod-log files are root-owned
-      # (0640), so a non-root filelog receiver silently opens zero files.
-      # Rootfs stays read-only and all capabilities stay dropped.
-      securityContext:
-        runAsUser: 0
-        runAsGroup: 0
-        seccompProfile:
-          type: RuntimeDefault
+      # Root, unlike every other DFE pod (see daemonset.podSecurityContext).
+      # The shared helper reads .Values.podSecurityContext, so the daemonset's
+      # own ids are handed to it as a synthesised context -- one hardening
+      # definition for both workloads in this chart.
+      {{- include "dfe-common.podSecurityContext" (dict "Values" (dict "podSecurityContext" .Values.daemonset.podSecurityContext)) | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.fullname" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:

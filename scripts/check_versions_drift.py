@@ -518,6 +518,15 @@ CHECKS += [
         Path("helm/charts/dfe-schema/values.yaml"),
         r'digest:\s*"([^"]+)"',
     ),
+    # The engine reports the deployment's dfe-ui version on
+    # GET /api/v1/system/deployment. Helm cannot read a sibling chart's
+    # appVersion, so the engine chart carries a second copy of the ui pin.
+    Check(
+        "dfe-ui version (engine values)",
+        "apps.dfe-ui",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r'uiVersion:\s*"([^"]+)"',
+    ),
     # The git-sync sidecar in the hunt-runner pod: a THIRD-PARTY image in a chart
     # whose own image is dfe-engine, so both halves are anchored on the repository
     # line rather than on the file's first tag:/digest: (which are the engine's).

@@ -873,21 +873,22 @@ def _metrics_gauge(url: str, name: str) -> float | None:
 
 
 def _health_body(url: str) -> dict | None:
-    """scalo's /healthz body, or None when the app's scalo serves no such route.
+    """scalo's /healthz body, or None when it does not answer with a JSON object.
 
-    scalo 2.12 registers the health components but serves only /livez and
-    /readyz (scalo-rs#66), so an absent body means the surface is missing, not
-    that the app has nothing to report.
+    scalo 2.12 serves no /healthz at all (scalo-rs#66), so a 404 is a normal
+    answer here and the caller falls back to the metrics gauge alone.
     """
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8", errors="replace"))
+            body = json.loads(response.read().decode("utf-8", errors="replace"))
     except (OSError, urllib.error.HTTPError, json.JSONDecodeError):
         return None
+    return body if isinstance(body, dict) else None
 
 
-def _health_component(body: dict | None, name: str) -> dict | None:
-    """One component's entry from a /healthz body, or None if absent."""
+def _health_component(url: str, name: str) -> dict | None:
+    """One component's entry from scalo's /healthz body, or None if absent."""
+    body = _health_body(url)
     if body is None:
         return None
     components = body.get("components")
@@ -953,7 +954,7 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
                 continue
             gauge = _metrics_gauge(f"http://localhost:{port}/metrics", "pipeline_idle")
             body = _health_body(f"http://localhost:{port}/healthz")
-            work = _health_component(body, "work_config")
+            work = _health_component(f"http://localhost:{port}/healthz", "work_config")
             idle = gauge == 1.0
             reason = (work or {}).get("message") or (work or {}).get("detail") or ""
             if gauge is None:

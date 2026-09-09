@@ -3,6 +3,13 @@ component: network-policies
 env: local
 cloud: local
 
+# SSoT is argocd/values/common.yaml `networkModel`; these are chart defaults for
+# a standalone render only. Every carve-out below reads them.
+networkModel:
+  podCIDR: "198.18.0.0/16"
+  serviceCIDR: "198.19.0.0/16"
+  linkLocalCIDR: "169.254.0.0/16"
+
 # Namespaces that get DFE app policies (ingress from gateway + dfe-*)
 dfeNamespaces:
   - dfe-local   # changes per env: dfe-dev, dfe-prod, etc.
@@ -90,14 +97,11 @@ internetEgress:
   # Allowed destinations (default: the whole internet).
   allowCIDRs:
     - 0.0.0.0/0
-  # Carved OUT of allowCIDRs to block lateral movement into the cluster. Defaults
-  # to the pod + service CIDRs (network model) + link-local. RFC1918 is NOT
-  # excluded by default so corporate/private data sources stay reachable; add them
-  # here if the deployment forbids private-network egress.
-  exceptCIDRs:
-    - 198.18.0.0/16    # pod CIDR (network-model default)
-    - 198.19.0.0/16    # service CIDR (network-model default)
-    - 169.254.0.0/16   # link-local (cloud metadata, etc.)
+  # Carved OUT of allowCIDRs to block lateral movement into the cluster. Unset,
+  # it is the networkModel ranges. RFC1918 is NOT excluded by default so
+  # corporate/private data sources stay reachable; list them here if the
+  # deployment forbids private-network egress.
+  exceptCIDRs: ~
 
 # EXTERNAL-SERVICE egress, DERIVED from the declared service modes. There is no
 # enable flag here and there deliberately never will be: a purpose opens when the
@@ -143,10 +147,7 @@ externalEgress:
   allowCIDRs:
     - 0.0.0.0/0
   # Same lateral-movement carve-out internetEgress uses, applied to every purpose.
-  exceptCIDRs:
-    - 198.18.0.0/16    # pod CIDR (network-model default)
-    - 198.19.0.0/16    # service CIDR (network-model default)
-    - 169.254.0.0/16   # link-local (cloud metadata, etc.)
+  exceptCIDRs: ~
 
   # Every chart that resolves clickhouse.host. dfe-schema is the DDL gate and runs
   # in the `clickhouse` namespace rather than beside the apps

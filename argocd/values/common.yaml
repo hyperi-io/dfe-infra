@@ -173,6 +173,17 @@ vault:
 elasticsearch:
   endpoint: ""
 
+# THE cluster network model: the ranges the CNI and kube-proxy hand out. These
+# are what the cluster was installed with, so a deployment on different ranges
+# changes them HERE and nowhere else. network-policies carves them out of every
+# internet allow (a compromised pod cannot then reach pod or service space) and
+# culvert pushes the service range as the route a tunnel client may take.
+networkModel:
+  podCIDR: "198.18.0.0/16"
+  serviceCIDR: "198.19.0.0/16"
+  # Cloud metadata and the rest of link-local, never a destination for a DFE pod.
+  linkLocalCIDR: "169.254.0.0/16"
+
 # Edge-fleet VPN (the culvert chart). clientCIDR is the CGNAT range (RFC 6598)
 # reserved for tunnel clients and never for pod or service ranges, so an
 # appliance's own LAN and the cluster cannot collide with it; the chart carves

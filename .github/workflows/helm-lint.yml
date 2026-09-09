@@ -9,6 +9,9 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The app catalogue is data the composition and profile tests read, so an
+      # edit to it alone used to merge with nothing run (dfe-infra#255).
+      - 'apps.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
       # Whole tree: the job now lints every file under scripts/, not only the
@@ -24,6 +27,9 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The app catalogue is data the composition and profile tests read, so an
+      # edit to it alone used to merge with nothing run (dfe-infra#255).
+      - 'apps.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
       # Whole tree: the job now lints every file under scripts/, not only the
@@ -214,6 +220,11 @@ jobs:
       # listener in front of it a stage pool's extra replicas take nothing.
       - name: Every stage pool gets the same listener, on the one profile that asks
         run: python3 scripts/tests/test_pool_listener.py
+
+      # The engine can only report what the deploy hands it, and a console that
+      # is not told the tier lists every optional app.
+      - name: The engine is told its profile and its ui pin
+        run: python3 scripts/tests/test_engine_deployment_facts.py
 
       - name: Lint library charts via test charts
         run: |

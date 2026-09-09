@@ -201,6 +201,20 @@ spec:
             - name: DFE_STACK_VERSION
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.profile }}
+            # The tier this deployment was stood up as, from the SAME cluster
+            # secret annotation that selects profile-<x>.yaml above. Without it
+            # the console lists every optional app, because an engine that does
+            # not know its tier cannot rule any of them out.
+            - name: DFE_PROFILE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.uiVersion }}
+            # The dfe-ui pin this deployment renders, so the engine can report it
+            # when the deploy repo's pins name no ui override.
+            - name: DFE_UI_VERSION
+              value: {{ . | quote }}
+            {{- end }}
             # Reconcile the CH tenant fence on startup: tier roles, the _org_id row
             # policies, the deny policies over tables without one, and a CH user per
             # org/group. Set false only for a deployment with no tenant isolation.

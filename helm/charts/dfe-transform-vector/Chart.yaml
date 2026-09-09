@@ -6,5 +6,5 @@ version: 0.3.0
 appVersion: "v1.0.37"   # == versions.yaml apps.dfe-transform-vector (drift-checked)
 dependencies:
   - name: dfe-common
-    version: "0.9.0"
+    version: "0.9.1"
     repository: "file://../../library/dfe-common"
