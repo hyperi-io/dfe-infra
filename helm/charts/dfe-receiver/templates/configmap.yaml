@@ -13,9 +13,9 @@ metadata:
 data:
   config.yaml: |
     {{- $cfg := deepCopy (.Values.config | default dict) }}
-    {{- if eq (default "" .Values.kafka.mode) "disabled" }}
-    {{- /* No-kafka profile: route the default destination to the loader over
-           direct gRPC. The receiver has no flat-env keys for loader.transport
+    {{- if eq (include "dfe-common.transport" .) "direct" }}
+    {{- /* Direct transport: route the default destination to the loader over
+           gRPC. The receiver has no flat-env keys for loader.transport
            or destinations.default (config/mod.rs apply_flat_env), so this is
            the one seam that can set them. grpc_endpoint derives from address. */}}
     {{- $_ := set $cfg "destinations" (mergeOverwrite (default dict (get $cfg "destinations")) (dict "default" "loader")) }}

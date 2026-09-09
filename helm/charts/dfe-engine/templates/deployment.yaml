@@ -17,6 +17,8 @@ spec:
   # strips nulls, so the sync cannot clear it itself.
   strategy:
     type: Recreate
+  {{- else }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
   {{- end }}
   selector:
     matchLabels:
@@ -138,6 +140,25 @@ spec:
             # there with 409 scaling_unsupported.
             - name: DFE_DEPLOYMENT_TARGET
               value: "kubernetes"
+            # What this deployment can carry a source's records on, from the one
+            # deployment-wide kafka.mode the profile sets. Without it the engine
+            # defaults to bus and accepts sources on a transport the brokerless
+            # profiles do not run. DFE_KAFKA_ENSURE_TOPICS is deliberately NOT
+            # set here: the engine derives topic creation from bus_present, and
+            # a second dial saying the same thing is a second thing to get wrong.
+            - name: DFE_TRANSPORT_DEFAULT
+              value: {{ include "dfe-common.transport" . | quote }}
+            - name: DFE_TRANSPORT_BUS_PRESENT
+              value: {{ ternary "true" "false" (eq (include "dfe-common.transport" .) "bus") | quote }}
+            {{- with .Values.stackVersion }}
+            # The certified stack this deployment runs, from the cluster secret's
+            # target_revision annotation the appset already reads. GET
+            # /api/v1/system/version prefers the deploy repo's pins.yaml and
+            # falls back to this, so a deploy whose pins carry no base still
+            # answers with a stack rather than nothing.
+            - name: DFE_STACK_VERSION
+              value: {{ . | quote }}
+            {{- end }}
             # Reconcile the CH tenant fence on startup: tier roles, the _org_id row
             # policies, the deny policies over tables without one, and a CH user per
             # org/group. Set false only for a deployment with no tenant isolation.

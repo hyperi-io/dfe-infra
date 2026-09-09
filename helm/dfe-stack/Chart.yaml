@@ -60,7 +60,7 @@ dependencies:
     repository: "file://../charts/kafka"
     condition: kafka.enabled
   - name: kafbat
-    version: "0.1.1"
+    version: "0.1.2"
     repository: "file://../charts/kafbat"
     condition: kafbat.enabled
   - name: dfe-schema
@@ -72,31 +72,31 @@ dependencies:
     repository: "file://../charts/otel-collector"
     condition: otel-collector.enabled
   - name: links
-    version: "0.1.2"
+    version: "0.1.3"
     repository: "file://../charts/links"
     condition: links.enabled
   # Deploy-repo FALLBACK git host. OFF: the trial runs no GitOps loop (there
   # is no ArgoCD to consume the deploy repo), and dfe-engine.gitops.enabled is
   # false to match. See appsets/layer2-deploy-repo.yaml for the product gating.
   - name: forgejo
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/forgejo"
     condition: forgejo.enabled
   # --- DFE applications (layer2-apps, wave 7; slim app set) -----------------
   - name: dfe-engine
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/dfe-engine"
     condition: dfe-engine.enabled
   - name: dfe-ui
-    version: "0.1.0"
+    version: "0.1.1"
     repository: "file://../charts/dfe-ui"
     condition: dfe-ui.enabled
   - name: dfe-receiver
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/dfe-receiver"
     condition: dfe-receiver.enabled
   - name: dfe-loader
-    version: "0.1.1"
+    version: "0.2.0"
     repository: "file://../charts/dfe-loader"
     condition: dfe-loader.enabled
   # Aliased: dfe-engine's own values carry a `hyperdx:` key, and a sibling

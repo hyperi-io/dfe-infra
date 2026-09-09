@@ -13,6 +13,14 @@ spec:
   # support competing consumers opts in via keda (see values.yaml).
   replicas: 1
   {{- end }}
+  {{- if .Values.persistence.enabled }}
+  # The cursor PVC is ReadWriteOnce: a surging replacement blocks on an attach
+  # the outgoing pod still holds, so this one replaces in place instead.
+  strategy:
+    type: Recreate
+  {{- else }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
@@ -21,8 +29,9 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
-        # Roll the pods when the config blob changes -- the app reads the file at
-        # startup only, so a ConfigMap update alone would not take effect.
+        # Roll the pods on ANY config change. One delivery mechanism for every
+        # key, so nothing depends on whether the app's own reloader would have
+        # caught it; dfe-common.rollout makes that roll a rolling update.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
@@ -63,7 +72,7 @@ spec:
                   name: {{ .Values.apiCredentials.secretName }}
                   key: {{ .Values.apiCredentials.apiSecretKey }}
                   optional: true
-            {{- if ne (default "" .Values.kafka.mode) "disabled" }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- if .Values.kafka.saslSecretName }}
             # SASL credential by env, not in the config blob: the engine-authored
@@ -104,7 +113,7 @@ spec:
             - name: DFE_FETCHER_DLQ_MODE
               value: {{ .Values.dlq.mode | quote }}
             {{- else }}
-            # No-kafka profile: the DLQ's kafka backend is gone with the broker,
+            # Direct transport: the DLQ's kafka backend is gone with the broker,
             # and the fetcher's mode vocabulary has no "disabled" word.
             - name: DFE_FETCHER_DLQ_ENABLED
               value: "false"

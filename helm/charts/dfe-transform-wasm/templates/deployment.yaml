@@ -6,6 +6,7 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   {{- include "dfe-common.replicas" . }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
@@ -14,8 +15,8 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
-        # Roll the pods when the config blob changes -- the app reads the file at
-        # startup only, so a ConfigMap update alone would not take effect.
+        # Roll the pods on ANY config change -- the one delivery mechanism every
+        # app chart uses, made a rolling update by dfe-common.rollout.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:

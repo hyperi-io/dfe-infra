@@ -13,8 +13,8 @@ metadata:
 data:
   fetcher.yaml: |
     {{- $cfg := deepCopy (.Values.config | default dict) }}
-    {{- if eq (default "" .Values.kafka.mode) "disabled" }}
-    {{- /* No-kafka profile: push straight to the loader's scalo Push listener,
+    {{- if eq (include "dfe-common.transport" .) "direct" }}
+    {{- /* Direct transport: push straight to the loader's scalo Push listener,
            the only gRPC door that speaks the fetcher's client protocol.
            `endpoint` is a URI (scalo GrpcConfig), NOT the host:port the
            receiver's own loader.address takes -- do not copy that spelling.

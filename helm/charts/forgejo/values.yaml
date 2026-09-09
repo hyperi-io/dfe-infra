@@ -57,6 +57,23 @@ deployRepo:
   # deleted.
   seedMarker: .seeded-apps
 
+# The push hook that refreshes Argo CD, instead of waiting out its 300 s poll
+# plus 60 s jitter -- the 5 to 9 minutes an engine source write takes to reach a
+# pod without it. Registered as type `gogs`: Argo CD's handler has no gitea or
+# forgejo parser, and Forgejo sends the X-Gogs-* headers the gogs one reads.
+# The external git path configures the same hook on GitHub or GitLab --
+# docs/DEPLOY-HELPERS.md carries that recipe.
+webhook:
+  enabled: true
+  # Split into host and path because the host is also the webhook allow-list
+  # entry (see gitea.env) and the two must not drift.
+  argocdHost: argocd-server.argocd.svc.cluster.local
+  path: /api/webhook
+  # Minted by bootstrap.sh, which writes the same value into argocd-secret's
+  # webhook.gogs.secret. Absent, the setup Job registers no hook and says so.
+  secretName: dfe-argo-webhook
+  secretKey: secret
+
 # Image for the PostSync repo-creation Job (needs curl).
 setup:
   image: curlimages/curl:8.21.0   # 2026-05 (clears 7-day cooldown); was stale 8.11.1

@@ -124,6 +124,39 @@ bundle has to hold the CA that signed the CURRENT gateway certificate: a
 reissued CA leaves a stale bundle behind, and the failure reads as an HTTP 500
 on `/login` whose log line is `certificate verify failed`.
 
+## Making a deploy-repo push reach Argo immediately
+
+Argo CD polls the deploy repo every 300 s with up to 60 s of jitter, so a source
+written through the engine takes 5 to 9 minutes to reach a pod. A push webhook
+to Argo's `/api/webhook` collapses that to the sync itself.
+
+On the BUNDLED deploy repo this is automatic: `bootstrap.sh` mints a shared
+secret into `dfe-argo-webhook` (forgejo namespace) and `argocd-secret`'s
+`webhook.gogs.secret`, and the Forgejo chart's setup Job registers the hook. The
+Job says which of the two it could not find rather than failing the sync, so a
+deployment with an adopted Argo CD still comes up -- it just keeps polling.
+
+On an EXTERNAL deploy repo the same hook is configured on the provider. Argo CD
+verifies the delivery against a key in `argocd-secret`, so mint one and put it
+in both places:
+
+    kubectl -n argocd patch secret argocd-secret --type merge \
+      -p '{"stringData":{"webhook.github.secret":"<shared secret>"}}'
+
+Then add the webhook on the provider, against the Argo CD server's public
+address:
+
+| Provider | Where | Payload URL | Content type | Secret field | Events |
+|---|---|---|---|---|---|
+| GitHub | repo Settings -> Webhooks -> Add | `https://<argocd host>/api/webhook` | `application/json` | Secret | Just the push event |
+| GitLab | project Settings -> Webhooks | `https://<argocd host>/api/webhook` | n/a | Secret token, and `webhook.gitlab.secret` in argocd-secret | Push events |
+
+Argo CD's handler parses GitHub, GitLab, Bitbucket, Bitbucket Server, Azure
+DevOps and Gogs. It has no Gitea or Forgejo parser, which is why the bundled
+path registers a `gogs`-type hook. A self-hosted Argo behind a private CA needs
+the provider to trust that CA, or the deliveries fail verification and the
+deployment silently falls back to the poll.
+
 ## Trusting the DFE certificate
 
 Which CA signed the gateway's `*.<domain>` certificate is a per-deployment

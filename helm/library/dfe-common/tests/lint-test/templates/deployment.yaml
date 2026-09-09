@@ -1,0 +1,25 @@
+# The harness for dfe-common.rollout and dfe-common.pdb: the same shape every
+# app chart's Deployment has -- the rollout strategy beside the replica count,
+# and the config checksum on the pod template.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  {{- include "dfe-common.replicas" . }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config-configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: app
+          image: "example:0.0.1"
