@@ -23,6 +23,14 @@ replicaCount: 1
 service:
   pushPort: 6000
 
+# gRPC target on the direct transport (kafka.mode: disabled): the LOADER's
+# Service name + grpcPort. The transform's gRPC output is a scalo Transport/Push
+# client, which the loader serves and the receiver does not (its :6000 speaks the
+# Vector protocol). A URI, unlike the receiver's host:port loaderGrpcAddress:
+# scalo's GrpcConfig.endpoint is parsed as one. Point it at another transform's
+# push Service to chain two transforms.
+loaderGrpcAddress: "http://dfe-loader:6000"
+
 kafka:
   # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
   # values. Templates read it through dfe-common.transport, never by comparing
@@ -52,6 +60,11 @@ otel:
 # deployment-specific addresses in a product chart, and Helm's map merge would
 # silently leave stale keys behind when the engine's overlay does not overwrite
 # them.
+#
+# One exception, in the ConfigMap rather than here: source.transport and
+# sink.transport (plus source.listen and sink.endpoint on direct) are derived
+# from kafka.mode by dfe-common.transformConfig, because which transport carries
+# the records is a deployment fact and not the engine's to author.
 config: {}
 
 # The .vrl programs this instance runs, as a list of {name, content}. Written by
