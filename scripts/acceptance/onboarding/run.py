@@ -22,7 +22,8 @@ The first thing an operator does with a new deployment is open it and be walked
 through setup. Nothing else in the acceptance suite covers that: the API tests
 authenticate straight past it, so a wizard that cannot be finished ships.
 
-Two phases. The wizard walks the screens the engine's own setup contract asks
+Two phases. The wizard phase signs in as the admin the deploy minted (the wizard
+sits behind the login) and walks the screens the engine's own setup contract asks
 for -- and asserts that a screen it does NOT ask for never appears, which is what
 catches a console still demanding a step the product dropped. Then the console
 phase logs in as the account the wizard just created, checks the navigation
@@ -37,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import ssl
 import sys
 import time
@@ -203,16 +205,37 @@ class Driver:
         return self.page.get_by_role("textbox", name=name, exact=True)
 
 
+def sign_in(driver: Driver, user: str, password: str) -> None:
+    """Log in through the console's own form as a local account."""
+    # The console is a single-page app that never goes network-idle, so the
+    # form is waited for by its own control rather than by the page settling.
+    driver.page.goto(f"{driver.ui}/login", wait_until="domcontentloaded",
+                     timeout=STEP_TIMEOUT_MS * 2)
+    # A deployment with an identity provider registered opens on the OIDC tab,
+    # and the local accounts sit behind the other one.
+    local = driver.page.get_by_role("tab", name=LOCAL_LOGIN_TAB, exact=True)
+    if local.count():
+        local.first.click(timeout=STEP_TIMEOUT_MS)
+    driver.textbox("Username").wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+    driver.textbox("Username").fill(user)
+    driver.textbox("Password").fill(password)
+    driver.button("Login").click(timeout=STEP_TIMEOUT_MS)
+
+
 def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, password: str,
-                breakglass_password: str) -> None:
+                breakglass_password: str, admin_user: str, admin_password: str) -> None:
     """Complete every screen the deployment asks for, in the console's order.
 
     Each screen is completed rather than clicked past: a wizard that can be
-    skipped proves nothing about whether its work lands.
+    skipped proves nothing about whether its work lands. The wizard sits behind
+    the login, so the run signs in as the admin the deploy minted first.
     """
+    sign_in(driver, admin_user, admin_password)
+    driver.page.wait_for_url("**/setup**", timeout=STEP_TIMEOUT_MS * 2)
+    driver.record("login", "done", f"signed in as {admin_user}; the console opened the wizard")
     driver.page.goto(f"{driver.ui}/setup/{wizard.WELCOME}", wait_until="domcontentloaded",
                      timeout=STEP_TIMEOUT_MS * 2)
-    driver.page.wait_for_load_state("networkidle", timeout=STEP_TIMEOUT_MS)
+    driver.button("Next").wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(driver.current_slug())
     driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
     driver.record(wizard.WELCOME, "done", "the wizard opened and moved on")
@@ -275,17 +298,7 @@ def check_console(driver: Driver, user: str, password: str) -> str:
     Returns:
         The source it created, for the caller to remove. Empty when it made none.
     """
-    # networkidle, not domcontentloaded: the console is a single-page app, and a
-    # control counted before it hydrates reads as absent.
-    driver.page.goto(f"{driver.ui}/login", wait_until="networkidle", timeout=STEP_TIMEOUT_MS * 2)
-    # A deployment with an identity provider registered opens on the OIDC tab,
-    # and the minted admin is a local account behind the other one.
-    local = driver.page.get_by_role("tab", name=LOCAL_LOGIN_TAB, exact=True)
-    if local.count():
-        local.first.click(timeout=STEP_TIMEOUT_MS)
-    driver.textbox("Username").fill(user)
-    driver.textbox("Password").fill(password)
-    driver.button("Login").click(timeout=STEP_TIMEOUT_MS)
+    sign_in(driver, user, password)
     driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
     driver.record("login", "done", f"signed in as {user}")
 
@@ -326,6 +339,7 @@ def run(args: argparse.Namespace) -> int:
         )
         return 2
 
+    _apply_resolve_map(args.resolve)
     admin_user, password = args.admin_user, os.environ.get("DFE_E2E_ADMIN_PASSWORD", "")
     if args.access_summary:
         # Sign in with exactly what the person who ran the deploy is holding: if
@@ -372,16 +386,25 @@ def run(args: argparse.Namespace) -> int:
     with sync_playwright() as play:
         # A clean profile every run: a browser carrying a previous session would
         # walk past the login this suite exists to exercise.
-        browser = play.chromium.launch(channel=args.channel, headless=not args.headed)
-        context = browser.new_context(
-            viewport={"width": 1440, "height": 900}, ignore_https_errors=args.insecure
+        # A gateway hostname this machine cannot resolve is mapped inside the
+        # browser, so the run reaches the deployment the way a user does.
+        launch_args = [f"--host-resolver-rules=MAP {host} {ip}" for host, ip in args.resolve]
+        browser = play.chromium.launch(
+            channel=args.channel, headless=not args.headed, args=launch_args
         )
-        page = context.new_page()
-        driver = Driver(page, args.ui_url, shots)
+
+        def fresh_context():
+            return browser.new_context(
+                viewport={"width": 1440, "height": 900}, ignore_https_errors=args.insecure
+            )
+
+        context = fresh_context()
+        driver = Driver(context.new_page(), args.ui_url, shots)
         try:
             if not complete:
                 walk_wizard(
-                    driver, expected, args.org, args.first_user, password, password
+                    driver, expected, args.org, args.first_user, password, password,
+                    admin_user, password,
                 )
                 surplus = wizard.unexpected_screens(expected, driver.seen)
                 if surplus:
@@ -390,6 +413,10 @@ def run(args: argparse.Namespace) -> int:
                         "failed",
                         f"screens this deployment does not ask for: {', '.join(surplus)}",
                     )
+                # The first user arrives on their own browser, not the admin's session.
+                context.close()
+                context = fresh_context()
+                driver.page = context.new_page()
             created = check_console(
                 driver, args.first_user if not complete else admin_user, password
             )
@@ -442,7 +469,34 @@ def build_parser() -> argparse.ArgumentParser:
                         help="skip the wizard on a deployment already set up")
     parser.add_argument("--insecure", action="store_true",
                         help="accept a certificate this machine does not trust")
+    parser.add_argument("--resolve", action="append", default=[], metavar="HOST:IP",
+                        type=_host_ip, help="resolve HOST to IP inside the browser (repeatable)")
     return parser
+
+
+def _apply_resolve_map(pairs: list[tuple[str, str]]) -> None:
+    """Resolve the mapped hosts to their addresses for this process's own calls.
+
+    The browser gets the same map as a launch argument; this covers the
+    urllib calls the run makes beside it, with TLS still verified (or not)
+    against the hostname.
+    """
+    if not pairs:
+        return
+    mapping = dict(pairs)
+    original = socket.getaddrinfo
+
+    def resolve(host, port, *rest, **kwargs):
+        return original(mapping.get(host, host), port, *rest, **kwargs)
+
+    socket.getaddrinfo = resolve
+
+
+def _host_ip(value: str) -> tuple[str, str]:
+    host, sep, ip = value.rpartition(":")
+    if not sep or not host or not ip:
+        raise argparse.ArgumentTypeError(f"expected HOST:IP, got {value!r}")
+    return host, ip
 
 
 def main(argv: list[str] | None = None) -> int:

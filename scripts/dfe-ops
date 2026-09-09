@@ -142,6 +142,7 @@ import os
 import platform
 import secrets
 import shutil
+import socket
 import ssl
 import subprocess
 import sys
@@ -149,6 +150,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
@@ -1046,8 +1048,26 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         ("datastore", ch_namespace, args.ch_target, args.ch_port, 8123),
         ("engine", namespace, args.engine_target, args.engine_port, 8000),
     ]
+    # The onboarding suite goes through the gateway, never a forward to the
+    # console pod: the pod bounces a browser's /api call to /login, because
+    # routing /api to the engine is the gateway's job.
+    ui_url, resolve = "", list(args.resolve)
     if ONBOARDING_SUITE in steps:
-        forwards.append(("ui", namespace, args.ui_target, args.ui_port, 3000))
+        ui_url = args.ui_url or _console_urls(kube, namespace)[0]
+        if "localhost" in ui_url:
+            print(
+                "the onboarding suite needs the console's gateway URL and this deployment "
+                "has no domain annotation; pass --ui-url", file=sys.stderr,
+            )
+            return 1
+        host = urllib.parse.urlsplit(ui_url).hostname or ""
+        if not resolve and not _resolves(host):
+            address = _gateway_address(kube)
+            if not address:
+                print(f"{host} does not resolve here and the gateway has no address to map it to", file=sys.stderr)
+                return 1
+            resolve = [f"{host}:{address}"]
+            print(f"  {host} does not resolve here: mapping it to the gateway at {address}", file=sys.stderr)
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
@@ -1122,15 +1142,17 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     for step in steps:
         print(f"\n>>> acceptance suite: {step}", file=sys.stderr)
         if step == ONBOARDING_SUITE:
-            rc = subprocess.run(
-                [
-                    "python3", str(ONBOARDING_RUNNER),
-                    "--ui-url", f"http://localhost:{args.ui_port}",
-                    "--engine-url", f"http://localhost:{args.engine_port}",
-                    "--shots-dir", args.shots_dir,
-                ],
-                env=env,
-            ).returncode
+            runner = [
+                sys.executable, str(ONBOARDING_RUNNER),
+                "--ui-url", ui_url,
+                "--engine-url", ui_url,
+                "--shots-dir", args.shots_dir,
+            ]
+            if args.insecure:
+                runner.append("--insecure")
+            for pair in resolve:
+                runner += ["--resolve", pair]
+            rc = subprocess.run(runner, env=env).returncode
         else:
             pytest_args = args.pytest_args or [
                 *_PYTEST_SUITES[step], "-m", "live", "-v", "--no-cov", "-p", "no:randomly",
@@ -1380,6 +1402,27 @@ def cmd_access_summary(args: argparse.Namespace) -> int:
             print(f"  {label}: {user} / {password}")
     print(f"==> access summary written to {path} (mode 0600) -- delete it once recorded")
     return 0
+
+
+def _gateway_address(kube: list[str]) -> str:
+    """The address the deployment's Gateway is programmed on, or empty."""
+    rc, doc, _ = _kubectl_json([*kube, "get", "gateway", "-A"])
+    if rc != 0:
+        return ""
+    for item in doc.get("items") or []:
+        for address in (item.get("status") or {}).get("addresses") or []:
+            if address.get("value"):
+                return str(address["value"])
+    return ""
+
+
+def _resolves(host: str) -> bool:
+    """Whether this machine can resolve the host at all."""
+    try:
+        socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    return True
 
 
 def _cluster_annotation(kube: list[str], name: str) -> str:
@@ -2857,8 +2900,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="engine login the suites authenticate as (default: the deploy's own minted admin)")
     ac.add_argument("--access-summary", default="", metavar="FILE",
                     help="the deploy's access summary, so the suites sign in with exactly what its launcher holds")
-    ac.add_argument("--ui-target", default="svc/dfe-ui", help="console port-forward target for the onboarding suite")
-    ac.add_argument("--ui-port", type=int, default=3300, help="local port for the console forward")
+    ac.add_argument("--ui-url", default="",
+                    help="console URL through the gateway for the onboarding suite (default: https://dfe.<domain> from the cluster annotation)")
+    ac.add_argument("--resolve", action="append", default=[], metavar="HOST:IP",
+                    help="resolve the console host to this address in the browser and the run (default: the gateway's address when the host does not resolve here)")
+    ac.add_argument("--insecure", action="store_true",
+                    help="accept a gateway certificate this machine does not trust")
     ac.add_argument("--shots-dir", default=".tmp/onboarding",
                     help="where the onboarding suite writes its per-step screenshots")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
