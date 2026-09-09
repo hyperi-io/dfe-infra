@@ -30,14 +30,14 @@ appVersion: "2.2.0-rc.12"
 dependencies:
   # --- platform (layer2-platform, wave 2) -----------------------------------
   - name: network-policies
-    version: "0.3.0"
+    version: "0.4.0"
     repository: "file://../charts/network-policies"
     condition: network-policies.enabled
   # Default OFF for the trial: the gateway needs the envoy-gateway operator,
   # Gateway API CRDs, cert-manager AND a LoadBalancer -- the trial uses
   # ClusterIP + port-forward instead (NOTES.txt). Flip on for a real edge.
   - name: envoy-gateway-config
-    version: "0.1.1"
+    version: "0.2.0"
     repository: "file://../charts/envoy-gateway-config"
     condition: envoy-gateway-config.enabled
   # --- data substrate (layer2-data, waves 4-6) ------------------------------
@@ -84,7 +84,7 @@ dependencies:
     condition: forgejo.enabled
   # --- DFE applications (layer2-apps, wave 7; slim app set) -----------------
   - name: dfe-engine
-    version: "0.2.0"
+    version: "0.3.0"
     repository: "file://../charts/dfe-engine"
     condition: dfe-engine.enabled
   - name: dfe-ui
@@ -92,11 +92,11 @@ dependencies:
     repository: "file://../charts/dfe-ui"
     condition: dfe-ui.enabled
   - name: dfe-receiver
-    version: "0.2.0"
+    version: "0.3.0"
     repository: "file://../charts/dfe-receiver"
     condition: dfe-receiver.enabled
   - name: dfe-loader
-    version: "0.2.0"
+    version: "0.3.0"
     repository: "file://../charts/dfe-loader"
     condition: dfe-loader.enabled
   # Aliased: dfe-engine's own values carry a `hyperdx:` key, and a sibling

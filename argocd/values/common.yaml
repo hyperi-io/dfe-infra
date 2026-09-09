@@ -94,6 +94,37 @@ kafka:
     enabled: true
     mechanism: SCRAM-SHA-512
 
+# The pool balancer for the direct transport. A Kubernetes Service balances per
+# CONNECTION and gRPC holds one connection open, so a sender pins itself to one
+# pod of the pool it dials. `enabled` puts a Gateway API listener in front of
+# every pool instead: the sender addresses the listener, and the proxy spreads
+# each REQUEST across the pool. Only the scale-mesh profile turns it on -- the
+# single-replica tiers have nothing to spread, and the brokered tiers balance
+# through the broker's consumer group.
+#
+# The listener is Gateway API, so the implementation is the class name:
+# `dfe-envoy` is the in-cluster Envoy Gateway the deployment already runs at its
+# edge, and a cloud provider's Gateway API class is the swap where the class
+# name is the whole difference.
+mesh:
+  enabled: false
+  gateway:
+    name: dfe-mesh
+    className: dfe-envoy
+    # Where the Gateway and its proxy pods live. The pool aliases are Services
+    # in this namespace selecting those pods, so it is also the namespace half
+    # of every pool's mesh hostname.
+    namespace: envoy-gateway-system
+    # How a pool alias finds the proxy pods. These are Envoy Gateway's own
+    # ownership labels; a different Gateway API implementation supplies its
+    # equivalents here rather than in a template.
+    proxySelector:
+      gateway.envoyproxy.io/owning-gateway-name: dfe-mesh
+      gateway.envoyproxy.io/owning-gateway-namespace: envoy-gateway-system
+  # The port the listener answers on, matching the platform push port every
+  # stage's listener already uses (dfe-common.pushPort).
+  port: 6000
+
 # Read only by the kafka chart, which projects the SCRAM credential into the
 # namespaces that need it beyond appNamespace. The collector's kafka_metrics
 # receiver authenticates as the same service user, so its namespace belongs here;

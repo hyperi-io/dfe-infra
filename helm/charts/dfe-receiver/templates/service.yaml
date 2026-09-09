@@ -29,6 +29,9 @@ spec:
       targetPort: {{ .name }}
       protocol: {{ .protocol | default "TCP" }}
       name: {{ .name }}
+      {{- with .appProtocol }}
+      appProtocol: {{ . }}
+      {{- end }}
     {{- end }}
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}

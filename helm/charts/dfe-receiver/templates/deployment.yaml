@@ -148,6 +148,13 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            {{- /* Disk spillover writes outside /tmp, so it needs its own
+                   volume, at the same path the ConfigMap gives the app. */}}
+            {{- $spill := .Values.receiver.buffer.spillover }}
+            {{- if $spill.enabled }}
+            - name: spool
+              mountPath: {{ $spill.path }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
@@ -168,3 +175,13 @@ spec:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        {{- $spill := .Values.receiver.buffer.spillover }}
+        {{- if $spill.enabled }}
+        # Node-local scratch, not a PVC: the spool is slack for an outage the
+        # pod is expected to outlive, and a record still held when the pod dies
+        # was never acknowledged as durable on this transport. sizeLimit is what
+        # stops one receiver filling the node's disk for everything else.
+        - name: spool
+          emptyDir:
+            sizeLimit: {{ $spill.sizeLimit }}
+        {{- end }}

@@ -150,6 +150,18 @@ spec:
               value: {{ include "dfe-common.transport" . | quote }}
             - name: DFE_TRANSPORT_BUS_PRESENT
               value: {{ ternary "true" "false" (eq (include "dfe-common.transport" .) "bus") | quote }}
+            # Whether the stage pools sit behind a listener here, and where that
+            # listener lives. The engine compiles a sender's destination, so it
+            # has to address the pool the same way the charts front it -- the
+            # shape of the address is apps.yaml's `mesh.host_pattern`, and these
+            # two are the deployment's half of it. Absent means the pools are
+            # dialled directly, which is every profile but scale-mesh.
+            - name: DFE_MESH_ENABLED
+              value: {{ ternary "true" "false" (eq (include "dfe-common.meshEnabled" .) "true") | quote }}
+            {{- if (include "dfe-common.meshEnabled" .) }}
+            - name: DFE_MESH_NAMESPACE
+              value: {{ .Values.mesh.gateway.namespace | quote }}
+            {{- end }}
             {{- with .Values.stackVersion }}
             # The certified stack this deployment runs, from the cluster secret's
             # target_revision annotation the appset already reads. GET
