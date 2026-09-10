@@ -15,12 +15,12 @@ variable "domain" {
 }
 
 variable "profile" {
-  description = "Deployment profile: slim (single-node, gRPC, no Kafka), single (single-node, with Kafka), scale (HA, with Kafka) or scale-mesh (HA, gRPC, no Kafka)"
+  description = "Deployment profile: slim (single-node, gRPC, no Kafka), single (single-node, with Kafka), scale (HA, with Kafka) or mesh (HA, gRPC, no Kafka)"
   type        = string
   default     = "scale"
   validation {
-    condition     = contains(["slim", "single", "scale", "scale-mesh"], var.profile)
-    error_message = "profile must be 'slim', 'single', 'scale' or 'scale-mesh'."
+    condition     = contains(["slim", "single", "scale", "mesh"], var.profile)
+    error_message = "profile must be 'slim', 'single', 'scale' or 'mesh'."
   }
 }
 

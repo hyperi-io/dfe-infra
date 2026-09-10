@@ -37,7 +37,7 @@ ENGINE_CHART = REPO_ROOT / "helm" / "charts" / "dfe-engine"
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml"
 VALUES = REPO_ROOT / "argocd" / "values"
 
-PROFILES = ("slim", "single", "scale", "scale-mesh")
+PROFILES = ("slim", "single", "scale", "mesh")
 
 # The cluster-secret annotation that is the SSoT for the tier at render time.
 PROFILE_ANNOTATION = "dfe.hyperi.io/profile"

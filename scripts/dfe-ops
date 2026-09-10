@@ -28,7 +28,7 @@ Subcommands:
   deploy       Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
                terraform -> bridge -> bootstrap -> Argo).
   stack-deploy Drive one END-TO-END deploy of a PINNED stack version in a chosen
-               MODE (slim|single|scale|scale-mesh) onto an EXISTING cluster:
+               MODE (slim|single|scale|mesh) onto an EXISTING cluster:
                offline pre-flight (pins resolve, no drift, mode charts render) ->
                bootstrap (Layer 0/1 + Argo sync of the mode's profile at the
                SSoT-pinned versions) -> bounded readiness gate -> the two default

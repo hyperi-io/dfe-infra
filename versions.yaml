@@ -1764,6 +1764,20 @@ stacks:
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
       dfe-hyperdx: "v0.2.0"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca (native ClickHouse JSON sub-paths across search, charts and filters, plus the inherited-security pass; upstream 2.36.0); deployment tag pin lives in the deploy repo values
+      # Authored files an app SHIPS and the engine SERVES, pinned separately from
+      # the app image the profile deploys: the reference pipelines move on their
+      # own cadence, and a deployment that runs no transform still shows them.
+      # The engine chart materialises these into content.mountPath and seeds its
+      # library from them (helm/charts/dfe-engine, DFE_LIBRARY_SEED_DIR).
+      #
+      # NOT YET FETCHABLE, both of them. Neither release carries the files as an
+      # asset (`gh release view <tag> --json assets` returns []) and neither
+      # Dockerfile copies them into the image, so the chart's content.entries is
+      # empty and these pins record the tag rather than drive a fetch. Each app
+      # ships its files in its image and the entry goes live with no change here.
+      dfe-transform-vector-templates: "v1.0.37"   # templates/{bus,direct}.yaml -- first tag whose tree carries them (v1.0.36 does not)
+      dfe-transform-vrl-pipelines: "v1.1.20"      # pipelines/filebeat/filebeat.vrl -- same tag as apps.dfe-transform-vrl
+      # dfe-transform-elastic-catalogue: "<tag>"  # sources.yaml, 344 KB -- dfe-transform-elastic#18
 
     # Stack upgrade metadata for THIS version.
     stack:

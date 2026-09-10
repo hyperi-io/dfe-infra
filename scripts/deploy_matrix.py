@@ -98,7 +98,7 @@ def matrix_profiles() -> tuple[str, ...]:
 
     Every cell --sets the chart's own mode, so a profile contributes only its
     values cascade -- and on the substrate charts the four modes collapse to two
-    shapes. slim and single both size ClickHouse single/1; scale-mesh sizes it
+    shapes. slim and single both size ClickHouse single/1; mesh sizes it
     cluster/3 exactly as scale does, differing only in the broker the cell's
     --set already varies. Running all four would double a live cluster matrix for
     no distinct cell.

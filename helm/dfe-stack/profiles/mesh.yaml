@@ -1,6 +1,6 @@
-# Profile overlay: SCALE-MESH -- HA replicas and a ClickHouse cluster with NO
+# Profile overlay: MESH -- HA replicas and a ClickHouse cluster with NO
 # Kafka; the receiver feeds the loader over direct gRPC.
-# Source: argocd/values/profile-scale-mesh.yaml, mapped onto the umbrella's
+# Source: argocd/values/profile-mesh.yaml, mapped onto the umbrella's
 # per-subchart keys (endpoints shortened for the single-namespace install).
 #
 # EXTRA prerequisites over slim/single (pins: versions.yaml `operators:`):
@@ -9,7 +9,7 @@
 # NOT strimzi-kafka-operator: this profile runs no broker.
 # At this tier the ArgoCD product path (argocd/appsets/) is the right vehicle;
 # this overlay exists so the umbrella's composition can be exercised end to end.
-# Usage: helm template dfe helm/dfe-stack -n dfe -f helm/dfe-stack/profiles/scale-mesh.yaml
+# Usage: helm template dfe helm/dfe-stack -n dfe -f helm/dfe-stack/profiles/mesh.yaml
 
 # NO POOL BALANCER HERE. The argocd path turns `mesh.enabled` on; this one
 # cannot, because the umbrella installs the apps alone into one namespace and
@@ -17,10 +17,10 @@
 # (envoy-gateway-config) that the umbrella does not carry. What the umbrella
 # exercises is the composition, not the edge.
 
-x-scale-mesh-shared:
-  # Source: argocd/values/profile-scale-mesh.yaml `resources:` -- 4Gi rather
+x-mesh-shared:
+  # Source: argocd/values/profile-mesh.yaml `resources:` -- 4Gi rather
   # than scale's 2Gi because no broker holds records between stages here.
-  resources: &scaleMeshResources
+  resources: &meshResources
     requests:
       cpu: 500m
       memory: 1Gi
@@ -29,17 +29,17 @@ x-scale-mesh-shared:
       memory: 4Gi
   # No broker: each stage hands records to the next over gRPC, at the address
   # the engine compiles into that stage's overlay.
-  kafka: &scaleMeshKafka
+  kafka: &meshKafka
     mode: disabled
-  # Source: argocd/values/profile-scale-mesh.yaml `keda:`.
-  keda: &scaleMeshKeda
+  # Source: argocd/values/profile-mesh.yaml `keda:`.
+  keda: &meshKeda
     enabled: true
     minReplicaCount: 2
     maxReplicaCount: 10
 
 clickhouse-cluster:
   clickhouse:
-    # Source: argocd/values/profile-scale-mesh.yaml `clickhouse:` -- operator
+    # Source: argocd/values/profile-mesh.yaml `clickhouse:` -- operator
     # cluster with DFE-owned Keeper, ReplicatedMergeTree.
     mode: cluster
     replicas: 3
@@ -47,10 +47,10 @@ clickhouse-cluster:
 
 cnpg-cluster:
   cluster:
-    # Source: argocd/values/profile-scale-mesh.yaml `cluster.instances` (HA).
+    # Source: argocd/values/profile-mesh.yaml `cluster.instances` (HA).
     instances: 3
 
-# Source: argocd/values/profile-scale-mesh.yaml `kafbat.enabled` (no Kafka to manage).
+# Source: argocd/values/profile-mesh.yaml `kafbat.enabled` (no Kafka to manage).
 kafbat:
   enabled: false
 
@@ -58,20 +58,20 @@ dfe-engine:
   # The operator cluster emits only a headless client Service.
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"
-  resources: *scaleMeshResources
+  resources: *meshResources
 
 dfe-ui:
   replicaCount: 2
-  resources: *scaleMeshResources
-  keda: *scaleMeshKeda
+  resources: *meshResources
+  keda: *meshKeda
 
 dfe-receiver:
   replicaCount: 2
-  kafka: *scaleMeshKafka
-  resources: *scaleMeshResources
-  keda: *scaleMeshKeda
+  kafka: *meshKafka
+  resources: *meshResources
+  keda: *meshKeda
   receiver:
-    # Source: argocd/values/profile-scale-mesh.yaml `receiver.buffer` -- with no
+    # Source: argocd/values/profile-mesh.yaml `receiver.buffer` -- with no
     # broker downstream this is the only slack in the chain, so 3 GiB of the
     # pod's 4Gi plus 20 GiB of spool.
     buffer:
@@ -82,18 +82,18 @@ dfe-receiver:
 
 dfe-loader:
   replicaCount: 2
-  kafka: *scaleMeshKafka
+  kafka: *meshKafka
   # The operator cluster emits only a headless client Service.
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"
-  resources: *scaleMeshResources
-  keda: *scaleMeshKeda
+  resources: *meshResources
+  keda: *meshKeda
 
 dfe-hyperdx:
   replicaCount: 2
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"
-  resources: *scaleMeshResources
+  resources: *meshResources
 
 dfe-schema:
   clickhouse:
@@ -102,7 +102,7 @@ dfe-schema:
 otel-collector:
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"
-  # Source: argocd/values/profile-scale-mesh.yaml `clusterTelemetry:` -- no broker
+  # Source: argocd/values/profile-mesh.yaml `clusterTelemetry:` -- no broker
   # to scrape.
   clusterTelemetry:
     kubeletStats:

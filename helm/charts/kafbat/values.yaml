@@ -4,7 +4,7 @@ env: local
 cloud: local
 
 # Deployed with the Kafka substrate in the single + scale tiers; gated OFF on the
-# brokerless tiers (slim, scale-mesh -- gRPC, no Kafka). Namespaced under
+# brokerless tiers (slim, mesh -- gRPC, no Kafka). Namespaced under
 # `kafbat:` so the shared profile cascade (common + <cloud> + profile-<tier>.yaml,
 # applied to EVERY chart) can toggle it WITHOUT the switch leaking to other
 # charts -- a bare top-level `enabled` would gate any chart that reads

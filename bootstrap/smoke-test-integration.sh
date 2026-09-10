@@ -218,7 +218,7 @@ check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FR
 echo ""
 echo "=== CORE 2: data path (receiver -> [kafka ->] loader -> ClickHouse) ==="
 # Post a unique event to the receiver, then poll the CH landing table for it.
-# Covers gRPC-direct (slim, scale-mesh) and kafka (single/scale): same two endpoints
+# Covers gRPC-direct (slim, mesh) and kafka (single/scale): same two endpoints
 # either way -- event IN at the receiver, row OUT in dfe.main.
 # _source `main` (not `smoke`): the receiver derives the topic as
 # <default_source><topic_suffix> = main_land, which is the topic the loader
@@ -272,7 +272,7 @@ check "_raw is populated on the API ingest path (full payload captured for this 
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== CORE 3: kafka seam (main_land created + produced + consumed) ==="
-# Only the kafka-based tiers (single/scale) run a broker. On slim and scale-mesh the
+# Only the kafka-based tiers (single/scale) run a broker. On slim and mesh the
 # receiver feeds the loader directly, so there is no topic to assert -> SKIP, not FAIL.
 if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods --no-headers 2>/dev/null | grep -qiE 'kafka|redpanda'; then
   # Pick the broker CLI by image: redpanda -> rpk, apache/strimzi -> kafka CLI.

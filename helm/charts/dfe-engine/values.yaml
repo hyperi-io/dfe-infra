@@ -59,6 +59,53 @@ service:
 # pins whatever that release shipped with.
 appCatalogue: {}
 
+# Authored files another repo ships and this engine serves: the reference
+# transform pipelines the library and the console's copy-paste view show, and the
+# source catalogue a transform ships. Each entry becomes ONE init container that
+# fills a shared emptyDir before the engine starts.
+#
+# NOT a ConfigMap and not a values blob: the elastic catalogue alone is 344 KB, so
+# either form re-serialises it into etcd on every Argo sync.
+#
+# Entry fields:
+#   name   the versions.yaml content pin this materialises, and the container name
+#   kind   the vehicle -- `image` copies files out of a pinned app image the
+#          deployment already has pull rights to; `asset` downloads a release
+#          asset over the engine image's python
+#   ref    the pinned image (tag@sha256) for `image`, the asset URL for `asset`
+#   role   where the files land, and so what reads them: `library` puts them under
+#          <mountPath>/library/<kind>, `catalogue` under <mountPath>/catalogue and
+#          sets DFE_SOURCE_CATALOGUE_FILE. Vehicle and role are independent.
+#   files  [{from, to}] -- `from` is a path inside the image or a name inside the
+#          asset, `to` is relative to the role's root
+#
+# EMPTY, and the pins in versions.yaml say why: neither transform release carries
+# its files as an asset, and neither Dockerfile copies them into the image, so
+# there is nothing to fetch yet. Each app that ships its files makes its entry
+# live -- the mechanism needs no change. The live block for the two content pins:
+#
+#   entries:
+#     - name: dfe-transform-vector-templates
+#       kind: image
+#       ref: "ghcr.io/hyperi-io/dfe-transform-vector:<tag>@<digest>"
+#       role: library
+#       files:
+#         - from: /usr/share/dfe-transform-vector/templates
+#           to: vector-yaml
+#     - name: dfe-transform-vrl-pipelines
+#       kind: image
+#       ref: "ghcr.io/hyperi-io/dfe-transform-vrl:<tag>@<digest>"
+#       role: library
+#       files:
+#         - from: /usr/share/dfe-transform-vrl/pipelines
+#           to: vrl
+content:
+  mountPath: /etc/dfe-engine/content
+  # The catalogue's filename is the engine's contract, not a deployment choice:
+  # the app manifest binds a catalogue by the name its app ships it under.
+  catalogueFile: sources.yaml
+  entries: []
+
 config:
   mountPath: /config
   # The engine's runtime store lives here: local accounts, orgs, wizard

@@ -99,7 +99,7 @@ kafka:
 # CONNECTION and gRPC holds one connection open, so a sender pins itself to one
 # pod of the pool it dials. `enabled` puts a Gateway API listener in front of
 # every pool instead: the sender addresses the listener, and the proxy spreads
-# each REQUEST across the pool. Only the scale-mesh profile turns it on -- the
+# each REQUEST across the pool. Only the mesh profile turns it on -- the
 # single-replica tiers have nothing to spread, and the brokered tiers balance
 # through the broker's consumer group.
 #

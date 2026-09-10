@@ -5,7 +5,7 @@ run) and `default_in` (where it IS run when nobody says otherwise). `default_in`
 absent means the same set as `profiles`; an empty list means the app is deployed
 on demand and never seeded.
 
-| App | slim | single | scale | scale-mesh | docker-slim | docker-single |
+| App | slim | single | scale | mesh | docker-slim | docker-single |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | `dfe-receiver` | X | X | X | X | X | X |
 | `dfe-loader` | X | X | X | X | X | X |

@@ -75,7 +75,9 @@ for line in fixture.get(key) or []:
 """
 
 
-def run_gate(fixture: dict, **env_overrides: str) -> subprocess.CompletedProcess:
+def run_gate(
+    fixture: dict, cwd: str | None = None, **env_overrides: str
+) -> subprocess.CompletedProcess:
     """The gate against a fixed cluster reading, with no wait between polls."""
     with tempfile.TemporaryDirectory() as tmp:
         bindir = Path(tmp)
@@ -102,8 +104,28 @@ def run_gate(fixture: dict, **env_overrides: str) -> subprocess.CompletedProcess
             encoding="utf-8",
             errors="replace",
             env=env,
+            cwd=cwd,
             check=False,
         )
+
+
+def test_a_file_matching_the_namespace_glob_does_not_blind_the_gate() -> None:
+    """The dfe-* pattern must stay a pattern whatever the working directory holds."""
+    with tempfile.TemporaryDirectory() as cwd:
+        (Path(cwd) / "dfe-access.md").write_text("stray\n", encoding="utf-8", newline="\n")
+        out = run_gate(
+            {
+                "pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"],
+                "deployments": ["dfe-local dfe-ui 2 1"],
+                "ns_workloads": ["dfe-ui 1/2 2 1 5d"],
+            },
+            cwd=cwd,
+        )
+    expect(
+        "an unready dfe-* workload still fails beside a dfe-* file",
+        out.returncode != 0 and "deployment dfe-local/dfe-ui 1/2 ready" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
 
 
 def test_an_hours_old_restart_count_is_not_live_churn() -> None:

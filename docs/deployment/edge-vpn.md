@@ -7,7 +7,7 @@ open is the path its records take. Nothing on the appliance's network is
 exposed, and the receiver never needs a public address at all.
 
 It is OFF unless a deployment asks for it, and it is offered on the `scale` and
-`scale-mesh` tiers.
+`mesh` tiers.
 
 ## What it is
 

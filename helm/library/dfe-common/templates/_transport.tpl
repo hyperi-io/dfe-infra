@@ -2,7 +2,7 @@
 dfe-common.transport -- which transport carries records between stages here.
 
 `kafka.mode` in the profile values is the deployment's one transport fact:
-`disabled` (slim, scale-mesh) means direct point-to-point gRPC, any other mode
+`disabled` (slim, mesh) means direct point-to-point gRPC, any other mode
 means a broker holds records between stages. A chart that compares that string
 itself is a second copy of the derivation.
 

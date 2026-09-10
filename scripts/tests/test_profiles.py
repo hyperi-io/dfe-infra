@@ -42,7 +42,7 @@ dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_profiles"] = dfeops
 _loader.exec_module(dfeops)
 
-BROKERLESS = ("slim", "scale-mesh")
+BROKERLESS = ("slim", "mesh")
 
 
 def test_the_committed_shell_fragment_matches_the_table() -> None:
@@ -102,9 +102,9 @@ def test_an_unknown_mode_is_not_credited_with_a_broker() -> None:
     assert not profiles.has_kafka("not-a-mode")
 
 
-def test_scale_mesh_is_sized_like_scale() -> None:
+def test_mesh_is_sized_like_scale() -> None:
     """Dropping the broker does not shrink the app tier."""
-    assert profiles.capacity("scale-mesh") == profiles.capacity("scale")
+    assert profiles.capacity("mesh") == profiles.capacity("scale")
 
 
 def test_dfe_ops_reads_the_one_table() -> None:
