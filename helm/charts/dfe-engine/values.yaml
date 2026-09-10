@@ -54,11 +54,6 @@ service:
   type: ClusterIP
   port: 8000
 
-# The app manifest the management API reflects, sourced from apps.yaml at the
-# repo root. Empty falls back to the snapshot bundled in the engine image, which
-# pins whatever that release shipped with.
-appCatalogue: {}
-
 # Authored files another repo ships and this engine serves: the reference
 # transform pipelines the library and the console's copy-paste view show, and the
 # source catalogue a transform ships. Each entry becomes ONE init container that

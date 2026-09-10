@@ -2318,13 +2318,14 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     if rc != 0 and args.strict_compat:
         hard_fail += 1
 
+    common = ARGO_VALUES / "common.yaml"
+    profile = REPO_ROOT / profiles.PROFILES[args.mode].argocd_values
+
     # 5. Render the mode's charts at the pinned versions (catch a broken profile
     #    offline). helm optional -- a missing binary warns, it does not fail.
     if shutil.which("helm") is None:
         print("  [warn] helm not on PATH -- skipping the chart-render pre-flight.", file=sys.stderr)
     else:
-        common = ARGO_VALUES / "common.yaml"
-        profile = REPO_ROOT / profiles.PROFILES[args.mode].argocd_values
         # appNamespace is an estate value the appset supplies at deploy from the
         # cluster's dfe.hyperi.io/dfe_namespace annotation; scale's kafka chart
         # fail-fasts without it (fromSecretsStore needs a target namespace to
@@ -2349,6 +2350,41 @@ def _offline_preflight(args: argparse.Namespace) -> int:
                 hard_fail += 1
             else:
                 print(f"  [ok]   helm render {chart} ({args.mode})", file=sys.stderr)
+
+    # 6. The engine mounts apps.yaml, which is what makes a new or changed app a
+    #    manifest edit rather than an engine release. A deploy that renders no
+    #    catalogue silently answers off the snapshot baked into the engine image.
+    if composition.write_catalogue(check_only=True) != 0:
+        hard_fail += 1
+    elif shutil.which("helm") is None:
+        print(
+            "  [warn] helm not on PATH -- the rendered app catalogue was not checked.",
+            file=sys.stderr,
+        )
+    else:
+        rc, out, err = _run_text(
+            [
+                "helm", "template", "dfe-engine", str(HELM_CHARTS / "dfe-engine"),
+                "-f", str(common), "-f", str(profile),
+                "--set", "appNamespace=preflight",
+            ]
+        )
+        # Whole lines, not substrings: a renamed variable still contains the old
+        # name, and the check would keep passing over it.
+        missing = [
+            what
+            for what, marker in (
+                ("the manifest", composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ") + "\n"),
+                ("DFE_APP_CATALOGUE_FILE", "name: DFE_APP_CATALOGUE_FILE\n"),
+            )
+            if marker not in out
+        ]
+        if rc != 0 or missing:
+            why = _last_line(err) or f"{', '.join(missing)} not rendered"
+            print(f"  [FAIL] engine app catalogue: {why}", file=sys.stderr)
+            hard_fail += 1
+        else:
+            print("  [ok]   engine mounts apps.yaml and is pointed at it", file=sys.stderr)
 
     if hard_fail:
         print(f"=== PRE-FLIGHT FAILED ({hard_fail} issue(s)) -- fix before deploying ===", file=sys.stderr)

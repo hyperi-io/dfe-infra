@@ -29,6 +29,9 @@ spec:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
+        # The engine reads the app manifest once at startup, so a manifest edit
+        # reaches a running deployment only by moving the pod template.
+        checksum/app-catalogue: {{ include (print $.Template.BasePath "/app-catalogue.yaml") . | sha256sum }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -311,12 +314,10 @@ spec:
               value: {{ .Values.config.mountPath }}/services
             - name: DFE_DEPLOYMENT_CONFIG_DIR
               value: {{ .Values.config.mountPath }}/deployments
-            {{- if .Values.appCatalogue }}
             # Points the management API at the mounted manifest, so a new or
             # changed app reflects without an engine release.
             - name: DFE_APP_CATALOGUE_FILE
               value: /etc/dfe-engine/catalogue/apps.yaml
-            {{- end }}
             # Unconditional because an absent directory is a no-op in the
             # engine, so a content entry added later needs no env change.
             - name: DFE_LIBRARY_SEED_DIR
@@ -494,11 +495,9 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.appCatalogue }}
             - name: app-catalogue
               mountPath: /etc/dfe-engine/catalogue
               readOnly: true
-            {{- end }}
             # Read-only here, writable in the init containers that fill it: the
             # engine reads this content, the pins own it.
             - name: content
@@ -538,11 +537,9 @@ spec:
         # so there is nothing here worth surviving the pod.
         - name: content
           emptyDir: {}
-        {{- if .Values.appCatalogue }}
         - name: app-catalogue
           configMap:
             name: {{ include "dfe-common.fullname" . }}-app-catalogue
-        {{- end }}
         {{- if .Values.authConfig.providersConfigMap }}
         - name: oidc-providers
           configMap:
