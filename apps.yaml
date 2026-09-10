@@ -236,9 +236,8 @@ apps:
     # One instance per fetcher source, written by the engine when the source is
     # written, so no profile seeds one.
     default_in: []
-    # Anything that can produce a record is work. The ingest listener defaults
-    # ON, so a deployment wanting the gate to turn on sources alone sets
-    # config.ingest.enabled false.
+    # Anything that can produce a record is work; the ingest listener defaults
+    # off, so an instance that wants it sets config.ingest.enabled true.
     idle_when:
       - config.sources
       - config.extractors.containers

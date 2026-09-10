@@ -1869,12 +1869,12 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.19.33"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
+      dfe-engine: "v1.19.35"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
       dfe-ui: "v1.5.7"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.33"      # independent release line
       dfe-loader: "v1.18.34"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.20"
-      dfe-fetcher: "v1.4.19"
+      dfe-fetcher: "v1.4.20"
       dfe-transform-vrl: "v1.1.21"
       dfe-transform-vector: "v1.0.37"  # direct transport through the supervisor bridge, copy-paste templates.
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
@@ -1894,12 +1894,12 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:a8cb0e31efb10eea0419b00af28940e1220ed25d8a952e372e4fe10ff5615421"
+      dfe-engine: "sha256:18c14620a2fc9f9c336583abf40f9d284521b27289e1eacd9f114145f64a95d4"
       dfe-ui: "sha256:febb760af2cae63b42de7dc3fcfcbefcf3a938388319466dbb3556a17ba34e74"
       dfe-receiver: "sha256:78ee9fa9d73eb98fe74ff8af9b33bf5810ec988be1b9f3a523194147aad013b4"
       dfe-loader: "sha256:630a0a578f54836ca991e25ec5167dc5558b587cc2ba9fa63f8dcb97eb7b437c"
       dfe-archiver: "sha256:eb33faa5f817a4e1f20d0da9b003c0d56cc6ecce93dd35e2a2c4d545c1d98585"
-      dfe-fetcher: "sha256:65366c085b20bd1da7eb4415e341f64188a2125d047f136a84a22597c2d08b8b"
+      dfe-fetcher: "sha256:6e3378adef778abfdd332c7b235a15dc15d6d53f29ae9cb2ea015330873f124e"
       dfe-transform-vrl: "sha256:f4526a28d804380c1655bc4c9aa1bab6a9031e008170de4af235dd7936d3199b"
       dfe-transform-vector: "sha256:9091ea88dcd04a4f83a7fbea778fbe5387f9c830d7f0a3e7a74b4506d53d687b"
       # Keyed here rather than under content:, which carries versions and

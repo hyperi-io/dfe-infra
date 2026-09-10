@@ -3,7 +3,7 @@ name: dfe-schema
 description: Applies the DFE ClickHouse schema before anything writes to it
 type: application
 version: 0.1.0
-appVersion: "v1.19.33"   # == versions.yaml apps.dfe-engine (the image this runs)
+appVersion: "v1.19.35"   # == versions.yaml apps.dfe-engine (the image this runs)
 dependencies:
   - name: dfe-common
     version: "0.9.1"
