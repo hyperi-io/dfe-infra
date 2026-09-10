@@ -1,6 +1,6 @@
 # Operators and apps the scale tiers need, selected by dfe.hyperi.io/profile.
 # dfe-scale-operators: Strimzi + the ClickHouse operator, profile scale only.
-# dfe-scale-mesh-operators: the ClickHouse operator alone, profile scale-mesh only
+# dfe-mesh-operators: the ClickHouse operator alone, profile mesh only
 # (that tier runs no broker).
 # dfe-redpanda-operator: scale plus an explicit redpanda provider opt-in.
 # dfe-scale-apps: the per-source transform workers, on both scale tiers; the
@@ -43,7 +43,7 @@ spec:
                 # Namespace is upstream's own and MUST match common.yaml
                 # operatorNamespaces.clickhouse, which is what opens the
                 # NetworkPolicy the operator needs to probe Keeper and run DDL.
-                # dfe-scale-mesh-operators below carries the same pin; both move together.
+                # dfe-mesh-operators below carries the same pin; both move together.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.7"
@@ -80,14 +80,14 @@ spec:
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
 ---
-# The scale-mesh tier runs a ClickHouse cluster and no broker, so it needs the
+# The mesh tier runs a ClickHouse cluster and no broker, so it needs the
 # ClickHouse operator without Strimzi. A separate ApplicationSet rather than a
 # wider selector on dfe-scale-operators: moving an element between ApplicationSets
 # orphans the Applications a running scale cluster already owns by name.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: dfe-scale-mesh-operators
+  name: dfe-mesh-operators
   namespace: argocd
 spec:
   goTemplate: true
@@ -100,7 +100,7 @@ spec:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
                   dfe.hyperi.io/managed: "true"
-                  dfe.hyperi.io/profile: scale-mesh
+                  dfe.hyperi.io/profile: mesh
           - list:
               elements:
                 # Same pin as dfe-scale-operators above; the two move together.
@@ -211,7 +211,7 @@ spec:
                 matchExpressions:
                   - key: dfe.hyperi.io/profile
                     operator: In
-                    values: [scale, scale-mesh]
+                    values: [scale, mesh]
           - list:
               elements:
                 # Kafka itself moved to layer2-data (mode-driven, all profiles).

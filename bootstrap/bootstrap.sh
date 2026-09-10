@@ -20,7 +20,7 @@
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
-#   DFE_PROFILE              slim | single | scale | scale-mesh
+#   DFE_PROFILE              slim | single | scale | mesh
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
 #   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
@@ -160,7 +160,7 @@ required_vars=(
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
-# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim and scale-mesh profiles are gRPC (kafka
+# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim and mesh profiles are gRPC (kafka
 # disabled), so it is empty there; only set when kafka.mode != disabled. Defaulted
 # empty so the cluster-secret annotation renders blank (kafka-dependent apps are
 # gated off on a brokerless profile anyway).

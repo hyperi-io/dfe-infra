@@ -39,7 +39,7 @@ dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_modes"] = dfeops
 _loader.exec_module(dfeops)
 
-BROKERLESS = ("slim", "scale-mesh")
+BROKERLESS = ("slim", "mesh")
 
 
 def _load(path: Path) -> dict:
@@ -56,8 +56,8 @@ def _charts(appset: dict) -> list[dict]:
     return appset["spec"]["generators"][0]["matrix"]["generators"][1]["list"]["elements"]
 
 
-def test_scale_mesh_is_a_declared_mode() -> None:
-    assert "scale-mesh" in dfeops.MODES
+def test_mesh_is_a_declared_mode() -> None:
+    assert "mesh" in dfeops.MODES
 
 
 def test_the_argocd_profiles_disable_kafka_on_the_brokerless_modes() -> None:
@@ -66,8 +66,8 @@ def test_the_argocd_profiles_disable_kafka_on_the_brokerless_modes() -> None:
     assert _load(ARGO_VALUES / "profile-scale.yaml")["kafka"]["mode"] == "cluster"
 
 
-def test_the_scale_mesh_argocd_profile_keeps_the_scale_clickhouse_cluster() -> None:
-    mesh = _load(ARGO_VALUES / "profile-scale-mesh.yaml")
+def test_the_mesh_argocd_profile_keeps_the_scale_clickhouse_cluster() -> None:
+    mesh = _load(ARGO_VALUES / "profile-mesh.yaml")
     scale = _load(ARGO_VALUES / "profile-scale.yaml")
     assert mesh["clickhouse"] == scale["clickhouse"]
     assert mesh["kafbat"]["enabled"] is False
@@ -75,7 +75,7 @@ def test_the_scale_mesh_argocd_profile_keeps_the_scale_clickhouse_cluster() -> N
 
 
 def test_the_stack_profile_disables_kafka_and_keeps_the_cluster() -> None:
-    mesh = _load(STACK_PROFILES / "scale-mesh.yaml")
+    mesh = _load(STACK_PROFILES / "mesh.yaml")
     scale = _load(STACK_PROFILES / "scale.yaml")
     assert "kafka" not in mesh
     assert mesh["kafbat"]["enabled"] is False
@@ -85,14 +85,14 @@ def test_the_stack_profile_disables_kafka_and_keeps_the_cluster() -> None:
     assert scale["kafka"]["kafka"]["mode"] == "cluster"
 
 
-def test_the_scale_mesh_operators_appset_selects_its_own_profile() -> None:
-    appset = _appsets()["dfe-scale-mesh-operators"]
+def test_the_mesh_operators_appset_selects_its_own_profile() -> None:
+    appset = _appsets()["dfe-mesh-operators"]
     selector = appset["spec"]["generators"][0]["matrix"]["generators"][0]["clusters"]["selector"]
-    assert selector["matchLabels"]["dfe.hyperi.io/profile"] == "scale-mesh"
+    assert selector["matchLabels"]["dfe.hyperi.io/profile"] == "mesh"
 
 
-def test_the_scale_mesh_operators_appset_installs_no_broker_operator() -> None:
-    charts = [element["chart"] for element in _charts(_appsets()["dfe-scale-mesh-operators"])]
+def test_the_mesh_operators_appset_installs_no_broker_operator() -> None:
+    charts = [element["chart"] for element in _charts(_appsets()["dfe-mesh-operators"])]
     assert charts == ["clickhouse-operator-helm"]
 
 
@@ -104,7 +104,7 @@ def test_the_clickhouse_operator_pin_is_the_same_on_both_scale_tiers() -> None:
         entry = next(e for e in elements if e["chart"] == "clickhouse-operator-helm")
         return entry["repo"], entry["version"]
 
-    assert pin("dfe-scale-mesh-operators") == pin("dfe-scale-operators")
+    assert pin("dfe-mesh-operators") == pin("dfe-scale-operators")
 
 
 def test_the_scale_apps_appset_covers_both_scale_tiers() -> None:
@@ -114,7 +114,7 @@ def test_the_scale_apps_appset_covers_both_scale_tiers() -> None:
         e for e in selector["matchExpressions"] if e["key"] == "dfe.hyperi.io/profile"
     )
     assert expression["operator"] == "In"
-    assert sorted(expression["values"]) == ["scale", "scale-mesh"]
+    assert sorted(expression["values"]) == ["mesh", "scale"]
 
 
 def test_the_acceptance_transport_defaults_follow_the_mode() -> None:
@@ -126,7 +126,7 @@ def test_the_acceptance_transport_defaults_follow_the_mode() -> None:
         )
 
     assert resolve(None, None) == "both"
-    assert resolve("scale-mesh", None) == "grpc"
+    assert resolve("mesh", None) == "grpc"
     assert resolve("slim", None) == "grpc"
     assert resolve("single", None) == "kafka"
     assert resolve("scale", None) == "kafka"

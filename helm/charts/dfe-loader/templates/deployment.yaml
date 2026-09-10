@@ -56,7 +56,7 @@ spec:
           env:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_LOADER_") | nindent 12 }}
             {{- if eq (include "dfe-common.transport" .) "direct" }}
-            # Direct transport (slim, scale-mesh): receiver -> loader gRPC on the
+            # Direct transport (slim, mesh): receiver -> loader gRPC on the
             # service grpcPort; the DLQ's kafka backend is gone with the broker.
             # grpc.listen has NO default and is required in grpc mode
             # (GrpcConfig, dfe-loader src/config/kafka.rs).

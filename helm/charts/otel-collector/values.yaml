@@ -128,7 +128,7 @@ clusterTelemetry:
   # bootstrapServers, so single-broker and Strimzi share one config with no JMX
   # exporter. Complements the consumers' own rdkafka_* lag, which stops reporting
   # when a consumer dies.
-  # Off by default -- the brokerless profiles (slim, scale-mesh) have no Kafka to
+  # Off by default -- the brokerless profiles (slim, mesh) have no Kafka to
   # scrape. SASL/SCRAM-SHA-512 is the DFE broker
   # standard, so the credential must be projected here via the kafka chart's
   # `user.password.extraAppNamespaces`.

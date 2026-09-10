@@ -31,7 +31,7 @@ values merge in this order (later wins):
 helm/charts/<app>/values.yaml        chart defaults
 argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides
-argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale / scale-mesh)
+argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale / mesh)
 deploy repo infra/common.yaml        deployment-wide (every appset)
 deploy repo infra/<chart>.yaml       one data-layer or platform chart
 deploy repo values/<app>-...yaml     engine-authored overlay (Layer 2 apps)
@@ -53,7 +53,7 @@ only on `scale` clusters (`layer-scale.yaml`).
 Which APPS a tier deploys is `apps.yaml`'s, not the profile file's --
 [composition.md](composition.md) has the table and the derivation.
 
-`scale-mesh` is `scale` without a broker: the stages hand records to each
+The `mesh` tier is `scale` without a broker: the stages hand records to each
 other over gRPC. That makes two things its own. `mesh.enabled` puts a
 Gateway API listener in front of every stage pool, because a Kubernetes
 Service balances per connection and gRPC holds one open, so a sender would

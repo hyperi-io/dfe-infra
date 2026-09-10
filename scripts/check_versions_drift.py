@@ -219,13 +219,13 @@ CHECKS += [
         Path("argocd/appsets/layer-scale.yaml"),
         r"charts\.redpanda\.com\n\s*chart: operator\n\s*targetRevision:\s*\"([^\"]+)\"",
     ),
-    # The scale-mesh appset repeats the operator pin, and a check reads its FIRST
+    # The mesh appset repeats the operator pin, and a check reads its FIRST
     # match only, so this one is anchored on that appset's profile selector.
     Check(
-        "clickhouse-operator appset (scale-mesh)",
+        "clickhouse-operator appset (mesh)",
         "operators.clickhouse-operator",
         Path("argocd/appsets/layer-scale.yaml"),
-        r"dfe\.hyperi\.io/profile: scale-mesh[\s\S]{0,400}?chart: clickhouse-operator-helm"
+        r"dfe\.hyperi\.io/profile: mesh[\s\S]{0,400}?chart: clickhouse-operator-helm"
         r"[\s\S]{0,300}?version:\s*\"([^\"]+)\"",
     ),
     Check(

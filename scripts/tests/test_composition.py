@@ -84,7 +84,7 @@ def test_the_on_demand_apps_are_seeded_nowhere() -> None:
 
 def test_culvert_is_offered_only_on_the_ha_tiers() -> None:
     assert "culvert" in composition.offered_in("scale")
-    assert "culvert" in composition.offered_in("scale-mesh")
+    assert "culvert" in composition.offered_in("mesh")
     assert "culvert" not in composition.offered_in("slim")
 
 

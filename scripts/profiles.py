@@ -29,7 +29,7 @@ and `single`, which is what `compose_profile` records.
 
     profiles.MODES                    # the Kubernetes deploy modes
     profiles.PROFILE_NAMES            # all six, k8s then compose
-    profiles.has_kafka("scale-mesh")  # False
+    profiles.has_kafka("mesh")        # False
     profiles.substrate("single")      # ('clickhouse-cluster', 'kafka')
     profiles.capacity("scale")        # (6.0, 12884901888, 3)
     profiles.lane_floor("slim")       # 6442450944
@@ -128,15 +128,15 @@ PROFILES: dict[str, Profile] = {
         umbrella_profile="helm/dfe-stack/profiles/scale.yaml",
         description="HA replicas, operator ClickHouse cluster and Strimzi Kafka",
     ),
-    "scale-mesh": Profile(
+    "mesh": Profile(
         platform=KUBERNETES,
         has_kafka=False,
         # Same HA sizing as scale: dropping the broker does not shrink the apps.
         substrate_charts=("clickhouse-cluster",),
         capacity_floor=(6.0, 12 * 1024**3, 3),
         lane_floor=16 * 1024**3,
-        argocd_values="argocd/values/profile-scale-mesh.yaml",
-        umbrella_profile="helm/dfe-stack/profiles/scale-mesh.yaml",
+        argocd_values="argocd/values/profile-mesh.yaml",
+        umbrella_profile="helm/dfe-stack/profiles/mesh.yaml",
         description="scale's HA sizing and ClickHouse cluster, gRPC transport, no broker",
     ),
     "docker-slim": Profile(
