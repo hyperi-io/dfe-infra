@@ -503,6 +503,16 @@ CHECKS += [
         Path("helm/charts/hyperdx/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # The immutable half of that pin, which the same name mismatch kept out of
+    # _DIGEST_MIRRORS -- so versions.yaml carried digests.dfe-hyperdx while the
+    # chart rendered a bare tag. Anchored on the fork's repository line so it
+    # cannot match the dashboards digest, which is a different image.
+    Check(
+        "hyperdx fork image digest",
+        "digests.dfe-hyperdx",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*ghcr\.io/hyperi-io/dfe-hyperdx[^\n]*\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
     # points, not an artefact of its own -- so the chart name does not match the
     # pin and it cannot ride _APP_CHARTS.
