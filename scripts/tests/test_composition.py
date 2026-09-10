@@ -104,6 +104,20 @@ def test_the_seeded_set_is_exactly_the_manifests_default() -> None:
         assert tuple(seeded) == composition.default_apps(mode), mode
 
 
+def test_the_engine_chart_carries_the_current_manifest() -> None:
+    """A stale chart copy deploys the apps of whichever commit last rendered it."""
+    assert composition.write_catalogue(check_only=True) == 0
+
+
+def test_the_chart_copy_is_the_manifest_byte_for_byte() -> None:
+    """Re-serialising it could change a value; only the banner is added."""
+    copy = composition.CHART_MANIFEST.read_text(encoding="utf-8")
+    assert copy.startswith(composition.CATALOGUE_BANNER)
+    assert copy[len(composition.CATALOGUE_BANNER) :] == (
+        composition.MANIFEST.read_text(encoding="utf-8")
+    )
+
+
 def test_the_chart_default_carries_no_second_copy_of_the_composition() -> None:
     """The profile layer is the only place the seeded set is stated."""
     from ruamel.yaml import YAML

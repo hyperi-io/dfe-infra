@@ -1,3 +1,5 @@
+# GENERATED from apps.yaml at the repo root -- do not edit. Regenerate with:
+#     python3 scripts/composition.py --write-catalogue
 # apps.yaml -- SINGLE SOURCE OF TRUTH for what each DFE app IS.
 #
 # versions.yaml pins WHICH version of an app is deployed. This file declares what
