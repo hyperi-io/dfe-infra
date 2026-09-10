@@ -19,7 +19,7 @@ the archiver with nothing recording why.
     import composition
 
     composition.default_apps("slim")       # ('dfe-engine', 'dfe-loader', ...)
-    composition.offered_in("scale-mesh")   # everything that MAY run there
+    composition.offered_in("mesh")   # everything that MAY run there
     composition.idle_when("dfe-archiver")  # the config paths meaning "no work"
 
 The seeded app set is written into each Kubernetes profile's values file as a

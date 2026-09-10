@@ -215,7 +215,7 @@ spec:
             # has to address the pool the same way the charts front it -- the
             # shape of the address is apps.yaml's `mesh.host_pattern`, and these
             # two are the deployment's half of it. Absent means the pools are
-            # dialled directly, which is every profile but scale-mesh.
+            # dialled directly, which is every profile but mesh.
             - name: DFE_MESH_ENABLED
               value: {{ ternary "true" "false" (eq (include "dfe-common.meshEnabled" .) "true") | quote }}
             {{- if (include "dfe-common.meshEnabled" .) }}

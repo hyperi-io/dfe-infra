@@ -209,7 +209,7 @@ def test_it_rolls_surge_first_on_a_config_change() -> None:
 
 def test_it_renders_on_every_profile_it_is_offered_in() -> None:
     """The scale profiles set replicaCount 2 for every app; this one cannot take it."""
-    for profile in ("scale", "scale-mesh"):
+    for profile in ("scale", "mesh"):
         text = render("culvert", "-f", str(VALUES / f"profile-{profile}.yaml"))
         deployment = one(text, "Deployment", "dfe-culvert")
         expect(f"{profile} still renders one replica",

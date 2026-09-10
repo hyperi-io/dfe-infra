@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         test_pool_listener.py
 #  Purpose:      Prove every stage pool gets the same listener from the same
-#                helper on scale-mesh, gets none on the other profiles, and that
+#                helper on mesh, gets none on the other profiles, and that
 #                the receiver's buffer figures reach the config the app reads.
 #  Language:     Python
 #
@@ -54,7 +54,7 @@ POOLS = {
 
 # The one profile that balances between pools. The other three either run a
 # broker (which balances its own consumers) or one pod per stage.
-MESH_PROFILE = "scale-mesh"
+MESH_PROFILE = "mesh"
 QUIET_PROFILES = ("slim", "single", "scale")
 
 # Where the mesh Gateway and the alias Services live -- argocd/values/common.yaml

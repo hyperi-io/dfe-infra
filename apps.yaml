@@ -409,7 +409,7 @@ apps:
   culvert:
     multiplicity: single
     scale_deployed: false
-    profiles: [scale, scale-mesh]
+    profiles: [scale, mesh]
     default_in: []
     transports: []
     hot_reload: false

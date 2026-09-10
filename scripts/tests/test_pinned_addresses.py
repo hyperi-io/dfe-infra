@@ -244,7 +244,7 @@ def test_the_tester_idp_registers_every_profile_hostname() -> None:
                "https://dfe.slim.dfe.example.com/api/v1/auth/oidc/dex/callback",
                "https://dfe.single.dfe.example.com/api/v1/auth/oidc/dex/callback",
                "https://dfe.scale.dfe.example.com/api/v1/auth/oidc/dex/callback",
-               "https://dfe.scale-mesh.dfe.example.com/api/v1/auth/oidc/dex/callback",
+               "https://dfe.mesh.dfe.example.com/api/v1/auth/oidc/dex/callback",
            ], f"got {uris}")
 
     plain = tester_idp.default_redirect_uris(

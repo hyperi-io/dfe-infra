@@ -1,4 +1,4 @@
-# Profile: scale-mesh -- HA on the gRPC transport, NO Kafka; ClickHouse cluster,
+# Profile: mesh -- HA on the gRPC transport, NO Kafka; ClickHouse cluster,
 # KEDA autoscaling.
 # Merged after common.yaml + <cloud>.yaml (third in the valueFiles cascade).
 # Keys unknown to a given chart are ignored by Helm.
@@ -45,7 +45,7 @@ clickhouse:
 cluster:
   instances: 3
 
-# Kafka -- DISABLED. scale-mesh uses gRPC transport (receiver -> loader direct).
+# Kafka -- DISABLED. This profile uses gRPC transport (receiver -> loader direct).
 kafka:
   mode: disabled
 

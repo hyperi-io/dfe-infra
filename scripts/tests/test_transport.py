@@ -41,7 +41,7 @@ VALUES = REPO_ROOT / "argocd" / "values"
 # mapping, and it lives in the profile files rather than in any chart.
 PROFILE_TRANSPORT = {
     "slim": "direct",
-    "scale-mesh": "direct",
+    "mesh": "direct",
     "single": "bus",
     "scale": "bus",
 }
