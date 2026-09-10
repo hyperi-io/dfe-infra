@@ -77,6 +77,10 @@ dlq:
 #                      (apps.yaml source_binding)
 #   otelServiceName    below
 #   component          instance-unique, to keep the objects and telemetry apart
+#
+# config.ingest.enabled is off in the app's own defaults and is the dial that
+# declares the container-extractor port 8080 on the pod here, so turning it on
+# also takes the instance out of idle whether or not anything ever posts to it.
 config: {}
 
 # OTel service.name for this instance. Empty falls back to the app name, which
