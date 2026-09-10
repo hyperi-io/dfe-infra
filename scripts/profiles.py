@@ -29,7 +29,7 @@ and `single`, which is what `compose_profile` records.
 
     profiles.MODES                    # the Kubernetes deploy modes
     profiles.PROFILE_NAMES            # all six, k8s then compose
-    profiles.has_kafka("mesh")  # False
+    profiles.has_kafka("mesh")        # False
     profiles.substrate("single")      # ('clickhouse-cluster', 'kafka')
     profiles.capacity("scale")        # (6.0, 12884901888, 3)
     profiles.lane_floor("slim")       # 6442450944
