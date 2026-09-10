@@ -119,7 +119,7 @@ dashboards:
   requireRefs: true
   image:
     repository: ""     # empty -> {{ global.registry }}/dfe-engine
-    tag: "v1.19.27"     # == versions.yaml apps.dfe-engine (drift-checked)
+    tag: "v1.19.28"     # == versions.yaml apps.dfe-engine (drift-checked)
     pullPolicy: IfNotPresent
   resources:
     requests:
