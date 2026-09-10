@@ -986,7 +986,6 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
 # The engine-repo paths each pytest suite lives at. The onboarding suite is not
 # one of them: it drives the console in a browser and lives in this repo.
 _PYTEST_SUITES = {
-    "filebeat": ("tests/e2e/test_filebeat_pipeline.py",),
     "flows": ("tests/e2e/flows",),
 }
 ONBOARDING_SUITE = "onboarding"
@@ -994,9 +993,9 @@ ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
 
 # `all` runs onboarding FIRST: a deployment nobody could have onboarded has
 # failed whatever the data path then does. The flow suite creates every source
-# shape and removes it again, so it proves a fresh deploy; filebeat reads a
-# source the deployment must already carry, so it is asked for by name.
-SUITES = (ONBOARDING_SUITE, "filebeat", "flows", "all")
+# shape and removes it again, so it proves a fresh deploy. A suite that reads a
+# source the deployment must already carry is run through the pytest passthrough.
+SUITES = (ONBOARDING_SUITE, "flows", "all")
 
 
 def suite_steps(suite: str) -> tuple[str, ...]:
@@ -1133,15 +1132,13 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         env["DFE_E2E_ADMIN_PASSWORD"] = password
     else:
         env.pop("DFE_E2E_ENGINE_URL", None)
-        print("  engine forward down: the transform class will skip", file=sys.stderr)
-        if steps != ("filebeat",):
-            stop.set()
-            print(
-                "every suite but filebeat goes through the engine, so none of them can "
-                "run without it; re-run with --suite filebeat to prove the read-only half",
-                file=sys.stderr,
-            )
-            return 1
+        stop.set()
+        print(
+            "engine forward down: every suite goes through the engine, so none of them "
+            "can run without it",
+            file=sys.stderr,
+        )
+        return 1
 
     rc = 0
     for step in steps:
@@ -1155,6 +1152,8 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             ]
             if args.insecure:
                 runner.append("--insecure")
+            if args.console_only:
+                runner.append("--console-only")
             for pair in resolve:
                 runner += ["--resolve", pair]
             rc = subprocess.run(runner, env=env).returncode
@@ -2944,7 +2943,7 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--transport", default=None, choices=("grpc", "kafka", "both"),
                     help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
     ac.add_argument("--suite", default="all", choices=SUITES,
-                    help="onboarding drives the wizard and the console in a browser; flows creates every source shape and removes it again; filebeat reads a filebeat source the deployment must already carry; all runs onboarding then flows")
+                    help="onboarding drives the wizard and the console in a browser; flows creates every source shape and removes it again; all runs onboarding then flows")
     ac.add_argument("--engine-user", default="",
                     help="engine login the suites authenticate as (default: the deploy's own minted admin)")
     ac.add_argument("--access-summary", default="", metavar="FILE",
@@ -2957,8 +2956,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="accept a gateway certificate this machine does not trust")
     ac.add_argument("--shots-dir", default=".tmp/onboarding",
                     help="where the onboarding suite writes its per-step screenshots")
+    ac.add_argument("--console-only", action="store_true",
+                    help="skip the wizard half of the onboarding suite on a deploy already set up, and prove the console half alone")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
-                    help="arguments passed through to pytest (default: the live filebeat suite)")
+                    help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)
 
     ui = sub.add_parser(

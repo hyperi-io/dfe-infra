@@ -247,6 +247,17 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     driver.button("Save").click(timeout=STEP_TIMEOUT_MS)
     driver.record(wizard.ORGANISATION, "done", f"created the organisation {org}")
 
+    if wizard.FIRST_USER not in expected:
+        # The first user already exists, so the organisation was the last required
+        # step and the console hands over to the workspace without a complete screen.
+        driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS)
+        driver.record(
+            wizard.COMPLETE,
+            "absent-as-expected",
+            "the first user already existed, so the wizard ended at the organisation",
+        )
+        return
+
     driver.page.wait_for_url(f"**/setup/{wizard.LOGIN}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.LOGIN)
     # Local accounts are the path every deployment has; an external IdP is the
@@ -367,7 +378,7 @@ def run(args: argparse.Namespace) -> int:
         print(f"onboarding: {exc}", file=sys.stderr)
         return 2
     steps = wizard.engine_steps(status)
-    expected = wizard.expected_slugs(steps)
+    expected = wizard.expected_slugs(steps, wizard.pending_steps(status))
     complete = wizard.setup_complete(status)
     print(f"  engine setup steps: {', '.join(steps) or 'none'}", file=sys.stderr)
     print(f"  screens this deployment must show: {', '.join(expected)}", file=sys.stderr)
@@ -417,8 +428,11 @@ def run(args: argparse.Namespace) -> int:
                 context.close()
                 context = fresh_context()
                 driver.page = context.new_page()
+            # The console session is the first user's when this run created one,
+            # otherwise the admin's.
+            made_first_user = not complete and wizard.FIRST_USER in expected
             created = check_console(
-                driver, args.first_user if not complete else admin_user, password
+                driver, args.first_user if made_first_user else admin_user, password
             )
         except Exception as exc:  # a Playwright timeout IS the finding
             driver.record("run", "failed", f"{type(exc).__name__}: {str(exc).splitlines()[0]}")
