@@ -77,6 +77,7 @@ flowchart TB
   subgraph library["library"]
     direction LR
     clickhouse_dfe["clickhouse-dfe"]:::general
+    factbook_rs["factbook-rs"]:::general
     logreducer["logreducer"]:::general
     scalo_py["scalo-py"]:::general
     scalo_rs["scalo-rs"]:::general

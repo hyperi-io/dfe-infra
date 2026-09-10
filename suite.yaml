@@ -445,6 +445,27 @@ nodes:
     # scalo-rs release can change a consumer's build with no Cargo range
     # moving.
 
+  factbook-rs:
+    repo: hyperi-io/factbook-rs
+    package: factbook
+    role: library
+    language: rust
+    audience: general
+    maturity: alpha
+    support: standard
+    licence: Apache-2.0
+    classification: oss
+    classification_source: in-repo
+    default_in_pass: false
+    artefacts:
+      - kind: crate
+        registry: crates.io
+        public: true
+    # The reference-data enricher extracted OUT of scalo: geoip is no longer
+    # in scalo. dfe-loader and dfe-transform-vector are its intended consumers;
+    # neither Cargo.lock resolves `factbook` yet, so no cargo-dep edge is drawn
+    # until one does.
+
   scalo-py:
     repo: hyperi-io/scalo-py
     package: scalo
@@ -926,7 +947,7 @@ lanes:
     why: "They pin the shared toolchain and the app catalogue. The catalogue edge into dfe-engine runs here, before any library moves."
 
   - name: libraries
-    members: [scalo-rs, scalo-py, dfe-schemas, logreducer, vector-vrl, clickhouse-dfe]
+    members: [scalo-rs, factbook-rs, scalo-py, dfe-schemas, logreducer, vector-vrl, clickhouse-dfe]
     why: "A consumer cannot resolve a version that does not exist yet, so the libraries release first."
 
   - name: consumers
