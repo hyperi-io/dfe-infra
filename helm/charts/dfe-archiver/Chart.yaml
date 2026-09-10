@@ -3,7 +3,7 @@ name: dfe-archiver
 description: DFE Rust Kafka consumer — S3/MinIO archiver
 type: application
 version: 0.3.0
-appVersion: "v1.7.20"   # == versions.yaml apps.dfe-archiver (drift-checked)
+appVersion: "v1.7.21"   # == versions.yaml apps.dfe-archiver (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.9.1"
