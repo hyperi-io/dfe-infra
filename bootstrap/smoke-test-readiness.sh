@@ -52,11 +52,15 @@ WATCH_NS="${READINESS_WATCH_NS:-argocd cert-manager external-secrets envoy-gatew
 # True when a namespace matches one of the WATCH_NS globs.
 watched_ns() {
   local ns="$1" pat
+  # Globbing off while the list is split: a file named dfe-anything in the
+  # working directory would otherwise replace the dfe-* pattern with its name.
+  set -f
   for pat in $WATCH_NS; do
     # Unquoted on purpose: the pattern is a glob.
     # shellcheck disable=SC2254
-    case "$ns" in $pat) return 0 ;; esac
+    case "$ns" in $pat) set +f; return 0 ;; esac
   done
+  set +f
   return 1
 }
 
