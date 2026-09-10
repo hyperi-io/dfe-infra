@@ -231,6 +231,10 @@ apps:
     multiplicity: per_config
     scale_deployed: false
     transports: [bus, direct]
+    # The Kubernetes tiers only: Compose ships no fetcher service, so a source
+    # asking to be fetched there is refused at save rather than written and
+    # never polled.
+    profiles: [slim, single, scale, mesh]
     # One instance per fetcher source, written by the engine when the source is
     # written, so no profile seeds one.
     default_in: []
