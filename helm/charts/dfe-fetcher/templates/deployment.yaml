@@ -55,6 +55,15 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+            {{- $ingest := default dict (get (default dict .Values.config) "ingest") }}
+            {{- if $ingest.enabled }}
+            # The container-extractor listener, declared only when this instance
+            # turns it on: off, the app binds nothing (dfe-fetcher
+            # src/config/mod.rs IngestConfig::default).
+            - name: ingest
+              containerPort: 8080
+              protocol: TCP
+            {{- end }}
           env:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_FETCHER_") | nindent 12 }}
             # An instance whose credentials are vault:/env: references in its own
