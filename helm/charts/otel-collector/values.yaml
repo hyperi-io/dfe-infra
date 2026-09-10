@@ -215,3 +215,11 @@ exporters:
     database: ""
     username: ""
     passwordSecretName: clickhouse-admin-password
+    # ClickHouse session settings, merged into the exporter's DSN query string.
+    #
+    # A log body repeating a JSON path fails its whole batch with code 117 and
+    # the retry never drains it, so one record stops the logs pipeline.
+    # The skip keeps the first occurrence and is silent; the raw Body column
+    # still holds the original text.
+    connectionParams:
+      type_json_skip_duplicated_paths: "1"
