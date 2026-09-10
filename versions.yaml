@@ -1872,7 +1872,7 @@ stacks:
       dfe-engine: "v1.19.35"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
       dfe-ui: "v1.5.8"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.34"      # independent release line
-      dfe-loader: "v1.18.34"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
+      dfe-loader: "v1.18.35"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.21"
       dfe-fetcher: "v1.4.21"
       dfe-transform-vrl: "v1.1.22"
@@ -1897,7 +1897,7 @@ stacks:
       dfe-engine: "sha256:18c14620a2fc9f9c336583abf40f9d284521b27289e1eacd9f114145f64a95d4"
       dfe-ui: "sha256:968e141a32ffb92503cfe9105e0e51bb9f690268086bec0965d6b245e2a21838"
       dfe-receiver: "sha256:5b91c7e8080ed29fb7eec2c06074274ba9dc4ae9f20eb72cb6f08866b33f8871"
-      dfe-loader: "sha256:630a0a578f54836ca991e25ec5167dc5558b587cc2ba9fa63f8dcb97eb7b437c"
+      dfe-loader: "sha256:a8455e2a382c5cf466ed408a52a86e58ff3683ef69642d84a05b78f16eae5e4f"
       dfe-archiver: "sha256:bddf7511841dc7aed95e2f24d573e35249c2699626626141e8ef7d821f194a2c"
       dfe-fetcher: "sha256:8af6fa45f1c53762d73a1c75eac1a96b19dc5c75faa6ce7b24fee4d9cdc31d4f"
       dfe-transform-vrl: "sha256:df45c3bd58ad2b3c1c715736333385142779ab833e79967dd8a78de6bf4f3604"
