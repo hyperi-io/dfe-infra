@@ -880,13 +880,17 @@ def _acceptance_transport(args: argparse.Namespace) -> str:
     return "both"
 
 
-def _metrics_gauge(url: str, name: str) -> float | None:
-    """One bare gauge's value from a Prometheus exposition, or None if absent."""
+def _metrics_body(url: str) -> str | None:
+    """A Prometheus exposition, or None when the metrics server did not answer."""
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
-            body = response.read().decode("utf-8", errors="replace")
+            return response.read().decode("utf-8", errors="replace")
     except (OSError, urllib.error.HTTPError):
         return None
+
+
+def _metrics_gauge(body: str, name: str) -> float | None:
+    """One bare gauge's value from an exposition, or None when the series is absent."""
     for line in body.splitlines():
         if line.startswith("#"):
             continue
@@ -979,13 +983,16 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
             if not _forward_ready(f"http://localhost:{port}/livez", name, 45.0):
                 failures.append(f"{name}: metrics port never answered")
                 continue
-            gauge = _metrics_gauge(f"http://localhost:{port}/metrics", "pipeline_idle")
+            exposition = _metrics_body(f"http://localhost:{port}/metrics")
+            # scalo registers pipeline_idle only while the app HAS no work, so an
+            # absent series on an exposition that answered means it is working.
+            gauge = _metrics_gauge(exposition, "pipeline_idle") if exposition is not None else None
             body = _health_body(f"http://localhost:{port}/healthz")
             work = _health_component(f"http://localhost:{port}/healthz", "work_config")
             idle = gauge == 1.0
             reason = (work or {}).get("message") or (work or {}).get("detail") or ""
-            if gauge is None:
-                failures.append(f"{name}: /metrics carries no pipeline_idle gauge")
+            if exposition is None:
+                failures.append(f"{name}: /metrics did not answer")
             elif body is None:
                 # The gauge is the only surface this scalo serves; the reason it
                 # would otherwise name is in the app's log.
