@@ -29,6 +29,10 @@ spec:
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          # The tiered buffer spools to the RELATIVE path .tmp/archiver-spool
+          # (dfe-archiver archiver.rs:142, not a config key), so the working
+          # directory has to be the writable volume or the app exits on EROFS.
+          workingDir: /tmp
           # Mirrors the image CMD (dfe-archiver Dockerfile:43). Explicit so the
           # config path is visible here rather than buried in the image.
           args:

@@ -79,6 +79,15 @@ def test_no_local_path_adds_neither() -> None:
     expect("and no archive volume", "archive" not in names, f"got {names}")
 
 
+def test_the_spool_lands_on_a_writable_volume() -> None:
+    """The spool path is relative and hardcoded, so the working directory carries it."""
+    spec = container(*ON_THE_BUS, *LOCAL_DISK)
+    working = spec["containers"][0].get("workingDir")
+    mounts = {m["mountPath"] for m in spec["containers"][0]["volumeMounts"]}
+    expect("the working directory is a mounted volume",
+           working in mounts, f"workingDir {working!r} is not one of {sorted(mounts)}")
+
+
 def test_the_broker_reaches_the_app() -> None:
     """The app reads bare KAFKA_*; BOOTSTRAP_SERVERS left it on localhost:9092."""
     env = env_of(container(*ON_THE_BUS))
@@ -130,6 +139,7 @@ def main() -> int:
     with standalone():
         test_local_disk_is_a_destination_and_a_volume()
         test_no_local_path_adds_neither()
+        test_the_spool_lands_on_a_writable_volume()
         test_the_broker_reaches_the_app()
         test_the_sasl_credential_rides_its_secret()
         test_the_landing_topics_are_discovered()
