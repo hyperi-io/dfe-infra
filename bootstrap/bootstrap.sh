@@ -173,6 +173,9 @@ export DFE_DNS_PROVIDER="${DFE_DNS_PROVIDER:-none}"
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is
 # satisfiable; a shared/customer cluster labels its own nodes at provisioning.
 DFE_LABEL_WORKLOAD_NODES="${DFE_LABEL_WORKLOAD_NODES:-$([[ "${DFE_CLOUD:-}" == "local" ]] && echo true || echo false)}"
+# The certified stack version; empty when a bare bootstrap names none, and the
+# engine then falls back to the deploy repo's pins.
+export DFE_STACK_VERSION="${DFE_STACK_VERSION:-}"
 # Front-door addresses; empty renders a blank annotation and the pool chooses.
 export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
 export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
@@ -185,7 +188,8 @@ if ! [[ "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}" =~ ^[0-9]+$ ]]; then
 fi
 echo "Default retention: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS} day(s) for every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)"
 # One cluster runs one profile at a time, so the profile tags the domain and no
-# two deployments publish the same hostname. An explicit DFE_DOMAIN wins.
+# two deployments publish the same hostname. dfe-ops refuses an explicit
+# DFE_DOMAIN that contradicts a declared base; a bare bootstrap trusts it.
 # A Kubernetes deploy that names no profile gets the HA tier on the bus.
 export DFE_PROFILE="${DFE_PROFILE:-scale}"
 if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" ]]; then

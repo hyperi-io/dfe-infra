@@ -31,6 +31,8 @@ metadata:
     # GitOps source
     dfe.hyperi.io/repo_url: "${DFE_REPO_URL}"
     dfe.hyperi.io/target_revision: "${DFE_TARGET_REVISION}"
+    # The certified stack version (versions.yaml), distinct from the git ref above.
+    dfe.hyperi.io/stack_version: "${DFE_STACK_VERSION}"
     # Deploy-specific gitops repo -- the SINGLE source for the deploy repo coords.
     # Argo reads it here (layer2-apps source 2 + the git generator), and the appset
     # injects the same value into the dfe-engine chart (gitops.repoUrl/branch), so

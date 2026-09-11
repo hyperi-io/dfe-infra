@@ -1870,7 +1870,7 @@ stacks:
     # == the pin here.
     apps:
       dfe-engine: "v1.19.35"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
-      dfe-ui: "v1.5.8"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
+      dfe-ui: "v1.5.9"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.34"      # independent release line
       dfe-loader: "v1.18.35"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.21"
@@ -1895,7 +1895,7 @@ stacks:
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
       dfe-engine: "sha256:18c14620a2fc9f9c336583abf40f9d284521b27289e1eacd9f114145f64a95d4"
-      dfe-ui: "sha256:968e141a32ffb92503cfe9105e0e51bb9f690268086bec0965d6b245e2a21838"
+      dfe-ui: "sha256:3bcdedcd48d41b0fea513f0fea9453845b0bb764f824b67a931eabadc1088c55"
       dfe-receiver: "sha256:5b91c7e8080ed29fb7eec2c06074274ba9dc4ae9f20eb72cb6f08866b33f8871"
       dfe-loader: "sha256:a8455e2a382c5cf466ed408a52a86e58ff3683ef69642d84a05b78f16eae5e4f"
       dfe-archiver: "sha256:bddf7511841dc7aed95e2f24d573e35249c2699626626141e8ef7d821f194a2c"
@@ -1904,7 +1904,7 @@ stacks:
       dfe-transform-vector: "sha256:0985af38126d0312a4b8d342b321149bbb02580d45c6d89e25e5314286c0863e"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
-      dfe-hyperdx: "sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca"
+      dfe-hyperdx: "sha256:0b0784db9e107acaa0b2c4bd80ad2a2da3d25175791f2b03ac110262b5d21d72"
       # ghcr.io/hyperi-io/culvert:v2.1.14. Manifest-LIST digest (amd64 + arm64),
       # read off the ghcr v2 API with an anonymous pull token.
       culvert: "sha256:b8b3f8c5450cc8eaa761a5b2de81128d1adc3022fa7aa9746c4c676e4fafd7d3"
@@ -1937,7 +1937,7 @@ stacks:
       dfe-schemas: "v0.2.1"              # baseline DDL; the dfe-schemas release current at this cut (2026-09-08)
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
-      dfe-hyperdx: "v0.2.0"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:e8e6b24a66d20e7a27132b903714d5f2c834c16c83ad8bc4f02a1374db1989ca (native ClickHouse JSON sub-paths across search, charts and filters, plus the inherited-security pass; upstream 2.36.0); deployment tag pin lives in the deploy repo values
+      dfe-hyperdx: "v0.2.2"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:0b0784db9e107acaa0b2c4bd80ad2a2da3d25175791f2b03ac110262b5d21d72 (catch-all source seeded as main over dfe.main, dashboards provisioned when a team is seeded, Next 16.3.4 for GHSA-2xp9-vwfh-vxw4 and GHSA-p293-qw3h-jr36; upstream 2.36.0); deployment tag pin lives in the deploy repo values
       # dfe-transform-elastic-catalogue: "v1.1.1"   # dfe-transform-elastic#18; the sources.yaml release asset the engine offers as the source catalogue
 
     # Stack upgrade metadata for THIS version.

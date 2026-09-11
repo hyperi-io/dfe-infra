@@ -502,11 +502,24 @@ def _apply_domain(env: dict[str, str], mode: str | None) -> dict[str, str]:
 
     One cluster runs one profile at a time, so each mode publishes
     <profile>.<base> and a rebuild in another mode cannot claim the hostnames the
-    previous one's DNS still names. An explicit DFE_DOMAIN wins.
+    previous one's DNS still names. An explicit DFE_DOMAIN alone is a fixed
+    domain; beside a base domain it must be the convention's value.
     """
-    if env.get("DFE_DOMAIN") or not env.get("DFE_BASE_DOMAIN") or not mode:
+    base = env.get("DFE_BASE_DOMAIN")
+    explicit = env.get("DFE_DOMAIN")
+    if explicit and base and mode and explicit != f"{mode}.{base}":
+        # A base domain declares the <mode>.<base> convention, so an explicit
+        # domain that contradicts it is a stale override, not a choice.
+        raise SystemExit(
+            f"ERROR: DFE_DOMAIN={explicit} contradicts DFE_BASE_DOMAIN={base} for "
+            f"--mode {mode}: this deploy would publish under {explicit} while the "
+            f"convention (and the DNS) names {mode}.{base}. Drop the DFE_DOMAIN "
+            "override (check every .tmp/*.env this run loaded) or set it to "
+            f"{mode}.{base}."
+        )
+    if explicit or not base or not mode:
         return env
-    env["DFE_DOMAIN"] = f"{mode}.{env['DFE_BASE_DOMAIN']}"
+    env["DFE_DOMAIN"] = f"{mode}.{base}"
     print(f"  domain derived from DFE_BASE_DOMAIN: {env['DFE_DOMAIN']}", file=sys.stderr)
     return env
 
@@ -2456,6 +2469,9 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
         return 0
 
     env = _assemble_env(args)
+    # The certified stack, as its own annotation: the engine reports it and the
+    # git ref Argo tracks is not a version.
+    env["DFE_STACK_VERSION"] = args.stack
 
     # Fail early on incomplete env -- clearer than a mid-bootstrap abort.
     missing = [v for v in BOOTSTRAP_REQUIRED if not env.get(v)]

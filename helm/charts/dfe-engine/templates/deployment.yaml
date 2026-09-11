@@ -257,7 +257,7 @@ spec:
             {{- end }}
             {{- with .Values.stackVersion }}
             # The certified stack this deployment runs, from the cluster secret's
-            # target_revision annotation the appset already reads. GET
+            # stack_version annotation the appset reads. GET
             # /api/v1/system/version prefers the deploy repo's pins.yaml and
             # falls back to this, so a deploy whose pins carry no base still
             # answers with a stack rather than nothing.

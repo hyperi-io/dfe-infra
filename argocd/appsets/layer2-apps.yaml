@@ -93,7 +93,7 @@ spec:
               # report it when the deploy repo's pins name no base. Only
               # dfe-engine reads it; the other charts ignore it.
               - name: stackVersion
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
               # The tier, from the same annotation that picks the profile values
               # file above -- so what the engine reports and what the charts were
               # rendered with are one value. Only dfe-engine reads it.

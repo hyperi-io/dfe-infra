@@ -200,10 +200,21 @@ def test_a_base_domain_is_tagged_with_the_profile() -> None:
            == "scale.dfe.example.com", "wrong domain")
 
 
-def test_an_explicit_domain_wins() -> None:
+def test_an_explicit_domain_alone_wins() -> None:
     expect("DFE_DOMAIN is not overwritten",
-           derive(DFE_DOMAIN="fixed.example.com", DFE_BASE_DOMAIN="dfe.example.com")
-           == "fixed.example.com", "the derivation overrode an explicit domain")
+           derive(DFE_DOMAIN="fixed.example.com") == "fixed.example.com",
+           "the derivation overrode an explicit domain")
+
+
+def test_an_explicit_domain_contradicting_the_base_is_refused() -> None:
+    """A declared base domain names the convention; a stale override must not publish."""
+    try:
+        derive(DFE_DOMAIN="fixed.example.com", DFE_BASE_DOMAIN="dfe.example.com")
+    except SystemExit as refused:
+        expect("the refusal names the domain the convention wants",
+               "slim.dfe.example.com" in str(refused), str(refused))
+        return
+    expect("a contradicting DFE_DOMAIN is refused", False, "the deploy would have published it")
 
 
 def test_no_base_domain_derives_nothing() -> None:
