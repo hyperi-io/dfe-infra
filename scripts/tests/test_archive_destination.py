@@ -79,6 +79,30 @@ def test_no_local_path_adds_neither() -> None:
     expect("and no archive volume", "archive" not in names, f"got {names}")
 
 
+def test_the_broker_reaches_the_app() -> None:
+    """The app reads bare KAFKA_*; BOOTSTRAP_SERVERS left it on localhost:9092."""
+    env = env_of(container(*ON_THE_BUS))
+    expect("the broker list arrives under the name the app reads",
+           env.get("KAFKA_BROKERS") == "broker:9092", f"got {env.get('KAFKA_BROKERS')!r}")
+    expect("and not under one it ignores", "KAFKA_BOOTSTRAP_SERVERS" not in env,
+           f"got {env.get('KAFKA_BOOTSTRAP_SERVERS')!r}")
+
+
+def test_the_sasl_credential_rides_its_secret() -> None:
+    """The app derives nothing from the provider, so protocol and mechanism are named."""
+    spec = container(*ON_THE_BUS, "--set", "kafka.securityProtocol=SASL_PLAINTEXT")
+    env = {e["name"]: e for e in spec["containers"][0]["env"]}
+    expect("the listener protocol is named",
+           env.get("KAFKA_SECURITY_PROTOCOL", {}).get("value") == "SASL_PLAINTEXT",
+           f"got {env.get('KAFKA_SECURITY_PROTOCOL')!r}")
+    for name, key in (("KAFKA_SASL_USER", "username"),
+                      ("KAFKA_SASL_PASSWORD", "password"),
+                      ("KAFKA_SASL_MECHANISM", "sasl.mechanism")):
+        ref = env.get(name, {}).get("valueFrom", {}).get("secretKeyRef", {})
+        expect(f"{name} comes from the kafka user secret",
+               ref.get("name") == "dfe-kafka-user" and ref.get("key") == key, f"got {ref!r}")
+
+
 def test_the_landing_topics_are_discovered() -> None:
     env = env_of(container(*ON_THE_BUS))
     expect("the default pattern is the platform's landing convention",
@@ -106,6 +130,8 @@ def main() -> int:
     with standalone():
         test_local_disk_is_a_destination_and_a_volume()
         test_no_local_path_adds_neither()
+        test_the_broker_reaches_the_app()
+        test_the_sasl_credential_rides_its_secret()
         test_the_landing_topics_are_discovered()
         test_an_empty_pattern_sends_no_env()
         test_the_direct_transport_reads_no_topics()

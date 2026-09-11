@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import sys
 import time
 import uuid
@@ -62,6 +63,10 @@ TRANSFORM_DEADLINE = 300.0
 # Argo, so the first record can take minutes to arrive.
 ROUTING_DEADLINE = 900.0
 INGEST_RETRY_WINDOW = 180.0
+# The archiver discovers a new landing topic on scalo's 60 s refresh and flushes
+# its buffer on the archiver's own flush_age_secs (60 s by default), so a file
+# for a topic created mid-run is two intervals away.
+ARCHIVE_DEADLINE = 300.0
 
 
 def select_option(page, combobox_index: int, text: str) -> None:
@@ -263,6 +268,68 @@ def wait_gain(store: Datastore, table: str, baseline: int, wanted: int, deadline
         time.sleep(5)
 
 
+def in_archiver(prefix: list[str], script: str) -> tuple[int, str]:
+    """Run *script* under a shell inside the archiver, wherever it runs.
+
+    The prefix is the whole of what makes this k8s or Compose: `kubectl exec
+    deploy/dfe-archiver --` or `docker exec dfe-archiver`. Nothing else in this
+    step knows which one it is.
+    """
+    import subprocess
+
+    done = subprocess.run(
+        [*prefix, "sh", "-c", script], capture_output=True, text=True, check=False
+    )
+    return done.returncode, (done.stdout or done.stderr).strip()
+
+
+def archive_directory(prefix: list[str]) -> tuple[str, str]:
+    """The local directory the archiver writes to, or why this step cannot run.
+
+    Read from the container rather than passed in, so the runner carries no
+    second copy of a path the chart owns.
+    """
+    code, out = in_archiver(prefix, "printenv ARCHIVER_DESTINATION")
+    if code != 0 or not out:
+        return "", "the archiver names no destination, so it archives nothing"
+    if not out.startswith("file://"):
+        return "", f"destination {out} is not local disk; this step proves the file path only"
+    return out[len("file://") :], ""
+
+
+def wait_archived(prefix: list[str], directory: str, name: str, deadline: float) -> tuple[str, bool]:
+    """Files under the run's own landing topic, polled until the archiver flushes.
+
+    The topic directory carries the source name, which is minted per run, so a
+    file below it belongs to this run and nothing else. Its CONTENT is
+    zstd-compressed and the image ships no decompressor, so the proof is the
+    path and a non-zero size.
+    """
+    topic = f"{name}_land"
+    # -printf is GNU findutils, which every DFE app image carries (debian-slim).
+    script = f"find {directory}/{topic} -type f -size +0c -printf '%s %p\\n'"
+    until = time.monotonic() + deadline
+    last = ""
+    while True:
+        code, out = in_archiver(prefix, script)
+        lines = [line for line in out.splitlines() if line.strip()]
+        if code == 0 and lines:
+            total = sum(int(line.split(" ", 1)[0]) for line in lines)
+            first = lines[0].split(" ", 1)[1]
+            return (
+                f"{len(lines)} file(s), {total} bytes under {topic}, first {first}",
+                True,
+            )
+        last = out
+        if time.monotonic() >= until:
+            return (
+                f"no archive file under {directory}/{topic} within {deadline:.0f}s; "
+                f"last: {last[:160] or 'nothing found'}",
+                False,
+            )
+        time.sleep(15)
+
+
 def companion(repo: Path, name: str) -> Path:
     """The checkout beside *repo*'s main clone, so a worktree resolves the same as a clone."""
     import subprocess
@@ -312,6 +379,7 @@ def run(args: argparse.Namespace) -> int:
     # delete can outlast a gateway's timeout. The console still goes through the gateway.
     api_url = os.environ.get("DFE_E2E_ENGINE_URL") or args.engine_url
     engine = Engine(api_url, admin_user, password, verify or api_url != args.engine_url)
+    archive_exec = shlex.split(args.archive_exec) if args.archive_exec else []
 
     name = f"fb{uuid.uuid4().hex[:8]}"
     run_id = f"src-{uuid.uuid4().hex[:12]}"
@@ -378,6 +446,15 @@ def run(args: argparse.Namespace) -> int:
                     "transformed", "done" if transformed else "failed",
                     f"{transformed} new rows carry {TRANSFORMED_COLUMN}, which only the transform sets",
                 )
+                if archive_exec:
+                    directory, refused = archive_directory(archive_exec)
+                    if refused:
+                        driver.record("archived", "skipped", refused)
+                    else:
+                        detail, wrote = wait_archived(archive_exec, directory, name, ARCHIVE_DEADLINE)
+                        driver.record("archived", "done" if wrote else "failed", detail)
+                else:
+                    driver.record("archived", "skipped", "no --archive-exec: nothing to look inside")
             else:
                 driver.record("feed", "skipped", "no receiver in this run (DFE_E2E_RECEIVER_URL unset)")
         except Exception as exc:  # a Playwright timeout IS the finding
@@ -409,6 +486,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-repo", required=True, help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)")
     parser.add_argument("--transform-repo", default="", help="dfe-transform-vrl checkout holding the bundled pipeline and corpus (default: beside the engine repo)")
     parser.add_argument("--access-summary", default="", metavar="FILE", help="the deploy's own summary, for the login when not run through dfe-ops")
+    parser.add_argument("--archive-exec", default="", metavar="PREFIX",
+                        help="command prefix that runs a shell inside the archiver, for the archive "
+                             "assertion (k8s: kubectl -n <ns> exec deploy/dfe-archiver --; "
+                             "docker: docker exec dfe-archiver)")
     parser.add_argument("--per-module", type=int, default=20, help="corpus lines per filebeat module to feed")
     parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")

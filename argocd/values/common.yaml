@@ -91,6 +91,9 @@ otel:
 # and named differently, so profile-scale.yaml overrides this.
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
+  # The shipped broker authenticates with SCRAM over its plain listener. A
+  # deployment on a TLS listener moves this to SASL_SSL with bootstrapServers.
+  securityProtocol: SASL_PLAINTEXT
   sasl:
     enabled: true
     mechanism: SCRAM-SHA-512

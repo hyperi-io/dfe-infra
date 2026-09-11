@@ -45,9 +45,43 @@ spec:
           env:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "ARCHIVER_") | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
-            - name: KAFKA_BOOTSTRAP_SERVERS
+            # Bare KAFKA_*, the archiver's own flat-env contract (core config.rs
+            # apply_kafka_env). BOOTSTRAP_SERVERS is read by nothing here and left
+            # the broker list on its localhost:9092 default.
+            - name: KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- with .Values.kafka.securityProtocol }}
+            # This app derives nothing from the provider, so a SASL listener has
+            # to be named here or it dials the broker in the clear.
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.kafka.saslSecretName }}
+            # SASL credential by env, not in the config blob -- see the same block in
+            # dfe-receiver. It spells the field USER, as this app does; dfe-loader
+            # spells it USERNAME.
+            #
+            # The mechanism rides the SAME secret as the credential, so it cannot
+            # drift from the password it belongs to, and it is a RAW passthrough to
+            # librdkafka -- the secret carries that spelling (SCRAM-SHA-512), not
+            # dfe-loader's enum spelling.
+            - name: KAFKA_SASL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            - name: KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
+            {{- end }}
             {{- with .Values.kafka.topicInclude }}
             # Broker-side topic discovery, so a source created after this pod
             # started is archived without a roll. Comma-separated: scalo's

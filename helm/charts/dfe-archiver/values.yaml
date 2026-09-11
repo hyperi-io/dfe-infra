@@ -31,6 +31,10 @@ kafka:
   # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
   # DFE Kafka credential contract (dfe-engine#98).
   provider: ""
+  # Wire protocol for the broker's listener (PLAINTEXT | SASL_PLAINTEXT | SSL |
+  # SASL_SSL). Empty leaves the app's own PLAINTEXT default; the deployment's
+  # kafka layer names it beside bootstrapServers.
+  securityProtocol: ""
   # Regex a discovered topic must match to be archived (KAFKA_TOPIC_INCLUDE).
   # The platform convention is {source}_land, so this archives every source's
   # landing topic and a source added later needs no restart. An empty list

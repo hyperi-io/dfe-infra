@@ -141,6 +141,7 @@ import json
 import os
 import platform
 import secrets
+import shlex
 import shutil
 import socket
 import ssl
@@ -1191,6 +1192,9 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             transform_repo = _sibling_repo("dfe-transform-vrl", "DFE_TRANSFORM_VRL_REPO")
             if transform_repo:
                 runner += ["--transform-repo", str(transform_repo)]
+            # The whole way in, not its parts: the docker lane passes its own.
+            archive_exec = shlex.join([*kube, "-n", namespace, "exec", args.archive_target, "--"])
+            runner += ["--archive-exec", archive_exec]
             if args.insecure:
                 runner.append("--insecure")
             if args.keep:
@@ -3008,6 +3012,8 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--ch-target", default=None,
                     help="port-forward target for the datastore (default: the service the --mode profile's clickhouse.host names, else svc/dfe-clickhouse)")
     ac.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
+    ac.add_argument("--archive-target", default="deploy/dfe-archiver",
+                    help="workload the source suite runs its archive assertion inside")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
     ac.add_argument("--ch-port", type=int, default=18123, help="local port for the datastore")
     ac.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
