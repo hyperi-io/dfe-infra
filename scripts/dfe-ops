@@ -1004,12 +1004,18 @@ _PYTEST_SUITES = {
 }
 ONBOARDING_SUITE = "onboarding"
 ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
+# The post-deploy source test: a real source with a transform and an archive,
+# created through the console and proven at every hop. Not part of `all`: it
+# runs after POST on the deployments that showcase the data path.
+SOURCE_SUITE = "source"
+SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
+BROWSER_SUITES = (ONBOARDING_SUITE, SOURCE_SUITE)
 
 # `all` runs onboarding FIRST: a deployment nobody could have onboarded has
 # failed whatever the data path then does. The flow suite creates every source
 # shape and removes it again, so it proves a fresh deploy. A suite that reads a
 # source the deployment must already carry is run through the pytest passthrough.
-SUITES = (ONBOARDING_SUITE, "flows", "all")
+SUITES = (ONBOARDING_SUITE, "flows", SOURCE_SUITE, "all")
 
 
 def suite_steps(suite: str) -> tuple[str, ...]:
@@ -1070,7 +1076,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     # console pod: the pod bounces a browser's /api call to /login, because
     # routing /api to the engine is the gateway's job.
     ui_url, resolve = "", list(args.resolve)
-    if ONBOARDING_SUITE in steps:
+    if any(step in BROWSER_SUITES for step in steps):
         ui_url = args.ui_url or _console_urls(kube, namespace)[0]
         if "localhost" in ui_url:
             print(
@@ -1168,6 +1174,27 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 runner.append("--insecure")
             if args.console_only:
                 runner.append("--console-only")
+            for pair in resolve:
+                runner += ["--resolve", pair]
+            rc = subprocess.run(runner, env=env).returncode
+        elif step == SOURCE_SUITE:
+            # The receiver, the datastore and the engine come from the same
+            # forwards and DFE_E2E_* env the flow suite gets; the console and
+            # the engine's login go through the gateway like onboarding.
+            runner = [
+                sys.executable, str(SOURCE_RUNNER),
+                "--ui-url", ui_url,
+                "--engine-url", ui_url,
+                "--engine-repo", str(args.repo),
+                "--shots-dir", args.shots_dir,
+            ]
+            transform_repo = _sibling_repo("dfe-transform-vrl", "DFE_TRANSFORM_VRL_REPO")
+            if transform_repo:
+                runner += ["--transform-repo", str(transform_repo)]
+            if args.insecure:
+                runner.append("--insecure")
+            if args.keep:
+                runner.append("--keep")
             for pair in resolve:
                 runner += ["--resolve", pair]
             rc = subprocess.run(runner, env=env).returncode
@@ -3011,6 +3038,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="where the onboarding suite writes its per-step screenshots")
     ac.add_argument("--console-only", action="store_true",
                     help="skip the wizard half of the onboarding suite on a deploy already set up, and prove the console half alone")
+    ac.add_argument("--keep", action="store_true",
+                    help="the source suite leaves the source it made deployed, for a look")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)
