@@ -7,7 +7,9 @@ metadata:
   annotations:
     {{- include "dfe-common.reloadAnnotations" . | nindent 4 }}
 spec:
-  {{- include "dfe-common.replicas" . }}
+  # One replica whatever the profile says: each replica serves its own copy of
+  # the source registry (dfe-engine#361), and the config PVC is ReadWriteOnce.
+  replicas: 1
   {{- if .Values.config.persistence.enabled }}
   # The config PVC is ReadWriteOnce: a rolling update can strand the new pod
   # on another node waiting for the attach the old pod still holds.
