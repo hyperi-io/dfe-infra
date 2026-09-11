@@ -49,3 +49,9 @@ tls:
 # MergeTree), no Kafka (gRPC transport). Flip to cluster/external to test those.
 clickhouse:
   mode: single
+
+# Archive to local disk in the archiver pod. This deployment has no object
+# store, and an ephemeral destination is enough to prove the landing topics
+# reach the archiver; a deployment that KEEPS archives sets s3.* instead.
+archive:
+  localPath: /var/lib/dfe/archive

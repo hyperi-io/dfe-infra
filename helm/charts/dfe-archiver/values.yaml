@@ -31,6 +31,20 @@ kafka:
   # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
   # DFE Kafka credential contract (dfe-engine#98).
   provider: ""
+  # Regex a discovered topic must match to be archived (KAFKA_TOPIC_INCLUDE).
+  # The platform convention is {source}_land, so this archives every source's
+  # landing topic and a source added later needs no restart. An empty list
+  # subscribes to nothing and the archiver reports itself idle.
+  topicInclude:
+    - "_land$"
+
+# Local disk INSIDE the pod: an emptyDir mounted at this path, with the
+# destination pointed at it (ARCHIVER_DESTINATION). Empty by default -- a
+# pod-local directory loses every file when the pod is replaced, so it proves
+# the path rather than keeping archives. A deployment with object storage sets
+# s3.* and leaves this empty.
+archive:
+  localPath: ""
 
 # Archive destination. Both keys are rendered as env (S3_ENDPOINT / S3_BUCKET,
 # the archiver's flat-env contract) and env BEATS the config file, so a value set

@@ -48,6 +48,13 @@ spec:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- with .Values.kafka.topicInclude }}
+            # Broker-side topic discovery, so a source created after this pod
+            # started is archived without a roll. Comma-separated: scalo's
+            # flat_env_list splits on it.
+            - name: KAFKA_TOPIC_INCLUDE
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- else }}
             # Receive on the scalo Push listener the Service fronts instead of a
             # landing topic. Single underscore: this app reads its own flat-env
@@ -56,6 +63,12 @@ spec:
               value: "grpc"
             - name: ARCHIVER_GRPC_LISTEN
               value: {{ printf "0.0.0.0:%v" (include "dfe-common.pushPort" .) | quote }}
+            {{- end }}
+            {{- with .Values.archive.localPath }}
+            # Local disk in the pod. Env BEATS the config file, the same rule as
+            # S3_*, so this wins over whatever the engine's overlay authored.
+            - name: ARCHIVER_DESTINATION
+              value: {{ printf "file://%s" . | quote }}
             {{- end }}
             {{- with .Values.s3.endpoint }}
             # An S3-compatible endpoint (the AWS default when unset). Env BEATS
@@ -97,6 +110,10 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            {{- with .Values.archive.localPath }}
+            - name: archive
+              mountPath: {{ . | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           # WAS `exec: pgrep dfe-archiver` -- a process-existence check that stays
@@ -123,3 +140,7 @@ spec:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        {{- with .Values.archive.localPath }}
+        - name: archive
+          emptyDir: {}
+        {{- end }}
