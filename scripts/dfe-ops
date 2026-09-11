@@ -497,17 +497,18 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     return _run_streaming(tf_cmd, env=env)
 
 
-def _apply_domain(env: dict[str, str], mode: str | None) -> dict[str, str]:
+def _apply_domain(env: dict[str, str], mode: str | None, *, deploying: bool = True) -> dict[str, str]:
     """Tag the domain with the profile when the deploy declares only a base one.
 
     One cluster runs one profile at a time, so each mode publishes
     <profile>.<base> and a rebuild in another mode cannot claim the hostnames the
     previous one's DNS still names. An explicit DFE_DOMAIN alone is a fixed
-    domain; beside a base domain it must be the convention's value.
+    domain; beside a base domain it must be the convention's value. A verify
+    observes the domain a stack already has, so it never refuses one.
     """
     base = env.get("DFE_BASE_DOMAIN")
     explicit = env.get("DFE_DOMAIN")
-    if explicit and base and mode and explicit != f"{mode}.{base}":
+    if deploying and explicit and base and mode and explicit != f"{mode}.{base}":
         # A base domain declares the <mode>.<base> convention, so an explicit
         # domain that contradicts it is a stale override, not a choice.
         raise SystemExit(
@@ -549,7 +550,7 @@ def _suite_env(args: argparse.Namespace) -> dict[str, str]:
         env["KUBECONFIG"] = args.kubeconfig
     if args.mode:
         env["DFE_PROFILE"] = args.mode
-    return _apply_domain(env, args.mode)
+    return _apply_domain(env, args.mode, deploying=False)
 
 
 def cmd_verify(args: argparse.Namespace) -> int:

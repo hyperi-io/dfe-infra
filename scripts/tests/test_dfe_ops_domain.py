@@ -60,6 +60,15 @@ def test_explicit_domain_contradicting_the_base_is_refused() -> None:
     assert "DFE_DOMAIN=example.com" in message
 
 
+def test_a_verify_observes_the_deployed_domain_without_refusing() -> None:
+    env = dfeops._apply_domain(
+        {"DFE_DOMAIN": "example.com", "DFE_BASE_DOMAIN": "dfe.example.com"},
+        "scale",
+        deploying=False,
+    )
+    assert env["DFE_DOMAIN"] == "example.com"
+
+
 def test_no_mode_leaves_the_domain_alone() -> None:
     env = dfeops._apply_domain(
         {"DFE_DOMAIN": "example.com", "DFE_BASE_DOMAIN": "dfe.example.com"}, None
