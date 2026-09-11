@@ -31,15 +31,22 @@ sys.path.insert(0, str(SCRIPTS))
 import composition  # noqa: E402
 import profiles  # noqa: E402
 
-# The core data path Derek settled on: every profile stands these up with no
-# further configuration, so a fresh deploy ingests, loads, archives, and serves
-# the control plane and the console.
-CORE_COMPOSITION = frozenset(
-    {"dfe-receiver", "dfe-loader", "dfe-archiver", "dfe-engine", "dfe-ui", "hyperdx"}
-)
+# The core data path: every profile stands these up with no further
+# configuration, so a fresh deploy ingests, loads, and serves the control plane
+# and the console.
+CORE_COMPOSITION = frozenset({"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-ui", "hyperdx"})
+
+# The leanest Compose tier runs the core data path alone.
+ARCHIVERLESS = "docker-slim"
 
 # Deployed on demand -- one instance per source, written by the engine.
 ON_DEMAND = ("dfe-fetcher", "dfe-transform-vrl", "dfe-transform-vector", "culvert")
+
+# Compose declares its services in a committed file and creates none at run time,
+# so the apps a source would otherwise deploy start idle instead, one each.
+COMPOSE_IDLE: dict[str, tuple[str, ...]] = {
+    "docker-single": ("dfe-fetcher", "dfe-transform-vrl")
+}
 
 
 def test_the_manifest_names_only_declared_profiles() -> None:
@@ -69,16 +76,24 @@ def test_every_profile_stands_up_the_core_composition() -> None:
         assert CORE_COMPOSITION <= set(composition.default_apps(profile)), profile
 
 
-def test_the_archiver_is_default_on_slim() -> None:
-    """The tier that used to omit it, with nothing recording why."""
-    assert "dfe-archiver" in composition.default_apps("slim")
-    assert "dfe-archiver" in composition.default_apps("docker-slim")
-
-
-def test_the_on_demand_apps_are_seeded_nowhere() -> None:
+def test_the_archiver_is_default_everywhere_but_the_leanest_compose_tier() -> None:
+    """Absent from one tier by declaration rather than by omission."""
     for profile in profiles.PROFILE_NAMES:
         deployed = composition.default_apps(profile)
+        if profile == ARCHIVERLESS:
+            assert "dfe-archiver" not in deployed
+            continue
+        assert "dfe-archiver" in deployed, profile
+
+
+def test_the_on_demand_apps_are_seeded_only_where_a_source_cannot_deploy_one() -> None:
+    for profile in profiles.PROFILE_NAMES:
+        deployed = composition.default_apps(profile)
+        idle = COMPOSE_IDLE.get(profile, ())
         for app in ON_DEMAND:
+            if app in idle:
+                assert app in deployed, f"{app} not in {profile}"
+                continue
             assert app not in deployed, f"{app} in {profile}"
 
 
@@ -136,6 +151,7 @@ def test_the_idling_apps_declare_what_empty_means() -> None:
     """An app the deploy stands up before it has work says which keys say so."""
     assert composition.idle_when("dfe-archiver")
     assert composition.idle_when("dfe-fetcher")
+    assert composition.idle_when("dfe-transform-vrl")
 
 
 def test_an_app_whose_work_arrives_without_a_config_change_never_idles() -> None:

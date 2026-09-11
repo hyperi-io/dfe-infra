@@ -213,9 +213,12 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: false
-    # Deployed everywhere by default and idle until an operator names a
-    # destination, rather than absent until someone remembers to add it. The
-    # topic pair is one condition: on the bus, neither an explicit list nor a
+    # Deployed by default and idle until an operator names a destination, rather
+    # than absent until someone remembers to add it. docker-slim is the one
+    # exception: the leanest Compose tier runs the core data path alone, so the
+    # archiver arrives with docker-single.
+    default_in: [slim, single, scale, mesh, docker-single]
+    # The topic pair is one condition: on the bus, neither an explicit list nor a
     # discovery pattern means nothing to read.
     idle_when:
       - config.archive.destination
@@ -229,13 +232,14 @@ apps:
     multiplicity: per_config
     scale_deployed: false
     transports: [bus, direct]
-    # The Kubernetes tiers only: Compose ships no fetcher service, so a source
-    # asking to be fetched there is refused at save rather than written and
-    # never polled.
-    profiles: [slim, single, scale, mesh]
-    # One instance per fetcher source, written by the engine when the source is
-    # written, so no profile seeds one.
-    default_in: []
+    # docker-slim runs the core data path alone, so no fetcher may be deployed
+    # there.
+    profiles: [slim, single, scale, mesh, docker-single]
+    # On the Kubernetes tiers one instance per fetcher source, written by the
+    # engine when the source is written, so no tier seeds one. Compose holds one
+    # service per app, so docker-single starts that single fetcher idle and the
+    # source it is later given fills it.
+    default_in: [docker-single]
     # Anything that can produce a record is work; the ingest listener defaults
     # off, so an instance that wants it sets config.ingest.enabled true.
     idle_when:
@@ -302,9 +306,16 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: false
-    # A transform instance IS a source's processing step, so it arrives with the
-    # source rather than with the profile.
-    default_in: []
+    # On the Kubernetes tiers a transform instance IS a source's processing step,
+    # so it arrives with the source rather than with the tier. Compose holds one
+    # service per app, so docker-single starts that single transform idle and the
+    # source it is later given fills it.
+    default_in: [docker-single]
+    # On the bus a transform with no topics has nothing to consume, so it starts,
+    # stays Ready and holds no consumer group. The direct form's listener IS the
+    # work, which is why the bind address is not listed here.
+    idle_when:
+      - config.source.topics
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
       config.source.topics: ["{source}_land"]
