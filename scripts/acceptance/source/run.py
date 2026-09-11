@@ -283,48 +283,55 @@ def in_archiver(prefix: list[str], script: str) -> tuple[int, str]:
     return done.returncode, (done.stdout or done.stderr).strip()
 
 
-def archive_directory(prefix: list[str]) -> tuple[str, str]:
+def archive_directory(prefixes: list[list[str]]) -> tuple[str, str]:
     """The local directory the archiver writes to, or why this step cannot run.
 
     Read from the container rather than passed in, so the runner carries no
     second copy of a path the chart owns.
     """
-    code, out = in_archiver(prefix, "printenv ARCHIVER_DESTINATION")
-    if code != 0 or not out:
-        return "", "the archiver names no destination, so it archives nothing"
-    if not out.startswith("file://"):
-        return "", f"destination {out} is not local disk; this step proves the file path only"
-    return out[len("file://") :], ""
+    for prefix in prefixes:
+        code, out = in_archiver(prefix, "printenv ARCHIVER_DESTINATION")
+        if code != 0 or not out:
+            continue
+        if not out.startswith("file://"):
+            return "", f"destination {out} is not local disk; this step proves the file path only"
+        return out[len("file://") :], ""
+    return "", "the archiver names no destination, so it archives nothing"
 
 
-def wait_archived(prefix: list[str], directory: str, name: str, deadline: float) -> tuple[str, bool]:
+def wait_archived(
+    prefixes: list[list[str]], directory: str, name: str, deadline: float
+) -> tuple[str, bool]:
     """Files under the run's own landing topic, polled until the archiver flushes.
 
     The topic directory carries the source name, which is minted per run, so a
     file below it belongs to this run and nothing else. Its CONTENT is
     zstd-compressed and the image ships no decompressor, so the proof is the
-    path and a non-zero size.
+    path and a non-zero size. Every replica is asked: the consumer group splits
+    the topic's partitions, so the run's records are archived by whichever
+    replicas hold them.
     """
     topic = f"{name}_land"
     # -printf is GNU findutils, which every DFE app image carries (debian-slim).
     script = f"find {directory}/{topic} -type f -size +0c -printf '%s %p\\n'"
     until = time.monotonic() + deadline
-    last = ""
     while True:
-        code, out = in_archiver(prefix, script)
-        lines = [line for line in out.splitlines() if line.strip()]
-        if code == 0 and lines:
-            total = sum(int(line.split(" ", 1)[0]) for line in lines)
-            first = lines[0].split(" ", 1)[1]
+        found: list[str] = []
+        for prefix in prefixes:
+            code, out = in_archiver(prefix, script)
+            if code == 0:
+                found += [line for line in out.splitlines() if line.strip()]
+        if found:
+            total = sum(int(line.split(" ", 1)[0]) for line in found)
             return (
-                f"{len(lines)} file(s), {total} bytes under {topic}, first {first}",
+                f"{len(found)} file(s) across {len(prefixes)} replica(s), {total} bytes "
+                f"under {topic}, first {found[0].split(' ', 1)[1]}",
                 True,
             )
-        last = out
         if time.monotonic() >= until:
             return (
-                f"no archive file under {directory}/{topic} within {deadline:.0f}s; "
-                f"last: {last[:160] or 'nothing found'}",
+                f"no archive file under {directory}/{topic} on any of {len(prefixes)} "
+                f"replica(s) within {deadline:.0f}s",
                 False,
             )
         time.sleep(15)
@@ -379,7 +386,7 @@ def run(args: argparse.Namespace) -> int:
     # delete can outlast a gateway's timeout. The console still goes through the gateway.
     api_url = os.environ.get("DFE_E2E_ENGINE_URL") or args.engine_url
     engine = Engine(api_url, admin_user, password, verify or api_url != args.engine_url)
-    archive_exec = shlex.split(args.archive_exec) if args.archive_exec else []
+    archive_exec = [shlex.split(one) for one in args.archive_exec]
 
     name = f"fb{uuid.uuid4().hex[:8]}"
     run_id = f"src-{uuid.uuid4().hex[:12]}"
@@ -486,10 +493,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-repo", required=True, help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)")
     parser.add_argument("--transform-repo", default="", help="dfe-transform-vrl checkout holding the bundled pipeline and corpus (default: beside the engine repo)")
     parser.add_argument("--access-summary", default="", metavar="FILE", help="the deploy's own summary, for the login when not run through dfe-ops")
-    parser.add_argument("--archive-exec", default="", metavar="PREFIX",
-                        help="command prefix that runs a shell inside the archiver, for the archive "
-                             "assertion (k8s: kubectl -n <ns> exec deploy/dfe-archiver --; "
-                             "docker: docker exec dfe-archiver)")
+    parser.add_argument("--archive-exec", action="append", default=[], metavar="PREFIX",
+                        help="command prefix that runs a shell inside one archiver replica, for the "
+                             "archive assertion; repeatable, one per replica (k8s: kubectl -n <ns> "
+                             "exec <pod> --; docker: docker exec dfe-archiver)")
     parser.add_argument("--per-module", type=int, default=20, help="corpus lines per filebeat module to feed")
     parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")

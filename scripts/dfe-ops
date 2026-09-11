@@ -841,6 +841,18 @@ def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
     return base64.b64decode(raw).decode("utf-8") if raw else ""
 
 
+def _pods_of(kube: list[str], namespace: str, selector: str) -> list[str]:
+    """Running pod names matching *selector*, newest-irrelevant, empty when none."""
+    done = subprocess.run(
+        [*kube, "-n", namespace, "get", "pods", "-l", selector,
+         "--field-selector", "status.phase=Running", "-o", "name"],
+        capture_output=True, text=True,
+    )
+    if done.returncode != 0:
+        return []
+    return [line.strip() for line in done.stdout.splitlines() if line.strip()]
+
+
 def _sibling_repo(name: str, env_var: str) -> str | None:
     """Where a companion checkout lives, without hardcoding one developer's tree.
 
@@ -1193,8 +1205,10 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             if transform_repo:
                 runner += ["--transform-repo", str(transform_repo)]
             # The whole way in, not its parts: the docker lane passes its own.
-            archive_exec = shlex.join([*kube, "-n", namespace, "exec", args.archive_target, "--"])
-            runner += ["--archive-exec", archive_exec]
+            # One per replica, because the consumer group splits the topic's
+            # partitions and each replica archives only what it was assigned.
+            for pod in _pods_of(kube, namespace, args.archive_selector):
+                runner += ["--archive-exec", shlex.join([*kube, "-n", namespace, "exec", pod, "--"])]
             if args.insecure:
                 runner.append("--insecure")
             if args.keep:
@@ -3012,8 +3026,8 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--ch-target", default=None,
                     help="port-forward target for the datastore (default: the service the --mode profile's clickhouse.host names, else svc/dfe-clickhouse)")
     ac.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
-    ac.add_argument("--archive-target", default="deploy/dfe-archiver",
-                    help="workload the source suite runs its archive assertion inside")
+    ac.add_argument("--archive-selector", default="app.kubernetes.io/name=dfe-archiver",
+                    help="label selector for the pods the source suite runs its archive assertion inside")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
     ac.add_argument("--ch-port", type=int, default=18123, help="local port for the datastore")
     ac.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
