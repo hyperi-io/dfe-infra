@@ -1869,8 +1869,8 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.19.35"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
-      dfe-ui: "v1.5.9"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
+      dfe-engine: "v1.19.36"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). Source flow model on two transports, the receiver/fetcher/transform compilers, mesh listener addressing, the source catalogue.
+      dfe-ui: "v1.5.10"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). App-management surfaces (sources processing, components, library) + hunt-results nav.
       dfe-receiver: "v1.15.34"      # independent release line
       dfe-loader: "v1.18.35"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
       dfe-archiver: "v1.7.21"
@@ -1894,8 +1894,8 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:18c14620a2fc9f9c336583abf40f9d284521b27289e1eacd9f114145f64a95d4"
-      dfe-ui: "sha256:3bcdedcd48d41b0fea513f0fea9453845b0bb764f824b67a931eabadc1088c55"
+      dfe-engine: "sha256:76eead96802df124d2426736908640ceb3ade0b876ab8eec6e9731c2b1121a6b"
+      dfe-ui: "sha256:c39c85f6f085685fe9890e9545135845fe4d65c5880057d1795de3c24f90738a"
       dfe-receiver: "sha256:5b91c7e8080ed29fb7eec2c06074274ba9dc4ae9f20eb72cb6f08866b33f8871"
       dfe-loader: "sha256:a8455e2a382c5cf466ed408a52a86e58ff3683ef69642d84a05b78f16eae5e4f"
       dfe-archiver: "sha256:bddf7511841dc7aed95e2f24d573e35249c2699626626141e8ef7d821f194a2c"
