@@ -421,6 +421,17 @@ def run(args: argparse.Namespace) -> int:
                 "deploy", "done",
                 f"applied; topics ensured {sorted(deployed.get('topics_ensured') or [])}; apps synced {deployed.get('apps_synced')}",
             )
+            # The id comes back from the fork, so a deploy that reports one is the
+            # fork's own acknowledgement that it made the source.
+            if "hyperdx_source_id" not in deployed:
+                driver.record("hyperdx-source", "skipped",
+                              "this engine build does not report a HyperDX source on deploy")
+            elif deployed.get("hyperdx_source_id"):
+                driver.record("hyperdx-source", "done",
+                              f"HyperDX source {deployed['hyperdx_source_id']} over dfe.{name}")
+            else:
+                driver.record("hyperdx-source", "failed",
+                              f"no HyperDX source: {deployed.get('hyperdx_source_error') or 'the engine gave no reason'}")
             driver.record("upload-program", "api-fallback", upload_program(engine, name, transform_repo))
             exists = store.table_exists(name) if store.host else None
             driver.record(
