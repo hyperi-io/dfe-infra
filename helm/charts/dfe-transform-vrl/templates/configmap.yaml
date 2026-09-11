@@ -6,9 +6,14 @@
 # Written to the path the image's CMD reads (/etc/dfe-transform-vrl/config.yaml
 # -- dfe-transform-vrl Dockerfile:43).
 #
-# The four keys below are the same four dfe-transform-vector's ConfigMap sets,
-# and deliberately so: the engine has ONE `transform` routing compiler and it
-# treats the two apps identically. Change one, change the other.
+# The four transport keys below are the same four dfe-transform-vector's
+# ConfigMap sets, and deliberately so: the engine has ONE `transform` routing
+# compiler and it treats the two apps identically. Change one, change the other.
+#
+# `enrichment_tables` is the one key that does NOT cross over. It is derived
+# here because the mount path is the chart's, and dfe-transform-vector has no
+# enrichment field in its config schema at all (dfe-transform-vector
+# docs/config-schema.yaml), so the same entry there would be inert.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -35,4 +40,11 @@ data:
            this file, so only the transport itself is derived here. */}}
     {{- $_ := set $cfg "source" (mergeOverwrite (default dict (get $cfg "source")) $source) }}
     {{- $_ := set $cfg "sink" (mergeOverwrite (default dict (get $cfg "sink")) $sink) }}
+    {{- /* The mounted tables are registered here because the mount path is the
+           chart's; without an entry the program fails to compile at every
+           get_enrichment_table_record call. */}}
+    {{- $tables := include "dfe-common.enrichmentTablesConfig" . | fromYamlArray }}
+    {{- if $tables }}
+    {{- $_ := set $cfg "enrichment_tables" (concat (default list (get $cfg "enrichment_tables")) $tables) }}
+    {{- end }}
     {{- toYaml $cfg | nindent 4 }}

@@ -80,7 +80,8 @@ transformFilesDir: ""
 # Lookup tables the VRL programs read, as a list of {name, content}. The bundled
 # filebeat pipeline needs its timezones table for the ios and meraki branches and
 # errors every event out without it. The app has no flat-env key for these, so the
-# engine writes the matching config.enrichment_tables[].path under the mount below.
+# ConfigMap derives the matching config.enrichment_tables[] entry under the mount
+# below -- the engine cannot, the mount directory being the chart's.
 enrichmentTables: []
 enrichmentTablesDir: ""
 
