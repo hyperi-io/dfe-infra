@@ -37,6 +37,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _runner import run_module  # noqa: E402
 
 
 def _load(name: str, filename: str | None = None):
@@ -49,6 +52,10 @@ def _load(name: str, filename: str | None = None):
 
 registry_pins = _load("registry_pins")
 release = _load("dfe_release", "dfe-release.py")
+
+# The driver's gh calls and its run wait live in scripts/suite/landing.py, the
+# ONE PR-landing implementation -- so that is where the recorder is installed.
+from suite import landing, proc  # noqa: E402
 
 REPO = "dfe-loader"
 TAG = "v1.18.22"
@@ -130,8 +137,8 @@ class FakeGh:
 def _install(monkeypatch, fake: FakeGh) -> FakeGh:
     """Route every gh call in the driver and in registry_pins at the recorder."""
     registry_pins.package_versions.cache_clear()
-    monkeypatch.setattr(release.subprocess, "run", fake)
-    monkeypatch.setattr(release.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(proc.subprocess, "run", fake)
+    monkeypatch.setattr(landing.time, "sleep", lambda _seconds: None)
     return fake
 
 
@@ -347,67 +354,6 @@ def test_digest_resolves_a_tag_through_the_paginating_reader(monkeypatch, capsys
     assert captured.out.strip() == DIGEST
 
 
-# --- standalone runner (mirrors the other tests in this dir) ------------------
-def main() -> int:
-    import contextlib
-    import io
-    import tempfile
-
-    class _MP:
-        """A minimal monkeypatch: records and restores attribute sets."""
-
-        def __init__(self):
-            self._undo = []
-
-        def setattr(self, obj, name, val):
-            self._undo.append((obj, name, getattr(obj, name)))
-            setattr(obj, name, val)
-
-        def restore(self):
-            for obj, name, old in reversed(self._undo):
-                setattr(obj, name, old)
-
-    class _Caps:
-        """A minimal capsys: reads the redirected buffers and drains them."""
-
-        def __init__(self, out, err):
-            self._out, self._err = out, err
-
-        def readouterr(self):
-            result = type(
-                "R", (), {"out": self._out.getvalue(), "err": self._err.getvalue()}
-            )()
-            for buf in (self._out, self._err):
-                buf.truncate(0)
-                buf.seek(0)
-            return result
-
-    failures = 0
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
-    for name, fn in tests:
-        mp = _MP()
-        out_buf, err_buf = io.StringIO(), io.StringIO()
-        params = fn.__code__.co_varnames[: fn.__code__.co_argcount]
-        with tempfile.TemporaryDirectory() as td:
-            kw = {}
-            if "monkeypatch" in params:
-                kw["monkeypatch"] = mp
-            if "tmp_path" in params:
-                kw["tmp_path"] = Path(td)
-            if "capsys" in params:
-                kw["capsys"] = _Caps(out_buf, err_buf)
-            try:
-                with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
-                    fn(**kw)
-                print(f"PASS  {name}")
-            except Exception as exc:
-                failures += 1
-                print(f"FAIL  {name}  {exc}")
-            finally:
-                mp.restore()
-    print(f"\n{'FAILED' if failures else 'ALL PASSED'} -- {failures} failure(s)")
-    return 1 if failures else 0
-
-
+# --- standalone runner (shared with the other recorder-style tests) -----------
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_module(globals()))

@@ -68,7 +68,9 @@ the suite (and the hard dfe-engine boundary),
 [docs/deployment/index.md](docs/deployment/index.md) for layers, tiers, and
 the values cascade, and [docs/suite-graph.md](docs/suite-graph.md) for which
 repos are suite members and what moves when one of them releases
-(`suite.yaml` is the source).
+(`suite.yaml` is the source). [docs/SUITE-RELEASE.md](docs/SUITE-RELEASE.md) is
+how that graph is walked: `scripts/dfe-suite` releases a library and moves every
+consumer onto it.
 
 - `terraform/` - reusable HCL modules (OpenTofu).
 - `helm/charts/` - one chart per DFE service and data component

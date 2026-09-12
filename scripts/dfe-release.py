@@ -35,15 +35,18 @@ in that file authenticates gh for this process:
 
     python3 scripts/dfe-release.py --env-file bootstrap/.env digest \\
         --repo dfe-loader --version v1.18.21
+
+Opening a PR, squash-merging it with the release trailer and waiting on the run
+are the same operations `scripts/dfe-suite` needs, so both drive them from
+`scripts/suite/landing.py`. This file owns the GHCR half: the repo allowlist,
+the release tag, the digest lookup, and the `ship` chain that ties them
+together.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -53,15 +56,21 @@ sys.path.insert(0, str(SCRIPTS))
 import envfile  # noqa: E402
 import registry_pins  # noqa: E402
 
+from suite.landing import (  # noqa: E402
+    DEFAULT_INTERVAL,
+    DEFAULT_TIMEOUT,
+    DEFAULT_WORKFLOW,
+    PUBLISH_TRAILER,
+    active_main_run,
+    latest_run,
+    merge_pr,
+    open_pr,
+    open_pr_number,
+    wait_for_run,
+)
+from suite.proc import gh  # noqa: E402
+
 ORG = "hyperi-io"
-
-# Shared across wait/ship so the two never drift apart.
-DEFAULT_WORKFLOW = "CI"
-DEFAULT_INTERVAL = 20
-DEFAULT_TIMEOUT = 1800
-
-# The release workflow greps a main-branch push message for this exact trailer.
-PUBLISH_TRAILER = "Publish: true"
 
 # Fixed allowlist -- the DFE app repos this tool may release. Not open slather.
 ALLOWED_REPOS = {
@@ -84,51 +93,10 @@ def _repo(name: str) -> str:
     return f"{ORG}/{name}"
 
 
-def _gh(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["gh", *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=check,
-    )
-
-
-def _open_pr(
-    repo: str, head: str, base: str, title: str, body_file: str
-) -> tuple[int, str, str]:
-    """Create the PR for a branch, falling back to the one already open for it.
-
-    Returns:
-        (exit code, stdout text, stderr text).
-    """
-    cmd = [
-        "pr",
-        "create",
-        "-R",
-        repo,
-        "--head",
-        head,
-        "--base",
-        base,
-        "--title",
-        title,
-        "--body-file",
-        body_file,
-    ]
-    proc = _gh(cmd, check=False)
-    if proc.returncode != 0:
-        # Already open? report the existing PR url/number.
-        existing = _gh(["pr", "view", head, "-R", repo, "--json", "number,url"], check=False)
-        if existing.returncode == 0:
-            return 0, existing.stdout.strip(), ""
-        return 1, "", proc.stderr.strip()
-    return 0, proc.stdout.strip(), ""
-
-
 def cmd_open(a: argparse.Namespace) -> int:
-    rc, out, err = _open_pr(_repo(a.repo), a.head, a.base, a.title, a.body_file)
+    rc, out, err = open_pr(
+        _repo(a.repo), a.head, a.base, a.title, body_file=a.body_file
+    )
     if rc:
         print(err, file=sys.stderr)
         return rc
@@ -136,68 +104,8 @@ def cmd_open(a: argparse.Namespace) -> int:
     return 0
 
 
-def _open_pr_number(repo: str, head: str) -> int | None:
-    """The number of the OPEN PR for a branch, or None.
-
-    State is checked because `gh pr view <branch>` also resolves a merged or
-    closed PR for that branch, and merging one of those again is not a no-op.
-    """
-    proc = _gh(["pr", "view", head, "-R", repo, "--json", "number,state"], check=False)
-    if proc.returncode != 0:
-        return None
-    data = json.loads(proc.stdout or "{}")
-    if data.get("state") != "OPEN":
-        return None
-    return data.get("number")
-
-
-def _merge_pr(
-    repo: str,
-    pr: int,
-    *,
-    publish: bool,
-    admin: bool = False,
-    delete_branch: bool = False,
-    subject: str | None = None,
-    note: str | None = None,
-) -> tuple[int, str, str]:
-    """Merge a PR to main; publish squash-merges so the merge itself ships.
-
-    The publish workflow only fires on a `refs/heads/main` push whose message
-    carries `Publish: true`, and a squash merge replaces the branch commits with
-    the message given here -- so the trailer belongs on the squash message, not
-    on any commit in the branch. One landing instead of merge-then-dispatch.
-
-    Returns:
-        (exit code, stdout text, stderr text).
-    """
-    cmd = ["pr", "merge", str(pr), "-R", repo]
-    if publish:
-        view = _gh(["pr", "view", str(pr), "-R", repo, "--json", "title,body"], check=False)
-        if view.returncode != 0:
-            return view.returncode, "", view.stderr.strip()
-        info = json.loads(view.stdout or "{}")
-        squash_subject = subject or info.get("title") or f"fix: land #{pr}"
-        pr_lines = (info.get("body") or "").strip().splitlines()
-        squash_note = note or (pr_lines[0] if pr_lines else "")
-        body = f"{squash_note}\n\n{PUBLISH_TRAILER}" if squash_note else PUBLISH_TRAILER
-        cmd += ["--squash", "--subject", squash_subject, "--body", body]
-    else:
-        cmd.append("--merge")
-    if admin:
-        cmd.append("--admin")
-    if delete_branch:
-        cmd.append("--delete-branch")
-
-    proc = _gh(cmd, check=False)
-    out = (proc.stdout + proc.stderr).strip()
-    if publish and proc.returncode == 0:
-        out = f"{out}\nsquashed with the release trailer -- {repo} will publish from main"
-    return proc.returncode, out, ""
-
-
 def cmd_merge(a: argparse.Namespace) -> int:
-    rc, out, err = _merge_pr(
+    rc, out, err = merge_pr(
         _repo(a.repo),
         a.pr,
         publish=a.publish,
@@ -215,124 +123,21 @@ def cmd_merge(a: argparse.Namespace) -> int:
 
 def cmd_dispatch(a: argparse.Namespace) -> int:
     repo = _repo(a.repo)
-    proc = _gh(
-        ["workflow", "run", a.workflow, "-R", repo, "-f", "from-head=true", "--ref", a.ref],
-        check=False,
+    proc = gh(
+        ["workflow", "run", a.workflow, "-R", repo, "-f", "from-head=true", "--ref", a.ref]
     )
     print((proc.stdout + proc.stderr).strip() or f"dispatched {a.workflow} on {repo}@{a.ref}")
     return proc.returncode
 
 
-def _latest_run(repo: str, workflow: str) -> dict | None:
-    proc = _gh(
-        [
-            "run",
-            "list",
-            "-R",
-            repo,
-            "-w",
-            workflow,
-            "--limit",
-            "1",
-            "--json",
-            "databaseId,status,conclusion,headBranch,createdAt,url",
-        ],
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    rows = json.loads(proc.stdout or "[]")
-    return rows[0] if rows else None
-
-
-def _active_main_run(repo: str, workflow: str) -> tuple[dict | None, str]:
-    """A queued or in-progress run of the workflow on main, if there is one.
-
-    Returns:
-        (the run record or None, an error message if the state is unknown).
-    """
-    for status in ("in_progress", "queued"):
-        proc = _gh(
-            [
-                "run",
-                "list",
-                "-R",
-                repo,
-                "-w",
-                workflow,
-                "-b",
-                "main",
-                "--status",
-                status,
-                "--limit",
-                "1",
-                "--json",
-                "databaseId,status,url",
-            ],
-            check=False,
-        )
-        if proc.returncode != 0:
-            return None, proc.stderr.strip() or f"gh run list failed for {repo}"
-        rows = json.loads(proc.stdout or "[]")
-        if rows:
-            return rows[0], ""
-    return None, ""
-
-
-def _wait_for_run(
-    repo: str,
-    workflow: str,
-    interval: int,
-    timeout: int,
-    *,
-    after_id: int | None = None,
-    out=None,
-    err=None,
-) -> tuple[int, dict | None]:
-    """Poll the workflow's latest run to completion.
-
-    after_id names the run that was already the latest before the trigger, so a
-    just-merged publish waits for ITS run instead of reporting the previous
-    one's conclusion.
-
-    Returns:
-        (exit code -- 0 success, 1 failed, 2 timed out; the completed run or None).
-    """
-    # Resolved here, not as a default: a default binds sys.stdout at import.
-    out = sys.stdout if out is None else out
-    err = sys.stderr if err is None else err
-    waited = 0
-    while True:
-        run = _latest_run(repo, workflow)
-        if run is None:
-            print("no runs found yet", file=err)
-        elif after_id is not None and run.get("databaseId") == after_id:
-            print(f"waiting for the run {workflow} will start ({waited}s)", file=err)
-        else:
-            status = run.get("status")
-            if status == "completed":
-                concl = run.get("conclusion")
-                print(f"{workflow} {concl} ({run.get('url')})", file=out)
-                return (0 if concl == "success" else 1), run
-            print(f"{workflow} {status}... ({waited}s) {run.get('url')}", file=out)
-        if waited >= timeout:
-            print(f"timed out after {timeout}s waiting for {workflow}", file=err)
-            return 2, None
-        time.sleep(interval)
-        waited += interval
-
-
 def cmd_wait(a: argparse.Namespace) -> int:
-    rc, _ = _wait_for_run(_repo(a.repo), a.workflow, a.interval, a.timeout)
+    rc, _ = wait_for_run(_repo(a.repo), a.workflow, a.interval, a.timeout)
     return rc
 
 
 def _latest_tag(repo: str) -> tuple[int, str, str]:
     """The newest published release tag. Returns (exit code, tag, error)."""
-    proc = _gh(
-        ["api", f"/repos/{repo}/releases/latest", "--jq", ".tag_name"],
-        check=False,
-    )
+    proc = gh(["api", f"/repos/{repo}/releases/latest", "--jq", ".tag_name"])
     if proc.returncode != 0:
         return 1, "", proc.stderr.strip()
     return 0, proc.stdout.strip(), ""
@@ -407,7 +212,7 @@ def cmd_ship(a: argparse.Namespace) -> int:
         print(problem, file=sys.stderr)
         return 2
 
-    pr = _open_pr_number(repo, a.branch)
+    pr = open_pr_number(repo, a.branch)
     if pr is None:
         if not a.body_file:
             print(
@@ -415,19 +220,19 @@ def cmd_ship(a: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        rc, out, err = _open_pr(repo, a.branch, "main", a.title, a.body_file)
+        rc, out, err = open_pr(repo, a.branch, "main", a.title, body_file=a.body_file)
         if rc:
             print(err, file=sys.stderr)
             return rc
         print(f"opened {out}", file=sys.stderr)
-        pr = _open_pr_number(repo, a.branch)
+        pr = open_pr_number(repo, a.branch)
         if pr is None:
             print(f"no open PR for {a.branch} after opening one", file=sys.stderr)
             return 1
     else:
         print(f"reusing open PR #{pr} for {a.branch}", file=sys.stderr)
 
-    active, err = _active_main_run(repo, a.workflow)
+    active, err = active_main_run(repo, a.workflow)
     if err:
         print(err, file=sys.stderr)
         return 1
@@ -439,16 +244,16 @@ def cmd_ship(a: argparse.Namespace) -> int:
         )
         return 3
 
-    before = _latest_run(repo, a.workflow)
+    before = latest_run(repo, a.workflow)
     before_id = before.get("databaseId") if before else None
 
-    rc, out, err = _merge_pr(repo, pr, publish=a.publish, subject=a.title)
+    rc, out, err = merge_pr(repo, pr, publish=a.publish, subject=a.title)
     if rc:
         print(err or out, file=sys.stderr)
         return rc
     print(out, file=sys.stderr)
 
-    rc, _ = _wait_for_run(
+    rc, _ = wait_for_run(
         repo, a.workflow, DEFAULT_INTERVAL, a.timeout,
         after_id=before_id, out=sys.stderr, err=sys.stderr,
     )

@@ -28,6 +28,10 @@ The diagrams on this page are generated from `suite.yaml` by
 `scripts/dfe-stack suite --render-docs` and compared against it by
 `scripts/check_suite_drift.py`. Edit the file, not the diagrams.
 
+This page says what the graph IS. `docs/SUITE-RELEASE.md` says how it is walked
+- releasing a library and moving every consumer onto it, with
+`scripts/dfe-suite`.
+
 That drift check has two halves. The in-repo half - structure, the charts, the
 pins, these diagrams - is binding wherever it runs. The cross-repo half reads
 each member's own file at the cited line, so it is SKIPPED, and says so, on a

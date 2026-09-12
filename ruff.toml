@@ -38,9 +38,10 @@ ignore = [
 ]
 
 [lint.isort]
-# _expect is the shared check helper sitting beside the tests that import it,
-# so it belongs in the first-party group rather than beside PyPI packages.
-known-first-party = ["_expect"]
+# The repo's own modules: the two shared test helpers sitting beside the tests
+# that import them, and the suite package under scripts/. They belong in the
+# first-party group rather than beside PyPI packages.
+known-first-party = ["_expect", "_runner", "suite"]
 
 [lint.per-file-ignores]
 # Test helpers load the script under test by path, which needs the import
