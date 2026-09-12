@@ -1902,7 +1902,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.20.1"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). The account API (#360), a HyperDX source per DFE source (#364/#366), the app config writer (#368), read-your-writes across engine replicas (#370).
+      dfe-engine: "v1.20.2"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). The account API (#360), a HyperDX source per DFE source (#364/#366), the app config writer (#368), read-your-writes across engine replicas (#370). Every remote call on the read path is bounded at 3 s with retries off, and the pins and history reads run under the publish lock.
       dfe-ui: "v1.6.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). General fixes (#280), the account page (#283), the transform engine picker (#290). MOVES WITH dfe-engine: #360 makes email required on the first-user create, so an older UI cannot complete it.
       dfe-receiver: "v1.15.35"      # independent release line; rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup plus the bytes admitted since that sample.
       dfe-loader: "v1.18.36"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept. Rebuilt on scalo-rs 2.12.2 (the same memory guard).
@@ -1927,7 +1927,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:fe0a4c5d7a387304dd77c93610b66c184ea38a849b60f92ff44fcb210b2a0aa1"
+      dfe-engine: "sha256:3c2d2049b0cb5bebdf14f0ad0bb8737ed070f454423fefae84ee9daba9b892fd"
       dfe-ui: "sha256:deaf57da204d848ce3361dd77d8244f97b48c0d4d8f5e503ced544c18482e69b"
       dfe-receiver: "sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
       dfe-loader: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
