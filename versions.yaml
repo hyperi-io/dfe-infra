@@ -1904,10 +1904,10 @@ stacks:
     apps:
       dfe-engine: "v1.20.1"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). The account API (#360), a HyperDX source per DFE source (#364/#366), the app config writer (#368), read-your-writes across engine replicas (#370).
       dfe-ui: "v1.6.0"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). General fixes (#280), the account page (#283), the transform engine picker (#290). MOVES WITH dfe-engine: #360 makes email required on the first-user create, so an older UI cannot complete it.
-      dfe-receiver: "v1.15.34"      # independent release line
-      dfe-loader: "v1.18.35"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept.
+      dfe-receiver: "v1.15.35"      # independent release line; rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup plus the bytes admitted since that sample.
+      dfe-loader: "v1.18.36"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept. Rebuilt on scalo-rs 2.12.2 (the same memory guard).
       dfe-archiver: "v1.7.22"       # rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup, not what the allocator asked for.
-      dfe-fetcher: "v1.4.21"
+      dfe-fetcher: "v1.4.22"        # rebuilt on scalo-rs 2.12.2 (the same memory guard).
       dfe-transform-vrl: "v1.1.23"   # rebuilt on scalo-rs 2.12.2 (the memory guard above).
       dfe-transform-vector: "v1.0.39"  # direct transport through the supervisor bridge, copy-paste templates; rebuilt on scalo-rs 2.12.2 (the memory guard above).
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
@@ -1929,10 +1929,10 @@ stacks:
     digests:
       dfe-engine: "sha256:fe0a4c5d7a387304dd77c93610b66c184ea38a849b60f92ff44fcb210b2a0aa1"
       dfe-ui: "sha256:deaf57da204d848ce3361dd77d8244f97b48c0d4d8f5e503ced544c18482e69b"
-      dfe-receiver: "sha256:5b91c7e8080ed29fb7eec2c06074274ba9dc4ae9f20eb72cb6f08866b33f8871"
-      dfe-loader: "sha256:a8455e2a382c5cf466ed408a52a86e58ff3683ef69642d84a05b78f16eae5e4f"
+      dfe-receiver: "sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
+      dfe-loader: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
       dfe-archiver: "sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
-      dfe-fetcher: "sha256:8af6fa45f1c53762d73a1c75eac1a96b19dc5c75faa6ce7b24fee4d9cdc31d4f"
+      dfe-fetcher: "sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
       dfe-transform-vrl: "sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
       dfe-transform-vector: "sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
       # Keyed here rather than under content:, which carries versions and
