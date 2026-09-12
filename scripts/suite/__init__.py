@@ -45,41 +45,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# The sibling scripts (suite_graph, envfile, registry_pins) are flat modules in
-# scripts/, so that directory has to be importable however this package was
-# reached. Done once here rather than in each submodule.
+# suite_graph and the other sibling scripts are flat modules in scripts/, so
+# that directory has to be importable however this package was reached.
 _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
-
-from suite.artefacts import Artefact, await_artefact  # noqa: E402
-from suite.graph import in_edges, load_graph, load_producer, out_edges  # noqa: E402
-from suite.kinds import CheckResult, check_edge, parse_evidence  # noqa: E402
-from suite.landing import follow_release, land_via_pr  # noqa: E402
-from suite.proc import FleetError, tag  # noqa: E402
-from suite.rebuild import rebuild_python, rebuild_rust  # noqa: E402
-from suite.repos import find_repo  # noqa: E402
-from suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library  # noqa: E402
-
-__all__ = [
-    "SHIP_PY",
-    "SHIP_RS",
-    "Artefact",
-    "CheckResult",
-    "FleetError",
-    "ShipSpec",
-    "await_artefact",
-    "check_edge",
-    "find_repo",
-    "follow_release",
-    "in_edges",
-    "land_via_pr",
-    "load_graph",
-    "load_producer",
-    "out_edges",
-    "parse_evidence",
-    "rebuild_python",
-    "rebuild_rust",
-    "ship_library",
-    "tag",
-]
