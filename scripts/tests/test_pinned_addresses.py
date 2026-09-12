@@ -201,8 +201,9 @@ def test_the_metallb_pool_holds_the_two_pinned_addresses() -> None:
 def test_bootstrap_installs_metallb_on_prem_only() -> None:
     """A cloud target already has a LoadBalancer controller; two would fight."""
     body = BOOTSTRAP.read_text(encoding="utf-8")
-    expect("the MetalLB step reads the same on-prem decision as the node labels",
-           'if [[ "${DFE_CLOUD}" != "local" ]]; then' in body, "the gate is missing")
+    # A deployment picks its own on-prem name, so the gate lists the clouds.
+    expect("the MetalLB step skips only the clouds",
+           'case "${DFE_CLOUD}" in aws | gcp | az | azure)' in body, "the gate is missing")
     expect("the chart version comes from versions.yaml, not the script",
            "bootstrap.metallb" in body and '--version "${METALLB_VERSION}"' in body,
            "the version is not read from the SSoT")
