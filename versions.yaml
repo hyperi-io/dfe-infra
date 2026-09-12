@@ -1836,9 +1836,11 @@ stacks:
       # Rancher 2.15 manages RKE2 1.34-1.36 and permits one minor per hop, so it
       # moves interleaved with rke2 above; 1.37 will need Rancher 2.16.
       rancher: ">=2.15"
-      # AWS target. dfe-infra consumes an existing EKS cluster today; when the
-      # Plan 07 provisioning lands this stays a floor rather than becoming a pin.
-      eks: ">=1.34"
+      # AWS target. Written as >=1.34 while the EKS side was unverified; EKS
+      # publishes 1.36 and DEFAULTS to it, so the AWS target clears the same
+      # floor as on-prem rather than a lower one. Verified with
+      # `aws eks describe-cluster-versions` in us-west-2.
+      eks: ">=1.36"
 
     # Stage bootstrap: cluster bootstrap (installed by bootstrap.sh via read_versions.py)
     bootstrap:
