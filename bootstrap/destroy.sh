@@ -97,6 +97,10 @@ echo "==> [7/7] Cleaning up namespaces"
 for ns in argocd cert-manager external-secrets envoy-gateway-system; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
+# destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
+# already carried, and removing an adopted LoadBalancer provider would strand
+# every other tenant's Service on the cluster.
+echo "  metallb-system and its address pool left in place -- an adopted LoadBalancer provider is never removed"
 
 echo ""
 echo "=== Teardown complete ==="

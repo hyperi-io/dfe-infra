@@ -37,6 +37,7 @@ CHARTS = REPO_ROOT / "helm" / "charts"
 GATEWAY = CHARTS / "envoy-gateway-config"
 RECEIVER = CHARTS / "dfe-receiver"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
+METALLB_POOL = REPO_ROOT / "bootstrap" / "templates" / "metallb-pool.yaml.tpl"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 ENV_EXAMPLE = REPO_ROOT / "bootstrap" / "local.env.example"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
@@ -185,6 +186,47 @@ def test_the_env_contract_documents_the_new_keys() -> None:
         expect(f"local.env.example declares {key}", f"{key}=" in body, "key missing")
 
 
+# --- something on-prem has to be able to hand the addresses out --------------
+def test_the_metallb_pool_holds_the_two_pinned_addresses() -> None:
+    """A pinned loadBalancerIP is unassignable unless a pool holds that address."""
+    body = METALLB_POOL.read_text(encoding="utf-8")
+    for var in ("${DFE_GATEWAY_IP}", "${DFE_RECEIVER_IP}"):
+        expect(f"the pool holds {var} as a /32", f'"{var}/32"' in body, "address missing")
+    expect("and hands neither out to a Service that did not ask for it",
+           "autoAssign: false" in body, "the pool auto-assigns")
+    expect("the pool is advertised on layer 2",
+           "kind: L2Advertisement" in body, "nothing advertises the pool")
+
+
+def test_bootstrap_installs_metallb_on_prem_only() -> None:
+    """A cloud target already has a LoadBalancer controller; two would fight."""
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+    expect("the MetalLB step reads the same on-prem decision as the node labels",
+           'if [[ "${DFE_CLOUD}" != "local" ]]; then' in body, "the gate is missing")
+    expect("the chart version comes from versions.yaml, not the script",
+           "bootstrap.metallb" in body and '--version "${METALLB_VERSION}"' in body,
+           "the version is not read from the SSoT")
+
+
+def test_bootstrap_applies_the_pool_only_with_both_addresses() -> None:
+    """Half a pool is a bare /32, which MetalLB rejects and the deploy needs."""
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+    expect("bootstrap.sh renders the pool template",
+           "metallb-pool.yaml.tpl" in body, "the template is never applied")
+    expect("and refuses to render it with either address unset",
+           'if [[ -z "${DFE_GATEWAY_IP}" ]] || [[ -z "${DFE_RECEIVER_IP}" ]]; then' in body,
+           "the guard is missing")
+
+
+def test_destroy_leaves_the_loadbalancer_provider_alone() -> None:
+    """destroy.sh cannot tell an adopted MetalLB from one it installed."""
+    body = (REPO_ROOT / "bootstrap" / "destroy.sh").read_text(encoding="utf-8")
+    deletes = [ln.strip() for ln in body.splitlines() if "delete" in ln and "metallb" in ln]
+    expect("nothing in destroy.sh deletes MetalLB", deletes == [], f"got {deletes}")
+    expect("and the teardown records the decision",
+           "metallb-system" in body, "a reader cannot tell it was deliberate")
+
+
 # --- the profile-tagged domain -----------------------------------------------
 def derive(**env: str) -> str:
     mode = env.pop("mode", "slim")
@@ -295,6 +337,10 @@ def main() -> int:
         test_the_cluster_secret_carries_both_addresses()
         test_the_appsets_pass_the_addresses_to_the_charts()
         test_the_env_contract_documents_the_new_keys()
+        test_the_metallb_pool_holds_the_two_pinned_addresses()
+        test_bootstrap_installs_metallb_on_prem_only()
+        test_bootstrap_applies_the_pool_only_with_both_addresses()
+        test_destroy_leaves_the_loadbalancer_provider_alone()
         test_a_base_domain_is_tagged_with_the_profile()
         test_an_explicit_domain_alone_wins()
         test_an_explicit_domain_contradicting_the_base_is_refused()

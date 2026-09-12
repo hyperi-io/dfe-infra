@@ -122,7 +122,7 @@ What the cluster must supply:
 | >= 1 Ready node (3 for `scale`) with headroom | scheduling | WARN under guidance floors |
 | The workload node label, when the overlay selects on one | pods sit Pending forever without it -- looks like a chart fault, is the wrong cluster | FAIL if no Ready node carries it |
 | A default StorageClass -- or none at all | PVCs; bootstrap falls back to local-path when absent | WARN/FAIL as applicable |
-| A LoadBalancer path on cloud targets | on-prem gets MetalLB from bootstrap | WARN |
+| A LoadBalancer path on cloud targets | on-prem gets MetalLB from bootstrap, pooled on `DFE_GATEWAY_IP`/`DFE_RECEIVER_IP` | WARN |
 | Pull access to the image registry | image supply | WARN (checked from the operator's machine) |
 
 Check any cluster read-only before touching it:

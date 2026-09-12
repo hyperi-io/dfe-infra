@@ -1847,6 +1847,7 @@ stacks:
       argocd: "10.9.0"               # 2026-09-11 chart -> Argo CD app v3.5.2, tested 1.33-1.36. Chart and app move independently: every chart from 10.4.1 to 10.9.0 carries v3.5.2, so take the highest chart rather than the first one reaching the app version. `--reuse-values` FAILS across this hop; the user values to re-supply are the external Valkey wiring (redis.enabled=false plus externalRedis.host/port).
       valkey: "8.1.9-alpine"         # image tag for bootstrap/templates/valkey.yaml (plain manifest, not a chart). Upstream 8.1.9 released 2026-07-21; image pushed 2026-07-22.
       local-path-provisioner: "v0.0.36"  # storage detect-or-install fallback when the cluster has NO default StorageClass (bare RKE2/EKS). Includes the HelperPod template-injection security fix. 2026-01
+      metallb: "0.16.1"              # chart metallb-chart-0.16.1, 2026-05-27 (clears the cooldown; verified via gh api repos/metallb/metallb/releases). appVersion v0.16.1. Chart kubeVersion is '>= 1.19.0-0', a floor with no ceiling, so it covers the whole platform.kubernetes 1.34-1.36 window. LoadBalancer detect-or-install fallback for on-prem (DFE_CLOUD=local), where nothing else programs a LoadBalancer Service and the gateway + receiver would sit Pending. Upstream publishes no LTS line.
 
     # Stage operators: cluster addons + operators (ArgoCD waves 2-3, appsets/layer1-addons.yaml; the 3 data operators via layer-scale.yaml). NOTE: the layer1-addons appset labels this stage "addons"; the SSoT canonical stage name is "operators".
     operators:

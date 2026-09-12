@@ -116,7 +116,7 @@ Not in compose. SSoT pins the chart version; appset/bootstrap uses it;
 drift-check enforces where a hardcoded pin exists. Already works - leave as-is.
 
 - bootstrap: `cert-manager`, `external-secrets`, `argocd`, `valkey` (plain
-  manifest image), `local-path-provisioner`.
+  manifest image), `local-path-provisioner`, `metallb` (on-prem only).
 - operators: `envoy-gateway`, `external-dns`, `keda`, `metrics-server`,
   `reloader`, `cloudnative-pg`, and the three OPERATOR chart pins
   (`strimzi-kafka-operator`, `clickhouse-operator`, `redpanda-operator` - the

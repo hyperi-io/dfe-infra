@@ -109,7 +109,8 @@ CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_R
 EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
 ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
 LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
-echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION}"
+METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.metallb)
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION} metallb=${METALLB_VERSION}"
 
 # Each operator below states its own Kubernetes window, so an under-floor cluster
 # fails inside one of them naming that operator rather than the cluster.
@@ -259,6 +260,7 @@ echo "==> [0/7] Adding Helm repositories"
 run helm repo add jetstack https://charts.jetstack.io 2>/dev/null || true
 run helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
 run helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
+run helm repo add metallb https://metallb.github.io/metallb 2>/dev/null || true
 run helm repo update
 
 echo "==> [1/7] Applying ArgoCD namespace + cluster secret"
@@ -343,6 +345,48 @@ if dfe_should_install external-secrets clustersecretstores.external-secrets.io e
     --namespace external-secrets --create-namespace \
     --version "${EXTERNAL_SECRETS_VERSION}" \
     --wait --timeout 5m
+fi
+
+echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"
+# Nothing programs a LoadBalancer Service on a bare on-prem cluster, so the
+# Envoy Gateway and the receiver's public door sit Pending forever.
+# DFE_CLOUD=local is the same on-prem decision the node-label step takes above.
+if [[ "${DFE_CLOUD}" != "local" ]]; then
+  echo "  DFE_CLOUD=${DFE_CLOUD}: the cloud LoadBalancer controller programs the Services -- MetalLB skipped"
+else
+  if dfe_should_install metallb ipaddresspools.metallb.io metallb-system metallb-controller; then
+    run helm upgrade --install metallb metallb/metallb \
+      --namespace metallb-system --create-namespace \
+      --version "${METALLB_VERSION}" \
+      --wait --timeout 5m
+    # The IPAddressPool webhook is failurePolicy=Fail, so the pool below is
+    # rejected until the controller serves it, and the speaker is what answers
+    # ARP for the addresses once it is accepted.
+    run kubectl -n metallb-system rollout status deployment/metallb-controller --timeout=300s
+    run kubectl -n metallb-system rollout status daemonset/metallb-speaker --timeout=300s
+  fi
+  # Applied on every on-prem run, so a rebuild that adopts MetalLB still gets
+  # the addresses this deployment's DNS records point at.
+  if [[ -z "${DFE_GATEWAY_IP}" ]] || [[ -z "${DFE_RECEIVER_IP}" ]]; then
+    echo "  WARNING: DFE_GATEWAY_IP and/or DFE_RECEIVER_IP are unset, so no address pool was created."
+    echo "           MetalLB hands out nothing it holds no pool for: the Envoy Gateway and the"
+    echo "           receiver's public Service stay Pending and every published hostname fails to"
+    echo "           resolve to a live address. Set both and re-run, unless the cluster already"
+    echo "           carried a LoadBalancer provider with a pool of its own."
+  elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/metallb-pool.yaml.tpl | kubectl apply -f -"
+  else
+    # A provider that came with the cluster already owns its addressing, and
+    # MetalLB refuses a pool whose range overlaps one it is already serving.
+    pools=$(kubectl get ipaddresspools.metallb.io -A -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+    if [[ -n "${pools}" ]] && [[ " ${pools} " != *" dfe-front-door "* ]]; then
+      echo "  Existing IPAddressPool(s) own this cluster's addressing (${pools}) -> DFE pool NOT applied."
+      echo "  The gateway and receiver addresses must fall inside one of them."
+    else
+      envsubst < "${TEMPLATES_DIR}/metallb-pool.yaml.tpl" | kubectl apply -f -
+      echo "  Applied the dfe-front-door IPAddressPool + L2Advertisement"
+    fi
+  fi
 fi
 
 echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"

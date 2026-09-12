@@ -567,6 +567,7 @@ UNCONSUMED: dict[str, str] = {
     "bootstrap.external-secrets": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.local-path-provisioner": "bootstrap.sh reads it at runtime; no hardcoded copy",
+    "bootstrap.metallb": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "services.cnpg-cluster-instances": "replica count, overridden per profile",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",

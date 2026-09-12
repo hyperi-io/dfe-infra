@@ -2386,6 +2386,11 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         ok(f"LoadBalancer provider working ({len(lb_live)} Service(s) hold an address)")
     elif lb_ctrl:
         ok(f"LoadBalancer controller present: {lb_ctrl[0]}")
+    elif (file_env.get("DFE_CLOUD") or "") == "local":
+        # The same on-prem gate bootstrap's MetalLB step reads, so the preview
+        # says INSTALL only where the step will actually run.
+        ok("no LoadBalancer provider -> bootstrap INSTALLS MetalLB + the dfe-front-door pool "
+           "(DFE_GATEWAY_IP/DFE_RECEIVER_IP)")
     else:
         warn("no LoadBalancer provider detected -- bootstrap installs MetalLB on-prem; on a cloud target the cloud LB controller must exist")
 
