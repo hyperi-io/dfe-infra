@@ -1207,7 +1207,15 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 "--engine-url", ui_url,
                 "--engine-repo", str(args.repo),
                 "--shots-dir", args.shots_dir,
+                "--case", args.source_case,
+                "--aws-service", args.aws_service,
             ]
+            # The upstream a fetched case polls is a property of the DEPLOYMENT,
+            # so it comes from the env files rather than from this script.
+            for flag, key in (("--aws-region", "DFE_AWS_REGION"),
+                              ("--aws-log-group", "DFE_AWS_LOG_GROUP")):
+                if settings.get(key):
+                    runner += [flag, settings[key]]
             transform_repo = _sibling_repo("dfe-transform-vrl", "DFE_TRANSFORM_VRL_REPO")
             if transform_repo:
                 runner += ["--transform-repo", str(transform_repo)]
@@ -3067,6 +3075,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip the wizard half of the onboarding suite on a deploy already set up, and prove the console half alone")
     ac.add_argument("--keep", action="store_true",
                     help="the source suite leaves the source it made deployed, for a look")
+    ac.add_argument("--source-case", default="filebeat", choices=("filebeat", "cloudwatch"),
+                    help="which source the source suite creates: filebeat pushed at the receiver, or "
+                         "an AWS upstream a fetcher polls")
+    ac.add_argument("--aws-service", default="cloudwatch_logs",
+                    help="the AWS service the cloudwatch case polls")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)

@@ -43,6 +43,7 @@ import access_summary as access_summary_file
 
 from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
+from acceptance.source import fetcher
 from acceptance.source.engine import Datastore, Engine
 
 META_SCHEMA = "meta/beats/filebeat"
@@ -163,9 +164,9 @@ def deploy(engine: Engine, name: str) -> dict:
     return reply.body
 
 
-def wait_instance(engine: Engine, name: str, deadline: float) -> str:
-    """The transform instance the source owns appears in the apps list."""
-    service = f"dfe-transform-{TRANSFORM_ENGINE}"
+def wait_instance(engine: Engine, name: str, deadline: float, service: str = "") -> str:
+    """The instance the source owns appears in the apps list."""
+    service = service or f"dfe-transform-{TRANSFORM_ENGINE}"
     until = time.monotonic() + deadline
     while True:
         apps = engine.call("GET", "/apps")
@@ -178,9 +179,9 @@ def wait_instance(engine: Engine, name: str, deadline: float) -> str:
         time.sleep(5)
 
 
-def wait_reporting(engine: Engine, name: str, deadline: float) -> str:
-    """The transform instance is up and reporting telemetry through the engine."""
-    service = f"dfe-transform-{TRANSFORM_ENGINE}"
+def wait_reporting(engine: Engine, name: str, deadline: float, service: str = "") -> str:
+    """The instance is up and reporting telemetry through the engine."""
+    service = service or f"dfe-transform-{TRANSFORM_ENGINE}"
     until = time.monotonic() + deadline
     last = ""
     while True:
@@ -400,11 +401,159 @@ def sweep_strays(engine: Engine, verify: bool) -> str:
     """Remove sources an earlier run left behind, so this run starts clean."""
     listing = engine.call("GET", "/sources")
     names = [str(item["name"]) for item in (listing.body or {}).get("items", [])]
-    strays = [n for n in names if n.startswith(("fb", "onboard")) and n != "filebeat"]
+    strays = [n for n in names if n.startswith(("fb", "cw", "onboard")) and n != "filebeat"]
     removed = [
         onboarding.remove_source(engine.base, verify, engine.token, n, 60.0) for n in strays
     ]
     return "; ".join(removed) if removed else "no strays"
+
+
+def filebeat_case(
+    driver, engine: Engine, store: Datastore, args: argparse.Namespace,
+    name: str, run_id: str, engine_repo: Path, transform_repo: Path,
+    receiver_url: str, verify: bool, archive_exec: list[list[str]],
+) -> None:
+    """Real filebeat lines pushed at the receiver, through the bundled VRL, archived."""
+    create_source_in_console(driver, name)
+    driver.record(
+        "attach-transform", "api-fallback",
+        attach_transform(engine, name, transform_repo) + " (the console has no transform control)",
+    )
+    deployed = deploy(engine, name)
+    driver.record(
+        "deploy", "done",
+        f"applied; topics ensured {sorted(deployed.get('topics_ensured') or [])}; apps synced {deployed.get('apps_synced')}",
+    )
+    # Read it back off the fork rather than trusting the deploy's own
+    # report: the deploy counts what it wrote, the listing says what is
+    # there, and only the second is what a human opens HyperDX to.
+    state, detail = assert_hyperdx_source(engine, name)
+    if state == "failed" and deployed.get("hyperdx_source_error"):
+        detail = f"{detail}; the deploy said: {deployed['hyperdx_source_error']}"
+    driver.record("hyperdx-source", state, detail)
+    driver.record("upload-program", "api-fallback", upload_program(engine, name, transform_repo))
+    exists = store.table_exists(name) if store.host else None
+    driver.record(
+        "table", "done" if exists else ("skipped" if exists is None else "failed"),
+        f"dfe.{name} {'exists' if exists else 'is missing'}" if exists is not None else "no datastore access in this run",
+    )
+    detail = wait_instance(engine, name, 120.0)
+    driver.record("transform-instance", "done" if "knows" in detail else "failed", detail)
+    detail = wait_reporting(engine, name, ROUTING_DEADLINE)
+    driver.record("transform-reporting", "done" if "reporting after" in detail else "failed", detail)
+    if not receiver_url:
+        driver.record("feed", "skipped", "no receiver in this run (DFE_E2E_RECEIVER_URL unset)")
+        return
+    detail = wait_routed(receiver_url, verify, engine_repo, transform_repo, store, name, ROUTING_DEADLINE)
+    driver.record("routed", "done" if detail.startswith("routed") else "failed", detail)
+    transformed_where = f" WHERE {TRANSFORMED_COLUMN} IS NOT NULL"
+    before = store.scalar(f"SELECT count() FROM {name}")
+    before_transformed = store.scalar(f"SELECT count() FROM {name}{transformed_where}")
+    posted = feed(receiver_url, verify, engine_repo, transform_repo, name, run_id, args.per_module)
+    driver.record("feed", "done", f"posted {posted} corpus records tagged e2e_run:{run_id}")
+    # The program rewrites each record into ECS and the tag with it, so the
+    # proof is the gain in the source's own table; the catch-all still holds
+    # the record as posted, so a stray there is found by the tag.
+    landed = wait_gain(store, name, before, posted, LAND_DEADLINE)
+    strayed = store.scalar(f"SELECT count() FROM main WHERE _raw LIKE '%{run_id}%'")
+    driver.record(
+        "landed", "done" if landed and not strayed else "failed",
+        f"dfe.{name} gained {landed} of {posted} posted rows, {strayed} strayed into dfe.main",
+    )
+    transformed = wait_gain(store, name, before_transformed, 1, TRANSFORM_DEADLINE, transformed_where)
+    driver.record(
+        "transformed", "done" if transformed else "failed",
+        f"{transformed} new rows carry {TRANSFORMED_COLUMN}, which only the transform sets",
+    )
+    record_archive(driver, archive_exec, name)
+
+
+def record_archive(driver, archive_exec: list[list[str]], name: str) -> None:
+    """The archive step, shared by every case: the source's own landing topic on disk."""
+    if not archive_exec:
+        driver.record("archived", "skipped", "no --archive-exec: nothing to look inside")
+        return
+    directory, refused = archive_directory(archive_exec)
+    if refused:
+        driver.record("archived", "skipped", refused)
+        return
+    detail, wrote = wait_archived(archive_exec, directory, name, ARCHIVE_DEADLINE)
+    driver.record("archived", "done" if wrote else "failed", detail)
+
+
+def cloudwatch_case(
+    driver, engine: Engine, store: Datastore, args: argparse.Namespace,
+    name: str, schema: str, archive_exec: list[list[str]],
+) -> None:
+    """A meta schema authored by hand, and an AWS upstream a fetcher polls on its own.
+
+    Nothing is pushed and nothing is written to AWS: the source's stanza is the
+    whole configuration, and the proof is rows appearing inside a poll interval.
+    """
+    case = fetcher.AWS_CASES[args.aws_service]
+    csv_file = Path(args.shots_dir) / f"{Path(schema).name}.csv"
+    csv_file.parent.mkdir(parents=True, exist_ok=True)
+    csv_file.write_text(fetcher.schema_csv(case), encoding="utf-8")
+    try:
+        driver.record(
+            "author-schema", "done",
+            fetcher.author_schema_in_console(driver, case, schema, csv_file, STEP_TIMEOUT_MS),
+        )
+    except Exception as exc:  # the console refusing to author IS the finding
+        driver.record(
+            "author-schema", "api-fallback",
+            fetcher.author_schema_by_api(engine, case, schema)
+            + f" (the console could not: {type(exc).__name__}: {str(exc).splitlines()[0]})",
+        )
+    driver.record("add-source-survey", "api-fallback", fetcher.survey_origin(driver, STEP_TIMEOUT_MS))
+    body = fetcher.source_body(
+        case, name, schema, args.aws_region, args.aws_log_group, args.poll_interval_secs
+    )
+    driver.record("add-source", "api-fallback", fetcher.create_source(engine, body))
+    deployed = deploy(engine, name)
+    driver.record(
+        "deploy", "done",
+        f"applied; topics ensured {sorted(deployed.get('topics_ensured') or [])}; apps synced {deployed.get('apps_synced')}",
+    )
+    state, detail = assert_hyperdx_source(engine, name)
+    if state == "failed" and deployed.get("hyperdx_source_error"):
+        detail = f"{detail}; the deploy said: {deployed['hyperdx_source_error']}"
+    driver.record("hyperdx-source", state, detail)
+    exists = store.table_exists(name) if store.host else None
+    driver.record(
+        "table", "done" if exists else ("skipped" if exists is None else "failed"),
+        f"dfe.{name} {'exists' if exists else 'is missing'}" if exists is not None else "no datastore access in this run",
+    )
+    detail = wait_instance(engine, name, fetcher.INSTANCE_DEADLINE, fetcher.FETCHER_SERVICE)
+    driver.record("fetcher-instance", "done" if "knows" in detail else "failed", detail)
+    detail = wait_reporting(engine, name, fetcher.REPORTING_DEADLINE, fetcher.FETCHER_SERVICE)
+    driver.record("fetcher-reporting", "done" if "reporting after" in detail else "failed", detail)
+    service_name = fetcher.telemetry_name(engine, name)
+    samples, since = fetcher.idle_history(store, service_name, int(fetcher.REPORTING_DEADLINE))
+    driver.record(
+        "fetcher-idle", "done",
+        f"{service_name} published {samples} pipeline_idle sample(s)"
+        + (f", last {since}s ago" if since is not None else "; it was created carrying its stanza, so it had work from the start"),
+    )
+    if not store.host:
+        driver.record("fetched", "skipped", "no datastore access in this run")
+        return
+    # A poll interval to fetch, and the landing topic plus the loader's own batch
+    # window before the row is queryable.
+    deadline = args.poll_interval_secs * 2 + 300
+    gained = fetcher.wait_rows(store, name, 0, deadline)
+    driver.record(
+        "fetched", "done" if gained else "failed",
+        f"dfe.{name} holds {gained} row(s) from {fetcher.upstream_note(case, args.aws_log_group)} "
+        f"within {deadline:.0f}s, nothing written to AWS",
+    )
+    if gained:
+        set_rows = store.scalar(f"SELECT count() FROM {name} WHERE {case.proof_column} != ''")
+        driver.record(
+            "fetched-columns", "done" if set_rows else "failed",
+            f"{set_rows} of {gained} row(s) carry {case.proof_column}, which only this upstream sets",
+        )
+    record_archive(driver, archive_exec, name)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -435,7 +584,9 @@ def run(args: argparse.Namespace) -> int:
     engine = Engine(api_url, admin_user, password, verify or api_url != args.engine_url)
     archive_exec = [shlex.split(one) for one in args.archive_exec]
 
-    name = f"fb{uuid.uuid4().hex[:8]}"
+    fetched = args.case == "cloudwatch"
+    name = fetcher.new_name("cw" if fetched else "fb")
+    schema = fetcher.schema_path(fetcher.AWS_CASES[args.aws_service], name) if fetched else ""
     run_id = f"src-{uuid.uuid4().hex[:12]}"
     shots = Path(args.shots_dir)
     created = False
@@ -457,73 +608,20 @@ def run(args: argparse.Namespace) -> int:
             driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
             driver.record("login", "done", f"signed in as {admin_user}")
             driver.record("sweep", "done", sweep_strays(engine, verify))
-            create_source_in_console(driver, name)
-            created = True
-            driver.record(
-                "attach-transform", "api-fallback",
-                attach_transform(engine, name, transform_repo) + " (the console has no transform control)",
-            )
-            deployed = deploy(engine, name)
-            driver.record(
-                "deploy", "done",
-                f"applied; topics ensured {sorted(deployed.get('topics_ensured') or [])}; apps synced {deployed.get('apps_synced')}",
-            )
-            # Read it back off the fork rather than trusting the deploy's own
-            # report: the deploy counts what it wrote, the listing says what is
-            # there, and only the second is what a human opens HyperDX to.
-            state, detail = assert_hyperdx_source(engine, name)
-            if state == "failed" and deployed.get("hyperdx_source_error"):
-                detail = f"{detail}; the deploy said: {deployed['hyperdx_source_error']}"
-            driver.record("hyperdx-source", state, detail)
-            driver.record("upload-program", "api-fallback", upload_program(engine, name, transform_repo))
-            exists = store.table_exists(name) if store.host else None
-            driver.record(
-                "table", "done" if exists else ("skipped" if exists is None else "failed"),
-                f"dfe.{name} {'exists' if exists else 'is missing'}" if exists is not None else "no datastore access in this run",
-            )
-            detail = wait_instance(engine, name, 120.0)
-            driver.record("transform-instance", "done" if "knows" in detail else "failed", detail)
-            detail = wait_reporting(engine, name, ROUTING_DEADLINE)
-            driver.record("transform-reporting", "done" if "reporting after" in detail else "failed", detail)
-            if receiver_url:
-                detail = wait_routed(receiver_url, verify, engine_repo, transform_repo, store, name, ROUTING_DEADLINE)
-                driver.record("routed", "done" if detail.startswith("routed") else "failed", detail)
-                transformed_where = f" WHERE {TRANSFORMED_COLUMN} IS NOT NULL"
-                before = store.scalar(f"SELECT count() FROM {name}")
-                before_transformed = store.scalar(f"SELECT count() FROM {name}{transformed_where}")
-                posted = feed(receiver_url, verify, engine_repo, transform_repo, name, run_id, args.per_module)
-                driver.record("feed", "done", f"posted {posted} corpus records tagged e2e_run:{run_id}")
-                # The program rewrites each record into ECS and the tag with it, so the
-                # proof is the gain in the source's own table; the catch-all still holds
-                # the record as posted, so a stray there is found by the tag.
-                landed = wait_gain(store, name, before, posted, LAND_DEADLINE)
-                strayed = store.scalar(f"SELECT count() FROM main WHERE _raw LIKE '%{run_id}%'")
-                driver.record(
-                    "landed", "done" if landed and not strayed else "failed",
-                    f"dfe.{name} gained {landed} of {posted} posted rows, {strayed} strayed into dfe.main",
-                )
-                transformed = wait_gain(store, name, before_transformed, 1, TRANSFORM_DEADLINE, transformed_where)
-                driver.record(
-                    "transformed", "done" if transformed else "failed",
-                    f"{transformed} new rows carry {TRANSFORMED_COLUMN}, which only the transform sets",
-                )
-                if archive_exec:
-                    directory, refused = archive_directory(archive_exec)
-                    if refused:
-                        driver.record("archived", "skipped", refused)
-                    else:
-                        detail, wrote = wait_archived(archive_exec, directory, name, ARCHIVE_DEADLINE)
-                        driver.record("archived", "done" if wrote else "failed", detail)
-                else:
-                    driver.record("archived", "skipped", "no --archive-exec: nothing to look inside")
+            if fetched:
+                cloudwatch_case(driver, engine, store, args, name, schema, archive_exec)
             else:
-                driver.record("feed", "skipped", "no receiver in this run (DFE_E2E_RECEIVER_URL unset)")
+                filebeat_case(
+                    driver, engine, store, args, name, run_id, engine_repo,
+                    transform_repo, receiver_url, verify, archive_exec,
+                )
         except Exception as exc:  # a Playwright timeout IS the finding
             driver.record("run", "failed", f"{type(exc).__name__}: {str(exc).splitlines()[0]}")
         finally:
             context.close()
             browser.close()
 
+    created = engine.call("GET", f"/sources/{name}").status == 200
     if created and not args.keep:
         detail = onboarding.remove_source(api_url, engine.verify, engine.token or "", name, onboarding.TEARDOWN_DEADLINE)
         driver.results.append(wizard.StepResult("teardown", "done" if detail.startswith("removed") else "failed", detail))
@@ -533,6 +631,13 @@ def run(args: argparse.Namespace) -> int:
         driver.results.append(wizard.StepResult("hyperdx-source-removed", state, detail))
     elif created:
         driver.results.append(wizard.StepResult("teardown", "kept", f"{name} left deployed (--keep)"))
+    # The schema the run authored is the run's to clean up; a kept source still
+    # reads from it.
+    if schema and not args.keep:
+        detail = fetcher.remove_schema(engine, schema)
+        driver.results.append(
+            wizard.StepResult("schema-removed", "done" if detail.startswith("removed") else "failed", detail)
+        )
 
     print()
     print(wizard.report_table(driver.results))
@@ -555,6 +660,17 @@ def build_parser() -> argparse.ArgumentParser:
                         help="command prefix that runs a shell inside one archiver replica, for the "
                              "archive assertion; repeatable, one per replica (k8s: kubectl -n <ns> "
                              "exec <pod> --; docker: docker exec dfe-archiver)")
+    parser.add_argument("--case", default="filebeat", choices=("filebeat", "cloudwatch"),
+                        help="filebeat pushes real lines at the receiver; cloudwatch authors a meta "
+                             "schema and lets a fetcher pull an AWS upstream")
+    parser.add_argument("--aws-service", default="cloudwatch_logs", choices=tuple(sorted(fetcher.AWS_CASES)),
+                        help="the AWS service the cloudwatch case's fetcher polls")
+    parser.add_argument("--aws-region", default=os.environ.get("DFE_E2E_AWS_REGION", ""),
+                        help="region the fetcher signs for (default: DFE_E2E_AWS_REGION)")
+    parser.add_argument("--aws-log-group", default=os.environ.get("DFE_E2E_AWS_LOG_GROUP", ""),
+                        help="CloudWatch log group to poll (default: DFE_E2E_AWS_LOG_GROUP)")
+    parser.add_argument("--poll-interval-secs", type=int, default=60,
+                        help="how often the fetcher polls its upstream")
     parser.add_argument("--per-module", type=int, default=20, help="corpus lines per filebeat module to feed")
     parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")

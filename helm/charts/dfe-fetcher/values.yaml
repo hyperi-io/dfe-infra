@@ -40,6 +40,15 @@ apiCredentials:
   apiKeyKey: api-key
   apiSecretKey: api-secret
 
+# Credentials for the upstream this instance polls. The source's fetcher stanza
+# names them as `env:NAME` references (dfe-fetcher src/config/resolve.rs), so
+# the Secret's KEYS are the variable names the stanza asks for and no value ever
+# reaches the engine-authored overlay. One Secret serves every instance: a key is
+# only read by the instance whose stanza names it. Optional, so a deployment that
+# fetches nothing needing credentials creates nothing.
+credentials:
+  secretName: dfe-fetcher-credentials
+
 # Cursor store. The fetcher records the window each connection resumed from at
 # cursor.file_path (/var/lib/dfe-fetcher/cursors.json by default) and the rootfs
 # is read-only, so that directory is a volume either way. Default emptyDir: the
