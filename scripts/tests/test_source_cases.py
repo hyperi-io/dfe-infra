@@ -150,11 +150,17 @@ class FakeEngine:
 
     ON_DISK: ClassVar[dict[str, int]] = {"filebeat.vrl": len(PROGRAM), "timezones.csv": len(TABLE)}
 
-    def __init__(self, transform: str = "vrl", committed: bool = True, reload: str = "roll") -> None:
+    #: appmgmt/appconfig.py RESTART_HINT, as a released engine renders it.
+    RESTART_HINT: ClassVar[str] = "restart required: docker compose restart dfe-transform-vrl"
+
+    def __init__(self, transform: str = "vrl", committed: bool = True,
+                 restart_required: tuple[str, ...] = (RESTART_HINT,),
+                 deploy_restarts: tuple[str, ...] = ()) -> None:
         self.base = "https://dfe.example"
         self.verify = False
         self.token = "t"
-        self.reload = reload
+        self.restart_required = restart_required
+        self.deploy_restarts = deploy_restarts
         self.source = {"current": "1.0.0", "deployed_version": "1.0.0",
                        "transform": {"engine": transform} if transform else {}}
         self.committed = committed
@@ -165,7 +171,8 @@ class FakeEngine:
         self.calls.append((method, path))
         if method == "PUT" and "/files/" in path:
             self.written[path] = str((body or {}).get("content") or "")
-            return reply(200, {"changed": True, "reload": self.reload})
+            return reply(200, {"changed": True, "reload": "roll",
+                               "restart_required": list(self.restart_required)})
         if method == "GET" and "/files/" in path:
             if not self.committed:
                 return reply(404, {"message": "no such file"})
@@ -178,7 +185,9 @@ class FakeEngine:
         if path == "/hyperdx/sources":
             return reply(200, {"teams": []})
         if method == "POST" and path.endswith("/deploy"):
-            return reply(200, {"applied": True, "topics_ensured": ["a_land"], "apps_synced": ["deploy instance"]})
+            return reply(200, {"applied": True, "topics_ensured": ["a_land"],
+                               "apps_synced": ["deploy instance"],
+                               "restart_required": list(self.deploy_restarts)})
         if method == "PUT" and path.startswith("/sources/"):
             self.source = {**self.source, "transform": {"engine": "vrl"}}
             return reply(200, self.source)
@@ -344,21 +353,21 @@ class TestTheFilebeatCaseCreate:
 
 
 class TestTheFilebeatCaseProvision:
-    def _provision(self, transform_repo, missing=(), committed=True, reload="roll"):
+    def _provision(self, transform_repo, missing=(), committed=True):
         driver = FakeDriver(FakePage(missing=missing))
-        engine = FakeEngine(committed=committed, reload=reload)
+        engine = FakeEngine(committed=committed)
         case = cases.build(parse())
-        reloads = case.provision(a_run(driver, engine, parse(), case.name, transform_repo))
-        return driver, engine, case, reloads
+        hints = case.provision(a_run(driver, engine, parse(), case.name, transform_repo))
+        return driver, engine, case, hints
 
     def test_the_console_commits_both_files_and_the_row_reads_done(self, transform_repo):
-        driver, _, _, reloads = self._provision(transform_repo)
+        driver, _, _, hints = self._provision(transform_repo)
 
         assert driver.rows == ["upload-program"]
         assert driver.status("upload-program") == "done"
         assert "filebeat.vrl" in driver.detail("upload-program")
         assert "timezones.csv" in driver.detail("upload-program")
-        assert reloads == []
+        assert hints == []
 
     def test_it_opens_the_sources_processing_tab_for_the_instance_it_wrote_to(self, transform_repo):
         driver, _, case, _ = self._provision(transform_repo)
@@ -387,11 +396,10 @@ class TestTheFilebeatCaseProvision:
         assert engine.written[f"/apps/{case.service}/{case.name}/files/transforms/filebeat.vrl"] == PROGRAM
         assert engine.written[f"/apps/{case.service}/{case.name}/files/enrichment/timezones.csv"] == TABLE
 
-    def test_the_fallback_carries_the_reload_each_write_reported(self, transform_repo):
-        """The write reply is the only place a released engine says how it reaches the process."""
-        _, _, _, reloads = self._provision(transform_repo, missing=("button:New file",))
+    def test_the_fallback_carries_the_restarts_the_writes_asked_for(self, transform_repo):
+        _, _, _, hints = self._provision(transform_repo, missing=("button:New file",))
 
-        assert reloads == ["roll", "roll"]
+        assert hints == [FakeEngine.RESTART_HINT] * 2
 
     def test_a_commit_the_engine_never_took_is_a_fallback_not_a_pass(self, transform_repo, monkeypatch):
         """The console's own notice is per panel, so the engine is what is asked."""
@@ -403,11 +411,11 @@ class TestTheFilebeatCaseProvision:
 
 
 class TestTheRestartStep:
-    """``reload`` decides, and on Compose ``roll`` needs the same hand as ``restart``."""
+    """The engine decides, and it names the app in the hint it hands back."""
 
     SERVICE = "dfe-transform-vrl"
 
-    def _apply(self, monkeypatch, prefix, reloads, returncode=0):
+    def _apply(self, monkeypatch, prefix, reported, returncode=0):
         ran: list[list[str]] = []
 
         def fake_run(argv, **_kwargs):
@@ -416,45 +424,43 @@ class TestTheRestartStep:
 
         monkeypatch.setattr(steps.subprocess, "run", fake_run)
         driver = FakeDriver(FakePage())
-        steps.apply_restarts(driver, prefix, self.SERVICE, reloads)
+        steps.apply_restarts(driver, prefix, reported)
         return driver, ran
 
-    def test_hot_needs_nobody(self, monkeypatch):
-        driver, ran = self._apply(monkeypatch, ["docker", "restart"], ["hot", "hot"])
+    def test_kubernetes_reports_none_because_the_chart_rolls_the_pod(self, monkeypatch):
+        driver, ran = self._apply(monkeypatch, [], [])
 
         assert driver.status("restart") == "skipped"
         assert ran == []
 
-    def test_kubernetes_leaves_roll_to_the_controller(self, monkeypatch):
-        driver, ran = self._apply(monkeypatch, [], ["roll"])
-
-        assert driver.status("restart") == "skipped"
-        assert ran == []
-
-    def test_compose_restarts_the_instance_service_on_roll(self, monkeypatch):
-        """Nothing on Compose rolls a container, so the app keeps its old topics."""
-        driver, ran = self._apply(monkeypatch, ["docker", "restart"], ["roll", "hot"])
+    def test_the_service_is_the_last_word_of_the_engine_s_hint(self, monkeypatch):
+        """appconfig.RESTART_HINT ends in the service; the rest of it is the reason."""
+        driver, ran = self._apply(monkeypatch, ["docker", "restart"], [FakeEngine.RESTART_HINT])
 
         assert driver.status("restart") == "done"
         assert ran == [["docker", "restart", self.SERVICE]]
 
-    def test_restart_with_no_way_to_do_it_is_a_failed_row(self, monkeypatch):
-        driver, ran = self._apply(monkeypatch, [], ["restart"])
+    def test_one_restart_per_app_however_many_writes_reported_it(self, monkeypatch):
+        _, ran = self._apply(
+            monkeypatch, ["docker", "restart"], [FakeEngine.RESTART_HINT] * 3
+        )
+
+        assert ran == [["docker", "restart", self.SERVICE]]
+
+    def test_a_hint_with_no_way_to_apply_it_is_a_failed_row(self, monkeypatch):
+        driver, ran = self._apply(monkeypatch, [], [FakeEngine.RESTART_HINT])
 
         assert driver.status("restart") == "failed"
         assert "--restart-exec" in driver.detail("restart")
         assert ran == []
 
     def test_a_refused_restart_is_the_finding(self, monkeypatch):
-        driver, _ = self._apply(monkeypatch, ["docker", "restart"], ["restart"], returncode=1)
+        driver, _ = self._apply(
+            monkeypatch, ["docker", "restart"], [FakeEngine.RESTART_HINT], returncode=1
+        )
 
         assert driver.status("restart") == "failed"
         assert "no such service" in driver.detail("restart")
-
-    def test_the_service_comes_from_the_case_because_the_reply_names_none(self, monkeypatch):
-        _, ran = self._apply(monkeypatch, ["docker", "restart"], ["restart"])
-
-        assert ran == [["docker", "restart", self.SERVICE]]
 
 
 class TestTheOrderTheRunnerWalks:
@@ -504,6 +510,18 @@ class TestTheOrderTheRunnerWalks:
         self._walk(case, driver, engine, transform_repo)
 
         assert driver.status("restart") == "skipped"
+
+    def test_a_deploy_that_asks_for_a_restart_is_heard_too(self, transform_repo):
+        """On Compose the deploy renders the config, so its hints arrive before any write."""
+        driver = FakeDriver(FakePage())
+        engine = FakeEngine(deploy_restarts=(FakeEngine.RESTART_HINT,))
+        case = cases.build(parse())
+        case.feed = lambda run: None
+        case.prove = lambda run: None
+        self._walk(case, driver, engine, transform_repo)
+
+        assert driver.status("restart") == "failed"
+        assert FakeEngine.RESTART_HINT in driver.detail("restart")
 
 
 class TestWhatTheRunTidiesUp:

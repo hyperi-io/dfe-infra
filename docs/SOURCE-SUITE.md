@@ -52,10 +52,16 @@ CloudTrail is the service that proves anything.
 
 ## Restarting an app the writes cannot reach
 
-Each file-set write answers with a `reload` mode. `hot` applies itself; `roll`
-reaches the process when the pod rolls, which a Kubernetes chart does on a
-checksum change; `restart` needs a manual one on every target. Compose rolls
-nothing, so a run given `--restart-exec` (dfe-docker passes
-`docker restart`) treats `roll` as `restart` too and restarts the instance's own
-app. Without it the app takes the new file and goes on consuming the topics it
+The deploy reply and each file-set write carry `restart_required`: one command
+per app whose running process cannot take that change where it stands. The
+engine works it out, so the runner does not. It is only ever non-empty where the
+engine renders the app's config itself -- a Compose deployment that named a
+config directory -- and only where the write changed something the process
+cannot pick up; a Kubernetes deploy reports none, because the chart's checksum
+rolls the pod.
+
+`--restart-exec` is the command prefix that applies one (dfe-docker passes
+`docker restart`); the app is the last word of the hint. A run that is handed a
+hint and no prefix fails the step rather than passing quietly, because without
+the restart the app takes the new file and goes on consuming the topics it
 started with, and the source never moves a record.

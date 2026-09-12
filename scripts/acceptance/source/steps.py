@@ -374,32 +374,40 @@ def record_archive(driver, archive_exec: list[list[str]], name: str) -> None:
     driver.record("archived", "done" if wrote else "failed", detail)
 
 
-def apply_restarts(driver, prefix: list[str], service: str, reloads: list[str]) -> None:
-    """Restart *service* when its file-set writes say it will not take them where it stands.
+def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
+    """Restart the apps the engine says cannot take a write where they stand.
 
-    Each write answers with a ``reload`` mode: ``hot`` applies itself, ``roll``
-    reaches the process when the pod rolls, ``restart`` needs a manual one on every
-    target. Compose rolls nothing, so a run carrying --restart-exec is a Compose
-    run and treats ``roll`` as ``restart`` too; without it the app takes the new
-    file and goes on consuming the topics it started with. The reply names no app,
-    so the one to restart is the instance's own service.
+    The engine computes this, so the runner does not have to: a hint appears only
+    where the engine renders the app's config itself -- a Compose deployment that
+    named a config directory -- and only where the write changed something the
+    running process cannot pick up. A Kubernetes deploy therefore reports none,
+    because the chart's checksum rolls the pod.
+
+    Without it the app takes the new file and goes on consuming the topics it
+    started with, so the source it was just given never moves a record.
     """
-    modes = sorted({str(mode) for mode in reloads if mode})
-    needs = [mode for mode in modes if mode == "restart" or (mode == "roll" and prefix)]
-    if not needs:
-        driver.record("restart", "skipped", f"reload {modes or ['none']}: no restart needed on this target")
+    hints = sorted({str(hint) for hint in reported if hint})
+    if not hints:
+        driver.record("restart", "skipped", "the engine reports every write taken where it stands")
         return
     if not prefix:
         driver.record(
             "restart", "failed",
-            f"{service} reports reload {needs} and this run was given no --restart-exec",
+            f"{len(hints)} app(s) need restarting and this run was given no --restart-exec: {hints}",
         )
         return
-    reply = subprocess.run([*prefix, service], capture_output=True, text=True, check=False)
-    if reply.returncode == 0:
-        driver.record("restart", "done", f"{service} restarted for reload {needs}")
-        return
-    driver.record("restart", "failed", f"{service} REFUSED: {(reply.stderr or reply.stdout).strip()[:120]}")
+    done = []
+    for hint in hints:
+        # appconfig.RESTART_HINT: "restart required: docker compose restart
+        # <service>", so the service is the last word and the rest is the reason.
+        service = hint.rsplit(" ", 1)[-1]
+        reply = subprocess.run([*prefix, service], capture_output=True, text=True, check=False)
+        done.append(f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {(reply.stderr or reply.stdout).strip()[:120]}'}")
+    driver.record(
+        "restart",
+        "done" if all("restarted" in entry for entry in done) else "failed",
+        "; ".join(done),
+    )
 
 
 # --- HyperDX -----------------------------------------------------------------
