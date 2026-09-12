@@ -349,6 +349,53 @@ def companion(repo: Path, name: str) -> Path:
     return home.parent / name
 
 
+def hyperdx_teams_holding(engine: Engine, name: str) -> tuple[list[str], int, str]:
+    """Teams carrying the HyperDX source *name*, how many hold any, and why not.
+
+    The engine reads this back off the fork, so it is the fork's own account of
+    where the source landed rather than the deploy's word for it.
+    """
+    reply = engine.call("GET", "/hyperdx/sources")
+    if reply.status == 404:
+        return [], 0, "this engine build has no HyperDX source listing"
+    if reply.status != 200:
+        return [], 0, f"the listing answered {reply.status}"
+
+    teams = (reply.body or {}).get("teams") or []
+    holding = [
+        str(team.get("team_name") or team.get("team"))
+        for team in teams
+        if any(source.get("name") == name for source in team.get("sources") or [])
+    ]
+    with_any = sum(1 for team in teams if team.get("sources"))
+    return holding, with_any, ""
+
+
+def assert_hyperdx_source(engine: Engine, name: str) -> tuple[str, str]:
+    """The step result for `name` being present on the teams a human reads from."""
+    holding, with_any, refused = hyperdx_teams_holding(engine, name)
+    if refused:
+        return "skipped", refused
+    if holding:
+        return "done", f"HyperDX source {name} on {len(holding)} team(s): {', '.join(holding)}"
+    if with_any == 0:
+        # A team is created on first HyperDX sign-in and gets its ClickHouse
+        # connection with it, so a deployment nobody has signed into has no team
+        # for the source to land on and the write had nowhere to go.
+        return "skipped", "no HyperDX team holds any DFE source yet; nobody has signed in"
+    return "failed", f"no HyperDX team carries {name}, though {with_any} hold other DFE sources"
+
+
+def assert_hyperdx_source_gone(engine: Engine, name: str) -> tuple[str, str]:
+    """The step result for `name` being off every team after teardown."""
+    holding, _, refused = hyperdx_teams_holding(engine, name)
+    if refused:
+        return "skipped", refused
+    if holding:
+        return "failed", f"HyperDX source {name} still on {', '.join(holding)}"
+    return "done", f"HyperDX source {name} is gone from every team"
+
+
 def sweep_strays(engine: Engine, verify: bool) -> str:
     """Remove sources an earlier run left behind, so this run starts clean."""
     listing = engine.call("GET", "/sources")
@@ -421,17 +468,13 @@ def run(args: argparse.Namespace) -> int:
                 "deploy", "done",
                 f"applied; topics ensured {sorted(deployed.get('topics_ensured') or [])}; apps synced {deployed.get('apps_synced')}",
             )
-            # The id comes back from the fork, so a deploy that reports one is the
-            # fork's own acknowledgement that it made the source.
-            if "hyperdx_source_id" not in deployed:
-                driver.record("hyperdx-source", "skipped",
-                              "this engine build does not report a HyperDX source on deploy")
-            elif deployed.get("hyperdx_source_id"):
-                driver.record("hyperdx-source", "done",
-                              f"HyperDX source {deployed['hyperdx_source_id']} over dfe.{name}")
-            else:
-                driver.record("hyperdx-source", "failed",
-                              f"no HyperDX source: {deployed.get('hyperdx_source_error') or 'the engine gave no reason'}")
+            # Read it back off the fork rather than trusting the deploy's own
+            # report: the deploy counts what it wrote, the listing says what is
+            # there, and only the second is what a human opens HyperDX to.
+            state, detail = assert_hyperdx_source(engine, name)
+            if state == "failed" and deployed.get("hyperdx_source_error"):
+                detail = f"{detail}; the deploy said: {deployed['hyperdx_source_error']}"
+            driver.record("hyperdx-source", state, detail)
             driver.record("upload-program", "api-fallback", upload_program(engine, name, transform_repo))
             exists = store.table_exists(name) if store.host else None
             driver.record(
@@ -484,6 +527,10 @@ def run(args: argparse.Namespace) -> int:
     if created and not args.keep:
         detail = onboarding.remove_source(api_url, engine.verify, engine.token or "", name, onboarding.TEARDOWN_DEADLINE)
         driver.results.append(wizard.StepResult("teardown", "done" if detail.startswith("removed") else "failed", detail))
+        # A delete that leaves the source behind gives every team a view over a
+        # table that no longer exists.
+        state, detail = assert_hyperdx_source_gone(engine, name)
+        driver.results.append(wizard.StepResult("hyperdx-source-removed", state, detail))
     elif created:
         driver.results.append(wizard.StepResult("teardown", "kept", f"{name} left deployed (--keep)"))
 
