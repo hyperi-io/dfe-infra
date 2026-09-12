@@ -1931,7 +1931,7 @@ stacks:
       dfe-transform-vector: "sha256:0985af38126d0312a4b8d342b321149bbb02580d45c6d89e25e5314286c0863e"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
-      dfe-hyperdx: "sha256:0b0784db9e107acaa0b2c4bd80ad2a2da3d25175791f2b03ac110262b5d21d72"
+      dfe-hyperdx: "sha256:558848c64150e92cb4a7e2bee678879675cff2e71fc18dcd3fbdd2bc5d56839a"
       # ghcr.io/hyperi-io/culvert:v2.1.14. Manifest-LIST digest (amd64 + arm64),
       # read off the ghcr v2 API with an anonymous pull token.
       culvert: "sha256:b8b3f8c5450cc8eaa761a5b2de81128d1adc3022fa7aa9746c4c676e4fafd7d3"
@@ -1964,7 +1964,7 @@ stacks:
       dfe-schemas: "v0.2.1"              # baseline DDL; the dfe-schemas release current at this cut (2026-09-08)
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
-      dfe-hyperdx: "v0.2.2"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:0b0784db9e107acaa0b2c4bd80ad2a2da3d25175791f2b03ac110262b5d21d72 (catch-all source seeded as main over dfe.main, dashboards provisioned when a team is seeded, Next 16.3.4 for GHSA-2xp9-vwfh-vxw4 and GHSA-p293-qw3h-jr36; upstream 2.36.0); deployment tag pin lives in the deploy repo values
+      dfe-hyperdx: "v0.2.3"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:558848c64150e92cb4a7e2bee678879675cff2e71fc18dcd3fbdd2bc5d56839a (a HyperDX source per DFE source, seeded on every team, on top of v0.2.2's catch-all main source and provisioned dashboards; upstream 2.36.0); deployment tag pin lives in the deploy repo values
       # dfe-transform-elastic-catalogue: "v1.1.1"   # dfe-transform-elastic#18; the sources.yaml release asset the engine offers as the source catalogue
 
     # Stack upgrade metadata for THIS version.
