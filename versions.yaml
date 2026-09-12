@@ -1836,11 +1836,13 @@ stacks:
       # Rancher 2.15 manages RKE2 1.34-1.36 and permits one minor per hop, so it
       # moves interleaved with rke2 above; 1.37 will need Rancher 2.16.
       rancher: ">=2.15"
-      # AWS target. Written as >=1.34 while the EKS side was unverified; EKS
-      # publishes 1.36 and DEFAULTS to it, so the AWS target clears the same
-      # floor as on-prem rather than a lower one. Verified with
-      # `aws eks describe-cluster-versions` in us-west-2.
-      eks: ">=1.36"
+      # AWS target, and the same window as kubernetes above rather than an open
+      # floor: the operator support that sets 1.34 does not change per cloud.
+      # The ceiling is reachable there -- EKS publishes 1.36 and defaults new
+      # clusters to it, verified with `aws eks describe-cluster-versions` in
+      # us-west-2 -- and 1.34 and 1.35 are both still on standard support, so
+      # the floor admits a real cluster rather than a hypothetical one.
+      eks: "1.34-1.36"
 
     # Stage bootstrap: cluster bootstrap (installed by bootstrap.sh via read_versions.py)
     bootstrap:
