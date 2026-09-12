@@ -133,8 +133,14 @@ def attach_transform(engine: Engine, name: str, transform_repo: Path) -> str:
     return f"transform {TRANSFORM_ENGINE} set on {name}"
 
 
-def upload_program(engine: Engine, name: str, transform_repo: Path) -> str:
-    """The program and its table go into the instance's file sets, which exist after the deploy."""
+def upload_program(engine: Engine, name: str, transform_repo: Path) -> tuple[str, list[str]]:
+    """The program and its table go into the instance's file sets, which exist after the deploy.
+
+    Returns the step detail and the restart commands the writes call for: the
+    instance's config is only rendered with the source's topics once the overlay
+    exists, so these writes are where a Compose deployment learns it must roll
+    the app, not the deploy before them.
+    """
     service = f"dfe-transform-{TRANSFORM_ENGINE}"
     program = (transform_repo / PROGRAM).read_text(encoding="utf-8")
     put = engine.call("PUT", f"/apps/{service}/{name}/files/transforms/{Path(PROGRAM).name}", {"content": program})
@@ -143,7 +149,10 @@ def upload_program(engine: Engine, name: str, transform_repo: Path) -> str:
     table = (transform_repo / ENRICHMENT).read_text(encoding="utf-8")
     put_table = engine.call("PUT", f"/apps/{service}/{name}/files/enrichment/{Path(ENRICHMENT).name}", {"content": table})
     enrichment = f"enrichment table {'accepted' if put_table.status in (200, 201) else f'REFUSED {put_table.status}: {put_table.body}'}"
-    return f"program {len(program)} bytes accepted, {enrichment}"
+    hints: list[str] = []
+    for reply in (put, put_table):
+        hints += [str(h) for h in ((reply.body or {}).get("restart_required") or [])]
+    return f"program {len(program)} bytes accepted, {enrichment}", hints
 
 
 def deploy(engine: Engine, name: str) -> dict:
@@ -199,14 +208,19 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, transform_re
 
     Before the receiver has rolled onto the new rule the probes land in the
     catch-all, so the run's own payload is sent only once this returns.
+
+    The proof is the table growing, not a marker: a transform rewrites each
+    record into the program's own shape and the probe tag does not survive it,
+    so a marker search passes only while the transform is not yet consuming.
     """
     probe = f"probe-{uuid.uuid4().hex[:8]}"
     until = time.monotonic() + deadline
+    before = store.scalar(f"SELECT count() FROM {name}")
     passes = 0
     while True:
         feed(receiver_url, verify, engine_repo, transform_repo, name, probe, 1)
         passes += 1
-        if store.scalar(f"SELECT count() FROM {name} WHERE _raw LIKE '%{probe}%'"):
+        if store.scalar(f"SELECT count() FROM {name}") > before:
             return f"routed into dfe.{name} after {passes} probe pass(es)"
         if time.monotonic() >= until:
             return f"NOT routed into dfe.{name} within {deadline:.0f}s ({passes} probe passes)"
@@ -397,6 +411,32 @@ def assert_hyperdx_source_gone(engine: Engine, name: str) -> tuple[str, str]:
     return "done", f"HyperDX source {name} is gone from every team"
 
 
+def open_console(driver, engine: Engine, admin_user: str, password: str, org: str, first_user: str) -> None:
+    """Sign in, completing the first-login wizard when the deployment still owes it.
+
+    The wizard sits behind the login and holds the console there until it is
+    finished, so a deployment nobody has onboarded has no Sources page for this
+    suite to test against. The walk is the onboarding suite's own, not a second
+    copy of it, and it records the login and each screen as it goes.
+    """
+    status = onboarding.setup_status(engine.base, engine.verify)
+    if wizard.setup_complete(status):
+        onboarding.sign_in(driver, admin_user, password)
+        driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
+        driver.record("login", "done", f"signed in as {admin_user}")
+        return
+    onboarding.walk_wizard(
+        driver,
+        wizard.expected_slugs(wizard.engine_steps(status), wizard.pending_steps(status)),
+        org, first_user, password, password, admin_user, password,
+    )
+    # The wizard hands the console to the account it just made; the rest of this
+    # run is the admin's, which is who its API calls are.
+    onboarding.sign_in(driver, admin_user, password)
+    driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
+    driver.record("console", "done", f"the console opened for {admin_user} after the setup wizard")
+
+
 def sweep_strays(engine: Engine, verify: bool) -> str:
     """Remove sources an earlier run left behind, so this run starts clean."""
     listing = engine.call("GET", "/sources")
@@ -412,6 +452,7 @@ def filebeat_case(
     driver, engine: Engine, store: Datastore, args: argparse.Namespace,
     name: str, run_id: str, engine_repo: Path, transform_repo: Path,
     receiver_url: str, verify: bool, archive_exec: list[list[str]],
+    restart_exec: list[str],
 ) -> None:
     """Real filebeat lines pushed at the receiver, through the bundled VRL, archived."""
     create_source_in_console(driver, name)
@@ -431,7 +472,11 @@ def filebeat_case(
     if state == "failed" and deployed.get("hyperdx_source_error"):
         detail = f"{detail}; the deploy said: {deployed['hyperdx_source_error']}"
     driver.record("hyperdx-source", state, detail)
-    driver.record("upload-program", "api-fallback", upload_program(engine, name, transform_repo))
+    detail, hints = upload_program(engine, name, transform_repo)
+    driver.record("upload-program", "api-fallback", detail)
+    # After the program, not before: a restart that beats the file to disk leaves
+    # the app idling on a transform it has no program for.
+    apply_restarts(driver, restart_exec, [*(deployed.get("restart_required") or []), *hints])
     exists = store.table_exists(name) if store.host else None
     driver.record(
         "table", "done" if exists else ("skipped" if exists is None else "failed"),
@@ -468,6 +513,41 @@ def filebeat_case(
     record_archive(driver, archive_exec, name)
 
 
+def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
+    """Restart the apps the engine says cannot take a write where they stand.
+
+    On Kubernetes a controller rolls the pod, so the engine reports nothing here.
+    A Compose deployment has nobody to do it: the app takes the new file but goes
+    on consuming the topics it started with, so the source it was just given
+    never moves a record. The engine hands back one command per app and this is
+    what runs them.
+    """
+    hints = sorted({str(hint) for hint in reported if hint})
+    if not hints:
+        driver.record("restart", "skipped", "the deploy reports every write taken where it stands")
+        return
+    if not prefix:
+        driver.record(
+            "restart", "failed",
+            f"{len(hints)} app(s) need restarting and this run was given no --restart-exec: {hints}",
+        )
+        return
+    import subprocess
+
+    done = []
+    for hint in hints:
+        # The engine's hint ends in the service name: "restart required: docker
+        # compose restart dfe-transform-vrl".
+        service = hint.rsplit(" ", 1)[-1]
+        reply = subprocess.run([*prefix, service], capture_output=True, text=True, check=False)
+        done.append(f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {(reply.stderr or reply.stdout).strip()[:120]}'}")
+    driver.record(
+        "restart",
+        "done" if all("restarted" in entry for entry in done) else "failed",
+        "; ".join(done),
+    )
+
+
 def record_archive(driver, archive_exec: list[list[str]], name: str) -> None:
     """The archive step, shared by every case: the source's own landing topic on disk."""
     if not archive_exec:
@@ -483,7 +563,7 @@ def record_archive(driver, archive_exec: list[list[str]], name: str) -> None:
 
 def cloudwatch_case(
     driver, engine: Engine, store: Datastore, args: argparse.Namespace,
-    name: str, schema: str, archive_exec: list[list[str]],
+    name: str, schema: str, archive_exec: list[list[str]], restart_exec: list[str],
 ) -> None:
     """A meta schema authored by hand, and an AWS upstream a fetcher polls on its own.
 
@@ -519,6 +599,7 @@ def cloudwatch_case(
     if state == "failed" and deployed.get("hyperdx_source_error"):
         detail = f"{detail}; the deploy said: {deployed['hyperdx_source_error']}"
     driver.record("hyperdx-source", state, detail)
+    apply_restarts(driver, restart_exec, deployed.get("restart_required") or [])
     exists = store.table_exists(name) if store.host else None
     driver.record(
         "table", "done" if exists else ("skipped" if exists is None else "failed"),
@@ -583,6 +664,7 @@ def run(args: argparse.Namespace) -> int:
     api_url = os.environ.get("DFE_E2E_ENGINE_URL") or args.engine_url
     engine = Engine(api_url, admin_user, password, verify or api_url != args.engine_url)
     archive_exec = [shlex.split(one) for one in args.archive_exec]
+    restart_exec = shlex.split(args.restart_exec)
 
     fetched = args.case == "cloudwatch"
     name = fetcher.new_name("cw" if fetched else "fb")
@@ -597,23 +679,21 @@ def run(args: argparse.Namespace) -> int:
         driver = onboarding.Driver(context.new_page(), args.ui_url, shots)
         try:
             try:
-                onboarding.sign_in(driver, admin_user, password)
+                open_console(driver, engine, admin_user, password, args.org, args.first_user)
             except Exception as exc:
                 # Chrome reconfigures its certificate verifier right after
                 # launch and fails the first navigation with ERR_CERT_VERIFIER_CHANGED.
                 if "ERR_CERT_VERIFIER_CHANGED" not in str(exc):
                     raise
                 driver.page.wait_for_timeout(3000)
-                onboarding.sign_in(driver, admin_user, password)
-            driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
-            driver.record("login", "done", f"signed in as {admin_user}")
+                open_console(driver, engine, admin_user, password, args.org, args.first_user)
             driver.record("sweep", "done", sweep_strays(engine, verify))
             if fetched:
-                cloudwatch_case(driver, engine, store, args, name, schema, archive_exec)
+                cloudwatch_case(driver, engine, store, args, name, schema, archive_exec, restart_exec)
             else:
                 filebeat_case(
                     driver, engine, store, args, name, run_id, engine_repo,
-                    transform_repo, receiver_url, verify, archive_exec,
+                    transform_repo, receiver_url, verify, archive_exec, restart_exec,
                 )
         except Exception as exc:  # a Playwright timeout IS the finding
             driver.record("run", "failed", f"{type(exc).__name__}: {str(exc).splitlines()[0]}")
@@ -621,7 +701,13 @@ def run(args: argparse.Namespace) -> int:
             context.close()
             browser.close()
 
-    created = engine.call("GET", f"/sources/{name}").status == 200
+    try:
+        created = engine.call("GET", f"/sources/{name}").status == 200
+    except OSError as exc:
+        # The step table is what this run produces; an engine that has gone away
+        # is a finding to print, not a traceback that loses every row above it.
+        driver.results.append(wizard.StepResult("teardown", "failed", f"the engine did not answer: {exc}"))
+        created = False
     if created and not args.keep:
         detail = onboarding.remove_source(api_url, engine.verify, engine.token or "", name, onboarding.TEARDOWN_DEADLINE)
         driver.results.append(wizard.StepResult("teardown", "done" if detail.startswith("removed") else "failed", detail))
@@ -656,10 +742,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-repo", required=True, help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)")
     parser.add_argument("--transform-repo", default="", help="dfe-transform-vrl checkout holding the bundled pipeline and corpus (default: beside the engine repo)")
     parser.add_argument("--access-summary", default="", metavar="FILE", help="the deploy's own summary, for the login when not run through dfe-ops")
+    parser.add_argument("--org", default="acceptance", help="organisation to create when the deployment still owes its setup wizard")
+    parser.add_argument("--first-user", default="operator", help="first user to create when the deployment still owes its setup wizard")
     parser.add_argument("--archive-exec", action="append", default=[], metavar="PREFIX",
                         help="command prefix that runs a shell inside one archiver replica, for the "
                              "archive assertion; repeatable, one per replica (k8s: kubectl -n <ns> "
                              "exec <pod> --; docker: docker exec dfe-archiver)")
+    parser.add_argument("--restart-exec", default="", metavar="PREFIX",
+                        help="command prefix that restarts one app by service name, for the apps a "
+                             "deploy reports it cannot apply where they stand (docker: docker restart); "
+                             "unused on Kubernetes, where the controller rolls the pod")
     parser.add_argument("--case", default="filebeat", choices=("filebeat", "cloudwatch"),
                         help="filebeat pushes real lines at the receiver; cloudwatch authors a meta "
                              "schema and lets a fetcher pull an AWS upstream")
