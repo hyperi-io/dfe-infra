@@ -841,6 +841,69 @@ def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
     return base64.b64decode(raw).decode("utf-8") if raw else ""
 
 
+# helm/charts/dfe-fetcher/values.yaml credentials.secretName, and the two keys
+# the fetcher's cloudwatch_logs service reads out of it.
+FETCHER_CREDENTIALS_SECRET = "dfe-fetcher-credentials"
+FETCHER_CREDENTIAL_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+
+
+def _vault_kv(path: str, *, vault_cmd: str = "bao", env: dict | None = None, run=subprocess.run) -> dict:
+    """The key-value pair stored at *path*, read through the secrets CLI."""
+    done = run(
+        [vault_cmd, "kv", "get", "-format=json", path],
+        capture_output=True, text=True, env=env,
+    )
+    if done.returncode != 0:
+        first = (done.stderr or "").strip().splitlines()
+        raise RuntimeError(f"{vault_cmd} kv get {path} failed: {first[0] if first else 'no output'}")
+    payload = json.loads(done.stdout).get("data", {})
+    # kv v2 nests the pair one level deeper than kv v1.
+    return payload.get("data", payload)
+
+
+def fetcher_credentials_manifest(namespace: str, values: dict, name: str = FETCHER_CREDENTIALS_SECRET) -> str:
+    """The Secret the fetcher chart references, as a manifest for kubectl to apply."""
+    data = {key: base64.b64encode(values[key].encode("utf-8")).decode("ascii") for key in FETCHER_CREDENTIAL_KEYS}
+    return json.dumps(
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "type": "Opaque",
+            "metadata": {"name": name, "namespace": namespace},
+            "data": data,
+        },
+        sort_keys=True,
+    )
+
+
+def apply_fetcher_credentials(
+    kube: list[str], namespace: str, vault_path: str,
+    *, vault_cmd: str = "bao", env: dict | None = None, run=subprocess.run,
+) -> str:
+    """Put the fetcher's upstream credentials in the namespace, reading them from the store.
+
+    A fetched source needs its own credentials, and a run that mints them by hand
+    is a run nobody else can repeat. Nothing here logs a value: the caller gets
+    the key names and the path they came from.
+    """
+    values = _vault_kv(vault_path, vault_cmd=vault_cmd, env=env, run=run)
+    missing = [key for key in FETCHER_CREDENTIAL_KEYS if not values.get(key)]
+    if missing:
+        raise RuntimeError(f"{vault_path} carries no {', '.join(missing)}")
+    done = run(
+        [*kube, "-n", namespace, "apply", "-f", "-"],
+        input=fetcher_credentials_manifest(namespace, values),
+        capture_output=True, text=True, env=env,
+    )
+    if done.returncode != 0:
+        first = (done.stderr or "").strip().splitlines()
+        raise RuntimeError(f"kubectl apply of {FETCHER_CREDENTIALS_SECRET} failed: {first[0] if first else 'no output'}")
+    return (
+        f"{FETCHER_CREDENTIALS_SECRET} in {namespace}: "
+        f"{', '.join(FETCHER_CREDENTIAL_KEYS)} from {vault_path}"
+    )
+
+
 def _pods_of(kube: list[str], namespace: str, selector: str) -> list[str]:
     """Running pod names matching *selector*, newest-irrelevant, empty when none."""
     done = subprocess.run(
@@ -1198,6 +1261,21 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 runner += ["--resolve", pair]
             rc = subprocess.run(runner, env=env).returncode
         elif step == SOURCE_SUITE:
+            # Before the runner, not inside it: the fetcher's pod mounts the
+            # Secret at start, so a source deployed without it never polls.
+            if args.fetcher_credentials_vault_path:
+                bao_env = dict(env)
+                if settings.get("DFE_VAULT_ADDR") and not bao_env.get("VAULT_ADDR"):
+                    bao_env["VAULT_ADDR"] = settings["DFE_VAULT_ADDR"]
+                try:
+                    print(
+                        f"  fetcher credentials: {apply_fetcher_credentials(kube, namespace, args.fetcher_credentials_vault_path, vault_cmd=args.vault_cmd, env=bao_env)}",
+                        file=sys.stderr,
+                    )
+                except (RuntimeError, json.JSONDecodeError, OSError) as exc:
+                    stop.set()
+                    print(f"acceptance: fetcher credentials: {exc}", file=sys.stderr)
+                    return 1
             # The receiver, the datastore and the engine come from the same
             # forwards and DFE_E2E_* env the flow suite gets; the console and
             # the engine's login go through the gateway like onboarding.
@@ -3116,6 +3194,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "an AWS upstream a fetcher polls")
     ac.add_argument("--aws-service", default="cloudwatch_logs",
                     help="the AWS service the cloudwatch case polls")
+    ac.add_argument("--fetcher-credentials-vault-path", default="", metavar="PATH",
+                    help=f"secrets-store path holding {' and '.join(FETCHER_CREDENTIAL_KEYS)}; the source "
+                         f"suite puts them in the {FETCHER_CREDENTIALS_SECRET} Secret the fetcher chart "
+                         "references, before it creates a fetched source (default: leave the Secret alone)")
+    ac.add_argument("--vault-cmd", default=DEFAULT_VAULT_CMD,
+                    help="secrets CLI the credentials are read with: bao or vault")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)
