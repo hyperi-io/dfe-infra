@@ -106,6 +106,21 @@ ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/v
 LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
 echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION}"
 
+# Each operator below states its own Kubernetes window, so an under-floor cluster
+# fails inside one of them naming that operator rather than the cluster.
+# DFE_SKIP_PLATFORM_CHECK=true proceeds anyway.
+if [[ "${DFE_SKIP_PLATFORM_CHECK:-false}" == "true" ]]; then
+  echo "WARNING: DFE_SKIP_PLATFORM_CHECK=true -- not checking the cluster against platform.kubernetes" >&2
+else
+  # dfe-ops names the stack it is deploying, so check the floor of THAT stack
+  # rather than whatever `current` happens to point at.
+  platform_args=(--file "${REPO_ROOT}/versions.yaml")
+  if [[ -n "${DFE_STACK_VERSION:-}" ]]; then
+    platform_args+=(--stack "${DFE_STACK_VERSION}")
+  fi
+  python3 "${SCRIPT_DIR}/check_platform.py" "${platform_args[@]}"
+fi
+
 # Dry-run wrapper
 run() {
   if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then

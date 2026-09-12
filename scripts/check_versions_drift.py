@@ -562,6 +562,7 @@ CHECKS += [
 #
 # Patterns are exact keys or `section.*`.
 UNCONSUMED: dict[str, str] = {
+    "platform.*": "a REQUIREMENT on a cluster this repo does not build, so there is nothing here to drift against -- deployment.example.yaml takes an existing cluster and argocd/values/aws.yaml is a Plan 07 stub. Give platform.eks a Check once that stub becomes real provisioning",
     "bootstrap.cert-manager": "bootstrap.sh reads it at runtime (read_versions.py); no hardcoded copy",
     "bootstrap.external-secrets": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
