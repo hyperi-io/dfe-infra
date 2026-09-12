@@ -47,6 +47,11 @@
 #                            empty lets the pool choose
 #   DFE_RECEIVER_IP          address the receiver's public TCP LoadBalancer must
 #                            take; empty lets the pool choose
+#   DFE_LOCAL_PATH_DIR       directory on each node local-path-provisioner creates
+#                            its volumes under, when the bootstrap installs it
+#                            because the cluster has no StorageClass. Unset keeps
+#                            upstream's /opt/local-path-provisioner, on the root
+#                            filesystem of a node whose data disk is elsewhere.
 #   DFE_CLICKHOUSE_DEFAULT_TTL_DAYS  days every time-series table keeps rows, the
 #                            OTel tables included (default 90; 0 = no default
 #                            TTL). A source or a dfe-schemas definition with its
@@ -280,6 +285,23 @@ else
   run kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
   run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
   run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  # Upstream hands every node /opt/local-path-provisioner, so on a node whose data
+  # disk is mounted elsewhere every PV lands on the root filesystem.
+  if [[ -n "${DFE_LOCAL_PATH_DIR:-}" ]]; then
+    echo "  local-path volumes -> ${DFE_LOCAL_PATH_DIR}"
+    if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+      echo "[DRY-RUN] patch local-path-config config.json nodePathMap -> ${DFE_LOCAL_PATH_DIR}"
+    else
+      local_path_config="$(kubectl -n local-path-storage get configmap local-path-config \
+        -o jsonpath='{.data.config\.json}' \
+        | python3 "${SCRIPT_DIR}/local_path_dir.py" --dir "${DFE_LOCAL_PATH_DIR}")"
+      kubectl -n local-path-storage patch configmap local-path-config \
+        --type merge -p "$(python3 -c 'import json,sys; print(json.dumps({"data": {"config.json": sys.stdin.read()}}))' <<<"${local_path_config}")"
+      # The provisioner reads config.json at start; a running pod keeps the old path.
+      kubectl -n local-path-storage rollout restart deployment/local-path-provisioner
+      kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
+    fi
+  fi
 fi
 
 echo "==> [1c/7] Node labels (dedicated-worker placement)"

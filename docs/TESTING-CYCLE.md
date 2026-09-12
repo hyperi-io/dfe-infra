@@ -101,6 +101,11 @@ estate-specific; if it is estate-specific, it belongs in `.env` -- never both.
 One escape hatch lives there: `DFE_SKIP_PLATFORM_CHECK=true` installs onto a
 cluster outside `platform.kubernetes`, warning as it goes.
 
+`DFE_LOCAL_PATH_DIR` goes in the same file when the nodes keep their data off
+the root filesystem: the local-path-provisioner bootstrap installs creates its
+volumes there instead of upstream's `/opt/local-path-provisioner`. Unset is
+upstream's behaviour; an adopted StorageClass ignores it.
+
 ## The cluster contract ("vanilla Rancher") and preflight
 
 The product rule: assume a vanilla Rancher/RKE2 cluster and BRING what the
