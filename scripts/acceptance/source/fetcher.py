@@ -144,18 +144,31 @@ def schema_csv(case: AwsCase) -> str:
 
 
 def author_schema_in_console(driver, case: AwsCase, path: str, csv_file: Path, timeout_ms: int) -> str:
-    """Schemas > Add Schema: name it, upload the columns, review, save."""
+    """Meta Schemas > Add Schema: name it, upload the columns, review, create.
+
+    The columns go in as the console's own DFE CSV import rather than row by row
+    in the grid: it is the path an operator with a column list already in hand
+    takes, and it is the one the form validates as a whole.
+    """
     page = driver.page
-    page.get_by_role("link", name="Schemas", exact=True).first.click(timeout=timeout_ms)
-    page.wait_for_url("**/schemas**", timeout=timeout_ms)
+    # The nav entry and the page's own tab share the label, so the address is
+    # unambiguous where the link is not.
+    page.goto(f"{driver.ui}/schemas/meta-schemas", wait_until="domcontentloaded", timeout=timeout_ms)
     page.get_by_role("button", name="Add Schema").first.click(timeout=timeout_ms)
+    # The page carries a second, closed copy of this drawer for its empty state,
+    # so every control is taken from the open one rather than from the document.
+    form = page.locator(".ant-drawer-open")
+    form.wait_for(state="visible", timeout=timeout_ms)
     parent, _, leaf = path.partition("/")[2].rpartition("/")
-    page.get_by_placeholder("Enter path").fill(parent)
-    page.get_by_placeholder("Enter name").fill(leaf)
-    page.get_by_placeholder("Enter description").fill(case.summary)
-    page.locator("input[type=file]").first.set_input_files(str(csv_file))
-    page.get_by_role("button", name="Save").first.click(timeout=timeout_ms)
-    page.get_by_role("button", name="Save").last.click(timeout=timeout_ms)
+    form.get_by_placeholder("Enter path").first.fill(parent, timeout=timeout_ms)
+    form.get_by_placeholder("Enter name").first.fill(leaf, timeout=timeout_ms)
+    form.get_by_placeholder("Enter description").first.fill(case.summary, timeout=timeout_ms)
+    form.locator("input[type=file]").first.set_input_files(str(csv_file), timeout=timeout_ms)
+    # The uploaded tab appears only once the CSV parsed, so it is the proof the
+    # columns were read before anything is submitted.
+    form.get_by_role("tab", name="Uploaded Columns").wait_for(state="visible", timeout=timeout_ms)
+    form.get_by_role("button", name="Review Schema").first.click(timeout=timeout_ms)
+    form.get_by_role("button", name="Create Schema").first.click(timeout=timeout_ms)
     page.get_by_text("Schema created successfully").wait_for(timeout=timeout_ms)
     return f"the console authored {path} {SCHEMA_VERSION} with {len(case.columns)} columns"
 
@@ -194,8 +207,9 @@ def survey_origin(driver, timeout_ms: int) -> str:
     read for a fetcher control, and what it has instead is reported.
     """
     page = driver.page
-    page.get_by_role("link", name="Sources", exact=True).first.click(timeout=timeout_ms)
-    page.wait_for_url("**/sources**", timeout=timeout_ms)
+    # By address rather than by the nav link: an earlier step may have left a
+    # drawer open over it, and this survey's finding must not be that.
+    page.goto(f"{driver.ui}/sources", wait_until="domcontentloaded", timeout=timeout_ms)
     driver.button("Add Source").first.click(timeout=timeout_ms)
     page.get_by_placeholder("Enter source").wait_for(state="visible", timeout=timeout_ms)
     offers_fetcher = page.get_by_text("Source Type", exact=True).count()
