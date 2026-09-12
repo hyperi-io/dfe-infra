@@ -52,12 +52,10 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
     case.create(run)
     deployed = steps.record_deploy(run.driver, run.engine, case.name)
     steps.record_hyperdx_source(run.driver, run.engine, case.name, deployed)
-    hints = case.provision(run)
+    reloads = case.provision(run)
     # After the case's files, not before: a restart that beats them to disk
     # leaves the app idling on a transform it has no program for.
-    steps.apply_restarts(
-        run.driver, restart_exec, [*(deployed.get("restart_required") or []), *hints]
-    )
+    steps.apply_restarts(run.driver, restart_exec, case.service, reloads)
     steps.record_table(run.driver, run.store, case.name)
     steps.record_instance_up(
         run.driver, run.engine, case.service, case.name,
@@ -183,9 +181,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "archive assertion; repeatable, one per replica (k8s: kubectl -n <ns> "
                              "exec <pod> --; docker: docker exec dfe-archiver)")
     parser.add_argument("--restart-exec", default="", metavar="PREFIX",
-                        help="command prefix that restarts one app by service name, for the apps a "
-                             "deploy reports it cannot apply where they stand (docker: docker restart); "
-                             "unused on Kubernetes, where the controller rolls the pod")
+                        help="command prefix that restarts one app by service name, for a file-set "
+                             "write the engine answers with reload roll or restart (docker: docker "
+                             "restart); unused on Kubernetes, where the controller rolls the pod")
     parser.add_argument("--case", default="filebeat", choices=("filebeat", "cloudwatch"),
                         help="filebeat pushes real lines at the receiver; cloudwatch authors a meta "
                              "schema and lets a fetcher pull an AWS upstream")

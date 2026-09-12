@@ -52,7 +52,7 @@ class Engine:
 
     base: str
     user: str
-    password: str
+    password: str = field(repr=False)
     verify: bool = True
     token: str = field(default="", repr=False)
 

@@ -140,6 +140,7 @@ import base64
 import json
 import os
 import platform
+import re
 import secrets
 import shlex
 import shutil
@@ -902,6 +903,13 @@ def apply_fetcher_credentials(
     A fetched source needs its own credentials, and a run that mints them by hand
     is a run nobody else can repeat. Nothing here logs a value: the caller gets
     the key names and the path they came from.
+
+    Server-side, because a client-side apply keeps the whole submitted object in
+    kubectl.kubernetes.io/last-applied-configuration -- and kubectl describe
+    prints annotations while it redacts data, so the one command an operator
+    reaches for to check the Secret landed would print the credential.
+    --force-conflicts takes the fields back off the client-side manager on a
+    cluster where an earlier run made this Secret the old way.
     """
     values = _vault_kv(vault_path, vault_cmd=vault_cmd, env=env, run=run)
     missing = [
@@ -912,7 +920,8 @@ def apply_fetcher_credentials(
     if missing:
         raise RuntimeError(f"{vault_path} carries no {'; no '.join(missing)}")
     done = run(
-        [*kube, "-n", namespace, "apply", "-f", "-"],
+        [*kube, "-n", namespace, "apply", "--server-side", "--force-conflicts",
+         "--field-manager=dfe-ops", "-f", "-"],
         input=fetcher_credentials_manifest(namespace, values),
         capture_output=True, text=True, env=env,
     )
@@ -1330,6 +1339,11 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             for pair in resolve:
                 runner += ["--resolve", pair]
             rc = subprocess.run(runner, env=env).returncode
+            # The suite removes what it made: a run that minted the Secret takes
+            # it back out, so the namespace does not keep AWS keys between runs.
+            if args.fetcher_credentials_vault_path and not args.keep:
+                _run_text([*kube, "-n", namespace, "delete", "secret",
+                           FETCHER_CREDENTIALS_SECRET, "--ignore-not-found"], env=env)
         else:
             # Serial (-n 0, since the repo's addopts pin -n): every source the
             # flow suite writes rolls the receiver, so parallel workers would
@@ -2213,6 +2227,22 @@ _ADOPT_OR_INSTALL = (
 _LB_CONTROLLER_HINTS = ("metallb", "svclb", "cloud-controller", "cilium-operator", "aws-load-balancer")
 
 
+def _cloud_programs_loadbalancers(cloud: str) -> bool:
+    """Whether *cloud* brings its own LoadBalancer controller, as bootstrap decides it.
+
+    One decision, one place: the list is bootstrap.sh's DFE_CLOUD_LB_PROVIDERS,
+    read rather than copied, so preflight's INSTALL preview cannot say one thing
+    while step [3b/7] does another. An unreadable bootstrap.sh means on-prem,
+    which is the preview that names MetalLB.
+    """
+    try:
+        body = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    found = re.search(r'^DFE_CLOUD_LB_PROVIDERS="([^"]*)"', body, re.MULTILINE)
+    return bool(found) and cloud in found.group(1).split()
+
+
 def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple[int, dict, str]:
     """Run kubectl ... -o json and parse. Returns (rc, parsed-or-{}, stderr)."""
     rc, out, err = _run_text([*base, *argv, "-o", "json"], env=env)
@@ -2292,7 +2322,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     # The floor is versions.yaml's, read through check_platform's own parser, so
     # preflight refuses exactly what bootstrap refuses. The ceiling stays
     # bootstrap's warning to give: --strict here would make it a failure.
-    if not args.min_k8s:
+    min_k8s = args.min_k8s or _platform_k8s_requirement()
+    if not min_k8s:
         print(
             "  [FAIL] versions.yaml declares no platform.kubernetes for the current "
             "stack; pass --min-k8s",
@@ -2302,11 +2333,11 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     sys.path.insert(0, str(BOOTSTRAP))
     from check_platform import as_tuple, parse_requirement
 
-    floor_text = parse_requirement(args.min_k8s)[0]
+    floor_text = parse_requirement(min_k8s)[0]
     floor = as_tuple(floor_text)
     if not floor:
         print(
-            f"  [FAIL] --min-k8s {args.min_k8s!r} is not a version (want e.g. 1.34 "
+            f"  [FAIL] --min-k8s {min_k8s!r} is not a version (want e.g. 1.34 "
             f"or 1.34-1.36)",
             file=sys.stderr,
         )
@@ -2407,7 +2438,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         ok(f"LoadBalancer provider working ({len(lb_live)} Service(s) hold an address)")
     elif lb_ctrl:
         ok(f"LoadBalancer controller present: {lb_ctrl[0]}")
-    elif (file_env.get("DFE_CLOUD") or "") == "local":
+    elif not _cloud_programs_loadbalancers(file_env.get("DFE_CLOUD") or ""):
         # The same on-prem gate bootstrap's MetalLB step reads, so the preview
         # says INSTALL only where the step will actually run.
         ok("no LoadBalancer provider -> bootstrap INSTALLS MetalLB + the dfe-front-door pool "
@@ -3023,7 +3054,10 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* defaults from a terraform env dir (env files win over it)")
     pf.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="a node label Ready workers MUST carry (repeatable) -- catches the wrong-cluster trap")
     pf.add_argument("--registry", default="ghcr.io", help="registry HOST to check reachability of (from this machine)")
-    pf.add_argument("--min-k8s", default=_platform_k8s_requirement(), help="minimum Kubernetes server version; defaults to the current stack's platform.kubernetes in versions.yaml, the floor bootstrap enforces")
+    # Resolved in cmd_preflight, not here: build_parser runs for every subcommand
+    # and for --help, and a versions.yaml this could not parse would take all of
+    # them down naming preflight.
+    pf.add_argument("--min-k8s", default="", help="minimum Kubernetes server version; defaults to the current stack's platform.kubernetes in versions.yaml, the floor bootstrap enforces")
     pf.add_argument("--strict", action="store_true", help="treat warnings as failures")
     pf.set_defaults(func=cmd_preflight)
 

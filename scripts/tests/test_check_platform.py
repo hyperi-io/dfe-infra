@@ -221,17 +221,22 @@ def test_the_current_stack_declares_the_platform() -> None:
 
 
 def test_preflight_defaults_to_the_same_floor() -> None:
-    """Two readers, one floor: preflight must not pass what bootstrap refuses."""
+    """Two readers, one floor: preflight must not pass what bootstrap refuses.
+
+    The default is resolved when preflight runs, not when the parser is built, so
+    what this checks is the resolver -- and that no other subcommand pays for it.
+    """
     loader = importlib.machinery.SourceFileLoader("dfeops_platform", str(REPO_ROOT / "scripts" / "dfe-ops"))
     spec = importlib.util.spec_from_loader("dfeops_platform", loader)
     dfeops = importlib.util.module_from_spec(spec)
     sys.modules["dfeops_platform"] = dfeops
     loader.exec_module(dfeops)
     args = dfeops.build_parser().parse_args(["preflight"])
+    expect("an unset --min-k8s stays unset in the parser", args.min_k8s == "", f"got {args.min_k8s!r}")
     expect(
-        "preflight --min-k8s defaults to platform.kubernetes",
-        args.min_k8s == _committed_platform()["kubernetes"],
-        f"got {args.min_k8s!r}",
+        "preflight resolves it to platform.kubernetes",
+        dfeops._platform_k8s_requirement() == _committed_platform()["kubernetes"],
+        f"got {dfeops._platform_k8s_requirement()!r}",
     )
 
 

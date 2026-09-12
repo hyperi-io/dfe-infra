@@ -62,7 +62,9 @@ def as_tuple(version: str) -> tuple[int, ...]:
 
     Build metadata (`+rke2r1`) carries digits that are not version parts, so it
     is cut before the parts are read; EKS reports a minor of `34+`, so anything
-    that is not a digit run is dropped rather than parsed.
+    that is not a digit run is dropped rather than parsed. That cut also puts
+    v1.36.4+rke2r1 and +rke2r2 on the same tuple, so a platform.rke2 floor
+    cannot name a build revision -- only a Kubernetes version.
     """
     return tuple(int(p) for p in re.findall(r"\d+", version.partition("+")[0]))
 

@@ -22,6 +22,7 @@ here opens a socket.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -149,10 +150,11 @@ class FakeEngine:
 
     ON_DISK: ClassVar[dict[str, int]] = {"filebeat.vrl": len(PROGRAM), "timezones.csv": len(TABLE)}
 
-    def __init__(self, transform: str = "vrl", committed: bool = True) -> None:
+    def __init__(self, transform: str = "vrl", committed: bool = True, reload: str = "roll") -> None:
         self.base = "https://dfe.example"
         self.verify = False
         self.token = "t"
+        self.reload = reload
         self.source = {"current": "1.0.0", "deployed_version": "1.0.0",
                        "transform": {"engine": transform} if transform else {}}
         self.committed = committed
@@ -163,8 +165,7 @@ class FakeEngine:
         self.calls.append((method, path))
         if method == "PUT" and "/files/" in path:
             self.written[path] = str((body or {}).get("content") or "")
-            return reply(200, {"changed": True, "reload": "roll",
-                               "restart_required": ["docker restart dfe-transform-vrl"]})
+            return reply(200, {"changed": True, "reload": self.reload})
         if method == "GET" and "/files/" in path:
             if not self.committed:
                 return reply(404, {"message": "no such file"})
@@ -343,21 +344,21 @@ class TestTheFilebeatCaseCreate:
 
 
 class TestTheFilebeatCaseProvision:
-    def _provision(self, transform_repo, missing=(), committed=True):
+    def _provision(self, transform_repo, missing=(), committed=True, reload="roll"):
         driver = FakeDriver(FakePage(missing=missing))
-        engine = FakeEngine(committed=committed)
+        engine = FakeEngine(committed=committed, reload=reload)
         case = cases.build(parse())
-        hints = case.provision(a_run(driver, engine, parse(), case.name, transform_repo))
-        return driver, engine, case, hints
+        reloads = case.provision(a_run(driver, engine, parse(), case.name, transform_repo))
+        return driver, engine, case, reloads
 
     def test_the_console_commits_both_files_and_the_row_reads_done(self, transform_repo):
-        driver, _, _, hints = self._provision(transform_repo)
+        driver, _, _, reloads = self._provision(transform_repo)
 
         assert driver.rows == ["upload-program"]
         assert driver.status("upload-program") == "done"
         assert "filebeat.vrl" in driver.detail("upload-program")
         assert "timezones.csv" in driver.detail("upload-program")
-        assert hints == []
+        assert reloads == []
 
     def test_it_opens_the_sources_processing_tab_for_the_instance_it_wrote_to(self, transform_repo):
         driver, _, case, _ = self._provision(transform_repo)
@@ -386,10 +387,11 @@ class TestTheFilebeatCaseProvision:
         assert engine.written[f"/apps/{case.service}/{case.name}/files/transforms/filebeat.vrl"] == PROGRAM
         assert engine.written[f"/apps/{case.service}/{case.name}/files/enrichment/timezones.csv"] == TABLE
 
-    def test_the_fallback_carries_the_restarts_the_writes_asked_for(self, transform_repo):
-        _, _, _, hints = self._provision(transform_repo, missing=("button:New file",))
+    def test_the_fallback_carries_the_reload_each_write_reported(self, transform_repo):
+        """The write reply is the only place a released engine says how it reaches the process."""
+        _, _, _, reloads = self._provision(transform_repo, missing=("button:New file",))
 
-        assert hints == ["docker restart dfe-transform-vrl"] * 2
+        assert reloads == ["roll", "roll"]
 
     def test_a_commit_the_engine_never_took_is_a_fallback_not_a_pass(self, transform_repo, monkeypatch):
         """The console's own notice is per panel, so the engine is what is asked."""
@@ -398,6 +400,61 @@ class TestTheFilebeatCaseProvision:
 
         assert driver.status("upload-program") == "api-fallback"
         assert "was not committed" in driver.detail("upload-program")
+
+
+class TestTheRestartStep:
+    """``reload`` decides, and on Compose ``roll`` needs the same hand as ``restart``."""
+
+    SERVICE = "dfe-transform-vrl"
+
+    def _apply(self, monkeypatch, prefix, reloads, returncode=0):
+        ran: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            ran.append(list(argv))
+            return subprocess.CompletedProcess(argv, returncode, "", "no such service")
+
+        monkeypatch.setattr(steps.subprocess, "run", fake_run)
+        driver = FakeDriver(FakePage())
+        steps.apply_restarts(driver, prefix, self.SERVICE, reloads)
+        return driver, ran
+
+    def test_hot_needs_nobody(self, monkeypatch):
+        driver, ran = self._apply(monkeypatch, ["docker", "restart"], ["hot", "hot"])
+
+        assert driver.status("restart") == "skipped"
+        assert ran == []
+
+    def test_kubernetes_leaves_roll_to_the_controller(self, monkeypatch):
+        driver, ran = self._apply(monkeypatch, [], ["roll"])
+
+        assert driver.status("restart") == "skipped"
+        assert ran == []
+
+    def test_compose_restarts_the_instance_service_on_roll(self, monkeypatch):
+        """Nothing on Compose rolls a container, so the app keeps its old topics."""
+        driver, ran = self._apply(monkeypatch, ["docker", "restart"], ["roll", "hot"])
+
+        assert driver.status("restart") == "done"
+        assert ran == [["docker", "restart", self.SERVICE]]
+
+    def test_restart_with_no_way_to_do_it_is_a_failed_row(self, monkeypatch):
+        driver, ran = self._apply(monkeypatch, [], ["restart"])
+
+        assert driver.status("restart") == "failed"
+        assert "--restart-exec" in driver.detail("restart")
+        assert ran == []
+
+    def test_a_refused_restart_is_the_finding(self, monkeypatch):
+        driver, _ = self._apply(monkeypatch, ["docker", "restart"], ["restart"], returncode=1)
+
+        assert driver.status("restart") == "failed"
+        assert "no such service" in driver.detail("restart")
+
+    def test_the_service_comes_from_the_case_because_the_reply_names_none(self, monkeypatch):
+        _, ran = self._apply(monkeypatch, ["docker", "restart"], ["restart"])
+
+        assert ran == [["docker", "restart", self.SERVICE]]
 
 
 class TestTheOrderTheRunnerWalks:

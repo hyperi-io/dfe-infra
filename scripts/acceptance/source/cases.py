@@ -81,7 +81,7 @@ class Case:
     def provision(self, run: Run) -> list[str]:
         """Files the deployed instance needs, written once the deploy has made it.
 
-        Returns the restart hints the writes reported, for the shared restart step.
+        Returns the ``reload`` mode each write reported, for the shared restart step.
         """
         return []
 
@@ -245,16 +245,16 @@ class FilebeatCase(Case):
             (self.ENRICHMENT_SET, Path(self.ENRICHMENT).name, (run.transform_repo / self.ENRICHMENT).read_text(encoding="utf-8")),
         ]
         console_detail, api_detail, refused = "", "", ""
-        hints: list[str] = []
+        reloads: list[str] = []
         try:
             console_detail = self._upload_in_console(run, wanted)
         except Exception as exc:  # the console refusing the control IS the finding
             refused = steps.refusal(exc)
         if refused:
-            api_detail, hints = self._upload_by_api(run, wanted)
+            api_detail, reloads = self._upload_by_api(run, wanted)
         status, detail = steps.console_outcome(console_detail, refused, api_detail)
         run.driver.record("upload-program", status, detail)
-        return hints
+        return reloads
 
     def _upload_in_console(self, run: Run, wanted: list[tuple[str, str, str]]) -> str:
         """Processing tab -> the instance's file sets -> one commit per file."""
@@ -313,13 +313,14 @@ class FilebeatCase(Case):
             time.sleep(5)
 
     def _upload_by_api(self, run: Run, wanted: list[tuple[str, str, str]]) -> tuple[str, list[str]]:
-        """The same files through the engine, and the restarts the writes call for.
+        """The same files through the engine, and the reload each write reported.
 
         The instance's config is only rendered with the source's topics once the
         overlay exists, so these writes are where a Compose deployment learns it
-        must roll the app, not the deploy before them.
+        must restart the app, not the deploy before them -- which reports no
+        reload at all.
         """
-        told, hints = [], []
+        told, reloads = [], []
         for set_name, filename, content in wanted:
             reply = run.engine.call(
                 "PUT", f"/apps/{self.service}/{self.name}/files/{set_name}/{filename}",
@@ -328,8 +329,8 @@ class FilebeatCase(Case):
             if reply.status not in (200, 201):
                 raise RuntimeError(f"the {set_name} upload was refused: {reply.status} {reply.body}")
             told.append(f"{filename} {len(content)} bytes accepted")
-            hints += [str(h) for h in ((reply.body or {}).get("restart_required") or [])]
-        return ", ".join(told), hints
+            reloads.append(str((reply.body or {}).get("reload") or ""))
+        return ", ".join(told), reloads
 
     # -- feed and prove -------------------------------------------------------
 

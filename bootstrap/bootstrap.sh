@@ -172,6 +172,17 @@ dfe_should_install() {
   return 0
 }
 
+# The clouds whose own controller programs a LoadBalancer Service. Everything
+# else is on-prem, whatever a deployment calls itself -- local, local-dfe, an
+# estate name -- so the list is the clouds, not the on-prem names. dfe-ops
+# preflight reads this same line so its INSTALL preview matches step [3b/7];
+# scripts/tests/test_pinned_addresses.py holds the two together.
+DFE_CLOUD_LB_PROVIDERS="aws gcp az azure"
+
+dfe_cloud_programs_loadbalancers() {
+  [[ " ${DFE_CLOUD_LB_PROVIDERS} " == *" ${DFE_CLOUD} "* ]]
+}
+
 # Validate required variables
 required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
@@ -193,6 +204,9 @@ export DFE_DNS_PROVIDER="${DFE_DNS_PROVIDER:-none}"
 # devex/local enforces DFE onto its dedicated workers via a HARD nodeSelector
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is
 # satisfiable; a shared/customer cluster labels its own nodes at provisioning.
+# Deliberately NARROWER than dfe_cloud_programs_loadbalancers: that one asks who
+# programs a LoadBalancer, this one asks whether every node in the cluster is
+# ours to label, and on a shared on-prem cluster it is not.
 DFE_LABEL_WORKLOAD_NODES="${DFE_LABEL_WORKLOAD_NODES:-$([[ "${DFE_CLOUD:-}" == "local" ]] && echo true || echo false)}"
 # The certified stack version; empty when a bare bootstrap names none, and the
 # engine then falls back to the deploy repo's pins.
@@ -350,12 +364,9 @@ fi
 echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"
 # Nothing programs a LoadBalancer Service on a bare on-prem cluster, so the
 # Envoy Gateway and the receiver's public door sit Pending forever.
-# Only a cloud brings its own controller, so the list is the clouds, not the
-# on-prem names: a deployment names itself local, local-dfe or its own estate.
-case "${DFE_CLOUD}" in aws | gcp | az | azure)
+if dfe_cloud_programs_loadbalancers; then
   echo "  DFE_CLOUD=${DFE_CLOUD}: the cloud LoadBalancer controller programs the Services -- MetalLB skipped"
-  ;;
-*)
+else
   if dfe_should_install metallb ipaddresspools.metallb.io metallb-system metallb-controller; then
     run helm upgrade --install metallb metallb/metallb \
       --namespace metallb-system --create-namespace \
@@ -389,8 +400,7 @@ case "${DFE_CLOUD}" in aws | gcp | az | azure)
       echo "  Applied the dfe-front-door IPAddressPool + L2Advertisement"
     fi
   fi
-  ;;
-esac
+fi
 
 echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then

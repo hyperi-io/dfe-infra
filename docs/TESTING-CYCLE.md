@@ -150,7 +150,7 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
 | `stack-deploy` | offline pin/drift/render preflight, then `bootstrap/bootstrap.sh` (Layer 0/1 + Argo profile sync at the pinned stack) | bounded readiness + the 2 default E2E tests (receiver->CH data path, self-monitoring OTel) |
 | `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration |
 | `acceptance` | `onboarding` drives the setup wizard and first console session in Chrome (`--console-only` on a deploy already set up); `flows` is the engine repo's live pytest suite over port-forwards; `source` is the section below; a suite needing a source the deployment already carries goes through the pytest passthrough | `all` runs onboarding FIRST and stops on it: a deployment nobody could have onboarded has failed whatever the data path then does. The wizard's screens come from the engine's own `auth/setup-status`, so a screen the deployment no longer asks for is a failure, not a variation |
-| `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then dfe-ui's Playwright specs tagged `@acceptance` over `--ui-url` or a port-forward | the key UI features on a credential that differs from the build default -- see [ACCEPTANCE-AUTOMATION.md](ACCEPTANCE-AUTOMATION.md) |
+| `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then dfe-ui's Playwright specs tagged `@acceptance` over `--ui-url` or a port-forward | the key UI features on a credential that differs from the build default |
 | `teardown` | `bootstrap/destroy.sh` (`--with-terraform` also destroys IaC state) | leaves the cluster as preflight found it |
 | `refresh` (not a cycle stage) | the section above | the tracked ref landed and every tracked Application is Synced + Healthy, then bounded readiness + the full smoke suite |
 
@@ -159,40 +159,13 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
 Not part of the stock POST: the default E2E tests prove the deploy moved data,
 these prove an operator can add a source and watch it work. Run on demand after
 a deploy, here and on docker through dfe-docker's `make test-source`, which
-calls the same runner -- `scripts/acceptance/source/` (`run.py` the order the
-steps happen in, `steps.py` what every source shares, `cases.py` the two kinds,
-`fetcher.py` the AWS upstreams) over `acceptance/clients.py`, the engine and
-datastore both suites use. dfe-ops supplies the port-forwards, the `DFE_E2E_*`
-env and the archiver exec prefix.
+calls the same runner. Two cases, chosen with `--source-case`: `filebeat` (the
+default) pushes a real corpus at the receiver, and `cloudwatch` (run as
+`--aws-service cloudtrail`) lets a fetcher pull an AWS upstream.
 
-Two cases, chosen with `--source-case`:
+The CloudWatch case needs a SIXTH env file naming the upstream
+(`.tmp/aws-test.env`: `DFE_AWS_REGION`, `DFE_AWS_LOG_GROUP`), and
+`--fetcher-credentials-vault-path kv/<path>` to put the AWS keys in the Secret
+the fetcher chart names before the source is created.
 
-- `filebeat` (the default). The console creates the source -- Configuration tab
-  (name, display name, description, Archive on, match `_source equals <name>`),
-  Meta Schema tab (the shipped `common-header/timeseries` 1.0.1 and
-  `meta/beats/filebeat` 1.0.0), then the Transform tab that unlocks (Define
-  Transform -> `dfe-transform-vrl`). After the deploy the source's Processing tab
-  puts the bundled `pipelines/filebeat/filebeat.vrl` and `timezones.csv` from the
-  dfe-transform-vrl checkout (`--transform-repo`) into the instance's file sets.
-  The filebeat corpus is posted at the receiver wrapped as
-  `{message, tags, _source}`. Proof: the transform instance reports, the receiver
-  routes, new rows in `<name>` carry `log_file_path` (only the program sets it),
-  a zstd file appears under `<name>_land` in the archiver (`--archive-selector`
-  names the pods, one exec per replica since each archives only its partitions),
-  and the engine lists a HyperDX source for it.
-- `cloudwatch`, run as `--aws-service cloudtrail`. The meta schema is authored by
-  hand in the console, the fetcher stanza goes through the API (no fetcher origin
-  in the console yet, dfe-ui #286), and the proof is rows arriving on their own
-  within a poll interval. A sixth env file names the upstream
-  (`.tmp/aws-test.env`: `DFE_AWS_REGION`, `DFE_AWS_LOG_GROUP`), and
-  `--fetcher-credentials-vault-path kv/<path>` reads `AWS_ACCESS_KEY_ID` and
-  `AWS_SECRET_ACCESS_KEY` out of the secrets store into the Secret the chart
-  names (`helm/charts/dfe-fetcher` `credentials.secretName`) before the source is
-  created, so no run mints it by hand; nothing is written to AWS. The test
-  account's CloudWatch Logs group is empty by construction, so CloudTrail is the
-  service that proves anything.
-
-Every step lands a screenshot under `--shots-dir`, and the run removes the source
-it made (`--keep` leaves it). A step the console cannot do goes through the API
-and is recorded as `api-fallback`, so the report says which half of the product
-was driven.
+What each case does and what proves it: [SOURCE-SUITE.md](SOURCE-SUITE.md).

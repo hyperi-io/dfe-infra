@@ -202,11 +202,21 @@ def test_bootstrap_installs_metallb_on_prem_only() -> None:
     """A cloud target already has a LoadBalancer controller; two would fight."""
     body = BOOTSTRAP.read_text(encoding="utf-8")
     # A deployment picks its own on-prem name, so the gate lists the clouds.
-    expect("the MetalLB step skips only the clouds",
-           'case "${DFE_CLOUD}" in aws | gcp | az | azure)' in body, "the gate is missing")
+    expect("the clouds are declared in one place",
+           'DFE_CLOUD_LB_PROVIDERS="aws gcp az azure"' in body, "the list is missing")
+    expect("the MetalLB step asks that list",
+           "if dfe_cloud_programs_loadbalancers; then" in body, "the gate is missing")
     expect("the chart version comes from versions.yaml, not the script",
            "bootstrap.metallb" in body and '--version "${METALLB_VERSION}"' in body,
            "the version is not read from the SSoT")
+
+
+def test_preflight_previews_metallb_off_the_same_list() -> None:
+    """Cluster B is local-dfe: a preview keyed on the literal 'local' warned where it installs."""
+    for cloud in ("aws", "gcp", "az", "azure"):
+        expect(f"{cloud} programs its own LoadBalancers", dfeops._cloud_programs_loadbalancers(cloud))
+    for cloud in ("local", "local-dfe", "tyrell", ""):
+        expect(f"{cloud!r} does not", not dfeops._cloud_programs_loadbalancers(cloud))
 
 
 def test_bootstrap_applies_the_pool_only_with_both_addresses() -> None:

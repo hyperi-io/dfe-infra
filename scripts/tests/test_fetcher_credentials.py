@@ -27,6 +27,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -114,7 +116,17 @@ def test_nothing_beside_the_two_credentials_reaches_the_secret():
 def test_it_applies_through_the_caller_s_kubectl_and_namespace():
     rec = Recorder(_kv_v2(AWS_ACCESS_KEY_ID=SECRET_ID, AWS_SECRET_ACCESS_KEY=SECRET_KEY))
     dfe_ops.apply_fetcher_credentials(KUBE, "dfe-b", "kv/dfe-test/aws", run=rec)
-    assert rec.calls[1]["cmd"] == [*KUBE, "-n", "dfe-b", "apply", "-f", "-"]
+    assert rec.calls[1]["cmd"] == [
+        *KUBE, "-n", "dfe-b", "apply", "--server-side", "--force-conflicts",
+        "--field-manager=dfe-ops", "-f", "-",
+    ]
+
+
+def test_the_apply_is_server_side_so_no_annotation_carries_the_values():
+    """kubectl describe prints annotations and redacts data, so a client-side apply leaks."""
+    rec = Recorder(_kv_v2(AWS_ACCESS_KEY_ID=SECRET_ID, AWS_SECRET_ACCESS_KEY=SECRET_KEY))
+    dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
+    assert "--server-side" in rec.calls[1]["cmd"]
 
 
 def test_the_store_is_read_with_the_named_cli():
@@ -128,7 +140,8 @@ def test_no_value_reaches_the_returned_line():
     detail = dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
     assert SECRET_ID not in detail
     assert SECRET_KEY not in detail
-    assert "AWS_ACCESS_KEY_ID" in detail and "kv/dfe-test/aws" in detail
+    assert "AWS_ACCESS_KEY_ID" in detail
+    assert "kv/dfe-test/aws" in detail
 
 
 def test_no_value_reaches_the_command_line():
@@ -142,58 +155,40 @@ def test_no_value_reaches_the_command_line():
 
 def test_a_half_populated_path_is_refused_before_anything_is_applied():
     rec = Recorder(_kv_v2(access_key_id=SECRET_ID))
-    try:
+    # Both accepted names are named, so the reader knows what to add.
+    with pytest.raises(RuntimeError, match="AWS_SECRET_ACCESS_KEY or secret_access_key"):
         dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
-        raise AssertionError("a path missing a key was accepted")
-    except RuntimeError as exc:
-        # Both accepted names are named, so the reader knows what to add.
-        assert "AWS_SECRET_ACCESS_KEY or secret_access_key" in str(exc)
     assert len(rec.calls) == 1
 
 
 def test_a_store_that_refuses_is_reported_without_its_output_body():
     rec = Recorder(kv_rc=2, kv_stderr="Error making API request.\nCode: 403. Errors:\n* permission denied")
-    try:
+    with pytest.raises(RuntimeError, match=r"Error making API request\.") as refused:
         dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
-        raise AssertionError("a failed read was accepted")
-    except RuntimeError as exc:
-        assert "Error making API request." in str(exc)
-        assert "permission denied" not in str(exc)
+    assert "permission denied" not in str(refused.value)
 
 
 def test_a_refused_apply_is_a_failure_not_a_silent_pass():
     rec = Recorder(
         _kv_v2(AWS_ACCESS_KEY_ID=SECRET_ID, AWS_SECRET_ACCESS_KEY=SECRET_KEY),
-        apply_rc=1, apply_stderr='Error from server (Forbidden): secrets is forbidden',
+        apply_rc=1, apply_stderr="Error from server (Forbidden): secrets is forbidden",
     )
-    try:
+    with pytest.raises(RuntimeError, match="dfe-fetcher-credentials") as refused:
         dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
-        raise AssertionError("a failed apply was accepted")
-    except RuntimeError as exc:
-        assert "dfe-fetcher-credentials" in str(exc) and "Forbidden" in str(exc)
+    assert "Forbidden" in str(refused.value)
 
 
-def test_the_default_is_to_leave_the_secret_alone():
+def test_the_default_is_to_leave_the_secret_alone(tmp_path):
     """An unset path is the default, so the flag adds nothing to a run that does not ask."""
     parser = dfe_ops.build_parser()
-    args = parser.parse_args(["acceptance", "--repo", "/tmp", "--suite", "source"])
+    args = parser.parse_args(["acceptance", "--repo", str(tmp_path), "--suite", "source"])
     assert args.fetcher_credentials_vault_path == ""
     assert args.vault_cmd == "bao"
 
 
 # --- standalone runner (mirrors the other tests in this dir) ------------------
 def main() -> int:
-    failures = 0
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
-    for name, fn in tests:
-        try:
-            fn()
-            print(f"PASS  {name}")
-        except Exception as exc:
-            failures += 1
-            print(f"FAIL  {name}  {exc}")
-    print(f"\n{'FAILED' if failures else 'ALL PASSED'} -- {failures} failure(s)")
-    return 1 if failures else 0
+    return pytest.main([__file__, "-q"])
 
 
 if __name__ == "__main__":
