@@ -18,7 +18,13 @@ Run it before installing anything:
     python3 check_platform.py                  # against the current kubecontext
     python3 check_platform.py --actual 1.33    # against a version you name
 
-Exits 3 when the cluster is below the floor, 0 when it meets it.
+`platform.kubernetes` is checked on every target. `platform.rke2` is checked as
+well when the cluster reports `+rke2` in gitVersion, which is the on-prem side;
+`platform.rancher` is declared rather than checked, because nothing in a cluster
+reports the Rancher managing it.
+
+Exits 3 when the cluster is below a floor, 0 when it meets it. A cluster above
+the ceiling warns and proceeds: untested is not the same as unsupported.
 """
 
 import argparse
@@ -42,8 +48,11 @@ def parse_requirement(raw: str) -> tuple[str, str | None]:
     value = raw.strip()
     if value.startswith(">="):
         return value[2:].strip(), None
-    if "-" in value and not value.startswith("v"):
-        low, _, high = value.partition("-")
+    # Decide range-or-exact on the bare number: a leading `v` is a prefix, not a
+    # separator, so `v1.34-v1.36` is a range and `v1.36.4+rke2r1` is not.
+    bare = value[1:] if value.startswith("v") else value
+    if "-" in bare:
+        low, _, high = bare.partition("-")
         return low.strip(), high.strip()
     return value, value
 
@@ -51,14 +60,20 @@ def parse_requirement(raw: str) -> tuple[str, str | None]:
 def as_tuple(version: str) -> tuple[int, ...]:
     """Numeric parts of a version, so 1.34 and v1.34.11+rke2r1 compare.
 
-    Distributions append build metadata (`+rke2r1`) and EKS reports a minor of
-    `34+`, so anything that is not a digit run is dropped rather than parsed.
+    Build metadata (`+rke2r1`) carries digits that are not version parts, so it
+    is cut before the parts are read; EKS reports a minor of `34+`, so anything
+    that is not a digit run is dropped rather than parsed.
     """
-    return tuple(int(p) for p in re.findall(r"\d+", version))
+    return tuple(int(p) for p in re.findall(r"\d+", version.partition("+")[0]))
 
 
-def cluster_version() -> str:
-    """The target cluster's server version, via kubectl."""
+def above_ceiling(actual: tuple[int, ...], ceiling: tuple[int, ...]) -> bool:
+    """Compare at the ceiling's own precision: v1.36.4 is not above a 1.36 ceiling."""
+    return actual[: len(ceiling)] > ceiling
+
+
+def cluster_version() -> tuple[str, str]:
+    """The target cluster's (major.minor, gitVersion), via kubectl."""
     out = subprocess.run(
         ["kubectl", "version", "-o", "json"],
         capture_output=True,
@@ -66,7 +81,7 @@ def cluster_version() -> str:
         check=True,
     ).stdout
     server = json.loads(out)["serverVersion"]
-    return f"{server['major']}.{server['minor']}"
+    return f"{server['major']}.{server['minor']}", server.get("gitVersion", "")
 
 
 def main() -> int:
@@ -76,7 +91,8 @@ def main() -> int:
     parser.add_argument(
         "--actual",
         default=None,
-        help="Cluster version to check instead of asking kubectl",
+        help="Cluster version to check instead of asking kubectl (a gitVersion "
+        "such as v1.36.4+rke2r1 drives the rke2 check too)",
     )
     args = parser.parse_args()
 
@@ -99,7 +115,7 @@ def main() -> int:
         return 1
 
     try:
-        actual = args.actual or cluster_version()
+        actual, git_version = (args.actual, args.actual) if args.actual else cluster_version()
     except (subprocess.CalledProcessError, FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
         print(f"ERROR: could not read the cluster version: {exc}", file=sys.stderr)
         return 1
@@ -117,7 +133,7 @@ def main() -> int:
         )
         return 3
 
-    if ceiling and actual_t > as_tuple(ceiling):
+    if ceiling and above_ceiling(actual_t, as_tuple(ceiling)):
         print(
             f"WARNING: cluster is Kubernetes {actual}, above the {ceiling} this "
             f"stack was tested against. Proceeding.",
@@ -125,6 +141,22 @@ def main() -> int:
         )
 
     print(f"platform: Kubernetes {actual} meets {required} (stack {stack_name})")
+
+    # The on-prem half. RKE2 names itself in gitVersion, so it can be checked;
+    # the Rancher managing the cluster is invisible from inside it, so
+    # platform.rancher stays a declaration.
+    rke2_required = platform.get("rke2")
+    if rke2_required and "+rke2" in git_version:
+        rke2_floor = as_tuple(parse_requirement(rke2_required)[0])
+        if as_tuple(git_version) < rke2_floor:
+            print(
+                f"REFUSED: cluster is RKE2 {git_version}, and stack {stack_name} "
+                f"requires rke2 {rke2_required}.",
+                file=sys.stderr,
+            )
+            return 3
+        print(f"platform: RKE2 {git_version} meets {rke2_required} (stack {stack_name})")
+
     return 0
 
 

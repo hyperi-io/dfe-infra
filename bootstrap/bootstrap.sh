@@ -112,7 +112,13 @@ echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${
 if [[ "${DFE_SKIP_PLATFORM_CHECK:-false}" == "true" ]]; then
   echo "WARNING: DFE_SKIP_PLATFORM_CHECK=true -- not checking the cluster against platform.kubernetes" >&2
 else
-  python3 "${SCRIPT_DIR}/check_platform.py" --file "${REPO_ROOT}/versions.yaml"
+  # dfe-ops names the stack it is deploying, so check the floor of THAT stack
+  # rather than whatever `current` happens to point at.
+  platform_args=(--file "${REPO_ROOT}/versions.yaml")
+  if [[ -n "${DFE_STACK_VERSION:-}" ]]; then
+    platform_args+=(--stack "${DFE_STACK_VERSION}")
+  fi
+  python3 "${SCRIPT_DIR}/check_platform.py" "${platform_args[@]}"
 fi
 
 # Dry-run wrapper

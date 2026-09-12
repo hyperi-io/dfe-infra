@@ -1986,6 +1986,24 @@ def _current_stack() -> str:
     return out.strip() if rc == 0 else ""
 
 
+def _platform_k8s_requirement() -> str:
+    """The current stack's `platform.kubernetes` string, empty if unreadable.
+
+    Preflight and bootstrap/check_platform.py have to refuse the same clusters,
+    so preflight reads the same key instead of carrying a literal floor that
+    goes stale the moment the stack moves.
+    """
+    sys.path.insert(0, str(BOOTSTRAP))
+    from check_platform import load_versions
+
+    try:
+        root = load_versions(REPO_ROOT / "versions.yaml")
+    except OSError:
+        return ""
+    stack = (root.get("stacks") or {}).get(root.get("current")) or {}
+    return str((stack.get("platform") or {}).get("kubernetes") or "")
+
+
 def _resolve_stack(args: argparse.Namespace) -> int:
     """Fill in an unset --stack from versions.yaml, which owns that pointer.
 
@@ -2172,15 +2190,33 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         sv = (int(server.get("major", "0")), int(server.get("minor", "0").rstrip("+")))
     except ValueError:
         sv = (0, 0)
-    try:
-        floor = tuple(int(p.rstrip("+")) for p in args.min_k8s.split("."))
-    except ValueError:
-        print(f"  [FAIL] --min-k8s {args.min_k8s!r} is not a version (want e.g. 1.28)", file=sys.stderr)
+    # The floor is versions.yaml's, read through check_platform's own parser, so
+    # preflight refuses exactly what bootstrap refuses. The ceiling stays
+    # bootstrap's warning to give: --strict here would make it a failure.
+    if not args.min_k8s:
+        print(
+            "  [FAIL] versions.yaml declares no platform.kubernetes for the current "
+            "stack; pass --min-k8s",
+            file=sys.stderr,
+        )
         return 2
-    if sv >= floor:
-        ok(f"API server {git_version} (>= {args.min_k8s})")
+    sys.path.insert(0, str(BOOTSTRAP))
+    from check_platform import as_tuple, parse_requirement
+
+    floor_text = parse_requirement(args.min_k8s)[0]
+    floor = as_tuple(floor_text)
+    if not floor:
+        print(
+            f"  [FAIL] --min-k8s {args.min_k8s!r} is not a version (want e.g. 1.34 "
+            f"or 1.34-1.36)",
+            file=sys.stderr,
+        )
+        return 2
+    # The server reports major.minor, so judge the floor at that precision.
+    if sv >= floor[: len(sv)]:
+        ok(f"API server {git_version} (>= {floor_text})")
     else:
-        fail(f"API server {git_version} is below the supported floor {args.min_k8s}")
+        fail(f"API server {git_version} is below the supported floor {floor_text}")
     if "+rke2" in git_version:
         ok("RKE2 distribution detected (the on-prem baseline)")
 
@@ -2883,7 +2919,7 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* defaults from a terraform env dir (env files win over it)")
     pf.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="a node label Ready workers MUST carry (repeatable) -- catches the wrong-cluster trap")
     pf.add_argument("--registry", default="ghcr.io", help="registry HOST to check reachability of (from this machine)")
-    pf.add_argument("--min-k8s", default="1.28", help="minimum Kubernetes server version (guidance floor)")
+    pf.add_argument("--min-k8s", default=_platform_k8s_requirement(), help="minimum Kubernetes server version; defaults to the current stack's platform.kubernetes in versions.yaml, the floor bootstrap enforces")
     pf.add_argument("--strict", action="store_true", help="treat warnings as failures")
     pf.set_defaults(func=cmd_preflight)
 
