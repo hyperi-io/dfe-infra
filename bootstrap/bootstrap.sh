@@ -350,10 +350,12 @@ fi
 echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"
 # Nothing programs a LoadBalancer Service on a bare on-prem cluster, so the
 # Envoy Gateway and the receiver's public door sit Pending forever.
-# DFE_CLOUD=local is the same on-prem decision the node-label step takes above.
-if [[ "${DFE_CLOUD}" != "local" ]]; then
+# Only a cloud brings its own controller, so the list is the clouds, not the
+# on-prem names: a deployment names itself local, local-dfe or its own estate.
+case "${DFE_CLOUD}" in aws | gcp | az | azure)
   echo "  DFE_CLOUD=${DFE_CLOUD}: the cloud LoadBalancer controller programs the Services -- MetalLB skipped"
-else
+  ;;
+*)
   if dfe_should_install metallb ipaddresspools.metallb.io metallb-system metallb-controller; then
     run helm upgrade --install metallb metallb/metallb \
       --namespace metallb-system --create-namespace \
@@ -387,7 +389,8 @@ else
       echo "  Applied the dfe-front-door IPAddressPool + L2Advertisement"
     fi
   fi
-fi
+  ;;
+esac
 
 echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
