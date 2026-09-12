@@ -88,6 +88,29 @@ def test_a_kv_v1_store_reads_the_same():
     assert base64.b64decode(applied["data"]["AWS_ACCESS_KEY_ID"]).decode() == SECRET_ID
 
 
+def test_a_store_naming_the_fields_its_own_way_reads_the_same():
+    """The Secret's keys are the fetcher's env names; a store names the values its own way."""
+    rec = Recorder(_kv_v2(
+        access_key_id=SECRET_ID, secret_access_key=SECRET_KEY,
+        region="ap-southeast-2", log_group_name="dfe-test", notes="a test account",
+    ))
+    dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
+    applied = json.loads(rec.calls[1]["input"])
+    assert base64.b64decode(applied["data"]["AWS_ACCESS_KEY_ID"]).decode() == SECRET_ID
+    assert base64.b64decode(applied["data"]["AWS_SECRET_ACCESS_KEY"]).decode() == SECRET_KEY
+
+
+def test_nothing_beside_the_two_credentials_reaches_the_secret():
+    """A store path holds more than the credentials, and none of it belongs in the Secret."""
+    rec = Recorder(_kv_v2(
+        access_key_id=SECRET_ID, secret_access_key=SECRET_KEY,
+        account_id="111122223333", iam_user_arn="arn:aws:iam::111122223333:user/dfe-fetcher-test",
+    ))
+    dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
+    applied = json.loads(rec.calls[1]["input"])
+    assert sorted(applied["data"]) == ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+
+
 def test_it_applies_through_the_caller_s_kubectl_and_namespace():
     rec = Recorder(_kv_v2(AWS_ACCESS_KEY_ID=SECRET_ID, AWS_SECRET_ACCESS_KEY=SECRET_KEY))
     dfe_ops.apply_fetcher_credentials(KUBE, "dfe-b", "kv/dfe-test/aws", run=rec)
@@ -118,12 +141,13 @@ def test_no_value_reaches_the_command_line():
 
 
 def test_a_half_populated_path_is_refused_before_anything_is_applied():
-    rec = Recorder(_kv_v2(AWS_ACCESS_KEY_ID=SECRET_ID))
+    rec = Recorder(_kv_v2(access_key_id=SECRET_ID))
     try:
         dfe_ops.apply_fetcher_credentials(KUBE, "dfe-local", "kv/dfe-test/aws", run=rec)
         raise AssertionError("a path missing a key was accepted")
     except RuntimeError as exc:
-        assert "AWS_SECRET_ACCESS_KEY" in str(exc)
+        # Both accepted names are named, so the reader knows what to add.
+        assert "AWS_SECRET_ACCESS_KEY or secret_access_key" in str(exc)
     assert len(rec.calls) == 1
 
 

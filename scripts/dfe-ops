@@ -842,9 +842,15 @@ def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
 
 
 # helm/charts/dfe-fetcher/values.yaml credentials.secretName, and the two keys
-# the fetcher's cloudwatch_logs service reads out of it.
+# the fetcher's cloudwatch_logs service reads out of it. The Secret's keys are
+# the fetcher's environment names; a secrets store names the same two values its
+# own way, so each is looked up under either.
 FETCHER_CREDENTIALS_SECRET = "dfe-fetcher-credentials"
-FETCHER_CREDENTIAL_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+FETCHER_CREDENTIAL_FIELDS = {
+    "AWS_ACCESS_KEY_ID": ("AWS_ACCESS_KEY_ID", "access_key_id"),
+    "AWS_SECRET_ACCESS_KEY": ("AWS_SECRET_ACCESS_KEY", "secret_access_key"),
+}
+FETCHER_CREDENTIAL_KEYS = tuple(FETCHER_CREDENTIAL_FIELDS)
 
 
 def _vault_kv(path: str, *, vault_cmd: str = "bao", env: dict | None = None, run=subprocess.run) -> dict:
@@ -861,9 +867,20 @@ def _vault_kv(path: str, *, vault_cmd: str = "bao", env: dict | None = None, run
     return payload.get("data", payload)
 
 
+def _credential_field(values: dict, key: str) -> str:
+    """The value for one Secret key, under whichever name the store holds it."""
+    for field in FETCHER_CREDENTIAL_FIELDS[key]:
+        if values.get(field):
+            return str(values[field])
+    return ""
+
+
 def fetcher_credentials_manifest(namespace: str, values: dict, name: str = FETCHER_CREDENTIALS_SECRET) -> str:
     """The Secret the fetcher chart references, as a manifest for kubectl to apply."""
-    data = {key: base64.b64encode(values[key].encode("utf-8")).decode("ascii") for key in FETCHER_CREDENTIAL_KEYS}
+    data = {
+        key: base64.b64encode(_credential_field(values, key).encode("utf-8")).decode("ascii")
+        for key in FETCHER_CREDENTIAL_KEYS
+    }
     return json.dumps(
         {
             "apiVersion": "v1",
@@ -887,9 +904,13 @@ def apply_fetcher_credentials(
     the key names and the path they came from.
     """
     values = _vault_kv(vault_path, vault_cmd=vault_cmd, env=env, run=run)
-    missing = [key for key in FETCHER_CREDENTIAL_KEYS if not values.get(key)]
+    missing = [
+        " or ".join(FETCHER_CREDENTIAL_FIELDS[key])
+        for key in FETCHER_CREDENTIAL_KEYS
+        if not _credential_field(values, key)
+    ]
     if missing:
-        raise RuntimeError(f"{vault_path} carries no {', '.join(missing)}")
+        raise RuntimeError(f"{vault_path} carries no {'; no '.join(missing)}")
     done = run(
         [*kube, "-n", namespace, "apply", "-f", "-"],
         input=fetcher_credentials_manifest(namespace, values),
