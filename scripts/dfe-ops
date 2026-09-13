@@ -91,6 +91,14 @@ Subcommands:
                validated by CALLING render_dial.py's/resolve_sizing.py's own
                validators, never a second copy of their rules. --answers
                drives it non-interactively for CI; --dry-run writes nothing.
+  upgrade      plan/preflight/apply/rollback a stack upgrade against a
+               deployment repo (`--deploy`), walking upgrade-order.yaml stage
+               by stage: plan diffs the pinned stack against a target
+               (`--to`, default the `current` pointer) and runs compat-check
+               + the sizing locked-change classifier; preflight is the gate
+               apply refuses to run without; apply bumps pins.yaml through a
+               surgical field edit and commits per stage (never a hand edit);
+               rollback refuses by name any step with no reverse path.
 
 Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
 this file is committed publicly, so substitute your own node):
@@ -139,6 +147,13 @@ this file is committed publicly, so substitute your own node):
     # Walk the wizard to write a deployment.yaml dial, then size it:
     python3 scripts/dfe-ops init --out deployment.yaml
     python3 scripts/dfe-ops init --answers wizard-answers.env --fixtures shapes/fixtures/aws
+
+    # Plan a stack upgrade against a deploy-repo checkout, then run its
+    # preflight, then apply stage by stage (asking before each one):
+    python3 scripts/dfe-ops upgrade plan --deploy ../dfe-deploy --to 2.2.0-rc.13
+    python3 scripts/dfe-ops upgrade preflight --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --dry-run
 
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
@@ -205,6 +220,7 @@ import envfile  # noqa: E402
 import profiles  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
+from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
@@ -3383,6 +3399,10 @@ def build_parser() -> argparse.ArgumentParser:
     # init -- the prompt-driven deployment-dial wizard. Registered from
     # dfe_ops_init.
     add_init_subparser(sub)
+
+    # upgrade -- plan/preflight/apply/rollback a stack upgrade against a
+    # deployment repo. Registered from dfe_ops_upgrade.
+    add_upgrade_subparser(sub)
 
     return ap
 

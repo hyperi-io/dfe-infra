@@ -15,7 +15,8 @@ first, with their stored-version conversions run on the running cluster
 BEFORE the operator that drops the old version starts; then the data
 services, Keeper before ClickHouse, the Kafka brokers under the operator's
 rolling update with `metadata.version` finalised after a soak; then the apps.
-Until `dfe-ops upgrade` exists the order is applied by hand from that file.
+`dfe-ops upgrade` (below) walks that file so the order is never applied by
+hand; see it for a deployment-repo driven upgrade.
 
 A Kafka version bump can hit a server-side-apply field-ownership conflict:
 the Strimzi operator's own client also writes fields like `KafkaNodePool`
@@ -30,6 +31,50 @@ This is safe only when the rendered value already matches the live one (the
 operator is re-asserting a default, not diverging from the chart); diff the
 object first, and never force through a field the operator computes on its
 own, such as a broker-assigned identifier.
+
+## dfe-ops upgrade
+
+`dfe-ops upgrade <verb> --deploy <dfe-deploy checkout> [--to <stack>]` drives a
+stack upgrade from a deployment repo's own `pins.yaml`, walking
+`upgrade-order.yaml` stage by stage. `--to` defaults to versions.yaml's
+`current` pointer; the FROM stack is read from the deploy's `pins.yaml`
+(`base.dfe-infra`).
+
+- `plan` diffs FROM -> TO, grouped by stage, each step carrying its
+  `before`/`finalise`/`pair`/`rollback` note. Runs `dfe-stack compat-check
+  --strict` for TO and writes the numbered plan to
+  `<deploy>/upgrades/<from>-to-<to>.md`. Pass `--dial <deployment.yaml>` (with
+  `--fixtures` or `--live`) to also run `resolve_sizing.py`'s locked-change
+  classifier against the deploy's committed `sizing/resolved.yaml` -- a
+  LOCKED field moving without `--migrate` blocks the plan. Exit 0 clean, 1
+  blocked (compat-check failed, or an unmigrated locked change), 2 the
+  deploy repo or stack name do not resolve.
+- `preflight` is the gate `apply` will not run without: the deploy repo is
+  clean, the cluster answers, every Argo Application is Synced and Healthy,
+  no KafkaRebalance is running, ClickHouse carries no merge past
+  `--clickhouse-merge-threshold`, the Strimzi stored-version conversion
+  already ran (checked only when the plan crosses the 0.x -> 1.x boundary,
+  read from the CRD's `status.storedVersions`), the on-prem node capacity
+  holds the new sizing (`check_node_capacity.py`), and a backup marker exists
+  at `--backup-marker` when the plan carries a one-way step. Each check
+  prints `PASS`/`FAIL` with the evidence line that decided it.
+- `apply` runs preflight, then walks the plan stage by stage: bumps
+  `pins.yaml`'s `base.dfe-infra` through a surgical field edit (the same
+  focused-editor shape `dfe-ops bastion` already uses for its dial, never a
+  hand rewrite), re-runs the resolver with `--migrate` when `--dial` is
+  given, commits the stage (`chore(upgrade): <stack> stage <n> -- <keys>`),
+  pushes only with `--push`, and waits for Argo to report every Application
+  Synced and Healthy, bounded by `--timeout`. Confirms before each stage
+  unless `--yes`. `--dry-run` prints every command and touches nothing -- no
+  pin edit, no commit, no cluster call beyond the compat-check. A `before`
+  note this repo already has a program for (today, only the Strimzi
+  conversion) is verified automatically; any other is printed and needs a
+  confirmed "I ran this by hand". A `finalise` note is never run
+  automatically -- it prints as a manual follow-up once the soak has passed.
+  Apply stops at the first failure and prints that step's rollback note.
+- `rollback --to <stack>` is the reverse plan, refusing by name any step
+  whose `rollback` is `none` or that carries a `finalise` -- one-way by
+  definition, once it has run.
 
 ## Re-size
 
