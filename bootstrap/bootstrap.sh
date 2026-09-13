@@ -15,8 +15,9 @@
 #   - envsubst (gettext package)
 #
 # Required environment variables (export from Terraform outputs):
-#   DFE_ENV                  dev | stg | prod | local
-#   DFE_CLOUD                aws | gcp | az | local
+#   DFE_ENV                  dev | test | staging | prod | local | customer-<id>
+#   DFE_CLOUD                aws | gcp | azure | local -- also names the
+#                            argocd/values/<cloud>.yaml overlay, which must exist
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
@@ -31,15 +32,26 @@
 #   DFE_NAMESPACE            K8s namespace for DFE apps (e.g. dfe-prod)
 #   DFE_CLICKHOUSE_HOST      ClickHouse service hostname
 #   DFE_KAFKA_BOOTSTRAP      Kafka bootstrap servers
+#   DFE_KAFKA_PROVIDER       strimzi | redpanda | msk | confluent-cloud |
+#                            redpanda-cloud; gates the otel-collector chart's
+#                            MSK open_monitoring scrape. Optional -- empty on a
+#                            deployment that predates this fact.
 #   DFE_OTEL_ENDPOINT        OTel Collector gRPC endpoint
-#   DFE_VAULT_ADDR           OpenBao/Vault address
-#   DFE_VAULT_ROLE_ID        ESO AppRole role_id
+#   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
+#   DFE_VAULT_ROLE_ID        ESO AppRole role_id  (DFE_SECRETS_BACKEND=openbao)
 #   DFE_WORKLOAD_IDENTITY_ANNOTATIONS  JSON map of service → cloud identity annotations
 #   DFE_REGISTRY_HOST        JFrog registry hostname
 #   DFE_REGISTRY_USER        JFrog service account username
 #   DFE_REGISTRY_TOKEN       JFrog API token
 #
 # Optional:
+#   DFE_SECRETS_BACKEND      which body the ESO ClusterSecretStore gets: openbao
+#                            (default, needs DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID
+#                            and an AppRole SecretID) or aws-sm (needs none of
+#                            them -- external-secrets authenticates as the pod
+#                            it runs in, through EKS Pod Identity).
+#   DFE_SECRETS_REGION       aws-sm only: the region the store reads from.
+#   DFE_SECRETS_PREFIX       aws-sm only: the path every remoteRef hangs off.
 #   DFE_BASE_DOMAIN          estate domain the profile tag is prefixed to when
 #                            DFE_DOMAIN is unset (one cluster, one profile at a
 #                            time, one set of hostnames per profile)
@@ -52,6 +64,32 @@
 #                            because the cluster has no StorageClass. Unset keeps
 #                            upstream's /opt/local-path-provisioner, on the root
 #                            filesystem of a node whose data disk is elsewhere.
+#   DFE_KUBE_CLUSTER_NAME    the EKS cluster's own name, for the AWS Load
+#                            Balancer Controller appset's cluster_name
+#                            annotation; empty omits the annotation (non-EKS
+#                            clouds)
+#   DFE_KARPENTER_DISCOVERY_TAG      the karpenter.sh/discovery tag value, for
+#                            karpenter-pools' karpenter.cluster.discoveryTag;
+#                            empty omits the annotation (non-AWS clouds)
+#   DFE_KARPENTER_INSTANCE_PROFILE   the pre-provisioned node instance profile,
+#                            for karpenter-pools' karpenter.cluster.instanceProfile;
+#                            empty omits the annotation (non-AWS clouds)
+#   DFE_KARPENTER_KMS_KEY_ID the deployment CMK every node root volume is
+#                            encrypted with, for
+#                            karpenter-pools' karpenter.cluster.kmsKeyId; empty
+#                            omits the annotation (non-AWS clouds)
+#   DFE_KAFKA_BROKER_HOSTS   derived, not set by the caller: every broker's bare
+#                            host (no port), comma separated, from
+#                            DFE_KAFKA_BOOTSTRAP. Empty on every provider but msk.
+#   DFE_TELEMETRY_SINK       otel (default) | cloudwatch, from the cloud root's
+#                            telemetry dial. On DFE_CLOUD=aws with otel, renders
+#                            the fetcher's AWS telemetry pre-config (below);
+#                            empty or cloudwatch renders nothing here.
+#   DFE_KAFKA_BROKER_LOG_BUCKET  the S3 bucket MSK's broker logs land in under
+#                            the otel sink; empty on every other provider or sink.
+#   DFE_CLOUDTRAIL_BUCKET    the S3 bucket the aws root's CloudTrail delivers to.
+#   DFE_EKS_AUDIT_LOG_GROUP  the CloudWatch log group EKS's control-plane audit
+#                            stream lands in -- unavoidable under either sink.
 #   DFE_CLICKHOUSE_DEFAULT_TTL_DAYS  days every time-series table keeps rows, the
 #                            OTel tables included (default 90; 0 = no default
 #                            TTL). A source or a dfe-schemas definition with its
@@ -69,6 +107,12 @@
 #   DFE_CA_SECRET_STORE      ClusterSecretStore the root is saved to and restored
 #                            from (default dfe-secret-store).
 #   DFE_CA_RESTORE_TIMEOUT   seconds to wait for the restore (default 60).
+#   DFE_SIZING_OVERRIDE=1    On-prem only (DFE_CLOUD=local): accept a cluster
+#                            whose real nodes fall short of sizing/<profile>.nodes.json
+#                            -- scripts/check_node_capacity.py prints the
+#                            demanded-vs-allocatable table as a WARNING instead
+#                            of refusing. The warning still stands: the first
+#                            thing to give is the broker under peak.
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
 #   DFE_POST=full            Power-on self test run after the deploy converges:
 #                              full       readiness gate + CORE e2e (default)
@@ -183,20 +227,61 @@ dfe_cloud_programs_loadbalancers() {
   [[ " ${DFE_CLOUD_LB_PROVIDERS} " == *" ${DFE_CLOUD} "* ]]
 }
 
+# Which secret store this deployment reads. openbao stays the default, so a
+# deployment that names no backend behaves exactly as it did.
+export DFE_SECRETS_BACKEND="${DFE_SECRETS_BACKEND:-openbao}"
+case "${DFE_SECRETS_BACKEND}" in
+  openbao|aws-sm) ;;
+  *)
+    echo "ERROR: DFE_SECRETS_BACKEND must be openbao or aws-sm (got '${DFE_SECRETS_BACKEND}')" >&2
+    exit 1
+    ;;
+esac
+# The store lives in the deployment's own region unless it is told otherwise.
+export DFE_SECRETS_REGION="${DFE_SECRETS_REGION:-${DFE_REGION:-}}"
+# The store prepends this to every remoteRef, and ESO adds no separator of its
+# own. Empty leaves keys absolute.
+DFE_SECRETS_PREFIX_PATH="${DFE_SECRETS_PREFIX:+${DFE_SECRETS_PREFIX%/}/}"
+export DFE_SECRETS_PREFIX_PATH
+
 # Validate required variables
 required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
   DFE_REPO_URL DFE_TARGET_REVISION
   DFE_STORAGE_CLASS DFE_NAMESPACE
   DFE_CLICKHOUSE_HOST DFE_OTEL_ENDPOINT
-  DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
+if [[ "${DFE_SECRETS_BACKEND}" == "openbao" ]]; then
+  required_vars+=(DFE_VAULT_ADDR DFE_VAULT_ROLE_ID)
+else
+  required_vars+=(DFE_SECRETS_REGION)
+fi
 # DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim and mesh profiles are gRPC (kafka
 # disabled), so it is empty there; only set when kafka.mode != disabled. Defaulted
 # empty so the cluster-secret annotation renders blank (kafka-dependent apps are
 # gated off on a brokerless profile anyway).
 export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
+# Who runs the brokers -- the last path segment of the credential's store key,
+# and (below) what gates the otel-collector chart's MSK open_monitoring scrape.
+# Empty on a deployment that predates this fact; the appset defaults it to
+# strimzi, the kafka chart's own default.
+export DFE_KAFKA_PROVIDER="${DFE_KAFKA_PROVIDER:-}"
+# The bare host list a Prometheus scrape target needs (no port, no SASL
+# scheme) -- MSK's own bootstrap string already lists every broker, comma
+# separated, which the kafkametrics receiver's single seed broker does not
+# expose on its own. Empty on every provider but msk.
+DFE_KAFKA_BROKER_HOSTS=""
+if [[ -n "${DFE_KAFKA_BOOTSTRAP}" ]]; then
+  IFS=',' read -ra _dfe_bootstrap_entries <<< "${DFE_KAFKA_BOOTSTRAP}"
+  _dfe_broker_hosts=()
+  for _dfe_entry in "${_dfe_bootstrap_entries[@]}"; do
+    _dfe_broker_hosts+=("${_dfe_entry%%:*}")
+  done
+  DFE_KAFKA_BROKER_HOSTS=$(IFS=,; echo "${_dfe_broker_hosts[*]}")
+  unset _dfe_bootstrap_entries _dfe_broker_hosts _dfe_entry
+fi
+export DFE_KAFKA_BROKER_HOSTS
 # external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
 # "none" deploys no external-dns, because its own default provider is aws and an
 # uncredentialled install crash-loops against Route 53 forever (#223).
@@ -214,6 +299,26 @@ export DFE_STACK_VERSION="${DFE_STACK_VERSION:-}"
 # Front-door addresses; empty renders a blank annotation and the pool chooses.
 export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
 export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
+# DFE's monitoring goes to its own OTel feed and HyperDX, never CloudWatch --
+# otel is the default sink a cloud root renders, and cloudwatch is the opt-in
+# AWS-native path. Empty (a non-cloud caller, or one with nothing to report)
+# renders no fetcher pre-config step below, the same as any other unset
+# optional fact.
+export DFE_TELEMETRY_SINK="${DFE_TELEMETRY_SINK:-}"
+export DFE_KAFKA_BROKER_LOG_BUCKET="${DFE_KAFKA_BROKER_LOG_BUCKET:-}"
+export DFE_CLOUDTRAIL_BUCKET="${DFE_CLOUDTRAIL_BUCKET:-}"
+export DFE_EKS_AUDIT_LOG_GROUP="${DFE_EKS_AUDIT_LOG_GROUP:-}"
+# The EKS cluster name for the LBC appset's cluster_name annotation, rendered only when set.
+export DFE_KUBE_CLUSTER_NAME="${DFE_KUBE_CLUSTER_NAME:-}"
+export DFE_KUBE_CLUSTER_NAME_ANNOTATION="${DFE_KUBE_CLUSTER_NAME:+dfe.hyperi.io/cluster_name: \"${DFE_KUBE_CLUSTER_NAME}\"}"
+# The karpenter-pools chart's three cluster facts, each rendered only when set --
+# empty on a non-AWS cloud, where Karpenter does not run.
+export DFE_KARPENTER_DISCOVERY_TAG="${DFE_KARPENTER_DISCOVERY_TAG:-}"
+export DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION="${DFE_KARPENTER_DISCOVERY_TAG:+dfe.hyperi.io/karpenter_discovery_tag: \"${DFE_KARPENTER_DISCOVERY_TAG}\"}"
+export DFE_KARPENTER_INSTANCE_PROFILE="${DFE_KARPENTER_INSTANCE_PROFILE:-}"
+export DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION="${DFE_KARPENTER_INSTANCE_PROFILE:+dfe.hyperi.io/karpenter_instance_profile: \"${DFE_KARPENTER_INSTANCE_PROFILE}\"}"
+export DFE_KARPENTER_KMS_KEY_ID="${DFE_KARPENTER_KMS_KEY_ID:-}"
+export DFE_KARPENTER_KMS_KEY_ID_ANNOTATION="${DFE_KARPENTER_KMS_KEY_ID:+dfe.hyperi.io/karpenter_kms_key_id: \"${DFE_KARPENTER_KMS_KEY_ID}\"}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
 export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"
@@ -240,6 +345,43 @@ done
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "ERROR: Missing required environment variables: ${missing[*]}" >&2
   exit 1
+fi
+
+# Every appset layers argocd/values/<cloud>.yaml over common.yaml, so a cloud
+# with no overlay deploys chart defaults and says nothing (dfe-infra#130).
+DFE_CLOUD_VALUES="${REPO_ROOT}/argocd/values/${DFE_CLOUD}.yaml"
+if [[ ! -f "${DFE_CLOUD_VALUES}" ]]; then
+  echo "ERROR: DFE_CLOUD=${DFE_CLOUD} has no overlay at ${DFE_CLOUD_VALUES}" >&2
+  echo "       Without it every chart takes its own defaults -- no storage class," >&2
+  echo "       no Service type, no per-cloud identity -- and nothing reports it." >&2
+  echo "       Add the overlay, or correct DFE_CLOUD -- the ones that exist are the" >&2
+  echo "       non-profile files in ${REPO_ROOT}/argocd/values/." >&2
+  exit 1
+fi
+echo "Cloud overlay: ${DFE_CLOUD_VALUES}"
+
+echo "==> [0a/7] On-prem node-capacity preflight"
+# DFE_CLOUD=local is this script's own token for "we do not create these
+# nodes" (see the header's DFE_CLOUD comment) -- the same substrate
+# sizing/targets/onprem.yaml and compute-shapes.yaml's onprem stub call
+# `cloud: onprem`. resolve_sizing.py writes the demand only for that cloud, so
+# a nodes.json existing at all already means this deployment is on-prem; a
+# cloud that creates its own nodes never gets one and this step is a no-op.
+DFE_SIZING_NODES_FILE="${REPO_ROOT}/sizing/${DFE_PROFILE}.nodes.json"
+if [[ "${DFE_CLOUD}" == "local" && -f "${DFE_SIZING_NODES_FILE}" ]]; then
+  echo "  Checking ${DFE_SIZING_NODES_FILE} against the cluster's real nodes..."
+  if ! python3 "${SCRIPT_DIR}/../scripts/check_node_capacity.py" \
+      --nodes-file "${DFE_SIZING_NODES_FILE}" \
+      ${KUBECONFIG:+--kubeconfig "${KUBECONFIG}"}; then
+    echo "ERROR: the cluster's real nodes fall short of the sizing demand -- see the table above." >&2
+    echo "       Add capacity, correct the dial and re-resolve, or set DFE_SIZING_OVERRIDE=1 to" >&2
+    echo "       accept it and continue (the warning still stands: the broker gives first)." >&2
+    exit 1
+  fi
+elif [[ "${DFE_CLOUD}" == "local" ]]; then
+  echo "  No ${DFE_SIZING_NODES_FILE} -- nothing to check, skipping"
+else
+  echo "  DFE_CLOUD=${DFE_CLOUD} creates its own nodes -- nothing to check, skipping"
 fi
 
 # Compute base64 auth for registry (only if registry vars are set)
@@ -402,13 +544,30 @@ else
   fi
 fi
 
-echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"
+echo "==> [4/7] ESO ClusterSecretStore (backend: ${DFE_SECRETS_BACKEND})"
+# One store name, dfe-secret-store, whatever backs it -- every ExternalSecret in
+# the tree references that name and none of them knows which cloud it is on.
+if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
+  ESO_STORE_TEMPLATE="${TEMPLATES_DIR}/eso-cluster-secret-store-aws.yaml.tpl"
+else
+  ESO_STORE_TEMPLATE="${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl"
+fi
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-  echo "[DRY-RUN] seed dfe-vault-approle-secret + envsubst store + patch caBundle"
+  if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
+    echo "[DRY-RUN] envsubst ${ESO_STORE_TEMPLATE##*/} | kubectl apply -f -"
+    echo "[DRY-RUN]   region=${DFE_SECRETS_REGION} prefix=${DFE_SECRETS_PREFIX_PATH:-<none>} auth=pod identity"
+  else
+    echo "[DRY-RUN] seed dfe-vault-approle-secret + envsubst store + patch caBundle"
+  fi
+elif [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
+  # No SecretID and no CA patch: the store carries no auth block, so ESO falls
+  # through to the pod's own credentials, and Secrets Manager is a public AWS
+  # endpoint whose certificate the SDK already trusts.
+  envsubst < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
+  echo "  ClusterSecretStore dfe-secret-store -> Secrets Manager in ${DFE_SECRETS_REGION}"
 else
   # Seed the AppRole SecretID the store references. Nothing else creates it, so ESO
-  # could never authenticate to OpenBao (store stuck InvalidProviderConfig). Vault
-  # provider path only; on cloud (AWS SM + IRSA) there is no SecretID.
+  # could never authenticate to OpenBao (store stuck InvalidProviderConfig).
   if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then
     kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f -
     kubectl -n external-secrets create secret generic dfe-vault-approle-secret \
@@ -421,7 +580,7 @@ else
     echo "           Downstream: dfe-local/dfe-kafka-user never appears and the data plane sits in"
     echo "           CreateContainerConfigError. Set DFE_VAULT_SECRET_ID and re-run."
   fi
-  envsubst < "${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl" | kubectl apply -f -
+  envsubst < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
   # ESO's vault provider cannot skip TLS verify (the env's VAULT_SKIP_VERIFY is for
   # terraform, which ESO ignores). Fetch OpenBao's issuing CA from its TLS handshake
   # and patch it into the store so it can verify the cert. No-op if none is found.
@@ -443,8 +602,14 @@ echo "==> [4a/7] Internal CA root: restore from the secret store before cert-man
 # cert-manager then adopts a root that already satisfies the spec.
 # Without a secret store nothing can hold the root between rebuilds.
 if [[ -z "${DFE_CA_PERSIST:-}" ]]; then
-  # A deployment with no store SecretID has nowhere to hold the root.
-  if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then DFE_CA_PERSIST="true"; else DFE_CA_PERSIST="false"; fi
+  # What decides it is whether the store can authenticate at all: on aws-sm the
+  # pod's own identity is the credential, on openbao nothing works without the
+  # AppRole SecretID and there is nowhere to hold the root.
+  if [[ "${DFE_SECRETS_BACKEND}" != "openbao" || -n "${DFE_VAULT_SECRET_ID:-}" ]]; then
+    DFE_CA_PERSIST="true"
+  else
+    DFE_CA_PERSIST="false"
+  fi
 fi
 if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
   echo "  Vault/OpenBao issuer mode seeded -- the estate PKI owns the root, nothing to persist"
@@ -597,6 +762,24 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
   else
     echo "  WARNING: external deploy repo with no DFE_CONFIG_REPO_TOKEN -- the engine CANNOT push (gitcrud) over SSH; it needs an HTTPS token. Set DFE_CONFIG_REPO_TOKEN for engine writes."
   fi
+fi
+
+echo "==> [4d/7] Fetcher AWS telemetry pre-config (otel sink only)"
+# DFE's monitoring goes to its own OTel feed, never CloudWatch, so on AWS with
+# sink=otel the broker-log bucket, the CloudTrail trail and the EKS audit log
+# have a fetcher-readable path instead. Under sink=cloudwatch these touchpoints
+# already have an AWS-native destination, so nothing is rendered. A STARTER
+# fragment, not a wired instance -- see the template's own header.
+if [[ "${DFE_CLOUD}" == "aws" && "${DFE_TELEMETRY_SINK}" == "otel" ]]; then
+  run kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | run kubectl apply -f -
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl | kubectl apply -f -"
+  else
+    envsubst < "${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl" | kubectl apply -f -
+    echo "  ConfigMap dfe-fetcher-aws-telemetry-preconfig applied in ${DFE_NAMESPACE}"
+  fi
+else
+  echo "  Skipped (DFE_CLOUD=${DFE_CLOUD}, DFE_TELEMETRY_SINK=${DFE_TELEMETRY_SINK:-<unset>}) -- otel on aws only"
 fi
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.

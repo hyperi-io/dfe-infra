@@ -128,12 +128,30 @@ spec:
               # about a table's TTL. Only dfe-schema reads it; harmless elsewhere.
               - name: retention.defaultTtlDays
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_default_ttl_days" | default "90" }}'
+              # Who runs the brokers, and (msk only) their bare host list -- the
+              # otel-collector chart's MSK open_monitoring scrape needs both, to
+              # decide whether to render the job and what to target. Only
+              # otel-collector reads either; harmless elsewhere.
+              - name: kafka.provider
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}'
+              - name: kafka.brokerHosts
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
+      # KEDA owns the broker KafkaNodePool's replica count (kafka-autoscaler.yaml),
+      # so selfHeal must not revert a scale-out as drift -- the same
+      # ignoreDifferences + RespectIgnoreDifferences=true pattern layer2-apps.yaml
+      # uses for Deployment replicas. Inert for every other app in this
+      # ApplicationSet's matrix: none of them render a KafkaNodePool.
+      ignoreDifferences:
+        - group: kafka.strimzi.io
+          kind: KafkaNodePool
+          jsonPointers:
+            - /spec/replicas
       syncPolicy:
         automated:
           prune: true
@@ -141,3 +159,4 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - RespectIgnoreDifferences=true

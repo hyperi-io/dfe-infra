@@ -1,0 +1,81 @@
+project: dfe
+component: karpenter
+env: local
+cloud: local
+
+# Karpenter's node shaping. EVERY field below is empty by default and filled by
+# the resolver's values overlay (sizing/<tier>.values.yaml) plus the cluster
+# facts the tofu emits, so nothing here names an instance type, a generation or
+# a size. A cloud with no Karpenter leaves `pools` empty and this chart renders
+# nothing.
+karpenter:
+
+  # The three handles the kubernetes-cluster module's `karpenter` output carries,
+  # plus the deployment key from its `kms_key_arn`. A pool cannot render without
+  # them, and the guards below say so by name rather than producing an
+  # EC2NodeClass that never reaches Ready.
+  cluster:
+    # The value of the karpenter.sh/discovery tag on the private subnets and the
+    # cluster security group. It is the cluster's own name.
+    discoveryTag: ""
+    # Pre-provisioned, so Karpenter never creates or deletes one.
+    instanceProfile: ""
+    # The deployment's customer-managed key, which every node root volume is
+    # encrypted with.
+    kmsKeyId: ""
+
+  # What every EC2NodeClass inherits. A pool overrides only what its workload
+  # forces -- ClickHouse and CI take the instance store, everything else does not.
+  nodeClass:
+    # An alias resolves the EKS-optimised image through SSM and carries its own
+    # family, so amiFamily is not set beside it. `latest` is deliberate: a new
+    # image is drift, and the disruption budget is what paces the replacement.
+    amiAlias: al2023@latest
+    metadata:
+      # IMDSv2 only. Hop limit 2 because a pod reaching the node's metadata goes
+      # through one extra hop, and 1 is what silently breaks the AWS SDK inside a
+      # container.
+      httpTokens: required
+      httpPutResponseHopLimit: 2
+    # Sized by the resolver from the instance's sustained baseline, not from a
+    # fixed number -- a 125 MiB/s root on a size whose baseline is 95 is a volume
+    # the instance cannot carry.
+    rootVolume:
+      sizeGi: ""
+      type: gp3
+      iops: ""
+      throughputMibS: ""
+    # RAID0 is the only value Karpenter accepts. Without it a `d` instance pays
+    # for its NVMe and uses none; with it containerd and kubelet move onto that
+    # NVMe and the root volume shrinks.
+    instanceStorePolicy: ""
+
+  # One entry per workload class, keyed by pool name. Each pool renders one
+  # NodePool and one EC2NodeClass of the same name.
+  #
+  #   families             instance families, best first. A LIST so an
+  #                        InsufficientCapacityError on one has somewhere to fall
+  #                        back to; a single-element list has none.
+  #   generationGt         the floor, as Karpenter's Gt operand -- one BELOW the
+  #                        oldest generation the family list names. Karpenter ANDs
+  #                        the requirements, so a floor above a listed family
+  #                        deletes that family, and the guard below refuses it.
+  #   generationIn         the pinned override. When set it REPLACES generationGt.
+  #   arch                 arm64 on every cloud pool.
+  #   capacityTypes        ["on-demand"], or ["spot", "on-demand"] for work that
+  #                        can be retried.
+  #   consolidation        policy is WhenEmpty | WhenEmptyOrUnderutilized |
+  #                        Balanced; after is how long the controller waits first.
+  #   budgetNodes          how many nodes may be terminating at once -- "10%",
+  #                        "1", "100%".
+  #   expireAfter          a duration, or the literal Never. NEVER omitted: the
+  #                        CRD defaults it to 720h, so an omission is a forced
+  #                        30-day replacement rather than no expiry.
+  #   taints               list of {key, value, effect}.
+  #   labels               map applied to every node the pool makes.
+  #   limits               map of resource -> quantity. Required: a pool with no
+  #                        limit answers a runaway workload by buying nodes.
+  #   weight               optional tie-break; higher wins for a pod that matches
+  #                        more than one pool.
+  #   nodeClass            optional per-pool override of the nodeClass block above.
+  pools: {}

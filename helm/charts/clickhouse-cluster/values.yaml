@@ -60,7 +60,10 @@ clickhouse:
         memory: 1Gi
       limits:
         cpu: "1"
-        memory: 1Gi
+        # 3Gi because Keeper's own default log caches are 1 GiB plus 500 MiB
+        # before a single request is served, so the old 1Gi limit was an OOMKill
+        # waiting on load rather than a bound on it.
+        memory: 3Gi
   # External CH (mode=external): connect to a supplied endpoint; deploy nothing.
   # Password materialised by ESO from Vault <project>/<env>/clickhouse/external.
   external:
@@ -70,7 +73,12 @@ clickhouse:
     secretName: dfe-clickhouse-external
     secretStoreName: dfe-secret-store
   # Storage model, decided at deploy and refused afterwards (the engine holds
-  # clickhouse.storageModel as a protected var). Named <family>-<bulk>: the
+  # clickhouse.storageModel as a protected var, and the deployment repo's
+  # governance/policies/storage-layout.yaml governs it post-deploy).
+  # EMPTY DERIVES IT: an objectStore.endpoint below yields `cached-object`,
+  # nothing yields `local`. Setting this is the explicit override and wins;
+  # every template reads the derived answer, never this key directly.
+  # Named <family>-<bulk>: the
   # family says whether parts MOVE to the bulk store or are COPIED to it, the
   # bulk half says what that store is. Full matrix: docs/deployment/storage.md
   #   local          -> parts live on the PVC, which is the capacity ceiling.
@@ -78,9 +86,11 @@ clickhouse:
   #                     StorageClass and a StatefulSet recreate
   #                     (volumeClaimTemplates are immutable).
   #   cached-object  -> parts live on an object-store disk fronted by a local
-  #                     read-through cache, so the PVC sizes the cache and the
-  #                     part metadata rather than the data. The cache is
-  #                     disposable; the bucket holds the durable copy.
+  #                     read-through cache, so the PVC sizes the part metadata
+  #                     rather than the data -- plus the cache itself, unless
+  #                     objectStore.cache.volume moves the cache to the node's
+  #                     instance store instead. The cache is disposable either
+  #                     way; the bucket holds the durable copy.
   #   tiered-block   -> two local volumes ranked hot then cold. New parts land
   #                     on the fast one and ClickHouse demotes the oldest to the
   #                     cold one once free space there falls below
@@ -89,7 +99,7 @@ clickhouse:
   # tiered-object and cached-block are named cells this chart does not render
   # yet; the render fails on either rather than deploying something inert.
   # Applies to both cluster and single mode; external mode owns its own storage.
-  storageModel: local
+  storageModel: ""
   # Object bulk store, for any model whose bulk half is `object`. Credentials
   # NEVER appear here -- the server reads them from the environment, wired from
   # a Secret the secrets store materialises (externalsecret-object-store.yaml),
@@ -99,10 +109,49 @@ clickhouse:
     # required, e.g. https://my-bucket.s3.ap-southeast-2.amazonaws.com/clickhouse/
     endpoint: ""
     region: ""
+    # cached-object only: a fixed cache size, which OVERRIDES the ratio below
+    # when set. Under cache.volume: pvc this stays optional -- empty leaves the
+    # cache tracking the PVC it is given -- and a value here must sit BELOW
+    # storage.size, because the cache and the part metadata share that PVC.
+    # Under cache.volume: instance-store it is REQUIRED: an emptyDir has no PVC
+    # to size itself against, so the ratio below cannot apply, and this value
+    # also becomes the emptyDir's own sizeLimit (see templates/clickhouse.yaml)
+    # -- the two can never disagree because they are the same number.
+    cacheSize: ""
     # cached-object only: the local read-through cache in front of the object
-    # store. Sized BELOW storage.size -- the cache and the part metadata share
-    # that PVC.
-    cacheSize: 20Gi
+    # store, on the s3_object_cache disk.
+    cache:
+      # Where the cache disk's bytes actually live -- pvc (default, current
+      # behaviour byte-for-byte) keeps it on a subdirectory of the data PVC
+      # alongside the part metadata; instance-store moves it to an emptyDir on
+      # the node's local NVMe instead, leaving the PVC to hold only the part
+      # metadata. instance-store needs cacheSize set and clickhouse.mode:
+      # cluster, and it needs a node that actually carries local NVMe -- the
+      # karpenter-pools chart's `clickhouse` pool, whose instanceStorePolicy:
+      # RAID0 is what makes that NVMe available to a pod at all. Unlike a gp3
+      # PVC, which reattaches to whatever node picks the pod back up, an
+      # emptyDir is destroyed with the pod: a node replacement empties the
+      # cache and the server rewarms it from the object store on next read.
+      # That is why the pool carries a disruption budget of one node at a
+      # time. See docs/deployment/storage.md.
+      volume: pvc
+      # Cache parts as they are written, not only as they are read -- the default
+      # false leaves every just-ingested part out of the cache, and hunts over
+      # recent data are the primary read.
+      onWriteOperations: true
+      # Cache ceiling as a fraction of the PVC, so the cache grows with the volume
+      # instead of needing a second edit; ClickHouse refuses max_size and this
+      # ratio together, so cacheSize above wins whenever it is set. Meaningless
+      # under cache.volume: instance-store, which always sets cacheSize.
+      maxSizeRatioToTotalSpace: 0.6
+      # Free fraction the cache keeps ahead of demand in the background; the
+      # server default of 0 disables background eviction entirely.
+      keepFreeSpaceSizeRatio: 0.05
+      # Load the cache metadata after the server opens its ports, so a large cache
+      # does not hold startup while it is walked.
+      loadMetadataAsynchronously: true
+      # cache_hits_threshold is deliberately NOT set: it is a deprecated no-op in
+      # 26.3 (FileCacheSettings.cpp "Deprecated setting").
     # Empty leaves the server default. GCS rejects the batch-delete call, so a
     # deployment against a GCS endpoint sets this false.
     supportBatchDelete: ""
@@ -159,6 +208,42 @@ clickhouse:
     limits:
       cpu: "4"
       memory: 8Gi
+  # Server settings, written through the operator CR's settings.extraConfig and
+  # so CLUSTER MODE ONLY -- single mode runs no operator, and its 2-core shape is
+  # what the thread and pool figures below would starve.
+  #
+  # Deliberately NOT set here: parts_to_delay_insert / parts_to_throw_insert /
+  # max_parts_in_total, whose 26.3 defaults (1000 / 3000 / 100000) self-disable
+  # above a 1 GiB average part size, so raising them hides a partition-key fault
+  # instead of fixing it; and max_server_memory_usage, which ClickHouse already
+  # derives from the cgroup limit.
+  serverProfile:
+    # Concurrent query threads as a multiple of the container's cores -- the
+    # default 0 is unbounded, and hunts, engine queries and merges share a node.
+    concurrentThreadsSoftLimitRatioToCores: 2
+    # Fraction of container RAM the server may use: 0.9 of a cgroup limit is an
+    # OOMKill rather than a graceful MEMORY_LIMIT_EXCEEDED.
+    maxServerMemoryUsageToRamRatio: 0.8
+    # Floor for the background merge and mutation pool -- ClickHouse's own
+    # default, and enough for the small replica shapes.
+    backgroundPoolSizeFloor: 16
+    # Merge threads per CPU core of the replica's request, so a 24-core node
+    # merges with 48 threads rather than sitting on the fixed floor.
+    backgroundPoolSizePerCore: 2
+  # User-profile settings, written into the `default` profile every identity
+  # inherits. Both modes get these: async_insert is user/query scope with no
+  # table-level form, and the loader sets no per-query settings, so this profile
+  # is the only place they can land. async_insert_max_data_size and
+  # async_insert_busy_timeout_ms stay unset -- the compiled 10 MiB buffer and the
+  # adaptive timeout (24.2+) are the tuned values.
+  userProfile:
+    # Server-side async inserts for every writer. A shipped default since 26.2,
+    # pinned here against a `compatibility` setting or a future re-default.
+    asyncInsert: 1
+    # The client waits for the flush, so an insert error still reaches it. Also a
+    # shipped default since 26.2, and 0 is refused at render time: the loader
+    # would commit a Kafka offset on an ack it never earned.
+    waitForAsyncInsert: 1
   users:
     # The one credential the deploy layer owns, named `default` on every target.
     # Only `default` can take its password from a Secret

@@ -1,0 +1,44 @@
+{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- if $public }}
+{{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.trusted_proxy_cidrs) | fromJsonArray }}
+# Edge settings for the public listeners only, attached by sectionName. A
+# listener-scoped ClientTrafficPolicy REPLACES the Gateway-scoped one for that
+# listener rather than merging with it, so the curve and cipher posture from
+# templates/client-traffic-policy.yaml is restated here -- dropping it would
+# quietly hand the public listeners Envoy Gateway's defaults, which admit
+# AES-128, CBC and P-256.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: dfe-public-edge
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    {{- range $key := $public }}
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $.Values.gateway.name }}
+      sectionName: https-public-{{ (index $.Values.routes $key).routeName }}
+    {{- end }}
+  {{- with $trusted }}
+  # What makes the CIDR filter mean anything: X-Forwarded-For is read from the
+  # right, and the first address outside this list is taken as the client. With
+  # no list Envoy believes the leftmost entry, which the caller writes.
+  clientIPDetection:
+    xForwardedFor:
+      trustedCIDRs:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+  tls:
+    minVersion: {{ .Values.ui.tls.min_version | quote }}
+    maxVersion: {{ .Values.tls.edge.maxVersion | quote }}
+    ecdhCurves:
+      {{- toYaml .Values.tls.edge.ecdhCurves | nindent 6 }}
+    {{- with .Values.tls.edge.ciphers }}
+    # Applied at TLS 1.2 only; ignored at 1.3 (BoringSSL fixes the suite).
+    ciphers:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+{{- end }}

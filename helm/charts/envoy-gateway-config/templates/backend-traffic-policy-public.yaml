@@ -1,0 +1,31 @@
+{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- if .Values.ui.rate_limit.enabled }}
+{{- range $key := $public }}
+{{- $r := index $.Values.routes $key }}
+---
+# A wall a credential-stuffing run hits before it reaches the login. The counter
+# is per route per proxy replica, NOT per caller: two replicas serve twice this
+# rate in total, and one attacker and one analyst share the same bucket.
+# Per-caller counting is scope global, which this chart refuses (see values.yaml).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: dfe-public-{{ $r.routeName }}-ratelimit
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $r.routeName }}-public
+  rateLimit:
+    {{- /* No `type:` -- it is deprecated in favour of naming the local or
+           global body directly, and naming both is how they combine. */}}
+    local:
+      rules:
+        - limit:
+            requests: {{ $.Values.ui.rate_limit.requests }}
+            unit: {{ $.Values.ui.rate_limit.unit }}
+{{- end }}
+{{- end }}

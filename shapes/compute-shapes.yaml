@@ -1,0 +1,1081 @@
+## Project:   dfe-infra
+## File:      shapes/compute-shapes.yaml
+## Purpose:   The shape SSoT -- per cloud and per use case, the instance family,
+##            architecture, generation and price policy, and the block-storage
+##            profile the resolver turns into a concrete instance type.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## WHAT THIS FILE IS. A workload asks for a FAMILY and a policy, never an
+## instance type. The resolver reads this file plus the cloud's live API and
+## emits the concrete type, its price and its storage profile into
+## shapes/resolved/<cloud>.json, which is committed so an API change is a
+## reviewed diff. Karpenter NodePool constraints render from the same entries,
+## so a new generation arrives by drift with no plan change.
+##
+## Nothing here names an instance type. `m9g.2xlarge` is an ANSWER, and answers
+## go stale: Graviton 9 shipped while every model's training data stopped at 8.
+##
+## THE FIELDS, per use case:
+##   family             the letter the cloud uses for the workload class
+##   modifiers          comma-separated family modifiers, `d` for local NVMe
+##   arch               arm64 on the clouds, amd64 on-prem
+##   generation_policy  newest                 take the newest generation
+##                      pinned                 stay on generation_pin
+##                      newest-with-modifiers  newest generation that still
+##                                             offers every required modifier,
+##                                             floored at generation_pin
+##   generation_pin     the generation number, required by the two policies
+##                      above that use one, empty otherwise
+##   price_policy       newest           take the generation whatever it costs
+##                      newest-within    take it while the step is under
+##                                       price_step_max_pct
+##                      cheapest-of      cheapest across price_generations
+##   size               the FLOOR size; the resolver scales up from it
+##   source             ec2 or msk-computefamily -- which API names the type
+##   volumes            one entry per volume, with its own size-derived ceilings
+##   instance_*_ceiling the ceilings the ATTACHED INSTANCE imposes
+##
+## A volume may carry `throughput_policy: instance-baseline`, which means the
+## resolver DERIVES its throughput from the instance's sustained baseline less
+## what the other volumes take, floored at gp3's own 125 MiB/s minimum. The
+## numeric `throughput_mib_s` beside it is that floor, not the answer: a fixed
+## 125 on a size whose instance baseline is 95 is a volume the instance cannot
+## carry, and the cloud says nothing about it.
+##
+## THE SILENT CAPS ARE EMPTY ON PURPOSE. A small volume carries IOPS and
+## bandwidth maxima of its own, and the instance behind it caps every volume
+## again -- an r9g.2xlarge tops out at 375 MB/s and 12,000 IOPS whatever the gp3
+## says. The cloud clamps without a word. The `*_ceiling` fields below are
+## placeholders for figures read from the provider's API at build time, and the
+## resolver asserts `volume profile <= size-derived ceiling <= instance ceiling`
+## and fails loudly. They stay empty until that task fills them.
+##
+## NO LISTS, like every SSoT file here: nested maps and scalars only, parsed by
+## scripts/yaml_subset.py, validated by scripts/validate_sizing.py.
+
+schema_version: 1
+
+## The nine workload classes. A new one is a new entry in every cloud key.
+use_cases:
+  eks-system: "The cluster's own controllers -- Karpenter, the CSI drivers, the load-balancer controller."
+  general: "The DFE services: receiver, loader, archiver, fetcher, transforms, engine, the UIs."
+  kafka-broker: "Self-hosted brokers only. A managed broker is the msk-broker entry."
+  kraft-controller: "The separate KRaft controller quorum, sized by partition count."
+  clickhouse: "ClickHouse servers, with the object-store cache on local NVMe."
+  keeper: "ClickHouse Keeper -- an IOPS workload with almost no capacity need."
+  ci-burst: "Retryable build and test work, the one place spot belongs."
+  msk-broker: "MSK Express brokers, named in MSK's own compute-family namespace."
+  toolbox: "The on-demand troubleshooting instance, running only while someone is debugging."
+
+clouds:
+
+  ## -------------------------------------------------------------------------
+  ## AWS -- the populated cloud. Prices and specs read from the Pricing and EC2
+  ## APIs in us-west-2 on the date in each ratio's `read`.
+  ## -------------------------------------------------------------------------
+  aws:
+    status: populated
+    arch: arm64
+    volume_default_type: gp3
+    ## gp3 reaches 80,000 IOPS, 2,000 MiB/s and 64 TiB -- not the 16,000 / 1,000
+    ## / 16 TiB every model remembers, which is how a deployment ends up on io2
+    ## for throughput gp3 delivers. Free baseline 3,000 IOPS and 125 MiB/s, then
+    ## 500 IOPS per GiB and 0.25 MiB/s per IOPS.
+    volume_baseline_iops: 3000
+    volume_baseline_throughput_mib_s: 125
+    ## The EBS CSI driver defaults to gp3 with throughput 125 and no iops, so
+    ## every PVC lands on the baseline whatever its size. The StorageClasses are
+    ## created in the tofu, one per use case, with both fields set.
+    storage_class_owner: terraform
+    use_cases:
+
+      eks-system:
+        family: m
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: large
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: gp3
+            size_gib: 40
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      general:
+        family: m
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: xlarge
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: gp3
+            size_gib: 40
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      ## Every broker is identical -- one family, one storage profile, one
+      ## config -- so scaling out is "add a broker" and throughput, CPU and disk
+      ## grow together. `replicas` is the only scale knob.
+      ##
+      ## The workload shape map first proposed the storage-optimised `i` family
+      ## here. It takes `m` instead: the broker's log lives on a PVC sized by the
+      ## retention formula rather than on instance store, and the ARM
+      ## storage-optimised families stop at generation 8, which would cost this
+      ## pool the always-newest rule for local disks it does not use.
+      kafka-broker:
+        family: m
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: 2xlarge
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: gp3
+            size_gib: 40
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+          ## Kafka buys THROUGHPUT, not IOPS: 500 MB/s wants 2,000 provisioned
+          ## IOPS, which is inside the free 3,000. The size comes from
+          ## sizing.yaml's kafka disk formula -- the chart's fixed 20Gi holds
+          ## under three minutes at the target rate.
+          data:
+            type: gp3
+            size_gib: ""
+            size_formula: sizing.kafka.<provider>.disk_formula
+            iops: 3000
+            throughput_mib_s: 500
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      kraft-controller:
+        family: m
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: medium
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: gp3
+            size_gib: 40
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+          ## The metadata log, not the data log: 20 GiB covers the 10-20 GiB a
+          ## controller actually uses.
+          data:
+            type: gp3
+            size_gib: 20
+            size_formula: sizing.kraft_controller.disk_gib_floor
+            iops: 3000
+            throughput_mib_s: 125
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      ## The cache wants local NVMe, so the newest generation taken here must
+      ## still offer the `d` modifier; the pin is the floor it falls back to
+      ## rather than dropping the modifier. `r9gd` now exists in us-west-2
+      ## (Graviton5, 474 GB of NVMe at 2xlarge), so the policy resolves to
+      ## generation 9 and the pin no longer binds -- which is the policy working,
+      ## not a reason to raise the pin.
+      clickhouse:
+        family: r
+        modifiers: d
+        arch: arm64
+        generation_policy: newest-with-modifiers
+        generation_pin: 8
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: 2xlarge
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: gp3
+            size_gib: 40
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+          data:
+            type: gp3
+            size_gib: ""
+            size_formula: sizing.clickhouse.disk_formula
+            iops: 3000
+            throughput_mib_s: 500
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+          ## INSTANCE STORE, outright. At about 474 GB the local NVMe on an
+          ## r9gd.2xlarge costs what gp3 costs provisioned to the instance's own
+          ## EBS ceiling, with 14.5x the IOPS; above ~1 TB the storage-optimised
+          ## family is cheaper per GB than gp3 storage alone. The cache is
+          ## disposable, so io2's durability is money for nothing. Karpenter
+          ## needs instanceStorePolicy RAID0 or the node pays for NVMe and uses
+          ## none, and the cache dies with the node, so the pool carries a
+          ## disruption budget either way.
+          cache:
+            type: nvme-instance-store
+            size_gib: ""
+            size_formula: instance-provided
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: required
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      ## The inverse of every other volume: capacity is irrelevant and the
+      ## 500-IOPS-per-GiB ratio is what sizes it. A 10Gi claim caps at 5,000
+      ## IOPS by ratio and delivers 3,000 with no iops set.
+      keeper:
+        family: m
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: large
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: gp3
+            size_gib: 40
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+          data:
+            type: gp3
+            size_gib: ""
+            size_formula: max(20, sizing.keeper.iops_target / 500)
+            iops: 6000
+            throughput_mib_s: 125
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      ## Spot with on-demand fallback: retryable work is what spot is for, and
+      ## a 100% disruption budget with 60s consolidation is only safe here.
+      ci-burst:
+        family: c
+        modifiers: d
+        arch: arm64
+        generation_policy: newest-with-modifiers
+        generation_pin: 8
+        price_policy: cheapest-of
+        price_step_max_pct: ""
+        price_generations: 2
+        size: 4xlarge
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          ## With instanceStorePolicy RAID0 containerd and kubelet move onto the
+          ## local NVMe and the root volume shrinks to ~40 GiB, which is what
+          ## covers build scratch as well.
+          root:
+            type: gp3
+            size_gib: 40
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: raid0
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      ## MSK's namespace, not EC2's: `express.m7g.large` is two generations
+      ## behind the EC2 family of the same name, and the Pricing API's
+      ## computeFamily is where the types come from. Storage is managed and
+      ## grows on its own.
+      msk-broker:
+        family: m
+        modifiers: ""
+        arch: arm64
+        generation_policy: pinned
+        generation_pin: 7
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: large
+        source: msk-computefamily
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: managed
+            size_gib: ""
+            size_formula: provider-managed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+      ## Smallest ARM shape there is, terminated when nobody is debugging.
+      ## Burstable ARM stops at t4g, so newest and pinned are the same answer
+      ## today and the policy stays newest so a t5g would be picked up.
+      toolbox:
+        family: t
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: cheapest-of
+        price_step_max_pct: ""
+        price_generations: 2
+        size: small
+        source: ec2
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: gp3
+            size_gib: 20
+            size_formula: fixed
+            iops: 3000
+            throughput_mib_s: 125
+            throughput_policy: instance-baseline
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+  ## -------------------------------------------------------------------------
+  ## GCP -- a validated stub. The storage families are researched, the compute
+  ## families are not: pd classes scale IOPS and throughput per GB, Hyperdisk
+  ## adds per-VM limits on top, and GKE's default standard-rwo is pd-balanced
+  ## rather than pd-ssd. Filling this in is an edit here plus one tofu body per
+  ## capability module, not new resolver code.
+  ## -------------------------------------------------------------------------
+  gcp:
+    status: stub
+    arch: arm64
+    volume_default_type: hyperdisk-balanced
+    volume_baseline_iops: ""
+    volume_baseline_throughput_mib_s: ""
+    storage_class_owner: terraform
+    use_cases:
+      eks-system:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: hyperdisk-balanced
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      general:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: hyperdisk-balanced
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      kafka-broker:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: hyperdisk-balanced
+            size_gib: ""
+            size_formula: sizing.kafka.<provider>.disk_formula
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      kraft-controller:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: hyperdisk-balanced
+            size_gib: ""
+            size_formula: sizing.kraft_controller.disk_gib_floor
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      clickhouse:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest-with-modifiers
+        generation_pin: 1
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          cache:
+            type: local-ssd
+            size_gib: ""
+            size_formula: instance-provided
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: required
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      keeper:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: hyperdisk-balanced
+            size_gib: ""
+            size_formula: max(20, sizing.keeper.iops_target / 500)
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      ci-burst:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: cheapest-of
+        price_step_max_pct: ""
+        price_generations: 2
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: hyperdisk-balanced
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      ## On GCP the managed broker is a SaaS overlay -- Confluent or Redpanda --
+      ## rather than a cloud-native one, so this entry stays empty and the
+      ## overlay carries the vendor's own unit.
+      msk-broker:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: pinned
+        generation_pin: 0
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: vendor-overlay
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: managed
+            size_gib: ""
+            size_formula: provider-managed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      toolbox:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: cheapest-of
+        price_step_max_pct: ""
+        price_generations: 2
+        size: ""
+        source: compute-machine-types
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: hyperdisk-balanced
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+  ## -------------------------------------------------------------------------
+  ## Azure -- a validated stub. Premium SSD v2 is structurally gp3 and carries
+  ## its own per-VM limits; it cannot be an OS disk, so the root volume is a
+  ## different class from the data volume here. AKS's managed-csi is Standard
+  ## SSD, which is not what a data volume wants.
+  ## -------------------------------------------------------------------------
+  azure:
+    status: stub
+    arch: arm64
+    volume_default_type: premium-ssd-v2
+    volume_baseline_iops: ""
+    volume_baseline_throughput_mib_s: ""
+    storage_class_owner: terraform
+    use_cases:
+      eks-system:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: premium-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      general:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: premium-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      kafka-broker:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: premium-ssd-v2
+            size_gib: ""
+            size_formula: sizing.kafka.<provider>.disk_formula
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      kraft-controller:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: premium-ssd-v2
+            size_gib: ""
+            size_formula: sizing.kraft_controller.disk_gib_floor
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      clickhouse:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest-with-modifiers
+        generation_pin: 1
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          cache:
+            type: local-nvme-temp-disk
+            size_gib: ""
+            size_formula: instance-provided
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: required
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      keeper:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest-within
+        price_step_max_pct: 10
+        price_generations: ""
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: premium-ssd-v2
+            size_gib: ""
+            size_formula: max(20, sizing.keeper.iops_target / 500)
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      ci-burst:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: cheapest-of
+        price_step_max_pct: ""
+        price_generations: 2
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: premium-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      msk-broker:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: pinned
+        generation_pin: 0
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: vendor-overlay
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: managed
+            size_gib: ""
+            size_formula: provider-managed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      toolbox:
+        family: ""
+        modifiers: ""
+        arch: arm64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: cheapest-of
+        price_step_max_pct: ""
+        price_generations: 2
+        size: ""
+        source: vm-sizes
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: premium-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+
+  ## -------------------------------------------------------------------------
+  ## On-prem -- a validated stub, and a different contract: we do not create
+  ## these nodes. The resolver emits a node-requirements table from the same
+  ## ratios and bootstrap REFUSES when the cluster's real nodes fall short.
+  ## Nodes are x86_64 here, so the arch is amd64 and the family fields name a
+  ## class rather than a cloud's letter.
+  ## -------------------------------------------------------------------------
+  onprem:
+    status: stub
+    arch: amd64
+    volume_default_type: local-ssd
+    volume_baseline_iops: ""
+    volume_baseline_throughput_mib_s: ""
+    storage_class_owner: operator
+    use_cases:
+      eks-system:
+        family: general
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: local-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      general:
+        family: general
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: local-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      kafka-broker:
+        family: storage
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: local-nvme
+            size_gib: ""
+            size_formula: sizing.kafka.<provider>.disk_formula
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      kraft-controller:
+        family: general
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: local-ssd
+            size_gib: 20
+            size_formula: sizing.kraft_controller.disk_gib_floor
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      clickhouse:
+        family: memory
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: local-nvme
+            size_gib: ""
+            size_formula: sizing.clickhouse.disk_formula
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      keeper:
+        family: general
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: local-nvme
+            size_gib: ""
+            size_formula: max(20, sizing.keeper.iops_target / 500)
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      ci-burst:
+        family: compute
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: local-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      ## No managed broker exists on-prem; the brokers we run are the
+      ## kafka-broker entry above.
+      msk-broker:
+        family: ""
+        modifiers: ""
+        arch: amd64
+        generation_policy: pinned
+        generation_pin: 0
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: node-requirements
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          data:
+            type: managed
+            size_gib: ""
+            size_formula: provider-managed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""
+      ## The operator owns the network on-prem, so the toolbox is the in-cluster
+      ## pod rather than an instance of its own.
+      toolbox:
+        family: ""
+        modifiers: ""
+        arch: amd64
+        generation_policy: newest
+        generation_pin: ""
+        price_policy: newest
+        price_step_max_pct: ""
+        price_generations: ""
+        size: ""
+        source: in-cluster-pod
+        instance_iops_ceiling: ""
+        instance_throughput_mib_s_ceiling: ""
+        volumes:
+          root:
+            type: local-ssd
+            size_gib: ""
+            size_formula: fixed
+            iops: ""
+            throughput_mib_s: ""
+            instance_store: none
+            size_derived_iops_ceiling: ""
+            size_derived_throughput_mib_s_ceiling: ""

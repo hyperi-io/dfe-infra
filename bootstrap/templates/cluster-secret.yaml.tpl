@@ -17,6 +17,10 @@ metadata:
     # external-dns provider, "none" for a deployment that publishes no records;
     # layer1-addons deploys the controller only for a value other than none.
     dfe.hyperi.io/dns-provider: "${DFE_DNS_PROVIDER}"
+    # A LABEL copy of the cloud annotation below: an ApplicationSet cluster
+    # selector's matchExpressions can only match labels, never annotations, and
+    # layer1-addons.yaml gates the AWS Load Balancer Controller on this key.
+    dfe.hyperi.io/cloud: "${DFE_CLOUD}"
   annotations:
     # Identity
     dfe.hyperi.io/env: "${DFE_ENV}"
@@ -24,6 +28,15 @@ metadata:
     dfe.hyperi.io/region: "${DFE_REGION}"
     dfe.hyperi.io/domain: "${DFE_DOMAIN}"
     dfe.hyperi.io/profile: "${DFE_PROFILE}"
+    # The EKS cluster's own name, for the LBC chart's subnet/tag discovery;
+    # empty on non-EKS clouds, where DFE_KUBE_CLUSTER_NAME_ANNOTATION is unset
+    # and this line renders blank rather than an empty-valued annotation.
+    ${DFE_KUBE_CLUSTER_NAME_ANNOTATION}
+    # The karpenter-pools chart's three cluster facts; each renders blank on a
+    # non-AWS cloud, same as the cluster_name annotation above.
+    ${DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION}
+    ${DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION}
+    ${DFE_KARPENTER_KMS_KEY_ID_ANNOTATION}
     # Front-door addresses this deployment's DNS already names. Empty leaves the
     # choice to the LB pool, which is what re-rolls them on a rebuild.
     dfe.hyperi.io/gateway_address: "${DFE_GATEWAY_IP}"
@@ -46,6 +59,10 @@ metadata:
     dfe.hyperi.io/dfe_namespace: "${DFE_NAMESPACE}"
     dfe.hyperi.io/clickhouse_host: "${DFE_CLICKHOUSE_HOST}"
     dfe.hyperi.io/kafka_bootstrap: "${DFE_KAFKA_BOOTSTRAP}"
+    dfe.hyperi.io/kafka_provider: "${DFE_KAFKA_PROVIDER}"
+    # Bare broker hosts (no port), for the otel-collector chart's MSK
+    # open_monitoring scrape. Empty on every provider but msk.
+    dfe.hyperi.io/kafka_broker_hosts: "${DFE_KAFKA_BROKER_HOSTS}"
     dfe.hyperi.io/otel_endpoint: "${DFE_OTEL_ENDPOINT}"
     # Deployment-wide retention; layer2-apps and layer2-data inject it into the
     # dfe-engine and dfe-schema charts as retention.defaultTtlDays.

@@ -1,0 +1,67 @@
+{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- if and $public .Values.tls.public.email }}
+# Let's Encrypt by DNS-01 on Route 53, for the handful of hostnames whose users
+# sit outside the VPC. Separate from tls.issuerName, which stays on the internal
+# CA and carries everything else.
+#
+# There is no key or secret here: the cluster module associates this
+# ServiceAccount with a role scoped to the PUBLIC zone alone, and the AWS SDK
+# inside cert-manager reads that association from the pod's own environment. A
+# credential in this file would be a second, weaker way in.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.tls.public.issuerName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  acme:
+    email: {{ .Values.tls.public.email }}
+    server: {{ .Values.tls.public.server }}
+    privateKeySecretRef:
+      name: dfe-letsencrypt-public-account-key
+    solvers:
+      - dns01:
+          {{- /* hostedZoneID named, so a challenge is one API call into the zone
+                 we were given rather than a search that can match a sibling
+                 zone. An empty body is the ambient-credential, find-the-zone
+                 path -- and it has to be written as {} , because a bare key
+                 renders as null and the CRD rejects it. */}}
+          {{- $r53 := .Values.tls.public.route53 }}
+          {{- if or $r53.region $r53.hostedZoneID }}
+          route53:
+            {{- with $r53.region }}
+            region: {{ . | quote }}
+            {{- end }}
+            {{- with $r53.hostedZoneID }}
+            hostedZoneID: {{ . | quote }}
+            {{- end }}
+          {{- else }}
+          route53: {}
+          {{- end }}
+{{- end }}
+{{- range $key := $public }}
+{{- $r := index $.Values.routes $key }}
+---
+# One certificate per public hostname. A wildcard would let any future public
+# name ride a certificate issued for a UI that is already exposed.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dfe-public-{{ $r.routeName }}-tls
+  namespace: {{ $.Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  secretName: dfe-public-{{ $r.routeName }}-tls
+  dnsNames:
+    - {{ include "envoy-gateway-config.publicHost" (dict "ctx" $ "key" $key) | quote }}
+  issuerRef:
+    kind: ClusterIssuer
+    name: {{ $.Values.tls.public.issuerName }}
+  # CNSA 2.0, the same posture the internal wildcard holds.
+  privateKey:
+    algorithm: {{ $.Values.tls.privateKey.algorithm }}
+    size: {{ $.Values.tls.privateKey.size }}
+    rotationPolicy: {{ $.Values.tls.privateKey.rotationPolicy }}
+{{- end }}

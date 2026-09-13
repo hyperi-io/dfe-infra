@@ -150,6 +150,28 @@ tls:
     cloudflareTokenSecretName: cloudflare-api-token
     cloudflareTokenSecretKey: token
 
+  # PUBLIC certificates for the exposed UIs -- a second issuer, separate from
+  # the one above, because the internal wildcard stays on the internal CA and
+  # only the handful of public hostnames need a publicly trusted chain.
+  # Let's Encrypt by DNS-01 on Route 53, authenticated by the cluster module's
+  # cert-manager Pod Identity role: there is no key here because the AWS SDK
+  # reads the association from the pod's own environment.
+  public:
+    # The ClusterIssuer the public Certificates reference. Point it at an issuer
+    # you already have (ACM, a corporate CA) and leave email empty to render
+    # none of your own.
+    issuerName: dfe-letsencrypt-public
+    # Blank = no public ClusterIssuer is rendered. ACME requires a contact.
+    email: ""
+    server: "https://acme-v02.api.letsencrypt.org/directory"
+    route53:
+      # Blank = cert-manager reads the region from its own environment.
+      region: ""
+      # The cluster module's public_zone_id output. Blank makes cert-manager
+      # find the zone itself, which costs an extra ListHostedZonesByName call
+      # per challenge and can match the wrong zone where names overlap.
+      hostedZoneID: ""
+
   # Vault/OpenBao PKI issuer mode -- the private-CA swap seam. vault.server
   # set renders the issuerName ClusterIssuer Vault-backed; acme.email set
   # renders it ACME (set exactly one). AppRole SecretID Secret is seeded by
@@ -178,6 +200,20 @@ appNamespace: ""
 # entry for this deployment only.
 hostnames: {}
 
+# Read-only here, and owned by the kafka chart: the Cruise Control UI is one of
+# that chart's workloads, so the route below can only render where that chart
+# renders the Service behind it. Same key names, so the ONE profile overlay
+# (argocd/values/profile-*.yaml) that sets them reaches both charts -- the
+# pattern `exposure:` and `mesh:` already use. The defaults match the kafka
+# chart's, so a deployment that never mentions Kafka renders no route either.
+kafka:
+  mode: disabled
+  provider: strimzi
+  rebalancing:
+    enabled: true
+    ui:
+      enabled: true
+
 # Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
 # the dfe-receiver chart (exposure.mode, its ingest door) because a deployment's
 # cloud overlay feeds both -- one block describes what a deployment exposes, and
@@ -191,6 +227,79 @@ exposure:
   # are data plane and unaffected.
   infraUisExternal: true
 
+# PUBLIC UI EXPOSURE -- the cloud half of the edge, off until a deployment names
+# a public zone. Everything DFE uses internally stays private; the UIs are the
+# exception, because their users sit outside the VPC.
+#
+# The key names are the DIAL's (snake_case, the `ui:` block of deployment.yaml)
+# rather than this chart's camelCase, so the dial block and this block are the
+# same YAML and a deployer's overlay is a copy rather than a translation.
+#
+# What renders, per UI marked public: its own Gateway listener on the public
+# hostname, its own publicly trusted Certificate, its own HTTPRoute, a
+# SecurityPolicy carrying the CIDR filter (and the OIDC group check where the
+# route takes one), and a local rate limit. Nothing public renders while
+# public_domain is empty -- the flags then record intent only.
+ui:
+  # The delegated public zone the exposed UIs answer on (the dial's
+  # dns.public_zone). Empty = this deployment publishes no public hostname and
+  # the whole public half of the chart renders nothing.
+  public_domain: ""
+
+  # Which UIs answer on a public hostname. dfe-ui is the product surface and is
+  # public by default on a cloud deploy; every admin UI is opt-in, one at a
+  # time. A name here must match a routes.<key> entry, and cruise_control needs
+  # the kafka chart to be deploying that UI as well -- either one missing fails
+  # the render rather than publishing a hostname with nothing behind it.
+  public:
+    dfe_ui: true
+    kafbat: false
+    cruise_control: false
+    hyperdx: false
+    argocd: false
+    links: false
+    forgejo: false
+
+  # Who may reach a public UI, comma-separated; empty = any address. Enforced
+  # twice -- at Envoy (SecurityPolicy authorization) and at the cloud load
+  # balancer (loadBalancerSourceRanges) -- so a gateway misconfiguration is not
+  # the only wall. NOTE the load-balancer half fences the WHOLE front door,
+  # ingest routes included, because one Service carries every listener.
+  allowed_cidrs: ""
+
+  # The proxy ranges Envoy may believe about the client address, comma-separated
+  # -- the load balancer's own subnets, plus any CDN in front. Required whenever
+  # allowed_cidrs is set: without it Envoy trusts the leftmost X-Forwarded-For
+  # entry, which the caller writes.
+  trusted_proxy_cidrs: ""
+
+  # Rate limiting sized for a handful of humans, so a credential-stuffing run
+  # hits a wall before it hits the login. LOCAL is per route per proxy replica,
+  # not per attacker -- per-attacker counting needs scope global, which needs
+  # Redis and an EnvoyGateway install change, so global is refused here.
+  rate_limit:
+    enabled: true
+    requests: 300           # a UI page load is a burst of tens; 5rps sustained clears it
+    unit: Minute            # Second | Minute | Hour | Day | Month | Year
+    scope: local            # local only -- global is refused at render
+
+  # Web application firewall. Default none: every public route sits behind OIDC
+  # or an app-side login with deny-by-default authorisation, so managed rules
+  # would guard code an unauthenticated caller never reaches. Any other mode
+  # terminates TLS above Envoy and moves the public certificate to the cloud's
+  # own store, which this chart does not render -- so it fails instead.
+  waf:
+    mode: none              # none only
+    plan: ""                # reserved: the CDN plan the WAF rides on
+    managed_rules: ""       # reserved: comma-separated managed rule groups
+
+  # Public edge TLS. min_version MUST be a quoted string ("1.2"): unquoted 1.2
+  # parses as a float and is rejected. hsts adds Strict-Transport-Security to
+  # every public response, so a browser never retries the name over plaintext.
+  tls:
+    min_version: "1.2"
+    hsts: true
+
 # HTTPRoutes -- map hostnames to backend services.
 #
 # Every route carries its CLASSIFICATION as data, and the class decides which
@@ -202,8 +311,11 @@ exposure:
 #
 # Cascade, in order, first match wins:
 #   1. class infra and exposure.infraUisExternal: false  -> not rendered
-#   2. routes.<name>.enabled: false                      -> not rendered
-#   3. otherwise                                         -> rendered
+#   2. the backend is another chart's opt-in workload and that chart is not
+#      deploying it (cruiseControl, from the kafka.* keys above)
+#                                                        -> not rendered
+#   3. routes.<name>.enabled: false                      -> not rendered
+#   4. otherwise                                         -> rendered
 #
 # Per-route fields:
 #   class        -- product | infra | ingest (above)
@@ -300,6 +412,26 @@ routes:
     hostname: ""
     backendService: dfe-kafbat
     backendNamespace: kafka
+    backendPort: 8080
+
+  # The Cruise Control UI (kafka chart, ns strimzi). A static page with NO auth
+  # of its own -- it reads the rebalancer's REST API through a proxy inside its
+  # own pod -- so the edge policy is the only thing in front of it. Renders only
+  # where the kafka chart renders the Service: provider strimzi, kafka.mode
+  # cluster, and both rebalancing switches on.
+  cruiseControl:
+    class: infra
+    enabled: true
+    edgePolicy: true
+    routeName: cruise-control
+    hostnameKey: cruiseControl
+    # The canonical hostnames map carries no cruise-control entry yet, so the
+    # label is named here until argocd/values/common.yaml has one.
+    hostname: cruise-control
+    # <kafka.name>-cruise-control-ui, in the namespace layer2-data places the
+    # kafka chart in.
+    backendService: dfe-kafka-cruise-control-ui
+    backendNamespace: strimzi
     backendPort: 8080
 
   # Deployment links page (bundled chart, ns links). The page has NO auth of

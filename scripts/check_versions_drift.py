@@ -204,6 +204,18 @@ _APPSET_PINS = [
         "argocd/appsets/layer-scale.yaml",
         "clickhouse-operator-helm",
     ),
+    (
+        "aws-load-balancer-controller appset (aws)",
+        "operators.aws-load-balancer-controller",
+        "argocd/appsets/layer1-addons.yaml",
+        "aws-load-balancer-controller",
+    ),
+    (
+        "karpenter appset (aws)",
+        "operators.karpenter",
+        "argocd/appsets/layer1-addons.yaml",
+        "karpenter",
+    ),
 ]
 
 CHECKS: list[Check] = [
@@ -250,6 +262,38 @@ CHECKS += [
         "operators.strimzi-kafka-operator",
         Path("helm/charts/kafka/values.yaml"),
         r"operatorVersion:\s*\"([^\"]+)\"",
+    ),
+    # The MSK bootstrap Job's SASL/IAM login module: a jar, not an image, so the
+    # immutable half is the release sha256 the chart pins beside this version.
+    # Anchored on iamAuth because comment lines sit between the key and the pin.
+    Check(
+        "aws-msk-iam-auth jar version (kafka values)",
+        "services.aws-msk-iam-auth",
+        Path("helm/charts/kafka/values.yaml"),
+        r"iamAuth:\n(?:\s*#[^\n]*\n)*\s*version:\s*\"([^\"]+)\"",
+    ),
+    # The Cruise Control UI: a release tarball, not an image, on the same terms
+    # as the jar above -- the integrity half is the sha256 the chart pins beside
+    # it. Anchored on `release:` because comments sit between the key and the pin.
+    Check(
+        "cruise-control-ui release (kafka values)",
+        "services.cruise-control-ui",
+        Path("helm/charts/kafka/values.yaml"),
+        r"release:\n(?:\s*#[^\n]*\n)*\s*version:\s*\"([^\"]+)\"",
+    ),
+    # It is SERVED by the same nginx image the links page runs, so the kafka
+    # chart carries a second copy of that pin and both halves are checked here.
+    Check(
+        "cruise-control-ui server image tag (kafka values)",
+        "services.nginx-unprivileged",
+        Path("helm/charts/kafka/values.yaml"),
+        r"nginx-unprivileged\n\s*tag:\s*\"([^\"@]+)",
+    ),
+    Check(
+        "cruise-control-ui server image digest (kafka values)",
+        "services-digests.nginx-unprivileged",
+        Path("helm/charts/kafka/values.yaml"),
+        r'digest:\s*"([^"]+)"',
     ),
     # kafbat (class D): chart value is tag@digest -- compare the TAG part to SSoT
     Check(
@@ -375,6 +419,15 @@ CHECKS += [
         Path("helm/charts/kafbat/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # karpenter-pools renders no image. Its appVersion is the Karpenter release
+    # whose CRDs every field in it was checked against, so the two moving apart
+    # is a chart written for a schema the cluster is not running.
+    Check(
+        "karpenter-pools chart appVersion",
+        "operators.karpenter",
+        Path("helm/charts/karpenter-pools/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
     # The worked example names a stack version the same way a chart names an
     # image tag, so it goes stale the moment `current` moves.
     Check(
@@ -408,7 +461,54 @@ _PROVIDER_MIRRORS = [
     (
         "providers.hashicorp-random",
         "random",
-        ["terraform/modules/tf-secrets/variables.tf"],
+        [
+            "terraform/modules/tf-secrets/variables.tf",
+            "terraform/modules/secrets/aws-sm/versions.tf",
+            "terraform/environments/aws/versions.tf",
+        ],
+    ),
+    # The AWS path declares the provider in each module and in both roots, so a
+    # lift has to move all four together or one of them resolves a different
+    # major on its own `tofu init`.
+    (
+        "providers.hashicorp-aws",
+        "aws",
+        [
+            "terraform/modules/kubernetes-cluster/aws/versions.tf",
+            "terraform/modules/managed-kafka/msk/versions.tf",
+            "terraform/modules/managed-kafka/confluent-cloud/versions.tf",
+            "terraform/modules/managed-kafka/redpanda-cloud/versions.tf",
+            "terraform/modules/secrets/aws-sm/versions.tf",
+            "terraform/environments/aws/versions.tf",
+            "terraform/environments/aws-state/versions.tf",
+        ],
+    ),
+    # The two SaaS Kafka providers, each paired with aws above for the
+    # private-link handshake's other end. The aws root ALSO declares both --
+    # its `provider "confluent" {}` / `provider "redpanda" {}` blocks configure
+    # whichever body count selects -- so a lift has to move all three together.
+    (
+        "providers.confluentinc-confluent",
+        "confluent",
+        [
+            "terraform/modules/managed-kafka/confluent-cloud/versions.tf",
+            "terraform/environments/aws/versions.tf",
+        ],
+    ),
+    (
+        "providers.redpanda-data-redpanda",
+        "redpanda",
+        [
+            "terraform/modules/managed-kafka/redpanda-cloud/versions.tf",
+            "terraform/environments/aws/versions.tf",
+        ],
+    ),
+    # Zips the broker-count autoscaler's inline Lambda source. Local-only, no
+    # cloud API, and msk/ is its one consumer.
+    (
+        "providers.hashicorp-archive",
+        "archive",
+        ["terraform/modules/managed-kafka/msk/versions.tf"],
     ),
     # The optional OIDC modules. Nothing instantiates them, so the constraint in
     # the module is the whole of the pin -- there is no lock file behind it.

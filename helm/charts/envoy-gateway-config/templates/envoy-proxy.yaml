@@ -1,13 +1,37 @@
 # EnvoyProxy -- customises the managed Envoy proxy's front-door Service so the
 # HTTP plane's LB is SWAPPABLE (cloud LB <-> k8s LB) the same way the receiver's
 # L4 LBs are. Referenced by the GatewayClass via parametersRef (see
-# gateway-class.yaml). type + annotations are set directly; loadBalancerIP,
-# loadBalancerClass, loadBalancerSourceRanges and externalIPs go through a
-# StrategicMerge patch so it works across Envoy Gateway versions regardless of
-# dedicated-field availability.
-# externalIPs is not gated on type -- a cluster with no LB controller reaches the
-# outside through it on a ClusterIP.
+# gateway-class.yaml).
+#
+# type, annotations, loadBalancerIP, loadBalancerClass and
+# loadBalancerSourceRanges are all dedicated fields at Envoy Gateway v1.8, so
+# they are set directly. Only externalIPs has no field of its own and still goes
+# through a StrategicMerge patch; it is not gated on type, because a cluster
+# with no LB controller reaches the outside through it on a ClusterIP.
 {{- $svc := .Values.envoyGateway.service }}
+{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.allowed_cidrs) | fromJsonArray }}
+{{- /* The second wall. ui.allowed_cidrs is enforced at Envoy as well, so a
+       misconfigured policy is not the only thing between the internet and a UI
+       -- but this one is the WHOLE front door, ingest routes included, because
+       one Service carries every listener. */}}
+{{- $sourceRanges := concat ($svc.loadBalancerSourceRanges | default list) $allowed | uniq }}
+{{- /* Every name this edge answers on, public and internal. external-dns picks
+       the zone by matching the suffix, so the public names land in the
+       delegated public zone and every internal name stays in the private one
+       with no zone filter to keep in step. */}}
+{{- $hostnames := list }}
+{{- if $public }}
+{{- range $key, $r := .Values.routes }}
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" $ "key" $key) }}
+{{- $hostnames = append $hostnames (printf "%s.%s" (include "envoy-gateway-config.routeHost" (dict "ctx" $ "key" $key)) $.Values.domain) }}
+{{- end }}
+{{- end }}
+{{- range $key := $public }}
+{{- $hostnames = append $hostnames (include "envoy-gateway-config.publicHost" (dict "ctx" $ "key" $key)) }}
+{{- end }}
+{{- $hostnames = $hostnames | uniq | sortAlpha }}
+{{- end }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
@@ -21,32 +45,36 @@ spec:
     kubernetes:
       envoyService:
         type: {{ $svc.type | default "LoadBalancer" }}
-        {{- with $svc.annotations }}
+        {{- if or $svc.annotations $hostnames }}
         annotations:
+          {{- with $svc.annotations }}
           {{- toYaml . | nindent 10 }}
+          {{- end }}
+          {{- /* Written only once a public zone is named, so a deployment that
+                 manages its own DNS by hand is untouched. */}}
+          {{- with $hostnames }}
+          external-dns.alpha.kubernetes.io/hostname: {{ join "," . | quote }}
+          {{- end }}
         {{- end }}
         {{- $isLB := eq ($svc.type | default "LoadBalancer") "LoadBalancer" }}
-        {{- $lbFields := and $isLB (or $svc.loadBalancerIP $svc.loadBalancerClass $svc.loadBalancerSourceRanges) }}
-        {{- if or $lbFields $svc.externalIPs }}
+        {{- if $isLB }}
+        {{- /* Empty = the pool picks; set = the address DNS already names. */}}
+        {{- with $svc.loadBalancerIP }}
+        loadBalancerIP: {{ . }}
+        {{- end }}
+        {{- with $svc.loadBalancerClass }}
+        loadBalancerClass: {{ . }}
+        {{- end }}
+        {{- with $sourceRanges }}
+        loadBalancerSourceRanges:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- end }}
+        {{- with $svc.externalIPs }}
         patch:
           type: StrategicMerge
           value:
             spec:
-              {{- if $lbFields }}
-              {{- /* Empty = the pool picks; set = the address DNS already names. */}}
-              {{- if $svc.loadBalancerIP }}
-              loadBalancerIP: {{ $svc.loadBalancerIP }}
-              {{- end }}
-              {{- if $svc.loadBalancerClass }}
-              loadBalancerClass: {{ $svc.loadBalancerClass }}
-              {{- end }}
-              {{- with $svc.loadBalancerSourceRanges }}
-              loadBalancerSourceRanges:
-                {{- toYaml . | nindent 16 }}
-              {{- end }}
-              {{- end }}
-              {{- with $svc.externalIPs }}
               externalIPs:
                 {{- toYaml . | nindent 16 }}
-              {{- end }}
         {{- end }}

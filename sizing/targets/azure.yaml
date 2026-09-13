@@ -1,0 +1,29 @@
+## Project:   dfe-infra
+## File:      sizing/targets/azure.yaml
+## Purpose:   The per-target knob matrix for `cloud: azure` -- a validated
+##            stub, not a built target. Every sizing knob it would change,
+##            marked blocked until the target itself exists.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Read by scripts/resolve_sizing.py's build_report -- see the module
+## docstring's TARGETS_DIR paragraph. `status` names the stub so the report
+## does not read as a finished target; every knob below carries a `state` of
+## `blocked`, `renamed` or `managed`, plus the one-sentence `reason`. NO LISTS:
+## nested maps and scalars only, parsed by scripts/yaml_subset.py.
+
+status: validated-stub
+
+node_shapes:
+  state: blocked
+  reason: "target not built yet -- compute-shapes.yaml's azure entry is a validated stub with every family, size and source field left empty, so there is nothing for select_shape to resolve against a live API."
+
+storage_classes:
+  state: blocked
+  reason: "target not built yet -- compute-shapes.yaml's azure comment notes Premium SSD v2 is structurally gp3 but cannot be an OS disk, so the root and data volume classes differ and the resolver's assertions do not cover either yet."
+
+karpenter_generation_floor:
+  state: blocked
+  reason: "target not built yet -- there is no live shape resolution for azure to render a Karpenter pool from, and AKS node pools are not Karpenter in any case."

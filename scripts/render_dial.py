@@ -10,6 +10,12 @@
 
 """Render the deployment dial into the DFE_* env file, for the k8s substrate.
 
+Two renders, one dial. ``--tofu`` writes the tfvars file the cloud roots read
+(``terraform/environments/<cloud>/dial.auto.tfvars.json``) from the dial's
+``target.provision`` block and the cloud-provisioning section beside it; the
+default render writes the DFE_* env file bootstrap and dfe-ops read. The tofu
+roots receive values and compute none, so everything they know arrives here.
+
 The deployment dial (``deployment.yaml``) is the single SSoT a deployment turns:
 one file the whole automation reads, authored by hand today and populated by the
 QA GUI wizard later. This is the k8s SIBLING of dfe-docker's ``render_dial.py``.
@@ -30,22 +36,30 @@ deploy time, or an operator fills the copied ``.env`` by hand. This renderer
 never reads or writes a secret.
 
 Dependency-free (no PyYAML) and stdlib only, matching the dfe-ops rule -- the
-dial's k8s slice is scalar / nested-map only.
+dial's k8s slice is scalar / nested-map only, so scripts/yaml_subset.py reads it.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
 from pathlib import Path
+
+from yaml_subset import YamlSubsetError, split_list
+from yaml_subset import parse as _parse_yaml_subset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DIAL = REPO_ROOT / "deployment.yaml"
 DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
 ENV_FILE = REPO_ROOT / "bootstrap" / ".env"
 ENV_TEMPLATE = REPO_ROOT / "bootstrap" / "local.env.example"
+TOFU_ROOTS = REPO_ROOT / "terraform" / "environments"
+SHAPES_DIR = REPO_ROOT / "shapes" / "resolved"
+VERSIONS_FILE = REPO_ROOT / "versions.yaml"
+TFVARS_NAME = "dial.auto.tfvars.json"
 
 # (dial path) -> DFE_* env key. These are the flat env-file keys dfe-ops reads
 # (bootstrap/local.env.example is the SSoT for the vocabulary). The three deploy
@@ -68,52 +82,14 @@ _ENV_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (("endpoints", "otel_endpoint"), "DFE_OTEL_ENDPOINT"),
     (("endpoints", "vault_addr"), "DFE_VAULT_ADDR"),
     (("retention", "default_ttl_days"), "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"),
+    # Which store body bootstrap renders, and which variables it then demands:
+    # openbao takes an address and an AppRole, aws-sm takes neither.
+    (("secrets", "backend"), "DFE_SECRETS_BACKEND"),
 )
 
 # An env assignment, live (`KEY=`) or hash-commented (`# KEY=`). The env file's
 # keys are DFE_*, KUBECONFIG, READINESS_TIMEOUT -- all [A-Z][A-Z0-9_]*.
 _SETTING_RE = re.compile(r"^[ \t]*(?:#[ \t]?)?(?P<key>[A-Z][A-Z0-9_]*)[ \t]*=")
-
-
-def _parse_yaml_subset(text: str) -> dict[str, object]:
-    """Parse a minimal YAML subset -- nested maps, scalar values -- into dicts.
-
-    Dependency-free (no PyYAML). Handles ``key: value`` scalars and ``key:``
-    nesting by indentation, skipping ``#`` comments and blank lines. It does NOT
-    handle lists or inline collections -- a line it cannot place raises
-    ValueError -- which is why the dial keeps every list (nodePools) in prose.
-    """
-    root: dict[str, object] = {}
-    stack: list[tuple[dict[str, object], int]] = [(root, -1)]
-    for line_num, raw_line in enumerate(text.splitlines(), 1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip())
-        while len(stack) > 1 and stack[-1][1] >= indent:
-            stack.pop()
-        parent = stack[-1][0]
-        if ": " in line:
-            key, value = line.split(": ", 1)
-            value = value.strip()
-            if value and value[0] in ("'", '"'):
-                # Quoted: take only what is INSIDE the quotes and drop any
-                # trailing inline comment, so `key: "" # note` is empty (the
-                # dial annotates blank estate fields exactly this way).
-                quote = value[0]
-                end = value.find(quote, 1)
-                value = value[1:end] if end != -1 else value[1:]
-            else:
-                # Unquoted: strip a trailing ` # ...` inline comment.
-                value = value.split(" #", 1)[0].strip()
-            parent[key.strip()] = value
-        elif line.endswith(":"):
-            child: dict[str, object] = {}
-            parent[line[:-1].strip()] = child
-            stack.append((child, indent))
-        else:
-            raise ValueError(f"line {line_num}: cannot parse {line!r}")
-    return root
 
 
 def _scalar(dial: dict[str, object], path: tuple[str, ...]) -> str | None:
@@ -184,6 +160,307 @@ def _derived_command(dial: dict[str, object], env_path: Path) -> str:
     return " ".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# The tofu render
+# ---------------------------------------------------------------------------
+
+# Which `platform:` key in versions.yaml states the control-plane floor for a
+# cloud. The stage arrives with dfe-infra#285; until then the dial carries the
+# version and this lookup finds nothing.
+_PLATFORM_KEY = {"aws": "eks", "gcp": "gke", "azure": "aks"}
+
+
+class DialError(ValueError):
+    """A dial the tofu render cannot turn into a tfvars file."""
+
+
+def _seeds(kafka_provider: str) -> dict[str, dict[str, str]]:
+    """The credentials the deploy layer puts in the store, for this broker.
+
+    An empty value is generated -- in the secrets module, or in the root for a
+    password a managed broker is created with -- and never surfaces, so neither
+    the dial nor the rendered tfvars ever carries one. The kafka key's last
+    segment is the provider, which is what the kafka chart reads back.
+    """
+    return {
+        f"kafka/{kafka_provider}": {"password": ""},
+        "ui/nextauth": {"secret": ""},
+    }
+
+
+def _text(dial: dict[str, object], path: tuple[str, ...], default: str = "") -> str:
+    """Return the scalar at ``path``, or ``default`` when it is absent or blank."""
+    value = _scalar(dial, path)
+    return default if value is None else value
+
+
+def _required(dial: dict[str, object], path: tuple[str, ...]) -> str:
+    """Return the scalar at ``path``, refusing an absent or blank one by name."""
+    value = _scalar(dial, path)
+    if value is None:
+        raise DialError(f"the dial sets no {'.'.join(path)}")
+    return value
+
+
+def _flag(dial: dict[str, object], path: tuple[str, ...], default: bool = False) -> bool:
+    """Read a true/false dial field. The dial writes them as strings, like `steps`."""
+    value = _scalar(dial, path)
+    if value is None:
+        return default
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    raise DialError(f"{'.'.join(path)} must be true or false, got {value!r}")
+
+
+def _number(dial: dict[str, object], path: tuple[str, ...]) -> int:
+    """Read a whole-number dial field, refusing anything else by name."""
+    value = _required(dial, path)
+    if not value.isdigit():
+        raise DialError(f"{'.'.join(path)} must be a whole number, got {value!r}")
+    return int(value)
+
+
+def _platform_version(cloud: str) -> str | None:
+    """The control-plane version versions.yaml states for this cloud, if any.
+
+    dfe-infra#285 adds a `platform:` stage of `>=` requirements to the current
+    stack. Until it lands there is nothing to read and the dial's own field is
+    what runs.
+    """
+    if not VERSIONS_FILE.is_file():
+        return None
+    try:
+        tree = _parse_yaml_subset(
+            VERSIONS_FILE.read_text(encoding="utf-8", errors="replace"),
+            source=str(VERSIONS_FILE),
+        )
+    except YamlSubsetError:
+        return None
+    current = _scalar(tree, ("current",))
+    if current is None:
+        return None
+    for key in (_PLATFORM_KEY.get(cloud, cloud), "kubernetes"):
+        value = _scalar(tree, ("stacks", current, "platform", key))
+        if value is not None:
+            return value.removeprefix(">=").strip()
+    return None
+
+
+def _resolved_shapes(cloud: str) -> dict[str, dict[str, object]]:
+    """Read the shape resolver's committed answer for this cloud.
+
+    The file carries provenance and policy keys the tofu roots do not declare,
+    so only the two the variable's type accepts are copied across.
+    """
+    path = SHAPES_DIR / f"{cloud}.json"
+    if not path.is_file():
+        raise DialError(
+            f"no resolved shapes at {path} -- the shape resolver writes it, and the "
+            f"root refuses a node pool whose shape_ref it cannot find"
+        )
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        name: {"instance_types": body["instance_types"], "arch": body["arch"]}
+        for name, body in doc.items()
+        if isinstance(body, dict) and not name.startswith("_")
+    }
+
+
+def _node_pools(dial: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Build the managed node groups from the dial, keyed by pool name.
+
+    labels and taints are structural: the restricted YAML the dial is written in
+    carries no list, and no pool needs either one yet.
+    """
+    pools = dial.get("node_pools")
+    if not isinstance(pools, dict) or not pools:
+        raise DialError("the dial declares no node_pools -- the cluster needs a system pool")
+    built: dict[str, dict[str, object]] = {}
+    for name in pools:
+        at = ("node_pools", name)
+        built[name] = {
+            "shape_ref": _required(dial, (*at, "shape_ref")),
+            "min_size": _number(dial, (*at, "min_size")),
+            "max_size": _number(dial, (*at, "max_size")),
+            "desired_size": _number(dial, (*at, "desired_size")),
+            "capacity_type": _required(dial, (*at, "capacity_type")),
+            "disk_gb": _number(dial, (*at, "disk_gb")),
+            "labels": {},
+            "taints": [],
+        }
+    return built
+
+
+def _kafka(dial: dict[str, object]) -> dict[str, object]:
+    """Who runs the brokers, and the managed one's shape when the root creates it.
+
+    strimzi and redpanda run inside the cluster, so the root builds nothing and
+    the msk block is not rendered at all. On msk every value is read here: the
+    module defaults none of them, because a defaulted broker version rots into a
+    deprecated line silently.
+    """
+    provider = _required(dial, ("kafka", "provider"))
+    if provider != "msk":
+        return {"provider": provider}
+
+    at = ("kafka", "msk")
+    return {
+        "provider": provider,
+        "msk": {
+            "shape_ref": _required(dial, (*at, "shape_ref")),
+            "broker_count": _number(dial, (*at, "broker_count")),
+            "broker_version": _required(dial, (*at, "broker_version")),
+            "num_partitions": _number(dial, (*at, "num_partitions")),
+            "log_retention_ms": _number(dial, (*at, "log_retention_ms")),
+            "message_max_bytes": _number(dial, (*at, "message_max_bytes")),
+            "scram_username": _required(dial, (*at, "scram_username")),
+            "bootstrap_job": {
+                "namespace": _required(dial, (*at, "bootstrap_job", "namespace")),
+                "service_account": _required(dial, (*at, "bootstrap_job", "service_account")),
+            },
+        },
+    }
+
+
+def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
+    """The telemetry dial for this cloud, defaulted to DFE's own policy.
+
+    DFE's monitoring goes to its own OTel feed and HyperDX, never CloudWatch,
+    so sink defaults to otel -- cloudwatch is the opt-in AWS-native path.
+    retention_days defaults to 2 under otel (bounding an S3 lifecycle for the
+    touchpoints AWS forces into CloudWatch anyway) and 7 under cloudwatch (an
+    AWS-native compliance path, kept short rather than left at a service
+    default). Read from telemetry.<cloud> so a future gcp or azure root carries
+    its own block rather than sharing one.
+    """
+    sink = _text(dial, ("telemetry", cloud, "sink"), "otel")
+    if sink not in ("otel", "cloudwatch"):
+        raise DialError(f"telemetry.{cloud}.sink must be otel or cloudwatch, got {sink!r}")
+
+    default_retention = 2 if sink == "otel" else 7
+    retention_raw = _scalar(dial, ("telemetry", cloud, "retention_days"))
+    if retention_raw is None:
+        retention_days = default_retention
+    elif retention_raw.isdigit():
+        retention_days = int(retention_raw)
+    else:
+        raise DialError(f"telemetry.{cloud}.retention_days must be a whole number, got {retention_raw!r}")
+
+    return {"sink": sink, "retention_days": retention_days}
+
+
+def _tags(dial: dict[str, object], cloud: str) -> dict[str, str]:
+    """The governance tag set. Six come from the dial; iac-source names the root."""
+    keys = (
+        "service-name",
+        "service-namespace",
+        "environment",
+        "owner",
+        "cost-center",
+        "lifecycle",
+    )
+    tags = {key: _text(dial, ("tags", key)) for key in keys}
+    tags["iac-source"] = f"dfe-infra/terraform/environments/{cloud}"
+    return tags
+
+
+def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
+    """Turn the dial into the variable set the cloud root declares.
+
+    Returns the cloud token and the variables. The shape is the root's
+    variables.tf exactly -- a key the root does not declare is an error there,
+    and a key it declares and this omits is a prompt on an unattended plan.
+    """
+    cloud = _required(dial, ("target", "provision", "cloud"))
+    root = TOFU_ROOTS / cloud
+    if not root.is_dir():
+        raise DialError(
+            f"target.provision.cloud is {cloud!r} and there is no root at {root} -- "
+            f"a cloud arrives as a new root over the capability modules"
+        )
+
+    public = _flag(dial, ("endpoint", "public"))
+    allowed = list(split_list(_scalar(dial, ("endpoint", "allowed_cidrs"))))
+    if public and not allowed:
+        raise DialError(
+            "endpoint.public is true and endpoint.allowed_cidrs is empty -- name the "
+            "addresses allowed to reach the Kubernetes API, or set public to false"
+        )
+
+    registry = _text(dial, ("registry",))
+    kafka = _kafka(dial)
+    return cloud, {
+        "provision": {
+            "cloud": cloud,
+            "account": _required(dial, ("target", "provision", "account")),
+            "region": _required(dial, ("target", "provision", "region")),
+            "cidr": _required(dial, ("target", "provision", "cidr")),
+        },
+        "name": _required(dial, ("metadata", "name")),
+        "env": _required(dial, ("k8s", "env")),
+        "profile": _required(dial, ("profile",)),
+        "kubernetes_version": _platform_version(cloud) or _required(dial, ("kubernetes_version",)),
+        "node_pools": _node_pools(dial),
+        "resolved_shapes": _resolved_shapes(cloud),
+        "network": {"nat": _required(dial, ("network", "nat"))},
+        "endpoint": {"public": public, "allowed_cidrs": allowed},
+        "dns": {
+            "private_zone": _required(dial, ("dns", "private_zone")),
+            "public_zone": _text(dial, ("dns", "public_zone")),
+        },
+        "telemetry": _telemetry(dial, cloud),
+        "storage_class": _required(dial, ("k8s", "storage_class")),
+        "kafka": kafka,
+        "secrets": {
+            "backend": _required(dial, ("secrets", "backend")),
+            "ref": _text(dial, ("secrets", "ref")),
+        },
+        "seeds": _seeds(str(kafka["provider"])),
+        "endpoints": {
+            "clickhouse_host": _text(dial, ("endpoints", "clickhouse_host")),
+            "kafka_bootstrap": _text(dial, ("endpoints", "kafka_bootstrap")),
+            "otel_endpoint": _text(dial, ("endpoints", "otel_endpoint")),
+        },
+        "repo_url": _required(dial, ("k8s", "repo_url")),
+        "target_revision": _required(dial, ("k8s", "target_revision")),
+        # The pull-secret host only. A registry credential is a secret, so it
+        # reaches tofu from the deployer's environment and never from the dial.
+        "registry_host": registry.split("/", 1)[0] if registry else "",
+        "registry_user": "",
+        "registry_token": "",
+        "state": {
+            "bucket": _required(dial, ("state", "bucket")),
+            "key": _required(dial, ("state", "key")),
+            "region": _required(dial, ("state", "region")),
+        },
+        "tags": _tags(dial, cloud),
+    }
+
+
+def _render_tofu(dial: dict[str, object], out: Path | None) -> int:
+    """Write the cloud root's tfvars file, and print the plan that consumes it."""
+    try:
+        cloud, variables = _tofu_vars(dial)
+    except (DialError, KeyError) as error:
+        print(f"render_dial: {error}", file=sys.stderr)
+        return 1
+
+    destination = out or TOFU_ROOTS / cloud / TFVARS_NAME
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(variables, indent=2) + "\n")
+    print(f"render_dial: wrote {destination}", file=sys.stderr)
+
+    root = TOFU_ROOTS / cloud
+    rel = root.relative_to(REPO_ROOT) if root.is_relative_to(REPO_ROOT) else root
+    print(file=sys.stderr)
+    print("Provision this dial with:", file=sys.stderr)
+    print(f"  tofu -chdir={rel} init", file=sys.stderr)
+    print(f"  tofu -chdir={rel} plan -out=deployment.tfplan", file=sys.stderr)
+    print(f"  tofu -chdir={rel} apply deployment.tfplan", file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="render_dial.py",
@@ -191,10 +468,16 @@ def main() -> int:
     )
     ap.add_argument("--dial", type=Path, default=DIAL, help="dial path (default: deployment.yaml)")
     ap.add_argument(
+        "--tofu",
+        action="store_true",
+        help=f"render the cloud root's tfvars instead (default: "
+        f"terraform/environments/<cloud>/{TFVARS_NAME})",
+    )
+    ap.add_argument(
         "--out",
         type=Path,
-        default=ENV_FILE,
-        help="env file to write (default: bootstrap/.env)",
+        default=None,
+        help="file to write (default: bootstrap/.env, or the tfvars path under --tofu)",
     )
     args = ap.parse_args()
 
@@ -216,6 +499,10 @@ def main() -> int:
         )
         return 1
 
+    if args.tofu:
+        return _render_tofu(dial, args.out)
+
+    args.out = args.out or ENV_FILE
     # Seed the env file from the committed example on first render, so every
     # DFE_* key + its guidance is present before the dial merges over it.
     if not args.out.is_file():

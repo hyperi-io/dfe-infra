@@ -3,7 +3,8 @@
 // A type=LoadBalancer Service annotated aws-load-balancer-type: external is
 // OWNED by this controller; without it the Service sits at "Ensuring load
 // balancer" forever, because the annotation tells the in-tree controller to
-// keep its hands off. Observed on this cluster before the controller existed.
+// keep its hands off. Observed on the spike cluster before the controller
+// existed.
 //
 // The policy document is AWS's published one, vendored rather than fetched at
 // plan time so a plan is not hostage to a raw.githubusercontent fetch.
@@ -24,8 +25,11 @@ resource "aws_iam_role_policy_attachment" "lbc" {
 }
 
 resource "aws_eks_pod_identity_association" "lbc" {
-  cluster_name    = aws_eks_cluster.main.name
+  cluster_name = aws_eks_cluster.this.name
+
+  // Namespace and service account the controller's own chart defaults to.
   namespace       = "kube-system"
   service_account = "aws-load-balancer-controller"
-  role_arn        = aws_iam_role.lbc.arn
+
+  role_arn = aws_iam_role.lbc.arn
 }

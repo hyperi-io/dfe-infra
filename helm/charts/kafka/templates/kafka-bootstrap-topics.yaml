@@ -36,10 +36,17 @@ and the single tier installs none. That tier creates the same topics with the
 broker's own CLI -- see kafka-single-bootstrap-topics.yaml. The redpanda
 provider creates no topics on either path (pre-existing parity gap; it relies
 on broker auto-creation).
+
+KafkaTopic renders kafka.strimzi.io/v1, which Strimzi 1.0 made the only served
+version -- it removed the v1beta2 this template used to write. Every other
+Strimzi CR the chart renders was already on v1, so this was the last one. An
+EXISTING cluster needs `bin/v1-api-conversion.sh convert-resource` then
+`crd-upgrade` before the operator is upgraded: 0.51 serves v1 but STORES
+v1beta2, so upgrading the operator first leaves the stored objects unreadable.
 */}}
 {{- range $t := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: {{ $t.name | replace "_" "-" }}
