@@ -87,6 +87,7 @@ kubernetes_version: "1.36"
 ## zone and is the cheaper tyre-kick default.
 network:
   nat: single                # per-az | single
+  az_count: 3                # 2-6; empty takes 3, enough for a quorum without a fourth zone's cross-zone charge
 
 ## The Kubernetes API endpoint. The private one is always on; public adds the
 ## public one for operators outside the VPC, and the root refuses 0.0.0.0/0.
@@ -147,7 +148,7 @@ ui:
     hsts: "true"
 
 ## The system node pool -- what the cluster runs before any DFE workload lands.
-## shape_ref indexes shapes/resolved/<cloud>.json; an instance type is never
+## shape_ref indexes shapes/resolved/<cloud>-<region>.json; an instance type is never
 ## named here, because the shape resolver owns that answer.
 node_pools:
   system:
@@ -216,12 +217,15 @@ sizing:
 
 ## KAFKA -- who runs the brokers. strimzi and redpanda run inside the cluster and
 ## tofu creates nothing for them; msk, confluent-cloud and redpanda-cloud are the
-## managed bodies the aws root creates, and the msk block below is read only
-## when provider is msk -- the two SaaS bodies size and tune the cluster
-## themselves (terraform/modules/managed-kafka/CONTRACT.md) and take no block of
-## their own. The same token is the last segment of the credential's store key
-## (<project>/<env>/kafka/<provider>), which is how the kafka chart reads the
-## password back.
+## managed bodies the aws root creates. num_partitions, log_retention_ms and
+## message_max_bytes below are read for WHICHEVER of the three is selected --
+## every managed body applies the same canonical profile
+## (terraform/modules/managed-kafka/CONTRACT.md) -- but the rest of the msk:
+## block (shape_ref, broker_count, broker_version, scram_username,
+## bootstrap_job) is msk-only: the two SaaS bodies size, version and tune the
+## cluster themselves and take no block of their own. The same token is the
+## last segment of the credential's store key (<project>/<env>/kafka/<provider>),
+## which is how the kafka chart reads the password back.
 kafka:
   # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud. DOCUMENTATION
   # ONLY below, not yet resolved by the sizing overlay: the provider-by-tier
@@ -231,7 +235,7 @@ kafka:
   # lands there.
   provider: strimzi
   msk:
-    shape_ref: msk-broker     # indexes shapes/resolved/<cloud>.json
+    shape_ref: msk-broker     # indexes shapes/resolved/<cloud>-<region>.json
     broker_count: 3           # >= 3, and a multiple of the zone count
     ## The BROKER version, in MSK's own spelling, and defaulted nowhere: the
     ## newest ACTIVE one is read from the vendor at build time, because a default
@@ -252,6 +256,18 @@ kafka:
     bootstrap_job:
       namespace: strimzi
       service_account: dfe-kafka-bootstrap
+  ## Topics tofu pre-creates for a managed body with NO bootstrap Job
+  ## (confluent-cloud, redpanda-cloud) -- msk needs none here, since its Job
+  ## above creates the same topics the chart's Strimzi path does. dfe-loader
+  ## treats a missing *_land topic as fatal, so main_land is the floor every
+  ## provider needs; an empty map ({}) takes num_partitions/log_retention_ms
+  ## above, and a topic may override either:
+  ##   landing_topics:
+  ##     main_land: {}
+  ##     okta_land:
+  ##       partitions: 24
+  landing_topics:
+    main_land: {}
 
 ## Where the tofu state lives. The store is created once per account by
 ## terraform/environments/<cloud>-state, before the first plan here.

@@ -21,7 +21,7 @@
 
 node_shapes:
   state: managed
-  reason: "select_shape resolves the concrete instance type against the live EC2 and Pricing APIs and commits the answer to shapes/resolved/aws.json, so a Graviton generation change is a reviewed diff, not a manual pick."
+  reason: "select_shape resolves the concrete instance type against the live EC2 and Pricing APIs and commits the answer to shapes/resolved/aws-<region>.json, so a Graviton generation change is a reviewed diff, not a manual pick."
 
 storage_classes:
   state: managed

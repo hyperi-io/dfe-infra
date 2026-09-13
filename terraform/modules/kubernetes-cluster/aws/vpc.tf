@@ -9,13 +9,15 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  // Three zones: enough for a quorum (etcd, Keeper, Kafka controllers) without
-  // paying cross-zone transfer on a fourth.
-  azs = slice(data.aws_availability_zones.available.names, 0, 3)
+  // var.network.az_count zones (3 by default): enough for a quorum (etcd,
+  // Keeper, Kafka controllers) without paying cross-zone transfer on a
+  // fourth, unless the dial asks for a different spread.
+  azs = slice(data.aws_availability_zones.available.names, 0, var.network.az_count)
 
-  // Sixteen /20s in a /16. The private half takes the first three, the public
-  // half the three starting at the midpoint, so the two never collide whatever
-  // the caller sizes provision.cidr to.
+  // Sixteen /20s in a /16. The private half takes the first az_count blocks,
+  // the public half az_count starting at the midpoint (index 8), so the two
+  // never collide whatever the caller sizes provision.cidr or az_count to --
+  // az_count's own 2-6 range never reaches the midpoint from the low end.
   private_cidrs = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, 4, i) }
   public_cidrs  = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, 4, i + 8) }
 

@@ -89,8 +89,11 @@ spec:
   cruiseControl:
     # WITHOUT these two, Strimzi strips the network-usage, network-capacity and
     # leader-bytes-in goals from default.goals AND hard.goals and rebalances
-    # network-blind, reporting success. Setting them is what keeps the goals in,
-    # so the goals list itself is left at the Strimzi default.
+    # network-blind, reporting success. Setting them is what keeps the goals
+    # in, so this Kafka CR's own config.default.goals and config.hard.goals
+    # are left unset at the Strimzi default -- the per-rebalance-template
+    # spec.goals override (kafka.rebalancing.goals) is a separate,
+    # proposal-specific list layered on top, in kafka-rebalance-templates.yaml.
     brokerCapacity:
       inboundNetwork: {{ include "dfe-kafka.brokerCapacityNetwork" . | quote }}
       outboundNetwork: {{ include "dfe-kafka.brokerCapacityNetwork" . | quote }}

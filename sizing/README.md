@@ -55,7 +55,7 @@ target-agnostic core derived here, then concrete shapes from
 
 | Artefact | What it is |
 |---|---|
-| `shapes/resolved/<cloud>.json` | the committed shape answer, merged over what is there, so API drift is a reviewed diff |
+| `shapes/resolved/<cloud>-<region>.json` | the committed shape answer, merged over what is there, so API drift is a reviewed diff. Keyed by region: instance-generation availability is not one worldwide |
 | `sizing/<tier>.auto.tfvars.json` | `node_pools` and `resolved_shapes`, and nothing the root does not declare |
 | `sizing/<tier>.values.yaml` | only keys the two charts already read |
 | `sizing/<tier>.report.md` | what was sized, from which ratio, at which confidence, at what price, and where the ceiling is |

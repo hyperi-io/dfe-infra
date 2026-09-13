@@ -102,6 +102,23 @@ def _scalar(dial: dict[str, object], path: tuple[str, ...]) -> str | None:
     return node.strip() if isinstance(node, str) and node.strip() else None
 
 
+def _node(dial: dict[str, object], path: tuple[str, ...]) -> dict[str, object]:
+    """Return the mapping at ``path``, or an empty one when absent or not a map.
+
+    A committed dial writes an empty map as the scalar ``{}`` (the restricted
+    YAML reader hands that back as a string, not a dict), so that spelling
+    counts as empty too, the same as no key at all.
+    """
+    node: object = dial
+    for step in path:
+        if not isinstance(node, dict):
+            return {}
+        node = node.get(step)
+    if isinstance(node, str) and node.strip() in ("", "{}"):
+        return {}
+    return node if isinstance(node, dict) else {}
+
+
 def _env_updates(dial: dict[str, object]) -> dict[str, str]:
     """Map the dial's k8s fields to the DFE_* keys they set (empty skipped)."""
     updates: dict[str, str] = {}
@@ -220,12 +237,27 @@ def _number(dial: dict[str, object], path: tuple[str, ...]) -> int:
     return int(value)
 
 
-def _platform_version(cloud: str) -> str | None:
-    """The control-plane version versions.yaml states for this cloud, if any.
+def _az_count(dial: dict[str, object]) -> int:
+    """How many availability zones the VPC spans. Empty takes 3, the usual spread."""
+    raw = _scalar(dial, ("network", "az_count"))
+    if raw is None:
+        return 3
+    if not raw.isdigit():
+        raise DialError(f"network.az_count must be a whole number, got {raw!r}")
+    value = int(raw)
+    if value < 2 or value > 6:
+        raise DialError(f"network.az_count must be between 2 and 6, got {value}")
+    return value
 
-    dfe-infra#285 adds a `platform:` stage of `>=` requirements to the current
-    stack. Until it lands there is nothing to read and the dial's own field is
-    what runs.
+
+def _platform_version(cloud: str) -> str | None:
+    """The control-plane FLOOR versions.yaml states for this cloud, if any.
+
+    The `platform:` stage names the oldest control-plane minor a cluster must
+    clear, not a version to install -- see _kubernetes_version, which is what
+    turns this floor and the dial's own choice into the version that runs.
+    Absent for a cloud with no stage yet, in which case the dial's own field
+    is all there is.
     """
     if not VERSIONS_FILE.is_file():
         return None
@@ -246,17 +278,51 @@ def _platform_version(cloud: str) -> str | None:
     return None
 
 
-def _resolved_shapes(cloud: str) -> dict[str, dict[str, object]]:
-    """Read the shape resolver's committed answer for this cloud.
+def _version_at_least(version: str, floor: str) -> bool:
+    """True when dotted-numeric *version* is the same as or newer than *floor*."""
+    return tuple(int(part) for part in version.split(".")) >= tuple(
+        int(part) for part in floor.split(".")
+    )
 
+
+def _kubernetes_version(dial: dict[str, object], cloud: str) -> str:
+    """The Kubernetes version to provision.
+
+    versions.yaml's `platform` stage is a FLOOR a cluster must clear, not a
+    pin that silently replaces the dial's own choice: a dial version that
+    clears the floor wins, one that falls short is refused by name (so the
+    mismatch is visible before a plan runs against an unsupported control
+    plane), and a dial naming no version at all takes the floor's minimum.
+    A cloud with no platform stage yet falls back to requiring the dial's own
+    field, as before that stage existed.
+    """
+    floor = _platform_version(cloud)
+    if floor is None:
+        return _required(dial, ("kubernetes_version",))
+    version = _scalar(dial, ("kubernetes_version",))
+    if version is None:
+        return floor
+    if _version_at_least(version, floor):
+        return version
+    raise DialError(
+        f"kubernetes_version {version} is below the platform floor {floor} for {cloud}"
+    )
+
+
+def _resolved_shapes(cloud: str, region: str) -> dict[str, dict[str, object]]:
+    """Read the shape resolver's committed answer for this cloud AND region.
+
+    Instance-generation availability differs by region and by months, so one
+    region's answer is never rendered for another: the file is keyed by both.
     The file carries provenance and policy keys the tofu roots do not declare,
     so only the two the variable's type accepts are copied across.
     """
-    path = SHAPES_DIR / f"{cloud}.json"
+    path = SHAPES_DIR / f"{cloud}-{region}.json"
     if not path.is_file():
         raise DialError(
-            f"no resolved shapes at {path} -- the shape resolver writes it, and the "
-            f"root refuses a node pool whose shape_ref it cannot find"
+            f"no resolved shapes at {path} -- capture this region first with "
+            f"'python3 scripts/resolve_sizing.py capture --region {region} --fixtures "
+            f"<fixtures-dir>', then resolve against it (or --live) to write {path.name}"
         )
     doc = json.loads(path.read_text(encoding="utf-8"))
     return {
@@ -291,28 +357,86 @@ def _node_pools(dial: dict[str, object]) -> dict[str, dict[str, object]]:
     return built
 
 
+MANAGED_KAFKA_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
+
+
+def _landing_topics(dial: dict[str, object]) -> dict[str, dict[str, int]]:
+    """Topics tofu must pre-create for a managed body with no bootstrap Job.
+
+    msk's landing topics are chart work -- its own in-cluster bootstrap Job
+    creates the same topics the Strimzi path does, from the SAME chart values,
+    so this is never read for msk. confluent-cloud and redpanda-cloud have no
+    such Job (CONTRACT.md: "the vendor's provider writes the ACLs and the
+    topics itself"), so tofu creates them here or dfe-loader crash-loops on a
+    bare deploy -- it treats a missing ``*_land`` topic as fatal.
+    """
+    topics = _node(dial, ("kafka", "landing_topics"))
+    built: dict[str, dict[str, int]] = {}
+    for name, body in topics.items():
+        if isinstance(body, str):
+            if body.strip() not in ("", "{}"):
+                raise DialError(f"kafka.landing_topics.{name} is a mapping, not {body!r}")
+            body = {}
+        elif not isinstance(body, dict):
+            raise DialError(f"kafka.landing_topics.{name} must be a mapping")
+        entry: dict[str, int] = {}
+        for field in ("partitions", "retention_ms"):
+            raw = _scalar(body, (field,))
+            if raw is None:
+                continue
+            if not raw.isdigit():
+                raise DialError(f"kafka.landing_topics.{name}.{field} must be a whole number, got {raw!r}")
+            entry[field] = int(raw)
+        built[name] = entry
+    return built
+
+
 def _kafka(dial: dict[str, object]) -> dict[str, object]:
-    """Who runs the brokers, and the managed one's shape when the root creates it.
+    """Who runs the brokers, and what tofu creates when the root builds the body.
 
     strimzi and redpanda run inside the cluster, so the root builds nothing and
-    the msk block is not rendered at all. On msk every value is read here: the
-    module defaults none of them, because a defaulted broker version rots into a
-    deprecated line silently.
+    no kafka block below is rendered at all. The three managed bodies --
+    msk, confluent-cloud, redpanda-cloud -- apply the SAME canonical tuning
+    (num_partitions, log_retention_ms, message_max_bytes:
+    terraform/modules/managed-kafka/CONTRACT.md), read from kafka.msk below
+    whichever one is selected; none of them is defaulted here, because a
+    defaulted value rots into a stale one silently. Only msk's shape, broker
+    count, version, SCRAM user and bootstrap Job are msk-only -- the two SaaS
+    bodies size, version and tune themselves. landing_topics is read for the
+    two SaaS bodies only; msk's bootstrap_job above covers the same ground.
     """
     provider = _required(dial, ("kafka", "provider"))
-    if provider != "msk":
+    if provider not in MANAGED_KAFKA_PROVIDERS:
         return {"provider": provider}
 
     at = ("kafka", "msk")
+    tuning = {
+        "num_partitions": _number(dial, (*at, "num_partitions")),
+        "log_retention_ms": _number(dial, (*at, "log_retention_ms")),
+        "message_max_bytes": _number(dial, (*at, "message_max_bytes")),
+    }
+
+    if provider != "msk":
+        landing_topics = _landing_topics(dial)
+        if not landing_topics:
+            raise DialError(
+                f"kafka.provider is {provider!r}, which has no bootstrap Job of its own, so "
+                f"kafka.landing_topics must name at least one topic -- an empty map ships a "
+                f"cluster dfe-loader crash-loops against"
+            )
+        return {
+            "provider": provider,
+            **tuning,
+            "landing_topics": landing_topics,
+        }
+
     return {
         "provider": provider,
         "msk": {
             "shape_ref": _required(dial, (*at, "shape_ref")),
             "broker_count": _number(dial, (*at, "broker_count")),
             "broker_version": _required(dial, (*at, "broker_version")),
-            "num_partitions": _number(dial, (*at, "num_partitions")),
-            "log_retention_ms": _number(dial, (*at, "log_retention_ms")),
-            "message_max_bytes": _number(dial, (*at, "message_max_bytes")),
+            **tuning,
             "scram_username": _required(dial, (*at, "scram_username")),
             "bootstrap_job": {
                 "namespace": _required(dial, (*at, "bootstrap_job", "namespace")),
@@ -349,6 +473,9 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     return {"sink": sink, "retention_days": retention_days}
 
 
+LIFECYCLE_VALUES = ("ephemeral", "persistent")
+
+
 def _tags(dial: dict[str, object], cloud: str) -> dict[str, str]:
     """The governance tag set. Six come from the dial; iac-source names the root."""
     keys = (
@@ -360,6 +487,14 @@ def _tags(dial: dict[str, object], cloud: str) -> dict[str, str]:
         "lifecycle",
     )
     tags = {key: _text(dial, ("tags", key)) for key in keys}
+    # tags.lifecycle drives real behaviour downstream (secret recovery windows,
+    # the KMS deletion window, whether a managed broker may be destroyed), so
+    # it is checked against the two values deployment.example.yaml documents
+    # rather than passed through as free text like the other five tags.
+    if tags["lifecycle"] and tags["lifecycle"] not in LIFECYCLE_VALUES:
+        raise DialError(
+            f"tags.lifecycle must be one of {' or '.join(LIFECYCLE_VALUES)}, got {tags['lifecycle']!r}"
+        )
     tags["iac-source"] = f"dfe-infra/terraform/environments/{cloud}"
     return tags
 
@@ -378,6 +513,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
             f"target.provision.cloud is {cloud!r} and there is no root at {root} -- "
             f"a cloud arrives as a new root over the capability modules"
         )
+    region = _required(dial, ("target", "provision", "region"))
 
     public = _flag(dial, ("endpoint", "public"))
     allowed = list(split_list(_scalar(dial, ("endpoint", "allowed_cidrs"))))
@@ -393,16 +529,16 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "provision": {
             "cloud": cloud,
             "account": _required(dial, ("target", "provision", "account")),
-            "region": _required(dial, ("target", "provision", "region")),
+            "region": region,
             "cidr": _required(dial, ("target", "provision", "cidr")),
         },
         "name": _required(dial, ("metadata", "name")),
         "env": _required(dial, ("k8s", "env")),
         "profile": _required(dial, ("profile",)),
-        "kubernetes_version": _platform_version(cloud) or _required(dial, ("kubernetes_version",)),
+        "kubernetes_version": _kubernetes_version(dial, cloud),
         "node_pools": _node_pools(dial),
-        "resolved_shapes": _resolved_shapes(cloud),
-        "network": {"nat": _required(dial, ("network", "nat"))},
+        "resolved_shapes": _resolved_shapes(cloud, region),
+        "network": {"nat": _required(dial, ("network", "nat")), "az_count": _az_count(dial)},
         "endpoint": {"public": public, "allowed_cidrs": allowed},
         "dns": {
             "private_zone": _required(dial, ("dns", "private_zone")),

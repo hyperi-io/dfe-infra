@@ -48,6 +48,17 @@ variable "kafka_password" {
   }
 }
 
+variable "recovery_window_days" {
+  description = "Secrets Manager's deletion delay. 0 forces immediate deletion with no recovery -- for an ephemeral deployment torn down and rebuilt under the same names, where the vendor's 30-day default would make the second create fail on a name that still exists. The caller sets this from the dial's tags.lifecycle; a persistent deployment keeps the vendor default."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.recovery_window_days == 0 || (var.recovery_window_days >= 7 && var.recovery_window_days <= 30)
+    error_message = "recovery_window_days must be 0 (immediate) or between 7 and 30 -- Secrets Manager's own range."
+  }
+}
+
 variable "kms_key_arn" {
   description = "The deployment's customer-managed key, from the cluster module. Every secret here is encrypted with it, and ESO is granted decrypt on it and nothing else."
   type        = string

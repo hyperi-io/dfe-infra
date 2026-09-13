@@ -8,6 +8,18 @@ data "aws_caller_identity" "current" {}
 locals {
   project = "dfe"
   cloud   = "aws"
+
+  // Deletion protection follows the dial's tags.lifecycle, not a fixed answer:
+  // ephemeral (tyre-kick, provision-test-destroy) deployments are torn down and
+  // rebuilt under the same names, so they get the fastest teardown each service
+  // allows; anything else -- persistent today, and any future value -- keeps
+  // the vendor's own default so destroying a real deployment needs a
+  // deliberate confirmation. (Named "lifecycle" is a reserved OpenTofu
+  // variable identifier, so this reads tags.lifecycle rather than a var of
+  // its own -- tags is where render_dial.py already renders it.)
+  ephemeral                         = var.tags.lifecycle == "ephemeral"
+  secret_recovery_window_days       = local.ephemeral ? 0 : 30
+  kafka_secret_recovery_window_days = local.ephemeral ? 0 : 30
 }
 
 // An SCP fences the test account to one region; nothing fences a deployment to
@@ -97,6 +109,8 @@ module "kafka" {
   log_retention_ms  = var.kafka.msk.log_retention_ms
   message_max_bytes = var.kafka.msk.message_max_bytes
 
+  secret_recovery_window_days = local.kafka_secret_recovery_window_days
+
   scram_username = var.kafka.msk.scram_username
   scram_password = random_password.kafka_scram.result
 
@@ -125,6 +139,14 @@ module "confluent" {
   name    = var.name
   env     = var.env
   network = module.cluster.network
+
+  // The same canonical tuning msk applies, and the same landing topics its
+  // own bootstrap Job would create -- this body has none, so tofu creates
+  // them itself (CONTRACT.md).
+  num_partitions    = var.kafka.num_partitions
+  log_retention_ms  = var.kafka.log_retention_ms
+  message_max_bytes = var.kafka.message_max_bytes
+  landing_topics    = var.kafka.landing_topics
 }
 
 // Same reasoning as confluent-cloud: Redpanda Cloud Serverless sizes and scales
@@ -143,6 +165,19 @@ module "redpanda" {
   network = module.cluster.network
 
   scram_password = random_password.kafka_scram.result
+
+  // The same canonical tuning msk applies, and the same landing topics its
+  // own bootstrap Job would create -- this body has none, so tofu creates
+  // them itself (CONTRACT.md).
+  num_partitions    = var.kafka.num_partitions
+  log_retention_ms  = var.kafka.log_retention_ms
+  message_max_bytes = var.kafka.message_max_bytes
+  landing_topics    = var.kafka.landing_topics
+
+  // The provider defaults this true, which makes tofu destroy refuse. Only an
+  // ephemeral deployment gets that: CONTRACT.md's own words are "a customer
+  // deployment sets it false", and lifecycle is what tells the two apart.
+  allow_deletion = local.ephemeral
 }
 
 locals {
@@ -192,4 +227,6 @@ module "secrets" {
   kms_key_arn                    = module.cluster.kms_key_arn
   cluster_name                   = module.cluster.cluster_name
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
+
+  recovery_window_days = local.secret_recovery_window_days
 }

@@ -90,6 +90,17 @@ clouds:
     ## every PVC lands on the baseline whatever its size. The StorageClasses are
     ## created in the tofu, one per use case, with both fields set.
     storage_class_owner: terraform
+    ## gp3 USD per GiB-month, keyed by region: there is no describe-price API
+    ## for EBS the way there is for EC2 and MSK, so this is a doc-sourced
+    ## constant per region rather than a live read, and it is not one figure
+    ## worldwide. The cost estimate in resolve_sizing.py refuses a region this
+    ## map does not name rather than borrowing another region's rate. Add a
+    ## region here before resolving a dial against it.
+    storage_pricing:
+      us-west-2:
+        gp3_usd_per_gib_month: 0.08
+        source: https://aws.amazon.com/ebs/pricing/
+        read: 2026-09-13
     use_cases:
 
       eks-system:

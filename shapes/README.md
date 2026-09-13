@@ -15,10 +15,13 @@ and modifiers, the architecture, the generation and price policies, the floor
 size, which API names the type, and the block-storage profile for every volume.
 
 It names no instance type. A type is an ANSWER: the resolver reads this file plus
-the cloud's live API and writes `shapes/resolved/<cloud>.json`, which is
-committed so an API change arrives as a reviewed diff. Karpenter NodePool
-constraints render from the same entries, so a new generation arrives by drift
-rather than by a plan change.
+the cloud's live API and writes `shapes/resolved/<cloud>-<region>.json`, which
+is committed so an API change arrives as a reviewed diff. Keyed by region,
+because instance-generation availability is not one worldwide -- a resolve
+against a region with no captured file refuses by name, naming the `capture
+--region` command that fills it in. Karpenter NodePool constraints render from
+the same entries, so a new generation arrives by drift rather than by a plan
+change.
 
 ## The silent caps are empty on purpose
 

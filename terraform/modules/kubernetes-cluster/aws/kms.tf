@@ -4,9 +4,14 @@
 // to audit, one to rotate and one to revoke.
 
 resource "aws_kms_key" "this" {
-  description             = "${var.name} (${var.env}) -- Kubernetes secrets, Kafka and block storage"
-  enable_key_rotation     = true
-  deletion_window_in_days = 30
+  description         = "${var.name} (${var.env}) -- Kubernetes secrets, Kafka and block storage"
+  enable_key_rotation = true
+
+  // KMS's own floor is 7 days; there is no zero. An ephemeral deployment
+  // (tags.lifecycle) gets that floor so a rebuild under the same name is not
+  // gated on a manual wait; anything else keeps the vendor's own 30-day
+  // default so destroying a real deployment needs a deliberate confirmation.
+  deletion_window_in_days = var.tags.lifecycle == "ephemeral" ? 7 : 30
 }
 
 resource "aws_kms_alias" "this" {

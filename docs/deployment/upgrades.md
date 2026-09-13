@@ -17,6 +17,20 @@ services, Keeper before ClickHouse, the Kafka brokers under the operator's
 rolling update with `metadata.version` finalised after a soak; then the apps.
 Until `dfe-ops upgrade` exists the order is applied by hand from that file.
 
+A Kafka version bump can hit a server-side-apply field-ownership conflict:
+the Strimzi operator's own client also writes fields like `KafkaNodePool`
+`.spec.storage.volumes` or `KafkaUser` `.spec.authorization.acls`, and if
+Helm's prior apply already owns them, the upgrade fails with `Apply failed
+with 1 conflict: conflict with "fabric8-kubernetes-client"`. Resolve it with
+`kubectl apply --server-side --force-conflicts --field-manager=helm -n
+<namespace> -f <rendered manifest>` -- `helm` because that is Helm's own
+default field manager (the base name it runs under), so reusing it hands
+ownership back cleanly and the next plain `helm upgrade` no longer conflicts.
+This is safe only when the rendered value already matches the live one (the
+operator is re-asserting a default, not diverging from the chart); diff the
+object first, and never force through a field the operator computes on its
+own, such as a broker-assigned identifier.
+
 ## Re-size
 
 Re-run the sizing resolver with a new estimate, focus or ratio and diff the

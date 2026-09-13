@@ -64,7 +64,7 @@ variable "node_pools" {
 }
 
 variable "resolved_shapes" {
-  description = "The shape resolver's committed answer for this cloud, read from shapes/resolved/aws.json and diffed on every change."
+  description = "The shape resolver's committed answer for this cloud AND region, read from shapes/resolved/aws-<region>.json and diffed on every change. One region's instance-generation availability is never another's."
   type = map(object({
     instance_types = list(string)
     arch           = string
@@ -72,10 +72,16 @@ variable "resolved_shapes" {
 }
 
 variable "network" {
-  description = "nat = per-az at the scale tier, single below it."
+  description = "nat = per-az at the scale tier, single below it. az_count is how many availability zones the VPC spans -- 2 for cost, 3 (the default) for the usual spread, up to the region's own ceiling."
   type = object({
-    nat = string
+    nat      = string
+    az_count = number
   })
+
+  validation {
+    condition     = var.network.az_count >= 2 && var.network.az_count <= 6
+    error_message = "network.az_count must be between 2 and 6 -- below 2 there is no redundancy to speak of, and no AWS region offers more than 6."
+  }
 }
 
 variable "endpoint" {
@@ -139,7 +145,7 @@ variable "storage_class" {
 // ---------------------------------------------------------------------------
 
 variable "kafka" {
-  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. The msk block is read only when provider is msk, and its values are the dial's -- the module defaults none of them for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no block of their own: both size and tune the cluster themselves (managed-kafka/CONTRACT.md), so name, env and network are all this root passes either one."
+  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves, so name, env, network and the shared tuning are all this root passes either one."
   type = object({
     provider = string
     msk = optional(object({
@@ -165,6 +171,17 @@ variable "kafka" {
         headroom                 = optional(number, 1.3)
       }), {})
     }))
+    // Read only when provider is confluent-cloud or redpanda-cloud -- msk's
+    // equivalents live inside msk above, and its landing topics are its own
+    // in-cluster bootstrap Job's (CONTRACT.md: neither SaaS body has one, so
+    // tofu creates their topics itself).
+    num_partitions    = optional(number)
+    log_retention_ms  = optional(number)
+    message_max_bytes = optional(number)
+    landing_topics = optional(map(object({
+      partitions   = optional(number)
+      retention_ms = optional(number)
+    })), {})
   })
 
   validation {
@@ -175,6 +192,21 @@ variable "kafka" {
   validation {
     condition     = var.kafka.provider != "msk" || var.kafka.msk != null
     error_message = "kafka.provider is msk, so the kafka.msk block has to be present -- it carries the broker shape, the version and the tuning, none of which this root invents."
+  }
+
+  validation {
+    condition = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || (
+      var.kafka.num_partitions != null && var.kafka.log_retention_ms != null && var.kafka.message_max_bytes != null
+    )
+    error_message = "kafka.provider is a managed SaaS body, so num_partitions, log_retention_ms and message_max_bytes have to be present -- the module defaults none of them."
+  }
+
+  validation {
+    // Neither SaaS body has a bootstrap Job of its own -- the vendor's
+    // provider writes the topics -- so an empty map here is a cluster with no
+    // landing topic, and dfe-loader treats a missing *_land topic as fatal.
+    condition     = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || length(var.kafka.landing_topics) > 0
+    error_message = "kafka.provider is a managed SaaS body with no bootstrap Job of its own, so landing_topics must name at least one topic -- an empty map ships a cluster dfe-loader crash-loops against."
   }
 }
 

@@ -95,6 +95,8 @@ kafka:
     bootstrap_job:
       namespace: strimzi
       service_account: dfe-kafka-bootstrap
+  landing_topics:
+    main_land:
 
 state:
   bucket: example-tfstate
@@ -176,9 +178,28 @@ def test_a_cloud_with_no_root_is_refused_by_name() -> None:
         render(replace=("cloud: aws", "cloud: oracle"))
 
 
+def test_a_region_with_no_captured_shapes_is_refused_by_name() -> None:
+    """One region's Graviton availability is never rendered for another."""
+    with pytest.raises(render_dial.DialError, match=r"capture --region ap-southeast-2"):
+        render(replace=("    region: us-west-2\n    cidr:", "    region: ap-southeast-2\n    cidr:"))
+
+
 def test_a_missing_field_is_named() -> None:
     with pytest.raises(render_dial.DialError, match=r"network\.nat"):
         render(drop="nat: single")
+
+
+def test_az_count_defaults_to_three() -> None:
+    assert render()["network"]["az_count"] == 3
+
+
+def test_az_count_takes_the_dials_own_value() -> None:
+    assert render(replace=("nat: single", "nat: single\n  az_count: 2"))["network"]["az_count"] == 2
+
+
+def test_an_out_of_range_az_count_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"network\.az_count"):
+        render(replace=("nat: single", "nat: single\n  az_count: 7"))
 
 
 def test_a_pool_size_that_is_not_a_number_is_refused() -> None:
@@ -190,6 +211,11 @@ def test_the_seventh_tag_names_the_root_that_created_the_resource() -> None:
     tags = render()["tags"]
     assert tags["iac-source"] == "dfe-infra/terraform/environments/aws"
     assert tags["owner"] == "owner@example.com"
+
+
+def test_an_unknown_lifecycle_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"tags\.lifecycle"):
+        render(replace=("lifecycle: ephemeral", "lifecycle: throwaway"))
 
 
 def test_an_absent_secrets_ref_renders_empty() -> None:
@@ -214,17 +240,45 @@ def test_an_in_cluster_broker_renders_no_msk_block() -> None:
 
 
 def test_a_confluent_cloud_broker_renders_no_msk_block() -> None:
-    """confluent-cloud sizes and tunes itself, so the root reads only the token."""
-    assert render(replace=("provider: msk", "provider: confluent-cloud"))["kafka"] == {
-        "provider": "confluent-cloud"
-    }
+    """confluent-cloud sizes and tunes itself, so no msk: sub-block is rendered."""
+    kafka = render(replace=("provider: msk", "provider: confluent-cloud"))["kafka"]
+    assert "msk" not in kafka
+    assert kafka["provider"] == "confluent-cloud"
 
 
 def test_a_redpanda_cloud_broker_renders_no_msk_block() -> None:
-    """redpanda-cloud sizes and tunes itself, so the root reads only the token."""
-    assert render(replace=("provider: msk", "provider: redpanda-cloud"))["kafka"] == {
-        "provider": "redpanda-cloud"
-    }
+    """redpanda-cloud sizes and tunes itself, so no msk: sub-block is rendered."""
+    kafka = render(replace=("provider: msk", "provider: redpanda-cloud"))["kafka"]
+    assert "msk" not in kafka
+    assert kafka["provider"] == "redpanda-cloud"
+
+
+def test_a_saas_broker_gets_the_same_tuning_and_landing_topics_msk_would() -> None:
+    """confluent-cloud and redpanda-cloud take no msk: block, but do take these."""
+    for provider in ("confluent-cloud", "redpanda-cloud"):
+        kafka = render(replace=("provider: msk", f"provider: {provider}"))["kafka"]
+        assert kafka["num_partitions"] == 12
+        assert kafka["log_retention_ms"] == 259200000
+        assert kafka["message_max_bytes"] == 16777216
+        assert kafka["landing_topics"] == {"main_land": {}}
+
+
+def test_msk_reads_no_top_level_tuning_or_landing_topics() -> None:
+    """msk's tuning lives inside msk:, and its topics are its bootstrap Job's."""
+    kafka = render()["kafka"]
+    assert "num_partitions" not in kafka
+    assert "landing_topics" not in kafka
+
+
+def test_a_saas_broker_with_no_landing_topics_is_refused_by_name() -> None:
+    """No bootstrap Job on this path means tofu is the only thing that can create one."""
+    without_topics = "\n".join(
+        line for line in DIAL.splitlines() if line.strip() not in ("landing_topics:", "main_land:")
+    )
+    with pytest.raises(render_dial.DialError, match=r"kafka\.landing_topics"):
+        render_dial._tofu_vars(
+            parse_dial(without_topics.replace("provider: msk", "provider: confluent-cloud"), source="test-dial")
+        )
 
 
 def test_the_kafka_seed_is_keyed_by_the_provider() -> None:
@@ -300,21 +354,43 @@ def test_node_pools_carry_the_structural_keys_the_type_demands() -> None:
 
 def test_only_the_two_shape_attributes_the_type_declares_are_copied() -> None:
     """The resolver's file carries provenance and policy the root never declares."""
-    shapes = render_dial._resolved_shapes("aws")
-    assert shapes, "shapes/resolved/aws.json holds no shape"
+    shapes = render_dial._resolved_shapes("aws", "us-west-2")
+    assert shapes, "shapes/resolved/aws-us-west-2.json holds no shape"
     for body in shapes.values():
         assert set(body) == {"instance_types", "arch"}
 
 
 def test_the_file_level_provenance_key_is_not_a_shape() -> None:
-    assert "_provenance" not in render_dial._resolved_shapes("aws")
+    assert "_provenance" not in render_dial._resolved_shapes("aws", "us-west-2")
 
 
-def test_the_dial_supplies_the_kubernetes_version_until_the_platform_stage_exists() -> None:
+def test_a_missing_region_is_refused_by_name() -> None:
+    """The message names the capture command, not just the missing path."""
+    with pytest.raises(render_dial.DialError, match=r"capture --region ap-southeast-2"):
+        render_dial._resolved_shapes("aws", "ap-southeast-2")
+
+
+def test_the_dials_kubernetes_version_wins_when_it_clears_the_platform_floor() -> None:
+    """The repo's real versions.yaml floors aws at eks >=1.34; the fixture dial names 1.36."""
+    assert render_dial._platform_version("aws") == "1.34"
     assert render()["kubernetes_version"] == "1.36"
 
 
-def test_the_platform_stage_wins_and_its_floor_marker_is_stripped(
+def test_a_dial_kubernetes_version_below_the_platform_floor_is_refused_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    versions = tmp_path / "versions.yaml"
+    versions.write_text(
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">= 1.38"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
+    with pytest.raises(render_dial.DialError, match=r"1\.36") as excinfo:
+        render()
+    assert "1.38" in str(excinfo.value)
+
+
+def test_a_dial_with_no_kubernetes_version_takes_the_platform_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Stack keys are written bare and the `current` pointer quoted, as versions.yaml does."""
@@ -325,7 +401,7 @@ def test_the_platform_stage_wins_and_its_floor_marker_is_stripped(
     )
     monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
     assert render_dial._platform_version("aws") == "1.37"
-    assert render()["kubernetes_version"] == "1.37"
+    assert render(drop='kubernetes_version: "1.36"')["kubernetes_version"] == "1.37"
 
 
 def test_the_written_file_is_json_the_root_can_read(tmp_path: Path) -> None:

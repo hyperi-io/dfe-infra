@@ -136,9 +136,8 @@ variable "kms_key_arn" {
 }
 
 variable "num_partitions" {
-  description = "Default partitions for a topic the brokers create. Derived by the chart from the same rule (S1.T7): a highly divisible multiple of the broker count, at least the consumer-parallelism ceiling, so a 3 -> 6 -> 12 scale-out divides evenly every time."
+  description = "Default partitions for a topic the brokers create. Derived by the chart from the same rule (S1.T7): a highly divisible multiple of the broker count, at least the consumer-parallelism ceiling, so a 3 -> 6 -> 12 scale-out divides evenly every time. No default: the caller's dial states it, so a value cannot drift from confluent-cloud's and redpanda-cloud's copies of the same setting silently."
   type        = number
-  default     = 12
 
   validation {
     condition     = var.num_partitions > 0
@@ -147,9 +146,8 @@ variable "num_partitions" {
 }
 
 variable "log_retention_ms" {
-  description = "How long a topic keeps data by default, in milliseconds. The buffer has to survive the longest consumer outage plus the archiver's lag; 259200000 is three days."
+  description = "How long a topic keeps data by default, in milliseconds. The buffer has to survive the longest consumer outage plus the archiver's lag; 259200000 is three days. No default: the caller's dial states it, so a value cannot drift from confluent-cloud's and redpanda-cloud's copies of the same setting silently."
   type        = number
-  default     = 259200000
 
   validation {
     condition     = var.log_retention_ms > 0
@@ -158,9 +156,8 @@ variable "log_retention_ms" {
 }
 
 variable "message_max_bytes" {
-  description = "The largest record the brokers accept, and the same number the replica fetcher, the topic and the scalo producer and consumer carry. 16 MiB covers filebeat's own 10 MiB truncation ceiling plus the ~1.48x enrichment growth measured on the fixtures."
+  description = "The largest record the brokers accept, and the same number the replica fetcher, the topic and the scalo producer and consumer carry. 16 MiB covers filebeat's own 10 MiB truncation ceiling plus the ~1.48x enrichment growth measured on the fixtures. No default: the caller's dial states it, so a value cannot drift from confluent-cloud's and redpanda-cloud's copies of the same setting silently."
   type        = number
-  default     = 16777216
 
   validation {
     condition     = var.message_max_bytes > 0

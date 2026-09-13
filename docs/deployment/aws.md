@@ -50,9 +50,12 @@ A few things hold for every deployment on this path:
   rather than targeted.
 - Run `python3 scripts/resolve_sizing.py --dial deployment.yaml --live` (or
   `--fixtures scripts/tests/fixtures/sizing --cloud aws` against a captured
-  catalogue, no AWS call made). It writes `shapes/resolved/aws.json` (the
-  committed instance-type answer), `sizing/scale.auto.tfvars.json` (node pools
-  and resolved shapes, nothing the root does not declare), `sizing/scale.
+  catalogue, no AWS call made -- capture one first for a region other than
+  us-west-2 with `resolve_sizing.py capture --region <region> --fixtures
+  <dir>`). It writes `shapes/resolved/aws-<region>.json` (the committed
+  instance-type answer, keyed by region because instance-generation
+  availability is not one worldwide), `sizing/scale.auto.tfvars.json` (node
+  pools and resolved shapes, nothing the root does not declare), `sizing/scale.
   values.yaml` (only the keys the ClickHouse and Kafka charts read),
   `sizing/scale.report.md` (what was sized, from which ratio, at what price),
   and `sizing/resolved.yaml` (the baseline the next resolve diffs against).

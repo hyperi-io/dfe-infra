@@ -57,8 +57,9 @@ resource "aws_secretsmanager_secret" "seed" {
 
   // A throwaway deployment is torn down and stood up again under the same
   // names, and Secrets Manager's default 30-day recovery window would make the
-  // second create fail on a name that still exists.
-  recovery_window_in_days = 0
+  // second create fail on a name that still exists -- var.recovery_window_days
+  // is 0 for exactly that case, and the vendor default otherwise.
+  recovery_window_in_days = var.recovery_window_days
 }
 
 resource "aws_secretsmanager_secret_version" "seed" {
