@@ -1902,8 +1902,8 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.20.3"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #377: DELETE on a core source (main) now declares its 409 in the spec, PUT/PATCH declare the core refusal as their second 409, and a bulk failed entry carries a code beside the message. Every remote call on the read path is bounded at 3 s with retries off, and the pins and history reads run under the publish lock.
-      dfe-ui: "v1.6.1"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). #291: the sources console hides Edit/Delete on a core source (gated on resource_type, not the name main) and the landing flow card reads main instead of the stale default. MOVES WITH dfe-engine: #360 makes email required on the first-user create, so an older UI cannot complete it.
+      dfe-engine: "v1.20.4"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #378: the version endpoint reports every pinned app, not just itself.
+      dfe-ui: "v1.6.3"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). #293/#295: console fixes -- brand caption, Access icon and suite version position corrected, wordmark caption now fits under the wordmark.
       dfe-receiver: "v1.15.35"      # independent release line; rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup plus the bytes admitted since that sample.
       dfe-loader: "v1.18.36"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept. Rebuilt on scalo-rs 2.12.2 (the same memory guard).
       dfe-archiver: "v1.7.22"       # rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup, not what the allocator asked for.
@@ -1927,8 +1927,8 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:b945e93d3a061af6eb25469a0bedaf709b2ad635cfbf2fb06b1b008568a63d23"
-      dfe-ui: "sha256:2f56b8204af7e8d9550c448053d85a6093a76c5177ad653a04b0d16705406987"
+      dfe-engine: "sha256:464d1853700fa8fc433f8587083432f793afc506a0c5110e4a25012ca0da65e4"
+      dfe-ui: "sha256:f76779f97b195289bb220de00f8e653a20ab0e16423e1e4bbd79f8773927ce8f"
       dfe-receiver: "sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
       dfe-loader: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
       dfe-archiver: "sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
