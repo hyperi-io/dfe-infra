@@ -19,6 +19,7 @@ deadlines; the polling is not written twice.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -470,3 +471,98 @@ def record_hyperdx_source(driver, engine: Engine, name: str, deployed: dict) -> 
     if state == "failed" and deployed.get("hyperdx_source_error"):
         detail = f"{detail}; the deploy said: {deployed['hyperdx_source_error']}"
     driver.record("hyperdx-source", state, detail)
+
+
+# --- the console's Observe page ----------------------------------------------
+
+# The rows were fed minutes ago and HyperDX searches the last fifteen by default,
+# so the wait is for the query to run, not for data to arrive.
+OBSERVE_DEADLINE = 90.0
+RESULTS_LINE = re.compile(r"^(\d+) Results?$")
+
+
+def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, results: str) -> tuple[str, str]:
+    """The step result for the console's Observe search over *name*.
+
+    Args:
+        name: The source the search should show rows for.
+        frame_url: Where the HyperDX frame ended up; a chrome-error URL is a frame the browser refused.
+        blocked: The console's own error line when it refused the frame.
+        picked: Whether the frame's source picker offered the source.
+        results: The frame's results line, such as "12 Results".
+
+    Returns:
+        The status and detail for ``Driver.record``.
+    """
+    if not frame_url or frame_url.startswith("chrome-error://"):
+        return "failed", f"the HyperDX frame did not load ({blocked or 'no frame on the page'})"
+    if not picked:
+        return "failed", f"the frame's source picker does not offer {name}"
+    found = RESULTS_LINE.match(results or "")
+    if found and int(found.group(1)) > 0:
+        return "done", f"Observe search over {name}: {results}"
+    return "failed", f"Observe search over {name} returned {results or 'no results line'}"
+
+
+def hyperdx_frame(page):
+    """The HyperDX frame the console embeds, once the browser has settled it."""
+    page.locator("iframe").first.wait_for(state="attached", timeout=STEP_TIMEOUT_MS)
+    handle = page.locator("iframe").first.element_handle()
+    frame = handle.content_frame() if handle else None
+    if frame is not None and not frame.url.startswith("chrome-error://"):
+        frame.wait_for_load_state("domcontentloaded", timeout=STEP_TIMEOUT_MS)
+    return frame
+
+
+def search_results(frame, name: str) -> tuple[bool, str]:
+    """Pick *name* in the frame's source picker and read the results line."""
+    picker = frame.get_by_placeholder("Data Source")
+    picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+    picker.click(timeout=STEP_TIMEOUT_MS)
+    picker.fill(name)
+    option = frame.get_by_role("option").filter(has_text=name)
+    if not option.count():
+        return False, ""
+    option.first.click(timeout=STEP_TIMEOUT_MS)
+    frame.get_by_role("button", name="Run", exact=True).click(timeout=STEP_TIMEOUT_MS)
+    line = frame.get_by_text(RESULTS_LINE)
+    until = time.monotonic() + OBSERVE_DEADLINE
+    results = ""
+    while True:
+        if line.count():
+            results = line.first.inner_text().strip()
+            found = RESULTS_LINE.match(results)
+            if found and int(found.group(1)) > 0:
+                return True, results
+        if time.monotonic() >= until:
+            return True, results
+        time.sleep(5)
+
+
+def record_observe(driver, name: str) -> None:
+    """Open the console's Observe search on the source and see its rows.
+
+    The console iframes HyperDX from a second origin, so this one step meets
+    what a tester meets: the embed's frame-ancestors, the login shared across
+    the two origins, and the source's own view, together.
+    """
+    page = driver.page
+    blocked: list[str] = []
+
+    def on_console(message) -> None:
+        if message.type == "error" and "frame-ancestors" in message.text:
+            blocked.append(message.text.splitlines()[0])
+
+    page.on("console", on_console)
+    frame_url, picked, results = "", False, ""
+    try:
+        page.goto(f"{driver.ui}/observe/search", wait_until="domcontentloaded", timeout=STEP_TIMEOUT_MS * 2)
+        frame = hyperdx_frame(page)
+        frame_url = frame.url if frame is not None else ""
+        if frame is not None and not frame_url.startswith("chrome-error://"):
+            picked, results = search_results(frame, name)
+    except Exception as exc:
+        results = refusal(exc)
+    finally:
+        page.remove_listener("console", on_console)
+    driver.record("observe", *observe_outcome(name, frame_url, "; ".join(blocked), picked, results))

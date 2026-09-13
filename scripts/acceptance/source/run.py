@@ -67,6 +67,7 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
     case.feed(run)
     case.prove(run)
     steps.record_archive(run.driver, archive_exec, case.name)
+    steps.record_observe(run.driver, case.name)
 
 
 def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:

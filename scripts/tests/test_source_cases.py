@@ -115,6 +115,31 @@ class FakePage:
     def count(self):
         return 1
 
+    # The Observe page: the console embeds HyperDX, and the fake is its own
+    # frame -- one that loaded, offers the source, and answers a search.
+    url = "https://hyperdx.example/search?embed=1"
+
+    def on(self, event, handler):
+        return None
+
+    def remove_listener(self, event, handler):
+        return None
+
+    def element_handle(self):
+        return self
+
+    def content_frame(self):
+        return self
+
+    def wait_for_load_state(self, *a, **k):
+        return None
+
+    def filter(self, has_text=""):
+        return self._guard(f"filter:{has_text}")
+
+    def inner_text(self, **kwargs):
+        return "3 Results"
+
 
 class FakeDriver:
     """Driver.record without the screenshot."""
@@ -478,8 +503,9 @@ class TestTheOrderTheRunnerWalks:
         assert steps_seen == [
             "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform",
             "deploy", "hyperdx-source", "upload-program", "restart", "table",
-            "transform-instance", "transform-reporting", "archived",
+            "transform-instance", "transform-reporting", "archived", "observe",
         ]
+        assert driver.status("observe") == "done"
 
     def test_the_files_are_written_after_the_deploy_that_makes_the_instance(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
@@ -500,7 +526,7 @@ class TestTheOrderTheRunnerWalks:
 
         assert "upload-program" not in order
         assert order == ["deploy", "hyperdx-source", "restart", "table",
-                         "fetcher-instance", "fetcher-reporting", "archived"]
+                         "fetcher-instance", "fetcher-reporting", "archived", "observe"]
 
     def test_the_restart_step_is_skipped_when_nothing_asked_for_one(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
@@ -522,6 +548,42 @@ class TestTheOrderTheRunnerWalks:
 
         assert driver.status("restart") == "failed"
         assert FakeEngine.RESTART_HINT in driver.detail("restart")
+
+
+class TestTheObserveStep:
+    """The console embeds HyperDX from a second origin; the row says which half refused."""
+
+    FRAME = "https://hyperdx.example/search?embed=1"
+
+    def test_rows_in_the_embedded_search_are_the_pass(self):
+        assert steps.observe_outcome("fb1", self.FRAME, "", True, "12 Results") == (
+            "done", "Observe search over fb1: 12 Results")
+
+    def test_a_frame_the_browser_refused_names_the_console_error(self):
+        blocked = "Framing 'http://box:8091/' violates the following Content Security Policy directive"
+        status, detail = steps.observe_outcome("fb1", "chrome-error://chromewebdata/", blocked, False, "")
+
+        assert status == "failed"
+        assert "did not load" in detail
+        assert blocked in detail
+
+    def test_no_frame_at_all_is_a_failed_row_too(self):
+        assert steps.observe_outcome("fb1", "", "", False, "")[0] == "failed"
+
+    def test_a_picker_without_the_source_is_a_failed_row(self):
+        status, detail = steps.observe_outcome("fb1", self.FRAME, "", False, "")
+
+        assert status == "failed"
+        assert "does not offer fb1" in detail
+
+    def test_zero_rows_is_a_failed_row_that_quotes_the_line(self):
+        status, detail = steps.observe_outcome("fb1", self.FRAME, "", True, "0 Results")
+
+        assert status == "failed"
+        assert "0 Results" in detail
+
+    def test_a_search_that_never_answered_says_so(self):
+        assert "no results line" in steps.observe_outcome("fb1", self.FRAME, "", True, "")[1]
 
 
 class TestWhatTheRunTidiesUp:

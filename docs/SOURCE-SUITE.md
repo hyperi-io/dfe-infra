@@ -37,6 +37,13 @@ Proof: the transform instance reports, the receiver routes, new rows in
 under `<name>_land` in the archiver, and the engine lists a HyperDX source for
 it.
 
+Last, for both cases, the `observe` step opens the console's Observe search,
+picks the source in the embedded HyperDX and reads a non-zero results line. The
+console iframes HyperDX from a second origin, so this is the step that meets
+what a tester meets: the embed's frame-ancestors, the login shared across the
+two origins and the source's own view. A frame the browser refused fails the
+step with the console's own error line.
+
 ## `cloudwatch`, run as `--aws-service cloudtrail`
 
 The meta schema is authored by hand in the console, the fetcher stanza goes
