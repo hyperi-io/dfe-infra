@@ -158,18 +158,19 @@ data:
         <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
       </access_control_improvements>
     </clickhouse>
-  # users.d overlay: server-side async inserts for EVERY writer, via the
-  # default settings profile (the base every identity inherits). async_insert
-  # is user/query-scope -- no table-level form exists -- so this one seam
-  # covers every table any identity writes; the loader's minted profile still
-  # carries its own tuned values on top. wait=1 keeps insert errors visible to
-  # the client. Flush cadence stays on ClickHouse's adaptive defaults (24.2+).
+  # users.d overlay: async inserts for EVERY writer, via the default settings
+  # profile (the base every identity inherits). async_insert is user/query-scope
+  # -- no table-level form exists -- so this one profile covers every table any
+  # identity writes; the loader's minted profile still carries its own tuned
+  # values on top. Both are ClickHouse's own defaults since 26.2 and are written
+  # here EXPLICITLY, against a `compatibility` setting or a future re-default.
+  # Flush cadence stays on ClickHouse's adaptive defaults (24.2+).
   dfe-users.xml: |
     <clickhouse>
       <profiles>
         <default>
-          <async_insert>1</async_insert>
-          <wait_for_async_insert>1</wait_for_async_insert>
+          <async_insert>{{ .Values.clickhouse.userProfile.asyncInsert }}</async_insert>
+          <wait_for_async_insert>{{ .Values.clickhouse.userProfile.waitForAsyncInsert }}</wait_for_async_insert>
         </default>
       </profiles>
     </clickhouse>

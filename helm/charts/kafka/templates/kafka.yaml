@@ -1,7 +1,9 @@
 {{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
-{{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
-{{- $rf := min (int .Values.kafka.config.defaultReplicationFactor) $replicas }}
-{{- $isr := min (int .Values.kafka.config.minInsyncReplicas) $replicas }}
+{{- $p := .Values.kafka.profile.scale }}
+{{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
+{{- $rf := min (int $p.replicationFactor) $replicas }}
+{{- $isr := min (int $p.minInsyncReplicas) $replicas }}
+{{- $threadKnobs := ge (int (include "dfe-kafka.brokerMilliCpu" .)) (mul (int $p.threadKnobVcpuFloor) 1000) }}
 # Strimzi KRaft + KafkaNodePool model (current API). replicas/storage/resources
 # live in the KafkaNodePool (see kafka-nodepool.yaml); the Kafka CR holds the
 # cluster-wide config only.
@@ -42,14 +44,28 @@ spec:
       transaction.state.log.min.isr: {{ $isr }}
       default.replication.factor: {{ $rf }}
       min.insync.replicas: {{ $isr }}
-      num.partitions: {{ .Values.kafka.config.numPartitions }}
-      log.retention.hours: {{ .Values.kafka.config.logRetentionHours }}
-      log.segment.bytes: {{ .Values.kafka.config.logSegmentBytes }}
-      # producer -> broker stores the client's codec as-is (no re-compression);
-      # scalo's sizing profile owns the codec (lz4 default, zstd opt-in).
-      compression.type: {{ .Values.kafka.config.compressionType }}
-      # Durability over availability -- never elect an out-of-sync leader.
-      unclean.leader.election.enable: {{ .Values.kafka.config.uncleanLeaderElection }}
+      # Derived, never a literal: this is the same number the landing topic gets.
+      num.partitions: {{ include "dfe-kafka.partitions" . }}
+      # ms, not hours -- the only retention form Kafka can update dynamically.
+      log.retention.ms: {{ include "dfe-kafka.retentionMs" . }}
+      # Per PARTITION, so time retention cannot overrun the broker PVC.
+      log.retention.bytes: {{ include "dfe-kafka.retentionBytes" . }}
+      # OFF: the partition count per source is an explicit value, and an
+      # auto-created topic takes broker defaults instead.
+      auto.create.topics.enable: {{ $p.autoCreateTopics }}
+      # The size chain -- these two and every topic's max.message.bytes move
+      # together or a produce is rejected and a follower stalls.
+      message.max.bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
+      replica.fetch.max.bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
+      {{- if $threadKnobs }}
+      # Gated to a broker CPU request of at least
+      # kafka.profile.scale.threadKnobVcpuFloor vCPU -- below that these buy
+      # context switching and nothing else.
+      num.network.threads: {{ $p.numNetworkThreads }}
+      num.io.threads: {{ $p.numIoThreads }}
+      num.replica.fetchers: {{ $p.numReplicaFetchers }}
+      num.recovery.threads.per.data.dir: {{ $p.numRecoveryThreadsPerDataDir }}
+      {{- end }}
       {{- if eq (include "dfe-kafka.storageBulk" .) "object" }}
       # The broker-wide switch; the landing topic carries the per-topic half.
       remote.log.storage.system.enable: "true"
@@ -66,4 +82,30 @@ spec:
   entityOperator:
     topicOperator: {}
     userOperator: {}
+  {{- if .Values.kafka.rebalancing.enabled }}
+  # Cruise Control is what makes a scale-out move data: Kafka places partitions
+  # stickily, so three new brokers otherwise carry only newly created topics.
+  # The rebalance templates it points at are kafka-rebalance-templates.yaml.
+  cruiseControl:
+    # WITHOUT these two, Strimzi strips the network-usage, network-capacity and
+    # leader-bytes-in goals from default.goals AND hard.goals and rebalances
+    # network-blind, reporting success. Setting them is what keeps the goals in,
+    # so the goals list itself is left at the Strimzi default.
+    brokerCapacity:
+      inboundNetwork: {{ include "dfe-kafka.brokerCapacityNetwork" . | quote }}
+      outboundNetwork: {{ include "dfe-kafka.brokerCapacityNetwork" . | quote }}
+    resources:
+      {{- toYaml .Values.kafka.rebalancing.resources | nindent 6 }}
+    # Both modes: add-brokers moves replicas ONTO a broker that just joined,
+    # remove-brokers moves them OFF one about to go. Only a spec.replicas change
+    # on an existing KafkaNodePool triggers either -- creating or deleting a
+    # pool fires nothing, and there is no steady-state drift correction.
+    autoRebalance:
+      - mode: add-brokers
+        template:
+          name: {{ .Values.kafka.name }}-rebalance-add-brokers
+      - mode: remove-brokers
+        template:
+          name: {{ .Values.kafka.name }}-rebalance-remove-brokers
+  {{- end }}
 {{- end }}

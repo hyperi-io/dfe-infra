@@ -39,6 +39,31 @@ spec:
                   namespace: default
                   wave: "2"
                   appProject: infra
+    # karpenter-pools: the NodePools and EC2NodeClasses a workload actually
+    # schedules onto. AWS-only, the same shape layer1-addons gates its two
+    # AWS-only controllers on -- Exists AND In, because NotIn/In alone matches
+    # an absent key. Wave 3, after the karpenter controller itself (wave 1 in
+    # layer1-addons.yaml): a NodePool applied before the controller that reads
+    # it just sits unclaimed.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/cloud
+                    operator: Exists
+                  - key: dfe.hyperi.io/cloud
+                    operator: In
+                    values: ["aws"]
+          - list:
+              elements:
+                - app: karpenter-pools
+                  namespace: kube-system
+                  wave: "3"
+                  appProject: infra
   template:
     metadata:
       name: '{{ .app }}-{{ .name }}'
@@ -80,6 +105,22 @@ spec:
               # namespace the apps are actually placed in.
               - name: appNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+            # `values` (a YAML string) rather than a structured block, same
+            # reason the karpenter addon in layer1-addons.yaml gives: a
+            # per-element conditional cannot live in a field this file's own
+            # tests parse as plain YAML before any Go templating runs.
+            values: |
+              {{- if eq .app "karpenter-pools" }}
+              # The three facts karpenter.cluster.* names, carried onto the
+              # cluster secret by bootstrap.sh from the kubernetes-cluster
+              # module's `karpenter` output. Without them the chart's own
+              # guards refuse to render (helm/charts/karpenter-pools/templates/_pools.tpl).
+              karpenter:
+                cluster:
+                  discoveryTag: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_discovery_tag" | quote }}
+                  instanceProfile: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_instance_profile" | quote }}
+                  kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_kms_key_id" | quote }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

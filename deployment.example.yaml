@@ -65,10 +65,212 @@ target:
     namespace: dfe
   # provision:               # cloud-provisioned (tofu runs). Set steps.provision: true.
   #   cloud: aws             # aws | gcp | azure | rancher
+  #   account: "000000000000"  # the root asserts the caller's identity against it before creating anything
   #   region: ap-southeast-2
-  #   cidr: 10.42.0.0/16
-  #   # nodePools are declared in terraform/environments/<cloud>/*.tfvars, not
-  #   # here -- a list does not belong in the wizard-populatable dial.
+  #   cidr: 10.42.0.0/16       # must not overlap what you peer with, nor 172.31.0.0/16
+
+## ---------------------------------------------------------------------------
+## CLOUD PROVISIONING -- read only when target.provision names a cloud.
+## `python3 scripts/render_dial.py --tofu` turns this section plus
+## target.provision into terraform/environments/<cloud>/dial.auto.tfvars.json,
+## which is the whole of what the tofu root knows: the roots receive values and
+## compute none. Ignored entirely on the target.existing path.
+## ---------------------------------------------------------------------------
+
+## Control-plane minor version. dfe-infra#285 adds a `platform:` stage to
+## versions.yaml and the renderer prefers it once present; this is the value
+## until it lands.
+kubernetes_version: "1.36"
+
+## Egress. per-az puts a NAT gateway in every zone, so a zone failure and the
+## cross-zone data charge both stay contained; single puts one in the first
+## zone and is the cheaper tyre-kick default.
+network:
+  nat: single                # per-az | single
+
+## The Kubernetes API endpoint. The private one is always on; public adds the
+## public one for operators outside the VPC, and the root refuses 0.0.0.0/0.
+endpoint:
+  public: "false"            # true | false
+  allowed_cidrs: ""          # comma-separated; must be set when public is true
+
+## DNS. private_zone resolves inside the VPC and carries everything internal;
+## public_zone is the delegated zone the exposed UIs answer on, empty for none.
+dns:
+  private_zone: dfe.internal
+  public_zone: ""
+
+## THE EXPOSED UIs. Everything DFE uses internally is private; the UIs are the
+## exception, because their users sit outside the VPC. Nothing here does
+## anything while dns.public_zone is empty. These keys are the gateway chart's
+## `ui:` values verbatim, so an overlay is a copy rather than a translation.
+ui:
+  ## dfe-ui is the product surface and is public by default on a cloud deploy.
+  ## Every admin UI is opt-in, one at a time. cruise_control has no route yet --
+  ## it arrives with the rebalancer UI, and turning it on before then fails the
+  ## render rather than silently doing nothing.
+  public:
+    dfe_ui: "true"
+    kafbat: "false"
+    cruise_control: "false"
+    hyperdx: "false"
+    argocd: "false"
+    links: "false"
+  ## Who may reach a public UI; empty = any address. Enforced at Envoy AND at
+  ## the cloud load balancer, so one misconfiguration is not the whole wall.
+  ## The load-balancer half fences the entire front door, ingest included.
+  allowed_cidrs: ""
+  ## The proxy ranges Envoy may believe about the client address -- the load
+  ## balancer's subnets, plus any CDN in front. Required when allowed_cidrs is
+  ## set: without it the address comes from a header the caller writes.
+  trusted_proxy_cidrs: ""
+  ## Sized for a handful of analysts and admins, so a credential-stuffing run
+  ## hits a wall before it hits the login. local counts per route per proxy
+  ## replica, not per attacker; per-attacker counting needs Redis and is refused.
+  rate_limit:
+    enabled: "true"
+    requests: "300"
+    unit: Minute             # Second | Minute | Hour | Day | Month | Year
+    scope: local             # local only
+  ## Every public route already sits behind a login with deny-by-default
+  ## authorisation, so managed rules would guard code no unauthenticated caller
+  ## reaches. Any other mode terminates TLS above Envoy and moves the public
+  ## certificate to the cloud's own store, which is not rendered here.
+  waf:
+    mode: none               # none only
+    plan: ""                 # reserved
+    managed_rules: ""        # reserved
+  ## Public edge TLS. min_version is a STRING -- unquoted 1.2 parses as a float
+  ## and is rejected. hsts stops a browser retrying the name over plaintext.
+  tls:
+    min_version: "1.2"
+    hsts: "true"
+
+## The system node pool -- what the cluster runs before any DFE workload lands.
+## shape_ref indexes shapes/resolved/<cloud>.json; an instance type is never
+## named here, because the shape resolver owns that answer.
+node_pools:
+  system:
+    shape_ref: eks-system
+    min_size: 2
+    max_size: 3
+    desired_size: 2
+    capacity_type: ON_DEMAND # ON_DEMAND | SPOT
+    disk_gb: 40
+
+## TELEMETRY -- recorded policy: DFE's monitoring goes to its own OTel feed and
+## HyperDX, never CloudWatch. Where a managed cloud service forces a
+## CloudWatch-shaped touchpoint anyway (MSK's broker logs, EKS's control-plane
+## audit log -- neither has any other export path), it is kept minimal and
+## short-retention rather than removed. sink: cloudwatch is the OPT-IN
+## AWS-native path for a compliance need CloudWatch itself satisfies.
+telemetry:
+  aws:
+    sink: otel               # otel | cloudwatch. otel is the default -- never CloudWatch by choice.
+    retention_days: 2        # S3 lifecycle expiry under otel (default 2); CloudWatch retention under cloudwatch (default 7).
+
+## SIZING -- `python3 scripts/resolve_sizing.py` turns these into node counts,
+## CPU, memory, disk, IOPS, partitions and retention. Scale tier only.
+sizing:
+  ## Estimated ingest in GB/day. LEAVE IT EMPTY for the tyre-kick floor, whose
+  ## carried throughput the sizing report states rather than targets. Above
+  ## 100,000 the resolver refuses and points at professional services.
+  ingest_gb_per_day: ""
+  ## economy (the minimum that could do it) | balanced | performance. It buys
+  ## headroom over the sized peak, and never trades RF3 or the controllers away.
+  focus: economy
+  ## Peak over the daily average -- log volume is diurnal, and a broker built for
+  ## the average falls over in the evening. Empty takes the researched 2.0.
+  peak_factor: ""
+  ## Average event size in bytes, which is what decides ClickHouse rows a second.
+  avg_event_bytes: ""
+  ## Uncompressed bytes in to compressed bytes on disk. Empty takes the
+  ## conservative 5, which is the largest unmeasured line in the disk estimate.
+  compression_ratio: ""
+  ## Days of recent data the hunts read, which is what the ClickHouse RAM band
+  ## applies to. Empty takes one day.
+  hunt_window_days: ""
+  ## Extra hours of dfe-archiver lag carried on top of the consumer-downtime
+  ## assumption, which together set Kafka retention.
+  archiver_lag_hours: ""
+  ## Monthly on-demand spend above which the report warns. Empty never warns.
+  spend_warn_usd_month: ""
+  ## On-prem only: converge anyway when the real nodes are smaller than the
+  ## requirements table demands, with the warning stated in the report.
+  allow_undersized: "false"
+  ## Values set BY HAND, per workload, over whatever the ratios derived. Every
+  ## field is optional and every one still goes through the storage-cap
+  ## assertions -- an override is a different answer, not an exemption. Workloads:
+  ## eks-system, general, kafka-broker, kraft-controller, clickhouse, keeper,
+  ## ci-burst, msk-broker, toolbox.
+  overrides: {}
+  # overrides:
+  #   kafka-broker:
+  #     cpu: 16              # vCPU a broker, replacing the derived requirement
+  #     memory: 64           # GiB a broker
+  #     disk_gb: 2000        # the broker log volume, in GiB
+  #     replicas: 6          # how many brokers, replacing the derived count
+  #     instance_type: m9g.4xlarge  # refused unless every target zone offers it
+  #     iops: 6000           # provisioned IOPS on the data volume
+  #     throughput_mibs: 750 # provisioned MiB/s on the data volume
+
+## KAFKA -- who runs the brokers. strimzi and redpanda run inside the cluster and
+## tofu creates nothing for them; msk, confluent-cloud and redpanda-cloud are the
+## managed bodies the aws root creates, and the msk block below is read only
+## when provider is msk -- the two SaaS bodies size and tune the cluster
+## themselves (terraform/modules/managed-kafka/CONTRACT.md) and take no block of
+## their own. The same token is the last segment of the credential's store key
+## (<project>/<env>/kafka/<provider>), which is how the kafka chart reads the
+## password back.
+kafka:
+  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud. DOCUMENTATION
+  # ONLY below, not yet resolved by the sizing overlay: the provider-by-tier
+  # default the resolver's aws overlay (sizing/targets/aws.yaml) is expected to
+  # apply once it picks this up is msk at Small and Medium, confluent-cloud at
+  # Large -- that file is in flight elsewhere, so this stays a comment until it
+  # lands there.
+  provider: strimzi
+  msk:
+    shape_ref: msk-broker     # indexes shapes/resolved/<cloud>.json
+    broker_count: 3           # >= 3, and a multiple of the zone count
+    ## The BROKER version, in MSK's own spelling, and defaulted nowhere: the
+    ## newest ACTIVE one is read from the vendor at build time, because a default
+    ## rots into a deprecated line silently. (`version:` above is the DFE stack
+    ## pin -- a different thing entirely.)
+    broker_version: 4.2.x.kraft
+    num_partitions: 12            # the broker default the chart derives too
+    log_retention_ms: 259200000   # three days in front of the archiver
+    message_max_bytes: 16777216   # 16 MiB, the one size the whole chain carries
+    scram_username: dfe-kafka-user  # matches the kafka chart's user.name
+    ## The in-cluster Job that pre-creates the landing topics and writes the
+    ## first ACLs -- the one thing tofu cannot do, because Kafka ACLs live in the
+    ## data plane. namespace is where the kafka app is deployed
+    ## (argocd/appsets/layer2-data.yaml); the chart renders no Job for an
+    ## external broker yet, so service_account names what that Job must declare
+    ## when it lands -- an identity bound to a name nothing renders grants
+    ## nothing, silently.
+    bootstrap_job:
+      namespace: strimzi
+      service_account: dfe-kafka-bootstrap
+
+## Where the tofu state lives. The store is created once per account by
+## terraform/environments/<cloud>-state, before the first plan here.
+state:
+  bucket: ""                 # from the <cloud>-state root's output
+  key: dfe/test/aws.tfstate  # unique per deployment -- two sharing one key destroy each other
+  region: ""                 # the state store's own region
+
+## GOVERNANCE TAGS, applied to every taggable cloud resource. The seventh key
+## the roots demand, iac-source, names the root that created the resource and
+## the renderer writes it. owner and cost-center have no safe default, and the
+## plan refuses any of the seven left empty.
+tags:
+  service-name: dfe
+  service-namespace: dfe
+  environment: test          # dev | test | staging | prod | customer-<id>
+  owner: ""                  # the team or address answerable for the spend
+  cost-center: ""            # whatever your finance side reconciles against
+  lifecycle: ephemeral       # ephemeral | persistent
 
 ## Image registry hosting the published dfe-* images.
 registry: ghcr.io/hyperi-io
@@ -102,6 +304,11 @@ steps:
 ## caller resolves the real values from here and injects the registry pull creds
 ## and the OpenBao AppRole id into the rendered env. `render_dial.py` never reads
 ## or writes a secret.
+## backend also reaches bootstrap.sh as DFE_SECRETS_BACKEND: on openbao it
+## requires DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID and seeds an AppRole SecretID, on
+## aws-sm it requires neither and the store authenticates by the pod's own
+## identity. ref is the path prefix every reference hangs off -- optional, and
+## empty means the deployment's own <project>/<env> path with nothing above it.
 secrets:
   backend: openbao           # file | openbao | eso | aws-sm | gcp-sm | azure-kv
   ref: kv/services           # base path; the value (which path) is estate context

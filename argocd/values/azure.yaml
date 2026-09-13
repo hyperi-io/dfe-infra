@@ -1,6 +1,6 @@
 # Azure AKS overrides — populated in Plan 07 (azure).
 global:
-  cloud: az
+  cloud: azure
 
 storageClass: managed-premium
 

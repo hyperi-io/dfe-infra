@@ -53,8 +53,8 @@ Redpanda is deployed via the **Redpanda operator** (`Redpanda` + `User` CRDs,
 Strimzi. The operator is installed only on an explicit opt-in: the
 `dfe-redpanda-operator` ApplicationSet keys on the cluster label
 `dfe.hyperi.io/kafka-provider: redpanda` (BSL stays off any cluster that has not
-chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.1.6, broker
-`redpanda-version` v26.1.8).
+chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.2.3, broker
+`redpanda-version` v26.2.2).
 
 - **Auth: SASL/SCRAM-SHA-512, on from first boot** (the DFE kafka standard), TLS
   off on the internal listener -- matching Strimzi's plain SCRAM listener. The

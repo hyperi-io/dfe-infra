@@ -112,6 +112,55 @@ spec:
                   wave: "2"
                   appProject: infra
                   chartValuesYaml: ""
+    # The two AWS-only controllers.
+    #
+    # The AWS Load Balancer Controller: a type=LoadBalancer Service annotated
+    # aws-load-balancer-type: external is OWNED by this controller and sits at
+    # "Ensuring load balancer" forever without it, because the annotation is
+    # also what tells the in-tree cloud provider to keep its hands off. Wave 1
+    # so it is running before any Service that names it.
+    #
+    # Karpenter: the node provisioner every pool outside the managed group comes
+    # from. Wave 1 as well -- a workload scheduled before it is running has
+    # nowhere to go but the managed group, which is sized for the cluster's own
+    # controllers.
+    #
+    # Gated on the cluster's declared cloud, the same shape external-dns uses
+    # above: Exists AND In, because NotIn/In alone matches an absent key.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/cloud
+                    operator: Exists
+                  - key: dfe.hyperi.io/cloud
+                    operator: In
+                    values: ["aws"]
+          - list:
+              elements:
+                - chart: aws-load-balancer-controller
+                  repo: https://aws.github.io/eks-charts
+                  version: "3.5.0"
+                  namespace: kube-system
+                  wave: "1"
+                  appProject: infra
+                  chartValuesYaml: ""
+                # OCI, the only place Karpenter publishes -- same bare-host form
+                # the clickhouse-operator entry in layer-scale.yaml uses. The
+                # chart carries its own crds/ directory, which Argo renders and
+                # applies with the release, so a CRD field added by an upgrade
+                # arrives with the controller that reads it.
+                - chart: karpenter
+                  repo: public.ecr.aws/karpenter
+                  version: "1.14.1"
+                  namespace: kube-system
+                  wave: "1"
+                  appProject: infra
+                  chartValuesYaml: ""
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -137,6 +186,44 @@ spec:
             {{- if eq .chart "external-dns" }}
             provider:
               name: '{{ index .metadata.labels "dfe.hyperi.io/dns-provider" }}'
+            {{- end }}
+            {{- if eq .chart "aws-load-balancer-controller" }}
+            # The EKS cluster's own name, not the name Argo registered the
+            # cluster under -- the controller tags what it creates with
+            # kubernetes.io/cluster/<name> and finds its subnets by that tag.
+            clusterName: '{{ index .metadata.annotations "dfe.hyperi.io/cluster_name" }}'
+            region: '{{ index .metadata.annotations "dfe.hyperi.io/region" }}'
+            # Named, not generated. The chart would otherwise derive the account
+            # name from the release name, and the cluster module's Pod Identity
+            # association names kube-system/aws-load-balancer-controller.
+            serviceAccount:
+              create: true
+              name: aws-load-balancer-controller
+            # The service mutator webhook makes this controller the default for
+            # EVERY new LoadBalancer Service and fails closed, so while the
+            # controller is down no LoadBalancer Service can be created at all.
+            # Off: the Services that want it say so by annotation.
+            enableServiceMutatorWebhook: false
+            {{- end }}
+            {{- if eq .chart "karpenter" }}
+            settings:
+              # The EKS cluster's own name. Karpenter tags what it launches with
+              # it and refuses to start without it.
+              clusterName: '{{ index .metadata.annotations "dfe.hyperi.io/cluster_name" }}'
+              # The tofu names the interruption queue after the cluster, so there
+              # is one annotation to carry rather than two. Left empty, Karpenter
+              # drops interruption handling silently and a spot node goes away
+              # with its pods still on it.
+              interruptionQueue: '{{ index .metadata.annotations "dfe.hyperi.io/cluster_name" }}'
+              # settings.clusterEndpoint is deliberately absent: the controller
+              # asks EKS for it at startup, which is what its eks:DescribeCluster
+              # grant is for.
+            # Named, not generated. The chart would otherwise derive the account
+            # name from the release, and the cluster module's Pod Identity
+            # association names kube-system/karpenter.
+            serviceAccount:
+              create: true
+              name: karpenter
             {{- end }}
             {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:

@@ -1,2 +1,3 @@
-{{/* Renders nothing; exists so the storage-model guard runs in every mode. */}}
+{{/* Renders nothing; exists so the storage-model and autoscaling guards run in every mode. */}}
 {{- include "dfe-kafka.validateStorageModel" . -}}
+{{- include "dfe-kafka.validateAutoscaling" . -}}

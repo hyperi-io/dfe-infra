@@ -1,7 +1,13 @@
 {{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
-{{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
-# Node pool for the Kafka cluster. Combined controller+broker roles (KRaft).
-# replicas: single -> 1, cluster -> kafka.replicas (default 3, set higher).
+{{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
+# The BROKER pool. It holds the data path only: the KRaft controllers run in
+# their own pool (kafka-controller-nodepool.yaml), because in combined mode a
+# broker under GC or IO pressure is also the metadata quorum, and an ingest
+# stall becomes a control-plane stall. Set kafka.controllerPool.enabled=false to
+# fall back to one combined pool.
+# replicas: cluster -> kafka.replicas (default 3, set higher). This is also the
+# ONLY field a scale-out changes, and the only change that triggers Cruise
+# Control's auto-rebalance.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:
@@ -12,7 +18,9 @@ metadata:
 spec:
   replicas: {{ $replicas }}
   roles:
+    {{- if not .Values.kafka.controllerPool.enabled }}
     - controller
+    {{- end }}
     - broker
   storage:
     type: jbod

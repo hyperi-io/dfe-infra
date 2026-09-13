@@ -22,7 +22,7 @@ usage() {
     echo "Deploy DFE to a target cluster. Runs terraform apply + bootstrap."
     echo ""
     echo "Options:"
-    echo "  --cloud CLOUD     Target cloud: local, aws, gcp, az (default: local)"
+    echo "  --cloud CLOUD     Target cloud: local, aws, gcp, azure (default: local)"
     echo "  --tf-dir DIR      Terraform environment dir (default: auto from --cloud)"
     echo "  --dry-run         Show what would happen without executing"
     echo "  --skip-terraform  Skip terraform apply (use existing state)"

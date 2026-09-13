@@ -1,0 +1,333 @@
+{
+  "_provenance": {
+    "written_by": "scripts/resolve_sizing.py",
+    "cloud": "aws",
+    "region": "us-west-2",
+    "availability_zones": [
+      "us-west-2a",
+      "us-west-2b",
+      "us-west-2c"
+    ],
+    "source": "aws-api",
+    "captured": "2026-09-13",
+    "resolved": "2026-09-13"
+  },
+  "clickhouse": {
+    "instance_types": [
+      "r9gd.4xlarge",
+      "r9gd.2xlarge",
+      "r8gd.2xlarge"
+    ],
+    "arch": "arm64",
+    "generation": 9,
+    "generation_policy": "newest-with-modifiers",
+    "price_policy": "newest-within",
+    "price_usd_hour": 1.28144,
+    "physical_processor": "AWS Graviton5 Processor",
+    "vcpu": 16,
+    "memory_gib": 128.0,
+    "instance_store_gb": 950,
+    "ceilings": {
+      "baseline_iops": 24000,
+      "baseline_throughput_mib_s": 750.0,
+      "maximum_iops": 48000,
+      "maximum_throughput_mib_s": 1500.0
+    },
+    "volumes": {
+      "root": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 250.0,
+        "source": "instance-baseline"
+      },
+      "data": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 500.0,
+        "source": "sizing.clickhouse.disk_formula"
+      },
+      "cache": {
+        "type": "nvme-instance-store",
+        "size_gib": 950,
+        "source": "instance-provided"
+      }
+    },
+    "storage_classes": {
+      "root": {
+        "name": "dfe-clickhouse-root",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 250.0
+      },
+      "data": {
+        "name": "dfe-clickhouse-data",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 500.0
+      }
+    }
+  },
+  "eks-system": {
+    "instance_types": [
+      "m9g.xlarge",
+      "m9g.large",
+      "m8g.large",
+      "m7g.large",
+      "m6g.large"
+    ],
+    "arch": "arm64",
+    "generation": 9,
+    "generation_policy": "newest",
+    "price_policy": "newest-within",
+    "price_usd_hour": 0.19568,
+    "physical_processor": "AWS Graviton5 Processor",
+    "vcpu": 4,
+    "memory_gib": 16.0,
+    "instance_store_gb": 0,
+    "ceilings": {
+      "baseline_iops": 6000,
+      "baseline_throughput_mib_s": 187.5,
+      "maximum_iops": 48000,
+      "maximum_throughput_mib_s": 1500.0
+    },
+    "volumes": {
+      "root": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 187.0,
+        "source": "instance-baseline"
+      }
+    },
+    "storage_classes": {
+      "root": {
+        "name": "dfe-eks-system-root",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 187.0
+      }
+    }
+  },
+  "general": {
+    "instance_types": [
+      "m9g.xlarge",
+      "m8g.xlarge",
+      "m7g.xlarge",
+      "m6g.xlarge"
+    ],
+    "arch": "arm64",
+    "generation": 9,
+    "generation_policy": "newest",
+    "price_policy": "newest-within",
+    "price_usd_hour": 0.19568,
+    "physical_processor": "AWS Graviton5 Processor",
+    "vcpu": 4,
+    "memory_gib": 16.0,
+    "instance_store_gb": 0,
+    "ceilings": {
+      "baseline_iops": 6000,
+      "baseline_throughput_mib_s": 187.5,
+      "maximum_iops": 48000,
+      "maximum_throughput_mib_s": 1500.0
+    },
+    "volumes": {
+      "root": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 187.0,
+        "source": "instance-baseline"
+      }
+    },
+    "storage_classes": {
+      "root": {
+        "name": "dfe-general-root",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 187.0
+      }
+    }
+  },
+  "kafka-broker": {
+    "instance_types": [
+      "m9g.4xlarge",
+      "m8g.4xlarge",
+      "m7g.4xlarge",
+      "m6g.4xlarge"
+    ],
+    "arch": "arm64",
+    "generation": 9,
+    "generation_policy": "newest",
+    "price_policy": "newest-within",
+    "price_usd_hour": 0.78272,
+    "physical_processor": "AWS Graviton5 Processor",
+    "vcpu": 16,
+    "memory_gib": 64.0,
+    "instance_store_gb": 0,
+    "ceilings": {
+      "baseline_iops": 24000,
+      "baseline_throughput_mib_s": 750.0,
+      "maximum_iops": 48000,
+      "maximum_throughput_mib_s": 1500.0
+    },
+    "volumes": {
+      "root": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 250.0,
+        "source": "instance-baseline"
+      },
+      "data": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 500.0,
+        "source": "sizing.kafka.<provider>.disk_formula"
+      }
+    },
+    "storage_classes": {
+      "root": {
+        "name": "dfe-kafka-broker-root",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 250.0
+      },
+      "data": {
+        "name": "dfe-kafka-broker-data",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 500.0
+      }
+    }
+  },
+  "keeper": {
+    "instance_types": [
+      "m9g.2xlarge",
+      "m9g.large",
+      "m8g.large",
+      "m7g.large",
+      "m6g.large"
+    ],
+    "arch": "arm64",
+    "generation": 9,
+    "generation_policy": "newest",
+    "price_policy": "newest-within",
+    "price_usd_hour": 0.39136,
+    "physical_processor": "AWS Graviton5 Processor",
+    "vcpu": 8,
+    "memory_gib": 32.0,
+    "instance_store_gb": 0,
+    "ceilings": {
+      "baseline_iops": 12000,
+      "baseline_throughput_mib_s": 375.0,
+      "maximum_iops": 48000,
+      "maximum_throughput_mib_s": 1500.0
+    },
+    "volumes": {
+      "root": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 250.0,
+        "source": "instance-baseline"
+      },
+      "data": {
+        "type": "gp3",
+        "iops": 6000,
+        "throughput_mib_s": 125.0,
+        "source": "max(20, sizing.keeper.iops_target / 500)"
+      }
+    },
+    "storage_classes": {
+      "root": {
+        "name": "dfe-keeper-root",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 250.0
+      },
+      "data": {
+        "name": "dfe-keeper-data",
+        "type": "gp3",
+        "iops": 6000,
+        "throughput": 125.0
+      }
+    }
+  },
+  "kraft-controller": {
+    "instance_types": [
+      "m9g.2xlarge",
+      "m9g.medium",
+      "m8g.medium",
+      "m7g.medium",
+      "m6g.medium"
+    ],
+    "arch": "arm64",
+    "generation": 9,
+    "generation_policy": "newest",
+    "price_policy": "newest-within",
+    "price_usd_hour": 0.39136,
+    "physical_processor": "AWS Graviton5 Processor",
+    "vcpu": 8,
+    "memory_gib": 32.0,
+    "instance_store_gb": 0,
+    "ceilings": {
+      "baseline_iops": 12000,
+      "baseline_throughput_mib_s": 375.0,
+      "maximum_iops": 48000,
+      "maximum_throughput_mib_s": 1500.0
+    },
+    "volumes": {
+      "root": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 250.0,
+        "source": "instance-baseline"
+      },
+      "data": {
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mib_s": 125.0,
+        "source": "sizing.kraft_controller.disk_gib_floor"
+      }
+    },
+    "storage_classes": {
+      "root": {
+        "name": "dfe-kraft-controller-root",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 250.0
+      },
+      "data": {
+        "name": "dfe-kraft-controller-data",
+        "type": "gp3",
+        "iops": 3000,
+        "throughput": 125.0
+      }
+    }
+  },
+  "msk-broker": {
+    "instance_types": [
+      "express.m7g.4xlarge",
+      "express.m7g.8xlarge",
+      "express.m7g.12xlarge"
+    ],
+    "arch": "arm64",
+    "generation": 7,
+    "generation_policy": "pinned",
+    "price_policy": "newest",
+    "price_usd_hour": 3.264,
+    "physical_processor": "AWS Graviton3 Processor",
+    "vcpu": 16,
+    "memory_gib": 64.0,
+    "instance_store_gb": 0,
+    "ceilings": {
+      "baseline_iops": 0,
+      "baseline_throughput_mib_s": 0.0,
+      "maximum_iops": 0,
+      "maximum_throughput_mib_s": 0.0
+    },
+    "volumes": {
+      "data": {
+        "type": "managed",
+        "source": "provider-managed"
+      }
+    },
+    "storage_classes": {}
+  }
+}

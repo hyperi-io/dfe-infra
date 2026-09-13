@@ -170,6 +170,8 @@ versionCheck:
 - [edge-vpn.md](edge-vpn.md) - the opt-in tunnel a field appliance dials in on:
   the two ports, the reserved client range, and how it reaches receivers only
 - [rke2.md](rke2.md) - the default distribution
+- [aws.md](aws.md) - deploying on AWS: EKS, Karpenter, MSK/Confluent/Redpanda
+  Kafka, sizing and teardown
 - [DEPLOY-HELPERS.md](../DEPLOY-HELPERS.md) - the release and deploy-overlay
   helpers, the logins a deploy carries, and the end-to-end recipe
 - [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) - which CA signs the gateway

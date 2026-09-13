@@ -66,11 +66,11 @@ def one(docs: list[dict], kind: str, name: str) -> dict:
 
 
 def envoy_service_patch(docs: list[dict]) -> dict:
-    """The StrategicMerge patch the EnvoyProxy applies to the generated Service."""
+    """The Service fields the EnvoyProxy sets, dedicated v1.8 fields and the legacy patch merged."""
     svc = one(docs, "EnvoyProxy", "dfe-envoy-proxy")["spec"]["provider"]["kubernetes"][
         "envoyService"
     ]
-    return svc.get("patch", {}).get("value", {}).get("spec", {})
+    return {**svc.get("patch", {}).get("value", {}).get("spec", {}), **svc}
 
 
 # --- the gateway's address ---------------------------------------------------

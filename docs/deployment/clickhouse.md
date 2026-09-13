@@ -42,8 +42,10 @@ has ever run on it.
 ## Storage model: `local`, `cached-object` or `tiered-block`
 
 `clickhouse.storageModel` is a separate axis from `clickhouse.mode` and is
-fixed for the life of the deployment. It defaults to `local`, where the PVC
-is the capacity ceiling. Models are named `<family>-<bulk>`: the family says
+fixed for the life of the deployment. It ships empty and is derived --
+`cached-object` when `clickhouse.objectStore.endpoint` is supplied, `local`
+otherwise, where the PVC is the capacity ceiling -- and a value written here
+overrides the derivation. Models are named `<family>-<bulk>`: the family says
 whether parts MOVE to the bulk store or are COPIED to it, the bulk half says
 what that store is. Every combination and its evidence:
 [storage.md](storage.md).
@@ -51,11 +53,15 @@ what that store is. Every combination and its evidence:
 `cached-object` renders a `storage_configuration` with an `s3` disk, a
 `cache` disk in front of it, and a `s3_cached` policy set as the server-wide
 `merge_tree.storage_policy` -- so the engine's DDL needs no per-table
-`storage_policy` and the PVC then sizes the cache plus the part metadata,
-not the data. The same fragment reaches both modes: `settings.extraConfig`
-on the operator CR for cluster, a `config.d/dfe-storage.yaml` ConfigMap
-entry for single. `external` mode refuses it -- the supplied ClickHouse
-owns its own storage.
+`storage_policy`. The cache is a separate volume, chosen by
+`clickhouse.objectStore.cache.volume`: the default `pvc` places it on the data
+PVC alongside the part metadata, while `instance-store` puts it on an
+`emptyDir` over the node's local NVMe instead, sized by
+`clickhouse.objectStore.cacheSize` -- see "Dimension 4: cache placement" in
+[storage.md](storage.md) for both. The same fragment reaches both modes:
+`settings.extraConfig` on the operator CR for cluster, a
+`config.d/dfe-storage.yaml` ConfigMap entry for single. `external` mode
+refuses it -- the supplied ClickHouse owns its own storage.
 
 Credentials are never in the values. The disk sets
 `use_environment_credentials`, and the chart wires `AWS_ACCESS_KEY_ID` /

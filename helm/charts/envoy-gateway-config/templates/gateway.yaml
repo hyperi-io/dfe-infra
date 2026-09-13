@@ -1,3 +1,4 @@
+{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -5,9 +6,13 @@ metadata:
   namespace: {{ .Values.gateway.namespace }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
-  {{- if not .Values.tls.wildcardCertificate.enabled }}
+  {{- if and (not .Values.tls.wildcardCertificate.enabled) (not $public) }}
   # Shim-driven issue -- only acts where cert-manager runs with
   # --enable-gateway-api; templates/wildcard-certificate.yaml is the other half.
+  # Dropped once a UI is public: the annotations are Gateway-wide, so the shim
+  # would issue the PUBLIC listeners' certificates from the internal CA too, and
+  # a browser outside the VPC trusts none of it. The explicit Certificate takes
+  # over the same secret from the same issuer.
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.tls.issuerName }}
     cert-manager.io/private-key-algorithm: {{ .Values.tls.privateKey.algorithm }}
@@ -37,3 +42,22 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
+    {{- /* One listener per public hostname, each terminating its own publicly
+           trusted certificate. A single wildcard listener would put every UI
+           behind one certificate, so exposing one UI would name them all. */}}
+    {{- range $key := $public }}
+    {{- $r := index $.Values.routes $key }}
+    - name: https-public-{{ $r.routeName }}
+      protocol: HTTPS
+      port: {{ $.Values.gateway.listenerPort }}
+      hostname: {{ include "envoy-gateway-config.publicHost" (dict "ctx" $ "key" $key) | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: dfe-public-{{ $r.routeName }}-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}

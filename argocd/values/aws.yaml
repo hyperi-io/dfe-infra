@@ -7,11 +7,36 @@ global:
 
 storageClass: gp3
 
+# The HTTP plane's front door, owned by the AWS Load Balancer Controller that
+# layer1-addons installs on this cloud.
 envoyGateway:
   service:
     type: LoadBalancer
     annotations:
-      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      # `external`, not `nlb`: the controller reconciles only `nlb-ip` and
+      # `external`, and ignores anything else. `nlb` was read by nothing, which
+      # left the in-tree cloud provider making the load balancer instead.
+      service.beta.kubernetes.io/aws-load-balancer-type: "external"
+      # Targets are pod IPs, so a request reaches Envoy in one hop and the node
+      # port hop that hides the client address is gone.
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+      # The UIs' users are outside the VPC. Everything else DFE runs stays
+      # private, and internal Services keep the default `internal` scheme.
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+      # Without this the target sees the load balancer's address, every request
+      # comes from one IP, and both the CIDR filter and the rate limit become
+      # decorations.
+      service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: "preserve_client_ip.enabled=true"
+      # NO aws-load-balancer-security-groups here, deliberately. Left absent,
+      # the controller creates a frontend security group AT CREATION and opens
+      # it to the Service's loadBalancerSourceRanges -- and creation is the only
+      # time an NLB can be given one, so an NLB born without a security group
+      # can never gain one afterwards. Naming a group here would also turn the
+      # backend rule management below off by default.
+      # With preserve_client_ip on and IP targets, the node and pod security
+      # groups have to admit the CLIENT address rather than the load balancer's;
+      # this is what keeps those rules in step.
+      service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 
 # The engine's runtime store is a PVC against the cluster's default
 # StorageClass (dfe-engine chart config.persistence) -- no per-cloud

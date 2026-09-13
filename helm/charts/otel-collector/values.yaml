@@ -145,6 +145,21 @@ clusterTelemetry:
       passwordSecretName: dfe-kafka-user
       passwordSecretKey: password
 
+  # MSK's own open_monitoring: the JMX exporter (broker JVM metrics) and node
+  # exporter (broker OS metrics) AWS runs on every broker instance, in
+  # Prometheus text format -- a DIFFERENT feed from the kafka block above,
+  # which speaks the Kafka protocol itself and covers broker/topic/consumer
+  # counts, not JVM or OS metrics. Gateway-only: the targets are the brokers'
+  # own hosts, not anything running in this cluster. Rendered only when
+  # kafka.provider is msk -- every other provider either exposes no such
+  # endpoint (strimzi, redpanda) or is a SaaS body with no host to target
+  # (confluent-cloud, redpanda-cloud).
+  mskOpenMonitoring:
+    enabled: true
+    collectionInterval: 30s
+    jmxPort: 11001
+    nodeExporterPort: 11002
+
   # KEDA needs no receiver here: the operator pushes its own metrics over OTLP to
   # the gateway, enabled in argocd/appsets/layer1-addons.yaml. Kept as a documented
   # absence so the next reader does not add a scrape job for it.
@@ -197,6 +212,17 @@ clickhouse:
 
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
+  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud, the SAME token
+  # the kafka chart's own kafka.provider carries -- gates
+  # clusterTelemetry.mskOpenMonitoring below. Populated from the
+  # dfe.hyperi.io/kafka_provider cluster-secret annotation
+  # (argocd/appsets/layer2-data.yaml); strimzi is both this chart's and the
+  # kafka chart's own default, so an unset annotation changes nothing.
+  provider: strimzi
+  # MSK's own bare broker hosts (no port), comma separated -- the target list
+  # the Prometheus receiver below needs. Derived by bootstrap.sh from
+  # DFE_KAFKA_BOOTSTRAP; empty on every provider but msk.
+  brokerHosts: ""
 
 exporters:
   # OTLP push to a hyperdx-side receiver. OFF: the dfe-hyperdx image ships

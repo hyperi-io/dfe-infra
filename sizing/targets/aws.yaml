@@ -1,0 +1,36 @@
+## Project:   dfe-infra
+## File:      sizing/targets/aws.yaml
+## Purpose:   The per-target knob matrix for `cloud: aws` -- every sizing knob
+##            the target changes or refuses, and why, so the sizing report can
+##            print the whole list rather than implying nothing was dropped on
+##            this target's account.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Read by scripts/resolve_sizing.py's build_report -- see the module
+## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
+## prints beside it. NO LISTS: nested maps and scalars only, parsed by
+## scripts/yaml_subset.py.
+##
+## AWS is the one POPULATED target: nothing here is blocked, because the
+## resolver, tofu and Karpenter carry every knob between them rather than a
+## vendor's own control plane taking it away.
+
+node_shapes:
+  state: managed
+  reason: "select_shape resolves the concrete instance type against the live EC2 and Pricing APIs and commits the answer to shapes/resolved/aws.json, so a Graviton generation change is a reviewed diff, not a manual pick."
+
+storage_classes:
+  state: managed
+  reason: "compute-shapes.yaml sets storage_class_owner: terraform for aws -- the StorageClasses are created by tofu, one per use case, with both iops and throughput set explicitly (A6 in resolve_sizing.py refuses an unset throughput or an iopsPerGB field)."
+
+karpenter_generation_floor:
+  state: managed
+  reason: "build_karpenter_pools emits generationGt (or generationIn on a pinned policy) from the same resolved family list select_shape chose, so a new Graviton generation arrives by drift with no plan change -- compute-shapes.yaml's own header promise."
+
+clickhouse_cache_volume:
+  state: managed
+  reason: "build_values emits clickhouse.objectStore.cache.volume from the resolved shape's own instance-store volume (compute-shapes.yaml's clickhouse.volumes.cache) -- instance-store with the shape's cache size whenever the chosen r9gd-class type carries local NVMe, pvc otherwise -- so a large gp3 cache is never the default a resolve presents."
