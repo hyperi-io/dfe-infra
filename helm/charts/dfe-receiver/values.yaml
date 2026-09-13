@@ -198,9 +198,10 @@ serviceAccount:
   annotations: {}   # workload identity annotations injected here
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
-# The engine/overlay drives these via the per-instance values file. DEFAULT
-# trigger is CPU (native KEDA cpu scaler, no shim); scalo ScalingPressure is OPT-IN
-# via the fail-safe dfe-keda-shim (a metric outage FREEZES scaling, never runs up).
+# The engine/overlay drives these via the per-instance values file. The DEFAULT
+# trigger is the scalo ScalingPressure composite (0-100) through the fail-safe
+# dfe-keda-shim, so a metric outage FREEZES scaling rather than running replicas up.
+# The native cpu scaler renders alongside it and the HPA takes the higher of the two.
 # minReplicaCount stays 1 -- scale-to-zero is 2.2 backlog; set min/idle to 0 via
 # the overlay to opt this pipeline app in later.
 keda:
@@ -210,14 +211,14 @@ keda:
   cooldownPeriod: 120
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
-  # OPT-IN: scale on scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim -
-  # a metric outage FREEZES scaling, never runs replicas up. Set enabled: true to use.
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
+  # DEFAULT: scale on scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim -
+  # a metric outage FREEZES scaling, never runs replicas up. Set enabled: false to drop it.
   pressure:
-    enabled: false
+    enabled: true
     # service: dfe-receiver   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

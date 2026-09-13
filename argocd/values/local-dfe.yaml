@@ -28,6 +28,12 @@ imagePullSecrets:
 postgresql:
   host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
 
+# KEDA dials the shim at the address the chart renders, and that default names
+# namespace dfe; this deploy's apps and their shim run in dfe-local.
+keda:
+  pressure:
+    shimAddress: "dfe-keda-shim.dfe-local.svc.cluster.local:8080"
+
 envoyGateway:
   service:
     type: LoadBalancer

@@ -20,6 +20,11 @@ flowchart LR
 - **Pod scaling is KEDA, on every target.** The charts ship the ScaledObjects
   (receiver, loader, hunt-runner via the fail-safe dfe-keda-shim); nothing about
   KEDA changes between on-prem and cloud.
+- **Every app that emits the gauge scales on scaling_pressure by default.** The
+  app charts set `keda.pressure.enabled: true`, so the shim's composite is the
+  signal; the native cpu scaler renders alongside it and the HPA takes the higher
+  of the two. `keda.pressure.shimAddress` must name the namespace the shim runs
+  in. `bootstrap/keda-scale-test.sh` proves the path on each deploy.
 - **Node scaling forks by target.** KEDA makes pods Pending; what turns Pending
   pods into new nodes depends entirely on where the cluster runs. That fork is a
   DECLARED decision, recorded here -- never an assumption baked into a chart.
