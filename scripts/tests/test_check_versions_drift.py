@@ -171,9 +171,10 @@ def test_fix_is_a_noop_when_nothing_drifts() -> None:
 def test_fix_propagates_one_ssot_key_to_every_mirror() -> None:
     """One SSoT bump must reach ALL of a key's mirrors, not just Renovate's one.
 
-    services.clickhouse-version has three: the server version and the keeper tag
-    in values.yaml, and the chart appVersion. Only the keeper tag is helm-values,
-    so Renovate could never have carried the other two.
+    services.clickhouse-version has four: the server version and the keeper tag
+    in values.yaml, the chart appVersion, and the dfe-toolbox base image's
+    clickhouse-client build ARG. Only the keeper tag is helm-values, so Renovate
+    could never have carried the other three.
     """
     versions = dict(drift.load_versions())
     versions["services.clickhouse-version"] = "26.3.17.110"
@@ -181,8 +182,8 @@ def test_fix_propagates_one_ssot_key_to_every_mirror() -> None:
     writes, fixed, refused = drift.plan_fix(versions)
     expect("propagation refuses nothing on a plain bump", refused == [], f"{refused}")
     expect(
-        "all three clickhouse mirrors are rewritten",
-        len([f for f in fixed if "clickhouse" in f]) == 3,
+        "all four clickhouse mirrors are rewritten",
+        len([f for f in fixed if "clickhouse" in f]) == 4,
         f"{fixed}",
     )
     chart = writes.get(Path("helm/charts/clickhouse-cluster/Chart.yaml"), "")

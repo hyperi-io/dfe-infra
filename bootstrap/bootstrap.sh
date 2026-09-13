@@ -352,6 +352,15 @@ export DFE_KARPENTER_INSTANCE_PROFILE="${DFE_KARPENTER_INSTANCE_PROFILE:-}"
 export DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION="${DFE_KARPENTER_INSTANCE_PROFILE:+dfe.hyperi.io/karpenter_instance_profile: \"${DFE_KARPENTER_INSTANCE_PROFILE}\"}"
 export DFE_KARPENTER_KMS_KEY_ID="${DFE_KARPENTER_KMS_KEY_ID:-}"
 export DFE_KARPENTER_KMS_KEY_ID_ANNOTATION="${DFE_KARPENTER_KMS_KEY_ID:+dfe.hyperi.io/karpenter_kms_key_id: \"${DFE_KARPENTER_KMS_KEY_ID}\"}"
+# The in-cluster toolbox pod's dial facts (deployment.yaml's toolbox.pod.*,
+# render_dial.py's DFE_TOOLBOX_POD_* keys). Unlike the karpenter facts above,
+# these are not conditional on AWS -- the chart deploys on every cloud -- so
+# they always render, defaulted to the chart's own off state rather than
+# omitted, and carried straight through as the literal text a real YAML
+# parser reads as a boolean (or an empty/numeric string for ttlSeconds).
+export DFE_TOOLBOX_POD_ENABLED="${DFE_TOOLBOX_POD_ENABLED:-false}"
+export DFE_TOOLBOX_POD_KUBE_API_ACCESS="${DFE_TOOLBOX_POD_KUBE_API_ACCESS:-false}"
+export DFE_TOOLBOX_POD_TTL_SECONDS="${DFE_TOOLBOX_POD_TTL_SECONDS:-}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
 export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"

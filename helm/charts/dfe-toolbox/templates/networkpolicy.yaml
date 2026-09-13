@@ -1,0 +1,47 @@
+{{- /*
+Self-contained, like culvert's: this chart deploys into `default`, which
+carries no baseline policy from the network-policies chart (that one only
+covers dfeNamespaces/dataNamespaces), so this is the pod's WHOLE network
+surface rather than an addition to some other policy.
+
+No ingress rules at all -- nothing needs to dial this pod, `kubectl exec`
+and `kubectl logs` go through the API server and kubelet, not a connection
+this policy would see. Egress is DNS plus the DFE namespaces, and nothing
+else -- no internet egress, matching the design brief.
+
+CAVEAT, not enforced by this file: NetworkPolicy is a request to the CNI, not
+self-enforcing. On EKS it does nothing unless the vpc-cni add-on has
+enableNetworkPolicy: true; on-prem it depends on the cluster's own CNI
+supporting NetworkPolicy at all. See docs/deployment/toolbox.md.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    # Cluster DNS.
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- $namespaces := concat (list .Values.appNamespace) .Values.dataNamespaces (list .Values.otelNamespace) }}
+    {{- range $ns := $namespaces }}
+    {{- if $ns }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+    {{- end }}
+    {{- end }}

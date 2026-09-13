@@ -153,6 +153,76 @@ ui:
     min_version: "1.2"
     hsts: true
 
+## TOOLBOX -- two independent troubleshooting surfaces sharing one top-level
+## key, because this restricted YAML subset allows no duplicate key. `pod:`
+## is the IN-CLUSTER one (any cloud, or on-prem); `enabled`/`aws:`/
+## `ttl_minutes`/`session:`/`session_log_retention_days` below it are the
+## on-demand SSM-managed EC2 instance for a CLOUD-PROVISIONED deployment only
+## (terraform/modules/toolbox/aws; docs/deployment/toolbox.md) -- ignored on
+## target.existing the same as the rest of the CLOUD PROVISIONING section,
+## even though it is written here rather than beside kafka: below, for the
+## one-`toolbox:`-key reason just given.
+toolbox:
+  ## An opt-in troubleshooting pod (helm/charts/dfe-toolbox), off by default
+  ## and idle at replicas: 0 even when the chart is deployed. render_dial.py
+  ## carries this sub-block through to the DFE_TOOLBOX_POD_* env keys,
+  ## bootstrap.sh onto the cluster-secret annotations, and
+  ## argocd/appsets/layer2-platform.yaml reads them back as this app's own
+  ## `toolbox.pod.*` parameters -- the same shape retention.defaultTtlDays
+  ## already uses (layer2-apps.yaml). This dial value is therefore
+  ## authoritative over argocd/values/common.yaml's fleet-wide `false`
+  ## default and over anything a deploy repo's own infra/dfe-toolbox.yaml
+  ## overlay sets. camelCase and unquoted booleans, like `ui:` above, because
+  ## these ARE the chart's own toolbox.pod.* values, not a render_dial.py
+  ## translation. A quoted "true"/"false" is refused by the chart's own
+  ## validate.yaml.
+  pod:
+    enabled: false
+    ## Read-only Kubernetes API access (pods/services/endpoints/configmaps, pods/log,
+    ## pods/portforward -- never secrets, never pods/exec). Refused unless enabled is
+    ## also true.
+    kubeApiAccess: false
+    ## Seconds before the companion CronJob scales the pod back to zero. Empty runs it
+    ## until an operator disables it by hand.
+    ttlSeconds: ""
+  ## The on-demand SSM-managed EC2 instance, READ by render_dial.py --tofu
+  ## (unlike pod: above). `enabled` is the `dfe-ops bastion up`/`down` toggle
+  ## -- down means the instance, its security group, its IAM role and both
+  ## kinds of Session document do not exist (terminate, never stop). Tool
+  ## versions are NEVER set here: render_dial.py assembles them from
+  ## versions.yaml's own toolbox: stage, so a deployer cannot pin a stale
+  ## tool by hand independent of everything else this repo pins through the
+  ## same file.
+  enabled: "false"
+  aws:
+    ## Smallest Graviton burstable size -- shapes/compute-shapes.yaml's own
+    ## `toolbox` use case resolves to the same family for the node-pool path.
+    instance_type: t4g.small
+    ## The IAM role EKS grants a read-only (AmazonEKSViewPolicy) access entry
+    ## to when enabled is true -- required then. The toolbox INSTANCE itself
+    ## gets no EKS access entry at all: a forward's kubectl identity is the
+    ## OPERATOR's own role, authenticated at the laptop end of the tunnel,
+    ## never the instance's (toolbox/aws/CONTRACT.md, "EKS access").
+    operator_role_arn: ""
+  ## Minutes with no active SSM session before the on-instance timer shuts
+  ## the box down (a systemd timer counting local ssm-session-worker
+  ## processes, not a CPU alarm -- an idle-looking tunnel can still be
+  ## carrying a live kcat consumer). Bounded 15-480 by the module itself, not
+  ## only here. `dfe-ops bastion up --ttl` overrides this for one call.
+  ttl_minutes: 60
+  ## Session Manager preferences for the SHELL session only -- a port-forward
+  ## session carries no such preferences, because Session Manager records no
+  ## transcript for one at all (toolbox/aws/CONTRACT.md #6). Both bounded by
+  ## Session Manager's own ceilings (60 minutes, 1440 minutes).
+  session:
+    idle_timeout_minutes: 15
+    max_duration_minutes: 240
+  ## S3 lifecycle expiry on the session-log bucket. Deliberately independent
+  ## of telemetry.aws.retention_days above (2-7 days) -- a session log is
+  ## evidence of human access to a customer's private data plane, not
+  ## service telemetry.
+  session_log_retention_days: 90
+
 ## The system node pool -- what the cluster runs before any DFE workload lands.
 ## shape_ref indexes shapes/resolved/<cloud>-<region>.json; an instance type is never
 ## named here, because the shape resolver owns that answer.

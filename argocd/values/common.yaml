@@ -195,6 +195,22 @@ networkModel:
 vpn:
   clientCIDR: "100.64.0.0/10"
 
+# The opt-in in-cluster toolbox pod (helm/charts/dfe-toolbox), always deployed
+# by argocd/appsets/layer2-platform.yaml but idle at replicas: 0 until a
+# deployment turns it on. Off everywhere by default; a deployer opts in
+# through the dial (deployment.yaml's toolbox.pod.*), which
+# layer2-platform.yaml renders as this chart's own parameters and which wins
+# over this file -- never by editing this file directly. See
+# docs/deployment/toolbox.md.
+toolbox:
+  pod:
+    enabled: false
+    # Requires enabled: true as well -- refused by the chart's own guard
+    # otherwise (helm/charts/dfe-toolbox/templates/_validate.tpl).
+    kubeApiAccess: false
+    # Empty = no auto-expiry CronJob; the pod runs until disabled by hand.
+    ttlSeconds: ""
+
 # Key names mirror the ScaledObject spec fields the library helper writes; the
 # earlier minReplicas/maxReplicas spelling matched nothing and never applied.
 # Profiles override these per tier. pressure.targetValue is on the 0-100

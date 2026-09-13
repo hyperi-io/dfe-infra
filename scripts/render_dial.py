@@ -84,6 +84,17 @@ _ENV_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     # Which store body bootstrap renders, and which variables it then demands:
     # openbao takes an address and an AppRole, aws-sm takes neither.
     (("secrets", "backend"), "DFE_SECRETS_BACKEND"),
+    # The in-cluster toolbox pod's own dial facts (helm/charts/dfe-toolbox),
+    # carried through unchanged: they ARE the chart's own toolbox.pod.* values
+    # (real YAML booleans, an empty-or-numeric string), not a render_dial.py
+    # translation, the same way ui.* is left for a real YAML/Helm parse to
+    # type-check. bootstrap.sh carries these onto the cluster-secret
+    # annotations the same way it already does for the karpenter-pools
+    # facts, and argocd/appsets/layer2-platform.yaml reads them back for
+    # this chart alone.
+    (("toolbox", "pod", "enabled"), "DFE_TOOLBOX_POD_ENABLED"),
+    (("toolbox", "pod", "kubeApiAccess"), "DFE_TOOLBOX_POD_KUBE_API_ACCESS"),
+    (("toolbox", "pod", "ttlSeconds"), "DFE_TOOLBOX_POD_TTL_SECONDS"),
 )
 
 # An env assignment, live (`KEY=`) or hash-commented (`# KEY=`). The env file's
@@ -401,6 +412,97 @@ def _msk_autoscaling(dial: dict[str, object]) -> dict[str, object]:
     return out
 
 
+def _optional_number(dial: dict[str, object], path: tuple[str, ...], default: int) -> int:
+    """Read a whole-number dial field, or `default` when absent or blank."""
+    raw = _scalar(dial, path)
+    if raw is None:
+        return default
+    if not raw.isdigit():
+        raise DialError(f"{'.'.join(path)} must be a whole number, got {raw!r}")
+    return int(raw)
+
+
+# Tool names toolbox/aws's user-data installs at a versions.yaml-pinned
+# version, read from the `toolbox:` stage docker/dfe-toolbox's own
+# Dockerfiles pin from too (see _toolbox_tool_versions). jq, kcat and openssl
+# are deliberately absent from this stage (versions.yaml's own comment: no
+# upstream release cadence worth tracking), and clickhouse-client/psql are
+# NOT here either -- they come from the existing services.clickhouse-version
+# / services.postgresql pins instead, so the debugging client always matches
+# the server it debugs.
+_TOOLBOX_TOOLS = (
+    "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
+    "aws-session-manager-plugin",
+)
+
+
+def _toolbox_tool_versions() -> dict[str, str]:
+    """The pinned tool versions terraform/modules/toolbox/aws's user-data
+    installs, read from versions.yaml -- never a literal in this file or the
+    module. Returns whatever is present, possibly empty: an environment whose
+    versions.yaml carries no `toolbox:` stage at all degrades gracefully the
+    same way _platform_version() does for a stage that has not landed -- the
+    module's OWN variable validation is what refuses an enabled toolbox until
+    every key is present, not this function.
+    """
+    if not VERSIONS_FILE.is_file():
+        return {}
+    try:
+        tree = _parse_yaml_subset(
+            VERSIONS_FILE.read_text(encoding="utf-8", errors="replace"),
+            source=str(VERSIONS_FILE),
+        )
+    except YamlSubsetError:
+        return {}
+    current = _scalar(tree, ("current",))
+    if current is None:
+        return {}
+
+    versions: dict[str, str] = {}
+    for tool in _TOOLBOX_TOOLS:
+        value = _scalar(tree, ("stacks", current, "toolbox", tool))
+        if value is not None:
+            versions[tool] = value
+
+    clickhouse = _scalar(tree, ("stacks", current, "services", "clickhouse-version"))
+    if clickhouse is not None:
+        versions["clickhouse-client"] = clickhouse
+    postgres = _scalar(tree, ("stacks", current, "services", "postgresql"))
+    if postgres is not None:
+        versions["psql"] = postgres
+    return versions
+
+
+def _toolbox(dial: dict[str, object]) -> dict[str, object]:
+    """toolbox.* -- the on-demand SSM-managed troubleshooting instance
+    (terraform/modules/toolbox/aws/CONTRACT.md). `enabled` is the
+    `dfe-ops bastion up`/`down` toggle. `tool_versions` is NEVER read from
+    the dial -- it is assembled from versions.yaml here, so a deployer
+    cannot pin a stale tool by hand independent of the SSoT everything else
+    in this repo pins through.
+    """
+    return {
+        "enabled": _flag(dial, ("toolbox", "enabled")),
+        "aws": {
+            "instance_type": _text(dial, ("toolbox", "aws", "instance_type"), "t4g.small"),
+            "operator_role_arn": _text(dial, ("toolbox", "aws", "operator_role_arn")),
+        },
+        "ttl_minutes": _optional_number(dial, ("toolbox", "ttl_minutes"), 60),
+        "session": {
+            "idle_timeout_minutes": _optional_number(
+                dial, ("toolbox", "session", "idle_timeout_minutes"), 15
+            ),
+            "max_duration_minutes": _optional_number(
+                dial, ("toolbox", "session", "max_duration_minutes"), 240
+            ),
+        },
+        "session_log_retention_days": _optional_number(
+            dial, ("toolbox", "session_log_retention_days"), 90
+        ),
+        "tool_versions": _toolbox_tool_versions(),
+    }
+
+
 def _kafka(dial: dict[str, object]) -> dict[str, object]:
     """Who runs the brokers, and what tofu creates when the root builds the body.
 
@@ -588,6 +690,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
             "region": _required(dial, ("state", "region")),
         },
         "tags": _tags(dial, cloud),
+        "toolbox": _toolbox(dial),
     }
 
 

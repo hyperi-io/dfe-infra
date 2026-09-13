@@ -160,6 +160,7 @@ versionCheck:
 ## Related
 
 - [architecture.md](../architecture.md) - where this repo sits in the suite
+- [wizard.md](wizard.md) - `dfe-ops init`, the prompt-driven wizard that writes a deployment.yaml dial
 - [composition.md](composition.md) - which apps a profile deploys by default,
   how apps.yaml's `default_in` reaches Argo and Compose, and what an app with
   nothing to do does instead of crash-looping
@@ -169,6 +170,9 @@ versionCheck:
   the private-CA IdP shape, and what Envoy Gateway cannot do with a groups claim
 - [edge-vpn.md](edge-vpn.md) - the opt-in tunnel a field appliance dials in on:
   the two ports, the reserved client range, and how it reaches receivers only
+- [toolbox.md](toolbox.md) - the troubleshooting image, the opt-in in-cluster
+  pod, and the on-demand AWS bastion: off by default, read-only Kubernetes API
+  access, and what each surface records
 - [rke2.md](rke2.md) - the default distribution
 - [aws.md](aws.md) - deploying on AWS: EKS, Karpenter, sizing, and the
   MSK/Confluent/Redpanda Kafka and ClickHouse choices

@@ -77,6 +77,20 @@ Subcommands:
                pins fresh" gate. Kills the hand look-up-a-sha-and-paste loop. The
                tag->digest core (scripts/registry_pins.py) is what dfe-deploy
                reuses to resolve an overlay's image.tag.
+  bastion      up/shell/forward/down/status for the on-demand SSM-managed
+               toolbox instance on a cloud-provisioned deployment
+               (terraform/modules/toolbox/aws). up flips toolbox.enabled in
+               the dial and applies just that target; forward is NOT recorded
+               by Session Manager (toolbox/aws/CONTRACT.md); down proves
+               nothing remains rather than trusting the apply alone.
+  init         Prompt-driven wizard over deployment.example.yaml's own fields:
+               target, tier/ingest/focus, Kafka provider, the derived
+               ClickHouse storage model, public UIs + OIDC, telemetry,
+               lifecycle + AZ count, toolbox, sizing overrides -- writes a
+               deployment.yaml render_dial.py accepts. Every answer is
+               validated by CALLING render_dial.py's/resolve_sizing.py's own
+               validators, never a second copy of their rules. --answers
+               drives it non-interactively for CI; --dry-run writes nothing.
 
 Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
 this file is committed publicly, so substitute your own node):
@@ -121,6 +135,10 @@ this file is committed publicly, so substitute your own node):
     # Trust this deployment's edge certificate on a developer box:
     python3 scripts/dfe-ops ca --kubeconfig .tmp/dfe.kubeconfig
     python3 scripts/dfe-ops ca --install --kubeconfig .tmp/dfe.kubeconfig
+
+    # Walk the wizard to write a deployment.yaml dial, then size it:
+    python3 scripts/dfe-ops init --out deployment.yaml
+    python3 scripts/dfe-ops init --answers wizard-answers.env --fixtures shapes/fixtures/aws
 
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
@@ -185,6 +203,8 @@ import capacity  # noqa: E402
 import composition  # noqa: E402
 import envfile  # noqa: E402
 import profiles  # noqa: E402
+from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
+from dfe_ops_init import add_init_subparser  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
@@ -3354,6 +3374,15 @@ def build_parser() -> argparse.ArgumentParser:
     # idp -- a throwaway Dex + glauth IdP on the deployment's own gateway, so an
     # external-OIDC login can be proven without borrowing a shared provider.
     add_idp_subparser(sub)
+
+    # bastion -- up/shell/forward/down/status for the on-demand SSM-managed
+    # toolbox instance (terraform/modules/toolbox/aws). Registered from
+    # dfe_ops_bastion.
+    add_bastion_subparser(sub)
+
+    # init -- the prompt-driven deployment-dial wizard. Registered from
+    # dfe_ops_init.
+    add_init_subparser(sub)
 
     return ap
 

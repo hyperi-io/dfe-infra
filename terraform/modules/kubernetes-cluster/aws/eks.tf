@@ -249,6 +249,16 @@ resource "aws_eks_addon" "this" {
   addon_name    = each.key
   addon_version = data.aws_eks_addon_version.this[each.key].version
 
+  // vpc-cni's own configuration schema (aws eks describe-addon-configuration)
+  // takes enableNetworkPolicy as a top-level STRING "true"/"false", not a JSON
+  // boolean -- confirmed against AWS's own worked example
+  // (https://aws.amazon.com/blogs/containers/amazon-vpc-cni-now-supports-kubernetes-network-policies/).
+  // With no config, network-policies' whole chart is decorative on this
+  // cluster: the add-on is created with no configuration_values at all
+  // otherwise, so nothing enforces a NetworkPolicy object. See
+  // helm/charts/network-policies and the toolbox pod's own fence.
+  configuration_values = each.key == "vpc-cni" ? jsonencode({ enableNetworkPolicy = "true" }) : null
+
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
 
@@ -292,4 +302,40 @@ resource "aws_eks_pod_identity_association" "ebs_csi" {
   service_account = "ebs-csi-controller-sa"
 
   role_arn = aws_iam_role.ebs_csi.arn
+}
+
+// ---------------------------------------------------------------------------
+// Toolbox operator -- read-only EKS access for whoever is behind the
+// on-demand bastion's tunnel. Empty var.toolbox_operator_role_arn means no
+// entry at all: the caller (the aws root) passes it only when the toolbox is
+// enabled. This is deliberately a SECOND access entry, never a wider scope on
+// aws_eks_access_entry.creator above -- a troubleshooting session should not
+// default to the identity that can rewrite the cluster. The toolbox EC2
+// instance/pod themselves get no access entry anywhere in this module or the
+// toolbox module -- the tunnel terminates TLS at the operator's laptop, so
+// the kubectl identity is the operator's own role, never the instance's
+// (terraform/modules/toolbox/aws/CONTRACT.md, "EKS access").
+// ---------------------------------------------------------------------------
+
+resource "aws_eks_access_entry" "toolbox_operator" {
+  count = var.toolbox_operator_role_arn != "" ? 1 : 0
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = var.toolbox_operator_role_arn
+
+  type = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "toolbox_operator_view" {
+  count = var.toolbox_operator_role_arn != "" ? 1 : 0
+
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = var.toolbox_operator_role_arn
+  policy_arn    = "arn:${data.aws_partition.current.partition}:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.toolbox_operator]
 }

@@ -1,0 +1,28 @@
+{{- if .Values.toolbox.pod.enabled }}
+The in-cluster toolbox pod is enabled. Reach it with:
+
+  kubectl exec -it -n {{ .Release.Namespace }} deploy/{{ include "dfe-common.fullname" . }} -- /bin/sh
+{{- if .Values.toolbox.pod.kubeApiAccess }}
+
+toolbox.pod.kubeApiAccess is true: this pod carries a read-only Kubernetes
+credential -- get/list/watch on pods, services, endpoints and configmaps in
+{{ .Values.appNamespace }}, {{ range $i, $ns := .Values.dataNamespaces }}{{ if $i }}, {{ end }}{{ $ns }}{{ end }} and {{ .Values.otelNamespace }}, plus pods/log and pods/portforward.
+It never carries a Secret and cannot exec into another pod.
+
+Its NetworkPolicy fences egress to those namespaces plus cluster DNS, but
+that fence only holds where the CNI enforces NetworkPolicy: on EKS this needs
+the vpc-cni add-on's enableNetworkPolicy set true, and on-prem it needs a CNI
+that implements NetworkPolicy at all. Confirm that before treating the fence
+as a control, not just a config declaration.
+{{- end }}
+{{- if .Values.toolbox.pod.ttlSeconds }}
+
+It auto-scales to zero {{ .Values.toolbox.pod.ttlSeconds }}s after the pod
+starts (the {{ include "dfe-common.fullname" . }}-ttl CronJob) -- flip
+toolbox.pod.enabled back to true to run it again.
+{{- end }}
+{{- else }}
+The in-cluster toolbox pod is disabled (toolbox.pod.enabled: false, the
+default). Set toolbox.pod.enabled: true in your deploy repo's infra overlay
+to start it -- see docs/deployment/toolbox.md.
+{{- end }}

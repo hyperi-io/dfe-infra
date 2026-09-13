@@ -39,6 +39,16 @@ spec:
                   namespace: default
                   wave: "2"
                   appProject: infra
+                # Opt-in in-cluster troubleshooting pod. Always deployed here
+                # (not cloud-gated, unlike karpenter-pools below) -- the chart
+                # itself renders replicas: 0 and no RBAC until a deployment's
+                # own toolbox.pod.enabled says otherwise (argocd/values/common.yaml).
+                # Same namespace as network-policies for the same reason: a
+                # generic platform namespace, not a DFE app or data one.
+                - app: dfe-toolbox
+                  namespace: default
+                  wave: "2"
+                  appProject: infra
     # karpenter-pools: the NodePools and EC2NodeClasses a workload actually
     # schedules onto. AWS-only, the same shape layer1-addons gates its two
     # AWS-only controllers on -- Exists AND In, because NotIn/In alone matches
@@ -105,6 +115,23 @@ spec:
               # namespace the apps are actually placed in.
               - name: appNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # The toolbox pod's own dial facts (deployment.yaml's
+              # toolbox.pod.*, carried onto the cluster secret by bootstrap.sh
+              # the same way retention.defaultTtlDays is in layer2-apps.yaml).
+              # Applied to every app this generator deploys, same as domain/
+              # appNamespace above -- harmless on envoy-gateway-config and
+              # network-policies, which read neither. enabled/kubeApiAccess
+              # are left to Helm's own --set type inference (bare true/false
+              # becomes a real YAML boolean, which the chart's own
+              # validate.yaml requires); ttlSeconds forces a string so a
+              # numeric TTL is never silently coerced to an int.
+              - name: toolbox.pod.enabled
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_enabled" | default "false" }}'
+              - name: toolbox.pod.kubeApiAccess
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_kube_api_access" | default "false" }}'
+              - name: toolbox.pod.ttlSeconds
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_ttl_seconds" | default "" }}'
+                forceString: true
             # `values` (a YAML string) rather than a structured block, same
             # reason the karpenter addon in layer1-addons.yaml gives: a
             # per-element conditional cannot live in a field this file's own

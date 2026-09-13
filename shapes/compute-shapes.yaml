@@ -341,7 +341,7 @@ clouds:
           data:
             type: gp3
             size_gib: ""
-            size_formula: max(20, sizing.keeper.iops_target / 500)
+            size_formula: max(20, max(sizing.floors.keeper_idle_iops, parts_created_per_second * sizing.keeper.raft_appends_per_part) / 500)
             iops: 6000
             throughput_mib_s: 125
             instance_store: none
@@ -581,7 +581,7 @@ clouds:
           data:
             type: hyperdisk-balanced
             size_gib: ""
-            size_formula: max(20, sizing.keeper.iops_target / 500)
+            size_formula: max(20, max(sizing.floors.keeper_idle_iops, parts_created_per_second * sizing.keeper.raft_appends_per_part) / 500)
             iops: ""
             throughput_mib_s: ""
             instance_store: none
@@ -806,7 +806,7 @@ clouds:
           data:
             type: premium-ssd-v2
             size_gib: ""
-            size_formula: max(20, sizing.keeper.iops_target / 500)
+            size_formula: max(20, max(sizing.floors.keeper_idle_iops, parts_created_per_second * sizing.keeper.raft_appends_per_part) / 500)
             iops: ""
             throughput_mib_s: ""
             instance_store: none
@@ -1029,7 +1029,7 @@ clouds:
           data:
             type: local-nvme
             size_gib: ""
-            size_formula: max(20, sizing.keeper.iops_target / 500)
+            size_formula: max(20, max(sizing.floors.keeper_idle_iops, parts_created_per_second * sizing.keeper.raft_appends_per_part) / 500)
             iops: ""
             throughput_mib_s: ""
             instance_store: none
