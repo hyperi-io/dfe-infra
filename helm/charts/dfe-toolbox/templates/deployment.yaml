@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  # The whole toggle: 0 when toolbox.pod.enabled is false, so this Deployment
+  # is always present (the appset deploys the chart unconditionally) but does
+  # nothing until an operator opts in.
+  replicas: {{ if .Values.toolbox.pod.enabled }}1{{ else }}0{{ end }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+    spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- if .Values.toolbox.pod.kubeApiAccess }}
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- else }}
+      # No dedicated ServiceAccount is rendered at all when kubeApiAccess is
+      # false (serviceaccount.yaml), so this pod runs as the namespace's
+      # default SA -- and this line stops even that default token mounting.
+      automountServiceAccountToken: false
+      {{- end }}
+      {{- include "dfe-common.imagePullSecrets" . | nindent 6 }}
+      {{- include "dfe-common.nodeSelector" . | nindent 6 }}
+      {{- include "dfe-common.tolerations" . | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.toolbox.pod.terminationGracePeriodSeconds }}
+      containers:
+        - name: toolbox
+          image: {{ include "dfe-common.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # A troubleshooting shell, not a service -- there is nothing else
+          # for the container to run. An operator reaches it with `kubectl
+          # exec` (see NOTES.txt / docs/deployment/toolbox.md).
+          command: ["sleep", "infinity"]
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          resources:
+            {{- toYaml .Values.toolbox.pod.resources | nindent 12 }}
+          volumeMounts:
+            # readOnlyRootFilesystem (dfe-common.containerSecurityContext)
+            # leaves nowhere to write; /work is the one place an operator can
+            # download or generate scratch files.
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}

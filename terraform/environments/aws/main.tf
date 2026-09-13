@@ -5,6 +5,11 @@
 
 data "aws_caller_identity" "current" {}
 
+// data.aws_partition.current is declared in cloudtrail.tf and reused below in
+// the KMS key policy grants' condition ARNs -- a CloudTrail ARN's partition
+// varies the same way any other ARN's does. (The toolbox operator's EKS
+// access-entry policy ARN uses its own copy, kubernetes-cluster/aws/eks.tf.)
+
 locals {
   project = "dfe"
   cloud   = "aws"
@@ -112,6 +117,11 @@ module "cluster" {
   tags               = var.tags
 
   key_policy_grants = local.key_policy_grants
+
+  // Empty unless the toolbox is enabled -- var.toolbox.aws.operator_role_arn
+  // is required-when-enabled (deployment.example.yaml), and the module
+  // itself treats an empty string as "create no access entry".
+  toolbox_operator_role_arn = var.toolbox.enabled ? var.toolbox.aws.operator_role_arn : ""
 }
 
 // The one Kafka password of the deployment, generated HERE rather than in the
@@ -285,3 +295,113 @@ module "secrets" {
 
   recovery_window_days = local.secret_recovery_window_days
 }
+
+// ---------------------------------------------------------------------------
+// Toolbox -- the on-demand SSM-managed troubleshooting instance. This module
+// is ALWAYS instantiated (no `count` on the block): `var.toolbox.enabled` is
+// threaded through as a plain input, because toolbox/aws's own session-log
+// bucket must survive an up/down cycle rather than being destroyed and
+// recreated with everything else -- see that module's CONTRACT.md.
+// ---------------------------------------------------------------------------
+
+module "toolbox_naming" {
+  source = "../../modules/tf-naming"
+
+  project   = local.project
+  component = "toolbox"
+  env       = var.env
+  cloud     = local.cloud
+  region    = var.provision.region
+}
+
+locals {
+  // The named forward targets `dfe-ops bastion forward` picks a Session
+  // document by -- computed here from the OTHER modules' own outputs, never
+  // invented in the toolbox module itself (toolbox/aws/CONTRACT.md).
+  toolbox_eks_api_target = {
+    eks-api = {
+      // module.cluster.cluster_endpoint is a full URL (https://<host>); the
+      // Port session document's `host` property takes a bare hostname.
+      host = trimsuffix(replace(module.cluster.cluster_endpoint, "https://", ""), "/")
+      port = 443
+    }
+  }
+
+  // local.managed_kafka.bootstrap is normalised to comma-separated bare
+  // host:port pairs (managed-kafka/CONTRACT.md) -- empty on a brokerless
+  // profile or an in-cluster (strimzi/redpanda) deployment neither of which
+  // this root builds a network path to from outside the cluster. One target
+  // PER broker, because a single fixed-host forward only ever reaches one
+  // broker and a Kafka client's metadata response names the others by their
+  // real (unreachable from outside) hostnames -- see docs/deployment/toolbox.md.
+  toolbox_kafka_brokers = local.managed_kafka.bootstrap != "" ? split(",", local.managed_kafka.bootstrap) : []
+  toolbox_kafka_targets = {
+    for idx, broker in local.toolbox_kafka_brokers :
+    "kafka-${idx}" => {
+      host = split(":", broker)[0]
+      port = tonumber(split(":", broker)[1])
+    }
+  }
+
+  // endpoints.clickhouse_host is estate-specific and blank in the committed
+  // dial template (deployment.example.yaml) -- when the deployer has not
+  // filled it in there is no address to forward to, so no target is added
+  // rather than guessing at the in-cluster Service DNS name. 9440 is
+  // ClickHouse's native protocol over TLS (helm/charts/network-policies'
+  // own values.yaml documents this port for the same reason).
+  toolbox_clickhouse_target = var.endpoints.clickhouse_host != "" ? {
+    clickhouse = {
+      host = var.endpoints.clickhouse_host
+      port = 9440
+    }
+  } : {}
+
+  // No Keeper target: no root output or dial field names a Keeper address
+  // today, and inventing a Service DNS name that might not match the actual
+  // chart's naming is worse than omitting it -- see docs/deployment/toolbox.md.
+  toolbox_targets = merge(
+    local.toolbox_eks_api_target,
+    local.toolbox_kafka_targets,
+    local.toolbox_clickhouse_target,
+  )
+}
+
+module "toolbox" {
+  source = "../../modules/toolbox/aws"
+
+  name = module.toolbox_naming.canonical_name
+  env  = var.env
+
+  enabled = var.toolbox.enabled
+
+  network = {
+    vpc_id             = module.cluster.network.vpc_id
+    cidr               = module.cluster.network.cidr
+    private_subnet_ids = module.cluster.network.private_subnet_ids
+  }
+
+  instance_type = var.toolbox.aws.instance_type
+  ttl_minutes   = var.toolbox.ttl_minutes
+  tool_versions = var.toolbox.tool_versions
+
+  session                    = var.toolbox.session
+  session_log_retention_days = var.toolbox.session_log_retention_days
+
+  kms_key_arn = module.cluster.kms_key_arn
+  targets     = local.toolbox_targets
+
+  // Follows tags.lifecycle the same way cloudtrail.tf's bucket does: an
+  // ephemeral tyre-kick deployment is rebuilt under the same name and needs
+  // the fast teardown; a persistent one keeps the safer default.
+  force_destroy_session_logs = local.ephemeral
+
+  tags = var.tags
+}
+
+// The toolbox operator's read-only EKS access entry (AmazonEKSViewPolicy)
+// lives INSIDE the cluster module now (kubernetes-cluster/aws/eks.tf,
+// "Toolbox operator"), fed by toolbox_operator_role_arn above -- not as a
+// standalone resource here. The cluster module already owns the creator's
+// cluster-admin entry and the Karpenter node entry; a third EKS access entry
+// belongs beside them rather than duplicated against the same cluster from a
+// second resource address, which is what this used to be.

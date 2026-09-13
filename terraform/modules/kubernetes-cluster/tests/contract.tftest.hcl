@@ -685,3 +685,86 @@ run "aws_audit_log_follows_cloudwatch_retention" {
     error_message = "the cloudwatch sink must carry telemetry.retention_days, not the otel floor"
   }
 }
+
+// With no configuration_values at all, network-policies' whole chart is
+// decorative on this cluster -- nothing enforces a NetworkPolicy object.
+run "aws_vpc_cni_enables_network_policy" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.this["vpc-cni"].configuration_values).enableNetworkPolicy == "true"
+    error_message = "the vpc-cni add-on must set enableNetworkPolicy: \"true\" in its configuration_values, or every NetworkPolicy in the cluster is unenforced"
+  }
+
+  // Not asserted here: that the other add-ons' configuration_values stays
+  // null. A mocked plan synthesises a placeholder for any optional attribute
+  // the config sets to null, so a null-equality check on a mocked resource
+  // proves nothing either way -- only a real plan/apply shows the true value.
+}
+
+// No operator_role_arn means no toolbox access entry -- the default for every
+// caller that has never heard of the toolbox.
+run "aws_toolbox_operator_defaults_to_no_access_entry" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = length(aws_eks_access_entry.toolbox_operator) == 0
+    error_message = "an empty toolbox_operator_role_arn must create no access entry at all"
+  }
+
+  assert {
+    condition     = length(aws_eks_access_policy_association.toolbox_operator_view) == 0
+    error_message = "an empty toolbox_operator_role_arn must create no access policy association either"
+  }
+}
+
+// A named operator role gets a SECOND, read-only access entry -- never the
+// cluster-admin scope the creator's own entry carries, and never one for the
+// toolbox instance itself (which is a different module and creates none).
+run "aws_toolbox_operator_gets_read_only_access_entry" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    toolbox_operator_role_arn = "arn:aws:iam::000000000000:role/dfe-toolbox-operator"
+  }
+
+  assert {
+    condition     = aws_eks_access_entry.toolbox_operator[0].principal_arn == "arn:aws:iam::000000000000:role/dfe-toolbox-operator"
+    error_message = "the access entry must name the operator role the caller passed in"
+  }
+
+  assert {
+    condition     = aws_eks_access_entry.toolbox_operator[0].type == "STANDARD"
+    error_message = "the operator's access entry must be STANDARD, matching the creator's"
+  }
+
+  assert {
+    condition     = aws_eks_access_policy_association.toolbox_operator_view[0].policy_arn == "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
+    error_message = "the toolbox operator must be read-only (AmazonEKSViewPolicy), never cluster-admin"
+  }
+
+  assert {
+    condition     = aws_eks_access_policy_association.toolbox_operator_view[0].access_scope[0].type == "cluster"
+    error_message = "the operator's view grant must be cluster-scoped, matching the creator's admin grant"
+  }
+
+  assert {
+    // The creator's entry is the only cluster-admin grant; the operator's is
+    // read-only. Two entries total, never a third for the toolbox instance,
+    // which this module has no input for at all.
+    condition     = aws_eks_access_policy_association.creator_admin.policy_arn != aws_eks_access_policy_association.toolbox_operator_view[0].policy_arn
+    error_message = "the toolbox operator must never share the creator's cluster-admin policy"
+  }
+}

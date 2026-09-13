@@ -1107,11 +1107,61 @@ def test_the_instance_steps_up_until_it_sustains_its_own_volumes(tmp_path: Path)
         assert resolve_sizing._volumes_fit(built, chosen), use_case
 
 
-def test_the_step_up_is_reported_with_its_price_delta(tmp_path: Path) -> None:
-    _run(_dial(tmp_path), tmp_path)
-    report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
-    assert "stepped up from" in report
-    assert "an hour a node" in report
+def test_the_step_up_is_reported_with_its_price_delta(catalogue) -> None:
+    """A demand no size in the family can carry at its own floor size steps up
+    within the family, and the note says by how much and at what price.
+
+    Built from a synthetic demand and a hand-shaped entry rather than a dial
+    band, so the step-up path stays covered whatever sizing.yaml's own ratios
+    resolve to -- Keeper's fixed 6,000-IOPS target used to be the one thing in
+    the whole golden matrix that forced this path, and scaling it to the
+    resolved ingest means nothing in that matrix triggers it any more.
+    """
+    entry = {
+        "family": "m",
+        "modifiers": "",
+        "generation_policy": "newest",
+        "generation_pin": "",
+        "price_policy": "newest",
+        "price_step_max_pct": "",
+        "price_generations": "",
+        "size": "large",
+        "volumes": {
+            "root": {
+                "type": "gp3",
+                "size_gib": "40",
+                "size_formula": "fixed",
+                "iops": "3000",
+                "throughput_mib_s": "125",
+                "throughput_policy": "instance-baseline",
+            },
+            "data": {
+                "type": "gp3",
+                "size_gib": "",
+                "size_formula": "iops-derived",
+                "iops": "6000",
+                "throughput_mib_s": "125",
+            },
+        },
+    }
+    # m9g.large's own baseline is 3,600 IOPS; m9g.xlarge's is 6,000. 5,000
+    # demanded plus root's 300 is 5,300 -- above large, comfortably under
+    # xlarge, so exactly one step.
+    demand = resolve_sizing.Node("keeper", 3, 1, 3, 20, 5000, 0, "test demand above the floor size's baseline")
+    notes: list[str] = []
+    choice = resolve_sizing.select_shape(
+        "keeper",
+        entry,
+        demand,
+        catalogue,
+        "newest",
+        notes,
+        ROOT_VOLUME_DEMAND_MIB_S,
+        ROOT_VOLUME_DEMAND_IOPS,
+    )
+    assert choice.instance_type == "m9g.xlarge", choice.instance_type
+    assert any("stepped up from" in note for note in notes), notes
+    assert any("an hour a node" in note for note in notes), notes
 
 
 def test_a_root_volume_takes_what_the_instance_has_left_to_give(tmp_path: Path) -> None:
@@ -1698,20 +1748,24 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
       demand it carries.
     - clickhouse lands on `r9gd.large` (2 vCPU / 16 GiB) for the same reason
       as kafka-broker.
-    - keeper is UNCHANGED at `m9g.2xlarge`: its own fsync-rate ratio (6,000
-      IOPS, independent of ingest) plus root's now-small 300 is a real 6,300
-      against xlarge's 6,000 baseline -- xlarge still cannot carry it, so
-      this is a genuine demand, not a counting bug, and 2xlarge (12,000)
-      still wins.
+    - keeper now lands on `m9g.large` too: its IOPS demand tracks the
+      resolved ingest instead of a flat target independent of it -- parts a
+      second (ingest over the loader's flush size) times the measured
+      appends a part (sizing.yaml's keeper.raft_appends_per_part), floored
+      at floors.keeper_idle_iops for what an idle quorum still asks for. At
+      no estimate that is 100 IOPS plus root's 300 -- 400 against large's
+      3,600 baseline, comfortably under, so the xlarge/2xlarge step-up the
+      old flat 6,000-IOPS target used to force here is gone.
     - general and ci-burst are unchanged: both declare a `size:` floor
       (`xlarge`, `4xlarge`) above what root's demand ever forced, so they
       were never inflated by this bug in the first place.
 
-    Verified against the fixture catalogue: total compute USD 2,316/month
-    (kafka-broker $214, kraft-controller $107, clickhouse $351, keeper $857
-    unchanged, eks-system $71, general $143 unchanged, ci-burst $572
-    unchanged) -- a 29% cut from remedy 2's 3,274, 52% off remedy 1's 4,832,
-    and 67% off the original 7,093.
+    Verified against the fixture catalogue: total compute USD 1,673/month
+    (kafka-broker $214, kraft-controller $107, clickhouse $351, keeper $214,
+    eks-system $71, general $143 unchanged, ci-burst $572 unchanged) -- a
+    further 28% cut on top of the prior fix's 2,316, from the same counting
+    error one level up: a figure standing in for a demand that was never
+    actually tied to what the deployment carries.
     """
     _run(_dial(tmp_path, estimate=None), tmp_path, cloud="aws")
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
@@ -1721,16 +1775,19 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     # The verified honest floor, not a hint: state it exactly, not just
     # "under" some round number, so a future regression that moves it either
     # way shows up as a failing assertion rather than a silent pass.
-    assert total == 2316, f"the floor's total compute is ${total:,}/month, expected exactly $2,316"
+    assert total == 1673, f"the floor's total compute is ${total:,}/month, expected exactly $1,673"
 
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     shapes = {name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()}
     assert shapes["kafka-broker"] == "m9g.large", shapes
     assert shapes["kraft-controller"] == "m9g.medium", shapes
     assert shapes["clickhouse"] == "r9gd.large", shapes
-    # Unaffected: keeper's own 6,000 IOPS fsync target plus root's 300 is a
-    # real 6,300-IOPS demand, still above xlarge's 6,000 baseline.
-    assert shapes["keeper"] == "m9g.2xlarge", shapes
+    # Keeper's IOPS demand now scales with ingest: at the floor that is the
+    # idle floor (100) plus root's 300, comfortably under m9g.large's 3,600
+    # baseline, so nothing forces a step past compute-shapes.yaml's own
+    # keeper floor size (large -- 2 vCPU / 8 GiB, above the 1 vCPU / 3 GiB
+    # sizing.yaml itself would ask for).
+    assert shapes["keeper"] == "m9g.large", shapes
 
 
 # ---------------------------------------------------------------------------

@@ -80,6 +80,16 @@ metadata:
     dfe.hyperi.io/clickhouse_default_ttl_days: "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}"
     # Workload identity annotations JSON (from tf-iam output)
     dfe.hyperi.io/workload_identity_annotations: '${DFE_WORKLOAD_IDENTITY_ANNOTATIONS}'
+    # The in-cluster toolbox pod's dial facts (deployment.yaml's
+    # toolbox.pod.*), read back by layer2-platform.yaml for the dfe-toolbox
+    # app alone. Always present (unlike the karpenter facts above, this chart
+    # is not cloud-gated), quoted here because every annotation value is a
+    # string -- the appset re-emits enabled/kubeApiAccess unquoted so they
+    # reach the chart as real YAML booleans, which its own validate.yaml
+    # requires.
+    dfe.hyperi.io/toolbox_pod_enabled: "${DFE_TOOLBOX_POD_ENABLED}"
+    dfe.hyperi.io/toolbox_pod_kube_api_access: "${DFE_TOOLBOX_POD_KUBE_API_ACCESS}"
+    dfe.hyperi.io/toolbox_pod_ttl_seconds: "${DFE_TOOLBOX_POD_TTL_SECONDS}"
 type: Opaque
 stringData:
   name: "dfe-${DFE_CLOUD}-${DFE_ENV}"

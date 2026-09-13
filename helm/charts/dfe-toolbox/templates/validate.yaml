@@ -1,0 +1,2 @@
+{{/* Renders nothing; exists so the guards run on every render. */}}
+{{- include "dfe-toolbox.validate" . -}}

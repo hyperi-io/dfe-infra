@@ -911,8 +911,14 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
 
     # --- Keeper --------------------------------------------------------------
     flush_bytes = take("keeper", "loader_flush_bytes")
-    keeper_iops = int(take("keeper", "iops_target"))
+    raft_appends_per_part = take("keeper", "raft_appends_per_part")
+    keeper_idle_iops = int(take("floors", "keeper_idle_iops"))
     parts_per_s = (avg_mb_s * BYTES_PER_MB / flush_bytes) if flush_bytes else 0.0
+    # IOPS tracks the resolved ingest, not a flat target: parts a second times
+    # the measured appends a part, floored at what an idle Keeper still asks
+    # for (keeper_idle_iops) so a no-estimate deployment resolves to a real,
+    # small demand rather than a formula-derived zero.
+    keeper_iops = max(keeper_idle_iops, math.ceil(parts_per_s * raft_appends_per_part))
     nodes["keeper"] = Node(
         use_case="keeper",
         count=int(take("floors", "keeper_replicas")),
@@ -924,8 +930,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         # Keeper fsyncs every Raft append and appends track PARTS CREATED, so
         # the loader's flush size and Keeper's storage profile are one decision.
         why=(
-            f"{parts_per_s:,.1f} parts a second at a {flush_bytes / 1024 / 1024:g} MiB loader flush; "
-            f"capacity is irrelevant and IOPS is everything"
+            f"{parts_per_s:,.1f} parts a second at a {flush_bytes / 1024 / 1024:g} MiB loader flush, "
+            f"{raft_appends_per_part:g} force_sync appends a part -- {keeper_iops:,} IOPS, floored at "
+            f"{keeper_idle_iops:,} idle; capacity is irrelevant and IOPS is everything"
         ),
     )
 

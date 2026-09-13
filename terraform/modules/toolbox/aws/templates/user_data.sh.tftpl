@@ -1,0 +1,158 @@
+#!/bin/bash
+# Toolbox instance bootstrap -- installs the same tool list the dfe-toolbox-aws
+# container image carries, at the SAME versions.yaml pins (every substitution
+# below is a render_dial.py-supplied value; nothing here is a literal
+# version), then installs the idle auto-terminate timer. URL shapes below
+# mirror docker/dfe-toolbox/base/Dockerfile and docker/dfe-toolbox/aws/Dockerfile
+# line for line, adjusted for dnf/rpm in place of apt/deb -- the two toolboxes
+# read the SAME versions.yaml toolbox: stage, so they should install the same
+# way wherever the packaging format allows it.
+#
+# AL2023 ships the SSM Agent preinstalled (AWS's own agent-install-al2.html:
+# "AMIs for Amazon Linux 2 and Amazon Linux 2023 ... come with SSM Agent
+# preinstalled by default"), so nothing here installs or starts it.
+set -euo pipefail
+
+ARCH=arm64
+BIN=/usr/local/bin
+mkdir -p "$BIN"
+
+# --- kubectl -- versions.yaml's value already carries its own "v" prefix ----
+curl -fsSL -o "$BIN/kubectl" \
+  "https://dl.k8s.io/release/${kubectl_version}/bin/linux/$ARCH/kubectl"
+chmod +x "$BIN/kubectl"
+
+# --- helm --------------------------------------------------------------------
+curl -fsSL -o /tmp/helm.tar.gz \
+  "https://get.helm.sh/helm-${helm_version}-linux-$ARCH.tar.gz"
+tar -xzf /tmp/helm.tar.gz -C /tmp
+install -m 0755 "/tmp/linux-$ARCH/helm" "$BIN/helm"
+rm -rf /tmp/helm.tar.gz "/tmp/linux-$ARCH"
+
+# --- argocd CLI ----------------------------------------------------------
+curl -fsSL -o "$BIN/argocd" \
+  "https://github.com/argoproj/argo-cd/releases/download/${argocd_version}/argocd-linux-$ARCH"
+chmod +x "$BIN/argocd"
+
+# --- OpenTofu -- the release TAG takes a "v" prefix the tarball's own
+# filename does not; tofu_version itself carries neither.
+curl -fsSL -o /tmp/tofu.zip \
+  "https://github.com/opentofu/opentofu/releases/download/v${tofu_version}/tofu_${tofu_version}_linux_$ARCH.zip"
+unzip -q /tmp/tofu.zip -d /tmp/tofu
+install -m 0755 /tmp/tofu/tofu "$BIN/tofu"
+rm -rf /tmp/tofu.zip /tmp/tofu
+
+# --- yq -- no AL2023 package; mikefarah/yq ships an arm64 static binary ----
+curl -fsSL -o "$BIN/yq" \
+  "https://github.com/mikefarah/yq/releases/download/${yq_version}/yq_linux_$ARCH"
+chmod +x "$BIN/yq"
+
+# --- aws CLI v2 -- AWS's own versioned bundled-installer URL, aarch64 naming
+curl -fsSL -o /tmp/awscliv2.zip \
+  "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-${awscli_version}.zip"
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install --update
+rm -rf /tmp/awscliv2.zip /tmp/aws
+
+# --- session-manager-plugin -- AWS publishes no versioned URL for this one,
+# only a floating "latest" per OS/arch, so ssm_plugin_version is informational
+# (versions.yaml's own comment on toolbox.aws-session-manager-plugin): it
+# records what "latest" resolved to when the pin was last verified.
+# docker/dfe-toolbox/aws/Dockerfile FAILS its build on a mismatch, because a
+# stale image is easy to rebuild; this instance instead only LOGS one,
+# because failing the boot would make the one debugging tool unusable at
+# exactly the moment AWS moved "latest" -- the worse failure of the two.
+curl -fsSL -o /tmp/session-manager-plugin.rpm \
+  "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_arm64/session-manager-plugin.rpm"
+dnf install -y /tmp/session-manager-plugin.rpm
+rm -f /tmp/session-manager-plugin.rpm
+installed_ssm_plugin="$(session-manager-plugin --version)"
+if [ "$installed_ssm_plugin" != "${ssm_plugin_version}" ]; then
+  logger -t toolbox-bootstrap "session-manager-plugin: latest is now $installed_ssm_plugin, versions.yaml toolbox.aws-session-manager-plugin says ${ssm_plugin_version} -- bump the pin"
+fi
+
+# --- jq, openssl -- AL2023 base repo packages. No upstream release cadence
+# worth tracking as a versions.yaml pin, matching
+# docker/dfe-toolbox/base/Dockerfile's identical (Debian apt) choice for the
+# same two tools.
+dnf install -y jq openssl
+
+# --- ClickHouse client, pinned to the SAME version this deployment's server
+# runs (versions.yaml services.clickhouse-version), never a version of its own
+dnf install -y "https://packages.clickhouse.com/rpm/clickhouse-client-${clickhouse_client_version}.$ARCH.rpm" || \
+  dnf install -y "clickhouse-client-${clickhouse_client_version}"
+
+# --- psql, pinned to the deployment's PostgreSQL MAJOR (services.postgresql)
+dnf install -y "postgresql${postgresql_major_version}"
+
+# --- kcat -- no upstream release cadence worth tracking either (the project
+# has shipped no release since 1.7.1 in 2021, per versions.yaml's own
+# toolbox: stage comment), so it is unpinned here too, matching
+# docker/dfe-toolbox/base/Dockerfile's Debian `kcat` package. UNVERIFIED on
+# AL2023 specifically: AWS publishes no `kcat` package in the base repos at
+# the time this module was written, unlike Debian, which does -- this line
+# needs proving against a real instance before it is relied on (CONTRACT.md,
+# "Known gap").
+dnf install -y kcat || true
+
+# ---------------------------------------------------------------------------
+# Idle auto-terminate -- see CONTRACT.md #9. No IAM grant of any kind: the
+# instance was launched with instance_initiated_shutdown_behavior = terminate,
+# so `shutdown -h now` on THIS instance IS the teardown, and detecting "idle"
+# by counting local ssm-session-worker processes needs no API call either
+# (ssm:DescribeSessions is unscoped -- Resource: "*" -- and this avoids
+# granting it at all, per CONTRACT.md #9).
+# ---------------------------------------------------------------------------
+cat > /usr/local/sbin/toolbox-idle-check.sh <<'SCRIPT'
+#!/bin/bash
+# Exit 0 (idle) when no ssm-session-worker process has run for TTL_MINUTES.
+# The SSM Agent forks one such process per active session -- shell AND
+# port-forward alike -- so this sees the session type nothing else in this
+# module observes (a forward carries no transcript to check instead).
+set -euo pipefail
+STATE=/var/run/toolbox-idle-since
+TTL_SECONDS=$(( ${ttl_minutes} * 60 ))
+
+if pgrep -f ssm-session-worker >/dev/null 2>&1; then
+  rm -f "$STATE"
+  exit 0
+fi
+
+NOW=$(date +%s)
+if [ ! -f "$STATE" ]; then
+  echo "$NOW" > "$STATE"
+  exit 0
+fi
+
+IDLE_SINCE=$(cat "$STATE")
+if (( NOW - IDLE_SINCE >= TTL_SECONDS )); then
+  logger -t toolbox-idle-check "no active SSM session for $TTL_SECONDS seconds -- shutting down"
+  shutdown -h now
+fi
+SCRIPT
+chmod +x /usr/local/sbin/toolbox-idle-check.sh
+
+cat > /etc/systemd/system/toolbox-idle-check.service <<'UNIT'
+[Unit]
+Description=Terminate this toolbox instance once no SSM session has been active for ttl_minutes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/toolbox-idle-check.sh
+UNIT
+
+cat > /etc/systemd/system/toolbox-idle-check.timer <<'UNIT'
+[Unit]
+Description=Run toolbox-idle-check every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now toolbox-idle-check.timer

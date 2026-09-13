@@ -544,19 +544,23 @@ keeper:
     read: 2026-09-13
     confidence: rule-of-thumb
     spot_test: Read Keeper RSS at 96 partitions with the default log caches in place.
-  iops_target:
-    value: 6000
-    unit: iops
-    applies_to: keeper
-    source: https://clickhouse.com/docs/guides/oss/deployment-and-scaling/keeper
-    read: 2026-09-13
-    confidence: rule-of-thumb
-    spot_test: Count fsyncs a second on the Keeper volume through a replay at the target part rate.
   ## SPOT-TEST CONFIRMED (2026-09-13): per-part Keeper cost is roughly constant
   ## at ~14.8 packets received regardless of flush size (14.76 at 1 MiB, 14.83
   ## at 16 MiB). The per-GB win comes entirely from fewer, larger parts: 14,782
   ## packets received per GB at 1 MiB flushes against 1,061 at 16 MiB, a 13.9x
-  ## reduction -- close to the 16x this section assumed.
+  ## reduction -- close to the 16x this section assumed. This is the number
+  ## that drives resolve_sizing.py's keeper IOPS demand: parts a second (from
+  ## the resolved ingest and loader_flush_bytes below) times this constant,
+  ## not a flat target -- a fixed IOPS figure regardless of ingest is what put
+  ## a tyre-kick deployment's Keeper on the same shape as a 100,000 GB/day one.
+  raft_appends_per_part:
+    value: 14.8
+    unit: appends-per-part
+    applies_to: keeper
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Compare Keeper mntr packets-received deltas per part at 1 MiB and 16 MiB loader flushes; re-run against a production-scale corpus.
   iops_driver:
     value: parts_created_per_second * raft_appends_per_part
     unit: formula
@@ -966,6 +970,21 @@ floors:
     read: 2026-09-13
     confidence: rule-of-thumb
     spot_test: Read Keeper RSS on the floor deployment with the default log caches.
+  ## Keeper's own quorum housekeeping -- session heartbeats, watch dispatch,
+  ## periodic snapshot and log-compaction fsyncs -- keeps writing whether or
+  ## not the loader is creating parts, so a deployment with no ingest estimate
+  ## still needs a real Keeper volume, not the derived zero that formula gives
+  ## it. Same reasoning as the root_volume_demand floors below: a deliberately
+  ## small, honest guess at what an idle Keeper actually asks of the instance,
+  ## product decision rather than a measured number.
+  keeper_idle_iops:
+    value: 100
+    unit: iops
+    applies_to: keeper
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Read Keeper's own fsync rate on a floor deployment carrying no loader traffic.
   ## The mandatory root volume every use case carries is not sized from a
   ## workload -- it holds the OS, container images and logs, never data (that
   ## is the "data" volume's job). gp3's own free minimum (3,000 IOPS / 125

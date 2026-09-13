@@ -125,6 +125,11 @@ def appset_chart_pattern(chart: str) -> str:
     return r"chart:\s*" + re.escape(chart) + r"\b[\s\S]{0,300}?version:\s*\"([^\"]+)\""
 
 
+def docker_arg_pattern(arg: str) -> str:
+    """`ARG <name>="X"` in a Dockerfile -- capture group 1 is the pin."""
+    return r"ARG\s+" + re.escape(arg) + r'="([^"]+)"'
+
+
 def provider_pattern(provider: str) -> str:
     """`<name> = {` then the nearest following `version = "..."`.
 
@@ -487,6 +492,7 @@ _PROVIDER_MIRRORS = [
             "terraform/modules/managed-kafka/confluent-cloud/versions.tf",
             "terraform/modules/managed-kafka/redpanda-cloud/versions.tf",
             "terraform/modules/secrets/aws-sm/versions.tf",
+            "terraform/modules/toolbox/aws/versions.tf",
             "terraform/environments/aws/versions.tf",
             "terraform/environments/aws-state/versions.tf",
         ],
@@ -659,6 +665,59 @@ CHECKS += [
         "services-digests.git-sync",
         Path("helm/charts/dfe-engine/values.yaml"),
         r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+]
+
+# dfe-toolbox image family (docker/dfe-toolbox/): a standalone ops shell, not
+# a deployed stack component, but every ARG default in its Dockerfiles must
+# still equal the versions.yaml pin it starts from -- the workflow overrides
+# each one at build time from the SAME source, but the default is what a
+# plain `docker build` with no --build-arg gets, and it is what
+# `check_versions_drift.py --fix` keeps current. clickhouse-client pins
+# services.clickhouse-version directly rather than a toolbox.* key of its
+# own, so there is only ever one ClickHouse version to keep in step with.
+_TOOLBOX_ARGS = [
+    # (label, versions.yaml key, Dockerfile, ARG name)
+    ("toolbox base image kubectl", "toolbox.kubectl", "docker/dfe-toolbox/base/Dockerfile", "KUBECTL_VERSION"),
+    ("toolbox base image helm", "toolbox.helm", "docker/dfe-toolbox/base/Dockerfile", "HELM_VERSION"),
+    ("toolbox base image argocd CLI", "toolbox.argocd-cli", "docker/dfe-toolbox/base/Dockerfile", "ARGOCD_VERSION"),
+    ("toolbox base image tofu", "toolbox.tofu", "docker/dfe-toolbox/base/Dockerfile", "TOFU_VERSION"),
+    ("toolbox base image yq", "toolbox.yq", "docker/dfe-toolbox/base/Dockerfile", "YQ_VERSION"),
+    ("toolbox base image clickhouse-client", "services.clickhouse-version", "docker/dfe-toolbox/base/Dockerfile", "CLICKHOUSE_VERSION"),
+    ("toolbox aws image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/aws/Dockerfile", "BASE_TAG"),
+    ("toolbox aws image aws-cli", "toolbox.aws-cli", "docker/dfe-toolbox/aws/Dockerfile", "AWS_CLI_VERSION"),
+    (
+        "toolbox aws image session-manager-plugin",
+        "toolbox.aws-session-manager-plugin",
+        "docker/dfe-toolbox/aws/Dockerfile",
+        "AWS_SSM_PLUGIN_VERSION",
+    ),
+    ("toolbox gcp image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/gcp/Dockerfile", "BASE_TAG"),
+    ("toolbox gcp image gcloud", "toolbox.gcloud", "docker/dfe-toolbox/gcp/Dockerfile", "GCLOUD_VERSION"),
+    ("toolbox azure image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/azure/Dockerfile", "BASE_TAG"),
+    ("toolbox azure image az-cli", "toolbox.az-cli", "docker/dfe-toolbox/azure/Dockerfile", "AZ_CLI_VERSION"),
+]
+CHECKS += [
+    Check(label, key, Path(f), docker_arg_pattern(arg)) for label, key, f, arg in _TOOLBOX_ARGS
+]
+
+# The in-cluster pod chart (helm/charts/dfe-toolbox) ships the base image --
+# no cloud CLI, per the security pass -- so it pins the same family tag rather
+# than a mirror of its own. Both the tag Helm actually renders and the
+# appVersion dfe-common.image falls back to are checked, so neither can drift
+# from the family's one pin or from each other.
+CHECKS += [
+    Check(
+        "dfe-toolbox chart image tag",
+        "toolbox.dfe-toolbox",
+        Path("helm/charts/dfe-toolbox/values.yaml"),
+        r'tag:\s*"([^"]+)"',
+    ),
+    Check(
+        "dfe-toolbox chart appVersion",
+        "toolbox.dfe-toolbox",
+        Path("helm/charts/dfe-toolbox/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
     ),
 ]
 

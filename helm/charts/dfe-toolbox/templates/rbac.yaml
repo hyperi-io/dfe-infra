@@ -1,0 +1,51 @@
+{{- if .Values.toolbox.pod.kubeApiAccess }}
+{{- /*
+Read-only, and deliberately never pods/exec: exec is how an operator gets
+INTO a pod, granted by the operator's own identity against the api-server's
+RBAC and audited as them -- never something the toolbox pod's own
+ServiceAccount should be able to do to another pod. pods/log and
+pods/portforward are read/observe only, not open a shell.
+
+One ClusterRole (cluster-scoped so it can be reused), bound per-namespace via
+RoleBinding rather than a single ClusterRoleBinding -- the pod sees the DFE
+app namespace, the data namespaces and otel, never every namespace on the
+cluster.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-viewer
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["get", "create"]
+{{- $namespaces := concat (list .Values.appNamespace) .Values.dataNamespaces (list .Values.otelNamespace) }}
+{{- range $ns := $namespaces }}
+{{- if $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dfe-common.fullname" $ }}-viewer
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "dfe-common.fullname" $ }}-viewer
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dfe-common.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- end }}

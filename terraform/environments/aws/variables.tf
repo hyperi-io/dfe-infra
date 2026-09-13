@@ -211,6 +211,33 @@ variable "kafka" {
 }
 
 // ---------------------------------------------------------------------------
+// Toolbox
+// ---------------------------------------------------------------------------
+
+variable "toolbox" {
+  description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop); the session-log bucket is not gated by it (CONTRACT.md). aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
+  type = object({
+    enabled = bool
+    aws = object({
+      instance_type     = string
+      operator_role_arn = optional(string, "")
+    })
+    ttl_minutes = number
+    session = object({
+      idle_timeout_minutes = number
+      max_duration_minutes = number
+    })
+    session_log_retention_days = optional(number, 90)
+    tool_versions              = optional(map(string), {})
+  })
+
+  validation {
+    condition     = !var.toolbox.enabled || var.toolbox.aws.operator_role_arn != ""
+    error_message = "toolbox.enabled is true, so toolbox.aws.operator_role_arn must name the IAM role the EKS read-only access entry binds to."
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Secrets
 // ---------------------------------------------------------------------------
 

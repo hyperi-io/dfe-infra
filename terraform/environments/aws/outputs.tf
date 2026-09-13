@@ -188,3 +188,27 @@ output "network" {
   description = "VPC, CIDR, zones and subnets, for whatever attaches to them next."
   value       = module.cluster.network
 }
+
+// ---------------------------------------------------------------------------
+// Toolbox -- read by `dfe-ops bastion {up,shell,forward,down,status}`.
+// ---------------------------------------------------------------------------
+
+output "toolbox_instance_id" {
+  description = "Empty when the toolbox is not enabled -- dfe-ops bastion status/down reads this to tell 'never brought up' from 'torn down'."
+  value       = module.toolbox.instance_id
+}
+
+output "toolbox_ssm_session_document" {
+  description = "The SHELL Session document dfe-ops bastion shell invokes. Empty when not enabled."
+  value       = module.toolbox.ssm_session_document
+}
+
+output "toolbox_targets" {
+  description = "Named forward targets plus each one's Session document -- dfe-ops bastion forward <name> reads this rather than knowing any host or port itself."
+  value       = module.toolbox.targets
+}
+
+output "toolbox_session_log_bucket" {
+  description = "Where every shell session's transcript lands. Persists across up/down cycles."
+  value       = module.toolbox.session_log_bucket
+}

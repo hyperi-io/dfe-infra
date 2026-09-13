@@ -214,6 +214,12 @@ variable "key_policy_grants" {
   default = []
 }
 
+variable "toolbox_operator_role_arn" {
+  description = "IAM role ARN granted a read-only (AmazonEKSViewPolicy) EKS access entry for the on-demand toolbox's operator identity. Empty (the default) creates no entry at all -- not every caller runs the toolbox, and the toolbox INSTANCE itself never gets one either way (eks.tf, 'Toolbox operator')."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "The governance tag set. Validated here and applied by the root's provider default_tags, so no resource in this module carries the map itself."
   type        = map(string)
