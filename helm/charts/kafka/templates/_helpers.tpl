@@ -74,8 +74,18 @@ scale-out divide evenly every time: at the defaults 3 brokers give 12, which 3,
 6 and 12 brokers all share out with no remainder. The count is INCREASE-ONLY --
 Kafka can add partitions to a topic and never remove them -- so a deploy that
 lowers these values leaves the live topics where they are.
+
+At kafka.mode=external the formula's own $brokers term (dfe-kafka.brokerCount,
+which reads kafka.replicas) has nothing to do with the managed cluster's real
+broker count -- kafka.replicas is this CHART's own field, never set for a
+managed broker. So the external path takes kafka.external.numPartitions
+verbatim when it is set, rather than deriving from a broker count the managed
+body does not share.
 */}}
 {{- define "dfe-kafka.partitions" -}}
+{{- if and (eq .Values.kafka.mode "external") .Values.kafka.external.numPartitions -}}
+{{- .Values.kafka.external.numPartitions -}}
+{{- else -}}
 {{- $brokers := int (include "dfe-kafka.brokerCount" .) -}}
 {{- $s := .Values.kafka.sizing -}}
 {{- $throughput := 0 -}}
@@ -84,6 +94,7 @@ lowers these values leaves the live topics where they are.
 {{- end -}}
 {{- $want := max (int $s.consumerCeiling) $throughput (mul $brokers (int $s.minPartitionsPerBroker)) -}}
 {{- mul (div (sub (add (int $want) $brokers) 1) $brokers) $brokers -}}
+{{- end -}}
 {{- end }}
 
 {{/*

@@ -364,6 +364,20 @@ def test_clickhouse_cached_object_reaches_single_mode() -> None:
            fragment["merge_tree"]["storage_policy"] == "s3_cached")
 
 
+def test_wait_for_async_insert_guard_catches_every_falsy_spelling() -> None:
+    """gate-3-correctness.md P3: the guard used to compare toString(value) to
+    the literal "0" alone, so a values file writing an unquoted `false` (the
+    Go bool, not the string) sailed through -- ClickHouse itself reads either
+    as the same fire-and-forget setting."""
+    for value in ("false", "no", "off"):
+        err = render_error("clickhouse-cluster", f"clickhouse.userProfile.waitForAsyncInsert={value}")
+        expect(f"waitForAsyncInsert={value} is refused", "must not be" in err, f"got {err[:200]}")
+    expect(
+        "the shipped default (1) still passes",
+        render_error("clickhouse-cluster") == "",
+    )
+
+
 def test_clickhouse_storage_model_guards() -> None:
     expect("an unknown model is refused",
            "must be local, cached-object or tiered-block" in render_error(
@@ -542,6 +556,7 @@ def main() -> int:
         test_clickhouse_tiered_block_reaches_single_mode()
         test_clickhouse_tiered_block_guards()
         test_clickhouse_cached_object_reaches_single_mode()
+        test_wait_for_async_insert_guard_catches_every_falsy_spelling()
         test_clickhouse_storage_model_guards()
         test_the_unclaimed_cells_are_refused_rather_than_rendered_inert()
         test_the_object_store_batch_delete_switch_is_tri_state()

@@ -124,8 +124,8 @@ Check any cluster read-only before touching it:
         --require-label dfe.hyperi.io/workload=dfe
 
 Verified against both estate clusters 2026-07-22: the DFE cluster passes clean;
-the neighbouring devex one fails exactly one check -- the workload label -- the
-wrong-cluster trap the check exists to catch.
+the neighbouring on-prem reference cluster fails exactly one check -- the
+workload label -- the wrong-cluster trap the check exists to catch.
 
 ## Targets: on-prem now, cloud by parameter
 

@@ -221,6 +221,43 @@ run "msk_express_shape_and_storage" {
   }
 }
 
+// The broker SG: egress narrowed to 443/tcp (no VPC interface endpoint covers
+// Secrets Manager, KMS or CloudWatch Logs here), and the open_monitoring
+// scrape ports opened from the VPC CIDR rather than client_cidrs.
+run "msk_broker_security_group_is_scoped" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_egress_rule.brokers.ip_protocol == "tcp"
+    error_message = "broker egress must be tcp, not -1 (all protocols)"
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_egress_rule.brokers.from_port == 443 && aws_vpc_security_group_egress_rule.brokers.to_port == 443
+    error_message = "broker egress must be scoped to 443, not every port"
+  }
+
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_ingress_rule.open_monitoring : r
+      if r.from_port == 11001 && r.cidr_ipv4 == var.network.cidr
+    ]) == 1
+    error_message = "the JMX exporter port (11001) must be open from the VPC CIDR for the otel-collector scrape"
+  }
+
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_ingress_rule.open_monitoring : r
+      if r.from_port == 11002 && r.cidr_ipv4 == var.network.cidr
+    ]) == 1
+    error_message = "the node exporter port (11002) must be open from the VPC CIDR for the otel-collector scrape"
+  }
+}
+
 // B3: IAM for the bootstrap Job, SCRAM for DFE. Both on one cluster is what
 // lets the Job create the first ACL.
 run "msk_both_sasl_mechanisms" {
@@ -355,6 +392,22 @@ run "msk_autoscaler_threshold_arithmetic" {
     error_message = "the alarm threshold must be broker_count x per_broker_capacity_mb_s x 1e6 x headroom"
   }
 
+  // The threshold above is bytes PER SECOND, so the metric compared against
+  // it has to be a rate too. BytesInPerSec is published once a minute, so a
+  // 300s period holds 5 samples -- SEARCH's statistic has to be Average
+  // (Sum/SampleCount), not Sum (the raw total of those 5 already-averaged
+  // rate samples), or the compared value runs ~5x hot and the alarm fires at
+  // a fraction of the traffic it was sized for.
+  assert {
+    // metric_query is a SET of objects (no addressable index), so the one
+    // query this alarm defines is picked out by its id instead.
+    condition = strcontains(
+      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].expression,
+      "'Average', 300"
+    )
+    error_message = "the per-broker SEARCH statistic must be Average, not Sum, or the cluster-wide figure is not actually bytes per second"
+  }
+
   assert {
     condition     = aws_cloudwatch_metric_alarm.broker_scale_out[0].evaluation_periods == 3 && aws_cloudwatch_metric_alarm.broker_scale_out[0].datapoints_to_alarm == 3
     error_message = "the alarm must require 3 of 3 datapoints -- that is the whole of its stabilisation, since nothing here re-arms"
@@ -456,11 +509,6 @@ run "msk_telemetry_otel_ships_broker_logs_to_s3" {
   }
 
   assert {
-    condition     = [for statement in jsondecode(aws_kms_key_policy.broker_logs[0].policy).Statement : statement if statement.Sid == "Allow Amazon MSK to use the key"][0].Principal.Service[0] == "delivery.logs.amazonaws.com"
-    error_message = "the deployment key's policy must grant the log delivery service principal, or an SSE-KMS bucket refuses MSK's writes"
-  }
-
-  assert {
     condition     = output.broker_log_bucket == aws_s3_bucket.broker_logs[0].bucket
     error_message = "broker_log_bucket must be the bucket the fetcher's object-store source reads"
   }
@@ -494,11 +542,6 @@ run "msk_telemetry_cloudwatch_keeps_the_aws_native_path" {
   assert {
     condition     = length(aws_s3_bucket.broker_logs) == 0
     error_message = "cloudwatch must create no broker-log bucket"
-  }
-
-  assert {
-    condition     = length(aws_kms_key_policy.broker_logs) == 0
-    error_message = "cloudwatch must leave the deployment key's policy exactly as the cluster module set it"
   }
 
   assert {

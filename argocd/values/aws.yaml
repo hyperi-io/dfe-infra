@@ -15,6 +15,10 @@ storageClass: gp3
 envoyGateway:
   service:
     type: LoadBalancer
+    # The chart's own cloud-agnostic exposure signal (values.yaml), read by
+    # envoy-gateway-config.validateUi's render guard -- set alongside the
+    # internet-facing scheme annotation below, not derived from it.
+    internetFacing: true
     annotations:
       # `external`, not `nlb`: the controller reconciles only `nlb-ip` and
       # `external`, and ignores anything else. `nlb` was read by nothing, which
@@ -44,3 +48,23 @@ envoyGateway:
 # The engine's runtime store is a PVC against the cluster's default
 # StorageClass (dfe-engine chart config.persistence) -- no per-cloud
 # storage seam needed.
+
+# The gateway Service above is internet-facing, so the infra-class kill switch
+# (envoy-gateway-config's exposure.infraUisExternal) defaults OFF here: Argo
+# CD, Kafbat, HyperDX, Forgejo, links and Cruise Control all stay off the
+# public load balancer until an operator's own overlay opts one back on.
+# dfe-ui is unaffected -- it is class product, and the kill switch never
+# reaches it. Turning a route back on also needs oidc.enabled (below) or
+# ui.allowed_cidrs, which the chart's render guard requires whenever the
+# Service is internet-facing and this switch is on.
+exposure:
+  infraUisExternal: false
+
+# Edge OIDC on by default for the same reason: a deployer who flips
+# exposure.infraUisExternal back on for one admin route still needs a real
+# oidc.providers entry (this only sets the switch, not a provider) before that
+# route's edgePolicy has anything to authenticate against -- and the render
+# guard above refuses the internet-facing + kill-switch-on combination unless
+# either this is true or ui.allowed_cidrs is set.
+oidc:
+  enabled: true

@@ -40,6 +40,9 @@ spec.loader.exec_module(bridge)
 
 
 def test_state_fallback_reads_outputs() -> None:
+    """Each output comes back as (value, sensitive) -- see get_tf_outputs's
+    docstring for why the flag has to survive alongside the value rather than
+    being resolved and dropped here."""
     state = {
         "outputs": {
             "DFE_ENV": {"value": "local"},
@@ -52,10 +55,10 @@ def test_state_fallback_reads_outputs() -> None:
             json.dumps(state), encoding="utf-8", newline="\n"
         )
         out = bridge._outputs_from_state(tmp)
-    expect("a plain output is read", out.get("DFE_ENV") == "local", f"{out}")
+    expect("a plain output is read", out.get("DFE_ENV") == ("local", False), f"{out}")
     expect(
         "a SENSITIVE output is read too -- the state file holds the real value",
-        out.get("DFE_VAULT_ROLE_ID") == "abc-123",
+        out.get("DFE_VAULT_ROLE_ID") == ("abc-123", True),
         f"{out}",
     )
     expect("a null-valued output is dropped", "DFE_UNSET" not in out, f"{out}")
@@ -81,6 +84,47 @@ def test_malformed_state_is_fatal() -> None:
         except SystemExit:
             raised = True
     expect("unparseable state exits rather than yielding nothing", raised)
+
+
+def test_json_output_reads_sensitive_flag_with_no_second_call() -> None:
+    """`-json` carries the real value AND the sensitive flag together -- a
+    second `-raw` fetch per sensitive key would only re-fetch what this
+    already has, so get_tf_outputs makes exactly one subprocess call."""
+    calls = []
+
+    class FakeResult:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    payload = json.dumps(
+        {
+            "DFE_ENV": {"value": "local", "sensitive": False},
+            "DFE_VAULT_ROLE_ID": {"value": "abc-123", "sensitive": True},
+        }
+    )
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return FakeResult(payload)
+
+    real_run, real_finder = bridge.subprocess.run, bridge._find_tf_binary
+    bridge.subprocess.run = fake_run
+    bridge._find_tf_binary = lambda: "tofu"
+    try:
+        out = bridge.get_tf_outputs("/unused")
+    finally:
+        bridge.subprocess.run = real_run
+        bridge._find_tf_binary = real_finder
+
+    expect("exactly one subprocess call", len(calls) == 1, f"{calls}")
+    expect("a plain output keeps its flag", out.get("DFE_ENV") == ("local", False), f"{out}")
+    expect(
+        "a sensitive output's real value comes from the one -json call",
+        out.get("DFE_VAULT_ROLE_ID") == ("abc-123", True),
+        f"{out}",
+    )
 
 
 def test_binary_finder_returns_none_rather_than_exiting() -> None:

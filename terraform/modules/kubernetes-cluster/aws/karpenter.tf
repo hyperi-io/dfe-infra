@@ -79,6 +79,18 @@ data "aws_iam_policy_document" "karpenter_queue" {
       // by AWS.
       identifiers = ["events.amazonaws.com", "sqs.amazonaws.com"]
     }
+
+    // Without this, any account's EventBridge rule that learns this queue's
+    // ARN can enqueue to it -- a forged spot-interruption message naming a
+    // real instance id would make Karpenter drain a node on a false alarm.
+    // AWS's own published CloudFormation for Karpenter carries no such
+    // condition (this queue policy matches it otherwise statement for
+    // statement), so this is a deliberate tightening beyond upstream parity.
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.provision.account]
+    }
   }
 
   statement {

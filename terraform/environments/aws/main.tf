@@ -20,6 +20,53 @@ locals {
   ephemeral                         = var.tags.lifecycle == "ephemeral"
   secret_recovery_window_days       = local.ephemeral ? 0 : 30
   kafka_secret_recovery_window_days = local.ephemeral ? 0 : 30
+
+  // Every service principal the deployment's KMS key must grant, beyond the
+  // account root -- collected here because the cluster module is the key's
+  // ONE policy owner (aws_kms_key_policy replaces the whole policy) and
+  // cloudtrail.tf's bucket and msk's broker-log delivery are both this root's
+  // to know about. CloudTrail is unconditional: cloudtrail.tf's bucket is
+  // SSE-KMS on this key regardless of which way telemetry.sink points. The
+  // MSK grant is conditional on the otel sink actually creating a log-
+  // delivery target -- confluent-cloud and redpanda-cloud emit no
+  // CloudWatch-shaped broker log for anything to deliver.
+  key_policy_grants = concat(
+    [
+      // AWS's documented CloudTrail-to-KMS statements: GenerateDataKey* needs
+      // both the trail-ARN and EncryptionContext conditions, Decrypt/
+      // DescribeKey need only the trail ARN. See
+      // https://docs.aws.amazon.com/awscloudtrail/latest/userguide/create-kms-key-policy-for-cloudtrail.html
+      {
+        sid        = "AllowCloudTrailToGenerateDataKeys"
+        principals = ["cloudtrail.amazonaws.com"]
+        actions    = ["kms:GenerateDataKey*"]
+        conditions = [
+          { test = "StringEquals", variable = "aws:SourceArn", values = [local.cloudtrail_arn] },
+          {
+            test     = "StringLike"
+            variable = "kms:EncryptionContext:aws:cloudtrail:arn"
+            values   = ["arn:${data.aws_partition.current.partition}:cloudtrail:*:${data.aws_caller_identity.current.account_id}:trail/*"]
+          },
+        ]
+      },
+      {
+        sid        = "AllowCloudTrailToReadTheKey"
+        principals = ["cloudtrail.amazonaws.com"]
+        actions    = ["kms:Decrypt", "kms:DescribeKey"]
+        conditions = [
+          { test = "StringEquals", variable = "aws:SourceArn", values = [local.cloudtrail_arn] },
+        ]
+      },
+    ],
+    var.kafka.provider == "msk" && var.telemetry.sink == "otel" ? [
+      {
+        sid        = "AllowMSKBrokerLogDeliveryToUseTheKey"
+        principals = ["delivery.logs.amazonaws.com"]
+        actions    = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"]
+        conditions = []
+      },
+    ] : []
+  )
 }
 
 // An SCP fences the test account to one region; nothing fences a deployment to
@@ -63,6 +110,8 @@ module "cluster" {
   dns                = var.dns
   telemetry          = var.telemetry
   tags               = var.tags
+
+  key_policy_grants = local.key_policy_grants
 }
 
 // The one Kafka password of the deployment, generated HERE rather than in the
@@ -123,6 +172,12 @@ module "kafka" {
 
   autoscaling = var.kafka.msk.autoscaling
   telemetry   = var.telemetry
+
+  // module.cluster.kms_key_arn alone only orders against aws_kms_key.this --
+  // the sibling aws_kms_key_policy.this resource produces no output this
+  // module reads, so nothing would otherwise force it to apply before MSK's
+  // first otel-sink log delivery, which needs the grant already in place.
+  depends_on = [module.cluster]
 }
 
 // Confluent Cloud sizes, tunes and versions the cluster itself (CONTRACT.md),

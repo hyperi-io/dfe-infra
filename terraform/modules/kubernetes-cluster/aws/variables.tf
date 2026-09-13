@@ -199,6 +199,21 @@ variable "telemetry" {
   }
 }
 
+variable "key_policy_grants" {
+  description = "Extra statements the deployment's KMS key policy must carry, beyond the account-root delegation to IAM. A service principal (cloudtrail.amazonaws.com, delivery.logs.amazonaws.com) is not an IAM identity, so it cannot be granted through an aws_iam_role_policy the way the cluster role above is -- its access has to live in the key's own policy. This module is the key's ONE policy owner (kms.tf), so every caller that needs one hands its statement in here rather than writing a second aws_kms_key_policy against the same key, which would silently replace this one's."
+  type = list(object({
+    sid        = string
+    principals = list(string)
+    actions    = list(string)
+    conditions = optional(list(object({
+      test     = string
+      variable = string
+      values   = list(string)
+    })), [])
+  }))
+  default = []
+}
+
 variable "tags" {
   description = "The governance tag set. Validated here and applied by the root's provider default_tags, so no resource in this module carries the map itself."
   type        = map(string)

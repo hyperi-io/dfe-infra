@@ -3,7 +3,7 @@
 # Referenced from versions.yaml stacks."2.2.0-rc.13".constraints.
 # Validated by: python3 scripts/dfe-stack compat-check --stack 2.2.0-rc.13
 #
-# The interdependency limitations we found live here MACHINE-READABLY (they were
+# The interdependency limitations live here MACHINE-READABLY (they were
 # prose comments before). Rules are keyed by ID (a MAP, not a list) so the
 # existing stdlib reader parses this with zero new parser code. Each rule is a
 # GUARD (`when-*` on one pin) plus a REQUIREMENT (`require-*` on another pin):

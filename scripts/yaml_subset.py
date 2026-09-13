@@ -31,6 +31,8 @@ reason. Callers that must tolerate one pass ``allow_duplicate_keys=True``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 REPEATED = "duplicate key"
 
 
@@ -85,6 +87,32 @@ def parse(
         else:
             raise YamlSubsetError(f"{source} line {line_num}: cannot parse {line!r}")
     return root
+
+
+def at(tree: object, path: Iterable[str]) -> object:
+    """Walk a parsed tree along `path`, answering None rather than raising.
+
+    Every SSoT reader in this repo (resolve_sizing.py's `_at`,
+    render_dial.py's `_scalar` and `_node`) descended a parsed tree the same
+    way -- stop and answer None the moment a step is not a map -- so this is
+    the one copy of that walk; each caller keeps its own wrapper for what it
+    does with the leaf (strip a scalar, default an absent branch to `{}`).
+
+    Args:
+        tree: A tree `parse` returned, or any nested-dict structure shaped
+            like one.
+        path: The keys to descend, in order.
+
+    Returns:
+        The value at `path`, or None the moment a step is missing or a
+        branch is not a map.
+    """
+    node = tree
+    for step in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(step)
+    return node
 
 
 def split_list(value: object) -> tuple[str, ...]:

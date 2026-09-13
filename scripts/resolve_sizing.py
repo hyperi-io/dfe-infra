@@ -33,7 +33,16 @@ on a ``cloud: onprem`` dial, which also gets ``sizing/<tier>.nodes.json``:
                                    a reviewed diff. Keyed by region -- instance
                                    generation availability differs by region,
                                    so one region's answer is never another's.
-    sizing/<tier>.auto.tfvars.json the tofu inputs, only keys the root declares
+    sizing.auto.tfvars.json        the tofu inputs, only keys the root declares.
+                                   At the ROOT of --out, beside
+                                   render_dial.py --tofu's own
+                                   dial.auto.tfvars.json -- tofu auto-loads
+                                   *.auto.tfvars.json only from the root
+                                   module directory, never a subdirectory.
+                                   This script is the single writer of
+                                   node_pools: it merges the dial's own
+                                   node_pools.system with what it derives, so
+                                   the two producers never collide on it.
     sizing/<tier>.values.yaml      the chart values overlay
     sizing/<tier>.report.md        what was sized, from which ratio, at which
                                    confidence, at what price, and where the
@@ -94,13 +103,13 @@ import argparse
 import json
 import math
 import re
-import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from yaml_subset import YamlSubsetError
+from aws_cli import run_aws
+from yaml_subset import YamlSubsetError, at
 from yaml_subset import parse as parse_yaml_subset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -131,40 +140,66 @@ EXIT_LOCKED_CHANGE = 3
 TARGETS_DIR = REPO_ROOT / "sizing" / "targets"
 
 # Which Kafka provider key in sizing.yaml a dial's kafka.provider selects.
+# confluent-cloud and redpanda-cloud keep their own dial spelling: neither
+# derives a shape (see SAAS_KAFKA_PROVIDERS below), so there is no sizing.yaml
+# section to alias them onto the way msk aliases onto msk-express.
 KAFKA_PROVIDERS = {
     "strimzi": "strimzi",
     "redpanda": "redpanda",
     "msk": "msk-express",
     "msk-express": "msk-express",
+    "confluent-cloud": "confluent-cloud",
+    "redpanda-cloud": "redpanda-cloud",
 }
+
+# The two fully vendor-managed Kafka bodies: no broker count, memory or disk is
+# ours to derive, so size_core skips both the kafka-broker and kraft-controller
+# nodes and run_resolve never asks a cloud's shape entries for either -- there
+# is no EC2 (or equivalent) instance to select at all, unlike msk-express,
+# which still picks a broker size from MSK's own compute-family namespace.
+SAAS_KAFKA_PROVIDERS = ("confluent-cloud", "redpanda-cloud")
 
 # Values the charts declare and the resolver needs as INPUTS to a derivation.
 # They live in the chart because that is where they are consumed; each one is
 # overridable from the dial, and the report prints the figure it used with this
 # source beside it.
+#
+# The source cites the VALUES KEY PATH, never a line number: a line number
+# drifts the moment a comment above it grows or shrinks, and nothing re-checks
+# it against the file, so a stale citation reads as evidence while pointing at
+# an unrelated comment. The key path is what the test in
+# test_resolve_sizing.py can actually assert exists in the chart's values.yaml.
 CHART_DEFAULTS = {
-    # helm/charts/kafka/values.yaml:206 -- a classic consumer group assigns at
+    # kafka.sizing.consumerCeiling -- a classic consumer group assigns at
     # most one consumer per partition, so partitions never go below this.
-    "consumer_ceiling": (10, "helm/charts/kafka/values.yaml:206"),
-    # helm/charts/kafka/values.yaml:217 -- 3 brokers give 12, which 3, 6 and 12
-    # brokers all divide evenly.
-    "min_partitions_per_broker": (4, "helm/charts/kafka/values.yaml:217"),
-    # helm/charts/kafka/values.yaml:214 -- one partition has one leader, so this
+    "consumer_ceiling": (10, "helm/charts/kafka/values.yaml#kafka.sizing.consumerCeiling"),
+    # kafka.sizing.minPartitionsPerBroker -- 3 brokers give 12, which 3, 6 and
+    # 12 brokers all divide evenly.
+    "min_partitions_per_broker": (
+        4,
+        "helm/charts/kafka/values.yaml#kafka.sizing.minPartitionsPerBroker",
+    ),
+    # kafka.sizing.perPartitionCapMbS -- one partition has one leader, so this
     # is what a single partition can absorb. Used where sizing.yaml states no
     # per-provider cap of its own.
-    "per_partition_cap_mb_s": (15, "helm/charts/kafka/values.yaml:214"),
-    # helm/charts/kafka/values.yaml:239 -- the rest of the PVC is index,
+    "per_partition_cap_mb_s": (
+        15,
+        "helm/charts/kafka/values.yaml#kafka.sizing.perPartitionCapMbS",
+    ),
+    # kafka.retention.usableFraction -- the rest of the PVC is index,
     # snapshot and in-flight segment space.
-    "usable_fraction": (0.85, "helm/charts/kafka/values.yaml:239"),
-    # helm/charts/kafka/values.yaml:192 -- broker NIC throughput in MB/s, full
+    "usable_fraction": (0.85, "helm/charts/kafka/values.yaml#kafka.retention.usableFraction"),
+    # kafka.broker.networkMbS -- broker NIC throughput in MB/s, full
     # duplex, and what stops Cruise Control filling the NIC during a rebalance.
-    "broker_network_mb_s": (1250, "helm/charts/kafka/values.yaml:192"),
-    # helm/charts/kafka/values.yaml:169 -- the floor a broker PVC never goes
+    "broker_network_mb_s": (1250, "helm/charts/kafka/values.yaml#kafka.broker.networkMbS"),
+    # kafka.storage.size -- the floor a broker PVC never goes
     # below, so a deployment with no estimate still asks for a real volume.
-    "kafka_broker_disk_gib": (20, "helm/charts/kafka/values.yaml:169"),
-    # helm/charts/clickhouse-cluster/values.yaml:181 -- the same floor for a
-    # ClickHouse replica.
-    "clickhouse_disk_gib": (50, "helm/charts/clickhouse-cluster/values.yaml:181"),
+    "kafka_broker_disk_gib": (20, "helm/charts/kafka/values.yaml#kafka.storage.size"),
+    # clickhouse.storage.size -- the same floor for a ClickHouse replica.
+    "clickhouse_disk_gib": (
+        50,
+        "helm/charts/clickhouse-cluster/values.yaml#clickhouse.storage.size",
+    ),
 }
 
 # Use cases whose IO is CONTINUOUS, so a burstable instance size cannot carry
@@ -263,12 +298,7 @@ def _load(path: Path) -> dict[str, object]:
 
 def _at(tree: object, *path: str) -> object:
     """Walk a parsed tree, answering None rather than raising on a missing key."""
-    node = tree
-    for step in path:
-        if not isinstance(node, dict):
-            return None
-        node = node.get(step)
-    return node
+    return at(tree, path)
 
 
 def _scalar(tree: object, *path: str) -> str | None:
@@ -338,7 +368,17 @@ class Dial:
     spend_warn_usd_month: float | None
     allow_undersized: bool
     name: str
+    # How many AZs the VPC spans (network.az_count, 2-6). Feeds the catalogue's
+    # own zone slice (fetch_live/fetch_fixtures) and the broker-count multiple,
+    # so a 4- or 5-AZ deployment gets a cluster that actually spreads across
+    # them rather than the 3 every deployment got regardless of the dial.
+    az_count: int = 3
     overrides: dict[str, dict[str, str]] = field(default_factory=dict)
+    # The dial's own `node_pools:` block (e.g. `system`) -- groups a deployer
+    # sizes directly rather than a ratio deriving. render_dial.py no longer
+    # writes these into tofu; this script merges them with what it derives, so
+    # there is a single writer of the `node_pools` tofu variable.
+    node_pools: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 def _dial_number(tree: object, *path: str) -> float | None:
@@ -366,15 +406,36 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         raise ResolveError(
             f"kafka.provider {provider!r} is not one of {', '.join(sorted(KAFKA_PROVIDERS))}"
         )
+    kafka_provider = KAFKA_PROVIDERS[provider]
+    # k8s.cloud's own token for an unprovisioned/existing cluster is `local`
+    # (deployment.example.yaml's default); compute-shapes.yaml has no `local`
+    # key, only `onprem`, so the resolve fails outright unless the operator
+    # knows to pass --cloud onprem by hand. Map it here so the default
+    # invocation produces the on-prem node-requirements file the preflight in
+    # bootstrap.sh looks for.
+    resolved_cloud = cloud or provision_cloud or "onprem"
+    if resolved_cloud == "local":
+        resolved_cloud = "onprem"
+    # The target overlay defaults to the cloud's own key -- what we run on AWS
+    # is the aws overlay -- EXCEPT when Kafka itself is a fully vendor-managed
+    # SaaS body: confluent-cloud.yaml and redpanda-cloud.yaml carry the knobs
+    # that govern the BROKER, which is what a re-size actually needs to see
+    # when there is no cloud-side shape to report on for it.
+    default_target = kafka_provider if kafka_provider in SAAS_KAFKA_PROVIDERS else resolved_cloud
+    az_count_raw = _dial_number(tree, "network", "az_count")
+    az_count = int(az_count_raw) if az_count_raw is not None else 3
+    if not 2 <= az_count <= 6:
+        raise ResolveError(
+            f"network.az_count must be between 2 and 6 -- below 2 there is no redundancy to speak "
+            f"of, and no AWS region offers more than 6 -- got {az_count}"
+        )
     return Dial(
         path=path,
         tier=_scalar(tree, "profile") or "single",
-        cloud=cloud or provision_cloud or "onprem",
+        cloud=resolved_cloud,
         region=_scalar(tree, "target", "provision", "region") or _scalar(tree, "k8s", "region") or "",
-        # The target overlay defaults to the cloud's own key: what we run on AWS
-        # is the aws overlay, and a vendor-run broker is its own key.
-        target=target or (cloud or provision_cloud or "onprem"),
-        kafka_provider=KAFKA_PROVIDERS[provider],
+        target=target or default_target,
+        kafka_provider=kafka_provider,
         ingest_gb_per_day=_dial_number(tree, "sizing", "ingest_gb_per_day"),
         focus=_scalar(tree, "sizing", "focus") or "economy",
         peak_factor=_dial_number(tree, "sizing", "peak_factor"),
@@ -386,7 +447,9 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         spend_warn_usd_month=_dial_number(tree, "sizing", "spend_warn_usd_month"),
         allow_undersized=allow == "true",
         name=_scalar(tree, "metadata", "name") or "dfe",
+        az_count=az_count,
         overrides=_read_overrides(tree),
+        node_pools=_read_node_pools(tree),
     )
 
 
@@ -432,6 +495,50 @@ def _read_overrides(tree: dict[str, object]) -> dict[str, dict[str, str]]:
     return out
 
 
+# The fields render_dial.py's own _node_pools used to read from the dial's
+# node_pools block, ported here so this script can merge them with the pools
+# it derives -- see build_tfvars and P1-3 in the correctness review.
+_NODE_POOL_FIELDS = ("min_size", "max_size", "desired_size", "disk_gb")
+
+
+def _read_node_pools(tree: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Read the dial's own node_pools block -- groups a deployer sizes by hand.
+
+    `system` is the one every cloud dial carries today (the cluster needs
+    something to run before Karpenter's own controller can), but nothing here
+    assumes the name: whatever the deployer declares is merged with what
+    build_tfvars derives, keyed by pool name.
+    """
+    node = _at(tree, "node_pools")
+    if node is None:
+        return {}
+    if not isinstance(node, dict):
+        raise ResolveError("node_pools is a map keyed by pool name")
+    out: dict[str, dict[str, object]] = {}
+    for name, body in node.items():
+        if not isinstance(body, dict):
+            raise ResolveError(f"node_pools.{name}: a map of fields, not a scalar")
+        shape_ref = _scalar(body, "shape_ref")
+        if not shape_ref:
+            raise ResolveError(f"node_pools.{name}.shape_ref is required")
+        capacity_type = _scalar(body, "capacity_type") or "ON_DEMAND"
+        pool: dict[str, object] = {"shape_ref": shape_ref, "capacity_type": capacity_type}
+        for field_name in _NODE_POOL_FIELDS:
+            raw = _scalar(body, field_name)
+            if raw is None:
+                raise ResolveError(f"node_pools.{name}.{field_name} is required")
+            try:
+                pool[field_name] = int(float(raw))
+            except ValueError as err:
+                raise ResolveError(
+                    f"node_pools.{name}.{field_name} must be a number, got {raw!r}"
+                ) from err
+        pool["labels"] = {}
+        pool["taints"] = []
+        out[name] = pool
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Core -- target-agnostic requirements
 # ---------------------------------------------------------------------------
@@ -468,6 +575,12 @@ class Core:
     nodes: dict[str, Node] = field(default_factory=dict)
     partitions: int = 0
     retention_hours: float = 0.0
+    # The two components retention_hours sums -- carried separately so
+    # build_values can emit them the way the chart adds them itself, rather
+    # than double-counting archiver_lag_hours if a deploy-repo overlay ever
+    # sets kafka.retention.archiverLagH on its own.
+    consumer_downtime_hours: float = 0.0
+    archiver_lag_hours: float = 0.0
     retention_ms: int = 0
     retention_bytes: int = 0
     message_chain_bytes: int = 0
@@ -476,6 +589,11 @@ class Core:
     clickhouse_ram_long_band_gib: float = 0.0
     clickhouse_memory_ratio: float = 0.8
     keeper_parts_per_s: float = 0.0
+    # What a quiet root volume asks of the instance -- not what gp3's own free
+    # minimum provisions it at. See sizing.yaml's floors.root_volume_demand_*
+    # and _resolve_volumes.
+    root_volume_demand_mib_s: float = 0.0
+    root_volume_demand_iops: int = 0
     notes: list[str] = field(default_factory=list)
     used: list[Ratio] = field(default_factory=list)
     overridden: list[Override] = field(default_factory=list)
@@ -562,37 +680,67 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
     floor_brokers = int(take("floors", "kafka_brokers"))
     floor_broker_vcpu = int(take("floors", "kafka_broker_vcpu"))
     floor_broker_ram = int(take("floors", "kafka_broker_ram_gib"))
+    # Every use case carries a mandatory gp3 root volume nothing here ever
+    # sizes from a workload -- see _resolve_volumes for why its DEMAND is this
+    # small, honest guess rather than gp3's own free minimum.
+    root_volume_demand_mib_s = take("floors", "root_volume_demand_mib_s")
+    root_volume_demand_iops = int(take("floors", "root_volume_demand_iops"))
+    # network.az_count feeds the broker-count multiple as well as the
+    # catalogue's own zone slice (see fetch_live/fetch_fixtures): a deployment
+    # spanning 4-6 AZs gets a cluster that spreads one-per-zone, rather than
+    # always rounding to a multiple of 3 whatever the dial's az_count says.
+    broker_count_multiple = max(floor_brokers, dial.az_count)
 
     nodes: dict[str, Node] = {}
     notes: list[str] = []
 
     # --- Kafka brokers -------------------------------------------------------
-    if provider == "msk-express":
-        mb_s_per_vcpu = take("kafka", provider, "mb_s_per_vcpu")
-        vcpu_cap = 48  # the largest Express size AWS sells, express.m7g.12xlarge
+    if provider in SAAS_KAFKA_PROVIDERS:
+        # Confluent Cloud and Redpanda Cloud sell eCKUs / throughput, not
+        # instances: broker count, memory and disk are the vendor's, so there
+        # is nothing to step up here -- only partitions and retention below
+        # are ours to derive.
+        mb_s_per_vcpu = 0.0
+        vcpu_cap = 0
+        brokers = broker_count_multiple
+        broker_vcpu = 0
         notes.append(
-            "MSK Express manages broker memory and storage, so only the broker count and "
-            "size are ours to derive -- sizing.yaml records both formulas as provider-managed."
+            f"{provider} manages broker count, memory and storage itself -- sizing.yaml carries "
+            "no shape for it, so only partitions and retention are ours to derive."
         )
-    elif provider == "strimzi":
-        mb_s_per_vcpu = take("kafka", provider, "mb_s_per_vcpu")
-        # Above this the EBS volume binds before the CPU does and the per-vCPU
-        # rate halves, so a bigger broker buys nothing: the cluster grows by
-        # BROKER, which is what cookie-cutter scale-out means.
-        vcpu_cap = int(take("kafka", provider, "disk_bound_above_vcpu"))
     else:
-        mb_s_per_vcpu = take("kafka", provider, "mb_s_per_core")
-        vcpu_cap = 32
+        if provider == "msk-express":
+            mb_s_per_vcpu = take("kafka", provider, "mb_s_per_vcpu")
+            vcpu_cap = 48  # the largest Express size AWS sells, express.m7g.12xlarge
+            notes.append(
+                "MSK Express manages broker memory and storage, so only the broker count and "
+                "size are ours to derive -- sizing.yaml records both formulas as provider-managed."
+            )
+        elif provider == "strimzi":
+            mb_s_per_vcpu = take("kafka", provider, "mb_s_per_vcpu")
+            # Above this the EBS volume binds before the CPU does and the per-vCPU
+            # rate halves, so a bigger broker buys nothing: the cluster grows by
+            # BROKER, which is what cookie-cutter scale-out means.
+            vcpu_cap = int(take("kafka", provider, "disk_bound_above_vcpu"))
+        else:
+            mb_s_per_vcpu = take("kafka", provider, "mb_s_per_core")
+            vcpu_cap = 32
 
-    total_broker_vcpu = max(floor_brokers * floor_broker_vcpu, math.ceil(required_mb_s / mb_s_per_vcpu))
-    brokers = floor_brokers
-    while math.ceil(total_broker_vcpu / brokers) > vcpu_cap:
-        brokers += floor_brokers
-    brokers = _ceil_to_multiple(brokers, floor_brokers)
-    broker_vcpu = max(floor_broker_vcpu, math.ceil(total_broker_vcpu / brokers))
+        total_broker_vcpu = max(
+            broker_count_multiple * floor_broker_vcpu, math.ceil(required_mb_s / mb_s_per_vcpu)
+        )
+        brokers = broker_count_multiple
+        while math.ceil(total_broker_vcpu / brokers) > vcpu_cap:
+            brokers += broker_count_multiple
+        brokers = _ceil_to_multiple(brokers, broker_count_multiple)
+        broker_vcpu = max(floor_broker_vcpu, math.ceil(total_broker_vcpu / brokers))
 
     per_broker_peak_mb_s = peak_mb_s / brokers
-    rf_disk = take("kafka", provider, "replication_disk_factor")
+    rf_disk = (
+        3.0
+        if provider in SAAS_KAFKA_PROVIDERS
+        else take("kafka", provider, "replication_disk_factor")
+    )
 
     # Partitions come BEFORE broker memory, because Redpanda's RAM formula counts
     # partition replicas and a JVM broker's does not.
@@ -628,10 +776,16 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
     else:
         broker_ram = 0
 
-    retention_hours = take("retention", "assumed_consumer_downtime_hours") + (
-        dial.archiver_lag_hours if dial.archiver_lag_hours is not None else 0.0
-    )
-    if provider == "msk-express":
+    # ONE assumption, two components -- how long a consumer may be down, plus
+    # dfe-archiver's own lag on top -- carried SEPARATELY into the values
+    # overlay (see build_values). The chart ADDS them itself
+    # (kafka.retention.assumedConsumerDowntimeH + archiverLagH), so summing
+    # them here as well would double the archiver term the moment a
+    # deploy-repo overlay ever sets archiverLagH on its own.
+    consumer_downtime_hours = take("retention", "assumed_consumer_downtime_hours")
+    archiver_lag_hours = dial.archiver_lag_hours if dial.archiver_lag_hours is not None else 0.0
+    retention_hours = consumer_downtime_hours + archiver_lag_hours
+    if provider in ("msk-express", *SAAS_KAFKA_PROVIDERS):
         broker_disk_gib = 0
     else:
         disk_headroom = take("kafka", provider, "disk_headroom")
@@ -644,30 +798,36 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
             math.ceil(broker_disk_mb * BYTES_PER_MB / BYTES_PER_GIB),
         )
 
-    broker_throughput_mib_s = math.ceil(
-        per_broker_peak_mb_s
-        * (1 + headroom)
-        * take("kafka", provider, "replication_network_factor")
-        * BYTES_PER_MB
-        / (1024 * 1024)
-    )
-    nodes["kafka-broker"] = Node(
-        use_case="kafka-broker",
-        count=brokers,
-        vcpu=broker_vcpu,
-        ram_gib=broker_ram,
-        disk_gib=broker_disk_gib,
-        iops=0,
-        throughput_mib_s=broker_throughput_mib_s,
-        why=(
-            f"{required_mb_s:,.0f} MB/s required at {peak_factor:g}x peak and {headroom:.0%} "
-            f"headroom, over {mb_s_per_vcpu:g} MB/s per vCPU, capped at {vcpu_cap} vCPU a broker"
-        ),
-    )
+    # No EC2 (or equivalent) instance exists for a fully vendor-managed body,
+    # so there is no broker Node to size -- run_resolve never asks a cloud's
+    # shape entries for kafka-broker either, and build_tfvars emits no pool.
+    if provider not in SAAS_KAFKA_PROVIDERS:
+        broker_throughput_mib_s = math.ceil(
+            per_broker_peak_mb_s
+            * (1 + headroom)
+            * take("kafka", provider, "replication_network_factor")
+            * BYTES_PER_MB
+            / (1024 * 1024)
+        )
+        nodes["kafka-broker"] = Node(
+            use_case="kafka-broker",
+            count=brokers,
+            vcpu=broker_vcpu,
+            ram_gib=broker_ram,
+            disk_gib=broker_disk_gib,
+            iops=0,
+            throughput_mib_s=broker_throughput_mib_s,
+            why=(
+                f"{required_mb_s:,.0f} MB/s required at {peak_factor:g}x peak and {headroom:.0%} "
+                f"headroom, over {mb_s_per_vcpu:g} MB/s per vCPU, capped at {vcpu_cap} vCPU a broker"
+            ),
+        )
 
     # --- KRaft controllers ---------------------------------------------------
     if provider == "msk-express":
         notes.append("MSK Express runs its own metadata quorum; no controller pool is ours to size.")
+    elif provider in SAAS_KAFKA_PROVIDERS:
+        notes.append(f"{provider} runs its own metadata quorum; no controller pool is ours to size.")
     else:
         nodes["kraft-controller"] = Node(
             use_case="kraft-controller",
@@ -795,6 +955,8 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         nodes=nodes,
         partitions=partitions,
         retention_hours=retention_hours,
+        consumer_downtime_hours=consumer_downtime_hours,
+        archiver_lag_hours=archiver_lag_hours,
         retention_ms=retention_ms,
         retention_bytes=retention_bytes,
         message_chain_bytes=message_chain_bytes,
@@ -803,6 +965,8 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         clickhouse_ram_long_band_gib=ram_long_band,
         clickhouse_memory_ratio=memory_usable,
         keeper_parts_per_s=parts_per_s,
+        root_volume_demand_mib_s=root_volume_demand_mib_s,
+        root_volume_demand_iops=root_volume_demand_iops,
         notes=notes,
         used=used,
     )
@@ -845,10 +1009,25 @@ def _apply_node_overrides(core: Core, overrides: dict[str, dict[str, str]]) -> N
     The shape selection runs afterwards, so an overridden cpu or memory is what
     the instance has to meet. Nothing here skips an assertion: an override that
     breaks a ceiling fails exactly like a derived value would.
+
+    size_core derives a Node for only four of the nine use cases
+    (kafka-broker, kraft-controller, clickhouse, keeper) -- eks-system,
+    general, ci-burst, msk-broker and toolbox never get one. A cpu/memory/
+    disk_gb/replicas override for one of those five has nothing to replace, so
+    it is refused BY NAME rather than accepted and silently dropped -- the
+    shape-level fields (instance_type, iops, throughput_mibs) still apply to
+    all nine through _apply_shape_overrides, which needs no Node.
     """
     for use_case, fields in overrides.items():
         node = core.nodes.get(use_case)
+        node_fields = sorted(name for name in fields if name in NODE_OVERRIDES)
         if node is None:
+            if node_fields:
+                raise ResolveError(
+                    f"sizing.overrides.{use_case}: {', '.join(node_fields)} -- this use case has no "
+                    "derived node to override (only kafka-broker, kraft-controller, clickhouse and "
+                    "keeper do); instance_type, iops and throughput_mibs still apply here"
+                )
             continue
         for what, raw in fields.items():
             if what not in NODE_OVERRIDES:
@@ -914,13 +1093,7 @@ class Catalogue:
 def _aws(args: list[str]) -> object:
     """Run one aws CLI call and parse its JSON, naming the call on failure."""
     try:
-        done = subprocess.run(
-            ["aws", *args, "--output", "json"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=600,
-        )
+        done = run_aws([*args, "--output", "json"], timeout=600)
     except FileNotFoundError as err:
         raise ResolveError("the aws CLI is not on PATH -- resolve from fixtures instead") from err
     if done.returncode != 0:
@@ -971,8 +1144,17 @@ def _instance_from_api(body: dict[str, object]) -> InstanceType | None:
     )
 
 
-def fetch_live(region: str) -> Catalogue:
-    """Read the EC2, offerings and Pricing answers straight from AWS."""
+def fetch_live(region: str, az_count: int) -> Catalogue:
+    """Read the EC2, offerings and Pricing answers straight from AWS.
+
+    Args:
+        region: The AWS region to read.
+        az_count: How many zones to keep, in the API's own order -- the VPC
+            takes `slice(data.aws_availability_zones.available.names, 0,
+            var.network.az_count)` (terraform/modules/kubernetes-cluster/aws/
+            vpc.tf:15), so the resolver asserts the chosen type is offered in
+            exactly those zones, in that same order, never a sorted one.
+    """
     zones = _aws(
         [
             "ec2", "describe-availability-zones", "--region", region,
@@ -980,10 +1162,13 @@ def fetch_live(region: str) -> Catalogue:
             "--query", "AvailabilityZones[].ZoneName",
         ]
     )
-    # The VPC takes the first three available zones
-    # (terraform/modules/kubernetes-cluster/aws/vpc.tf:14), so the resolver
-    # asserts the chosen type is offered in exactly those three.
-    azs = tuple(sorted(str(z) for z in zones))[:3]
+    all_azs = tuple(str(z) for z in zones)
+    if len(all_azs) < az_count:
+        raise ResolveError(
+            f"{region} offers only {len(all_azs)} availability zones, fewer than the "
+            f"{az_count} network.az_count asks for"
+        )
+    azs = all_azs[:az_count]
 
     raw = _aws(
         [
@@ -1127,8 +1312,15 @@ def _fetch_msk_prices(region: str) -> tuple[tuple[str, ...], dict[str, float]]:
     return tuple(sorted(prices)), prices
 
 
-def fetch_fixtures(directory: Path, region: str) -> Catalogue:
-    """Read the captured answers for one region instead of calling AWS."""
+def fetch_fixtures(directory: Path, region: str, az_count: int = 3) -> Catalogue:
+    """Read the captured answers for one region instead of calling AWS.
+
+    The fixture's own `azs` list is kept in whatever order it was captured
+    in (fetch_live no longer sorts it), sliced to `az_count` -- a fixture
+    captured with fewer zones than a dial's network.az_count asks for cannot
+    validate offerings for a zone it never recorded, so that is refused by
+    name rather than silently resolving against too few zones.
+    """
     path = directory / f"aws-catalogue-{region}.json"
     if not path.is_file():
         raise ResolveError(
@@ -1137,9 +1329,15 @@ def fetch_fixtures(directory: Path, region: str) -> Catalogue:
         )
     doc = json.loads(path.read_text(encoding="utf-8"))
     types = {name: InstanceType(**body) for name, body in doc["types"].items()}
+    all_azs = tuple(doc["azs"])
+    if len(all_azs) < az_count:
+        raise ResolveError(
+            f"{path} carries only {len(all_azs)} availability zones, fewer than the {az_count} "
+            "network.az_count asks for -- recapture with more zones before resolving here"
+        )
     return Catalogue(
         region=doc["region"],
-        azs=tuple(doc["azs"]),
+        azs=all_azs[:az_count],
         types=types,
         offerings={az: set(names) for az, names in doc["offerings"].items()},
         msk_families=tuple(doc.get("msk_families", ())),
@@ -1248,6 +1446,8 @@ def select_shape(
     catalogue: Catalogue,
     focus_generation: str,
     notes: list[str],
+    root_volume_demand_mib_s: float,
+    root_volume_demand_iops: int,
 ) -> Choice:
     """Pick the concrete type for one use case, from the YAML plus the live API.
 
@@ -1258,6 +1458,9 @@ def select_shape(
         catalogue: The cloud's answers.
         focus_generation: The focus level's generation policy.
         notes: Selection notes, appended to in place for the report.
+        root_volume_demand_mib_s: What a quiet root volume asks of the
+            instance -- sizing.yaml's floors.root_volume_demand_mib_s.
+        root_volume_demand_iops: Its IOPS counterpart.
 
     Returns:
         The chosen type, its fallback ladder and the price that chose it.
@@ -1353,12 +1556,38 @@ def select_shape(
         chosen = min(window, key=lambda t: t.price_usd_hour)
 
     _cross_check_generation(use_case, chosen, notes)
-    chosen, volumes = _size_up_to_carry_the_volumes(use_case, entry, demand, chosen, candidates, notes)
+    chosen, volumes = _size_up_to_carry_the_volumes(
+        use_case,
+        entry,
+        demand,
+        chosen,
+        candidates,
+        notes,
+        root_volume_demand_mib_s,
+        root_volume_demand_iops,
+    )
+
+    # `ladder` is the smallest type PER GENERATION that meets the raw demand,
+    # built before the volume step-up above ran. A fallback smaller than the
+    # (possibly stepped-up) chosen type -- or one whose own baseline cannot
+    # sustain the same volume profile -- would let EKS place the pool on a
+    # size the step-up existed to avoid the moment the chosen type is short of
+    # capacity, silently halving the node the step-up just bought.
+    fallbacks = [
+        t.name
+        for t in ladder
+        if t.name != chosen.name
+        and t.vcpu >= chosen.vcpu
+        and t.memory_gib >= chosen.memory_gib
+        and _volumes_fit(
+            _resolve_volumes(entry, demand, t, root_volume_demand_mib_s, root_volume_demand_iops), t
+        )
+    ]
 
     return Choice(
         use_case=use_case,
         instance_type=chosen.name,
-        fallbacks=[t.name for t in ladder if t.name != chosen.name],
+        fallbacks=fallbacks,
         vcpu=chosen.vcpu,
         memory_gib=chosen.memory_gib,
         generation=chosen.generation,
@@ -1377,7 +1606,12 @@ def select_shape(
 
 
 def select_msk_shape(
-    use_case: str, entry: dict[str, object], demand: Node, catalogue: Catalogue
+    use_case: str,
+    entry: dict[str, object],
+    demand: Node,
+    catalogue: Catalogue,
+    root_volume_demand_mib_s: float,
+    root_volume_demand_iops: int,
 ) -> Choice:
     """Pick the MSK broker type, which lives in MSK's own compute-family namespace.
 
@@ -1434,7 +1668,9 @@ def select_msk_shape(
         baseline_throughput_mib_s=0.0,
         maximum_iops=0,
         maximum_throughput_mib_s=0.0,
-        volumes=_resolve_volumes(entry, demand, reference),
+        volumes=_resolve_volumes(
+            entry, demand, reference, root_volume_demand_mib_s, root_volume_demand_iops
+        ),
         count=demand.count,
     )
 
@@ -1483,13 +1719,20 @@ def _apply_shape_overrides(
             choice.maximum_throughput_mib_s = replacement.maximum_throughput_mib_s
             continue
         key = "iops" if what == "iops" else "throughput_mib_s"
+        demand_key = "demand_iops" if what == "iops" else "demand_throughput_mib_s"
         for name, volume in choice.volumes.items():
             if volume.get("type") != "gp3" or name != "data":
                 continue
             core.overridden.append(
                 Override(choice.use_case, what, str(volume.get(key)), raw)
             )
-            volume[key] = _whole(choice.use_case, what, raw)
+            applied = _whole(choice.use_case, what, raw)
+            volume[key] = applied
+            # They asked for it: an override above what the workload was going
+            # to demand anyway RAISES the demand to match, so A3's baseline
+            # check and A7's own-ceiling check both see what the deployer
+            # actually wants provisioned, not what size_core quietly derived.
+            volume[demand_key] = max(float(volume.get(demand_key, 0) or 0), float(applied))
 
 
 def _size_up_to_carry_the_volumes(
@@ -1499,21 +1742,30 @@ def _size_up_to_carry_the_volumes(
     chosen: InstanceType,
     candidates: list[InstanceType],
     notes: list[str],
+    root_volume_demand_mib_s: float,
+    root_volume_demand_iops: int,
 ) -> tuple[InstanceType, dict[str, dict[str, object]]]:
-    """Step up within the family until the instance sustains its own volumes.
+    """Step up within the family until the instance sustains the DEMANDED IO.
 
-    An instance caps every volume behind it, and the cloud clamps silently, so a
-    profile the instance cannot sustain is fixed by taking a bigger instance
-    rather than by reporting it. A3 then fires only when no size in the family
-    can carry the profile at all.
+    An instance caps the real traffic to every volume behind it, and the cloud
+    clamps silently, so a profile the instance cannot sustain is fixed by
+    taking a bigger instance rather than by reporting it. A3 then fires only
+    when no size in the family can carry the demand at all. What a volume is
+    merely provisioned for -- gp3's own free ceiling, or a bigger one the
+    deployer asked for -- is not traffic the instance ever has to carry at
+    once, so it plays no part in this step-up; see _resolve_volumes and A7.
     """
     ladder = sorted(
         (t for t in candidates if t.generation == chosen.generation and t.vcpu >= chosen.vcpu),
         key=lambda t: (t.vcpu, t.memory_gib, t.name),
     )
-    volumes = _resolve_volumes(entry, demand, chosen)
+    volumes = _resolve_volumes(
+        entry, demand, chosen, root_volume_demand_mib_s, root_volume_demand_iops
+    )
     for candidate in ladder:
-        built = _resolve_volumes(entry, demand, candidate)
+        built = _resolve_volumes(
+            entry, demand, candidate, root_volume_demand_mib_s, root_volume_demand_iops
+        )
         if _volumes_fit(built, candidate):
             if candidate.name != chosen.name:
                 rise = (candidate.price_usd_hour or 0) - (chosen.price_usd_hour or 0)
@@ -1530,10 +1782,21 @@ def _size_up_to_carry_the_volumes(
 
 
 def _volumes_fit(volumes: dict[str, dict[str, object]], candidate: InstanceType) -> bool:
-    """Whether the instance's sustained baseline carries every volume behind it."""
-    total_iops = sum(int(v.get("iops", 0) or 0) for v in volumes.values() if v.get("type") == "gp3")
+    """Whether the instance's sustained baseline carries the node's DEMANDED IO.
+
+    Sums `demand_iops` / `demand_throughput_mib_s`, never the provisioned
+    `iops` / `throughput_mib_s` -- a volume's own ceiling is not traffic the
+    workload drives, and summing every volume's ceiling as though it were is
+    what put a tyre-kick deployment on an instance sized for nothing anyone
+    asked for. See _resolve_volumes for where a volume's demand comes from.
+    """
+    total_iops = sum(
+        int(v.get("demand_iops", 0) or 0) for v in volumes.values() if v.get("type") == "gp3"
+    )
     total_throughput = sum(
-        float(v.get("throughput_mib_s", 0) or 0) for v in volumes.values() if v.get("type") == "gp3"
+        float(v.get("demand_throughput_mib_s", 0) or 0)
+        for v in volumes.values()
+        if v.get("type") == "gp3"
     )
     if candidate.baseline_iops and total_iops > candidate.baseline_iops:
         return False
@@ -1561,9 +1824,40 @@ def _cross_check_generation(use_case: str, chosen: InstanceType, notes: list[str
 
 
 def _resolve_volumes(
-    entry: dict[str, object], demand: Node, chosen: InstanceType
+    entry: dict[str, object],
+    demand: Node,
+    chosen: InstanceType,
+    root_volume_demand_mib_s: float,
+    root_volume_demand_iops: int,
 ) -> dict[str, dict[str, object]]:
-    """Turn the shape's volume profiles into concrete sizes, IOPS and throughput."""
+    """Turn the shape's volume profiles into concrete sizes, IOPS and throughput.
+
+    Every gp3 volume carries two figures, kept apart on purpose:
+
+    `iops` / `throughput_mib_s` is what gets PROVISIONED -- the CreateVolume
+    numbers a StorageClass actually sets, and the ceiling A1/A2 check the
+    volume against. It is the shape's own literal (or the deployer's own
+    override, see _apply_shape_overrides) -- a generous, fixed ceiling the
+    workload is free to leave unused, never bumped up here to chase demand.
+
+    `demand_iops` / `demand_throughput_mib_s` is what the WORKLOAD actually
+    asks of the volume -- what A3 sums against the instance's sustained
+    baseline. The "data" volume is the one Node.iops / Node.throughput_mib_s
+    targets, so its demand is that real, workload-derived figure, decoupled
+    from whatever it is provisioned for; a demand above the provisioned
+    ceiling is refused by name (A7), never silently raised the way sizing
+    used to. Every OTHER gp3 volume -- root, always, since nothing here ever
+    sizes root from a workload -- carries `root_volume_demand_mib_s` /
+    `root_volume_demand_iops` instead: sizing.yaml's own small, honest guess
+    at what a quiet root disk actually asks of the instance (the OS,
+    container images and logs, never data), never gp3's own free 3,000 IOPS /
+    125 MiB/s minimum -- that free minimum is what CreateVolume provisions
+    the volume at, not traffic the instance has to carry, and treating it as
+    demand is the same counting error the "data" volume's own A3 fix already
+    corrected. The volume's own provisioned figure still caps it (`min`
+    below): the floor can never claim a demand above what the volume is
+    actually provisioned for.
+    """
     out: dict[str, dict[str, object]] = {}
     volumes = entry.get("volumes")
     if not isinstance(volumes, dict):
@@ -1576,7 +1870,12 @@ def _resolve_volumes(
         if disk_type == "nvme-instance-store":
             out[name] = {
                 "type": disk_type,
-                "size_gib": chosen.instance_store_gb,
+                # InstanceStorageInfo.TotalSizeInGB is AWS's own DECIMAL GB, not
+                # GiB -- the field this dict carries is size_gib, so convert at
+                # the read rather than copy a GB number under a GiB name. A
+                # 950 GB device becomes 884Gi, which is the device's real GiB
+                # capacity -- see build_values' clickhouse.objectStore.cacheSize.
+                "size_gib": int(chosen.instance_store_gb * BYTES_PER_GB / BYTES_PER_GIB),
                 "source": "instance-provided",
             }
             continue
@@ -1592,18 +1891,27 @@ def _resolve_volumes(
             size_gib = int(float(size)) if size else 0
         iops = int(float(str(profile.get("iops", "") or 0)))
         throughput = float(str(profile.get("throughput_mib_s", "") or 0))
-        if name == "data" and demand.iops:
-            iops = max(iops, demand.iops)
-        if name == "data" and demand.throughput_mib_s:
-            throughput = max(throughput, float(demand.throughput_mib_s))
         out[name] = {
             "type": disk_type,
             "size_gib": size_gib,
             "iops": iops,
             "throughput_mib_s": throughput,
+            "demand_iops": int(demand.iops) if name == "data" else 0,
+            "demand_throughput_mib_s": float(demand.throughput_mib_s) if name == "data" else 0.0,
             "source": formula,
         }
     _derive_baseline_throughput(volumes, out, chosen)
+    for name, volume in out.items():
+        # AFTER the instance-baseline derivation above, which is the one thing
+        # that can still move a non-data volume's own provisioned throughput
+        # (root's) -- the demand floor is capped at whatever ended up
+        # provisioned, never above it, so A7 can never fire on the floor
+        # itself.
+        if volume.get("type") == "gp3" and name != "data":
+            volume["demand_iops"] = min(root_volume_demand_iops, int(volume.get("iops", 0) or 0))
+            volume["demand_throughput_mib_s"] = min(
+                root_volume_demand_mib_s, float(volume.get("throughput_mib_s", 0) or 0)
+            )
     return out
 
 
@@ -1643,7 +1951,7 @@ def _derive_baseline_throughput(
 
 
 # ---------------------------------------------------------------------------
-# The silent-cap assertions, A1-A6
+# The silent-cap assertions, A1-A7
 # ---------------------------------------------------------------------------
 
 
@@ -1690,17 +1998,27 @@ def assert_caps(
 ) -> list[Finding]:
     """Assert the volume profile against every cap the cloud will not mention.
 
-    A1 size-derived IOPS, A2 throughput from IOPS, A3 the sum of the volumes
-    against the instance BASELINE, A4 the burst cliff, A5 the spend guard, A6 the
-    StorageClass parameters. The cloud clamps or bursts silently; these do not.
+    A1 size-derived IOPS, A2 throughput from IOPS, A3 the workload's DEMANDED
+    IO against the instance BASELINE, A4 the burst cliff, A5 the spend guard,
+    A6 the StorageClass parameters, A7 a demand above what a volume is
+    provisioned for. The cloud clamps or bursts silently; these do not.
 
-    A4 is FATAL only at focus performance, which promises the sustained maximum;
-    below it A3 already holds the profile to the instance's baseline, so a
-    burstable size is a warning that names the smallest sustained one.
+    A3 sums `demand_iops` / `demand_throughput_mib_s`, never what a volume is
+    merely provisioned for: a gp3 ceiling is money the deployer is free to
+    leave unused, and treating every volume's ceiling as traffic the instance
+    must carry AT ONCE is what put a tyre-kick deployment (near-zero real
+    demand) on an instance sized for two idle volumes' free minimums rather
+    than for anything it does. See _resolve_volumes for where a volume's
+    demand comes from -- sizing.yaml's small root-volume floor for a volume
+    nothing here ever asks a workload about, the real Node figure for "data".
+
+    A4 is FATAL only at focus performance, which promises the sustained
+    maximum; below it A3 already holds the DEMAND to the instance's baseline,
+    so a burstable size is a warning that names the smallest sustained one.
     """
     findings: list[Finding] = []
-    total_iops = 0
-    total_throughput = 0.0
+    total_demand_iops = 0
+    total_demand_throughput = 0.0
 
     for name, volume in choice.volumes.items():
         if volume.get("type") != "gp3":
@@ -1708,8 +2026,10 @@ def assert_caps(
         size_gib = int(volume.get("size_gib", 0) or 0)
         iops = int(volume.get("iops", 0) or 0)
         throughput = float(volume.get("throughput_mib_s", 0) or 0)
-        total_iops += iops
-        total_throughput += throughput
+        demand_iops = int(volume.get("demand_iops", 0) or 0)
+        demand_throughput = float(volume.get("demand_throughput_mib_s", 0) or 0)
+        total_demand_iops += demand_iops
+        total_demand_throughput += demand_throughput
 
         size_ceiling = min(GP3_MAX_IOPS, GP3_IOPS_PER_GIB * size_gib)
         if iops > size_ceiling:
@@ -1735,26 +2055,51 @@ def assert_caps(
                     True,
                 )
             )
+        # A workload that wants more of a volume than it is provisioned for is
+        # a deployer decision, not the resolver's to make quietly: name the
+        # override that raises the ceiling to match, rather than raising it
+        # on their behalf and hiding what actually got provisioned.
+        if demand_iops > iops:
+            findings.append(
+                Finding(
+                    "A7",
+                    choice.use_case,
+                    f"{name}: the workload demands {demand_iops:,} IOPS, above the {iops:,} "
+                    f"provisioned -- raise sizing.overrides.{choice.use_case}.iops",
+                    True,
+                )
+            )
+        if demand_throughput > throughput:
+            findings.append(
+                Finding(
+                    "A7",
+                    choice.use_case,
+                    f"{name}: the workload demands {demand_throughput:,.0f} MiB/s, above the "
+                    f"{throughput:,.0f} provisioned -- raise "
+                    f"sizing.overrides.{choice.use_case}.throughput_mibs",
+                    True,
+                )
+            )
 
-    if choice.baseline_iops and total_iops > choice.baseline_iops:
+    if choice.baseline_iops and total_demand_iops > choice.baseline_iops:
         findings.append(
             Finding(
                 "A3",
                 choice.use_case,
-                f"the volumes ask for {total_iops:,} IOPS and {choice.instance_type} sustains "
-                f"{choice.baseline_iops:,} (it reaches {choice.maximum_iops:,} for 30 minutes once "
-                f"a day) -- the instance is the ceiling, not the volume",
+                f"the workload demands {total_demand_iops:,} IOPS and {choice.instance_type} "
+                f"sustains {choice.baseline_iops:,} (it reaches {choice.maximum_iops:,} for 30 "
+                f"minutes once a day) -- the instance is the ceiling, not the volume",
                 True,
             )
         )
-    if choice.baseline_throughput_mib_s and total_throughput > choice.baseline_throughput_mib_s:
+    if choice.baseline_throughput_mib_s and total_demand_throughput > choice.baseline_throughput_mib_s:
         findings.append(
             Finding(
                 "A3",
                 choice.use_case,
-                f"the volumes ask for {total_throughput:,.0f} MiB/s and {choice.instance_type} "
-                f"sustains {choice.baseline_throughput_mib_s:,.0f} (it reaches "
-                f"{choice.maximum_throughput_mib_s:,.0f} for 30 minutes once a day)",
+                f"the workload demands {total_demand_throughput:,.0f} MiB/s and "
+                f"{choice.instance_type} sustains {choice.baseline_throughput_mib_s:,.0f} (it "
+                f"reaches {choice.maximum_throughput_mib_s:,.0f} for 30 minutes once a day)",
                 True,
             )
         )
@@ -1807,7 +2152,17 @@ def assert_caps(
                     True,
                 )
             )
-        if "iopsPerGB" in volume or "allowAutoIOPSPerGBIncrease" in volume:
+        # Checked against the SHAPE ENTRY compute-shapes.yaml declares, not the
+        # built `volume` dict: _resolve_volumes only ever copies
+        # type/size_gib/iops/throughput_mib_s/source into that dict, so it can
+        # never carry either key and this check would never fire against it.
+        # A future compute-shapes.yaml edit naming either field by mistake --
+        # thinking it is a real EBS CSI StorageClass parameter -- is what this
+        # is meant to catch.
+        raw_profile = _at(entry, "volumes", name)
+        if isinstance(raw_profile, dict) and (
+            "iopsPerGB" in raw_profile or "allowAutoIOPSPerGBIncrease" in raw_profile
+        ):
             findings.append(
                 Finding(
                     "A6",
@@ -1851,18 +2206,23 @@ def _storage_class(choice: Choice, name: str, volume: dict[str, object]) -> dict
 
 
 def _shape_volumes(choice: Choice) -> dict[str, dict[str, object]]:
-    """The volume profiles without the deployment's own sizes.
+    """The volume profiles without the deployment's own sizes or demand.
 
-    This file is committed and diffed to show API and policy drift, so a size
-    derived from one customer's estimate does not belong in it -- that number
-    goes to the tfvars and the chart values. A fixed or instance-provided size is
-    a property of the shape and stays.
+    This file is committed and diffed to show API and policy drift, so a
+    number derived from one customer's estimate does not belong in it -- that
+    goes to the tfvars and the chart values. A fixed or instance-provided
+    size is a property of the shape and stays; `demand_iops` /
+    `demand_throughput_mib_s` are always deployment-specific (the workload's
+    own Node figures, or root's derived floor for THIS instance choice) and
+    never belong here either, the same as a formula-derived size_gib.
     """
     out: dict[str, dict[str, object]] = {}
     for name, volume in choice.volumes.items():
         kept = dict(volume)
         if volume.get("source") not in ("fixed", "instance-provided"):
             kept.pop("size_gib", None)
+        kept.pop("demand_iops", None)
+        kept.pop("demand_throughput_mib_s", None)
         out[name] = kept
     return out
 
@@ -1921,13 +2281,20 @@ def merge_resolved(
     return ordered
 
 
-def build_tfvars(core: Core, choices: dict[str, Choice]) -> dict[str, object]:
+def build_tfvars(core: Core, choices: dict[str, Choice], dial: Dial) -> dict[str, object]:
     """The tofu inputs -- only the two keys the AWS root's variables.tf declares.
 
     node_pools and resolved_shapes are the sizing answer; every other variable is
     the dial's, and a key the root does not declare is an error there.
+
+    This script is the SINGLE writer of node_pools: it starts from the dial's
+    own node_pools block (dial.node_pools, e.g. `system` -- a group a deployer
+    sizes by hand rather than a ratio deriving) and adds the pools it derives
+    on top. render_dial.py no longer emits node_pools at all, so there is
+    exactly one place the two tfvars producers could otherwise collide on this
+    variable, and this is it.
     """
-    pools: dict[str, object] = {}
+    pools: dict[str, object] = dict(dial.node_pools)
     for use_case, choice in choices.items():
         if use_case in NOT_A_NODE_POOL:
             continue
@@ -2202,7 +2569,13 @@ def build_values(
         kafka["messageMaxBytes"] = core.message_chain_bytes
         kafka["sizing"] = {"peakMbS": round(core.peak_mb_s, 1)}
         kafka["retention"] = {
-            "assumedConsumerDowntimeH": int(core.retention_hours),
+            # Two SEPARATE fields, matching the chart's own
+            # (assumedConsumerDowntimeH + archiverLagH) x 3600000 formula --
+            # core.retention_hours is their SUM, used for the disk-sizing math
+            # above, and emitting it under assumedConsumerDowntimeH alone would
+            # double the archiver term the moment archiverLagH is ever also set.
+            "assumedConsumerDowntimeH": int(core.consumer_downtime_hours),
+            "archiverLagH": int(core.archiver_lag_hours),
             "usableFraction": CHART_DEFAULTS["usable_fraction"][0],
         }
         kafka["resources"] = {
@@ -2211,6 +2584,14 @@ def build_values(
         }
         kafka["storage"] = {"size": f"{broker.disk_gib}Gi"}
         kafka["broker"] = {"networkMbS": CHART_DEFAULTS["broker_network_mb_s"][0]}
+        # validate.yaml refuses a KEDA ceiling below kafka.replicas outright --
+        # the chart's own static default (6) is right at the floor and wrong
+        # the moment the resolved broker count passes it. Twice the resolved
+        # count, same headroom convention build_karpenter_pools already uses
+        # for its own NodePool limits, capped at the partition count so a
+        # broker added at the ceiling still gets a share (partitions is always
+        # a multiple of brokers, so it is never below broker.count either).
+        kafka["autoscaling"] = {"maxBrokers": min(core.partitions, broker.count * 2)}
     if controller:
         kafka["controllerPool"] = {
             "replicas": controller.count,
@@ -2242,12 +2623,22 @@ def build_values(
         ch_choice = choices.get("clickhouse") if choices else None
         cache = ch_choice.volumes.get("cache") if ch_choice else None
         if isinstance(cache, dict) and cache.get("size_gib"):
+            # _storage.tpl's own guard refuses cache.volume: instance-store
+            # unless storageModel is cached-object -- the model derives the
+            # object store, and a fragment that sets the cache but not the
+            # model fails the chart's render outright (helm/charts/
+            # clickhouse-cluster/templates/_storage.tpl).
             ch["objectStore"] = {
                 "cache": {"volume": "instance-store"},
                 "cacheSize": f"{cache['size_gib']}Gi",
             }
+            ch["storageModel"] = "cached-object"
         else:
+            # No object-store cache to place -- local is the model this cloud
+            # (or on-prem) resolves to unless a deploy-repo overlay says
+            # otherwise; the resolver never derives tiered-block.
             ch["objectStore"] = {"cache": {"volume": "pvc"}}
+            ch["storageModel"] = "local"
     if keeper:
         ch["keeper"] = {
             "replicas": keeper.count,
@@ -2627,9 +3018,9 @@ def run_resolve(args: argparse.Namespace) -> int:
         # captured default rather than refusing outright.
         region = args.region or dial.region or "us-west-2"
         if args.live:
-            catalogue = fetch_live(region)
+            catalogue = fetch_live(region, dial.az_count)
         elif args.fixtures:
-            catalogue = fetch_fixtures(args.fixtures, region)
+            catalogue = fetch_fixtures(args.fixtures, region, dial.az_count)
         else:
             raise ResolveError(
                 f"{dial.cloud} is a populated cloud, so the resolve needs an API: pass --live or "
@@ -2641,6 +3032,11 @@ def run_resolve(args: argparse.Namespace) -> int:
         if dial.kafka_provider == "msk-express":
             wanted = [u for u in wanted if u not in ("kafka-broker", "kraft-controller")]
             wanted.append("msk-broker")
+        elif dial.kafka_provider in SAAS_KAFKA_PROVIDERS:
+            # No EC2 instance to select for a vendor-managed body -- neither
+            # kafka-broker nor msk-broker (that name is MSK's own namespace)
+            # -- so no broker node pool is emitted at all.
+            wanted = [u for u in wanted if u not in ("kafka-broker", "kraft-controller")]
         # ci-burst is not a core requirement -- size_core derives no node for it,
         # so it always resolves off the shape's own floor size -- but every
         # populated cloud carries retryable build/test work, so it always joins
@@ -2658,9 +3054,25 @@ def run_resolve(args: argparse.Namespace) -> int:
             )
             source = str(entry.get("source", ""))
             if source == "msk-computefamily":
-                choice = select_msk_shape(use_case, entry, demand, catalogue)
+                choice = select_msk_shape(
+                    use_case,
+                    entry,
+                    demand,
+                    catalogue,
+                    core.root_volume_demand_mib_s,
+                    core.root_volume_demand_iops,
+                )
             elif source == "ec2":
-                choice = select_shape(use_case, entry, demand, catalogue, focus_generation, notes)
+                choice = select_shape(
+                    use_case,
+                    entry,
+                    demand,
+                    catalogue,
+                    focus_generation,
+                    notes,
+                    core.root_volume_demand_mib_s,
+                    core.root_volume_demand_iops,
+                )
             else:
                 notes.append(
                     f"{use_case} resolves against {source}, not an API this resolver reads -- its "
@@ -2720,8 +3132,18 @@ def run_resolve(args: argparse.Namespace) -> int:
         resolved_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
         written.append(resolved_path)
 
-        tfvars_path = out / "sizing" / f"{core.tier}.auto.tfvars.json"
-        tfvars_path.write_text(json.dumps(build_tfvars(core, choices), indent=2) + "\n", encoding="utf-8")
+        # At the ROOT of --out, beside render_dial.py --tofu's own
+        # dial.auto.tfvars.json -- OpenTofu auto-loads *.auto.tfvars* only
+        # from the root module directory, never a subdirectory, and this is
+        # the single writer of the node_pools variable the two files used to
+        # collide on (build_tfvars merges dial.node_pools with what it
+        # derives). Named sizing.auto.tfvars.json, never <tier>.auto.tfvars
+        # .json, so tofu's own alphabetical load order is stable regardless
+        # of which tier was resolved.
+        tfvars_path = out / "sizing.auto.tfvars.json"
+        tfvars_path.write_text(
+            json.dumps(build_tfvars(core, choices, dial), indent=2) + "\n", encoding="utf-8"
+        )
         written.append(tfvars_path)
 
     values_path = out / "sizing" / f"{core.tier}.values.yaml"
@@ -2770,17 +3192,22 @@ def run_resolve(args: argparse.Namespace) -> int:
         print(f"resolve_sizing: wrote {path}", file=sys.stderr)
     for finding in findings:
         print(f"resolve_sizing: {finding.rule} {finding.use_case}: {finding.message}", file=sys.stderr)
-    if locked_changes:
-        # --migrate was passed (the refusal above already returned otherwise):
-        # the change was accepted and the artefacts written, so this run is a
-        # clean success whatever the assertions found.
-        return 0
+    # --migrate (already printed MIGRATING above, and reported here as a
+    # normal finding if it also happens to be fatal) accepts the LOCKED DIFF,
+    # never the caps: a fatal A1/A2/A3 (a volume profile the cloud will
+    # reject or silently clamp) still exits 1 on a migration run exactly as
+    # it would on any other, so the artefacts having been written is never
+    # read as "the assertions passed".
     return 1 if any(f.fatal for f in findings) else 0
 
 
 def run_capture(args: argparse.Namespace) -> int:
     """Fetch the live AWS answers once, scrub them and write the fixture."""
-    catalogue = fetch_live(args.region)
+    # The broadest az_count the tofu root accepts (network.az_count's own 2-6
+    # range), so a fixture captured once serves any dial's az_count without
+    # needing a re-capture -- fetch_fixtures slices down to what a resolve
+    # actually asks for.
+    catalogue = fetch_live(args.region, az_count=6)
     path = write_fixture(catalogue, args.fixtures)
     print(
         f"resolve_sizing: captured {len(catalogue.types)} instance types "

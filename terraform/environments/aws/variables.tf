@@ -75,7 +75,7 @@ variable "network" {
   description = "nat = per-az at the scale tier, single below it. az_count is how many availability zones the VPC spans -- 2 for cost, 3 (the default) for the usual spread, up to the region's own ceiling."
   type = object({
     nat      = string
-    az_count = number
+    az_count = optional(number, 3)
   })
 
   validation {

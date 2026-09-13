@@ -1,5 +1,16 @@
-{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") .Values.kafka.autoscaling.enabled }}
 {{- $a := .Values.kafka.autoscaling }}
+{{- $hasPrometheusTrigger := and $a.metrics.usePrometheus $a.metrics.prometheusUrl }}
+{{/*
+KEDA's ScaledObject schema requires a non-empty `triggers` list -- an armed
+autoscaler with no landing source declared and no Prometheus endpoint wired up
+would render `triggers: null`, which the CRD rejects and the kafka Application
+never syncs. So the whole autoscaler -- ConfigMap, TriggerAuthentication and
+ScaledObject alike -- renders only when at least one trigger actually would.
+NOTES.txt tells the operator why nothing rendered, since kafka.autoscaling.enabled
+being true with no ScaledObject to show for it looks like a bug rather than the
+armed-but-idle state it is.
+*/}}
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") $a.enabled (or .Values.kafka.landingTopics.sources $hasPrometheusTrigger) }}
 {{- $minReplicas := int (include "dfe-kafka.brokerCount" .) }}
 # The broker-count autoscaler: a KEDA ScaledObject whose scaleTargetRef is the
 # broker KafkaNodePool (kafka-nodepool.yaml), NOT the Kafka CR -- Strimzi 1.2.0
@@ -42,6 +53,12 @@ spec:
     - parameter: password
       name: {{ .Values.user.name }}
       key: password
+    # Strimzi's own cluster CA, the same secret + key cruise-control-ui.yaml
+    # trusts for its proxy hop -- so KEDA verifies the broker's certificate
+    # rather than taking the TLS listener on faith.
+    - parameter: ca
+      name: {{ .Values.kafka.name }}-cluster-ca-cert
+      key: ca.crt
   configMapTargetRef:
     - parameter: username
       name: {{ .Values.kafka.name }}-broker-scaler-username
@@ -92,16 +109,24 @@ spec:
     - type: kafka
       metricType: Value
       metadata:
-        bootstrapServers: {{ include "dfe-kafka.bootstrapServers" $ | quote }}
+        # Deliberately NOT dfe-kafka.bootstrapServers: that helper is pinned to
+        # the plain listener (port 9092, tls: false) for kafbat and the
+        # otel-collector's metrics receiver, and changing it would flip both.
+        # KEDA is the one client here carrying a broker password over the
+        # wire on its own connection (no proxy in front of it, unlike
+        # cruise-control-ui), so it takes the cluster's "tls" listener
+        # (kafka.yaml, port 9093, tls: true) instead, verified against the
+        # cluster CA above rather than run bare.
+        bootstrapServers: {{ printf "%s-kafka-bootstrap:9093" $.Values.kafka.name | quote }}
         topic: {{ printf "%s%s" $s.name $.Values.kafka.landingTopics.suffix | quote }}
         consumerGroup: {{ printf "dfe-transform-%s-%s" $kind $s.name | quote }}
         lagThreshold: {{ int $a.lagThreshold | quote }}
         sasl: scram_sha512
-        tls: disable
+        tls: enable
       authenticationRef:
         name: {{ $.Values.kafka.name }}-broker-scaler-auth
     {{- end }}
-    {{- if and $a.metrics.usePrometheus $a.metrics.prometheusUrl }}
+    {{- if $hasPrometheusTrigger }}
     # Opt-in: needs BOTH a queryable PromQL endpoint (prometheusUrl) and
     # Strimzi's Kafka JMX metrics wired onto the Kafka CR -- neither ships
     # with this chart today (validateAutoscaling only checks the URL is set

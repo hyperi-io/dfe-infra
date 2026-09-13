@@ -50,10 +50,15 @@ loader acknowledge an insert the server has not flushed.
 
 Called from validate.yaml so it fires in every mode. wait_for_async_insert = 0
 turns every INSERT into fire-and-forget, and the loader commits its Kafka offset
-on the ack -- so the rows are lost with no error anywhere.
+on the ack -- so the rows are lost with no error anywhere. Checked against every
+falsy spelling YAML and ClickHouse both accept, not just the literal string "0":
+a values file writing an unquoted `false` renders the Go bool false, and
+toString on THAT gives "false", which the old string-only check let straight
+through.
 */}}
 {{- define "dfe-clickhouse.validateUserProfile" -}}
-{{- if eq (toString .Values.clickhouse.userProfile.waitForAsyncInsert) "0" -}}
-{{- fail "clickhouse.userProfile.waitForAsyncInsert must not be 0 -- the loader would commit a Kafka offset on an insert the server never flushed" -}}
+{{- $v := .Values.clickhouse.userProfile.waitForAsyncInsert -}}
+{{- if or (and (kindIs "bool" $v) (not $v)) (has (toString $v | lower) (list "0" "false" "no" "off")) -}}
+{{- fail (printf "clickhouse.userProfile.waitForAsyncInsert must not be %v -- the loader would commit a Kafka offset on an insert the server never flushed" $v) -}}
 {{- end -}}
 {{- end }}

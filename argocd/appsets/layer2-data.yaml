@@ -136,6 +136,31 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}'
               - name: kafka.brokerHosts
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
+            # `values` (a YAML string) rather than a structured parameters block,
+            # same reason layer2-platform.yaml gives: a per-element conditional
+            # cannot live in a field this file's own tests parse as plain YAML
+            # before any Go templating runs.
+            values: |
+              {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- $bootstrapIam := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap_iam" }}
+              {{- if and (eq .app "kafka") (or $kafkaMode $bootstrapIam) }}
+              # kafka.mode and the MSK bootstrap Job's own IAM endpoint --
+              # rendered ONLY when bootstrap.sh set the annotation (a managed
+              # broker), so a strimzi/redpanda deploy's kafka.mode stays
+              # exactly what its profile overlay says. Both are read by the
+              # kafka chart's msk-bootstrap-job.yaml / msk-bootstrap-rbac.yaml,
+              # which render only at mode=external + provider=msk + a non-empty
+              # bootstrapIam (gate-3-correctness.md P1-5).
+              kafka:
+                {{- if $kafkaMode }}
+                mode: {{ $kafkaMode | quote }}
+                {{- end }}
+                {{- if $bootstrapIam }}
+                external:
+                  msk:
+                    bootstrapIam: {{ $bootstrapIam | quote }}
+                {{- end }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

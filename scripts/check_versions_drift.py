@@ -428,6 +428,14 @@ CHECKS += [
         Path("helm/charts/karpenter-pools/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # The node image alias is dated, not `latest`, precisely so it has a pin
+    # this check can hold it to -- see the pin's own comment in versions.yaml.
+    Check(
+        "karpenter-pools AL2023 AMI alias",
+        "operators.karpenter-al2023-ami",
+        Path("helm/charts/karpenter-pools/values.yaml"),
+        r'amiAlias:\s*al2023@([^\s"]+)',
+    ),
     # The worked example names a stack version the same way a chart names an
     # image tag, so it goes stale the moment `current` moves.
     Check(

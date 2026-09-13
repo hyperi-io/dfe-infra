@@ -31,7 +31,9 @@ this checker can attribute to one use case, so a shortfall there is for the
 operator to read, not for this script to refuse on.
 
 Stdlib only, like every other script here: ``kubectl`` is read from PATH via
-subprocess, exactly as resolve_sizing.py reads ``aws``.
+``kubectl_cli``, the shared subprocess wrapper `bootstrap/check_platform.py`
+also uses -- the kubectl counterpart to `aws_cli`, which `resolve_sizing.py`
+and `cloud_sweep.py` share for ``aws``.
 """
 
 from __future__ import annotations
@@ -40,9 +42,10 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+import kubectl_cli
 
 # A Kubernetes resource quantity: a decimal, then an optional suffix. cpu
 # carries `m` (millicores) or nothing (whole cores); memory carries the binary
@@ -97,12 +100,12 @@ def parse_quantity(raw: str) -> float:
 
 def kubectl_get_nodes(kubeconfig: str | None) -> object:
     """`kubectl get nodes -o json`, from PATH."""
-    cmd = ["kubectl"]
+    cmd = []
     if kubeconfig:
         cmd += ["--kubeconfig", kubeconfig]
     cmd += ["get", "nodes", "-o", "json"]
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)
+        done = kubectl_cli.run_kubectl(cmd, timeout=60)
     except FileNotFoundError as err:
         raise CapacityError("kubectl is not on PATH") from err
     if done.returncode != 0:

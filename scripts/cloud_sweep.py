@@ -38,23 +38,42 @@ code, and the named --exclude-bucket (the tofu state bucket) is never
 touched. Exit 0 means the tagged set is empty; exit 1 means resources
 remain, printed for cleanup.
 
+--delete refuses to run without --account, checked against
+`aws sts get-caller-identity` before anything is touched -- a 12-digit id
+matched against the live session, never a name, because a name describes
+intent and an id is what the delete calls actually land against. It then
+prints the full eligible list and asks for an explicit "yes" before
+deleting anything, unless --yes is given to skip that prompt (for CI).
+
+--include-untagged is DANGEROUS with --delete. It drops the one filter that
+keeps this script's own deletions to what the tag-filter names, so --delete
+--include-untagged removes EVERY resource the 21 listers found in --region,
+tagged or not, in whatever account --account named -- EC2 instances, EKS and
+MSK clusters, NAT gateways, security groups, non-default VPCs and their
+subnets, Route 53 zones, log groups, Secrets Manager secrets (with
+--force-delete-without-recovery), KMS aliases and S3 buckets (with
+--exclude-bucket the only exemption). Reach for it only when the sweep is
+meant to clear a region entirely, never as a way to speed up an ordinary
+cleanup.
+
 Stdlib only: every AWS call shells out to the `aws` CLI with --output json.
 
     python3 scripts/cloud_sweep.py --region us-west-2
     python3 scripts/cloud_sweep.py --region us-west-2 --delete \\
-        --exclude-bucket hyperi-s3-dfe-test-tfstate
+        --account 000000000000 --exclude-bucket example-tfstate-bucket
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+
+import aws_cli
 
 AWS_TIMEOUT = 60  # seconds allowed for one aws CLI call before it is a hang, not a slow API
 POLL_TIMEOUT = 300  # seconds to wait for an async delete (NAT gateway, EKS, MSK) to finish
@@ -86,13 +105,7 @@ class Resource:
 
 def run_aws(args: list[str], region: str) -> dict:
     """Run one `aws ... --output json` call and return its parsed body."""
-    result = subprocess.run(
-        ["aws", *args, "--region", region, "--output", "json"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=AWS_TIMEOUT,
-    )
+    result = aws_cli.run_aws([*args, "--region", region, "--output", "json"], timeout=AWS_TIMEOUT)
     if result.returncode != 0:
         raise CloudSweepError(f"aws {' '.join(args)} failed: {result.stderr.strip()}")
     text = result.stdout.strip()
@@ -101,13 +114,7 @@ def run_aws(args: list[str], region: str) -> dict:
 
 def run_aws_text(args: list[str], region: str) -> None:
     """Run one `aws` call whose output is not JSON (e.g. `s3 rm`), for its side effect."""
-    result = subprocess.run(
-        ["aws", *args, "--region", region],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=AWS_TIMEOUT,
-    )
+    result = aws_cli.run_aws([*args, "--region", region], timeout=AWS_TIMEOUT)
     if result.returncode != 0:
         raise CloudSweepError(f"aws {' '.join(args)} failed: {result.stderr.strip()}")
 
@@ -835,12 +842,50 @@ def parse_tag_filter(raw: str) -> dict[str, str]:
     return pairs
 
 
+def verify_account(region: str, expected_account: str) -> None:
+    """Refuse to delete unless the live session's account matches --account.
+
+    A name describes intent; only the id `aws sts get-caller-identity` returns
+    describes which account the delete calls actually land against.
+    """
+    identity = run_aws(["sts", "get-caller-identity"], region)
+    actual = identity.get("Account", "")
+    if actual != expected_account:
+        raise CloudSweepError(
+            f"--account {expected_account} does not match the authenticated account "
+            f"{actual or 'unknown'} -- re-authenticate, or correct --account. Refusing to delete."
+        )
+
+
+def confirm_delete(eligible: list[Resource], *, skip_prompt: bool) -> bool:
+    """Print the full eligible list and get an explicit "yes", unless --yes skips the prompt."""
+    print(f"About to delete {len(eligible)} resource(s):")
+    for r in eligible:
+        print(f"  {r.kind} {r.name}")
+    if skip_prompt:
+        return True
+    reply = input(f"Type 'yes' to delete these {len(eligible)} resource(s): ")
+    return reply.strip() == "yes"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="List, and on --delete remove, leftover AWS resources from a DFE cloud proof."
     )
     parser.add_argument("--region", required=True, help="AWS region to sweep, e.g. us-west-2")
     parser.add_argument("--delete", action="store_true", help="delete what is found instead of only listing it")
+    parser.add_argument(
+        "--account",
+        default=None,
+        help="12-digit AWS account id --delete must run against. Required with --delete, and checked "
+        "against `aws sts get-caller-identity` before anything is touched -- refused on a mismatch.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="skip the interactive confirmation --delete otherwise prints the eligible list and asks for "
+        "(for CI; a human runs without it)",
+    )
     parser.add_argument(
         "--exclude-bucket", default=None, help="S3 bucket name never to touch, e.g. the tofu state bucket"
     )
@@ -852,7 +897,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--include-untagged",
         action="store_true",
-        help="also delete and count resources that carry none of the tag-filter tags",
+        help="DANGEROUS with --delete: also delete and count resources that carry none of the tag-filter "
+        "tags -- turns --delete into a region-wide wipe of everything the listers found in --account, "
+        "tagged or not (--exclude-bucket is the one exemption). See the module docstring.",
     )
     return parser
 
@@ -861,11 +908,29 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     tag_filter = parse_tag_filter(args.tag_filter)
 
+    if args.delete:
+        if not args.account:
+            print(
+                "--delete needs --account <12-digit-id>, checked against the live session -- "
+                "refusing to delete against whatever account happens to be authenticated.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            verify_account(args.region, args.account)
+        except CloudSweepError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
     resources = collect(args.region, tag_filter, args.exclude_bucket)
     print_report(resources)
     eligible = filter_for_delete(resources, include_untagged=args.include_untagged, exclude_bucket=args.exclude_bucket)
 
     if args.delete and eligible:
+        if not confirm_delete(eligible, skip_prompt=args.yes):
+            print("delete cancelled: no 'yes' received", file=sys.stderr)
+            return 1
+
         failures = delete_resources(eligible, args.region)
         resources = collect(args.region, tag_filter, args.exclude_bucket)
         eligible = filter_for_delete(

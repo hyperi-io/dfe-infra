@@ -239,9 +239,9 @@ variable "scram_password" {
 }
 
 variable "secret_recovery_window_days" {
-  description = "Secrets Manager's deletion delay. Zero because a throwaway deployment is torn down and rebuilt under the same name, and the default 30-day window would make the second create fail on a name that still exists."
+  description = "Secrets Manager's deletion delay. Defaults to the vendor's own 30 days -- a persistent deployment's default -- and the caller sets 0 explicitly for a throwaway deployment torn down and rebuilt under the same name, where the 30-day window would make the second create fail on a name that still exists."
   type        = number
-  default     = 0
+  default     = 30
 }
 
 variable "eks_cluster_name" {

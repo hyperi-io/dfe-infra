@@ -14,7 +14,7 @@
 
     python3 -m pytest scripts/tests/test_cloud_sweep.py -q
 
-Every test mocks `subprocess.run` with fixture JSON lifted from the real aws
+Every test mocks `aws_cli.run_aws` with fixture JSON lifted from the real aws
 CLI shapes (list-of-Key/Value tags for EC2, TagSet for ENIs, a plain dict for
 EKS/MSK) -- no network call and no real account is touched.
 """
@@ -49,13 +49,13 @@ def _fail(stderr: str = "boom") -> subprocess.CompletedProcess:
 
 
 def _mock_run(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess) -> None:
-    """Replace subprocess.run with one that returns `responses` in call order."""
+    """Replace aws_cli.run_aws with one that returns `responses` in call order."""
     queue = list(responses)
 
     def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
         return queue.pop(0)
 
-    monkeypatch.setattr(cloud_sweep.subprocess, "run", fake_run)
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
 
 
 # ---------------------------------------------------------------------------
@@ -274,10 +274,10 @@ def test_kms_aliases_skip_the_aws_managed_ones(monkeypatch: pytest.MonkeyPatch) 
 def test_s3_buckets_treat_a_tagging_error_as_untagged(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_run(
         monkeypatch,
-        _ok({"Buckets": [{"Name": "hyperi-s3-dfe-test-tfstate", "CreationDate": "2026-08-01T00:00:00+00:00"}]}),
+        _ok({"Buckets": [{"Name": "example-tfstate-bucket", "CreationDate": "2026-08-01T00:00:00+00:00"}]}),
         _fail("An error occurred (NoSuchTagSet)"),
     )
-    found = cloud_sweep.list_s3_buckets(REGION, TAG_FILTER, exclude_bucket="hyperi-s3-dfe-test-tfstate")
+    found = cloud_sweep.list_s3_buckets(REGION, TAG_FILTER, exclude_bucket="example-tfstate-bucket")
     assert found[0].tagged is False
     assert found[0].extra["excluded"] == "True"
 
@@ -340,8 +340,8 @@ def _resource(kind: str, rid: str, *, tagged: bool) -> cloud_sweep.Resource:
 
 
 def test_the_excluded_bucket_is_never_eligible_even_if_tagged() -> None:
-    resources = [_resource("s3-bucket", "hyperi-s3-dfe-test-tfstate", tagged=True), _resource("ec2-instance", "i-1", tagged=True)]
-    eligible = cloud_sweep.filter_for_delete(resources, include_untagged=False, exclude_bucket="hyperi-s3-dfe-test-tfstate")
+    resources = [_resource("s3-bucket", "example-tfstate-bucket", tagged=True), _resource("ec2-instance", "i-1", tagged=True)]
+    eligible = cloud_sweep.filter_for_delete(resources, include_untagged=False, exclude_bucket="example-tfstate-bucket")
     assert [r.id for r in eligible] == ["i-1"]
 
 
@@ -410,7 +410,7 @@ def test_main_exits_zero_when_nothing_is_eligible(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         cloud_sweep,
         "collect",
-        lambda region, tf, bucket: [_resource("s3-bucket", "hyperi-s3-dfe-test-tfstate", tagged=False)],
+        lambda region, tf, bucket: [_resource("s3-bucket", "example-tfstate-bucket", tagged=False)],
     )
     code = cloud_sweep.main(["--region", REGION])
     assert code == 0
@@ -428,9 +428,80 @@ def test_main_with_delete_recollects_and_reports_what_survived(monkeypatch: pyte
     first = [_resource("ec2-instance", "i-1", tagged=True)]
     second: list[cloud_sweep.Resource] = []
     responses = iter([first, second])
+    monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
     monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket: next(responses))
     monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region: [])
+    code = cloud_sweep.main(["--region", REGION, "--delete", "--account", "000000000000", "--yes"])
+    assert code == 0
+    assert "sweep clean" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# --delete's account guard and confirmation prompt
+# ---------------------------------------------------------------------------
+
+
+def test_verify_account_passes_when_the_identity_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _ok({"Account": "000000000000"}))
+    cloud_sweep.verify_account(REGION, "000000000000")  # must not raise
+
+
+def test_verify_account_raises_on_a_mismatched_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _ok({"Account": "111111111111"}))
+    with pytest.raises(cloud_sweep.CloudSweepError, match="000000000000") as excinfo:
+        cloud_sweep.verify_account(REGION, "000000000000")
+    assert "111111111111" in str(excinfo.value)
+
+
+def test_delete_without_account_is_refused_before_any_aws_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("no aws call should happen before --account is checked")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
     code = cloud_sweep.main(["--region", REGION, "--delete"])
+    assert code == 2
+    assert "--account" in capsys.readouterr().err
+
+
+def test_delete_refuses_when_the_authenticated_account_does_not_match(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _mock_run(monkeypatch, _ok({"Account": "111111111111"}))
+    code = cloud_sweep.main(["--region", REGION, "--delete", "--account", "000000000000"])
+    assert code == 2
+    assert "does not match" in capsys.readouterr().err
+
+
+def test_delete_without_yes_prompts_and_cancels_on_anything_but_yes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
+    monkeypatch.setattr(
+        cloud_sweep, "collect", lambda region, tf, bucket: [_resource("ec2-instance", "i-1", tagged=True)]
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "no")
+    code = cloud_sweep.main(["--region", REGION, "--delete", "--account", "000000000000"])
+    assert code == 1
+    assert "cancelled" in capsys.readouterr().err
+
+
+def test_delete_with_yes_skips_the_prompt_and_deletes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
+    first = [_resource("ec2-instance", "i-1", tagged=True)]
+    second: list[cloud_sweep.Resource] = []
+    responses = iter([first, second])
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket: next(responses))
+    monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region: [])
+
+    def refuse_to_prompt(prompt: str) -> str:
+        raise AssertionError("--yes must skip the interactive confirmation entirely")
+
+    monkeypatch.setattr("builtins.input", refuse_to_prompt)
+    code = cloud_sweep.main(["--region", REGION, "--delete", "--account", "000000000000", "--yes"])
     assert code == 0
     assert "sweep clean" in capsys.readouterr().out
 

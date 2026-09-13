@@ -68,15 +68,6 @@ dns:
   private_zone: dfe-example.internal
   public_zone: dfe.example.com
 
-node_pools:
-  system:
-    shape_ref: eks-system
-    min_size: 2
-    max_size: 3
-    desired_size: 2
-    capacity_type: ON_DEMAND
-    disk_gb: 40
-
 telemetry:
   aws:
     sink: cloudwatch
@@ -147,9 +138,13 @@ def render(**kwargs: object) -> dict[str, object]:
 
 
 def test_the_render_emits_exactly_what_the_root_declares() -> None:
-    """A variable the root declares and the render omits prompts on an unattended plan."""
+    """A variable the root declares and the render omits prompts on an unattended plan --
+    except node_pools and resolved_shapes, which resolve_sizing.py's build_tfvars is now
+    the SINGLE writer of (see _tofu_vars's own docstring): the two tfvars producers used
+    to collide on node_pools (the correctness review's P1-3), so this render emits neither
+    variable at all rather than risk the same collision on resolved_shapes too."""
     declared = set(_VARIABLE_RE.findall(AWS_VARIABLES.read_text(encoding="utf-8")))
-    assert set(render()) == declared
+    assert set(render()) == declared - {"node_pools", "resolved_shapes"}
 
 
 def test_provision_carries_the_account_the_root_asserts() -> None:
@@ -178,12 +173,6 @@ def test_a_cloud_with_no_root_is_refused_by_name() -> None:
         render(replace=("cloud: aws", "cloud: oracle"))
 
 
-def test_a_region_with_no_captured_shapes_is_refused_by_name() -> None:
-    """One region's Graviton availability is never rendered for another."""
-    with pytest.raises(render_dial.DialError, match=r"capture --region ap-southeast-2"):
-        render(replace=("    region: us-west-2\n    cidr:", "    region: ap-southeast-2\n    cidr:"))
-
-
 def test_a_missing_field_is_named() -> None:
     with pytest.raises(render_dial.DialError, match=r"network\.nat"):
         render(drop="nat: single")
@@ -200,11 +189,6 @@ def test_az_count_takes_the_dials_own_value() -> None:
 def test_an_out_of_range_az_count_is_refused_by_name() -> None:
     with pytest.raises(render_dial.DialError, match=r"network\.az_count"):
         render(replace=("nat: single", "nat: single\n  az_count: 7"))
-
-
-def test_a_pool_size_that_is_not_a_number_is_refused() -> None:
-    with pytest.raises(render_dial.DialError, match="min_size"):
-        render(replace=("min_size: 2", "min_size: two"))
 
 
 def test_the_seventh_tag_names_the_root_that_created_the_resource() -> None:
@@ -237,6 +221,83 @@ def test_an_in_cluster_broker_renders_no_msk_block() -> None:
     assert render(replace=("provider: msk", "provider: strimzi"))["kafka"] == {
         "provider": "strimzi"
     }
+
+
+# The line every autoscaling test inserts after -- unique in the fixture, and the
+# sibling key (autoscaling:) has to sit at msk:'s own 4-space depth, not
+# bootstrap_job's 6-space one.
+_AFTER_BOOTSTRAP_JOB = "      service_account: dfe-kafka-bootstrap\n  landing_topics:"
+
+
+def test_msk_autoscaling_is_omitted_when_the_dial_sets_nothing() -> None:
+    """Every field already has a root-level default (variables.tf); a dial that
+    names no autoscaling block should not restate them -- the root's own
+    `optional(object({...}), {})` takes an empty object exactly this way."""
+    assert render()["kafka"]["msk"]["autoscaling"] == {}
+
+
+def test_msk_autoscaling_fields_reach_the_msk_block() -> None:
+    autoscaling = render(
+        replace=(
+            _AFTER_BOOTSTRAP_JOB,
+            "      service_account: dfe-kafka-bootstrap\n"
+            "    autoscaling:\n"
+            '      enabled: "false"\n'
+            "      max_brokers: 9\n"
+            "      step: 3\n"
+            "      per_broker_capacity_mb_s: 75\n"
+            "      headroom: 1.5\n"
+            "  landing_topics:",
+        )
+    )["kafka"]["msk"]["autoscaling"]
+    assert autoscaling == {
+        "enabled": False,
+        "max_brokers": 9,
+        "step": 3,
+        "per_broker_capacity_mb_s": 75,
+        "headroom": 1.5,
+    }
+
+
+def test_msk_autoscaling_rejects_a_non_numeric_max_brokers() -> None:
+    with pytest.raises(render_dial.DialError, match=r"kafka\.msk\.autoscaling\.max_brokers"):
+        render(
+            replace=(
+                _AFTER_BOOTSTRAP_JOB,
+                "      service_account: dfe-kafka-bootstrap\n"
+                "    autoscaling:\n"
+                "      max_brokers: six\n"
+                "  landing_topics:",
+            )
+        )
+
+
+def test_msk_autoscaling_rejects_a_non_numeric_headroom() -> None:
+    with pytest.raises(render_dial.DialError, match=r"kafka\.msk\.autoscaling\.headroom"):
+        render(
+            replace=(
+                _AFTER_BOOTSTRAP_JOB,
+                "      service_account: dfe-kafka-bootstrap\n"
+                "    autoscaling:\n"
+                "      headroom: lots\n"
+                "  landing_topics:",
+            )
+        )
+
+
+def test_msk_autoscaling_is_not_read_for_a_saas_broker() -> None:
+    """confluent-cloud and redpanda-cloud take no msk: block at all, autoscaling
+    included -- MSK is the only provider with a broker-count scaler of its own."""
+    kafka = render(replace=("provider: msk", "provider: confluent-cloud"))["kafka"]
+    assert "autoscaling" not in kafka
+
+
+def test_node_pools_and_resolved_shapes_are_never_emitted() -> None:
+    """resolve_sizing.py's build_tfvars is the single writer of both (P1-3) --
+    this render must never re-introduce the collision by emitting either."""
+    variables = render()
+    assert "node_pools" not in variables
+    assert "resolved_shapes" not in variables
 
 
 def test_a_confluent_cloud_broker_renders_no_msk_block() -> None:
@@ -337,37 +398,6 @@ def test_only_the_pull_secret_host_reaches_tofu() -> None:
     assert variables["registry_host"] == "ghcr.io"
     assert variables["registry_user"] == ""
     assert variables["registry_token"] == ""
-
-
-def test_node_pools_carry_the_structural_keys_the_type_demands() -> None:
-    assert set(render()["node_pools"]["system"]) == {
-        "shape_ref",
-        "min_size",
-        "max_size",
-        "desired_size",
-        "capacity_type",
-        "disk_gb",
-        "labels",
-        "taints",
-    }
-
-
-def test_only_the_two_shape_attributes_the_type_declares_are_copied() -> None:
-    """The resolver's file carries provenance and policy the root never declares."""
-    shapes = render_dial._resolved_shapes("aws", "us-west-2")
-    assert shapes, "shapes/resolved/aws-us-west-2.json holds no shape"
-    for body in shapes.values():
-        assert set(body) == {"instance_types", "arch"}
-
-
-def test_the_file_level_provenance_key_is_not_a_shape() -> None:
-    assert "_provenance" not in render_dial._resolved_shapes("aws", "us-west-2")
-
-
-def test_a_missing_region_is_refused_by_name() -> None:
-    """The message names the capture command, not just the missing path."""
-    with pytest.raises(render_dial.DialError, match=r"capture --region ap-southeast-2"):
-        render_dial._resolved_shapes("aws", "ap-southeast-2")
 
 
 def test_the_dials_kubernetes_version_wins_when_it_clears_the_platform_floor() -> None:

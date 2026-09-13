@@ -34,13 +34,17 @@ def _find_tf_binary() -> str | None:
     return None
 
 
-def _outputs_from_state(tf_dir: str) -> dict[str, str]:
+def _outputs_from_state(tf_dir: str) -> dict[str, tuple[str, bool]]:
     """Read outputs straight out of terraform.tfstate.
 
     The binary is the right reader when it is present -- it honours remote state
     and workspaces. This is for the machine that has the state file but no tofu
     installed, where the alternative is being unable to deploy at all. Local
     state only, and it says so rather than silently reading a stale file.
+
+    Returns each output as (value, sensitive) -- state carries the same
+    per-output `sensitive` flag `-json` does, so main()'s summary print can
+    mask by that flag rather than guess from the key's name.
     """
     state = Path(tf_dir) / "terraform.tfstate"
     if not state.is_file():
@@ -57,7 +61,7 @@ def _outputs_from_state(tf_dir: str) -> dict[str, str]:
         sys.exit(1)
 
     outputs = {
-        k: str(v.get("value", ""))
+        k: (str(v.get("value", "")), bool(v.get("sensitive", False)))
         for k, v in (raw.get("outputs") or {}).items()
         if v.get("value") is not None
     }
@@ -70,11 +74,17 @@ def _outputs_from_state(tf_dir: str) -> dict[str, str]:
     return outputs
 
 
-def get_tf_outputs(tf_dir: str) -> dict[str, str]:
-    """Run `terraform output -json` and return a flat dict of name->value.
+def get_tf_outputs(tf_dir: str) -> dict[str, tuple[str, bool]]:
+    """Run `terraform output -json` and return name -> (value, sensitive).
 
-    Handles sensitive outputs: terraform output -json redacts them.
-    For any sensitive output, falls back to `terraform output -raw <key>`.
+    `-json` does not redact a sensitive output -- only the human-readable,
+    no-flag `terraform output` display does that (it prints `<sensitive>`).
+    The `sensitive` field survives into the JSON right alongside the real
+    value, so this reads it there rather than making a second `-raw` call per
+    sensitive key that would only ever re-fetch the value this already has.
+    Carrying the flag through, rather than discarding it once the value is in
+    hand, is what lets main()'s summary print mask by the real flag instead of
+    a guess from the key's name.
 
     With no IaC binary installed, falls back to reading terraform.tfstate.
     """
@@ -92,27 +102,7 @@ def get_tf_outputs(tf_dir: str) -> dict[str, str]:
         sys.exit(1)
 
     raw = json.loads(result.stdout)
-    outputs = {}
-    for k, v in raw.items():
-        if v.get("sensitive", False):
-            # Sensitive outputs are redacted in -json mode; fetch individually
-            raw_result = subprocess.run(
-                [tf_bin, "output", "-raw", k],
-                cwd=tf_dir,
-                capture_output=True,
-                text=True,
-            )
-            if raw_result.returncode != 0:
-                print(
-                    f"WARNING: could not read sensitive output '{k}': {raw_result.stderr}",
-                    file=sys.stderr,
-                )
-                outputs[k] = ""
-            else:
-                outputs[k] = raw_result.stdout.strip()
-        else:
-            outputs[k] = str(v["value"])
-    return outputs
+    return {k: (str(v["value"]), bool(v.get("sensitive", False))) for k, v in raw.items()}
 
 
 def main() -> None:
@@ -146,8 +136,11 @@ def main() -> None:
     print(f"Reading Terraform outputs from {tf_dir}...")
     outputs = get_tf_outputs(str(tf_dir))
 
-    # Filter to DFE_* keys only
-    env_vars = {k: v for k, v in outputs.items() if k.startswith("DFE_")}
+    # Filter to DFE_* keys only, keeping the sensitive flag terraform reported
+    # for each one -- the summary print below masks by that, not by a guess
+    # from the key's name.
+    env_vars = {k: v for k, (v, _sensitive) in outputs.items() if k.startswith("DFE_")}
+    sensitive_keys = {k for k, (_v, sensitive) in outputs.items() if sensitive}
 
     if not env_vars:
         print("ERROR: No DFE_* outputs found in Terraform state.", file=sys.stderr)
@@ -181,7 +174,10 @@ def main() -> None:
     print(f"\n  {len(env_vars)} DFE_* variables loaded from Terraform")
     for k in sorted(env_vars.keys()):
         v = env_vars[k]
-        if "TOKEN" in k or "SECRET" in k or "ROLE_ID" in k:
+        # Masked by terraform's own `sensitive` flag, not by matching the key's
+        # name against TOKEN/SECRET/ROLE_ID -- a sensitive output named
+        # anything else would otherwise print in the clear here.
+        if k in sensitive_keys:
             display = v[:4] + "***" if len(v) > 4 else "***"
         else:
             display = v

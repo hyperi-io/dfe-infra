@@ -51,7 +51,7 @@ variables {
   pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
 }
 
-run "default_recovery_window_is_the_ephemeral_answer" {
+run "default_recovery_window_is_the_persistent_answer" {
   command = plan
 
   module {
@@ -59,8 +59,25 @@ run "default_recovery_window_is_the_ephemeral_answer" {
   }
 
   assert {
+    condition     = aws_secretsmanager_secret.seed["kafka/msk"].recovery_window_in_days == 30
+    error_message = "recovery_window_days defaults to 30 -- the vendor default a persistent deployment keeps -- when the caller sets nothing; an ephemeral deployment passes 0 explicitly"
+  }
+}
+
+run "the_caller_sets_the_ephemeral_window" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    recovery_window_days = 0
+  }
+
+  assert {
     condition     = aws_secretsmanager_secret.seed["kafka/msk"].recovery_window_in_days == 0
-    error_message = "recovery_window_days defaults to 0 -- the ephemeral-safe answer -- when the caller sets nothing"
+    error_message = "a caller-supplied recovery_window_days of 0 must reach the secret unchanged"
   }
 }
 

@@ -12,6 +12,8 @@ spec:
       kind: Gateway
       name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
+      # See httproute-argocd.yaml: pinned off the plaintext :80 listener.
+      sectionName: https
   hostnames:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "kafbat") }}.{{ .Values.domain }}"
   rules:

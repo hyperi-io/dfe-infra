@@ -78,6 +78,17 @@ mock_provider "aws" {
       identity              = [{ oidc = [{ issuer = "https://oidc.example.invalid/id/MOCK" }] }]
     }
   }
+
+  // The deploying principal aws_eks_access_entry.creator names, so the
+  // implicit bootstrap_cluster_creator_admin_permissions grant it replaces is
+  // made explicit rather than left to whoever ran apply.
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "000000000000"
+      arn        = "arn:aws:iam::000000000000:role/mock-deployer"
+      user_id    = "AROAMOCKMOCKMOCKMOCK"
+    }
+  }
 }
 
 variables {
@@ -171,6 +182,97 @@ run "aws_cluster_handles" {
   assert {
     condition     = can(jsondecode(output.pod_identity_trust_policy_json)) || output.pod_identity_trust_policy_json != ""
     error_message = "pod_identity_trust_policy_json must be a non-empty policy document"
+  }
+}
+
+// The deploying principal must be named explicitly rather than implied by
+// bootstrap_cluster_creator_admin_permissions.
+run "aws_cluster_creator_is_named_not_implied" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = aws_eks_cluster.this.access_config[0].bootstrap_cluster_creator_admin_permissions == false
+    error_message = "bootstrap_cluster_creator_admin_permissions must be false -- the explicit access entry below is what makes the admin grant reviewable in a plan"
+  }
+
+  assert {
+    condition     = aws_eks_access_entry.creator.principal_arn == data.aws_caller_identity.current.arn
+    error_message = "the deploying principal's access entry must name the caller"
+  }
+
+  assert {
+    condition     = aws_eks_access_entry.creator.type == "STANDARD"
+    error_message = "the creator's access entry must be STANDARD -- EC2_LINUX and friends refuse an access policy association"
+  }
+
+  assert {
+    condition     = aws_eks_access_policy_association.creator_admin.policy_arn == "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+    error_message = "the deploying principal must be associated with the cluster-admin access policy, matching what bootstrap_cluster_creator_admin_permissions used to grant implicitly"
+  }
+
+  assert {
+    condition     = aws_eks_access_policy_association.creator_admin.access_scope[0].type == "cluster"
+    error_message = "the admin grant must be cluster-scoped, matching the old implicit behaviour"
+  }
+}
+
+// aws_kms_key_policy REPLACES the key's whole policy: the account-root
+// delegation to IAM has to survive alongside whatever key_policy_grants adds,
+// or every existing IAM-side grant on this key (the cluster role above, ESO's
+// role) stops working the moment a caller supplies one.
+run "aws_kms_key_policy_keeps_root_and_adds_caller_grants" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    key_policy_grants = [
+      {
+        sid        = "AllowMockServiceToUseTheKey"
+        principals = ["mock.amazonaws.com"]
+        actions    = ["kms:Decrypt", "kms:DescribeKey"]
+        conditions = [
+          { test = "StringEquals", variable = "aws:SourceArn", values = ["arn:aws:mock:us-west-2:000000000000:thing/mock"] },
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s if s.Sid == "EnableIAMUserPermissions"][0].Principal.AWS == "arn:aws:iam::000000000000:root"
+    error_message = "the key policy must keep the account-root delegation to IAM"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s if s.Sid == "AllowMockServiceToUseTheKey"][0].Principal.Service[0] == "mock.amazonaws.com"
+    error_message = "a caller-supplied key_policy_grants entry must reach the key policy"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s if s.Sid == "AllowMockServiceToUseTheKey"][0].Condition.StringEquals["aws:SourceArn"] == ["arn:aws:mock:us-west-2:000000000000:thing/mock"]
+    error_message = "a caller-supplied condition must reach the rendered statement"
+  }
+}
+
+// No grants supplied: the policy is exactly the root delegation, so a body
+// that needs no extra principal (confluent-cloud, redpanda-cloud) leaves the
+// key exactly as AWS's own default would have.
+run "aws_kms_key_policy_with_no_grants_is_root_only" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = length(jsondecode(aws_kms_key_policy.this.policy).Statement) == 1
+    error_message = "with no key_policy_grants the policy must carry only the root delegation statement"
   }
 }
 

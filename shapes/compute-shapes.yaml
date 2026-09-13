@@ -162,6 +162,16 @@ clouds:
       ## retention formula rather than on instance store, and the ARM
       ## storage-optimised families stop at generation 8, which would cost this
       ## pool the always-newest rule for local disks it does not use.
+      ##
+      ## `size` names the SMALLEST family member on purpose, matching
+      ## kraft-controller below: sizing.yaml's own kafka_broker_vcpu (2) /
+      ## kafka_broker_ram_gib (8) floor is what actually sets the tyre-kick
+      ## minimum (select_shape takes the larger of the two), and that floor
+      ## IS m9g.large -- so a bigger `size` here only pins the minimum above
+      ## what the workload ever asks for. It read `2xlarge` from this file's
+      ## first commit with no stated reason, which happened to go unnoticed
+      ## because a since-fixed resolver bug (see resolve_sizing.py's A3) sized
+      ## every no-estimate deployment past 2xlarge anyway.
       kafka-broker:
         family: m
         modifiers: ""
@@ -171,7 +181,7 @@ clouds:
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
-        size: 2xlarge
+        size: medium
         source: ec2
         instance_iops_ceiling: ""
         instance_throughput_mib_s_ceiling: ""
@@ -242,6 +252,14 @@ clouds:
       ## (Graviton5, 474 GB of NVMe at 2xlarge), so the policy resolves to
       ## generation 9 and the pin no longer binds -- which is the policy working,
       ## not a reason to raise the pin.
+      ##
+      ## `size` names the smallest r9gd member, same reasoning as
+      ## kafka-broker above: sizing.yaml's own clickhouse_vcpu (2) /
+      ## clickhouse_ram_gib (8) floor is what actually sets the tyre-kick
+      ## minimum, and `medium` (1 vCPU) is below it on vCPU alone, so
+      ## select_shape's own max-with-the-workload-floor lands on r9gd.large --
+      ## the true smallest r-class that clears the memory floor, not
+      ## `2xlarge` pinning it three sizes higher for no stated reason.
       clickhouse:
         family: r
         modifiers: d
@@ -251,7 +269,7 @@ clouds:
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
-        size: 2xlarge
+        size: medium
         source: ec2
         instance_iops_ceiling: ""
         instance_throughput_mib_s_ceiling: ""

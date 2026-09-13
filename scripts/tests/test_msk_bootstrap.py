@@ -44,6 +44,9 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHART = REPO_ROOT / "helm" / "charts" / "kafka"
 VALUES = REPO_ROOT / "argocd" / "values"
+BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
+LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
 
 # The valueFiles order a cloud deploy layers, minus the deploy-repo overlay each
 # test supplies as its own values dict.
@@ -255,6 +258,24 @@ def test_the_topic_configs_are_the_derived_ones() -> None:
            f"{creates['m365_land']} / {creates['okta_land']}")
 
 
+def test_an_explicit_partition_count_wins_over_the_broker_count_formula() -> None:
+    """kafka.replicas is this chart's own field, never the managed cluster's
+    real broker count at mode=external -- gate-3-correctness.md P2-2. The
+    override must reach every topic the Job creates, and win regardless of
+    what kafka.replicas happens to be set to."""
+    job = bootstrap_job(render(merged({"kafka": {"replicas": 9, "external": {"numPartitions": 48}}})))
+    lines = {
+        ln.split("--topic ")[1].split()[0].strip('"'): ln
+        for ln in commands(job) if "--create" in ln
+    }
+    expect("the override reaches the landing topic",
+           "--partitions 48 " in lines["main_land"], lines["main_land"])
+    expect("the override reaches a per-source topic too, beating its own default",
+           "--partitions 48 " in lines["okta_land"], lines["okta_land"])
+    expect("a DLQ topic keeps its own fixed partition count regardless",
+           "--partitions 1 " in lines["dfe_loader_dlq"], lines["dfe_loader_dlq"])
+
+
 def test_the_iam_jar_is_pinned_and_verified() -> None:
     job = bootstrap_job(render())
     pod = job["spec"]["template"]["spec"]
@@ -292,7 +313,7 @@ def test_the_job_carries_no_credential() -> None:
 def test_the_job_is_tracked_and_bounded() -> None:
     docs = render()
     job = bootstrap_job(docs)
-    account = [d for d in docs if d.get("kind") == "ServiceAccount"][0]
+    account = next(d for d in docs if d.get("kind") == "ServiceAccount")
     annotations = job["metadata"].get("annotations", {})
     expect("the Job is a tracked resource, not an Argo hook",
            "argocd.argoproj.io/hook" not in annotations, repr(annotations))
@@ -307,6 +328,84 @@ def test_the_job_is_tracked_and_bounded() -> None:
            ["metadata"]["name"] != job["metadata"]["name"])
 
 
+# --- the pipeline that reaches the chart: bootstrap.sh -> cluster secret -----
+# --- -> the layer2-data appset. gate-3-correctness.md P1-5: the Job and its ---
+# --- RBAC existed and were unreachable -- nothing set mode=external or -------
+# --- carried bootstrapIam this far. --------------------------------------
+
+
+def test_bootstrap_derives_kafka_mode_for_every_managed_provider() -> None:
+    """external only for msk/confluent-cloud/redpanda-cloud -- strimzi and
+    redpanda run in-cluster and must keep the profile overlay's own mode."""
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+    expect(
+        "DFE_KAFKA_MODE is derived, not accepted as an input",
+        'DFE_KAFKA_MODE=""' in body and "case \"${DFE_KAFKA_PROVIDER}\" in" in body,
+        "the derivation is missing",
+    )
+    expect(
+        "all three managed providers flip it to external",
+        "msk|confluent-cloud|redpanda-cloud) DFE_KAFKA_MODE=\"external\" ;;" in body,
+        "the case arm is missing or lists the wrong providers",
+    )
+    expect("the derived value is exported", 'export DFE_KAFKA_MODE' in body)
+
+
+def test_bootstrap_defaults_the_tofu_outputs_it_carries_forward() -> None:
+    """Empty by default so the annotations below always render, on every
+    provider but msk -- the same pattern DFE_KAFKA_BOOTSTRAP already uses."""
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+    for key in ("DFE_KAFKA_BOOTSTRAP_IAM", "DFE_KAFKA_BOOTSTRAP_ROLE_ARN", "DFE_KAFKA_CREDENTIAL_REF"):
+        expect(f"{key} is defaulted empty", f'export {key}="${{{key}:-}}"' in body, f"{key} missing")
+
+
+def test_the_cluster_secret_carries_every_new_kafka_annotation() -> None:
+    body = CLUSTER_SECRET.read_text(encoding="utf-8")
+    for annotation, env_key in (
+        ("dfe.hyperi.io/kafka_mode", "DFE_KAFKA_MODE"),
+        ("dfe.hyperi.io/kafka_bootstrap_iam", "DFE_KAFKA_BOOTSTRAP_IAM"),
+        ("dfe.hyperi.io/kafka_bootstrap_role_arn", "DFE_KAFKA_BOOTSTRAP_ROLE_ARN"),
+        ("dfe.hyperi.io/kafka_credential_ref", "DFE_KAFKA_CREDENTIAL_REF"),
+    ):
+        expect(
+            f"{annotation} is set from ${{{env_key}}}",
+            f'{annotation}: "${{{env_key}}}"' in body,
+            "annotation missing from the template",
+        )
+
+
+def test_the_appset_turns_the_annotations_into_the_chart_values_that_render_the_job() -> None:
+    """A `parameters:` entry is a structured list this file's own tests parse
+    as plain YAML before Go templating runs, so a per-element conditional
+    cannot live there -- this is a `values:` block string instead, the same
+    pattern layer2-platform.yaml uses for karpenter-pools."""
+    doc = yaml.safe_load(LAYER2_DATA.read_text(encoding="utf-8"))
+    kafka_source = doc["spec"]["template"]["spec"]["sources"][0]
+    values_block = kafka_source["helm"]["values"]
+    expect(
+        "the block is gated to the kafka app alone",
+        'eq .app "kafka"' in values_block,
+        values_block,
+    )
+    expect(
+        "kafka.mode reads the kafka_mode annotation",
+        "mode: {{ $kafkaMode | quote }}" in values_block
+        and 'index .metadata.annotations "dfe.hyperi.io/kafka_mode"' in values_block,
+        values_block,
+    )
+    expect(
+        "kafka.external.msk.bootstrapIam reads the kafka_bootstrap_iam annotation",
+        "bootstrapIam: {{ $bootstrapIam | quote }}" in values_block
+        and 'index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap_iam"' in values_block,
+        values_block,
+    )
+    expect(
+        "both nest under one kafka: key, so neither overwrites the other in the merged values",
+        values_block.count("kafka:") == 1,
+        values_block,
+    )
+
+
 def main() -> int:
     with standalone():
         test_the_job_and_its_account_render_for_msk()
@@ -316,9 +415,14 @@ def main() -> int:
         test_the_principal_is_a_value()
         test_the_topics_are_the_shared_list()
         test_the_topic_configs_are_the_derived_ones()
+        test_an_explicit_partition_count_wins_over_the_broker_count_formula()
         test_the_iam_jar_is_pinned_and_verified()
         test_the_job_carries_no_credential()
         test_the_job_is_tracked_and_bounded()
+        test_bootstrap_derives_kafka_mode_for_every_managed_provider()
+        test_bootstrap_defaults_the_tofu_outputs_it_carries_forward()
+        test_the_cluster_secret_carries_every_new_kafka_annotation()
+        test_the_appset_turns_the_annotations_into_the_chart_values_that_render_the_job()
         return summary()
 
 

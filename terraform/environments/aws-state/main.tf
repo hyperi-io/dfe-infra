@@ -42,19 +42,24 @@ resource "aws_s3_bucket_versioning" "state" {
 
 // State routinely holds secrets in plaintext -- generated passwords, tokens,
 // certificate keys -- so the bucket encrypts by default rather than trusting
-// every writer to ask for it.
+// every writer to ask for it. SSE-KMS even with no CMK supplied: this root
+// runs before anything else exists, so the deployment's own customer-managed
+// key (kubernetes-cluster/aws/kms.tf) is not there yet to hand in -- the
+// AWS-managed aws/s3 key is the floor rather than SSE-S3, which carries no
+// KMS-side gate at all. var.kms_key_arn still overrides it once a real CMK
+// exists (a customer that wants its state under its own key on day one).
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = var.kms_key_arn == "" ? "AES256" : "aws:kms"
-      kms_master_key_id = var.kms_key_arn == "" ? null : var.kms_key_arn
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = var.kms_key_arn == "" ? "alias/aws/s3" : var.kms_key_arn
     }
 
     // Cuts KMS request charges on a bucket that is read and written on every
-    // plan. No effect under SSE-S3.
-    bucket_key_enabled = var.kms_key_arn != ""
+    // plan.
+    bucket_key_enabled = true
   }
 }
 
