@@ -179,6 +179,10 @@ versionCheck:
 - [aws-operations.md](aws-operations.md) - running and tearing down a
   deployed AWS cluster: node pools and images, admin UI exposure, Kafka
   telemetry and autoscaling, teardown, upgrades
+- [upgrade-rollback.md](upgrade-rollback.md) - the rollback runbook: what
+  rolling back means per upgrade stage, the `dfe-ops upgrade rollback`
+  refusal rule, the sizing config-vs-data rule, and the soak before a
+  Kafka finalise
 - [DEPLOY-HELPERS.md](../DEPLOY-HELPERS.md) - the release and deploy-overlay
   helpers, the logins a deploy carries, and the end-to-end recipe
 - [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) - which CA signs the gateway

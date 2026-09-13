@@ -59,22 +59,30 @@ stack upgrade from a deployment repo's own `pins.yaml`, walking
   at `--backup-marker` when the plan carries a one-way step. Each check
   prints `PASS`/`FAIL` with the evidence line that decided it.
 - `apply` runs preflight, then walks the plan stage by stage: bumps
-  `pins.yaml`'s `base.dfe-infra` through a surgical field edit (the same
-  focused-editor shape `dfe-ops bastion` already uses for its dial, never a
-  hand rewrite), re-runs the resolver with `--migrate` when `--dial` is
-  given, commits the stage (`chore(upgrade): <stack> stage <n> -- <keys>`),
-  pushes only with `--push`, and waits for Argo to report every Application
-  Synced and Healthy, bounded by `--timeout`. Confirms before each stage
-  unless `--yes`. `--dry-run` prints every command and touches nothing -- no
-  pin edit, no commit, no cluster call beyond the compat-check. A `before`
+  `pins.yaml`'s `base.dfe-infra` via a surgical field edit (never a hand
+  rewrite), re-runs the resolver with `--migrate` when `--dial` is given,
+  commits the stage (`chore(upgrade): <stack> stage <n> -- <keys>`), pushes
+  only with `--push`, and waits for Argo to report every Application Synced
+  and Healthy, bounded by `--timeout`. Confirms before each stage unless
+  `--yes`; `--stop-before <stage-key>` halts before a named
+  `upgrade-order.yaml` stage, touching nothing in it or after. A `before`
   note this repo already has a program for (today, only the Strimzi
-  conversion) is verified automatically; any other is printed and needs a
-  confirmed "I ran this by hand". A `finalise` note is never run
-  automatically -- it prints as a manual follow-up once the soak has passed.
-  Apply stops at the first failure and prints that step's rollback note.
-- `rollback --to <stack>` is the reverse plan, refusing by name any step
-  whose `rollback` is `none` or that carries a `finalise` -- one-way by
-  definition, once it has run.
+  conversion) runs automatically; any other needs a confirmed "I ran this by
+  hand". A reached `finalise` note prints and stays pending unless
+  `--finalise` is given, which asks whether the soak is over and, on yes,
+  writes `upgrades/<from>-to-<to>.finalised` -- the marker `rollback` reads.
+  `--dry-run` prints every command, finalise and stop-before included, and
+  touches nothing. Apply stops at the first failure and prints that step's
+  rollback note.
+- `rollback --to <stack>` is the reverse plan. It refuses by name a step
+  carrying `rollback: none` with no `finalise` (unconditionally one-way), or
+  a `finalise`-bearing step whose finalise has ALREADY run -- read from the
+  marker above, not the pin diff alone. A `finalise`-bearing step with no
+  marker yet reverses like any other step, noting the soak can be abandoned
+  safely. `--check-cluster` also reads the live Kafka CR's
+  `status.kafkaMetadataVersion` and refuses when it already shows the
+  bumped value even with no marker -- a finalise run by hand, outside this
+  tool.
 
 ## Re-size
 
@@ -111,3 +119,18 @@ the server, Karpenter against the Kubernetes version.
 
 Pre-flight snapshots the Argo application versions, `sizing/resolved.yaml`
 and the tofu state, and prints the one-way steps before asking to continue.
+
+`dfe-ops upgrade rollback --to <stack>` (above) refuses by name a step whose
+finalise has already run -- read from the `upgrades/<from>-to-<to>.finalised`
+marker `apply --finalise` writes, never from the pin diff alone. Between the
+Kafka broker roll and its `metadata.version` finalise, soak the cluster
+under normal ingest for 24 hours by default, watching consumer lag,
+under-replicated partitions, ClickHouse's merge backlog and insert errors,
+and confirming KEDA and Cruise Control both stay quiet. A problem during the
+soak ends it early: `dfe-ops upgrade rollback --to <stack>` reverses the pin
+like any other step, because no marker exists yet -- no manual git revert
+needed. `--check-cluster` also refuses when the live Kafka CR already shows
+the bumped `status.kafkaMetadataVersion`, catching a finalise run by hand
+outside this tool. The full per-stage runbook, the sizing config-vs-data
+rule for a locked field, and what `apply --finalise`/`--stop-before` do at
+finalise time are in [upgrade-rollback.md](upgrade-rollback.md).
