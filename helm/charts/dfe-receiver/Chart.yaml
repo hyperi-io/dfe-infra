@@ -3,7 +3,7 @@ name: dfe-receiver
 description: DFE Rust ingest service -- the stack's one external door, Kafka producer
 type: application
 version: 0.3.0
-appVersion: "v1.15.34"   # == versions.yaml apps.dfe-receiver (drift-checked)
+appVersion: "v1.15.35"   # == versions.yaml apps.dfe-receiver (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.10.0"

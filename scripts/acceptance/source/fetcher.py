@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from acceptance.source.engine import Datastore, Engine
+from acceptance.clients import Datastore, Engine
 
 HEADER = "common-header/timeseries"
 HEADER_VERSION = "1.0.1"
@@ -287,20 +287,6 @@ def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tu
 def telemetry_name(engine: Engine, name: str) -> str:
     reply = engine.call("GET", f"/apps/{FETCHER_SERVICE}/{name}/status")
     return str((reply.body or {}).get("telemetry_name") or "")
-
-
-def wait_rows(
-    store: Datastore, table: str, baseline: int, deadline: float, where: str = ""
-) -> int:
-    """Rows the fetcher pulled in on its own, polled until the deadline."""
-    until = time.monotonic() + deadline
-    while True:
-        gained = store.scalar(f"SELECT count() FROM {table}{where}") - baseline
-        if gained > 0:
-            return gained
-        if time.monotonic() >= until:
-            return gained
-        time.sleep(15)
 
 
 def upstream_note(case: AwsCase, log_group: str) -> str:

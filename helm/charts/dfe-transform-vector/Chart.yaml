@@ -3,7 +3,7 @@ name: dfe-transform-vector
 description: "Vector sidecar management transform — Kafka consumer → Vector → Kafka producer"
 type: application
 version: 0.3.0
-appVersion: "v1.0.38"   # == versions.yaml apps.dfe-transform-vector (drift-checked)
+appVersion: "v1.0.39"   # == versions.yaml apps.dfe-transform-vector (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.10.0"

@@ -140,6 +140,7 @@ import base64
 import json
 import os
 import platform
+import re
 import secrets
 import shlex
 import shutil
@@ -841,6 +842,98 @@ def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
     return base64.b64decode(raw).decode("utf-8") if raw else ""
 
 
+# helm/charts/dfe-fetcher/values.yaml credentials.secretName, and the two keys
+# the fetcher's cloudwatch_logs service reads out of it. The Secret's keys are
+# the fetcher's environment names; a secrets store names the same two values its
+# own way, so each is looked up under either.
+FETCHER_CREDENTIALS_SECRET = "dfe-fetcher-credentials"
+FETCHER_CREDENTIAL_FIELDS = {
+    "AWS_ACCESS_KEY_ID": ("AWS_ACCESS_KEY_ID", "access_key_id"),
+    "AWS_SECRET_ACCESS_KEY": ("AWS_SECRET_ACCESS_KEY", "secret_access_key"),
+}
+FETCHER_CREDENTIAL_KEYS = tuple(FETCHER_CREDENTIAL_FIELDS)
+
+
+def _vault_kv(path: str, *, vault_cmd: str = "bao", env: dict | None = None, run=subprocess.run) -> dict:
+    """The key-value pair stored at *path*, read through the secrets CLI."""
+    done = run(
+        [vault_cmd, "kv", "get", "-format=json", path],
+        capture_output=True, text=True, env=env,
+    )
+    if done.returncode != 0:
+        first = (done.stderr or "").strip().splitlines()
+        raise RuntimeError(f"{vault_cmd} kv get {path} failed: {first[0] if first else 'no output'}")
+    payload = json.loads(done.stdout).get("data", {})
+    # kv v2 nests the pair one level deeper than kv v1.
+    return payload.get("data", payload)
+
+
+def _credential_field(values: dict, key: str) -> str:
+    """The value for one Secret key, under whichever name the store holds it."""
+    for field in FETCHER_CREDENTIAL_FIELDS[key]:
+        if values.get(field):
+            return str(values[field])
+    return ""
+
+
+def fetcher_credentials_manifest(namespace: str, values: dict, name: str = FETCHER_CREDENTIALS_SECRET) -> str:
+    """The Secret the fetcher chart references, as a manifest for kubectl to apply."""
+    data = {
+        key: base64.b64encode(_credential_field(values, key).encode("utf-8")).decode("ascii")
+        for key in FETCHER_CREDENTIAL_KEYS
+    }
+    return json.dumps(
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "type": "Opaque",
+            "metadata": {"name": name, "namespace": namespace},
+            "data": data,
+        },
+        sort_keys=True,
+    )
+
+
+def apply_fetcher_credentials(
+    kube: list[str], namespace: str, vault_path: str,
+    *, vault_cmd: str = "bao", env: dict | None = None, run=subprocess.run,
+) -> str:
+    """Put the fetcher's upstream credentials in the namespace, reading them from the store.
+
+    A fetched source needs its own credentials, and a run that mints them by hand
+    is a run nobody else can repeat. Nothing here logs a value: the caller gets
+    the key names and the path they came from.
+
+    Server-side, because a client-side apply keeps the whole submitted object in
+    kubectl.kubernetes.io/last-applied-configuration -- and kubectl describe
+    prints annotations while it redacts data, so the one command an operator
+    reaches for to check the Secret landed would print the credential.
+    --force-conflicts takes the fields back off the client-side manager on a
+    cluster where an earlier run made this Secret the old way.
+    """
+    values = _vault_kv(vault_path, vault_cmd=vault_cmd, env=env, run=run)
+    missing = [
+        " or ".join(FETCHER_CREDENTIAL_FIELDS[key])
+        for key in FETCHER_CREDENTIAL_KEYS
+        if not _credential_field(values, key)
+    ]
+    if missing:
+        raise RuntimeError(f"{vault_path} carries no {'; no '.join(missing)}")
+    done = run(
+        [*kube, "-n", namespace, "apply", "--server-side", "--force-conflicts",
+         "--field-manager=dfe-ops", "-f", "-"],
+        input=fetcher_credentials_manifest(namespace, values),
+        capture_output=True, text=True, env=env,
+    )
+    if done.returncode != 0:
+        first = (done.stderr or "").strip().splitlines()
+        raise RuntimeError(f"kubectl apply of {FETCHER_CREDENTIALS_SECRET} failed: {first[0] if first else 'no output'}")
+    return (
+        f"{FETCHER_CREDENTIALS_SECRET} in {namespace}: "
+        f"{', '.join(FETCHER_CREDENTIAL_KEYS)} from {vault_path}"
+    )
+
+
 def _pods_of(kube: list[str], namespace: str, selector: str) -> list[str]:
     """Running pod names matching *selector*, newest-irrelevant, empty when none."""
     done = subprocess.run(
@@ -1198,6 +1291,21 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 runner += ["--resolve", pair]
             rc = subprocess.run(runner, env=env).returncode
         elif step == SOURCE_SUITE:
+            # Before the runner, not inside it: the fetcher's pod mounts the
+            # Secret at start, so a source deployed without it never polls.
+            if args.fetcher_credentials_vault_path:
+                bao_env = dict(env)
+                if settings.get("DFE_VAULT_ADDR") and not bao_env.get("VAULT_ADDR"):
+                    bao_env["VAULT_ADDR"] = settings["DFE_VAULT_ADDR"]
+                try:
+                    print(
+                        f"  fetcher credentials: {apply_fetcher_credentials(kube, namespace, args.fetcher_credentials_vault_path, vault_cmd=args.vault_cmd, env=bao_env)}",
+                        file=sys.stderr,
+                    )
+                except (RuntimeError, json.JSONDecodeError, OSError) as exc:
+                    stop.set()
+                    print(f"acceptance: fetcher credentials: {exc}", file=sys.stderr)
+                    return 1
             # The receiver, the datastore and the engine come from the same
             # forwards and DFE_E2E_* env the flow suite gets; the console and
             # the engine's login go through the gateway like onboarding.
@@ -1231,6 +1339,11 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             for pair in resolve:
                 runner += ["--resolve", pair]
             rc = subprocess.run(runner, env=env).returncode
+            # The suite removes what it made: a run that minted the Secret takes
+            # it back out, so the namespace does not keep AWS keys between runs.
+            if args.fetcher_credentials_vault_path and not args.keep:
+                _run_text([*kube, "-n", namespace, "delete", "secret",
+                           FETCHER_CREDENTIALS_SECRET, "--ignore-not-found"], env=env)
         else:
             # Serial (-n 0, since the repo's addopts pin -n): every source the
             # flow suite writes rolls the receiver, so parallel workers would
@@ -1986,6 +2099,24 @@ def _current_stack() -> str:
     return out.strip() if rc == 0 else ""
 
 
+def _platform_k8s_requirement() -> str:
+    """The current stack's `platform.kubernetes` string, empty if unreadable.
+
+    Preflight and bootstrap/check_platform.py have to refuse the same clusters,
+    so preflight reads the same key instead of carrying a literal floor that
+    goes stale the moment the stack moves.
+    """
+    sys.path.insert(0, str(BOOTSTRAP))
+    from check_platform import load_versions
+
+    try:
+        root = load_versions(REPO_ROOT / "versions.yaml")
+    except OSError:
+        return ""
+    stack = (root.get("stacks") or {}).get(root.get("current")) or {}
+    return str((stack.get("platform") or {}).get("kubernetes") or "")
+
+
 def _resolve_stack(args: argparse.Namespace) -> int:
     """Fill in an unset --stack from versions.yaml, which owns that pointer.
 
@@ -2096,6 +2227,22 @@ _ADOPT_OR_INSTALL = (
 _LB_CONTROLLER_HINTS = ("metallb", "svclb", "cloud-controller", "cilium-operator", "aws-load-balancer")
 
 
+def _cloud_programs_loadbalancers(cloud: str) -> bool:
+    """Whether *cloud* brings its own LoadBalancer controller, as bootstrap decides it.
+
+    One decision, one place: the list is bootstrap.sh's DFE_CLOUD_LB_PROVIDERS,
+    read rather than copied, so preflight's INSTALL preview cannot say one thing
+    while step [3b/7] does another. An unreadable bootstrap.sh means on-prem,
+    which is the preview that names MetalLB.
+    """
+    try:
+        body = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    found = re.search(r'^DFE_CLOUD_LB_PROVIDERS="([^"]*)"', body, re.MULTILINE)
+    return bool(found) and cloud in found.group(1).split()
+
+
 def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple[int, dict, str]:
     """Run kubectl ... -o json and parse. Returns (rc, parsed-or-{}, stderr)."""
     rc, out, err = _run_text([*base, *argv, "-o", "json"], env=env)
@@ -2172,15 +2319,34 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         sv = (int(server.get("major", "0")), int(server.get("minor", "0").rstrip("+")))
     except ValueError:
         sv = (0, 0)
-    try:
-        floor = tuple(int(p.rstrip("+")) for p in args.min_k8s.split("."))
-    except ValueError:
-        print(f"  [FAIL] --min-k8s {args.min_k8s!r} is not a version (want e.g. 1.28)", file=sys.stderr)
+    # The floor is versions.yaml's, read through check_platform's own parser, so
+    # preflight refuses exactly what bootstrap refuses. The ceiling stays
+    # bootstrap's warning to give: --strict here would make it a failure.
+    min_k8s = args.min_k8s or _platform_k8s_requirement()
+    if not min_k8s:
+        print(
+            "  [FAIL] versions.yaml declares no platform.kubernetes for the current "
+            "stack; pass --min-k8s",
+            file=sys.stderr,
+        )
         return 2
-    if sv >= floor:
-        ok(f"API server {git_version} (>= {args.min_k8s})")
+    sys.path.insert(0, str(BOOTSTRAP))
+    from check_platform import as_tuple, parse_requirement
+
+    floor_text = parse_requirement(min_k8s)[0]
+    floor = as_tuple(floor_text)
+    if not floor:
+        print(
+            f"  [FAIL] --min-k8s {min_k8s!r} is not a version (want e.g. 1.34 "
+            f"or 1.34-1.36)",
+            file=sys.stderr,
+        )
+        return 2
+    # The server reports major.minor, so judge the floor at that precision.
+    if sv >= floor[: len(sv)]:
+        ok(f"API server {git_version} (>= {floor_text})")
     else:
-        fail(f"API server {git_version} is below the supported floor {args.min_k8s}")
+        fail(f"API server {git_version} is below the supported floor {floor_text}")
     if "+rke2" in git_version:
         ok("RKE2 distribution detected (the on-prem baseline)")
 
@@ -2272,6 +2438,11 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         ok(f"LoadBalancer provider working ({len(lb_live)} Service(s) hold an address)")
     elif lb_ctrl:
         ok(f"LoadBalancer controller present: {lb_ctrl[0]}")
+    elif not _cloud_programs_loadbalancers(file_env.get("DFE_CLOUD") or ""):
+        # The same on-prem gate bootstrap's MetalLB step reads, so the preview
+        # says INSTALL only where the step will actually run.
+        ok("no LoadBalancer provider -> bootstrap INSTALLS MetalLB + the dfe-front-door pool "
+           "(DFE_GATEWAY_IP/DFE_RECEIVER_IP)")
     else:
         warn("no LoadBalancer provider detected -- bootstrap installs MetalLB on-prem; on a cloud target the cloud LB controller must exist")
 
@@ -2883,7 +3054,10 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* defaults from a terraform env dir (env files win over it)")
     pf.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="a node label Ready workers MUST carry (repeatable) -- catches the wrong-cluster trap")
     pf.add_argument("--registry", default="ghcr.io", help="registry HOST to check reachability of (from this machine)")
-    pf.add_argument("--min-k8s", default="1.28", help="minimum Kubernetes server version (guidance floor)")
+    # Resolved in cmd_preflight, not here: build_parser runs for every subcommand
+    # and for --help, and a versions.yaml this could not parse would take all of
+    # them down naming preflight.
+    pf.add_argument("--min-k8s", default="", help="minimum Kubernetes server version; defaults to the current stack's platform.kubernetes in versions.yaml, the floor bootstrap enforces")
     pf.add_argument("--strict", action="store_true", help="treat warnings as failures")
     pf.set_defaults(func=cmd_preflight)
 
@@ -3080,6 +3254,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "an AWS upstream a fetcher polls")
     ac.add_argument("--aws-service", default="cloudwatch_logs",
                     help="the AWS service the cloudwatch case polls")
+    ac.add_argument("--fetcher-credentials-vault-path", default="", metavar="PATH",
+                    help=f"secrets-store path holding {' and '.join(FETCHER_CREDENTIAL_KEYS)}; the source "
+                         f"suite puts them in the {FETCHER_CREDENTIALS_SECRET} Secret the fetcher chart "
+                         "references, before it creates a fetched source (default: leave the Secret alone)")
+    ac.add_argument("--vault-cmd", default=DEFAULT_VAULT_CMD,
+                    help="secrets CLI the credentials are read with: bao or vault")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)

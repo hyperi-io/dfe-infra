@@ -36,14 +36,9 @@ exit code fails the deploy.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import socket
-import ssl
 import sys
-import time
-import urllib.error
-import urllib.request
 import uuid
 from pathlib import Path
 
@@ -51,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import access_summary as access_summary_file
 
+from acceptance.clients import engine_token, remove_source, setup_status
 from acceptance.onboarding import wizard
 
 # The nav entries every role sees, so the check is a rendered console rather than
@@ -63,113 +59,6 @@ LOCAL_LOGIN_TAB = "Login with Local"
 STEP_TIMEOUT_MS = 30_000
 # How long the run keeps checking that the source it made has gone.
 TEARDOWN_DEADLINE = 120.0
-
-
-def _context(verify: bool) -> ssl.SSLContext | None:
-    """The TLS posture for this run's own API calls."""
-    if verify:
-        return None
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    return context
-
-
-def source_names(engine_url: str, verify: bool, token: str) -> tuple[str, ...]:
-    """Every source the deployment currently carries."""
-    request = urllib.request.Request(
-        f"{engine_url.rstrip('/')}/api/v1/sources",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    with urllib.request.urlopen(request, timeout=60, context=_context(verify)) as response:
-        return tuple(str(item["name"]) for item in json.loads(response.read())["items"])
-
-
-def remove_source(engine_url: str, verify: bool, token: str, name: str, deadline: float) -> str:
-    """Delete a source the run created, and confirm it went.
-
-    Through the API rather than the console: this is the run tidying up after
-    itself, not part of what it claims to prove.
-
-    The confirmation is a read, not the DELETE's status. A delete commits to the
-    deploy repo and reconciles the apps, which outlasts a gateway's own timeout,
-    so a 504 on a delete that landed would otherwise read as a source left behind.
-
-    Args:
-        engine_url: Engine API base.
-        verify: Whether to verify TLS.
-        token: A bearer token for the engine.
-        name: The source to remove.
-        deadline: Seconds to keep checking that it went.
-
-    Returns:
-        One line saying whether it went.
-    """
-    request = urllib.request.Request(
-        f"{engine_url.rstrip('/')}/api/v1/sources/{name}",
-        method="DELETE",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    status = ""
-    try:
-        with urllib.request.urlopen(request, timeout=120, context=_context(verify)) as response:
-            status = str(response.status)
-    except urllib.error.HTTPError as exc:
-        status = str(exc.code)
-    except (urllib.error.URLError, OSError) as exc:
-        status = type(exc).__name__
-
-    until = time.monotonic() + deadline
-    while True:
-        try:
-            if name not in source_names(engine_url, verify, token):
-                return f"removed {name} (delete answered {status})"
-        except (urllib.error.URLError, OSError, ValueError, KeyError):
-            pass
-        if time.monotonic() >= until:
-            return f"could NOT remove {name}: still there {deadline:.0f}s after a {status}"
-        time.sleep(5)
-
-
-def engine_token(engine_url: str, verify: bool, user: str, password: str) -> str:
-    """A bearer token for the run's own tidy-up, or empty when login fails."""
-    request = urllib.request.Request(
-        f"{engine_url.rstrip('/')}/api/v1/auth/login",
-        data=json.dumps({"username": user, "password": password}).encode(),
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60, context=_context(verify)) as response:
-            return str(json.loads(response.read())["access_token"])
-    except (urllib.error.URLError, OSError, ValueError, KeyError):
-        return ""
-
-
-def _fetch(url: str, verify: bool) -> dict:
-    """One unauthenticated GET, decoded."""
-    with urllib.request.urlopen(url, timeout=30, context=_context(verify)) as response:
-        return json.loads(response.read())
-
-
-def setup_status(engine_url: str, verify: bool) -> dict:
-    """The deployment's setup contract.
-
-    Args:
-        engine_url: Engine API base.
-        verify: Whether to verify TLS.
-
-    Returns:
-        The setup-status document.
-
-    Raises:
-        OnboardingError: The engine would not answer.
-    """
-    url = f"{engine_url.rstrip('/')}/api/v1/auth/setup-status"
-    try:
-        return _fetch(url, verify)
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise wizard.OnboardingError(f"the engine did not serve {url}: {exc}") from exc
 
 
 class Driver:

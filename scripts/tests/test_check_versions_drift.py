@@ -25,7 +25,9 @@ on a bare CI image.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
 from pathlib import Path
 
@@ -322,6 +324,35 @@ def test_regressed_appversions_are_caught() -> None:
             f"{label}: matches SSoT as committed",
             drift.extract_value(check) == versions[key],
         )
+
+
+def test_the_metallb_pin_is_accounted_for_by_a_reason() -> None:
+    """bootstrap.sh is its only reader, so there is no mirror to check it against."""
+    versions = drift.load_versions()
+    expect("bootstrap.metallb is in the current stack", "bootstrap.metallb" in versions,
+           f"got {sorted(k for k in versions if k.startswith('bootstrap.'))}")
+    expect("no CHECKS entry claims it",
+           "bootstrap.metallb" not in {c.key for c in drift.CHECKS})
+    expect("an UNCONSUMED reason accounts for it instead",
+           drift.unconsumed_reason("bootstrap.metallb") is not None)
+    bootstrap_sh = (REPO_ROOT / "bootstrap" / "bootstrap.sh").read_text(encoding="utf-8")
+    expect("and the recorded reason is true -- bootstrap.sh reads the key",
+           "bootstrap.metallb" in bootstrap_sh, "no runtime read of the pin")
+
+
+def test_dropping_the_metallb_reason_reports_the_pin_dead() -> None:
+    """A pin accounted for by nothing has to FAIL the run, not pass quietly."""
+    original = drift.UNCONSUMED
+    captured = io.StringIO()
+    try:
+        drift.UNCONSUMED = {k: v for k, v in original.items() if k != "bootstrap.metallb"}
+        with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
+            rc = drift.main()
+    finally:
+        drift.UNCONSUMED = original
+    expect("an unaccounted pin fails the check", rc == 1, f"got rc={rc}")
+    expect("and the failure names the key",
+           "bootstrap.metallb" in captured.getvalue(), captured.getvalue())
 
 
 def main() -> int:

@@ -48,7 +48,9 @@ log() { echo "  [scale-test] $*"; }
 ch_query() {
     # Run a ClickHouse query via the CH pod (HTTP :8123 plaintext, in-cluster).
     local pod
-    pod="$(kubectl -n "${CH_NS}" get pod -l "${CH_SELECTOR}" -o name | head -1)"
+    # One name from kubectl itself: piping a multi-pod listing into head closes
+    # the pipe early, and SIGPIPE under pipefail aborts the run with no output.
+    pod="$(kubectl -n "${CH_NS}" get pod -l "${CH_SELECTOR}" -o jsonpath='{.items[0].metadata.name}')"
     if [ -z "${pod}" ]; then
         echo "ERROR: no ClickHouse pod found in ns=${CH_NS} selector=${CH_SELECTOR}" >&2
         return 1

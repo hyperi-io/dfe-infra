@@ -28,7 +28,7 @@ clickhouse:
   # here -- public repo). The Altinity operator is NOT tested with this stack.
   mode: cluster
   name: dfe-clickhouse
-  version: "26.3.31.5"
+  version: "26.3.32.14"
   # Cluster-mode node count. Defaults to 3; set higher for more nodes.
   # (single mode ignores this -- it is always 1 standalone pod.)
   replicas: 3
@@ -50,7 +50,7 @@ clickhouse:
     replicas: 3
     image:
       repository: docker.io/clickhouse/clickhouse-keeper
-      tag: "26.3.31.5"
+      tag: "26.3.32.14"
     storage:
       size: 10Gi
       storageClass: ""
