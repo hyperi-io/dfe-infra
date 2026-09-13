@@ -83,10 +83,10 @@ serviceAccount:
   annotations: {}   # workload identity annotations injected here
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
-# The DEFAULT trigger is the scalo ScalingPressure composite (dfe_scaling_pressure,
-# 0-100) through the fail-safe dfe-keda-shim, so a metric outage FREEZES scaling
-# rather than running replicas up. The native cpu scaler renders alongside it and
-# the HPA takes the higher of the two. minReplicaCount stays 1
+# The SHIPPED trigger is the native cpu scaler; the scalo ScalingPressure composite
+# (dfe_scaling_pressure, 0-100) through the fail-safe dfe-keda-shim is opt-in until
+# every app emits the gauge (dfe-infra #302), and the HPA takes the higher of the
+# two where both render. minReplicaCount stays 1
 # (scale-to-zero is 2.2 backlog; set min/idle 0 to opt in).
 keda:
   enabled: true
@@ -97,10 +97,10 @@ keda:
   cpu:
     targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: true             # DEFAULT: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
     # service: dfe-loader     # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
+    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

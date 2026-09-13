@@ -101,15 +101,16 @@ serviceAccount:
   create: true
   annotations: {}
 
-# KEDA autoscaling -- folded into the chart. The DEFAULT trigger is scalo
-# ScalingPressure (dfe_scaling_pressure, 0-100), with the native KEDA cpu scaler
-# rendered alongside it so the HPA takes the higher of the two. Pressure is
-# the advanced signal: the composite fuses Kafka CG lag + container-contract
-# metrics (buffer, memory) AND hard-gates to 0 when the downstream sink is unreachable
-# (circuit-breaker open), so pressure never scales out pods that would not help when
-# the real bottleneck is downstream. It routes through the fail-safe dfe-keda-shim (a
-# metric outage FREEZES scaling, never runs replicas up). Transforms are multi-instance;
-# set pressure.service per instance. minReplicaCount stays 1 (scale-to-zero is 2.2 backlog).
+# KEDA autoscaling -- folded into the chart. The SHIPPED trigger is the native KEDA
+# cpu scaler; scalo ScalingPressure (dfe_scaling_pressure, 0-100) is opt-in until
+# every app emits the gauge (dfe-infra #302), and the HPA takes the higher of the two
+# where both render. Pressure is the advanced signal: the composite fuses Kafka CG lag
+# + container-contract metrics (buffer, memory) AND hard-gates to 0 when the downstream
+# sink is unreachable (circuit-breaker open), so pressure never scales out pods that
+# would not help when the real bottleneck is downstream. It routes through the fail-safe
+# dfe-keda-shim (a metric outage FREEZES scaling, never runs replicas up). Transforms are
+# multi-instance; set pressure.service per instance. minReplicaCount stays 1
+# (scale-to-zero is 2.2 backlog).
 keda:
   enabled: true
   minReplicaCount: 1
@@ -119,10 +120,10 @@ keda:
   cpu:
     targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: true             # DEFAULT: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
     # service: dfe-transform-vrl   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
+    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

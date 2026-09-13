@@ -8,10 +8,11 @@ scaleTargetRef is the app's own Deployment (dfe-common.fullname). The DEFAULT
 trigger is CPU utilisation (native KEDA cpu scaler - zero code, zero upstream risk,
 the safe fleet baseline; metrics-server is installed and the pods declare CPU
 requests). scalo ScalingPressure renders alongside it per app
-(.Values.keda.pressure.enabled, on by default in every app chart whose app emits
-the gauge) and routes through the fail-safe dfe-keda-shim so a metric outage
-FREEZES scaling rather than running replicas up. keda.pressure.shimAddress must
-name the namespace the shim runs in -- the default names dfe. An app may still set .Values.keda.triggers to
+(.Values.keda.pressure.enabled, OFF in every app chart until every app emits the
+gauge) and routes through the fail-safe dfe-keda-shim so a metric outage FREEZES
+scaling rather than running replicas up. A deploy that turns pressure on outside
+namespace dfe must also set keda.pressure.shimAddress, because the default below
+names dfe. An app may still set .Values.keda.triggers to
 override VERBATIM (any KEDA scaler type, e.g. Kafka lag), so the engine's
 HelmKedaConfig output still maps 1:1 when it emits explicit triggers.
 
