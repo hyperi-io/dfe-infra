@@ -32,6 +32,15 @@ envoyGateway:
     annotations: {}
     loadBalancerSourceRanges: []
     externalIPs: []
+    # Is this Service actually reachable from the internet? Not derived from
+    # `type` or the annotations, because the scheme annotation that makes it so
+    # is cloud-specific (AWS: aws-load-balancer-scheme: internet-facing; GCP and
+    # Azure carry no equivalent here yet) and a chart-side render guard needs
+    # ONE stable field to check regardless of cloud. False on every local/
+    # on-prem overlay; a cloud overlay that requests a public LB sets it true
+    # alongside the annotation that does so (argocd/values/aws.yaml). Read by
+    # envoy-gateway-config.validateUi below.
+    internetFacing: false
 
 # Pool balancer for the direct transport. `enabled`, `gateway` and `port` are
 # the deploy-config SSoT's (argocd/values/common.yaml `mesh:`) because every

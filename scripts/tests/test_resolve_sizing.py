@@ -37,6 +37,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,7 +51,9 @@ CATALOGUE = FIXTURES / "aws-catalogue-us-west-2.json"
 GOLDEN = FIXTURES / "golden-matrix.json"
 
 sys.path.insert(0, str(SCRIPTS))
+import render_dial  # noqa: E402
 import resolve_sizing  # noqa: E402
+from yaml_subset import parse as parse_dial  # noqa: E402
 
 WRITE_GOLDEN = os.environ.get("RESOLVE_SIZING_GOLDEN") == "write"
 
@@ -59,6 +63,18 @@ WRITE_GOLDEN = os.environ.get("RESOLVE_SIZING_GOLDEN") == "write"
 BANDS = (None, 1000, 10000, 100000)
 FOCUSES = ("economy", "balanced", "performance")
 CLOUDS = ("aws", "onprem")
+
+# Read once, from sizing.yaml itself, rather than hardcoded here -- a test
+# call site that does not care about the root volume's own demand still has
+# to pass SOMETHING, and the real ratio is what select_shape and
+# select_msk_shape actually thread through in production.
+_SIZING = resolve_sizing._load(resolve_sizing.SIZING_FILE)
+ROOT_VOLUME_DEMAND_MIB_S = resolve_sizing._ratio(
+    _SIZING, "floors", "root_volume_demand_mib_s"
+).number
+ROOT_VOLUME_DEMAND_IOPS = int(
+    resolve_sizing._ratio(_SIZING, "floors", "root_volume_demand_iops").number
+)
 
 
 def _dial(
@@ -134,7 +150,7 @@ def _summary(out: Path, status: int, tier: str = "scale") -> dict[str, object]:
             for rule, use_case in re.findall(r"^\| (A\d)(?: \(warn\))? \| ([\w-]+) \|", report, re.M)
         ),
     }
-    tfvars = out / "sizing" / f"{tier}.auto.tfvars.json"
+    tfvars = out / "sizing.auto.tfvars.json"
     if tfvars.is_file():
         doc = json.loads(tfvars.read_text(encoding="utf-8"))
         snapshot["shapes"] = {
@@ -165,6 +181,19 @@ def _case_name(cloud: str, focus: str, band: int | None) -> str:
     return f"{cloud}-scale-{focus}-{band if band is not None else 'no-estimate'}"
 
 
+# A kafka.provider AXIS, alongside the cloud x focus x band cross-product --
+# not multiplied through it, same reasoning as MSK_CI_BURST_CASE further down:
+# provider is orthogonal, and a full cross-product would be disproportionate
+# to what these need to prove. msk already gets its own dedicated fixture
+# (msk_case) with its own tests; these are the two tokens
+# gate-3-correctness.md P2-1 found the resolver refusing outright --
+# confluent-cloud and redpanda-cloud never reached read_dial at all before.
+PROVIDER_AXIS_CASES = {
+    "aws-scale-economy-10000-confluent-cloud": "confluent-cloud",
+    "aws-scale-economy-10000-redpanda-cloud": "redpanda-cloud",
+}
+
+
 @pytest.fixture(scope="module")
 def matrix(tmp_path_factory) -> dict[str, object]:
     """Resolve every case in the matrix once, and answer the snapshots."""
@@ -177,6 +206,12 @@ def matrix(tmp_path_factory) -> dict[str, object]:
     out = tmp_path_factory.mktemp("overridden")
     status = _run(_dial(out, estimate=10000, extra=OVERRIDE_BLOCK), out, cloud="aws")
     built[OVERRIDE_CASE] = _summary(out, status)
+    for name, provider in PROVIDER_AXIS_CASES.items():
+        out = tmp_path_factory.mktemp(name)
+        status = _run(
+            _dial(out, cloud="aws", focus="economy", estimate=10000, provider=provider), out, cloud="aws"
+        )
+        built[name] = _summary(out, status)
     return built
 
 
@@ -190,7 +225,9 @@ def test_the_matrix_matches_its_snapshots(matrix: dict[str, object]) -> None:
 
 
 def test_every_case_in_the_matrix_produced_a_snapshot(matrix: dict[str, object]) -> None:
-    assert sorted(matrix) == sorted([*(_case_name(*case) for case in _cases()), OVERRIDE_CASE])
+    assert sorted(matrix) == sorted(
+        [*(_case_name(*case) for case in _cases()), OVERRIDE_CASE, *PROVIDER_AXIS_CASES]
+    )
 
 
 @pytest.mark.parametrize("tier", ["slim", "single"])
@@ -229,7 +266,7 @@ def test_no_estimate_reports_the_carried_throughput_rather_than_targeting_it(tmp
 def test_the_floor_holds_the_broker_count_at_three(tmp_path: Path) -> None:
     dial = _dial(tmp_path, estimate=None)
     _run(dial, tmp_path)
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert doc["node_pools"]["kafka-broker"]["desired_size"] == 3
 
 
@@ -240,7 +277,7 @@ def test_the_broker_count_grows_with_the_estimate(tmp_path: Path) -> None:
         out = tmp_path / str(band)
         out.mkdir()
         _run(_dial(out, estimate=band), out)
-        doc = json.loads((out / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+        doc = json.loads((out / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
         counts.append(doc["node_pools"]["kafka-broker"]["desired_size"])
     assert counts[1] > counts[0]
     assert all(count % 3 == 0 for count in counts)
@@ -254,7 +291,7 @@ def test_partitions_divide_evenly_by_the_broker_count(tmp_path: Path) -> None:
         _run(_dial(out, estimate=band), out)
         report = (out / "sizing" / "scale.report.md").read_text(encoding="utf-8")
         partitions = int(re.search(r"Partitions: \*\*(\d+)\*\*", report)[1])
-        doc = json.loads((out / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+        doc = json.loads((out / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
         brokers = doc["node_pools"]["kafka-broker"]["desired_size"]
         assert partitions % brokers == 0, (band, partitions, brokers)
 
@@ -262,7 +299,7 @@ def test_partitions_divide_evenly_by_the_broker_count(tmp_path: Path) -> None:
 def test_economy_never_trades_the_durability_floor(tmp_path: Path) -> None:
     """The cheapest deployment still runs three brokers, three replicas, three controllers."""
     _run(_dial(tmp_path, focus="economy", estimate=None), tmp_path)
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     for pool in ("kafka-broker", "kraft-controller", "clickhouse", "keeper"):
         assert doc["node_pools"][pool]["desired_size"] >= 3
 
@@ -343,19 +380,82 @@ def test_a2_catches_throughput_the_provisioned_iops_cannot_carry(catalogue) -> N
     assert "A2" in rules
 
 
-def test_a3_catches_volumes_that_sum_past_the_instance_baseline(catalogue) -> None:
-    """The attached instance caps every volume behind it, and says nothing."""
+def test_a3_catches_the_workloads_demand_summed_past_the_instance_baseline(catalogue) -> None:
+    """The attached instance caps every volume behind it, and says nothing.
+
+    A3 sums `demand_iops` / `demand_throughput_mib_s`, never the plain
+    `iops` / `throughput_mib_s` a volume is merely provisioned for -- see
+    test_a3_ignores_a_provisioned_ceiling_the_workload_never_demands below
+    for the regression this used to be (gate-3 remedy 2): a resolve used to
+    fail this exact check from two idle volumes at their own free minimum,
+    with nothing actually driving either of them.
+    """
     choice = _choice(
         baseline_iops=12000,
         maximum_iops=12000,
         volumes={
-            "root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 125},
-            "data": {"type": "gp3", "size_gib": 2000, "iops": 20000, "throughput_mib_s": 500},
+            "root": {
+                "type": "gp3",
+                "size_gib": 40,
+                "iops": 3000,
+                "throughput_mib_s": 125,
+                "demand_iops": 3000,
+                "demand_throughput_mib_s": 125,
+            },
+            "data": {
+                "type": "gp3",
+                "size_gib": 2000,
+                "iops": 20000,
+                "throughput_mib_s": 500,
+                "demand_iops": 20000,
+                "demand_throughput_mib_s": 500,
+            },
         },
     )
     findings = resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
     assert any(f.rule == "A3" for f in findings)
     assert any("the instance is the ceiling" in f.message for f in findings)
+
+
+def test_a3_ignores_a_provisioned_ceiling_the_workload_never_demands(catalogue) -> None:
+    """Two idle gp3 volumes at gp3's own free minimum must never force a
+    bigger instance on their own -- the exact bug gate-3 remedy 2 fixed. A3
+    used to sum `iops` / `throughput_mib_s` (what a volume is PROVISIONED
+    for), so a root and a data volume each sitting at gp3's unavoidable
+    3,000 IOPS / 125 MiB/s summed to 6,000 / 250 and failed against any
+    instance below m9g.2xlarge, even at zero real ingest. Root's demand is
+    its own mandatory floor (nothing ever asks less of it than that), but
+    the data volume's provisioned 500 MiB/s ceiling here is money the
+    deployer has not asked to spend, so it must not count.
+    """
+    choice = _choice(
+        baseline_iops=6000,
+        baseline_throughput_mib_s=187.5,
+        volumes={
+            "root": {
+                "type": "gp3",
+                "size_gib": 40,
+                "iops": 3000,
+                "throughput_mib_s": 125,
+                "demand_iops": 3000,
+                "demand_throughput_mib_s": 125,
+            },
+            "data": {
+                "type": "gp3",
+                "size_gib": 20,
+                "iops": 3000,
+                "throughput_mib_s": 500,
+                "demand_iops": 0,
+                "demand_throughput_mib_s": 0,
+            },
+        },
+    )
+    findings = [
+        f
+        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
+        if f.rule == "A3"
+    ]
+    assert not findings, findings
 
 
 @pytest.mark.parametrize(
@@ -446,6 +546,73 @@ def test_a_regions_missing_storage_price_is_refused_by_name() -> None:
         resolve_sizing._gp3_price_per_gib_month(shapes, "aws", "ap-southeast-2")
 
 
+def test_a7_catches_a_demand_above_what_the_volume_is_provisioned_for(catalogue) -> None:
+    """A demand above the provisioned ceiling is refused BY NAME, never
+    silently raised the way an earlier pass here used to (gate-3 remedy 2):
+    it names the exact override the deployer has to raise."""
+    choice = _choice(
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 2000,
+                "iops": 3000,
+                "throughput_mib_s": 500,
+                "demand_iops": 0,
+                "demand_throughput_mib_s": 900,
+            }
+        }
+    )
+    findings = [
+        f
+        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
+        if f.rule == "A7"
+    ]
+    assert findings
+    assert findings[0].fatal
+    assert "sizing.overrides.kafka-broker.throughput_mibs" in findings[0].message
+
+
+def test_an_override_above_demand_lifts_the_demand(catalogue) -> None:
+    """The deployer asked for it: raising a volume's provisioned ceiling
+    above what the workload was going to demand anyway raises the DEMAND to
+    match, so A3's instance-baseline check sees what was actually asked
+    for, and A7 does not turn straight around and refuse the same number."""
+    choice = _choice(
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 2000,
+                "iops": 3000,
+                "throughput_mib_s": 500,
+                "demand_iops": 0,
+                "demand_throughput_mib_s": 200,
+            }
+        }
+    )
+    core = resolve_sizing.Core(
+        tier="scale",
+        focus="economy",
+        headroom=0.0,
+        estimated=True,
+        ingest_gb_per_day=0.0,
+        avg_mb_s=0.0,
+        peak_mb_s=0.0,
+        peak_factor=1.0,
+        required_mb_s=0.0,
+        carried_mb_s=0.0,
+    )
+    resolve_sizing._apply_shape_overrides(
+        choice, {"kafka-broker": {"throughput_mibs": "900"}}, core, catalogue
+    )
+    assert choice.volumes["data"]["throughput_mib_s"] == 900
+    assert choice.volumes["data"]["demand_throughput_mib_s"] == 900
+    assert not [
+        f
+        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
+        if f.rule == "A7"
+    ]
+
+
 def test_a6_catches_a_storage_class_that_leaves_throughput_unset(catalogue) -> None:
     """Unset, the EBS CSI driver takes 125 MiB/s whatever the volume size."""
     choice = _choice(
@@ -505,7 +672,16 @@ def test_a_candidate_with_no_price_fails_the_selection(catalogue, tmp_path: Path
     }
     demand = resolve_sizing.Node("general", 1, 2, 4, 0, 0, 0, "test")
     with pytest.raises(resolve_sizing.ResolveError, match="no on-demand price"):
-        resolve_sizing.select_shape("general", entry, demand, stripped, "newest", [])
+        resolve_sizing.select_shape(
+            "general",
+            entry,
+            demand,
+            stripped,
+            "newest",
+            [],
+            ROOT_VOLUME_DEMAND_MIB_S,
+            ROOT_VOLUME_DEMAND_IOPS,
+        )
 
 
 def vars_of(instance: resolve_sizing.InstanceType) -> dict[str, object]:
@@ -529,7 +705,16 @@ def test_too_many_unreadable_type_names_fail_the_selection_loudly(catalogue) -> 
     )
     demand = resolve_sizing.Node("general", 1, 2, 4, 0, 0, 0, "test")
     with pytest.raises(resolve_sizing.ResolveError, match="could not be parsed"):
-        resolve_sizing.select_shape("general", {"family": "m", "size": "large"}, demand, broken, "newest", [])
+        resolve_sizing.select_shape(
+            "general",
+            {"family": "m", "size": "large"},
+            demand,
+            broken,
+            "newest",
+            [],
+            ROOT_VOLUME_DEMAND_MIB_S,
+            ROOT_VOLUME_DEMAND_IOPS,
+        )
 
 
 def test_the_chosen_type_is_offered_in_every_availability_zone(tmp_path: Path, catalogue) -> None:
@@ -623,7 +808,7 @@ def test_a_resolve_preserves_an_entry_it_did_not_size(tmp_path: Path) -> None:
 def test_the_tfvars_names_only_variables_the_root_declares(tmp_path: Path) -> None:
     """A key the root does not declare is an error there, so it never gets emitted."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     declared = set(
         re.findall(
             r'^variable "([a-z_]+)"',
@@ -638,7 +823,7 @@ def test_the_tfvars_names_only_variables_the_root_declares(tmp_path: Path) -> No
 
 def test_the_node_pool_objects_carry_every_attribute_the_variable_type_demands(tmp_path: Path) -> None:
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     demanded = {"shape_ref", "min_size", "max_size", "desired_size", "capacity_type", "disk_gb", "labels", "taints"}
     for pool in doc["node_pools"].values():
         assert set(pool) == demanded
@@ -790,7 +975,7 @@ def test_an_override_replaces_the_derived_value_and_says_so(tmp_path: Path) -> N
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     assert "Overridden by the deployer" in report
     assert "| kafka-broker | `replicas` | 3 | **6** |" in report
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert doc["node_pools"]["kafka-broker"]["desired_size"] == 6
     assert doc["resolved_shapes"]["kafka-broker"]["instance_types"] == ["m9g.8xlarge"]
 
@@ -863,7 +1048,7 @@ def test_the_msk_broker_reads_the_same_demand_the_self_hosted_broker_would(tmp_p
 def test_a_managed_broker_is_never_a_kubernetes_node_pool(tmp_path: Path) -> None:
     """AWS runs those brokers, so no node group of ours creates them."""
     _run(_dial(tmp_path, provider="msk", estimate=10000), tmp_path)
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert "msk-broker" not in doc["node_pools"]
     assert "msk-broker" in doc["resolved_shapes"]
 
@@ -871,7 +1056,7 @@ def test_a_managed_broker_is_never_a_kubernetes_node_pool(tmp_path: Path) -> Non
 def test_the_msk_path_sizes_no_broker_pvc_or_controller_pool(tmp_path: Path) -> None:
     """Express manages its own storage and runs its own metadata quorum."""
     _run(_dial(tmp_path, provider="msk", estimate=1000), tmp_path)
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert "kraft-controller" not in doc["resolved_shapes"]
     values = (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
     assert "replicas" not in values.split("clickhouse:")[0]
@@ -883,18 +1068,43 @@ def test_the_msk_path_sizes_no_broker_pvc_or_controller_pool(tmp_path: Path) -> 
 
 
 def test_the_instance_steps_up_until_it_sustains_its_own_volumes(tmp_path: Path) -> None:
-    """A3 fires only when no size in the family can carry the profile."""
-    _run(_dial(tmp_path), tmp_path)
+    """A3 fires only when no size in the family can carry the DEMANDED IO.
+
+    gate-3 remedy 2: this used to assert `sum(provisioned) <= baseline` read
+    straight off the committed `shapes/resolved/aws-us-west-2.json` -- which
+    is exactly the bug that file's own A3 fix corrected, since a volume's
+    provisioned ceiling (clickhouse's data volume asks for 500 MiB/s at every
+    scale) is money the deployer is free to leave unused, not traffic the
+    instance has to carry. The persisted file no longer even carries a
+    volume's demand (see _shape_volumes -- it is deployment-specific, like a
+    formula-derived size), so this re-derives it the same way the resolver
+    itself does and checks the REAL invariant `_size_up_to_carry_the_volumes`
+    guarantees: every chosen instance's OWN _volumes_fit against its OWN
+    demand, never mind what it happens to be provisioned for.
+    """
+    dial_path = _dial(tmp_path)
+    _run(dial_path, tmp_path)
     doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+
+    sizing = resolve_sizing._load(resolve_sizing.SIZING_FILE)
+    shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
+    dial = resolve_sizing.read_dial(dial_path, cloud="aws")
+    core = resolve_sizing.size_core(sizing, dial)
+    live_catalogue = resolve_sizing.fetch_fixtures(FIXTURES, "us-west-2")
+
     for use_case, entry in doc.items():
         if use_case.startswith("_") or use_case == "msk-broker":
             continue
-        volumes = [v for v in entry["volumes"].values() if v.get("type") == "gp3"]
-        assert sum(v["iops"] for v in volumes) <= entry["ceilings"]["baseline_iops"], use_case
-        assert (
-            sum(v["throughput_mib_s"] for v in volumes)
-            <= entry["ceilings"]["baseline_throughput_mib_s"]
-        ), use_case
+        chosen_name = entry["instance_types"][0]
+        chosen = live_catalogue.types[chosen_name]
+        shape_entry = resolve_sizing._at(shapes, "clouds", "aws", "use_cases", use_case)
+        demand = core.nodes.get(
+            resolve_sizing.BROKER_DEMAND.get(use_case, use_case)
+        ) or resolve_sizing.Node(use_case, 1, 0, 0, 0, 0, 0, "cluster overhead")
+        built = resolve_sizing._resolve_volumes(
+            shape_entry, demand, chosen, core.root_volume_demand_mib_s, core.root_volume_demand_iops
+        )
+        assert resolve_sizing._volumes_fit(built, chosen), use_case
 
 
 def test_the_step_up_is_reported_with_its_price_delta(tmp_path: Path) -> None:
@@ -994,7 +1204,7 @@ def test_a_locked_change_is_accepted_and_written_with_migrate(tmp_path: Path, ca
     assert status == 0
     assert (second / "sizing" / "resolved.yaml").is_file()
     assert (second / "sizing" / "scale.report.md").is_file()
-    assert (second / "sizing" / "scale.auto.tfvars.json").is_file()
+    assert (second / "sizing.auto.tfvars.json").is_file()
     err = capsys.readouterr().err
     assert "MIGRATING msk_broker_type: strimzi -> msk-express" in err
     assert "Standard to Express is a cluster replacement" in err
@@ -1150,7 +1360,7 @@ def msk_case(tmp_path_factory) -> Path:
 def test_ci_burst_is_not_a_dial_knob(tmp_path: Path) -> None:
     """Every populated resolve gets one -- there is no sizing field that opts out."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "sizing" / "scale.auto.tfvars.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert "ci-burst" in doc["resolved_shapes"]
     # A fixed EKS managed node group cannot express "spot, 100% disruption
     # budget" -- ci-burst is Karpenter-only.
@@ -1190,3 +1400,580 @@ def test_a_populated_cloud_never_writes_a_nodes_json(tmp_path: Path) -> None:
     """The demand-only artefact is on-prem's alone -- a cloud creates its own nodes."""
     _run(_dial(tmp_path), tmp_path)
     assert not (tmp_path / "sizing" / "scale.nodes.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Fragment-to-chart render -- gate-3-correctness.md P1-1 and the review's own
+# recommended test (a): nothing else runs `helm template` against the
+# resolver's own output, which is exactly how the ClickHouse storageModel
+# fragment shipped broken.
+# ---------------------------------------------------------------------------
+
+HELM_BIN = shutil.which("helm")
+CHARTS_DIR = REPO_ROOT / "helm" / "charts"
+
+# The minimal values a REAL AWS deploy's OTHER overlays supply -- the S3
+# endpoint (a bucket only terraform knows), the Karpenter cluster facts (the
+# kubernetes-cluster module's own output) -- so the render is judged on the
+# UNION argocd actually applies, never the resolver's fragment alone. Never
+# the resolver's job to fill in: it derives sizing, not bucket URLs or IAM
+# ARNs.
+CHART_RENDER_BASES: dict[str, dict[str, object]] = {
+    "kafka": {"appNamespace": "dfe", "kafka": {"mode": "cluster", "provider": "strimzi"}},
+    "clickhouse-cluster": {
+        "appNamespace": "dfe",
+        "clickhouse": {
+            "mode": "cluster",
+            "replicas": 3,
+            "shardsCount": 1,
+            "objectStore": {"endpoint": "https://s3.us-west-2.amazonaws.com/dfe-clickhouse-test/"},
+        },
+    },
+    "karpenter-pools": {
+        "karpenter": {
+            "cluster": {
+                "discoveryTag": "dfe-test",
+                "instanceProfile": "dfe-test-karpenter",
+                "kmsKeyId": "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000",
+            }
+        }
+    },
+}
+CHART_RENDER_CHARTS = tuple(CHART_RENDER_BASES)
+
+
+@pytest.fixture(scope="module")
+def aws_golden_outputs(tmp_path_factory) -> dict[str, Path]:
+    """The output directory for every AWS golden-matrix case (cloud x focus x
+    band, strimzi), so the chart render tests below have the same
+    `scale.values.yaml` fragment the golden snapshot already covers."""
+    outputs: dict[str, Path] = {}
+    for focus in FOCUSES:
+        for band in BANDS:
+            name = _case_name("aws", focus, band)
+            out = tmp_path_factory.mktemp("render-" + name.replace("-", "_"))
+            _run(_dial(out, cloud="aws", focus=focus, estimate=band), out, cloud="aws")
+            outputs[name] = out
+    return outputs
+
+
+def _helm_template(chart: str, base: dict[str, object], fragment: Path) -> subprocess.CompletedProcess:
+    base_path = fragment.with_name(f"_render_base_{chart}.json")
+    # JSON is valid YAML, so this needs no writer beyond the stdlib's own.
+    base_path.write_text(json.dumps(base), encoding="utf-8")
+    chart_dir = CHARTS_DIR / chart
+    return subprocess.run(
+        ["helm", "template", "t", str(chart_dir), "-f", str(base_path), "-f", str(fragment)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("chart", CHART_RENDER_CHARTS)
+@pytest.mark.parametrize(
+    "case", [_case_name("aws", focus, band) for focus in FOCUSES for band in BANDS]
+)
+def test_the_resolved_fragment_renders_against_its_chart(
+    aws_golden_outputs: dict[str, Path], chart: str, case: str
+) -> None:
+    """The values fragment resolve_sizing.py writes must not break the chart
+    it targets. `helm lint` never catches this class of bug -- it has no
+    notion of what the resolver derives -- so this is the one place the two
+    halves actually meet. P1-1: the resolver used to emit
+    clickhouse.objectStore.cache.volume: instance-store with no
+    clickhouse.storageModel beside it, which _storage.tpl's own guard
+    refuses outright.
+    """
+    if HELM_BIN is None:
+        pytest.skip("helm is not on PATH")
+    fragment = aws_golden_outputs[case] / "sizing" / "scale.values.yaml"
+    result = _helm_template(chart, CHART_RENDER_BASES[chart], fragment)
+    assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# P1-3 -- the two tfvars producers must not collide on the same variable
+# ---------------------------------------------------------------------------
+
+# The same shape scripts/tests/test_render_dial_tofu.py's own fixture dial
+# uses, trimmed to what _tofu_vars needs -- render_dial.py is a sibling's
+# file and is called here AS IT IS, never edited, so this test proves (or
+# disproves) the composition rather than asserting a behaviour of its own.
+RENDER_DIAL_TOFU_FIXTURE = """
+substrate: k8s
+metadata:
+  name: dfe-example
+profile: scale
+registry: ghcr.io/hyperi-io
+target:
+  provision:
+    cloud: aws
+    account: "000000000000"
+    region: us-west-2
+    cidr: 10.90.0.0/16
+kubernetes_version: "1.36"
+network:
+  nat: single
+endpoint:
+  public: "false"
+  allowed_cidrs: ""
+dns:
+  private_zone: dfe-example.internal
+  public_zone: ""
+node_pools:
+  system:
+    shape_ref: eks-system
+    min_size: 2
+    max_size: 3
+    desired_size: 2
+    capacity_type: ON_DEMAND
+    disk_gb: 40
+telemetry:
+  aws:
+    sink: otel
+    retention_days: 2
+kafka:
+  provider: strimzi
+  landing_topics:
+    main_land:
+state:
+  bucket: example-tfstate
+  key: dfe/test/aws.tfstate
+  region: us-west-2
+tags:
+  service-name: dfe
+  service-namespace: example
+  environment: test
+  owner: owner@example.com
+  cost-center: experiments
+  lifecycle: ephemeral
+secrets:
+  backend: aws-sm
+  ref: dfe
+k8s:
+  env: test
+  storage_class: gp3
+  repo_url: https://github.com/example/dfe-deploy.git
+  target_revision: main
+endpoints:
+  clickhouse_host: ""
+  kafka_bootstrap: ""
+  otel_endpoint: ""
+"""
+
+
+def _render_dial_tofu_vars() -> dict[str, object]:
+    """The variables render_dial.py --tofu produces today, called directly --
+    it reads shapes/resolved/aws-us-west-2.json, the same committed file this
+    script's own resolve merges into."""
+    tree = parse_dial(RENDER_DIAL_TOFU_FIXTURE, source="test-tofu-fixture")
+    _, variables = render_dial._tofu_vars(tree)
+    return variables
+
+
+def _required_tf_variables(path: Path) -> set[str]:
+    """Every `variable` this root declares with no `default` -- OpenTofu
+    prompts (or fails outright, unattended) on a plan that leaves one of
+    these unset, so the two tfvars producers together have to cover all of
+    them. Brace-matched per variable block, not a flat regex over the whole
+    file, because `type = object({...})` nests its own braces and an
+    `optional(type, value)` default inside one is not a `default =` line."""
+    text = path.read_text(encoding="utf-8")
+    required: set[str] = set()
+    for match in re.finditer(r'variable\s+"([^"]+)"\s*\{', text):
+        name = match.group(1)
+        depth = 1
+        i = match.end()
+        while depth > 0 and i < len(text):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        body = text[match.end() : i]
+        if not re.search(r"^\s*default\s*=", body, re.MULTILINE):
+            required.add(name)
+    return required
+
+
+def test_the_two_tfvars_producers_compose_with_no_variable_defined_twice(tmp_path: Path) -> None:
+    """OpenTofu auto-loads every *.auto.tfvars.json in the root directory in
+    ALPHABETICAL ORDER, and a later file replaces a top-level key WHOLESALE
+    rather than merging it -- gate-3-correctness.md P1-3, where
+    dial.auto.tfvars.json and the sizing tfvars both declared node_pools and
+    the sized brokers vanished under the system group's own file (or vice
+    versa, whichever file sorted last). resolve_sizing.py now writes
+    sizing.auto.tfvars.json at the root of --out, beside dial.auto.tfvars.json
+    ('d' before 's'), and merges the dial's own node_pools.system into what it
+    derives -- so it is the SINGLE writer of that variable and there is
+    nothing left for the two files to collide on there.
+
+    gate-3 remedy 2 left this red for a test-construction reason, not a
+    resolver bug: `_dial()`'s own minimal dial never writes a `node_pools:`
+    block at all, so nothing here ever gave the resolver a `system` group to
+    merge -- there was nothing wrong to find. RENDER_DIAL_TOFU_FIXTURE above
+    (a realistic dial) carries exactly this block, so the fix gives the
+    RESOLVER-facing dial the same one -- appended after everything `_dial()`
+    writes, never through its own `extra` splice: that lands mid-`sizing:`,
+    and a `node_pools:` block deep enough to carry disk_gb re-dents back to
+    2 spaces, which is exactly where `_dial()` places its own next line
+    (`spend_warn_usd_month`), so it would read as a sixth node_pools.system
+    FIELD rather than a sizing one.
+    """
+    dial_path = _dial(tmp_path, cloud="aws", estimate=10000)
+    with dial_path.open("a", encoding="utf-8") as f:
+        f.write(
+            "node_pools:\n"
+            "  system:\n"
+            "    shape_ref: eks-system\n"
+            "    min_size: 2\n"
+            "    max_size: 3\n"
+            "    desired_size: 2\n"
+            "    capacity_type: ON_DEMAND\n"
+            "    disk_gb: 40\n"
+        )
+    dial_vars = _render_dial_tofu_vars()
+    _run(dial_path, tmp_path, cloud="aws")
+    sizing_vars = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+
+    overlap = set(dial_vars) & set(sizing_vars)
+    assert not overlap, (
+        f"dial.auto.tfvars.json and sizing.auto.tfvars.json both declare {sorted(overlap)} -- "
+        "tofu's later-file-wins load order silently drops whichever one lost"
+    )
+    assert "system" in sizing_vars["node_pools"], sizing_vars["node_pools"]
+    assert sizing_vars["node_pools"]["system"]["shape_ref"] == "eks-system"
+
+    # The two producers TOGETHER have to cover every variable the root
+    # declares with no default -- a gap here is an unattended plan prompting
+    # for a value neither file ever supplies.
+    required = _required_tf_variables(
+        REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf"
+    )
+    covered = set(dial_vars) | set(sizing_vars)
+    missing = required - covered
+    assert not missing, (
+        f"variables.tf declares {sorted(missing)} with no default, and neither "
+        "dial.auto.tfvars.json nor sizing.auto.tfvars.json writes it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-4 -- the no-estimate floor must not size up on a fixed volume profile
+# ---------------------------------------------------------------------------
+
+
+def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_path: Path) -> None:
+    """Q27/Q29: 3 brokers, 3 ClickHouse replicas plus Keeper, economy, the
+    smallest shape that does not OOM.
+
+    gate-3 remedy 1 got this to USD 4,832/month by deriving the data
+    volume's throughput from demand instead of a fixed scale assumption.
+    gate-3 remedy 2 got it to USD 3,274/month by summing `demand_iops` /
+    `demand_throughput_mib_s` in A3 instead of the PROVISIONED figures every
+    gp3 volume carries -- but it still gave the mandatory root volume gp3's
+    own free minimum (3,000 IOPS / 125 MiB/s) AS its demand, on the theory
+    that root's floor is never optional so its demand had to equal that
+    resolved figure. That is the same ceiling-as-demand error the "data"
+    volume's own fix had just corrected, one level up: 125 MiB/s is above
+    m9g.large's and r9gd.large's own baseline throughput (95 MiB/s), which
+    forced every use case with a gp3 root past a PHYSICAL floor of xlarge
+    regardless of what it demanded.
+
+    gate-4 (this fix) gives root a small, honest, documented demand instead
+    (sizing.yaml's floors.root_volume_demand_mib_s / _iops, 10 MiB/s / 300
+    IOPS -- what a quiet root disk carrying the OS, container images and
+    logs actually asks of the instance, capped at whatever it is
+    provisioned for). That is comfortably under every candidate's baseline,
+    so the physical xlarge floor is gone and every use case falls through to
+    its OWN real floor:
+
+    - kafka-broker and eks-system land on `m9g.large` (2 vCPU / 8 GiB) --
+      sizing.yaml's own kafka_broker_vcpu/_ram_gib floor, unreachable before
+      because root's inflated demand always forced xlarge first.
+    - kraft-controller lands on `m9g.medium` (1 vCPU / 4 GiB) --
+      kraft_controller.vcpu_floor/ram_gib_floor, its true floor since it is
+      sized by PARTITION COUNT, never throughput, and root is now the only
+      demand it carries.
+    - clickhouse lands on `r9gd.large` (2 vCPU / 16 GiB) for the same reason
+      as kafka-broker.
+    - keeper is UNCHANGED at `m9g.2xlarge`: its own fsync-rate ratio (6,000
+      IOPS, independent of ingest) plus root's now-small 300 is a real 6,300
+      against xlarge's 6,000 baseline -- xlarge still cannot carry it, so
+      this is a genuine demand, not a counting bug, and 2xlarge (12,000)
+      still wins.
+    - general and ci-burst are unchanged: both declare a `size:` floor
+      (`xlarge`, `4xlarge`) above what root's demand ever forced, so they
+      were never inflated by this bug in the first place.
+
+    Verified against the fixture catalogue: total compute USD 2,316/month
+    (kafka-broker $214, kraft-controller $107, clickhouse $351, keeper $857
+    unchanged, eks-system $71, general $143 unchanged, ci-burst $572
+    unchanged) -- a 29% cut from remedy 2's 3,274, 52% off remedy 1's 4,832,
+    and 67% off the original 7,093.
+    """
+    _run(_dial(tmp_path, estimate=None), tmp_path, cloud="aws")
+    report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
+    rows = re.findall(r"\| \*\*total compute\*\* \| .*?\*\*([\d,]+)\*\* \|", report)
+    assert rows, report
+    total = int(rows[0].replace(",", ""))
+    # The verified honest floor, not a hint: state it exactly, not just
+    # "under" some round number, so a future regression that moves it either
+    # way shows up as a failing assertion rather than a silent pass.
+    assert total == 2316, f"the floor's total compute is ${total:,}/month, expected exactly $2,316"
+
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    shapes = {name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()}
+    assert shapes["kafka-broker"] == "m9g.large", shapes
+    assert shapes["kraft-controller"] == "m9g.medium", shapes
+    assert shapes["clickhouse"] == "r9gd.large", shapes
+    # Unaffected: keeper's own 6,000 IOPS fsync target plus root's 300 is a
+    # real 6,300-IOPS demand, still above xlarge's 6,000 baseline.
+    assert shapes["keeper"] == "m9g.2xlarge", shapes
+
+
+# ---------------------------------------------------------------------------
+# P2-4 -- the instance-store cache size is decimal GB at the read, GiB
+# everywhere else, and the two must not be mixed
+# ---------------------------------------------------------------------------
+
+
+def test_the_instance_store_cache_converts_gb_to_gib(catalogue) -> None:
+    """InstanceStorageInfo.TotalSizeInGB is AWS's own decimal GB. A 950 GB
+    device is an 884 GiB device, and the resolver's own `size_gib` field name
+    promises GiB -- copying the GB number in unconverted told ClickHouse's
+    filesystem cache it had 7.5% more room than the device holds."""
+    entry = {
+        "volumes": {
+            "cache": {
+                "type": "nvme-instance-store",
+                "size_gib": "",
+                "size_formula": "instance-provided",
+                "iops": "",
+                "throughput_mib_s": "",
+            }
+        }
+    }
+    chosen = resolve_sizing.InstanceType(
+        name="r9gd.2xlarge",
+        family="r",
+        generation=9,
+        modifiers="d",
+        size="2xlarge",
+        vcpu=8,
+        memory_gib=64.0,
+        baseline_iops=12000,
+        baseline_throughput_mib_s=375.0,
+        maximum_iops=48000,
+        maximum_throughput_mib_s=1500.0,
+        instance_store_gb=950,
+        price_usd_hour=0.64072,
+        physical_processor="AWS Graviton5 Processor",
+    )
+    demand = resolve_sizing.Node("clickhouse", 3, 8, 64, 0, 0, 0, "test")
+    volumes = resolve_sizing._resolve_volumes(
+        entry, demand, chosen, ROOT_VOLUME_DEMAND_MIB_S, ROOT_VOLUME_DEMAND_IOPS
+    )
+    assert volumes["cache"]["size_gib"] == 884
+
+
+# ---------------------------------------------------------------------------
+# P2-6 -- a node-field override on a use case size_core derives no node for
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("use_case", ["eks-system", "general", "ci-burst", "msk-broker", "toolbox"])
+def test_a_node_override_on_a_nodeless_use_case_is_refused_by_name(
+    tmp_path: Path, use_case: str, capsys
+) -> None:
+    """size_core derives a Node for only kafka-broker, kraft-controller,
+    clickhouse and keeper -- a cpu/memory/disk_gb/replicas override for one of
+    the other five use cases had nothing to replace and was silently dropped,
+    absent from the report's own 'Overridden by the deployer' table."""
+    extra = f"  overrides:\n    {use_case}:\n      cpu: 8"
+    assert _run(_dial(tmp_path, extra=extra), tmp_path) == 1
+    err = capsys.readouterr().err
+    assert use_case in err
+    assert "no derived node to override" in err
+
+
+def test_a_shape_override_still_applies_to_a_nodeless_use_case(tmp_path: Path) -> None:
+    """instance_type, iops and throughput_mibs act on the CHOICE, not a Node,
+    so they still apply to eks-system, general, ci-burst, msk-broker and
+    toolbox -- only the node-field overrides above are refused."""
+    extra = "  overrides:\n    eks-system:\n      instance_type: m9g.2xlarge"
+    assert _run(_dial(tmp_path, extra=extra), tmp_path) == 0
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert doc["resolved_shapes"]["eks-system"]["instance_types"][0] == "m9g.2xlarge"
+
+
+# ---------------------------------------------------------------------------
+# P2-7 -- network.az_count must reach the resolver
+# ---------------------------------------------------------------------------
+
+
+def test_az_count_reaches_the_catalogues_own_zone_slice(tmp_path: Path) -> None:
+    """The catalogue fixture carries 3 zones; asking for 2 must slice down to
+    2, not silently keep 3 -- proving the dial's az_count is read at all."""
+    extra = "network:\n  az_count: 2"
+    _run(_dial(tmp_path, extra=extra), tmp_path, cloud="aws")
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    assert doc["_provenance"]["availability_zones"] == ["us-west-2a", "us-west-2b"]
+
+
+def test_az_count_above_the_fixtures_own_zone_count_is_refused_by_name(tmp_path: Path, capsys) -> None:
+    """The committed fixture carries 3 zones; a dial asking for 4 cannot be
+    validated against a zone the fixture never captured."""
+    extra = "network:\n  az_count: 4"
+    assert _run(_dial(tmp_path, extra=extra), tmp_path, cloud="aws") == 1
+    err = capsys.readouterr().err
+    assert "fewer than the 4" in err
+
+
+def test_az_count_out_of_the_tofu_roots_own_range_is_refused(tmp_path: Path, capsys) -> None:
+    extra = "network:\n  az_count: 7"
+    assert _run(_dial(tmp_path, extra=extra), tmp_path) == 1
+    assert "network.az_count must be between 2 and 6" in capsys.readouterr().err
+
+
+def test_the_broker_count_multiple_follows_az_count(tmp_path: Path) -> None:
+    """A deployment spread over more zones than the floor's 3 brokers gets a
+    broker count that actually spreads one-per-zone, not the floor's own
+    multiple regardless of how many zones the VPC spans."""
+    extra = "network:\n  az_count: 5"
+    _run(_dial(tmp_path, cloud="onprem", extra=extra), tmp_path, cloud="onprem")
+    doc = json.loads((tmp_path / "sizing" / "scale.nodes.json").read_text(encoding="utf-8"))
+    assert doc["kafka-broker"]["count"] == 5
+
+
+# ---------------------------------------------------------------------------
+# P2-10 -- a fallback instance type must never be smaller than the chosen one
+# ---------------------------------------------------------------------------
+
+
+def test_fallbacks_never_undercut_the_volume_step_up(tmp_path: Path) -> None:
+    """select_shape's fallback ladder used to list the smallest type PER
+    GENERATION that met the raw demand, built BEFORE the volume step-up
+    replaced the chosen type with a bigger one -- so EKS's own capacity
+    fallback could silently halve the node the step-up existed to avoid. Every
+    fallback in the committed answer must carry at least the chosen type's own
+    vCPU and memory."""
+    _run(_dial(tmp_path), tmp_path, cloud="aws")
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    live_catalogue = resolve_sizing.fetch_fixtures(FIXTURES, "us-west-2")
+    for use_case, entry in doc.items():
+        if use_case.startswith("_") or use_case == "msk-broker":
+            continue
+        chosen_name, *fallbacks = entry["instance_types"]
+        chosen_type = live_catalogue.types[chosen_name]
+        for name in fallbacks:
+            candidate = live_catalogue.types[name]
+            assert candidate.vcpu >= chosen_type.vcpu, (use_case, name)
+            assert candidate.memory_gib >= chosen_type.memory_gib, (use_case, name)
+
+    # The direct unit-level proof: a family whose older generation's smallest
+    # size is BELOW the volume-stepped-up chosen type must not appear.
+    catalogue_obj = resolve_sizing.fetch_fixtures(FIXTURES, "us-west-2")
+    entry = {
+        "family": "m",
+        "modifiers": "",
+        "generation_policy": "newest",
+        "generation_pin": "",
+        "price_policy": "newest",
+        "price_step_max_pct": "",
+        "price_generations": "",
+        "size": "large",
+        "volumes": {
+            "root": {
+                "type": "gp3",
+                "size_gib": "40",
+                "size_formula": "fixed",
+                "iops": "3000",
+                "throughput_mib_s": "125",
+                "throughput_policy": "instance-baseline",
+            },
+            "data": {
+                "type": "gp3",
+                "size_gib": "",
+                "size_formula": "fixed",
+                "iops": "3000",
+                "throughput_mib_s": "500",
+            },
+        },
+    }
+    demand = resolve_sizing.Node("kafka-broker", 3, 2, 8, 40, 0, 0, "test")
+    choice = resolve_sizing.select_shape(
+        "kafka-broker",
+        entry,
+        demand,
+        catalogue_obj,
+        "newest",
+        [],
+        ROOT_VOLUME_DEMAND_MIB_S,
+        ROOT_VOLUME_DEMAND_IOPS,
+    )
+    for name in choice.fallbacks:
+        candidate = catalogue_obj.types[name]
+        assert candidate.vcpu >= choice.vcpu, (name, candidate.vcpu, choice.vcpu)
+        assert candidate.memory_gib >= choice.memory_gib, (name, candidate.memory_gib, choice.memory_gib)
+
+
+# ---------------------------------------------------------------------------
+# P2-5 -- --migrate accepts the locked diff, never the caps
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_still_fails_on_a_fatal_assertion(tmp_path: Path, capsys) -> None:
+    """A locked-field change plus a fatal A1 (an override past the size-derived
+    IOPS ceiling) must exit 1 even with --migrate -- migrating the locked diff
+    is not the same thing as the caps having passed."""
+    first = tmp_path / "first"
+    first.mkdir()
+    _run(_dial(first, provider="strimzi", estimate=1000), first)
+    previous = first / "sizing" / "resolved.yaml"
+
+    second = tmp_path / "second"
+    second.mkdir()
+    extra = "  overrides:\n    keeper:\n      iops: 60000"
+    dial = _dial(second, provider="msk", estimate=1000, extra=extra)
+    status = _run(dial, second, previous=previous, migrate=True)
+
+    assert status == 1
+    err = capsys.readouterr().err
+    assert "MIGRATING msk_broker_type" in err
+    assert "A1 keeper" in err
+
+
+# ---------------------------------------------------------------------------
+# P3 -- the dead A6 check, checked against the shape entry it can actually see
+# ---------------------------------------------------------------------------
+
+
+def test_a6_catches_iops_per_gb_on_the_raw_shape_entry(catalogue) -> None:
+    """_resolve_volumes only ever copies type/size_gib/iops/throughput_mib_s/
+    demand_iops/demand_throughput_mib_s/source into the built volume dict, so
+    a check against THAT dict can never see iopsPerGB or
+    allowAutoIOPSPerGBIncrease -- checked against the shape entry
+    compute-shapes.yaml declares instead, which is where a future mistaken
+    field name would actually appear."""
+    choice = _choice(
+        volumes={"data": {"type": "gp3", "size_gib": 500, "iops": 3000, "throughput_mib_s": 500}}
+    )
+    entry = {"volumes": {"data": {"iopsPerGB": "50"}}}
+    findings = resolve_sizing.assert_caps(choice, entry, catalogue, 0, gp3_usd_per_gib_month=0.08)
+    assert any(f.rule == "A6" and "iopsPerGB" in f.message for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# P2-12 -- k8s.cloud: local maps onto the onprem shape key
+# ---------------------------------------------------------------------------
+
+
+def test_k8s_cloud_local_resolves_as_onprem(tmp_path: Path) -> None:
+    """compute-shapes.yaml has no `local` key, only `onprem` -- deployment
+    .example.yaml's own default (k8s.cloud: local) failed the resolve outright
+    unless the operator knew to pass --cloud onprem by hand."""
+    dial = _dial(tmp_path, cloud="local")
+    dial_obj = resolve_sizing.read_dial(dial)
+    assert dial_obj.cloud == "onprem"

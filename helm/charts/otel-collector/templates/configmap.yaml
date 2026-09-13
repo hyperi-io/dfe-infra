@@ -154,7 +154,7 @@ data:
             password: ${env:KAFKA_PASSWORD}
         {{- end }}
       {{- end }}
-      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk")) }}
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
       prometheus:
         config:
           scrape_configs:
@@ -387,7 +387,7 @@ data:
         metrics:
           receivers:
             - otlp
-            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk")) }}
+            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
             # One receiver carries every scrape job, so this must match the
             # receiver's own gate or configured jobs are never routed anywhere.
             - prometheus

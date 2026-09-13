@@ -28,15 +28,28 @@ karpenter:
   # forces -- ClickHouse and CI take the instance store, everything else does not.
   nodeClass:
     # An alias resolves the EKS-optimised image through SSM and carries its own
-    # family, so amiFamily is not set beside it. `latest` is deliberate: a new
-    # image is drift, and the disruption budget is what paces the replacement.
-    amiAlias: al2023@latest
+    # family, so amiFamily is not set beside it. Pinned to a dated AL2023
+    # release (operators.karpenter-al2023-ami in versions.yaml, drift-checked)
+    # rather than `latest`: `latest` moved the node image on every reconcile
+    # with no cooldown and no version an operator could point at, which is
+    # exactly the unwatched-drift failure mode every other pin in this repo
+    # exists to avoid. A new release arrives as a versions.yaml bump through
+    # the same 7-day cooldown gate, not silently.
+    amiAlias: al2023@v20260827
     metadata:
-      # IMDSv2 only. Hop limit 2 because a pod reaching the node's metadata goes
-      # through one extra hop, and 1 is what silently breaks the AWS SDK inside a
-      # container.
+      # IMDSv2 only, hop limit 1 -- a pod on the node cannot reach
+      # 169.254.169.254 at all. Every AWS credential on this cluster is a Pod
+      # Identity association (Karpenter, the Load Balancer Controller, the EBS
+      # CSI driver, external-dns, cert-manager, the MSK bootstrap Job), so no
+      # pod's own AWS SDK call needs the node's IMDS; hop limit 2 would be the
+      # thing that let a pod reach it, and from there the node role's own
+      # credentials -- which for Karpenter's node role carry AmazonEKS_CNI_Policy
+      # network-interface actions on "*". A container that needs the
+      # node's own IMDS (not the workload's identity) is the one case to raise
+      # this back to 2 for, and it should be that pool's own override, not the
+      # shared default.
       httpTokens: required
-      httpPutResponseHopLimit: 2
+      httpPutResponseHopLimit: 1
     # Sized by the resolver from the instance's sustained baseline, not from a
     # fixed number -- a 125 MiB/s root on a size whose baseline is 95 is a volume
     # the instance cannot carry.
@@ -61,6 +74,14 @@ karpenter:
   #                        the requirements, so a floor above a listed family
   #                        deletes that family, and the guard below refuses it.
   #   generationIn         the pinned override. When set it REPLACES generationGt.
+  #   minVcpu              optional floor on karpenter.k8s.aws/instance-cpu.
+  #                        families + generation bound WHICH instance line, never
+  #                        which SIZE on it -- a workload sized up for its
+  #                        volume's EBS baseline still fits a smaller instance's
+  #                        cpu/memory request, which is all Karpenter's own
+  #                        bin-packing looks at. Empty renders no floor.
+  #   minMemoryGib         optional floor on karpenter.k8s.aws/instance-memory,
+  #                        in GiB. Same reasoning as minVcpu.
   #   arch                 arm64 on every cloud pool.
   #   capacityTypes        ["on-demand"], or ["spot", "on-demand"] for work that
   #                        can be retried.

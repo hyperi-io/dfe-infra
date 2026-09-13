@@ -128,6 +128,14 @@ kafka:
   # uses AWS IAM (IRSA/workload-identity, SASL OAUTHBEARER) -- no static secret.
   external:
     bootstrap: ""
+    # The managed broker's own partition count (its num_partitions tofu
+    # variable). dfe-kafka.partitions cannot derive one from kafka.replicas at
+    # mode=external -- that field is this chart's own, never the managed
+    # cluster's real broker count -- so this is read VERBATIM instead of
+    # falling back to the chart's own num.partitions formula. Empty falls back
+    # to that formula anyway (at whatever kafka.replicas happens to default
+    # to), which is a stated gap until this is wired from the dial.
+    numPartitions: ""
     auth:
       type: scram
       secretName: dfe-kafka-external
@@ -536,8 +544,8 @@ kafka:
     # metrics.usePrometheus is true.
     bytesInPerBrokerThresholdMBs: 80
     metrics:
-      # The OFF switch, never an on switch. The devex stack ships no
-      # PromQL-queryable backend today: the otel-collector's own `prometheus`
+      # The OFF switch, never an on switch. The on-prem reference cluster ships
+      # no PromQL-queryable backend today: the otel-collector's own `prometheus`
       # block (helm/charts/otel-collector) is an EXPOSITION endpoint feeding
       # ClickHouse, not a server KEDA can run a query against. Flip this on
       # only once a deployment has a real Prometheus/Thanos/Mimir/

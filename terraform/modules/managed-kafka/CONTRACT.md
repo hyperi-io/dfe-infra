@@ -1,6 +1,6 @@
 # managed-kafka -- module contract
 
-The Kafka a deployment gets when it does not run its own. One body per
+REFERENCE. The Kafka a deployment gets when it does not run its own. One body per
 VENDOR, not per cloud, because only one of them is cloud-bound:
 
 | Body | Status | What it is | Clouds |
@@ -42,7 +42,7 @@ using the second.
 
 | Input | Type | Meaning |
 |-------|------|---------|
-| `implementation` | `string` | `msk`, `redpanda-cloud`, `confluent-cloud` or `strimzi`. Selects the body; each body asserts it is the one named. |
+| `implementation` | `string` | `msk`, `redpanda-cloud`, `confluent-cloud`, or `strimzi`. Selects the body; each body asserts it is the one named. |
 | `connectivity` | `string` | `private` (the default, and the only one a product deploy should use) or `public`. |
 | `name` | `string` | Name prefix for every resource the body creates, and the cluster's own name. |
 | `env` | `string` | Deployment environment, for the names and descriptions that have to distinguish two deployments in one account. |
@@ -53,11 +53,13 @@ using the second.
 | `kafka_version` | `string` | The broker version, in the provider's own spelling. No default: the newest supported version is read from the vendor at build time, because a default rots into a deprecated line silently. |
 | `client_cidrs` | `list(string)` | Who may reach the brokers. Empty means the whole VPC the cluster module built. |
 | the tuning settings | `number` each | `num_partitions`, `log_retention_ms`, `message_max_bytes`. The canonical broker profile, already reduced to what this implementation accepts -- named and validated rather than an opaque map, because a map cannot be checked against a provider's read-only list and a setting silently dropped is the failure mode this contract exists to prevent. A body APPLIES what it is given and reports what its provider refuses; it does not decide what is applicable. No default in any body: the root's dial states every one, so a value cannot drift between the three copies silently. |
-| `landing_topics` | `map(object({ partitions, retention_ms }))` | Read by `confluent-cloud` and `redpanda-cloud` only, keyed by topic name. Neither has a bootstrap Job of its own -- msk's landing topics are that Job's, from the chart's own values -- so tofu creates these itself, or dfe-loader crash-loops on a bare deploy (a missing `*_land` topic is fatal to it). A null `partitions` or `retention_ms` takes the tuning settings above. |
+| `landing_topics` | `map(object({ partitions, retention_ms }))` | Read by `confluent-cloud` and `redpanda-cloud` only, keyed by topic name, and REQUIRED (at least one entry) for either -- the root's own variable validation refuses a plan with an empty map on a SaaS provider. Neither has a bootstrap Job of its own -- msk's landing topics are that Job's, from the chart's own values -- so tofu creates these itself, or dfe-loader crash-loops on a bare deploy (a missing `*_land` topic is fatal to it). A null `partitions` or `retention_ms` takes the tuning settings above. |
 | `kms_key_arn` | `string` | The deployment's own key, from the cluster module. Encrypts the data at rest and the credential. |
 | `eks_cluster_name`, `pod_identity`, `pod_identity_trust_policy_json` | | The workload identity the bootstrap Job runs as, for a body whose provider needs one. |
 | `autoscaling` | `object({ enabled, max_brokers, step, per_broker_capacity_mb_s, headroom })` | `msk`-only: broker-count scaling, since AWS gives Express no native equivalent. Ignored by both SaaS bodies, whose vendor already elastic-scales. |
 | `telemetry` | `object({ sink, retention_days })` | `msk`-only: where the broker logs land. `otel` (the default) ships them to an S3 bucket this body creates, for DFE's own OTel feed; `cloudwatch` is the opt-in AWS-native path. Neither SaaS body emits a CloudWatch-shaped broker log, so neither takes this input. |
+| `secret_recovery_window_days` | `number` | `msk`-only. Secrets Manager's deletion delay for the SCRAM credential. Defaults to the vendor's own 30 days; the root passes 0 for a `tags.lifecycle: ephemeral` deployment torn down and rebuilt under the same name, where the 30-day window would fail the second create on a name that still exists. |
+| `region` | `string` | `confluent-cloud`-only, and read only on `connectivity = public`: on `private` the region is discovered from the VPC's own provider configuration, because a private attachment has to sit in the same region as the network it attaches to. `basic` tier has no VPC to discover it from, so this is that path's only source. |
 
 ## Outputs
 
@@ -134,14 +136,28 @@ cluster, and on MSK it is MSK's.
 **Broker logs follow `telemetry.sink`**, never both destinations at once.
 `otel` (the default) delivers them to an S3 bucket this body creates --
 lifecycle-expired at `telemetry.retention_days`, SSE-KMS on the deployment's own
-key, public access blocked, `force_destroy` true because it is log spill and
-not data DFE keeps. Because the log delivery service authenticates against a
-resource policy rather than an IAM identity, this body ALSO extends the
-deployment key's policy (`aws_kms_key_policy`, which replaces the whole policy)
-to grant it -- something an IAM role policy cannot do for a service principal.
+key, public access blocked, `force_destroy` true unconditionally because it is
+log spill and not data DFE keeps (unlike the CloudTrail bucket in
+`terraform/environments/aws/cloudtrail.tf`, whose `force_destroy` DOES follow
+`tags.lifecycle` -- a management-event trail is closer to data worth keeping
+on a persistent deployment).
 `cloudwatch` keeps the CloudWatch log group at `telemetry.retention_days`
 instead and builds no bucket. `open_monitoring` (JMX + node exporter) stays on
-under both -- it is scraped in-cluster, not delivered through either sink.
+under both -- it is scraped in-cluster, not delivered through either sink,
+open to the whole VPC on 11001/11002 regardless of how `client_cidrs` narrows
+the Kafka ports.
+
+This body does NOT own or extend the deployment KMS key's policy. The log
+delivery service (`delivery.logs.amazonaws.com`) authenticates against a
+resource policy rather than an IAM identity, so the grant it needs has to
+live in the key's own policy -- but `aws_kms_key_policy` REPLACES a key's
+whole policy, so a second such resource against the same key silently
+strips whatever the first one granted. `kubernetes-cluster/aws` is the key's
+ONE policy owner for exactly this reason (its `CONTRACT.md`,
+`key_policy_grants`); this body has no `aws_kms_key_policy` resource of its
+own, and the root computes the `delivery.logs.amazonaws.com` grant and hands
+it to the cluster module when `provider == "msk" && telemetry.sink ==
+"otel"`.
 
 ## What both SaaS bodies share
 

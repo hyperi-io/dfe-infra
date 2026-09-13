@@ -1,6 +1,6 @@
 # secrets -- module contract
 
-The store External Secrets Operator reads from, the credentials seeded into it,
+REFERENCE. The store External Secrets Operator reads from, the credentials seeded into it,
 and the identity ESO uses to reach it. One body per backend:
 
 | Body | Status | Store | ESO auth |
@@ -27,6 +27,7 @@ ClusterSecretStore provider block needs.
 | `seeds` | `map(map(string))` | Secret name -> field -> value. An EMPTY value means "generate one here and never show it to the caller", which is how a password lands in the store without passing through a tfvars file or a plan output. |
 | `kafka_password` | `string` | Sensitive. Fills the `password` field of the `kafka/<provider>` seed, which no body generates -- see below. Null only where the seeds carry no kafka entry at all. |
 | `kms_key_arn` | `string` | The deployment's own key, from the cluster module. Bodies whose backend has no separate key ignore it. |
+| `recovery_window_days` | `number`, default 30 | AWS-only today (`aws-sm/`). The store's deletion delay. The root passes 0 for a `tags.lifecycle: ephemeral` deployment torn down and rebuilt under the same name, where the vendor's 30-day window would fail the second create on a name still pending deletion. |
 | `cluster_name` | `string` | Which cluster's ESO gets the identity. |
 | `pod_identity_trust_policy_json` | `string` | From the cluster module, so this module mints a workload identity without knowing how the cloud expresses cluster trust. |
 

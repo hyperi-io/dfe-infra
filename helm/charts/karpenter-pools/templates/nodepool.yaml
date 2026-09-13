@@ -72,6 +72,25 @@ spec:
           values:
             - {{ $pool.generationGt | quote }}
         {{- end }}
+        {{- with $pool.minVcpu }}
+        # families + generation alone bound WHICH instance line, not which SIZE
+        # on it -- a workload sized up for its volume's EBS baseline (a bigger
+        # instance sustains more IOPS/throughput at the same family) still fits
+        # a smaller instance's cpu/memory REQUEST, which is all Karpenter's own
+        # bin-packing looks at. Gt (n-1) expresses ">= n" -- Karpenter's well-known
+        # labels carry no Ge operator (gate-3-correctness.md P3).
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: Gt
+          values:
+            - {{ sub (int .) 1 | quote }}
+        {{- end }}
+        {{- with $pool.minMemoryGib }}
+        - key: karpenter.k8s.aws/instance-memory
+          operator: Gt
+          values:
+            # instance-memory is in MiB; the pool states GiB, so 1024x - 1.
+            - {{ sub (mul (int .) 1024) 1 | quote }}
+        {{- end }}
       {{- with $pool.taints }}
       taints:
         {{- toYaml . | nindent 8 }}

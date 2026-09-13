@@ -33,6 +33,9 @@ OIDC=(--set oidc.enabled=true
 PASS=0
 FAIL=0
 
+ERR_FILE="$(mktemp)"
+trap 'rm -f "${ERR_FILE}"' EXIT
+
 # Render once per case and report the names of one kind, newline separated.
 render_names() {
   local kind="$1"; shift
@@ -62,6 +65,41 @@ assert_absent() {
   else
     echo "  [PASS] ${label}: ${needle} absent"
     PASS=$((PASS+1))
+  fi
+}
+
+# Render with the given extra --set/-f args; exit status is helm's own (0 =
+# rendered, non-zero = refused). stderr lands in ERR_FILE, which the two
+# assert_render_* helpers below read.
+try_render() {
+  helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-system \
+    "${BASE_VALUES[@]}" --set appNamespace=dfe-local "$@" >/dev/null 2>"${ERR_FILE}"
+}
+
+assert_render_refused() {
+  local label="$1" pattern="$2"; shift 2
+  if try_render "$@"; then
+    echo "  [FAIL] ${label}: expected a refusal, render succeeded"
+    FAIL=$((FAIL+1))
+  elif grep -q -- "${pattern}" "${ERR_FILE}"; then
+    echo "  [PASS] ${label}: refused (${pattern})"
+    PASS=$((PASS+1))
+  else
+    echo "  [FAIL] ${label}: refused, but not with '${pattern}':"
+    sed 's/^/    /' "${ERR_FILE}"
+    FAIL=$((FAIL+1))
+  fi
+}
+
+assert_render_succeeds() {
+  local label="$1"; shift
+  if try_render "$@"; then
+    echo "  [PASS] ${label}: rendered"
+    PASS=$((PASS+1))
+  else
+    echo "  [FAIL] ${label}: render failed:"
+    sed 's/^/    /' "${ERR_FILE}"
+    FAIL=$((FAIL+1))
   fi
 }
 
@@ -122,6 +160,77 @@ R="$(render_names SecurityPolicy "${OIDC[@]}" --set exposure.infraUisExternal=fa
 for p in dfe-oidc-acme-argocd-admin dfe-oidc-acme-forgejo-admin dfe-oidc-acme-links-admin; do
   assert_absent "killswitch-policy" "${p}" "${R}"
 done
+
+echo ""
+echo "case 8 -- every internal route pins to the https listener; only the redirect route pins http"
+FULL="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-system \
+  "${BASE_VALUES[@]}" --set appNamespace=dfe-local 2>/dev/null)"
+HTTPS_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: https$')"
+HTTP_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: http$')"
+if [ "${HTTPS_PINS}" -eq 8 ]; then
+  echo "  [PASS] sectionname-https: 8 internal routes pinned"
+  PASS=$((PASS+1))
+else
+  echo "  [FAIL] sectionname-https: expected 8, got ${HTTPS_PINS}"
+  FAIL=$((FAIL+1))
+fi
+if [ "${HTTP_PINS}" -eq 1 ]; then
+  echo "  [PASS] sectionname-http: exactly one redirect route pinned"
+  PASS=$((PASS+1))
+else
+  echo "  [FAIL] sectionname-http: expected 1, got ${HTTP_PINS}"
+  FAIL=$((FAIL+1))
+fi
+
+echo ""
+echo "case 9 -- internet-facing gateway with the kill switch on refuses with no OIDC and no CIDR fence"
+assert_render_refused "internet-facing-guard" "envoyGateway.service.internetFacing" \
+  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true
+
+echo ""
+echo "case 10 -- the same combination renders once OIDC is enabled"
+assert_render_succeeds "internet-facing-oidc" \
+  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true --set oidc.enabled=true
+
+echo ""
+echo "case 11 -- or once an allow-list fences the load balancer instead"
+assert_render_succeeds "internet-facing-cidr" \
+  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true \
+  --set ui.allowed_cidrs=203.0.113.0/24 --set ui.trusted_proxy_cidrs=203.0.113.0/24
+
+echo ""
+echo "case 12 -- internet-facing with the kill switch OFF (the aws.yaml default) renders clean"
+assert_render_succeeds "internet-facing-killswitch-off" \
+  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=false
+
+echo ""
+echo "case 13 -- a ui.public.* value that survives as a string, not a bool, is refused by name"
+assert_render_refused "ui-public-type-guard" "ui.public.kafbat" --set-string ui.public.kafbat=false
+
+echo ""
+echo "case 14 -- same guard covers ui.rate_limit.enabled and ui.tls.hsts"
+assert_render_refused "ui-rate-limit-type-guard" "ui.rate_limit.enabled" --set-string ui.rate_limit.enabled=true
+assert_render_refused "ui-tls-hsts-type-guard" "ui.tls.hsts" --set-string ui.tls.hsts=true
+
+echo ""
+echo "case 15 -- the AWS overlay's own defaults render clean: OIDC on, no admin UI on the public edge"
+R="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-system \
+  -f argocd/values/common.yaml -f argocd/values/aws.yaml \
+  --set appNamespace=dfe-local --set domain=dfe.example.com 2>/dev/null \
+  | awk '/^kind: /{k=$2} /^  name: /{if (k=="HTTPRoute") print $2}')"
+for r in argocd hyperdx forgejo kafbat links; do
+  assert_absent "aws-overlay-default" "${r}" "${R}"
+done
+for r in dfe-ui dfe-engine otel; do
+  assert_has "aws-overlay-default" "${r}" "${R}"
+done
+
+echo ""
+echo "case 16 -- a route with no hostname refuses by name instead of publishing a leading-dot name"
+assert_render_refused "missing-hostname" "routes.dfeUi has no hostname" \
+  --set-string hostnames.dfe=""
+assert_render_refused "missing-public-hostname" "routes.dfeUi has no hostname" \
+  --set-string hostnames.dfe="" --set ui.public_domain=example.com --set ui.public.dfe_ui=true "${OIDC[@]}"
 
 echo ""
 echo "=== ${PASS} passed, ${FAIL} failed ==="

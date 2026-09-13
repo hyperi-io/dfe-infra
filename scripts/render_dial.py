@@ -48,7 +48,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from yaml_subset import YamlSubsetError, split_list
+from yaml_subset import YamlSubsetError, at, split_list
 from yaml_subset import parse as _parse_yaml_subset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -57,7 +57,6 @@ DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
 ENV_FILE = REPO_ROOT / "bootstrap" / ".env"
 ENV_TEMPLATE = REPO_ROOT / "bootstrap" / "local.env.example"
 TOFU_ROOTS = REPO_ROOT / "terraform" / "environments"
-SHAPES_DIR = REPO_ROOT / "shapes" / "resolved"
 VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 TFVARS_NAME = "dial.auto.tfvars.json"
 
@@ -94,11 +93,7 @@ _SETTING_RE = re.compile(r"^[ \t]*(?:#[ \t]?)?(?P<key>[A-Z][A-Z0-9_]*)[ \t]*=")
 
 def _scalar(dial: dict[str, object], path: tuple[str, ...]) -> str | None:
     """Return the non-empty scalar at ``path`` in the parsed dial, else None."""
-    node: object = dial
-    for step in path:
-        if not isinstance(node, dict):
-            return None
-        node = node.get(step)
+    node = at(dial, path)
     return node.strip() if isinstance(node, str) and node.strip() else None
 
 
@@ -109,11 +104,7 @@ def _node(dial: dict[str, object], path: tuple[str, ...]) -> dict[str, object]:
     YAML reader hands that back as a string, not a dict), so that spelling
     counts as empty too, the same as no key at all.
     """
-    node: object = dial
-    for step in path:
-        if not isinstance(node, dict):
-            return {}
-        node = node.get(step)
+    node = at(dial, path)
     if isinstance(node, str) and node.strip() in ("", "{}"):
         return {}
     return node if isinstance(node, dict) else {}
@@ -229,6 +220,39 @@ def _flag(dial: dict[str, object], path: tuple[str, ...], default: bool = False)
     raise DialError(f"{'.'.join(path)} must be true or false, got {value!r}")
 
 
+# Every ui.* boolean, and the chart default it takes when the dial omits it
+# (envoy-gateway-config/values.yaml). This renderer writes no DFE_UI_* env key
+# today -- the dial's ui: block is copied by hand into a real Helm values
+# overlay (docs/deployment/aws.md) -- but a bad value should still be refused
+# here, by name, before an operator carries it forward. deployment.example.yaml
+# writes this block's booleans unquoted, unlike the rest of the dial, for the
+# same reason: a value copied verbatim into a real Helm values file needs to
+# already be the type that file expects.
+_UI_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
+    ("ui", "public", "dfe_ui"): True,
+    ("ui", "public", "kafbat"): False,
+    ("ui", "public", "cruise_control"): False,
+    ("ui", "public", "hyperdx"): False,
+    ("ui", "public", "argocd"): False,
+    ("ui", "public", "links"): False,
+    ("ui", "rate_limit", "enabled"): True,
+    ("ui", "tls", "hsts"): True,
+}
+
+
+def _ui_flags(dial: dict[str, object]) -> dict[str, bool]:
+    """Validate every `ui:` boolean the same way `_flag()` guards `endpoint.public`.
+
+    Returns each field keyed by its dotted path (e.g. "ui.public.kafbat"), so a
+    caller can report which UIs the dial marks public without re-deriving the
+    path list.
+    """
+    return {
+        ".".join(path): _flag(dial, path, default)
+        for path, default in _UI_BOOL_DEFAULTS.items()
+    }
+
+
 def _number(dial: dict[str, object], path: tuple[str, ...]) -> int:
     """Read a whole-number dial field, refusing anything else by name."""
     value = _required(dial, path)
@@ -309,54 +333,6 @@ def _kubernetes_version(dial: dict[str, object], cloud: str) -> str:
     )
 
 
-def _resolved_shapes(cloud: str, region: str) -> dict[str, dict[str, object]]:
-    """Read the shape resolver's committed answer for this cloud AND region.
-
-    Instance-generation availability differs by region and by months, so one
-    region's answer is never rendered for another: the file is keyed by both.
-    The file carries provenance and policy keys the tofu roots do not declare,
-    so only the two the variable's type accepts are copied across.
-    """
-    path = SHAPES_DIR / f"{cloud}-{region}.json"
-    if not path.is_file():
-        raise DialError(
-            f"no resolved shapes at {path} -- capture this region first with "
-            f"'python3 scripts/resolve_sizing.py capture --region {region} --fixtures "
-            f"<fixtures-dir>', then resolve against it (or --live) to write {path.name}"
-        )
-    doc = json.loads(path.read_text(encoding="utf-8"))
-    return {
-        name: {"instance_types": body["instance_types"], "arch": body["arch"]}
-        for name, body in doc.items()
-        if isinstance(body, dict) and not name.startswith("_")
-    }
-
-
-def _node_pools(dial: dict[str, object]) -> dict[str, dict[str, object]]:
-    """Build the managed node groups from the dial, keyed by pool name.
-
-    labels and taints are structural: the restricted YAML the dial is written in
-    carries no list, and no pool needs either one yet.
-    """
-    pools = dial.get("node_pools")
-    if not isinstance(pools, dict) or not pools:
-        raise DialError("the dial declares no node_pools -- the cluster needs a system pool")
-    built: dict[str, dict[str, object]] = {}
-    for name in pools:
-        at = ("node_pools", name)
-        built[name] = {
-            "shape_ref": _required(dial, (*at, "shape_ref")),
-            "min_size": _number(dial, (*at, "min_size")),
-            "max_size": _number(dial, (*at, "max_size")),
-            "desired_size": _number(dial, (*at, "desired_size")),
-            "capacity_type": _required(dial, (*at, "capacity_type")),
-            "disk_gb": _number(dial, (*at, "disk_gb")),
-            "labels": {},
-            "taints": [],
-        }
-    return built
-
-
 MANAGED_KAFKA_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
 
 
@@ -389,6 +365,40 @@ def _landing_topics(dial: dict[str, object]) -> dict[str, dict[str, int]]:
             entry[field] = int(raw)
         built[name] = entry
     return built
+
+
+def _msk_autoscaling(dial: dict[str, object]) -> dict[str, object]:
+    """kafka.msk.autoscaling -- MSK's broker-count scaler, `var.autoscaling` for
+    the msk module (terraform/modules/managed-kafka/msk/variables.tf).
+
+    Every field the root declares is already `optional(..., default)` with the
+    SAME default this reads from the dial's own comment, so a field the dial
+    leaves blank is OMITTED here rather than guessed at twice -- the root's own
+    default applies, and only a value an operator actually set overrides it.
+    `step` has no root-level default at all (the module derives it from the
+    subnet count when unset), so it is never invented here either.
+    """
+    at = ("kafka", "msk", "autoscaling")
+    out: dict[str, object] = {}
+    enabled = _scalar(dial, (*at, "enabled"))
+    if enabled is not None:
+        out["enabled"] = _flag(dial, (*at, "enabled"))
+    for field_name in ("max_brokers", "step", "per_broker_capacity_mb_s"):
+        raw = _scalar(dial, (*at, field_name))
+        if raw is None:
+            continue
+        if not raw.isdigit():
+            raise DialError(f"kafka.msk.autoscaling.{field_name} must be a whole number, got {raw!r}")
+        out[field_name] = int(raw)
+    headroom = _scalar(dial, (*at, "headroom"))
+    if headroom is not None:
+        try:
+            out["headroom"] = float(headroom)
+        except ValueError as err:
+            raise DialError(
+                f"kafka.msk.autoscaling.headroom must be a number, got {headroom!r}"
+            ) from err
+    return out
 
 
 def _kafka(dial: dict[str, object]) -> dict[str, object]:
@@ -442,6 +452,7 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
                 "namespace": _required(dial, (*at, "bootstrap_job", "namespace")),
                 "service_account": _required(dial, (*at, "bootstrap_job", "service_account")),
             },
+            "autoscaling": _msk_autoscaling(dial),
         },
     }
 
@@ -504,7 +515,16 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
 
     Returns the cloud token and the variables. The shape is the root's
     variables.tf exactly -- a key the root does not declare is an error there,
-    and a key it declares and this omits is a prompt on an unattended plan.
+    and a key it declares and this omits is a prompt on an unattended plan --
+    EXCEPT `node_pools` and `resolved_shapes`, which this deliberately never
+    emits. `scripts/resolve_sizing.py`'s `build_tfvars` is the single writer of
+    both, in its own `sizing.auto.tfvars.json` beside this file's
+    `dial.auto.tfvars.json`: it starts from the dial's own `node_pools:` block
+    (e.g. `system`) and adds the pools and shapes it derives on top, so there is
+    exactly one place either variable is written and the two tfvars producers
+    can never silently overwrite one another's map (the correctness review's
+    P1-3 -- resolving it needed a single owner, not two files racing to be the
+    last one OpenTofu loads).
     """
     cloud = _required(dial, ("target", "provision", "cloud"))
     root = TOFU_ROOTS / cloud
@@ -536,8 +556,6 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "env": _required(dial, ("k8s", "env")),
         "profile": _required(dial, ("profile",)),
         "kubernetes_version": _kubernetes_version(dial, cloud),
-        "node_pools": _node_pools(dial),
-        "resolved_shapes": _resolved_shapes(cloud, region),
         "network": {"nat": _required(dial, ("network", "nat")), "az_count": _az_count(dial)},
         "endpoint": {"public": public, "allowed_cidrs": allowed},
         "dns": {
@@ -662,6 +680,23 @@ def main() -> int:
         )
     else:
         print("render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr)
+
+    try:
+        ui_flags = _ui_flags(dial)
+    except DialError as error:
+        print(f"render_dial: {error}", file=sys.stderr)
+        return 1
+
+    public_uis = [
+        name
+        for name in ("dfe_ui", "kafbat", "cruise_control", "hyperdx", "argocd", "links")
+        if ui_flags[f"ui.public.{name}"]
+    ]
+    print(file=sys.stderr)
+    print(
+        "Public UI exposure (ui.public.*): " + (", ".join(public_uis) if public_uis else "none"),
+        file=sys.stderr,
+    )
 
     print(file=sys.stderr)
     print("Deploy this dial with:", file=sys.stderr)

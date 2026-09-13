@@ -36,6 +36,20 @@
 #                            redpanda-cloud; gates the otel-collector chart's
 #                            MSK open_monitoring scrape. Optional -- empty on a
 #                            deployment that predates this fact.
+#   DFE_KAFKA_BOOTSTRAP_IAM  the SASL/IAM-authenticated endpoint the in-cluster
+#                            MSK bootstrap Job connects to, from the aws root's
+#                            managed-kafka/msk output. Empty on every provider
+#                            but msk, and on an msk deployment predating this.
+#   DFE_KAFKA_BOOTSTRAP_ROLE_ARN  the role the bootstrap Job's Pod Identity
+#                            association names, from the same output. Carried
+#                            onto the cluster secret for completeness; the Job
+#                            itself needs no role ARN in its own pod spec --
+#                            EKS Pod Identity resolves the credential by
+#                            namespace + service account alone.
+#   DFE_KAFKA_CREDENTIAL_REF where the broker's own copy of the SCRAM
+#                            credential lives, from the same output. Carried
+#                            onto the cluster secret for completeness; no
+#                            current consumer reads it back.
 #   DFE_OTEL_ENDPOINT        OTel Collector gRPC endpoint
 #   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
 #   DFE_VAULT_ROLE_ID        ESO AppRole role_id  (DFE_SECRETS_BACKEND=openbao)
@@ -221,7 +235,7 @@ dfe_should_install() {
 # estate name -- so the list is the clouds, not the on-prem names. dfe-ops
 # preflight reads this same line so its INSTALL preview matches step [3b/7];
 # scripts/tests/test_pinned_addresses.py holds the two together.
-DFE_CLOUD_LB_PROVIDERS="aws gcp az azure"
+DFE_CLOUD_LB_PROVIDERS="aws gcp azure"
 
 dfe_cloud_programs_loadbalancers() {
   [[ " ${DFE_CLOUD_LB_PROVIDERS} " == *" ${DFE_CLOUD} "* ]]
@@ -282,6 +296,25 @@ if [[ -n "${DFE_KAFKA_BOOTSTRAP}" ]]; then
   unset _dfe_bootstrap_entries _dfe_broker_hosts _dfe_entry
 fi
 export DFE_KAFKA_BROKER_HOSTS
+# The IAM bootstrap endpoint, its Pod Identity role and the broker's own
+# credential reference -- tofu outputs on an msk deployment, empty everywhere
+# else. Defaulted the same way as DFE_KAFKA_BOOTSTRAP/DFE_KAFKA_PROVIDER above,
+# so the cluster-secret annotations below always render rather than reference
+# an unset variable.
+export DFE_KAFKA_BOOTSTRAP_IAM="${DFE_KAFKA_BOOTSTRAP_IAM:-}"
+export DFE_KAFKA_BOOTSTRAP_ROLE_ARN="${DFE_KAFKA_BOOTSTRAP_ROLE_ARN:-}"
+export DFE_KAFKA_CREDENTIAL_REF="${DFE_KAFKA_CREDENTIAL_REF:-}"
+# kafka.mode flips to "external" only for a managed broker (msk,
+# confluent-cloud, redpanda-cloud) -- strimzi and redpanda run in-cluster and
+# take their mode from the profile overlay (profile-*.yaml), which this must
+# NEVER override. Empty means "leave the profile's own kafka.mode alone": the
+# appset parameter that reads the resulting annotation is emitted only when it
+# is non-empty, for exactly this reason (argocd/appsets/layer2-data.yaml).
+DFE_KAFKA_MODE=""
+case "${DFE_KAFKA_PROVIDER}" in
+  msk|confluent-cloud|redpanda-cloud) DFE_KAFKA_MODE="external" ;;
+esac
+export DFE_KAFKA_MODE
 # external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
 # "none" deploys no external-dns, because its own default provider is aws and an
 # uncredentialled install crash-loops against Route 53 forever (#223).
@@ -771,7 +804,16 @@ echo "==> [4d/7] Fetcher AWS telemetry pre-config (otel sink only)"
 # already have an AWS-native destination, so nothing is rendered. A STARTER
 # fragment, not a wired instance -- see the template's own header.
 if [[ "${DFE_CLOUD}" == "aws" && "${DFE_TELEMETRY_SINK}" == "otel" ]]; then
-  run kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | run kubectl apply -f -
+  # `run` echoes instead of executing, so piping `run cmd-a | run cmd-b` under
+  # DFE_DRY_RUN carries the left side's echo TEXT into the right side, which
+  # also just echoes -- neither side ever sees real input. Guarded with an
+  # `if`, like the ConfigMap apply two lines below, so a dry run prints one
+  # readable line and a real run pipes for real.
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] kubectl create namespace ${DFE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
+  else
+    kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  fi
   if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
     echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl | kubectl apply -f -"
   else

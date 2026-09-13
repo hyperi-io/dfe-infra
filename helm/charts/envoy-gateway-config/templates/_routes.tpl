@@ -47,7 +47,11 @@ true
 
 {{- define "envoy-gateway-config.routeHost" -}}
 {{- $r := index .ctx.Values.routes .key -}}
-{{- $r.hostname | default (index .ctx.Values.hostnames $r.hostnameKey) -}}
+{{- $host := $r.hostname | default (index .ctx.Values.hostnames $r.hostnameKey) -}}
+{{- if not $host -}}
+{{- fail (printf "routes.%s has no hostname: set routes.%s.hostname, or add hostnames.%s to the deploy-config SSoT (argocd/values/common.yaml) -- an empty subdomain label renders a hostname starting with a literal dot, which ACME and DNS both reject" .key .key $r.hostnameKey) -}}
+{{- end -}}
+{{- $host -}}
 {{- end -}}
 
 {{- define "envoy-gateway-config.routeNs" -}}
@@ -122,6 +126,40 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 
 {{- define "envoy-gateway-config.validateUi" -}}
 {{- $ui := .ctx.Values.ui -}}
+
+{{- /* Every admin UI on a public load balancer with no edge auth and no CIDR
+       fence is the exact misconfiguration a cloud overlay can reintroduce by
+       flipping exposure.infraUisExternal back on -- checked here, not only in
+       argocd/values/aws.yaml's default, because a values overlay can undo that
+       default without ever touching this file. envoyGateway.service.
+       internetFacing is the chart's own cloud-agnostic signal (see
+       values.yaml); it says nothing about ui.public_domain, so this fires
+       whether or not any UI is ALSO published on its own public hostname. */ -}}
+{{- if and .ctx.Values.envoyGateway.service.internetFacing .ctx.Values.exposure.infraUisExternal -}}
+{{- if and (not .ctx.Values.oidc.enabled) (not $ui.allowed_cidrs) -}}
+{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with oidc.enabled false and ui.allowed_cidrs empty -- every admin UI (argocd, kafbat, hyperdx, forgejo, links, cruise-control) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* ui.public.* is documented (deployment.example.yaml) to copy verbatim
+       into this chart's values, where an unquoted true/false is a native YAML
+       bool and a quoted "true"/"false" unmarshals as a Go string -- non-empty,
+       so always truthy to the `if $public` test in publicRoutes above.
+       Refused rather than coerced: a string here is more likely a stale
+       copy-paste from the dial's own (string-typed) format than a deliberate
+       choice, and coercing it would hide that a UI meant to stay private was
+       about to publish anyway. */ -}}
+{{- range $name, $val := $ui.public -}}
+{{- if not (kindIs "bool" $val) -}}
+{{- fail (printf "ui.public.%s is %v (a %s), not a bool -- copy deployment.example.yaml's ui: block in unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (kindIs "bool" $ui.rate_limit.enabled) -}}
+{{- fail (printf "ui.rate_limit.enabled is %v (a %s), not a bool -- see the ui.public.* refusal above for why this is refused rather than coerced" $ui.rate_limit.enabled (kindOf $ui.rate_limit.enabled)) -}}
+{{- end -}}
+{{- if not (kindIs "bool" $ui.tls.hsts) -}}
+{{- fail (printf "ui.tls.hsts is %v (a %s), not a bool -- see the ui.public.* refusal above" $ui.tls.hsts (kindOf $ui.tls.hsts)) -}}
+{{- end -}}
 
 {{- /* A WAF terminates TLS above Envoy, so the public certificate moves to the
        cloud's own store and the Certificates below stop being what a browser

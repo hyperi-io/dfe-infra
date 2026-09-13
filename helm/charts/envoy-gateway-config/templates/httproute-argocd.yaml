@@ -12,6 +12,10 @@ spec:
       kind: Gateway
       name: {{ .Values.gateway.name }}
       namespace: {{ .Values.gateway.namespace }}
+      # Pinned to the HTTPS listener: with no sectionName this route would
+      # attach to the plaintext :80 listener too (same wildcard hostname), and
+      # :80 carries only the HTTP -> HTTPS redirect (httproute-http-redirect.yaml).
+      sectionName: https
   hostnames:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "argocd") }}.{{ .Values.domain }}"
   rules:

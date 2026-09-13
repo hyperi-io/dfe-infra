@@ -66,13 +66,19 @@ spec:
       # this pod AWS credentials only because the association carries this account
       # name and this namespace.
       serviceAccountName: {{ $msk.bootstrap.serviceAccount }}
+      # This pod holds a Pod Identity credential that writes Kafka ACLs
+      # (kafka-cluster:AlterCluster) and shells out to fetch a jar from the
+      # internet, so it takes the same hardening as every other DFE workload --
+      # matching cruise-control-ui.yaml in this chart -- rather than the bare pod
+      # spec a one-shot Job might otherwise skip.
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       volumes:
         # The jar the init container fetches, handed to the CLI container.
         - name: iam-auth
           emptyDir: {}
-        # The client properties are written at runtime, so /tmp has to be writable
-        # whatever the pod's rootfs policy turns out to be.
+        # The client properties are written at runtime, so /tmp must be writable
+        # regardless of the pod's rootfs policy.
         - name: tmp
           emptyDir: {}
       initContainers:
@@ -83,6 +89,7 @@ spec:
         # whose mirror needs it.
         - name: fetch-iam-auth
           image: "apache/kafka:{{ .Values.kafka.version }}"
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           resources:
             {{- toYaml $msk.bootstrap.resources | nindent 12 }}
           volumeMounts:
@@ -114,6 +121,7 @@ spec:
       containers:
         - name: msk-bootstrap
           image: "apache/kafka:{{ .Values.kafka.version }}"
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           resources:
             {{- toYaml $msk.bootstrap.resources | nindent 12 }}
           volumeMounts:

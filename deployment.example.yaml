@@ -104,19 +104,25 @@ dns:
 ## THE EXPOSED UIs. Everything DFE uses internally is private; the UIs are the
 ## exception, because their users sit outside the VPC. Nothing here does
 ## anything while dns.public_zone is empty. These keys are the gateway chart's
-## `ui:` values verbatim, so an overlay is a copy rather than a translation.
+## `ui:` values verbatim, so an overlay is a copy rather than a translation --
+## which is exactly why every boolean below is unquoted, unlike the rest of
+## this dial (render_dial.py's own convention writes true/false as quoted
+## strings, see _flag()). This block is meant to be pasted straight into a
+## real Helm values file, where Go templates read an unquoted true/false as a
+## bool and a quoted "false" as a non-empty string that is always truthy. The
+## chart refuses a quoted one at render rather than guessing what you meant.
 ui:
   ## dfe-ui is the product surface and is public by default on a cloud deploy.
   ## Every admin UI is opt-in, one at a time. cruise_control has no route yet --
   ## it arrives with the rebalancer UI, and turning it on before then fails the
   ## render rather than silently doing nothing.
   public:
-    dfe_ui: "true"
-    kafbat: "false"
-    cruise_control: "false"
-    hyperdx: "false"
-    argocd: "false"
-    links: "false"
+    dfe_ui: true
+    kafbat: false
+    cruise_control: false
+    hyperdx: false
+    argocd: false
+    links: false
   ## Who may reach a public UI; empty = any address. Enforced at Envoy AND at
   ## the cloud load balancer, so one misconfiguration is not the whole wall.
   ## The load-balancer half fences the entire front door, ingest included.
@@ -129,7 +135,7 @@ ui:
   ## hits a wall before it hits the login. local counts per route per proxy
   ## replica, not per attacker; per-attacker counting needs Redis and is refused.
   rate_limit:
-    enabled: "true"
+    enabled: true
     requests: "300"
     unit: Minute             # Second | Minute | Hour | Day | Month | Year
     scope: local             # local only
@@ -145,7 +151,7 @@ ui:
   ## and is rejected. hsts stops a browser retrying the name over plaintext.
   tls:
     min_version: "1.2"
-    hsts: "true"
+    hsts: true
 
 ## The system node pool -- what the cluster runs before any DFE workload lands.
 ## shape_ref indexes shapes/resolved/<cloud>-<region>.json; an instance type is never
@@ -168,7 +174,12 @@ node_pools:
 telemetry:
   aws:
     sink: otel               # otel | cloudwatch. otel is the default -- never CloudWatch by choice.
-    retention_days: 2        # S3 lifecycle expiry under otel (default 2); CloudWatch retention under cloudwatch (default 7).
+    ## LEAVE EMPTY so render_dial.py's own sink-conditional default applies: 2
+    ## (S3 lifecycle expiry) under otel, 7 under cloudwatch. CloudWatch Logs
+    ## only accepts a fixed retention list, which does not include 2 -- a
+    ## literal 2 here fails the plan the moment sink flips to cloudwatch and
+    ## nothing else changes.
+    retention_days: ""
 
 ## SIZING -- `python3 scripts/resolve_sizing.py` turns these into node counts,
 ## CPU, memory, disk, IOPS, partitions and retention. Scale tier only.
@@ -242,20 +253,33 @@ kafka:
     ## rots into a deprecated line silently. (`version:` above is the DFE stack
     ## pin -- a different thing entirely.)
     broker_version: 4.2.x.kraft
-    num_partitions: 12            # the broker default the chart derives too
+    num_partitions: 12            # NOT yet wired to the chart's own partition count at these defaults (kafka.external.numPartitions) -- see helm/charts/kafka/values.yaml
     log_retention_ms: 259200000   # three days in front of the archiver
     message_max_bytes: 16777216   # 16 MiB, the one size the whole chain carries
     scram_username: dfe-kafka-user  # matches the kafka chart's user.name
     ## The in-cluster Job that pre-creates the landing topics and writes the
     ## first ACLs -- the one thing tofu cannot do, because Kafka ACLs live in the
     ## data plane. namespace is where the kafka app is deployed
-    ## (argocd/appsets/layer2-data.yaml); the chart renders no Job for an
-    ## external broker yet, so service_account names what that Job must declare
-    ## when it lands -- an identity bound to a name nothing renders grants
-    ## nothing, silently.
+    ## (argocd/appsets/layer2-data.yaml); bootstrap.sh and that appset wire
+    ## mode=external and this broker's bootstrapIam onto the chart automatically
+    ## for kafka.provider: msk, so service_account only needs to match what the
+    ## tofu root's Pod Identity association names -- an identity bound to a name
+    ## nothing renders grants nothing, silently.
     bootstrap_job:
       namespace: strimzi
       service_account: dfe-kafka-bootstrap
+    ## The broker-count scaler: a CloudWatch alarm on cluster-wide BytesInPerSec
+    ## driving a Lambda that raises the broker count (MSK Express has no native
+    ## equivalent -- UpdateBrokerCount is a manual API with no scaling policy of
+    ## its own). Every field is optional; a value left blank takes the module's
+    ## own default (terraform/modules/managed-kafka/msk/variables.tf), so an
+    ## operator only ever states what they want to CHANGE.
+    autoscaling:
+      enabled: "true"          # the off switch, never an on switch
+      max_brokers: 6           # the ceiling; must be >= broker_count and a multiple of the zone count
+      step: ""                 # brokers added per scale-out; empty takes the zone count
+      per_broker_capacity_mb_s: 50  # the resolved broker shape's published network throughput
+      headroom: 1.3            # multiplies broker_count x per_broker_capacity_mb_s for the alarm threshold; must be > 1
   ## Topics tofu pre-creates for a managed body with NO bootstrap Job
   ## (confluent-cloud, redpanda-cloud) -- msk needs none here, since its Job
   ## above creates the same topics the chart's Strimzi path does. dfe-loader

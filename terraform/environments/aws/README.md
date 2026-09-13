@@ -72,6 +72,7 @@ Fill in, at minimum:
 | `tags` | All seven keys. The plan refuses on a missing one. |
 | `kafka.provider` | `msk` creates the managed broker below; `confluent-cloud` and `redpanda-cloud` create a SaaS broker (see Kafka, below); `strimzi` or `redpanda` run in the cluster and this root creates nothing for them. |
 | `kafka.msk.broker_version` | Defaulted nowhere. `aws kafka list-kafka-versions --region <region>` prints the ACTIVE ones -- take the newest, in MSK's `N.N.x.kraft` spelling. |
+| `kafka.landing_topics` | Required -- at least one topic -- when `kafka.provider` is `confluent-cloud` or `redpanda-cloud`. Neither runs a bootstrap Job of its own, so this root creates the topics tofu can reach; an empty map ships a cluster dfe-loader crash-loops against on a missing `*_land` topic. Ignored for `msk`, whose in-cluster Job creates the same topics from the chart's own values. |
 | `secrets.ref` | Optional. Empty puts the deployment's secrets at `<project>/<env>`, which is what a store holding one deployment wants. |
 
 Then:

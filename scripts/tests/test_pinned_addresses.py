@@ -36,6 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 GATEWAY = CHARTS / "envoy-gateway-config"
 RECEIVER = CHARTS / "dfe-receiver"
+COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 METALLB_POOL = REPO_ROOT / "bootstrap" / "templates" / "metallb-pool.yaml.tpl"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
@@ -51,6 +52,12 @@ _loader.exec_module(dfeops)
 
 def render(chart: Path, *sets: str) -> list[dict]:
     cmd = ["helm", "template", chart.name, str(chart)]
+    if chart == GATEWAY:
+        # The real hostnames map: every route this chart enables by default
+        # now refuses to render with no hostname to publish it on, and this
+        # file's own concern (a pinned address reaching the EnvoyProxy) is
+        # unrelated to which routes exist.
+        cmd += ["-f", str(COMMON_VALUES)]
     for s in sets:
         cmd += ["--set", s]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -203,7 +210,7 @@ def test_bootstrap_installs_metallb_on_prem_only() -> None:
     body = BOOTSTRAP.read_text(encoding="utf-8")
     # A deployment picks its own on-prem name, so the gate lists the clouds.
     expect("the clouds are declared in one place",
-           'DFE_CLOUD_LB_PROVIDERS="aws gcp az azure"' in body, "the list is missing")
+           'DFE_CLOUD_LB_PROVIDERS="aws gcp azure"' in body, "the list is missing")
     expect("the MetalLB step asks that list",
            "if dfe_cloud_programs_loadbalancers; then" in body, "the gate is missing")
     expect("the chart version comes from versions.yaml, not the script",
@@ -213,9 +220,9 @@ def test_bootstrap_installs_metallb_on_prem_only() -> None:
 
 def test_preflight_previews_metallb_off_the_same_list() -> None:
     """Cluster B is local-dfe: a preview keyed on the literal 'local' warned where it installs."""
-    for cloud in ("aws", "gcp", "az", "azure"):
+    for cloud in ("aws", "gcp", "azure"):
         expect(f"{cloud} programs its own LoadBalancers", dfeops._cloud_programs_loadbalancers(cloud))
-    for cloud in ("local", "local-dfe", "tyrell", ""):
+    for cloud in ("local", "local-dfe", "example-onprem", "az", ""):
         expect(f"{cloud!r} does not", not dfeops._cloud_programs_loadbalancers(cloud))
 
 

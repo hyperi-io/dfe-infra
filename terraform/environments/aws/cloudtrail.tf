@@ -18,8 +18,14 @@ locals {
 }
 
 resource "aws_s3_bucket" "cloudtrail" {
-  bucket        = local.cloudtrail_name
-  force_destroy = true
+  bucket = local.cloudtrail_name
+
+  // Same rule as the KMS deletion window (kubernetes-cluster/aws/kms.tf) and
+  // the secret recovery windows above: only an ephemeral deployment gets the
+  // fast, no-confirmation teardown. A persistent deployment's audit trail
+  // survives a tofu destroy rather than being deleted along with the record
+  // of the destroy itself.
+  force_destroy = local.ephemeral
 
   tags = { Name = local.cloudtrail_name }
 }
@@ -31,6 +37,22 @@ resource "aws_s3_bucket_public_access_block" "cloudtrail" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+// Without this, a principal holding s3:DeleteObject on the bucket (not just
+// s3:PutObject) can remove individual trail files with nothing to recover
+// them from. Versioning alone, not Object Lock: Object Lock has to be
+// enabled at bucket creation, needs its own retention-period variable, and in
+// compliance mode blocks deletion of locked objects outright -- which fights
+// force_destroy on an ephemeral deployment's teardown. That is a deliberate
+// design question for whoever owns the tamper-evident-audit story, not a
+// same-shaped fix as this one.
+resource "aws_s3_bucket_versioning" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
@@ -57,6 +79,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
 
     expiration {
       days = var.telemetry.retention_days
+    }
+
+    // Versioning above means a delete no longer removes the object -- it
+    // becomes a noncurrent version. With no rule for THOSE, a bucket with
+    // s3:DeleteObject exercised against it (accidentally or not) grows
+    // forever instead of the delete actually freeing anything.
+    noncurrent_version_expiration {
+      noncurrent_days = var.telemetry.retention_days
     }
   }
 }

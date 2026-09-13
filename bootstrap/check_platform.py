@@ -35,6 +35,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+from kubectl_cli import run_kubectl
 from read_versions import load_versions
 
 
@@ -76,12 +78,7 @@ def above_ceiling(actual: tuple[int, ...], ceiling: tuple[int, ...]) -> bool:
 
 def cluster_version() -> tuple[str, str]:
     """The target cluster's (major.minor, gitVersion), via kubectl."""
-    out = subprocess.run(
-        ["kubectl", "version", "-o", "json"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+    out = run_kubectl(["version", "-o", "json"], check=True).stdout
     server = json.loads(out)["serverVersion"]
     return f"{server['major']}.{server['minor']}", server.get("gitVersion", "")
 

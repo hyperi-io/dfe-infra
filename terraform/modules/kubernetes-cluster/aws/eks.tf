@@ -6,6 +6,11 @@
 
 data "aws_partition" "current" {}
 
+// The principal running this apply, so the cluster-admin grant below names
+// them explicitly rather than relying on EKS's own implicit "whoever created
+// the cluster" rule.
+data "aws_caller_identity" "current" {}
+
 locals {
   // AWS-managed policies are addressed by name under the aws-managed account;
   // only the partition varies, which is why it is read rather than written.
@@ -72,8 +77,11 @@ resource "aws_eks_cluster" "this" {
   }
 
   access_config {
-    authentication_mode                         = "API"
-    bootstrap_cluster_creator_admin_permissions = true
+    authentication_mode = "API"
+    // false, not the implicit grant: the true default writes an access entry
+    // for whatever principal ran the apply, unnamed and unreviewable in any
+    // plan. aws_eks_access_entry.creator below is the same grant, made explicit.
+    bootstrap_cluster_creator_admin_permissions = false
   }
 
   encryption_config {
@@ -91,6 +99,29 @@ resource "aws_eks_cluster" "this" {
     aws_iam_role_policy.cluster_kms,
     aws_cloudwatch_log_group.cluster,
   ]
+}
+
+// The explicit stand-in for bootstrap_cluster_creator_admin_permissions: the
+// same cluster-admin grant EKS would otherwise hand the deploying principal
+// implicitly, but declared here so it appears in a plan and survives being
+// read back rather than being inferred from whoever happened to run apply.
+resource "aws_eks_access_entry" "creator" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = data.aws_caller_identity.current.arn
+
+  type = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "creator_admin" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = data.aws_caller_identity.current.arn
+  policy_arn    = "arn:${data.aws_partition.current.partition}:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.creator]
 }
 
 // ---------------------------------------------------------------------------

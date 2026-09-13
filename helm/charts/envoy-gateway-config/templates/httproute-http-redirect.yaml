@@ -1,0 +1,30 @@
+# The plaintext :80 listener's only route. Every other HTTPRoute in this chart
+# pins sectionName: https (see httproute-argocd.yaml), so with no sectionName
+# match at all the http listener would otherwise carry no route -- Envoy
+# answers a request that reaches it with 404 rather than moving it to TLS,
+# which on an internet-facing gateway means an admin UI's Host header reaches
+# :80 in cleartext with no certificate warning and no redirect. This route is
+# pinned to the http listener specifically so nothing else can attach there
+# instead.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Values.gateway.name }}-http-redirect
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+      sectionName: http
+  hostnames:
+    - "*.{{ .Values.domain }}"
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

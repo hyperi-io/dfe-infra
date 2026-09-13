@@ -73,9 +73,25 @@ resource "aws_cloudwatch_metric_alarm" "broker_scale_out" {
   // sums over cannot be named in advance. SEARCH is what re-discovers every
   // current broker's metric stream each evaluation, which a fixed list of
   // dimensions could not survive a scale-out of its own making.
+  //
+  // The statistic SEARCH asks for is 'Average', not 'Sum': BytesInPerSec is
+  // already a per-second RATE, published once a minute, so a 300s period
+  // holds 5 of those one-minute rate samples. Sum is defined as "the sum of
+  // the values of all data points collected during the period" (CloudWatch
+  // statistics docs), so summing 5 already-averaged rate samples yields a
+  // number on the order of 5x the true sustained rate -- comparing THAT
+  // against a bytes-per-second threshold fired the alarm at roughly a fifth
+  // of the traffic it was sized for. Average is Sum/SampleCount, which
+  // collapses the 5 samples back to the mean rate over the period regardless
+  // of how many landed in it. The outer SUM() is unchanged and is not the
+  // same kind of sum: it is metric-math's SPATIAL aggregation across the
+  // broker dimension SEARCH returns, adding per-broker rates together at each
+  // timestamp to get a cluster-wide rate -- which is dimensionally correct
+  // the way summing 5 temporal samples of one rate is not.
+  // https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Statistics-definitions.html
   metric_query {
     id          = "cluster_bytes_in"
-    expression  = "SUM(SEARCH('{AWS/Kafka,\"Broker ID\",\"Cluster Name\"} MetricName=\"BytesInPerSec\" \"Cluster Name\"=\"${aws_msk_cluster.this.cluster_name}\"', 'Sum', 300))"
+    expression  = "SUM(SEARCH('{AWS/Kafka,\"Broker ID\",\"Cluster Name\"} MetricName=\"BytesInPerSec\" \"Cluster Name\"=\"${aws_msk_cluster.this.cluster_name}\"', 'Average', 300))"
     label       = "${var.name} cluster BytesInPerSec"
     return_data = true
   }

@@ -44,7 +44,7 @@ variable "bucket_name" {
 }
 
 variable "kms_key_arn" {
-  description = "Customer-managed key for the bucket's default encryption. Empty means SSE-S3, which is free and needs no key policy -- the right answer for a bucket created before anything else exists."
+  description = "Customer-managed key for the bucket's default encryption. Empty means SSE-KMS on the AWS-managed alias/aws/s3 key -- the floor for a bucket created before any customer-managed key exists, rather than SSE-S3, which grants any s3:GetObject principal a plaintext read with no KMS-side gate."
   type        = string
   default     = ""
 }

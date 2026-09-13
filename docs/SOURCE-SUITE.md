@@ -25,7 +25,7 @@ product was driven.
 The console creates the source -- Configuration tab (name, display name,
 description, Archive on, match `_source equals <name>`), Meta Schema tab (the
 shipped `common-header/timeseries` 1.0.1 and `meta/beats/filebeat` 1.0.0), then
-the Transform tab that unlocks (Define Transform -> `dfe-transform-vrl`). After
+the Transform tab that then becomes available (Define Transform -> `dfe-transform-vrl`). After
 the deploy the source's Processing tab puts the bundled
 `pipelines/filebeat/filebeat.vrl` and `timezones.csv` from the
 dfe-transform-vrl checkout (`--transform-repo`) into the instance's file sets.

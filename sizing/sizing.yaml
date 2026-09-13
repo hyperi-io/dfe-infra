@@ -966,6 +966,32 @@ floors:
     read: 2026-09-13
     confidence: rule-of-thumb
     spot_test: Read Keeper RSS on the floor deployment with the default log caches.
+  ## The mandatory root volume every use case carries is not sized from a
+  ## workload -- it holds the OS, container images and logs, never data (that
+  ## is the "data" volume's job). gp3's own free minimum (3,000 IOPS / 125
+  ## MiB/s) is what CreateVolume provisions it at, but treating that ceiling
+  ## as DEMAND is the same counting error the "data" volume's A3 fix already
+  ## corrected: a root volume nobody is writing to still forced every
+  ## use case past its physical instance-baseline floor. These two ratios are
+  ## a deliberately small, honest guess at what a quiet root disk actually
+  ## asks of the instance; the gp3 minimum stays the provisioned CEILING
+  ## (resolve_sizing.py's A7), never the demand.
+  root_volume_demand_mib_s:
+    value: 10
+    unit: mib-per-second
+    applies_to: all-workloads
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Watch iostat on a running node's root volume over a normal day and read its sustained throughput.
+  root_volume_demand_iops:
+    value: 300
+    unit: iops
+    applies_to: all-workloads
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Watch iostat on a running node's root volume over a normal day and read its sustained IOPS.
 
 ## ---------------------------------------------------------------------------
 ## Ceilings. The generator REFUSES above its cap rather than extrapolating, and

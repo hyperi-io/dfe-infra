@@ -23,8 +23,26 @@ data:
     # Fold this under a dfe-fetcher instance's config.sources. Both
     # access_key_id/secret_access_key fields use the env: indirection
     # (dfe-fetcher/docs/cloud-setup/aws.md, .../object_store.md) -- point them
-    # at a real credential (or credential_secret: vault:...) before this reads
-    # anything; a blank credential just health-checks unhealthy.
+    # at a real credential before this reads anything; a blank credential just
+    # health-checks unhealthy.
+    #
+    # THIS IS THE ONE CREDENTIAL IN THE STACK THAT CANNOT BE POD IDENTITY.
+    # Every other AWS credential here -- Karpenter, the Load Balancer
+    # Controller, the EBS CSI driver, external-dns, cert-manager, the MSK
+    # bootstrap Job -- runs as a Pod Identity association with no stored
+    # secret. dfe-fetcher's AWS source cannot join them: its
+    # `resolve_credentials()` (dfe-fetcher src/source/aws/mod.rs) reads
+    # `aws.access_key_id`/`aws.secret_access_key` (or a `credential_secret`
+    # resolving to the same pair) directly and never calls into the AWS SDK's
+    # own credential chain, so there is no code path here for the Pod Identity
+    # agent to reach. Track dfe-fetcher for that support; until it lands, mint
+    # the narrowest read-only IAM user this source needs (cloudtrail
+    # LookupEvents + the one CloudWatch Logs group named below, nothing else --
+    # see dfe-fetcher/docs/cloud-setup/aws.md for the policy), put its key pair
+    # in this deployment's own secret store (the same aws-sm/OpenBao backend
+    # `secrets.backend` already names), and let ESO materialise it into the
+    # Secret these env vars read -- never a key exported by hand into the
+    # engine-authored Application that runs this config.
     sources:
       # CloudTrail's LookupEvents API returns management events directly --
       # the same scope the trail itself is configured for

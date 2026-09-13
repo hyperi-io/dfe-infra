@@ -10,28 +10,33 @@ Copyright: HyperI / DFE contributors
 
 # DFE on AWS
 
+Operations (teardown, node pools, edge exposure, Kafka telemetry, upgrades):
+[aws-operations.md](aws-operations.md).
+
 DFE's AWS path provisions an EKS cluster with OpenTofu, then hands it to the
 same bootstrap and Argo CD layers every other cluster uses. Nothing about
-Layer 1 or Layer 2 changes for AWS -- the difference is entirely in what
-`terraform/environments/aws` builds and what the deployment dial resolves
-before it runs.
+Layer 1 or Layer 2 changes for AWS -- the difference is in what
+`terraform/environments/aws` builds and what the deployment dial resolves.
 
-A few things hold for every deployment on this path:
+A few things hold for every deployment:
 
 - ARM only. Every node pool, and the MSK broker shape when one is built,
   resolve to Graviton -- the cluster module refuses a `shape_ref` whose
   resolved architecture is not arm64.
-- Nodes and the data plane sit in private subnets. NAT is one gateway for the
-  whole network by default (`network.nat: single`), or one per availability
-  zone (`per-az`) when a zone failure or the cross-zone data charge matters
-  more than the extra NAT gateway.
+- Nodes and the data plane sit in private subnets, behind one NAT gateway by
+  default (`network.nat: single`) or one per availability zone (`per-az`)
+  when a zone failure or the cross-zone charge outweighs the extra gateway.
+- `network.az_count` (default 3, 2-6) sizes the VPC and is one of the four
+  fields the resolver derives and locks; a Strimzi/MSK broker count steps up
+  to at least the AZ count, so a deployment spanning more zones than the
+  tyre-kick floor's three brokers still spreads one broker per zone.
 - The Kubernetes API's private endpoint is always on. `endpoint.public: true`
   adds the public one, and only alongside `endpoint.allowed_cidrs` -- the plan
   refuses a public endpoint with no allow-list.
-- A gateway VPC endpoint keeps S3 traffic off the NAT path, at no extra
+- A gateway VPC endpoint keeps S3 traffic off the NAT path at no extra
   charge.
 - The account's state bucket is a one-off: run
-  `terraform/environments/aws-state` once, before any deployment's own apply.
+  `terraform/environments/aws-state` once, before any deployment applies.
 - Every controller that needs an AWS credential -- the EBS CSI driver,
   Karpenter, the AWS Load Balancer Controller, external-dns, cert-manager --
   gets it through EKS Pod Identity, associated to its own service account by
@@ -41,47 +46,82 @@ A few things hold for every deployment on this path:
 
 ## From the dial to a running cluster
 
+### Sizing the deployment
+
 - Copy `deployment.example.yaml` to `deployment.yaml`. Every AWS-relevant
   field is documented inline, including the worked `cloud_aws:` example block
   near the bottom.
 - Estimate `sizing.ingest_gb_per_day` in GB/day, or leave it blank for the
   tyre-kick floor -- the smallest shape that runs the profile without an
   out-of-memory kill, with whatever throughput it happens to carry reported
-  rather than targeted.
-- Run `python3 scripts/resolve_sizing.py --dial deployment.yaml --live` (or
-  `--fixtures scripts/tests/fixtures/sizing --cloud aws` against a captured
-  catalogue, no AWS call made -- capture one first for a region other than
-  us-west-2 with `resolve_sizing.py capture --region <region> --fixtures
-  <dir>`). It writes `shapes/resolved/aws-<region>.json` (the committed
-  instance-type answer, keyed by region because instance-generation
-  availability is not one worldwide), `sizing/scale.auto.tfvars.json` (node
-  pools and resolved shapes, nothing the root does not declare), `sizing/scale.
-  values.yaml` (only the keys the ClickHouse and Kafka charts read),
-  `sizing/scale.report.md` (what was sized, from which ratio, at what price),
-  and `sizing/resolved.yaml` (the baseline the next resolve diffs against).
-- Commit `resolved.yaml` so a re-size has something to check itself against.
-  The values fragment slots into a deploy repo's own values overlay for the
-  data-layer charts; point `resolve_sizing.py`'s `--out` at
-  `terraform/environments/aws` and its tfvars fragment lands next to
-  `render_dial.py --tofu`'s own `dial.auto.tfvars.json` there, so `tofu init`
-  picks up both -- every `*.auto.tfvars.json` in that directory loads, in name
-  order.
+  rather than targeted. On AWS economy focus that floor is verified at
+  USD 2,316/month compute: `m9g.large` for kafka-broker and eks-system,
+  `m9g.medium` for kraft-controller (a 1 vCPU/4 GiB floor with no data
+  volume of its own), `r9gd.large` for clickhouse, and `m9g.2xlarge` for
+  keeper -- its own 6,000-IOPS fsync demand is the one workload that still
+  needs it, plus the fixed `general` (`m9g.xlarge`) and `ci-burst`
+  (`c8gd.4xlarge`) pools. There is no blanket `xlarge` minimum: each
+  workload floors at its own vCPU/RAM/IOPS demand plus the mandatory gp3
+  root volume's own small demand (10 MiB/s, 300 IOPS), so kraft-controller
+  and eks-system clear at `medium`/`large` while keeper's fsync target
+  alone keeps it at `2xlarge`.
+
+### Resolving sizing artefacts
+
+- Run `python3 scripts/resolve_sizing.py --dial deployment.yaml --live
+  --out terraform/environments/aws` (or `--fixtures
+  scripts/tests/fixtures/sizing --cloud aws` against a captured catalogue, no
+  AWS call -- capture one first for a region other than us-west-2 with
+  `resolve_sizing.py capture --region <region> --fixtures <dir>`). Every
+  artefact lands under `--out` (default the repo root when omitted):
+  `<out>/shapes/resolved/aws-<region>.json` (the instance-type answer, keyed
+  by region because instance-generation availability is not one worldwide),
+  `<out>/sizing.auto.tfvars.json` at the ROOT of `--out` (`node_pools` and
+  `resolved_shapes`, nothing the root does not declare -- named so, never
+  `<tier>.auto.tfvars.json`, so it sorts after `render_dial.py --tofu`'s own
+  `dial.auto.tfvars.json` whatever tier was resolved). The resolver is the
+  ONE writer of both variables: it starts from the dial's own
+  `node_pools.system` block (the always-on group a deployer sizes by hand)
+  and merges the pools it derives on top, and `render_dial.py --tofu` emits
+  neither key at all -- so the two producers never collide on the same
+  tfvars variable. Under
+  `<out>/sizing/`: `<tier>.values.yaml` (only the keys the ClickHouse and
+  Kafka charts read), `<tier>.report.md` (what was sized, from which ratio,
+  at what price) and `resolved.yaml` (the baseline the next resolve diffs
+  against) -- plus `<tier>.nodes.json` on an on-prem resolve, the demand
+  `bootstrap.sh`'s preflight checks the cluster's real nodes against.
+- Pointing `--out` at `terraform/environments/aws` is what lands
+  `sizing.auto.tfvars.json` beside `render_dial.py --tofu`'s own
+  `dial.auto.tfvars.json`, so `tofu init` picks up both -- every
+  `*.auto.tfvars.json` in that directory loads, in name order. Commit
+  `sizing/resolved.yaml` so a re-size has something to check itself against.
+  The values fragment slots into a deploy repo's own overlay for the
+  data-layer charts.
+
+### Sizing knobs and locks
+
 - `sizing.focus` buys headroom over the sized peak: `economy` (40%),
   `balanced` (60%) or `performance` (100%). None of the three trade away RF3,
-  `min.insync.replicas=2` or the separate KRaft controllers -- those hold at
-  every focus level.
+  `min.insync.replicas=2` or the separate KRaft controllers.
 - `sizing.overrides` is a deployer's per-workload override block, applied
   last, over whatever the ratios derived -- and still checked against every
   storage-cap assertion, so an override is a different answer, not an
   exemption.
-- Partition count, the storage model, MSK Standard against Express,
-  combined against separate KRaft controllers, the cloud itself and the
-  availability-zone count are locked once resolved. A re-resolve that moves
-  one refuses and exits 3 unless you also pass
+- `sizing.yaml` names six fields locked once resolved -- partition count, the
+  storage model, MSK Standard against Express, combined against separate
+  KRaft controllers, the cloud itself and the availability-zone count -- but
+  the resolver only DERIVES four of them (partition count, MSK Standard
+  against Express, the cloud, the AZ count); the storage model and the
+  combined/separate controller choice are deployer-set chart-values
+  overrides it never computes, so a re-resolve cannot compare them and they
+  are not what `--migrate` protects. A re-resolve that moves one of the four
+  derived fields refuses and exits 3 unless you also pass
   `--previous sizing/resolved.yaml --migrate`.
-- Above 100,000 GB/day the resolver refuses outright rather than
-  extrapolating, and points at a professional-services engagement instead of
-  a generated profile.
+- Above 100,000 GB/day the resolver refuses outright and points at a
+  professional-services engagement rather than a generated profile.
+
+### Applying the plan
+
 - Render the tofu inputs with `python3 scripts/render_dial.py --tofu`, which
   writes `terraform/environments/aws/dial.auto.tfvars.json` from the dial's
   `target.provision` block. Then, from that directory:
@@ -99,6 +139,8 @@ A few things hold for every deployment on this path:
 
 ## Kafka and ClickHouse
 
+### Kafka
+
 - `kafka.provider: msk` is the only managed Kafka the AWS root builds today.
   It runs MSK Express brokers -- Express only, because MSK cannot convert a
   Standard cluster to Express later -- authenticated both ways: SASL/SCRAM
@@ -106,80 +148,56 @@ A few things hold for every deployment on this path:
   since Kafka ACLs live in the data plane and tofu cannot write the first
   one. That Job creates the landing and DLQ topics and the SCRAM principal's
   ACLs, and exits non-zero on any failure.
-- MSK's own broker-count scaler is a CloudWatch alarm on `BytesInPerSec`
-  driving a Lambda, wired from `kafka.msk.autoscaling`. The telemetry dial
-  (`telemetry.aws.sink`, default `otel`) governs the rest: broker logs land
-  in an S3 bucket the fetcher reads, and only the opt-in `cloudwatch` sink
-  keeps them in CloudWatch instead -- see the Telemetry section of
-  `docs/deployment/kafka/aws-msk.md` for the cost table. `open_monitoring`
-  is always scrape-only, read by the OTel collector gateway. Intelligent
-  rebalancing is turned on, so a broker added later gets existing
-  partitions moved onto it.
+- MSK's broker-count scaler, its telemetry sink and its rebalancing
+  behaviour are operational detail, not part of the provider choice -- see
+  [Kafka telemetry and autoscaling](aws-operations.md#kafka-telemetry-and-autoscaling)
+  in aws-operations.md.
+
+### Managed and SaaS Kafka bodies
+
 - `confluent-cloud` and `redpanda-cloud` module bodies exist under
   `terraform/modules/managed-kafka/`, contract-tested like `msk/`, and the
   AWS root now calls whichever one `kafka.provider` names -- all five
-  tokens validate (`strimzi`, `redpanda`, `msk`, `confluent-cloud`,
-  `redpanda-cloud`), each body behind its own `count`. Neither SaaS body
-  takes a tuning input; the root passes only `name`, `env` and `network`,
-  and the vendor API credential is a provider environment variable, never a
-  tfvar. Confluent's default tier (Freight) is a Private Network Interface
-  rather than PrivateLink and caps `max.message.bytes` at 8 MiB, under the
-  16 MiB the size chain carries. Redpanda Cloud's only creatable tier is
-  Serverless, over a PrivateLink-style endpoint, and its SCRAM password
-  reuses MSK's own seed. Hand-written Terraform for both still lives in
-  `docs/deployment/kafka/confluent-cloud.md` and `redpanda-cloud.md`.
+  tokens validate on both the resolver and the tofu root (`strimzi`,
+  `redpanda`, `msk`, `confluent-cloud`, `redpanda-cloud`), each body behind
+  its own `count`. Neither SaaS body sizes, versions or scales itself from a
+  shape the resolver picks, but both take the same tuning `msk` does
+  (`num_partitions`, `log_retention_ms`,
+  `message_max_bytes`, `landing_topics`, since neither runs a bootstrap Job of
+  its own to pre-create topics); `redpanda-cloud` additionally takes the
+  shared SCRAM password and the ephemeral-lifecycle `allow_deletion` flag.
+  Only `name`, `env` and `network` are true of every body regardless of
+  provider. The vendor API credential is a provider environment variable,
+  never a tfvar: `CONFLUENT_CLOUD_API_KEY` / `CONFLUENT_CLOUD_API_SECRET`
+  for Confluent, `REDPANDA_CLIENT_ID` / `REDPANDA_CLIENT_SECRET` for
+  Redpanda Cloud -- export both before `tofu plan`, since the `redpanda`
+  provider checks for its pair at configure time regardless of which
+  `kafka.provider` is selected. Confluent's default tier (Freight) is a
+  Private Network Interface, not PrivateLink, and caps `max.message.bytes`
+  at 8 MiB, under the chain's 16 MiB. Redpanda Cloud's only creatable
+  tier is Serverless, over a PrivateLink-style endpoint, and its SCRAM
+  password reuses MSK's own seed. Hand-written Terraform for both still lives
+  in `docs/deployment/kafka/confluent-cloud.md` and `redpanda-cloud.md`.
 - `strimzi` runs in the cluster exactly as it does anywhere else. Its broker
   autoscaling is a KEDA `ScaledObject` on the `KafkaNodePool` `/scale`
   subresource, triggered on consumer lag by default, with scale-in off until
   proven safe.
+
+### ClickHouse
+
 - ClickHouse's storage model on a cloud deploy is `cached-object`: parts sit
   in S3, behind a local read-through cache. The AWS ClickHouse shape pins a
-  local-NVMe family (`r*d`, generation floor 8), and the resolver already
-  sizes a dedicated instance-store cache disk for it -- but the chart has not
-  yet wired a separate cache volume, so today the cache shares the data PVC,
-  bounded at 60% of its space by default.
+  local-NVMe family (`r*d`, generation floor 8), and the resolver sizes a
+  dedicated instance-store cache disk for it and points
+  `clickhouse.objectStore.cache.volume` at `instance-store`, so the cache runs
+  on that NVMe rather than sharing the data PVC -- see
+  [storage.md](storage.md) for the mechanism and its default (`pvc`, bounded
+  at 60% of the data PVC's space) for any shape with no such NVMe.
 - Retention starts from a 24-hour assumed consumer downtime on the sized
   (`scale`) tier, plus any `archiver_lag_hours`; `single` and `slim` are not
-  sized at all and keep the chart's fixed 72-hour profile. DLQ topics hold 7
+  sized and keep the chart's fixed 72-hour profile. DLQ topics hold 7
   days (168 hours) regardless of tier.
 
-## Nodes, the edge and lifecycle
-
-- Karpenter provisions every node pool outside the small always-on managed
-  group (`node_pools.system` in the dial) that carries Karpenter itself and
-  the AWS Load Balancer Controller before Karpenter can allocate anything --
-  both install at the same early sync wave. Every Karpenter pool is arm64,
-  and its generation floor sits one generation below the oldest generation in
-  its resolved instance family list, so a new Graviton generation arrives as
-  drift, with no plan change.
-- Every pinned image is checked for both `linux/amd64` and `linux/arm64`
-  manifests (`scripts/check_image_arch.py`) -- an image missing either pulls
-  fine and only fails at container start. The one exception the stack works
-  around rather than ships: the Cruise Control UI's only credible
-  third-party image is amd64-only, so DFE fetches its static release
-  tarball at pod start instead of running that image at all.
-- dfe-ui is public by default on a cloud deploy; every admin UI (Argo CD,
-  Kafbat, HyperDX, the links page) is opt-in, one at a time. A public UI
-  with no authentication fails the render -- dfe-ui's own login counts, as
-  does edge OIDC or an admin app's own scheme (Kafbat's OIDC, HyperDX's
-  session cookie); nothing else does.
-- `ui.allowed_cidrs` is opt-in and enforced twice, at Envoy and at the load
-  balancer's `loadBalancerSourceRanges`. Set it alongside
-  `ui.trusted_proxy_cidrs`, or the client address comes from a header the
-  caller writes. The default rate limit is 300 requests a minute, counted
-  locally per proxy replica. `ui.waf.mode` only ever renders `none` --
-  anything else would move the public certificate to the cloud's own store.
-  A public hostname needs `dns.public_zone` and gets a Let's Encrypt
-  certificate by DNS-01, through cert-manager's own Pod Identity role.
-- Tear down with `tofu destroy` in `terraform/environments/aws`, deleting
-  the Kubernetes workloads first -- anything that made a load balancer, a
-  volume or a DNS record did so through a controller, and `tofu destroy`
-  does not know about it. Then run `scripts/cloud_sweep.py --region
-  <region>` read-only to see what is left, add `--exclude-bucket <state
-  bucket>` so the state store is never a candidate, and only add `--delete`
-  once you have read the listing. The AWS account defaults -- the default
-  VPC and everything that comes with it, AWS-managed KMS aliases -- are
-  never listed or touched.
-- Stack, re-size and platform upgrades follow
-  [upgrades.md](upgrades.md); the operator order across charts is data,
-  not judgement -- `upgrade-order.yaml` at the repo root.
+See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
+for node pools and images, admin UI exposure, teardown, lifecycle tags and
+upgrades.

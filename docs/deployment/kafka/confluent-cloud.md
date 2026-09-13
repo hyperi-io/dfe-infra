@@ -22,6 +22,19 @@ Read the opinionated baseline in [README.md](README.md) first. Confluent Cloud
 is the most managed of the three clouds: it exposes very few broker knobs and
 expresses the rest per topic.
 
+**On the AWS path, tofu builds this for you.** Setting `kafka.provider:
+confluent-cloud` in the deployment dial makes `terraform/environments/aws`
+call the maintained, contract-tested `terraform/modules/managed-kafka/confluent-cloud`
+module instead of hand-rolling the snippet below -- see
+[aws.md](../aws.md#kafka-and-clickhouse) and that module's
+`CONTRACT.md`. That module defaults to the **Freight** tier (private
+networking, no public endpoint, autoscales on eCKUs) rather than the
+`standard` tier this page's own worked example uses, and Confluent caps a
+topic's `max.message.bytes` at 8 MiB on every tier -- under the 16 MiB DFE's
+canonical size chain otherwise carries. The example below is for a
+deployment standing Confluent Cloud up by some other means and pointing DFE
+at it with `kafka.mode=external`.
+
 ## What Confluent Cloud lets you set vs manages
 
 Confluent Cloud manages the broker fleet, KRaft metadata plane, segment sizing,

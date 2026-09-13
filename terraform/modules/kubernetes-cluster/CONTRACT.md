@@ -1,6 +1,6 @@
 # kubernetes-cluster -- module contract
 
-One managed Kubernetes cluster, its network, its DNS zones and the workload
+REFERENCE. One managed Kubernetes cluster, its network, its DNS zones and the workload
 identities the in-cluster controllers need. One body per implementation:
 
 | Body | Status | Cluster | Workload identity |
@@ -33,6 +33,7 @@ owns the provider, the backend and the tags; the body owns the resources.
 | `dns` | `object({ private_zone, public_zone })` | The private zone always exists. `public_zone` of `""` means no public zone and no public-DNS identity. |
 | `telemetry` | `object({ sink, retention_days })` | Where a CloudWatch-only touchpoint lands. Every cloud's control plane delivers SOME logs to a CloudWatch-shaped sink with no other export path -- on `aws/` that is the EKS audit log, always on, always in CloudWatch. `sink = otel` (the default) pins its retention to a 1-day floor since it is an unavoidable exception, not a chosen destination; `sink = cloudwatch` keeps it at `retention_days` like every other touchpoint under that sink. |
 | `tags` | `map(string)` | The six required governance tags plus `iac-source`. The body VALIDATES them; the root APPLIES them through the provider's default-tag mechanism, so a body never tags a resource with this map itself. |
+| `key_policy_grants` | `list(object({ sid, principals, actions, conditions }))`, default `[]` | AWS-only today. Extra KMS key policy statements for a service principal (`cloudtrail.amazonaws.com`, `delivery.logs.amazonaws.com`), which cannot be granted through an IAM role policy. This body is the key's ONE policy owner (`aws_kms_key_policy` replaces the whole policy), so a sibling module hands its statement in here rather than writing a second `aws_kms_key_policy` against the same key, which would silently replace this one's. The root computes the list. |
 
 `node_pools` in full:
 

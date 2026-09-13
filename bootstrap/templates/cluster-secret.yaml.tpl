@@ -60,9 +60,20 @@ metadata:
     dfe.hyperi.io/clickhouse_host: "${DFE_CLICKHOUSE_HOST}"
     dfe.hyperi.io/kafka_bootstrap: "${DFE_KAFKA_BOOTSTRAP}"
     dfe.hyperi.io/kafka_provider: "${DFE_KAFKA_PROVIDER}"
+    # "external" for a managed broker (msk, confluent-cloud, redpanda-cloud),
+    # blank otherwise so the profile overlay's own kafka.mode is left alone --
+    # the appset parameter reading this is emitted only when it is non-empty.
+    dfe.hyperi.io/kafka_mode: "${DFE_KAFKA_MODE}"
     # Bare broker hosts (no port), for the otel-collector chart's MSK
     # open_monitoring scrape. Empty on every provider but msk.
     dfe.hyperi.io/kafka_broker_hosts: "${DFE_KAFKA_BROKER_HOSTS}"
+    # The SASL/IAM endpoint the in-cluster MSK bootstrap Job connects to, its
+    # Pod Identity role, and the broker's own SCRAM credential reference.
+    # Empty on every provider but msk; only bootstrap_iam is read back today
+    # (layer2-data.yaml, into kafka.external.msk.bootstrapIam).
+    dfe.hyperi.io/kafka_bootstrap_iam: "${DFE_KAFKA_BOOTSTRAP_IAM}"
+    dfe.hyperi.io/kafka_bootstrap_role_arn: "${DFE_KAFKA_BOOTSTRAP_ROLE_ARN}"
+    dfe.hyperi.io/kafka_credential_ref: "${DFE_KAFKA_CREDENTIAL_REF}"
     dfe.hyperi.io/otel_endpoint: "${DFE_OTEL_ENDPOINT}"
     # Deployment-wide retention; layer2-apps and layer2-data inject it into the
     # dfe-engine and dfe-schema charts as retention.defaultTtlDays.
