@@ -19,7 +19,10 @@
 ## nested maps and scalars only. `before` names a step that must complete on
 ## the RUNNING cluster before the version moves; `finalise` names the one-way
 ## step held back for a soak after the roll; `pair` names the key that moves
-## with this one as a single change.
+## with this one as a single change; `rollback` names the reverse path when
+## one exists, or the literal `none` when the step cannot be undone (a
+## one-way step also carrying `finalise` is `none` by definition and does not
+## need to repeat it -- `dfe-ops upgrade rollback` refuses by name either way).
 
 stages:
   "10-bootstrap":
@@ -59,6 +62,7 @@ stages:
     "40-kafka-brokers":
       key: services.kafka-version
       finalise: "metadata.version bump after a soak; one way"
+      rollback: "none"
     "50-redpanda-brokers":
       key: services.redpanda-version
       pair: operators.redpanda-operator
