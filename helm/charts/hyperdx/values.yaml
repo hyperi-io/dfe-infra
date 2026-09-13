@@ -10,18 +10,18 @@ cloud: local
 # change that clearly cannot impact dfe-engine may land directly here; then
 # raise a dfe-engine issue noting it was done, for politeness.
 
-# dfe-hyperdx fork image (combined API + App). CONFIRM the published image
-# name/tag from the fork's CI before first deploy.
+# dfe-hyperdx fork image (combined API + App), published to GHCR by the fork's CI.
 image:
   repository: ghcr.io/hyperi-io/dfe-hyperdx
   tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
+  # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
+  # digests.dfe-hyperdx (drift-checked). The tag and this must move together.
+  digest: "sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f"
   pullPolicy: IfNotPresent
 
-# TODO(verify-on-publish): the fork image is NOT published yet (ghcr returns
-# MANIFEST_UNKNOWN), so its runtime UID could not be verified. This falls back to
-# the DFE default 1000. When the fork's CI ships the image, confirm its USER and
-# set podSecurityContext.runAsUser here if it is not 1000, or runAsNonRoot will
-# reject the pod. readOnlyRootFilesystem is off because the App is Next.js-based.
+# The image runs as USER node, which its node:alpine base creates as uid 1000, so
+# the DFE default runAsUser 1000 matches and runAsNonRoot admits the pod.
+# readOnlyRootFilesystem is off because the App is Next.js-based.
 containerSecurityContext:
   readOnlyRootFilesystem: false
 
@@ -119,7 +119,7 @@ dashboards:
   requireRefs: true
   image:
     repository: ""     # empty -> {{ global.registry }}/dfe-engine
-    tag: "v1.19.9"     # == versions.yaml apps.dfe-engine (drift-checked)
+    tag: "v1.20.4"     # == versions.yaml apps.dfe-engine (drift-checked)
     pullPolicy: IfNotPresent
   resources:
     requests:

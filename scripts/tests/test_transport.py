@@ -197,6 +197,34 @@ def test_the_transform_config_names_the_transport() -> None:
                f"got {direct['sink']!r}")
 
 
+def test_the_fetcher_dlq_follows_the_instance_output() -> None:
+    """The engine compiles a direct source's fetcher to output.type grpc on a bus
+    deploy too, and the fetcher refuses a kafka-only DLQ with no kafka output."""
+
+    def env(*args: str) -> dict:
+        deployment = next(
+            d for d in docs(render(CHARTS / "dfe-fetcher", "dfe-fetcher", *args))
+            if d.get("kind") == "Deployment"
+        )
+        return {e["name"]: e.get("value") for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+    bus = env()
+    expect("a bus instance dead-letters to kafka", bus.get("DFE_FETCHER_DLQ_MODE") == "kafka_only",
+           f"got {bus.get('DFE_FETCHER_DLQ_MODE')!r}")
+    expect("and is not switched off", "DFE_FETCHER_DLQ_ENABLED" not in bus, repr(bus.get("DFE_FETCHER_DLQ_ENABLED")))
+
+    direct_on_bus = env("--set", "config.output.type=grpc")
+    expect("a direct instance on a bus deploy switches the DLQ off",
+           direct_on_bus.get("DFE_FETCHER_DLQ_ENABLED") == "false",
+           f"got {direct_on_bus.get('DFE_FETCHER_DLQ_ENABLED')!r}")
+    expect("and names no kafka mode", "DFE_FETCHER_DLQ_MODE" not in direct_on_bus,
+           repr(direct_on_bus.get("DFE_FETCHER_DLQ_MODE")))
+
+    direct = env("--set", "kafka.mode=disabled")
+    expect("a direct deploy switches the DLQ off", direct.get("DFE_FETCHER_DLQ_ENABLED") == "false",
+           f"got {direct.get('DFE_FETCHER_DLQ_ENABLED')!r}")
+
+
 def test_no_chart_derives_the_transport_itself() -> None:
     offenders = [
         str(t.relative_to(REPO_ROOT))
@@ -214,6 +242,7 @@ def main() -> int:
         test_the_engine_follows_the_profile()
         test_the_push_service_renders_on_direct_only()
         test_the_transform_config_names_the_transport()
+        test_the_fetcher_dlq_follows_the_instance_output()
         test_no_chart_derives_the_transport_itself()
         return summary()
 

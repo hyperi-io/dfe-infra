@@ -8,7 +8,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-receiver (drift-checked).
-  digest: "sha256:0e9d04354c041d71a6c79eb923f5f59f7926e4ad321eb8dc64f940874b2fdf14"
+  digest: "sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -198,9 +198,10 @@ serviceAccount:
   annotations: {}   # workload identity annotations injected here
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
-# The engine/overlay drives these via the per-instance values file. DEFAULT
-# trigger is CPU (native KEDA cpu scaler, no shim); scalo ScalingPressure is OPT-IN
-# via the fail-safe dfe-keda-shim (a metric outage FREEZES scaling, never runs up).
+# The engine/overlay drives these via the per-instance values file. The SHIPPED
+# trigger is the native cpu scaler; the scalo ScalingPressure composite (0-100)
+# through the fail-safe dfe-keda-shim is opt-in until every app emits the gauge
+# (dfe-infra #302), and the HPA takes the higher of the two where both render.
 # minReplicaCount stays 1 -- scale-to-zero is 2.2 backlog; set min/idle to 0 via
 # the overlay to opt this pipeline app in later.
 keda:
@@ -210,14 +211,14 @@ keda:
   cooldownPeriod: 120
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
-  # OPT-IN: scale on scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim -
-  # a metric outage FREEZES scaling, never runs replicas up. Set enabled: true to use.
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
+  # OPT-IN: scale on scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim,
+  # which freezes scaling on a metric outage rather than running replicas up.
   pressure:
-    enabled: false
+    enabled: false            # no Rust app emits the gauge yet -- dfe-infra #302
     # service: dfe-receiver   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

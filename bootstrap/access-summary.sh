@@ -208,7 +208,7 @@ kubectl -n ${NS} get secret dfe-engine-seed-accounts -o jsonpath='{.data.seed-ac
 ## Smoke check
 
 \`\`\`sh
-curl -fsS https://dfe.${DOMAIN}/api/v1/system/health   # engine health
+curl -fsS -o /dev/null https://dfe.${DOMAIN}/openapi.json   # the engine answers through the gateway
 kubectl -n ${NS} get pods                              # everything Running
 \`\`\`
 

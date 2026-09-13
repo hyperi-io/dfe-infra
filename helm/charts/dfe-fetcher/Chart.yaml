@@ -3,8 +3,8 @@ name: dfe-fetcher
 description: DFE Rust scheduled API fetcher — Kafka producer, ESO credentials
 type: application
 version: 0.3.0
-appVersion: "v1.4.17"   # == versions.yaml apps.dfe-fetcher (drift-checked)
+appVersion: "v1.4.22"   # == versions.yaml apps.dfe-fetcher (drift-checked)
 dependencies:
   - name: dfe-common
-    version: "0.9.1"
+    version: "0.10.0"
     repository: "file://../../library/dfe-common"

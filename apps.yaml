@@ -9,7 +9,9 @@
 # The engine resolves it in this order: DFE_APP_CATALOGUE_FILE, then a copy
 # mounted into the engine pod from this file, then the snapshot bundled in the
 # engine image. A deployment that mounts this file picks up a new app without
-# waiting for an engine release.
+# waiting for an engine release. Helm reads only files inside a chart, so the
+# engine chart carries the copy it mounts -- re-render it after editing here:
+#     python3 scripts/composition.py --write-catalogue
 #
 # Multiplicity and replication are INDEPENDENT axes. A transform is both: there
 # may be hundreds of them, one per source, and each one is separately KEDA-scaled.
@@ -80,20 +82,36 @@
 #   where the app ships a catalogue of them. The engine writes a source's
 #   transform.variant there without knowing which app it is.
 #
+# consumes
+#   The config file the app's own image reads, by name. On Kubernetes the app's
+#   chart renders the instance overlay into a ConfigMap and the name is the
+#   chart's; on Compose there is no chart, so dfe-engine renders the same
+#   content into <app-config-dir>/<app>/<name> and the container reads it
+#   there. An app with no `consumes` reads no config file the engine renders --
+#   the console and the UI, which carry no data-plane config at all. Fields:
+#     config  the file name, as the image's own CMD spells it
+#
 # files[]
 #   A family of files the app reads off disk. Content is carried in the instance's
 #   values overlay, because Helm cannot read a raw file out of an Argo $values
 #   source. Fields:
-#     name         identifier used in the API path
-#     values_path  dot-path in the overlay holding the list of {name, content}
-#     links_path   dot-path in the overlay holding the library links that produced
-#                  that content. Optional; defaults to values_path + "Links".
-#     dir_setting  the app's own config key naming the directory it reads
-#     suffixes     extensions the app will actually load; anything else is refused
-#     language     editor syntax hint
-#     reload       hot    the app applies a change without a restart
-#                  roll   a pod roll applies it; the chart checksums the files
-#                  restart needs a manual restart
+#     name          identifier used in the API path
+#     values_path   dot-path in the overlay holding the list of {name, content}
+#     links_path    dot-path in the overlay holding the library links that produced
+#                   that content. Optional; defaults to values_path + "Links".
+#     dir_setting   the app's own config key naming the directory it reads
+#     entries_path  the app's own config key holding one {name, path} entry per
+#                   file, for a set the app names table by table rather than by
+#                   directory. The name is the file name without its extension,
+#                   which is the name a program looks the table up by. Whoever
+#                   owns the mount derives these: the chart on Kubernetes
+#                   (dfe-common.enrichmentTablesConfig), the engine's writer on
+#                   Compose. Set this or dir_setting, never both.
+#     suffixes      extensions the app will actually load; anything else is refused
+#     language      editor syntax hint
+#     reload        hot    the app applies a change without a restart
+#                   roll   a pod roll applies it; the chart checksums the files
+#                   restart needs a manual restart
 #
 # routing
 #   Present when the app's routing block is DERIVED from the source definitions
@@ -178,6 +196,8 @@ apps:
     # A reload rebuilds the router and the validator in place; the sinks and the
     # listeners are built once at startup.
     hot_reload: true
+    consumes:
+      config: config.yaml
     routing:
       compiler: receiver
       values_paths:
@@ -193,6 +213,8 @@ apps:
     hot_reload: true
     endpoints:
       push: {port: 6000}
+    consumes:
+      config: loader.yaml
     routing:
       compiler: loader
       values_paths:
@@ -211,9 +233,14 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: false
-    # Deployed everywhere by default and idle until an operator names a
-    # destination, rather than absent until someone remembers to add it. The
-    # topic pair is one condition: on the bus, neither an explicit list nor a
+    consumes:
+      config: archiver.yaml
+    # Deployed by default and idle until an operator names a destination, rather
+    # than absent until someone remembers to add it. docker-slim is the one
+    # exception: the leanest Compose tier runs the core data path alone, so the
+    # archiver arrives with docker-single.
+    default_in: [slim, single, scale, mesh, docker-single]
+    # The topic pair is one condition: on the bus, neither an explicit list nor a
     # discovery pattern means nothing to read.
     idle_when:
       - config.archive.destination
@@ -227,12 +254,16 @@ apps:
     multiplicity: per_config
     scale_deployed: false
     transports: [bus, direct]
-    # One instance per fetcher source, written by the engine when the source is
-    # written, so no profile seeds one.
-    default_in: []
-    # Anything that can produce a record is work. The ingest listener defaults
-    # ON, so a deployment wanting the gate to turn on sources alone sets
-    # config.ingest.enabled false.
+    # docker-slim runs the core data path alone, so no fetcher may be deployed
+    # there.
+    profiles: [slim, single, scale, mesh, docker-single]
+    # On the Kubernetes tiers one instance per fetcher source, written by the
+    # engine when the source is written, so no tier seeds one. Compose holds one
+    # service per app, so docker-single starts that single fetcher idle and the
+    # source it is later given fills it.
+    default_in: [docker-single]
+    # Anything that can produce a record is work; the ingest listener defaults
+    # off, so an instance that wants it sets config.ingest.enabled true.
     idle_when:
       - config.sources
       - config.extractors.containers
@@ -241,6 +272,8 @@ apps:
     # rest of the stanza binds a connection, a topic or the concurrency
     # semaphore, all established once at startup (its config.example.yaml).
     hot_reload: true
+    consumes:
+      config: fetcher.yaml
     # instance_id keys the cursor store, so it has to be stable per source: a
     # changed id re-fetches the default window instead of resuming.
     source_binding:
@@ -297,9 +330,18 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: false
-    # A transform instance IS a source's processing step, so it arrives with the
-    # source rather than with the profile.
-    default_in: []
+    consumes:
+      config: config.yaml
+    # On the Kubernetes tiers a transform instance IS a source's processing step,
+    # so it arrives with the source rather than with the tier. Compose holds one
+    # service per app, so docker-single starts that single transform idle and the
+    # source it is later given fills it.
+    default_in: [docker-single]
+    # On the bus a transform with no topics has nothing to consume, so it starts,
+    # stays Ready and holds no consumer group. The direct form's listener IS the
+    # work, which is why the bind address is not listed here.
+    idle_when:
+      - config.source.topics
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
       config.source.topics: ["{source}_land"]
@@ -325,6 +367,7 @@ apps:
         values_path: enrichmentTables
         links_path: enrichmentTableLinks
         dir_setting: ""
+        entries_path: config.enrichment_tables
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll
@@ -340,6 +383,8 @@ apps:
       push: {port: 6000}
     hot_reload: true
     default_in: []
+    consumes:
+      config: config.yaml
     # This app derives topics and consumer group from its own dfe_source field.
     source_binding:
       config.dfe_source: "{source}"
@@ -362,6 +407,7 @@ apps:
         values_path: enrichmentTables
         links_path: enrichmentTableLinks
         dir_setting: ""
+        entries_path: config.enrichment_tables
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll

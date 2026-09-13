@@ -11,8 +11,9 @@ differently -- a directory of programs versus named tables referenced by
 `get_enrichment_table_record`. The bundled filebeat pipeline needs its timezones
 table for the ios and meraki branches, and errors every event out without it.
 
-The engine writes the matching `enrichment_tables[].path` into the config blob;
-this only guarantees the files are on disk where those paths point.
+The matching `enrichment_tables[]` entry is derived here too
+(dfe-common.enrichmentTablesConfig), because the mount directory is the chart's
+and the engine cannot know it.
 */}}
 
 {{/*
@@ -67,6 +68,31 @@ Usage:
 {{/*
 No env helper here on purpose. The app has no flat-env key for enrichment --
 `enrichment_tables` is a list, and its loader reads it from the config blob
-only, so a DFE_TRANSFORM_ENRICHMENT_DIR would be inert. The engine writes each
-`enrichment_tables[].path` under enrichmentTablesDir instead.
+only, so a DFE_TRANSFORM_ENRICHMENT_DIR would be inert.
+
+The `enrichment_tables[]` entries are derived HERE, not by the engine: the
+mount directory is this chart's, so the engine cannot know the path. Every
+mounted table the config blob does not already name gets a legacy flat entry
+{name, path}, the name being the file name without its extension -- the name
+a VRL program looks the table up by. A key column cannot be derived from a
+file name, so an entry without one is scanned per lookup; a config blob that
+names the table with `key_columns` keeps its own entry.
+
+Usage:
+  {{- $tables := include "dfe-common.enrichmentTablesConfig" . | fromYamlArray }}
 */}}
+{{- define "dfe-common.enrichmentTablesConfig" -}}
+{{- $dir := include "dfe-common.enrichmentTablesDir" . -}}
+{{- $declared := list -}}
+{{- range (default list (get (default dict .Values.config) "enrichment_tables")) -}}
+{{- $declared = append $declared (default "" .name) -}}
+{{- end -}}
+{{- $tables := list -}}
+{{- range .Values.enrichmentTables -}}
+{{- $name := regexReplaceAll "\\.[^.]+$" .name "" -}}
+{{- if not (has $name $declared) -}}
+{{- $tables = append $tables (dict "name" $name "path" (printf "%s/%s" $dir .name)) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $tables -}}
+{{- end -}}

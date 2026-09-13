@@ -70,6 +70,29 @@ class TestWhichScreensAreExpected:
 
         assert wizard.unexpected_screens(expected, expected) == ()
 
+    def test_a_seeded_first_user_ends_the_wizard_at_the_organisation(self):
+        expected = wizard.expected_slugs(NEW_RELEASE, pending=("oidc_provider", "organisations"))
+
+        assert expected == (wizard.WELCOME, wizard.ORGANISATION)
+
+    def test_every_step_pending_expects_every_screen(self):
+        assert wizard.expected_slugs(NEW_RELEASE, pending=NEW_RELEASE) == wizard.expected_slugs(NEW_RELEASE)
+
+    def test_a_reset_screen_already_done_is_not_expected_again(self):
+        pending = ("oidc_provider", "organisations", "first_user")
+
+        assert wizard.RESET_BREAK_GLASS not in wizard.expected_slugs(OLD_RELEASE, pending=pending)
+
+    def test_pending_steps_come_off_the_document(self):
+        status = {"initial_setup": {"steps": list(NEW_RELEASE), "pending_steps": ["organisations"]}}
+
+        assert wizard.pending_steps(status) == ("organisations",)
+
+    def test_a_document_without_pending_steps_treats_every_step_as_pending(self):
+        status = {"initial_setup": {"steps": list(NEW_RELEASE), "complete": False}}
+
+        assert wizard.pending_steps(status) == NEW_RELEASE
+
 
 class TestReadingTheEngineContract:
     def test_the_steps_come_off_the_document(self):
@@ -198,8 +221,11 @@ class TestSuiteOrder:
     def test_all_runs_onboarding_first(self):
         assert ops.suite_steps("all")[0] == ops.ONBOARDING_SUITE
 
-    def test_all_runs_every_suite(self):
-        assert set(ops.suite_steps("all")) == set(ops.SUITES) - {"all"}
+    def test_all_proves_a_fresh_deploy_without_the_seeded_source(self):
+        assert ops.suite_steps("all") == (ops.ONBOARDING_SUITE, "flows")
+
+    def test_a_suite_that_needs_a_seeded_source_is_not_a_named_suite(self):
+        assert "filebeat" not in ops.SUITES
 
     def test_a_named_suite_runs_only_itself(self):
         assert ops.suite_steps("flows") == ("flows",)

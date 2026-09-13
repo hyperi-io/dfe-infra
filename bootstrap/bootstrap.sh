@@ -20,7 +20,7 @@
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
-#   DFE_PROFILE              slim | single | scale | mesh
+#   DFE_PROFILE              slim | single | scale | mesh (default: scale)
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
 #   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
@@ -47,6 +47,11 @@
 #                            empty lets the pool choose
 #   DFE_RECEIVER_IP          address the receiver's public TCP LoadBalancer must
 #                            take; empty lets the pool choose
+#   DFE_LOCAL_PATH_DIR       directory on each node local-path-provisioner creates
+#                            its volumes under, when the bootstrap installs it
+#                            because the cluster has no StorageClass. Unset keeps
+#                            upstream's /opt/local-path-provisioner, on the root
+#                            filesystem of a node whose data disk is elsewhere.
 #   DFE_CLICKHOUSE_DEFAULT_TTL_DAYS  days every time-series table keeps rows, the
 #                            OTel tables included (default 90; 0 = no default
 #                            TTL). A source or a dfe-schemas definition with its
@@ -104,7 +109,23 @@ CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_R
 EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
 ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
 LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
-echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION}"
+METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.metallb)
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION} metallb=${METALLB_VERSION}"
+
+# Each operator below states its own Kubernetes window, so an under-floor cluster
+# fails inside one of them naming that operator rather than the cluster.
+# DFE_SKIP_PLATFORM_CHECK=true proceeds anyway.
+if [[ "${DFE_SKIP_PLATFORM_CHECK:-false}" == "true" ]]; then
+  echo "WARNING: DFE_SKIP_PLATFORM_CHECK=true -- not checking the cluster against platform.kubernetes" >&2
+else
+  # dfe-ops names the stack it is deploying, so check the floor of THAT stack
+  # rather than whatever `current` happens to point at.
+  platform_args=(--file "${REPO_ROOT}/versions.yaml")
+  if [[ -n "${DFE_STACK_VERSION:-}" ]]; then
+    platform_args+=(--stack "${DFE_STACK_VERSION}")
+  fi
+  python3 "${SCRIPT_DIR}/check_platform.py" "${platform_args[@]}"
+fi
 
 # Dry-run wrapper
 run() {
@@ -151,6 +172,17 @@ dfe_should_install() {
   return 0
 }
 
+# The clouds whose own controller programs a LoadBalancer Service. Everything
+# else is on-prem, whatever a deployment calls itself -- local, local-dfe, an
+# estate name -- so the list is the clouds, not the on-prem names. dfe-ops
+# preflight reads this same line so its INSTALL preview matches step [3b/7];
+# scripts/tests/test_pinned_addresses.py holds the two together.
+DFE_CLOUD_LB_PROVIDERS="aws gcp az azure"
+
+dfe_cloud_programs_loadbalancers() {
+  [[ " ${DFE_CLOUD_LB_PROVIDERS} " == *" ${DFE_CLOUD} "* ]]
+}
+
 # Validate required variables
 required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
@@ -172,7 +204,13 @@ export DFE_DNS_PROVIDER="${DFE_DNS_PROVIDER:-none}"
 # devex/local enforces DFE onto its dedicated workers via a HARD nodeSelector
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is
 # satisfiable; a shared/customer cluster labels its own nodes at provisioning.
+# Deliberately NARROWER than dfe_cloud_programs_loadbalancers: that one asks who
+# programs a LoadBalancer, this one asks whether every node in the cluster is
+# ours to label, and on a shared on-prem cluster it is not.
 DFE_LABEL_WORKLOAD_NODES="${DFE_LABEL_WORKLOAD_NODES:-$([[ "${DFE_CLOUD:-}" == "local" ]] && echo true || echo false)}"
+# The certified stack version; empty when a bare bootstrap names none, and the
+# engine then falls back to the deploy repo's pins.
+export DFE_STACK_VERSION="${DFE_STACK_VERSION:-}"
 # Front-door addresses; empty renders a blank annotation and the pool chooses.
 export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
 export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
@@ -185,8 +223,11 @@ if ! [[ "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}" =~ ^[0-9]+$ ]]; then
 fi
 echo "Default retention: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS} day(s) for every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)"
 # One cluster runs one profile at a time, so the profile tags the domain and no
-# two deployments publish the same hostname. An explicit DFE_DOMAIN wins.
-if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" && -n "${DFE_PROFILE:-}" ]]; then
+# two deployments publish the same hostname. dfe-ops refuses an explicit
+# DFE_DOMAIN that contradicts a declared base; a bare bootstrap trusts it.
+# A Kubernetes deploy that names no profile gets the HA tier on the bus.
+export DFE_PROFILE="${DFE_PROFILE:-scale}"
+if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" ]]; then
   export DFE_DOMAIN="${DFE_PROFILE}.${DFE_BASE_DOMAIN}"
   echo "Domain derived from DFE_BASE_DOMAIN: ${DFE_DOMAIN}"
 fi
@@ -233,6 +274,7 @@ echo "==> [0/7] Adding Helm repositories"
 run helm repo add jetstack https://charts.jetstack.io 2>/dev/null || true
 run helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
 run helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
+run helm repo add metallb https://metallb.github.io/metallb 2>/dev/null || true
 run helm repo update
 
 echo "==> [1/7] Applying ArgoCD namespace + cluster secret"
@@ -259,6 +301,23 @@ else
   run kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
   run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
   run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  # Upstream hands every node /opt/local-path-provisioner, so on a node whose data
+  # disk is mounted elsewhere every PV lands on the root filesystem.
+  if [[ -n "${DFE_LOCAL_PATH_DIR:-}" ]]; then
+    echo "  local-path volumes -> ${DFE_LOCAL_PATH_DIR}"
+    if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+      echo "[DRY-RUN] patch local-path-config config.json nodePathMap -> ${DFE_LOCAL_PATH_DIR}"
+    else
+      local_path_config="$(kubectl -n local-path-storage get configmap local-path-config \
+        -o jsonpath='{.data.config\.json}' \
+        | python3 "${SCRIPT_DIR}/local_path_dir.py" --dir "${DFE_LOCAL_PATH_DIR}")"
+      kubectl -n local-path-storage patch configmap local-path-config \
+        --type merge -p "$(python3 -c 'import json,sys; print(json.dumps({"data": {"config.json": sys.stdin.read()}}))' <<<"${local_path_config}")"
+      # The provisioner reads config.json at start; a running pod keeps the old path.
+      kubectl -n local-path-storage rollout restart deployment/local-path-provisioner
+      kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
+    fi
+  fi
 fi
 
 echo "==> [1c/7] Node labels (dedicated-worker placement)"
@@ -300,6 +359,47 @@ if dfe_should_install external-secrets clustersecretstores.external-secrets.io e
     --namespace external-secrets --create-namespace \
     --version "${EXTERNAL_SECRETS_VERSION}" \
     --wait --timeout 5m
+fi
+
+echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"
+# Nothing programs a LoadBalancer Service on a bare on-prem cluster, so the
+# Envoy Gateway and the receiver's public door sit Pending forever.
+if dfe_cloud_programs_loadbalancers; then
+  echo "  DFE_CLOUD=${DFE_CLOUD}: the cloud LoadBalancer controller programs the Services -- MetalLB skipped"
+else
+  if dfe_should_install metallb ipaddresspools.metallb.io metallb-system metallb-controller; then
+    run helm upgrade --install metallb metallb/metallb \
+      --namespace metallb-system --create-namespace \
+      --version "${METALLB_VERSION}" \
+      --wait --timeout 5m
+    # The IPAddressPool webhook is failurePolicy=Fail, so the pool below is
+    # rejected until the controller serves it, and the speaker is what answers
+    # ARP for the addresses once it is accepted.
+    run kubectl -n metallb-system rollout status deployment/metallb-controller --timeout=300s
+    run kubectl -n metallb-system rollout status daemonset/metallb-speaker --timeout=300s
+  fi
+  # Applied on every on-prem run, so a rebuild that adopts MetalLB still gets
+  # the addresses this deployment's DNS records point at.
+  if [[ -z "${DFE_GATEWAY_IP}" ]] || [[ -z "${DFE_RECEIVER_IP}" ]]; then
+    echo "  WARNING: DFE_GATEWAY_IP and/or DFE_RECEIVER_IP are unset, so no address pool was created."
+    echo "           MetalLB hands out nothing it holds no pool for: the Envoy Gateway and the"
+    echo "           receiver's public Service stay Pending and every published hostname fails to"
+    echo "           resolve to a live address. Set both and re-run, unless the cluster already"
+    echo "           carried a LoadBalancer provider with a pool of its own."
+  elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/metallb-pool.yaml.tpl | kubectl apply -f -"
+  else
+    # A provider that came with the cluster already owns its addressing, and
+    # MetalLB refuses a pool whose range overlaps one it is already serving.
+    pools=$(kubectl get ipaddresspools.metallb.io -A -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+    if [[ -n "${pools}" ]] && [[ " ${pools} " != *" dfe-front-door "* ]]; then
+      echo "  Existing IPAddressPool(s) own this cluster's addressing (${pools}) -> DFE pool NOT applied."
+      echo "  The gateway and receiver addresses must fall inside one of them."
+    else
+      envsubst < "${TEMPLATES_DIR}/metallb-pool.yaml.tpl" | kubectl apply -f -
+      echo "  Applied the dfe-front-door IPAddressPool + L2Advertisement"
+    fi
+  fi
 fi
 
 echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"

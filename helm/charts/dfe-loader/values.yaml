@@ -8,7 +8,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-loader (drift-checked).
-  digest: "sha256:38711e8dae47e68f9a58227dea02018952db269885b9aaba3bd4b6b2f261de62"
+  digest: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -83,9 +83,10 @@ serviceAccount:
   annotations: {}   # workload identity annotations injected here
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
-# DEFAULT trigger is CPU (native KEDA cpu scaler, no shim). scalo ScalingPressure
-# (dfe_scaling_pressure, 0-100) is OPT-IN via the fail-safe dfe-keda-shim (a metric
-# outage FREEZES scaling, never runs replicas up). minReplicaCount stays 1
+# The SHIPPED trigger is the native cpu scaler; the scalo ScalingPressure composite
+# (dfe_scaling_pressure, 0-100) through the fail-safe dfe-keda-shim is opt-in until
+# every app emits the gauge (dfe-infra #302), and the HPA takes the higher of the
+# two where both render. minReplicaCount stays 1
 # (scale-to-zero is 2.2 backlog; set min/idle 0 to opt in).
 keda:
   enabled: true
@@ -94,12 +95,12 @@ keda:
   cooldownPeriod: 120
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # opt-in: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
     # service: dfe-loader     # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

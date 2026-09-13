@@ -503,6 +503,16 @@ CHECKS += [
         Path("helm/charts/hyperdx/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # The immutable half of that pin, which the same name mismatch kept out of
+    # _DIGEST_MIRRORS -- so versions.yaml carried digests.dfe-hyperdx while the
+    # chart rendered a bare tag. Anchored on the fork's repository line so it
+    # cannot match the dashboards digest, which is a different image.
+    Check(
+        "hyperdx fork image digest",
+        "digests.dfe-hyperdx",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*ghcr\.io/hyperi-io/dfe-hyperdx[^\n]*\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
     # points, not an artefact of its own -- so the chart name does not match the
     # pin and it cannot ride _APP_CHARTS.
@@ -552,10 +562,15 @@ CHECKS += [
 #
 # Patterns are exact keys or `section.*`.
 UNCONSUMED: dict[str, str] = {
+    "platform.kubernetes": "bootstrap/check_platform.py and dfe-ops preflight both read it at runtime by name; no hardcoded copy",
+    "platform.rke2": "bootstrap/check_platform.py reads it at runtime; no hardcoded copy",
+    "platform.rancher": "DECLARED, not checked: nothing in a cluster reports the Rancher managing it, so there is no second copy to drift against",
+    "platform.eks": "a REQUIREMENT on a cluster this repo does not build -- deployment.example.yaml takes an existing cluster and argocd/values/aws.yaml is a Plan 07 stub. Give it a Check once that stub becomes real provisioning",
     "bootstrap.cert-manager": "bootstrap.sh reads it at runtime (read_versions.py); no hardcoded copy",
     "bootstrap.external-secrets": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.local-path-provisioner": "bootstrap.sh reads it at runtime; no hardcoded copy",
+    "bootstrap.metallb": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "services.cnpg-cluster-instances": "replica count, overridden per profile",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",

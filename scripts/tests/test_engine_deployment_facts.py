@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_engine_deployment_facts.py
-#  Purpose:      Prove the engine is TOLD its tier and its ui pin, from the one
-#                place each is already known, so the console never guesses.
+#  Purpose:      Prove the engine is TOLD its tier, its ui pin and the app
+#                manifest, from the one place each is already known, so the
+#                console never guesses.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -16,6 +17,11 @@ cluster-secret annotation that selects argocd/values/profile-<x>.yaml, and the
 dfe-ui pin, which Helm cannot read off a sibling chart and so is mirrored into
 the engine's values under check_versions_drift.py.
 
+`GET /api/v1/apps` answers the same way. The app manifest is dfe-infra's
+apps.yaml, and Helm reads only files inside a chart, so the chart carries the
+copy scripts/composition.py renders and mounts it -- which is what makes a new
+or changed app a manifest edit rather than an engine release.
+
     python3 scripts/tests/test_engine_deployment_facts.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
@@ -24,8 +30,10 @@ Needs `helm` on PATH. No test runner, matching the other checks here.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -42,23 +50,34 @@ PROFILES = ("slim", "single", "scale", "mesh")
 # The cluster-secret annotation that is the SSoT for the tier at render time.
 PROFILE_ANNOTATION = "dfe.hyperi.io/profile"
 
+# Where the chart mounts the manifest, and what it points the engine at.
+CATALOGUE_CONFIGMAP = "dfe-engine-app-catalogue"
+CATALOGUE_FILE = "/etc/dfe-engine/catalogue/apps.yaml"
 
-def render(*args: str) -> str:
-    cmd = ["helm", "template", "dfe-engine", str(ENGINE_CHART), *args]
+
+def render(*args: str, chart: Path = ENGINE_CHART) -> str:
+    cmd = ["helm", "template", "dfe-engine", str(chart), *args]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for dfe-engine {args}:\n{out.stderr}")
     return out.stdout
 
 
-def engine_env(*args: str) -> dict[str, str | None]:
-    docs = [d for d in yaml.safe_load_all(render(*args)) if d]
+def documents(*args: str, chart: Path = ENGINE_CHART) -> list[dict]:
+    return [d for d in yaml.safe_load_all(render(*args, chart=chart)) if d]
+
+
+def pod_template(*args: str, chart: Path = ENGINE_CHART) -> dict:
     deployment = next(
         d
-        for d in docs
+        for d in documents(*args, chart=chart)
         if d.get("kind") == "Deployment" and d["metadata"]["name"] == "dfe-engine"
     )
-    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    return deployment["spec"]["template"]
+
+
+def engine_env(*args: str) -> dict[str, str | None]:
+    container = pod_template(*args)["spec"]["containers"][0]
     return {e["name"]: e.get("value") for e in container["env"]}
 
 
@@ -130,6 +149,93 @@ def test_the_ui_pin_is_the_one_the_ui_chart_deploys() -> None:
         )
 
 
+def test_the_manifest_reaches_the_engine() -> None:
+    """Without the mount the engine answers off the snapshot in its image."""
+    for profile in PROFILES:
+        args = (
+            "-f",
+            str(VALUES / "common.yaml"),
+            "-f",
+            str(VALUES / f"profile-{profile}.yaml"),
+        )
+        catalogue = next(
+            (
+                d
+                for d in documents(*args)
+                if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == CATALOGUE_CONFIGMAP
+            ),
+            None,
+        )
+        expect(
+            f"{profile} renders the app catalogue",
+            catalogue is not None,
+            f"no ConfigMap {CATALOGUE_CONFIGMAP}",
+        )
+        if catalogue:
+            expect(
+                f"{profile} mounts the manifest this repo declares",
+                catalogue["data"]["apps.yaml"]
+                == (ENGINE_CHART / "files" / "apps.yaml").read_text(encoding="utf-8"),
+                "the rendered catalogue is not the chart's copy of apps.yaml",
+            )
+        expect(
+            f"{profile} points the engine at the mounted file",
+            engine_env(*args).get("DFE_APP_CATALOGUE_FILE") == CATALOGUE_FILE,
+            f"got {engine_env(*args).get('DFE_APP_CATALOGUE_FILE')!r}",
+        )
+
+
+def test_the_engine_reads_the_manifest_off_that_configmap() -> None:
+    """An env var naming a path nothing mounted fails the engine at startup."""
+    template = pod_template()
+    volume = next(
+        (v for v in template["spec"]["volumes"] if v["name"] == "app-catalogue"), None
+    )
+    expect(
+        "the catalogue volume is the rendered ConfigMap",
+        volume is not None and volume["configMap"]["name"] == CATALOGUE_CONFIGMAP,
+        f"got {volume!r}",
+    )
+    mount = next(
+        (
+            m
+            for m in template["spec"]["containers"][0]["volumeMounts"]
+            if m["name"] == "app-catalogue"
+        ),
+        None,
+    )
+    expect(
+        "and it is mounted where the env var looks",
+        mount is not None and mount["mountPath"] == str(Path(CATALOGUE_FILE).parent),
+        f"got {mount!r}",
+    )
+
+
+def test_a_manifest_edit_moves_the_pod_template() -> None:
+    """The engine reads the manifest once at startup, so a ConfigMap-only change
+    would sit in etcd unread until something else rolled the pod."""
+    with tempfile.TemporaryDirectory(prefix="dfe-engine-chart-") as tmp:
+        edited = Path(tmp) / "dfe-engine"
+        shutil.copytree(ENGINE_CHART, edited)
+        manifest = edited / "files" / "apps.yaml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                "scale_deployed: true", "scale_deployed: false", 1
+            ),
+            encoding="utf-8",
+        )
+        before = pod_template()["metadata"]["annotations"].get("checksum/app-catalogue")
+        after = pod_template(chart=edited)["metadata"]["annotations"].get(
+            "checksum/app-catalogue"
+        )
+        expect("the pod template carries a catalogue checksum", bool(before), "no annotation")
+        expect(
+            "and a manifest edit moves it",
+            before != after,
+            "the checksum is unchanged, so the edit would never reach a pod",
+        )
+
+
 def test_every_profile_still_renders_with_the_real_overlays() -> None:
     for profile in PROFILES:
         env = engine_env(
@@ -159,6 +265,9 @@ def main() -> int:
         test_the_profile_comes_from_the_annotation_that_picks_the_values_file()
         test_the_ui_pin_reaches_the_engine()
         test_the_ui_pin_is_the_one_the_ui_chart_deploys()
+        test_the_manifest_reaches_the_engine()
+        test_the_engine_reads_the_manifest_off_that_configmap()
+        test_a_manifest_edit_moves_the_pod_template()
         test_every_profile_still_renders_with_the_real_overlays()
         return summary()
 

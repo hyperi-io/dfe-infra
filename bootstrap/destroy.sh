@@ -30,6 +30,11 @@ if [[ "${DRY_RUN}" != "true" ]] && [[ "${1:-}" != "--force" ]]; then
 fi
 
 echo "==> [1/7] Deleting ArgoCD Applications + ApplicationSets"
+# KEDA scalers carry finalizer.keda.sh, which only the KEDA operator clears, so
+# they go before Argo's concurrent cascade can reap the operator ahead of them.
+run kubectl delete scaledobject --all -A 2>/dev/null || true
+run kubectl delete scaledjob --all -A 2>/dev/null || true
+run kubectl delete triggerauthentication --all -A 2>/dev/null || true
 run kubectl -n argocd delete applicationset --all 2>/dev/null || true
 # Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
 # app.catalog.cattle.io and every Argo Application survives the teardown.
@@ -49,12 +54,6 @@ run kubectl -n cnpg delete cluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete clickhousecluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete keepercluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete clickhouseinstallation --all 2>/dev/null || true
-# KEDA scalers carry finalizer.keda.sh, which only the KEDA operator clears, so
-# they go while it is still running; the keda namespace itself goes after the
-# dfe-* namespaces below.
-run kubectl delete scaledobject --all -A 2>/dev/null || true
-run kubectl delete scaledjob --all -A 2>/dev/null || true
-run kubectl delete triggerauthentication --all -A 2>/dev/null || true
 if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 5
 fi
@@ -98,6 +97,10 @@ echo "==> [7/7] Cleaning up namespaces"
 for ns in argocd cert-manager external-secrets envoy-gateway-system; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
+# destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
+# already carried, and removing an adopted LoadBalancer provider would strand
+# every other tenant's Service on the cluster.
+echo "  metallb-system and its address pool left in place -- an adopted LoadBalancer provider is never removed"
 
 echo ""
 echo "=== Teardown complete ==="

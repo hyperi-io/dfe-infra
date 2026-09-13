@@ -9,20 +9,26 @@ on demand and never seeded.
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | `dfe-receiver` | X | X | X | X | X | X |
 | `dfe-loader` | X | X | X | X | X | X |
-| `dfe-archiver` | X | X | X | X | X | X |
+| `dfe-archiver` | X | X | X | X | | X |
 | `dfe-engine` | X | X | X | X | X | X |
 | `dfe-ui` | X | X | X | X | X | X |
 | `hyperdx` | X | X | X | X | X | X |
-| `dfe-fetcher` | | | | | | |
-| `dfe-transform-vrl` | | | | | | |
+| `dfe-fetcher` | | | | | n/a | X |
+| `dfe-transform-vrl` | | | | | | X |
 | `dfe-transform-vector` | | | | | | |
 | `culvert` | n/a | n/a | | | n/a | n/a |
 
-`python3 scripts/composition.py` prints that table from the manifest, and
-`scripts/tests/test_composition.py` fails when the two disagree. A fetcher or a
-transform instance IS a source's processing step, so it arrives when the engine
-writes the source rather than with the profile. culvert is offered on the two HA
-tiers and enabled by an operator adding its values file.
+`python3 scripts/composition.py` prints that table from the manifest. On the
+Kubernetes tiers a fetcher or a transform instance IS a source's processing step,
+so it arrives when the engine writes the source rather than with the tier.
+culvert is offered on the two HA tiers and enabled by an operator adding its
+values file.
+
+Compose is the exception, and the reason is Compose's own: it holds ONE service
+per app, declared in a committed file, and nothing creates a second at run time.
+So `docker-single` starts one archiver, one fetcher and one transform-vrl idle
+(see "Deployed before it has work"), and the source each is later given fills the
+one that is already there. `docker-slim` runs the core data path alone.
 
 The six profile names are `scripts/profiles.py`'s -- four Kubernetes tiers and
 two Compose ones, because an app can be default on a cluster and opt-in on a
@@ -40,6 +46,20 @@ which the bundled deploy repo seeds on a fresh deployment -- one
 `values/<app>-<instance>-values.yaml` per app, and one Argo Application per
 file. The forgejo chart's own default is empty on purpose: a list there would be
 a second copy of the composition that nothing keeps in step.
+
+The engine reflects the whole manifest, not only the derived set, so the engine
+chart carries its own copy:
+
+    python3 scripts/composition.py --write-catalogue
+
+That writes `helm/charts/dfe-engine/files/apps.yaml` -- the manifest byte for
+byte, under a generated banner -- which the chart mounts as a ConfigMap and
+points `DFE_APP_CATALOGUE_FILE` at. The pod template checksums it, so a manifest
+edit rolls the engine and `GET /api/v1/apps` answers with the new shape at the
+stack revision carrying it. An engine with no mount falls back to the snapshot
+baked into its image, and adding an app would then need an engine release, so
+`dfe-ops stack-deploy` fails its pre-flight when the copy is stale or the render
+carries no catalogue.
 
 dfe-docker projects the same manifest. `scripts/dfe-stack render
 --docker-profile <slim|single>` reads `default_in` for the matching

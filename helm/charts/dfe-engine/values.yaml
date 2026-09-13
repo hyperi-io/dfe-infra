@@ -15,15 +15,15 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:96b1637a305791f70262474f4a6961c42f783c4f53b5653046e38392760c3178"
+  digest: "sha256:464d1853700fa8fc433f8587083432f793afc506a0c5110e4a25012ca0da65e4"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
 # The certified stack version this deployment runs. The appset passes the cluster
-# secret's dfe.hyperi.io/target_revision annotation, the same string Argo pins the
-# base charts at, so the engine reports the stack the cluster is actually on when
-# the deploy repo's pins.yaml names no base. Empty = report nothing rather than
+# secret's dfe.hyperi.io/stack_version annotation, written by dfe-ops from
+# --stack, so the engine reports the stack the cluster was deployed at when the
+# deploy repo's pins.yaml names no base. Empty = report nothing rather than
 # guess.
 stackVersion: ""
 
@@ -38,22 +38,21 @@ profile: ""
 # names it. Helm cannot read a sibling chart's appVersion, so this is a second
 # copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
 # stops the two diverging.
-uiVersion: "v1.5.1"
+uiVersion: "v1.6.3"
 
-# The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set;
-# this chart has no broker settings of its own, and dfe-common.transport reads a
-# missing map as the bus default.
+# The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
+# and dfe-common.transport reads a missing map as the bus default. On the bus
+# the engine creates each source's _land/_load topics, so it needs the broker
+# address and the same SASL credential the data-plane apps use.
 kafka:
   mode: ""
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+  provider: ""
 
 service:
   type: ClusterIP
   port: 8000
-
-# The app manifest the management API reflects, sourced from apps.yaml at the
-# repo root. Empty falls back to the snapshot bundled in the engine image, which
-# pins whatever that release shipped with.
-appCatalogue: {}
 
 # Authored files another repo ships and this engine serves: the reference
 # transform pipelines the library and the console's copy-paste view show, and the

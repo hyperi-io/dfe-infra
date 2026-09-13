@@ -13,7 +13,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-fetcher (drift-checked).
-  digest: "sha256:18bef367f23e1602018ffc615c32455a792b70f70e02362eea7b39e0e840ee62"
+  digest: "sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -39,6 +39,15 @@ apiCredentials:
   secretName: dfe-fetcher-api-creds
   apiKeyKey: api-key
   apiSecretKey: api-secret
+
+# Credentials for the upstream this instance polls. The source's fetcher stanza
+# names them as `env:NAME` references (dfe-fetcher src/config/resolve.rs), so
+# the Secret's KEYS are the variable names the stanza asks for and no value ever
+# reaches the engine-authored overlay. One Secret serves every instance: a key is
+# only read by the instance whose stanza names it. Optional, so a deployment that
+# fetches nothing needing credentials creates nothing.
+credentials:
+  secretName: dfe-fetcher-credentials
 
 # Cursor store. The fetcher records the window each connection resumed from at
 # cursor.file_path (/var/lib/dfe-fetcher/cursors.json by default) and the rootfs
@@ -77,6 +86,10 @@ dlq:
 #                      (apps.yaml source_binding)
 #   otelServiceName    below
 #   component          instance-unique, to keep the objects and telemetry apart
+#
+# config.ingest.enabled is off in the app's own defaults and is the dial that
+# declares the container-extractor port 8080 on the pod here, so turning it on
+# also takes the instance out of idle whether or not anything ever posts to it.
 config: {}
 
 # OTel service.name for this instance. Empty falls back to the app name, which

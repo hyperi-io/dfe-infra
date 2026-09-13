@@ -27,8 +27,13 @@ GENERATED block, because Helm cannot read apps.yaml:
 
     python3 scripts/composition.py --write-seed
 
-`scripts/tests/test_composition.py` fails when a committed block and this
-derivation disagree, so the generated lists cannot quietly drift.
+Helm reads only files inside the chart directory, so the manifest the engine
+mounts and reflects is a copy the engine chart carries:
+
+    python3 scripts/composition.py --write-catalogue
+
+`scripts/tests/test_composition.py` fails when a committed block or the chart's
+copy and this manifest disagree, so neither can quietly drift.
 """
 
 from __future__ import annotations
@@ -41,6 +46,14 @@ import profiles
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "apps.yaml"
+
+# The engine chart's copy, mounted into the engine pod as the app catalogue.
+CHART_MANIFEST = REPO_ROOT / "helm" / "charts" / "dfe-engine" / "files" / "apps.yaml"
+
+CATALOGUE_BANNER = (
+    "# GENERATED from apps.yaml at the repo root -- do not edit. Regenerate with:\n"
+    "#     python3 scripts/composition.py --write-catalogue\n"
+)
 
 # Delimiters around the generated block in each profile values file.
 SEED_BEGIN = "# BEGIN seeded apps -- rendered by `python3 scripts/composition.py --write-seed`\n"
@@ -237,6 +250,49 @@ def write_seed(check_only: bool = False) -> int:
     return 0
 
 
+def catalogue_copy() -> str:
+    """The engine chart's copy of the manifest: the banner, then apps.yaml verbatim.
+
+    Returns:
+        The whole file body, newline-terminated.
+
+    Raises:
+        CompositionError: The manifest is missing.
+    """
+    if not MANIFEST.is_file():
+        raise CompositionError(f"{MANIFEST} not found")
+    # Copied byte for byte rather than re-serialised: a round trip through a YAML
+    # writer can change a value (YAML 1.1 reads `no` and `off` as booleans).
+    return CATALOGUE_BANNER + MANIFEST.read_text(encoding="utf-8")
+
+
+def write_catalogue(check_only: bool = False) -> int:
+    """Render the manifest into the engine chart, which is what mounts it.
+
+    Args:
+        check_only: Report drift and change nothing.
+
+    Returns:
+        Process exit status: 1 when the committed copy is stale.
+    """
+    fresh = catalogue_copy()
+    current = CHART_MANIFEST.read_text(encoding="utf-8") if CHART_MANIFEST.is_file() else ""
+    if current == fresh:
+        return 0
+    where = CHART_MANIFEST.relative_to(REPO_ROOT)
+    if check_only:
+        print(
+            "STALE against apps.yaml -- run `python3 scripts/composition.py "
+            f"--write-catalogue`: {where}",
+            file=sys.stderr,
+        )
+        return 1
+    CHART_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    CHART_MANIFEST.write_text(fresh, encoding="utf-8", newline="\n")
+    print(f"wrote the app manifest into {where}", file=sys.stderr)
+    return 0
+
+
 def _table() -> str:
     """One row per profile: what it deploys by default."""
     rows = []
@@ -275,9 +331,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="report a stale committed seed block and exit 1 (for CI)",
     )
+    parser.add_argument(
+        "--write-catalogue",
+        action="store_true",
+        help="render the manifest into the engine chart, which mounts it into the engine pod",
+    )
+    parser.add_argument(
+        "--check-catalogue",
+        action="store_true",
+        help="report a stale committed chart copy of the manifest and exit 1 (for CI)",
+    )
     args = parser.parse_args(argv)
 
     try:
+        if args.write_catalogue or args.check_catalogue:
+            return write_catalogue(check_only=args.check_catalogue)
         if args.write_seed or args.check_seed:
             return write_seed(check_only=args.check_seed)
         if args.profile:

@@ -3,8 +3,8 @@ name: hyperdx
 description: HyperDX observability UI (dfe-hyperdx fork) — header-SSO over ClickHouse
 type: application
 version: 0.2.0
-appVersion: "v0.2.0"   # == versions.yaml apps.dfe-hyperdx (drift-checked)
+appVersion: "v0.2.4"   # == versions.yaml apps.dfe-hyperdx (drift-checked)
 dependencies:
   - name: dfe-common
-    version: "0.9.1"
+    version: "0.10.0"
     repository: "file://../../library/dfe-common"

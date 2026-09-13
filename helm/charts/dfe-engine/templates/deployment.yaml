@@ -7,7 +7,9 @@ metadata:
   annotations:
     {{- include "dfe-common.reloadAnnotations" . | nindent 4 }}
 spec:
-  {{- include "dfe-common.replicas" . }}
+  # One replica whatever the profile says: each replica serves its own copy of
+  # the source registry (dfe-engine#361), and the config PVC is ReadWriteOnce.
+  replicas: 1
   {{- if .Values.config.persistence.enabled }}
   # The config PVC is ReadWriteOnce: a rolling update can strand the new pod
   # on another node waiting for the attach the old pod still holds.
@@ -29,6 +31,9 @@ spec:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
+        # The engine reads the app manifest once at startup, so a manifest edit
+        # reaches a running deployment only by moving the pod template.
+        checksum/app-catalogue: {{ include (print $.Template.BasePath "/app-catalogue.yaml") . | sha256sum }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -210,6 +215,36 @@ spec:
               value: {{ include "dfe-common.transport" . | quote }}
             - name: DFE_TRANSPORT_BUS_PRESENT
               value: {{ ternary "true" "false" (eq (include "dfe-common.transport" .) "bus") | quote }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
+            # On the bus the engine creates each source's _land/_load topics, so
+            # it dials the broker with the same SASL user the data plane uses
+            # (settings.py: DFE_KAFKA_*; the provider derives the mechanism).
+            - name: DFE_KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- if .Values.kafka.saslSecretName }}
+            # The profiles point every app at the broker's internal plain
+            # listener, so the protocol and the mechanism are set the way the
+            # data-plane charts set them (the provider contract would derive
+            # SASL_SSL and fail the handshake -- dfe-engine#332).
+            - name: DFE_KAFKA_SECURITY_PROTOCOL
+              value: "SASL_PLAINTEXT"
+            - name: DFE_KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
+            - name: DFE_KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            {{- end }}
+            {{- end }}
             # Whether the stage pools sit behind a listener here, and where that
             # listener lives. The engine compiles a sender's destination, so it
             # has to address the pool the same way the charts front it -- the
@@ -224,7 +259,7 @@ spec:
             {{- end }}
             {{- with .Values.stackVersion }}
             # The certified stack this deployment runs, from the cluster secret's
-            # target_revision annotation the appset already reads. GET
+            # stack_version annotation the appset reads. GET
             # /api/v1/system/version prefers the deploy repo's pins.yaml and
             # falls back to this, so a deploy whose pins carry no base still
             # answers with a stack rather than nothing.
@@ -281,12 +316,10 @@ spec:
               value: {{ .Values.config.mountPath }}/services
             - name: DFE_DEPLOYMENT_CONFIG_DIR
               value: {{ .Values.config.mountPath }}/deployments
-            {{- if .Values.appCatalogue }}
             # Points the management API at the mounted manifest, so a new or
             # changed app reflects without an engine release.
             - name: DFE_APP_CATALOGUE_FILE
               value: /etc/dfe-engine/catalogue/apps.yaml
-            {{- end }}
             # Unconditional because an absent directory is a no-op in the
             # engine, so a content entry added later needs no env change.
             - name: DFE_LIBRARY_SEED_DIR
@@ -464,11 +497,9 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.appCatalogue }}
             - name: app-catalogue
               mountPath: /etc/dfe-engine/catalogue
               readOnly: true
-            {{- end }}
             # Read-only here, writable in the init containers that fill it: the
             # engine reads this content, the pins own it.
             - name: content
@@ -508,11 +539,9 @@ spec:
         # so there is nothing here worth surviving the pod.
         - name: content
           emptyDir: {}
-        {{- if .Values.appCatalogue }}
         - name: app-catalogue
           configMap:
             name: {{ include "dfe-common.fullname" . }}-app-catalogue
-        {{- end }}
         {{- if .Values.authConfig.providersConfigMap }}
         - name: oidc-providers
           configMap:
