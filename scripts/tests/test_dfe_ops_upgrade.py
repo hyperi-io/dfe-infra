@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -634,7 +635,7 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
-        yes=False, push=False, timeout=900, dry_run=True,
+        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -667,7 +668,7 @@ def test_cmd_upgrade_apply_nothing_to_apply(
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
-        yes=False, push=False, timeout=900, dry_run=True,
+        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -685,11 +686,91 @@ def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
-        yes=False, push=False, timeout=900, dry_run=True,
+        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_BLOCKED
     assert "REFUSED" in capsys.readouterr().err
+
+
+def _apply_args(**overrides: object) -> _Args:
+    """The apply _Args shape every dry-run test shares, with per-test overrides."""
+    base = dict(
+        dial=None, fixtures=None, live=False,
+        kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
+        clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
+        nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
+        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
+    )
+    base.update(overrides)
+    return _Args(**base)
+
+
+# ---------------------------------------------------------------------------
+# cmd_upgrade_apply --finalise / --stop-before -- dry-run output, stage control
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_upgrade_apply_dry_run_finalise_prints_finalise_line_not_pending(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+
+    args = _apply_args(deploy=str(deploy), to="2.0.0", finalise=True)
+    rc = u.cmd_upgrade_apply(args)
+    assert rc == u.EXIT_OK
+    err = capsys.readouterr().err
+    assert "[dry-run] finalise services.kafka-version: metadata.version bump after a soak; one way" in err
+    assert "finalise pending (manual, after a soak)" not in err
+
+
+def test_cmd_upgrade_apply_dry_run_without_finalise_still_prints_pending(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+
+    args = _apply_args(deploy=str(deploy), to="2.0.0", finalise=False)
+    rc = u.cmd_upgrade_apply(args)
+    assert rc == u.EXIT_OK
+    err = capsys.readouterr().err
+    assert "finalise pending (manual, after a soak): services.kafka-version" in err
+
+
+def test_cmd_upgrade_apply_stop_before_stops_short(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+
+    args = _apply_args(deploy=str(deploy), to="2.0.0", stop_before="30-services")
+    rc = u.cmd_upgrade_apply(args)
+    assert rc == u.EXIT_OK
+    err = capsys.readouterr().err
+    assert "stage 1/3: 10-bootstrap" in err
+    assert "stage 2/3: 20-operators" in err
+    assert "stage 3/3: 30-services" not in err
+    assert "stopping before stage 3/3 (30-services)" in err
+    # Only the one compat-check call ran -- no git, no kubectl, for any stage.
+    assert len(calls) == 1
+
+
+def test_cmd_upgrade_apply_stop_before_unknown_stage_refuses(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+
+    args = _apply_args(deploy=str(deploy), to="2.0.0", stop_before="99-nonexistent")
+    rc = u.cmd_upgrade_apply(args)
+    assert rc == u.EXIT_BLOCKED
+    err = capsys.readouterr().err
+    assert "does not match any stage" in err
 
 
 # ---------------------------------------------------------------------------
@@ -697,21 +778,54 @@ def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_upgrade_rollback_refuses_one_way_step(
+def _rollback_args(**overrides: object) -> _Args:
+    """The rollback _Args shape every test shares, with per-test overrides."""
+    base = dict(
+        kubeconfig=None, push=False, dry_run=True,
+        check_cluster=False, kafka_name=u.DEFAULT_KAFKA_NAME, kafka_namespace=u.DEFAULT_KAFKA_NAMESPACE,
+    )
+    base.update(overrides)
+    return _Args(**base)
+
+
+def test_cmd_upgrade_rollback_allowed_before_finalise_marker(
     monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     # Deploy is currently pinned at 2.0.0 (post-upgrade); roll back to 1.0.0
-    # crosses services.kafka-version, a one-way (finalise) step.
+    # crosses services.kafka-version, a finalise-bearing step -- but its
+    # finalise has not run (no marker), so the pin move itself is reversible.
     u.bump_pin_file(deploy, "2.0.0")
 
-    args = _Args(deploy=str(deploy), to="1.0.0", kubeconfig=None, push=False, dry_run=True)
+    args = _rollback_args(deploy=str(deploy), to="1.0.0")
+    rc = u.cmd_upgrade_rollback(args)
+    assert rc == u.EXIT_OK
+    err = capsys.readouterr().err
+    assert "REFUSED" not in err
+    assert "services.kafka-version" in err
+    assert "has not run yet" in err
+    assert "soak can be abandoned safely" in err
+
+
+def test_cmd_upgrade_rollback_refused_once_finalise_marker_exists(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    u.bump_pin_file(deploy, "2.0.0")
+    # The forward apply (1.0.0 -> 2.0.0) already ran --finalise for the kafka
+    # step: its marker exists, so rollback must refuse by name -- the whole
+    # point of keying the refusal on the marker rather than the pin diff.
+    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="2026-09-11T00:00:00+00:00")
+
+    args = _rollback_args(deploy=str(deploy), to="1.0.0")
     rc = u.cmd_upgrade_rollback(args)
     assert rc == u.EXIT_BLOCKED
     err = capsys.readouterr().err
     assert "REFUSED" in err
     assert "services.kafka-version" in err
+    assert "finalise already ran" in err
 
 
 def test_cmd_upgrade_rollback_allows_a_reversible_step(
@@ -723,11 +837,195 @@ def test_cmd_upgrade_rollback_allows_a_reversible_step(
     # neither of which is one-way in this fixture.
     u.bump_pin_file(deploy, "1.1.0")
 
-    args = _Args(deploy=str(deploy), to="1.0.0", kubeconfig=None, push=False, dry_run=True)
+    args = _rollback_args(deploy=str(deploy), to="1.0.0")
     rc = u.cmd_upgrade_rollback(args)
     assert rc == u.EXIT_OK
     out = capsys.readouterr().out
     assert "Upgrade plan: 1.1.0 -> 1.0.0" in out
+
+
+def test_cmd_upgrade_rollback_unconditional_one_way_step_still_refused(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, versions_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A step with `rollback: none` and NO `finalise` note has no soak to wait
+    out at all -- it stays refused unconditionally, marker or not."""
+    order_path = tmp_path / "upgrade-order-unconditional.yaml"
+    order_path.write_text(
+        """
+stages:
+  "10-bootstrap":
+    "10-cert-manager":
+      key: bootstrap.cert-manager
+      rollback: "none"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    u.bump_pin_file(deploy, "1.1.0")
+
+    args = _rollback_args(deploy=str(deploy), to="1.0.0")
+    rc = u.cmd_upgrade_rollback(args)
+    assert rc == u.EXIT_BLOCKED
+    err = capsys.readouterr().err
+    assert "REFUSED" in err
+    assert "bootstrap.cert-manager" in err
+
+
+# ---------------------------------------------------------------------------
+# finalise markers -- read/write, and the rollback --check-cluster guard
+# ---------------------------------------------------------------------------
+
+
+def test_read_finalised_keys_empty_when_no_upgrades_dir(deploy: Path) -> None:
+    assert u.read_finalised_keys(deploy) == {}
+
+
+def test_write_finalise_marker_then_read_back(deploy: Path) -> None:
+    path = u.write_finalise_marker(
+        deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="2026-09-11T00:00:00+00:00"
+    )
+    assert path == deploy / "upgrades" / "1.0.0-to-2.0.0.finalised"
+    assert path.is_file()
+    finalised = u.read_finalised_keys(deploy)
+    assert finalised == {"services.kafka-version": "2026-09-11T00:00:00+00:00"}
+
+
+def test_write_finalise_marker_defaults_a_real_timestamp(deploy: Path) -> None:
+    path = u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version")
+    line = path.read_text(encoding="utf-8").strip()
+    key, _, timestamp = line.partition(" ")
+    assert key == "services.kafka-version"
+    assert datetime.fromisoformat(timestamp)  # a real ISO-8601 stamp, not a placeholder
+
+
+def test_write_finalise_marker_updates_in_place_no_duplicate(deploy: Path) -> None:
+    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t1")
+    path = u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t2")
+    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines == ["services.kafka-version t2"]
+
+
+def test_write_finalise_marker_keeps_sibling_keys(deploy: Path) -> None:
+    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t1")
+    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "operators.strimzi-kafka-operator", timestamp="t2")
+    finalised = u.read_finalised_keys(deploy)
+    assert finalised == {"services.kafka-version": "t1", "operators.strimzi-kafka-operator": "t2"}
+
+
+def test_run_finalise_hook_confirmed_writes_marker(deploy: Path) -> None:
+    step = u.Step(
+        stage="30-services", order="10", key="services.kafka-version",
+        finalise="metadata.version bump after a soak; one way", rollback="none",
+    )
+    move = u.Move(step=step, old="4.2.0", new="4.3.1")
+    ran, detail = u.run_finalise_hook(
+        deploy, move, from_name="1.0.0", to_name="2.0.0", kubeconfig=None, assume_yes=True
+    )
+    assert ran is True
+    assert "marker written" in detail
+    finalised = u.read_finalised_keys(deploy)
+    assert "services.kafka-version" in finalised
+    assert datetime.fromisoformat(finalised["services.kafka-version"])
+
+
+def test_run_finalise_hook_declined_writes_no_marker(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    step = u.Step(
+        stage="30-services", order="10", key="services.kafka-version",
+        finalise="metadata.version bump after a soak; one way", rollback="none",
+    )
+    move = u.Move(step=step, old="4.2.0", new="4.3.1")
+    monkeypatch.setattr("builtins.input", lambda *_a: "n")
+    ran, detail = u.run_finalise_hook(
+        deploy, move, from_name="1.0.0", to_name="2.0.0", kubeconfig=None, assume_yes=False
+    )
+    assert ran is False
+    assert "declined" in detail
+    assert u.read_finalised_keys(deploy) == {}
+
+
+def test_check_cluster_metadata_version_no_finalise_moves() -> None:
+    ok, detail = u.check_cluster_metadata_version(None, [])
+    assert ok is True
+    assert "nothing to check" in detail
+
+
+def test_check_cluster_metadata_version_refuses_when_bumped(monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    step = u.Step(
+        stage="30-services", order="10", key="services.kafka-version",
+        finalise="metadata.version bump after a soak; one way", rollback="none",
+    )
+    move = u.Move(step=step, old="4.2.0", new="4.3.1")
+    doc = {"status": {"kafkaMetadataVersion": "4.3.1"}}
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+    ok, detail = u.check_cluster_metadata_version("kc", [move])
+    assert ok is False
+    assert "services.kafka-version" in detail
+
+
+def test_check_cluster_metadata_version_passes_when_not_yet_bumped(monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    step = u.Step(
+        stage="30-services", order="10", key="services.kafka-version",
+        finalise="metadata.version bump after a soak; one way", rollback="none",
+    )
+    move = u.Move(step=step, old="4.2.0", new="4.3.1")
+    doc = {"status": {"kafkaMetadataVersion": "4.2.0"}}
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+    ok, _detail = u.check_cluster_metadata_version("kc", [move])
+    assert ok is True
+
+
+def test_check_cluster_metadata_version_unreachable_is_a_clean_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    step = u.Step(
+        stage="30-services", order="10", key="services.kafka-version",
+        finalise="metadata.version bump after a soak; one way", rollback="none",
+    )
+    move = u.Move(step=step, old="4.2.0", new="4.3.1")
+    _mock_run(monkeypatch, _proc(1, stderr="Unable to connect to the server\n"))
+    ok, detail = u.check_cluster_metadata_version("kc", [move])
+    assert ok is True
+    assert "cannot read Kafka CR" in detail
+
+
+def test_cmd_upgrade_rollback_check_cluster_refuses_without_marker(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    import json
+
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    u.bump_pin_file(deploy, "2.0.0")
+    # No marker exists, but the live cluster already shows the bumped value --
+    # e.g. an operator ran the metadata.version bump by hand.
+    doc = {"status": {"kafkaMetadataVersion": "4.3.1"}}
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+
+    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", check_cluster=True)
+    rc = u.cmd_upgrade_rollback(args)
+    assert rc == u.EXIT_BLOCKED
+    err = capsys.readouterr().err
+    assert "REFUSED" in err
+    assert "check-cluster" in err
+
+
+def test_cmd_upgrade_rollback_check_cluster_passes_when_not_bumped(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    import json
+
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    u.bump_pin_file(deploy, "2.0.0")
+    doc = {"status": {"kafkaMetadataVersion": "4.2.0"}}
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+
+    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", check_cluster=True)
+    rc = u.cmd_upgrade_rollback(args)
+    assert rc == u.EXIT_OK
 
 
 # ---------------------------------------------------------------------------

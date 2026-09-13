@@ -15,7 +15,8 @@
     dfe-ops upgrade plan --deploy <dir> [--to <stack>]
     dfe-ops upgrade preflight --deploy <dir> [--to <stack>]
     dfe-ops upgrade apply --deploy <dir> [--to <stack>] [--yes] [--push] [--dry-run]
-    dfe-ops upgrade rollback --deploy <dir> --to <stack> [--dry-run]
+                           [--finalise] [--stop-before <stage-key>]
+    dfe-ops upgrade rollback --deploy <dir> --to <stack> [--dry-run] [--check-cluster]
 
 Every verb takes `--deploy`, a dfe-deploy checkout (its `pins.yaml` names the
 FROM stack in `base.dfe-infra`), and `--to`, a versions.yaml stack version
@@ -51,17 +52,35 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                push only with --push; wait for Argo to report every
                Application Synced and Healthy, bounded by --timeout. Confirms
                before each stage unless --yes. Stops at the first failure and
-               prints that step's rollback note. --dry-run prints every
-               command it would run and touches nothing.
+               prints that step's rollback note. --stop-before <stage-key>
+               stops the walk before that upgrade-order.yaml stage, touching
+               nothing in it or after. A reached step carrying a `finalise`
+               note is printed and left pending unless --finalise is given, in
+               which case apply asks whether the soak is over and, on yes,
+               records it in the marker `rollback` reads (see below).
+               --dry-run prints every command it would run, including a
+               reached finalise and a --stop-before halt, and touches nothing.
 
     rollback   The reverse plan for TO -> the deploy's current FROM, refusing
-               by name any step whose `rollback` is `none` or that carries a
-               `finalise` (a one-way step, by definition, once it has run).
+               by name a step with `rollback: none` and no `finalise` note (an
+               unconditional one-way step), or a `finalise`-bearing step whose
+               finalise has ALREADY run -- read from the marker `apply
+               --finalise` writes (`upgrades/<from>-to-<to>.finalised`), not
+               from the pin diff alone. A `finalise`-bearing step with no
+               marker yet is reversed like any other step, with a note that
+               the soak can be abandoned safely. --check-cluster additionally
+               reads the live Kafka CR's `status.kafkaMetadataVersion` and
+               refuses when it already shows the bumped value, even with no
+               marker (a finalise run by hand, outside this tool).
 
-Nothing here executes a `before`/`finalise` note as a shell command -- they are
-runbook prose, not argv. `apply` checks the one note this repo already has a
-program for (the Strimzi stored-version conversion) and otherwise prints the
-note and asks for confirmation that an operator ran it by hand.
+Nothing here executes a `before` or `finalise` note as a shell command -- they
+are runbook prose, not argv. `apply` checks the one `before` note this repo
+already has a program for (the Strimzi stored-version conversion) and
+otherwise prints the note and asks for confirmation that an operator ran it by
+hand. A `finalise` note works the same way: printed and left pending unless
+--finalise is passed, in which case apply asks for confirmation instead of
+running anything itself, and only writes the marker once the operator (or a
+future automated hook) confirms it ran.
 """
 
 from __future__ import annotations
@@ -73,7 +92,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -103,6 +124,8 @@ DEFAULT_ARGOCD_NAMESPACE = "argocd"
 DEFAULT_CLICKHOUSE_NAMESPACE = "clickhouse"
 DEFAULT_CLICKHOUSE_SELECTOR = "app.kubernetes.io/name=clickhouse"
 DEFAULT_CLICKHOUSE_MERGE_THRESHOLD = 300.0  # seconds
+DEFAULT_KAFKA_NAMESPACE = "kafka"
+DEFAULT_KAFKA_NAME = "dfe-kafka"  # helm/charts/kafka/values.yaml's kafka.name default
 DEFAULT_TIER = "scale"
 DEFAULT_BACKUP_MARKER = "upgrades/.backup-ok"
 DEFAULT_TIMEOUT = 900
@@ -533,6 +556,40 @@ def check_strimzi_conversion(kubeconfig: str | None, crds: tuple[str, ...] = STR
     return True, f"{checked} Strimzi CRD(s) store v1 only"
 
 
+def check_cluster_metadata_version(
+    kubeconfig: str | None,
+    moves: list[Move],
+    *,
+    kafka_name: str = DEFAULT_KAFKA_NAME,
+    kafka_namespace: str = DEFAULT_KAFKA_NAMESPACE,
+) -> tuple[bool, str]:
+    """Whether the LIVE cluster already carries a finalised metadata.version
+    for a step this rollback would reverse -- the signal a finalise run by
+    hand (outside `apply --finalise`, so no marker was written) leaves behind.
+
+    Reads the Strimzi Kafka CR's `status.kafkaMetadataVersion` -- the field
+    upgrade-order.yaml's kafka-brokers `finalise` note names -- and refuses
+    when it already equals (or is prefixed by) a finalise-bearing step's NEW
+    pin, the value that step's finalise would have moved it to. Unreachable,
+    absent, or not yet at that value all pass: this is a live-cluster
+    corroboration on top of the marker, never a replacement for it.
+    """
+    finalise_moves = [move for move in moves if move.step.finalise]
+    if not finalise_moves:
+        return True, "no finalise-bearing step in this rollback -- nothing to check"
+    rc, doc, err = _kubectl_json(kubeconfig, "-n", kafka_namespace, "get", "kafka", kafka_name)
+    if rc != 0:
+        return True, f"cannot read Kafka CR {kafka_name} in {kafka_namespace} -- skipped: {err}"
+    live = str((doc.get("status") or {}).get("kafkaMetadataVersion") or "")
+    if not live:
+        return True, f"Kafka CR {kafka_name} carries no status.kafkaMetadataVersion -- skipped"
+    bumped = [move for move in finalise_moves if live == move.new or live.startswith(move.new)]
+    if bumped:
+        names = ", ".join(move.step.key for move in bumped)
+        return False, f"live status.kafkaMetadataVersion is {live!r} -- {names} already reflects the bumped value"
+    return True, f"live status.kafkaMetadataVersion is {live!r} -- does not match a bumped step"
+
+
 def check_node_capacity(kubeconfig: str | None, nodes_file: Path) -> tuple[bool, str]:
     if not nodes_file.is_file():
         return True, f"no {nodes_file} -- nothing to check"
@@ -654,6 +711,67 @@ def bump_pin_file(deploy: Path, stack: str) -> bool:
     return True
 
 
+# --- finalise markers ----------------------------------------------------------
+# The record that a one-way step's `finalise` note actually ran -- the fact
+# `rollback` keys its refusal on, rather than the pin diff alone. A pin move
+# that touches a one-way step is reversible right up until its finalise runs.
+
+
+def _finalise_marker_path(deploy: Path, from_stack: str, to_stack: str) -> Path:
+    """Same `<from>-to-<to>` naming as the plan file
+    (`upgrades/<from>-to-<to>.md`) -- `apply` writes this name in the forward
+    direction it moved, and a rollback checking for it computes the SAME name
+    because a rollback's own FROM/TO are that forward move's TO/FROM, swapped."""
+    return deploy / "upgrades" / f"{from_stack}-to-{to_stack}.finalised"
+
+
+def read_finalised_keys(deploy: Path) -> dict[str, str]:
+    """Every versions.yaml key any `*.finalised` marker under <deploy>/upgrades
+    records, mapped to the timestamp of its last write.
+
+    Scans every marker file, not just the one name this rollback's own
+    from/to would compute -- a rollback spanning more than one past `apply`
+    (a multi-hop rollback) still has to see a finalise that ran during an
+    intermediate hop.
+    """
+    upgrades_dir = deploy / "upgrades"
+    finalised: dict[str, str] = {}
+    if not upgrades_dir.is_dir():
+        return finalised
+    for marker in sorted(upgrades_dir.glob("*.finalised")):
+        for line in marker.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            key, _, timestamp = line.partition(" ")
+            if key:
+                finalised[key] = timestamp
+    return finalised
+
+
+def write_finalise_marker(
+    deploy: Path, from_stack: str, to_stack: str, key: str, *, timestamp: str | None = None
+) -> Path:
+    """Record that `key`'s finalise hook ran, in
+    <deploy>/upgrades/<from_stack>-to-<to_stack>.finalised. Idempotent per
+    key -- a repeat write updates the timestamp rather than duplicating the
+    line, and every other key already in the marker survives."""
+    path = _finalise_marker_path(deploy, from_stack, to_stack)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entries: dict[str, str] = {}
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            existing_key, _, existing_ts = line.partition(" ")
+            if existing_key:
+                entries[existing_key] = existing_ts
+    entries[key] = timestamp or datetime.now(UTC).isoformat()
+    path.write_text("".join(f"{k} {v}\n" for k, v in sorted(entries.items())), encoding="utf-8")
+    return path
+
+
 # --- Argo sync wait (apply) ----------------------------------------------------
 
 
@@ -772,6 +890,12 @@ BEFORE_CHECKS = {
     "operators.strimzi-kafka-operator": check_strimzi_conversion,
 }
 
+# A finalise note this repo already has a program for, same shape as
+# BEFORE_CHECKS, keyed by the step's versions.yaml `key`. Empty today -- no
+# finalise note has an automated hook yet, so every one falls back to the
+# manual-confirm path a `before` note with no BEFORE_CHECKS entry already uses.
+FINALISE_HOOKS: dict[str, Callable[[str | None], tuple[bool, str]]] = {}
+
 
 def _confirm(prompt: str, *, assume_yes: bool) -> bool:
     if assume_yes:
@@ -781,6 +905,25 @@ def _confirm(prompt: str, *, assume_yes: bool) -> bool:
     except EOFError:
         return False
     return answer.strip().lower() in ("y", "yes")
+
+
+def run_finalise_hook(
+    deploy: Path, move: Move, *, from_name: str, to_name: str, kubeconfig: str | None, assume_yes: bool
+) -> tuple[bool, str]:
+    """Run (or confirm) one finalise-bearing move's hook, and mark it when it
+    runs. `ran` is False only when an automated hook fails or the operator
+    declines -- the marker is written only when `ran` is True, so a decline
+    leaves the step exactly as reversible as it was before this call."""
+    check = FINALISE_HOOKS.get(move.step.key)
+    if check is not None:
+        ok, detail = check(kubeconfig)
+    else:
+        confirmed = _confirm(f"soak complete -- run finalise now: {move.step.finalise}", assume_yes=assume_yes)
+        ok, detail = confirmed, ("confirmed by operator" if confirmed else "declined by operator")
+    if ok:
+        marker = write_finalise_marker(deploy, from_name, to_name, move.step.key)
+        detail = f"{detail} -- marker written: {marker}"
+    return ok, detail
 
 
 def cmd_upgrade_apply(args: argparse.Namespace) -> int:
@@ -821,6 +964,14 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             return EXIT_BLOCKED
 
     grouped = moves_by_stage(moves)
+    if args.stop_before and args.stop_before not in [stage for stage, _ in grouped]:
+        have = ", ".join(stage for stage, _ in grouped) or "none"
+        print(
+            f"dfe-ops upgrade apply: --stop-before {args.stop_before!r} does not match any stage this "
+            f"plan reaches (have: {have})",
+            file=sys.stderr,
+        )
+        return EXIT_BLOCKED
     commands: list[str] = []
 
     def emit(cmd: str) -> None:
@@ -829,6 +980,13 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             print(f"[dry-run] {cmd}", file=sys.stderr)
 
     for stage_index, (stage, stage_moves) in enumerate(grouped, start=1):
+        if args.stop_before and stage == args.stop_before:
+            print(
+                f"\ndfe-ops upgrade apply: stopping before stage {stage_index}/{len(grouped)} ({stage}) "
+                "-- --stop-before",
+                file=sys.stderr,
+            )
+            return EXIT_OK
         print(f"\n=== stage {stage_index}/{len(grouped)}: {stage} ===", file=sys.stderr)
         for move in stage_moves:
             print(f"  {move.step.key}: {move.old} -> {move.new}", file=sys.stderr)
@@ -895,11 +1053,21 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     return EXIT_BLOCKED
 
         for move in stage_moves:
-            if move.step.finalise:
+            if not move.step.finalise:
+                continue
+            if not args.finalise:
                 print(
                     f"  finalise pending (manual, after a soak): {move.step.key}: {move.step.finalise}",
                     file=sys.stderr,
                 )
+                continue
+            emit(f"finalise {move.step.key}: {move.step.finalise}")
+            if args.dry_run:
+                continue
+            ok, detail = run_finalise_hook(
+                deploy, move, from_name=from_name, to_name=to_name, kubeconfig=args.kubeconfig, assume_yes=args.yes
+            )
+            print(f"  [{'DONE' if ok else 'PENDING'}] finalise {move.step.key}: {detail}", file=sys.stderr)
 
         keys = ", ".join(move.step.key for move in stage_moves)
         message = f"chore(upgrade): {to_name} stage {stage_index} -- {keys}"
@@ -967,15 +1135,54 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
     # step names the FORWARD direction, so a step's one-way-ness is the same
     # fact regardless of which way the pin is about to move.
     moves = plan_moves(steps, flatten_stack(to_pins), flatten_stack(from_pins))
-    one_way = [move for move in moves if move.step.one_way]
-    if one_way:
-        names = ", ".join(move.step.key for move in one_way)
+
+    # A step is refused for one of two reasons: `rollback: none` with no
+    # `finalise` at all has no soak to wait out -- it is unconditionally
+    # one-way. A `finalise`-bearing step is refused only once that finalise
+    # has ACTUALLY run, read from the marker `apply --finalise` writes, not
+    # from the pin diff alone -- see read_finalised_keys().
+    finalised = read_finalised_keys(deploy)
+    blocked: list[tuple[Move, str]] = []
+    pending_finalise: list[Move] = []
+    for move in moves:
+        step = move.step
+        if step.finalise:
+            if step.key in finalised:
+                blocked.append((move, f"finalise already ran ({finalised[step.key]}): {step.finalise}"))
+            else:
+                pending_finalise.append(move)
+            continue
+        if step.rollback.strip().lower() == "none":
+            blocked.append((move, f"no rollback path: {step.rollback}"))
+
+    if blocked:
+        names = ", ".join(move.step.key for move, _ in blocked)
+        reasons = "; ".join(f"{move.step.key}: {reason}" for move, reason in blocked)
         print(
-            f"dfe-ops upgrade rollback: REFUSED -- {names} carries no rollback path "
-            f"(one-way step: {'; '.join(move.step.finalise or move.step.rollback for move in one_way)})",
+            f"dfe-ops upgrade rollback: REFUSED -- {names} carries no rollback path ({reasons})",
             file=sys.stderr,
         )
         return EXIT_BLOCKED
+
+    if args.check_cluster:
+        ok, detail = check_cluster_metadata_version(
+            args.kubeconfig, moves, kafka_name=args.kafka_name, kafka_namespace=args.kafka_namespace
+        )
+        print(f"[{'PASS' if ok else 'FAIL'}] cluster metadata.version check: {detail}", file=sys.stderr)
+        if not ok:
+            print(
+                "dfe-ops upgrade rollback: REFUSED -- --check-cluster found the live cluster already past "
+                "this step (no marker was written for it)",
+                file=sys.stderr,
+            )
+            return EXIT_BLOCKED
+
+    for move in pending_finalise:
+        print(
+            f"dfe-ops upgrade rollback: {move.step.key} finalise has not run yet -- reversing the pin; "
+            f"the soak can be abandoned safely ({move.step.finalise})",
+            file=sys.stderr,
+        )
 
     print(render_plan(moves, from_stack=from_name, to_stack=to_name))
     if args.dry_run:
@@ -1075,15 +1282,34 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     apply_.add_argument("--push", action="store_true", help="git push after each stage's commit")
     apply_.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="bounded wait (seconds) for Argo to converge, per stage")
     apply_.add_argument("--dry-run", action="store_true", help="print every command without running it")
+    apply_.add_argument(
+        "--finalise",
+        action="store_true",
+        help="run a reached stage's finalise hook after confirming the soak is over, writing the marker rollback reads",
+    )
+    apply_.add_argument(
+        "--stop-before",
+        default=None,
+        metavar="<stage-key>",
+        help="stop the run before this upgrade-order.yaml stage (e.g. 30-services), touching nothing in it or after",
+    )
     apply_.set_defaults(func=cmd_upgrade_apply)
 
     rollback = verbs.add_parser(
         "rollback",
-        help="the reverse plan, refusing by name any one-way step",
+        help="the reverse plan, refusing by name any step whose finalise has actually run",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     _add_deploy_target_args(rollback, to_required=True)
     rollback.add_argument("--kubeconfig", default=None, help="kubeconfig for the target cluster")
     rollback.add_argument("--push", action="store_true", help="git push after the rollback commit")
     rollback.add_argument("--dry-run", action="store_true", help="print what would happen without running it")
+    rollback.add_argument(
+        "--check-cluster",
+        action="store_true",
+        help="when kubectl is reachable, also refuse if the live Kafka CR already shows a bumped "
+        "status.kafkaMetadataVersion, even with no marker",
+    )
+    rollback.add_argument("--kafka-name", default=DEFAULT_KAFKA_NAME, help="Kafka CR name --check-cluster reads")
+    rollback.add_argument("--kafka-namespace", default=DEFAULT_KAFKA_NAMESPACE, help="namespace the Kafka CR runs in")
     rollback.set_defaults(func=cmd_upgrade_rollback)
