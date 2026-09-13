@@ -109,6 +109,12 @@ variables {
 
   broker_count = 3
 
+  // No module default: the same three numbers a customer dial carries, so a
+  // contract run proves what render_dial.py actually sends.
+  num_partitions    = 12
+  log_retention_ms  = 259200000
+  message_max_bytes = 16777216
+
   kms_key_arn      = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
   eks_cluster_name = "dfe-contract"
 

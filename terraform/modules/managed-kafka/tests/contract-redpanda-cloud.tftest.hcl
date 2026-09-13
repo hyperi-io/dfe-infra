@@ -78,6 +78,12 @@ variables {
 
   scram_password = "contract-only-not-a-real-credential"
 
+  // No module default: the same numbers a customer dial carries, so a
+  // contract run proves what render_dial.py actually sends.
+  num_partitions    = 12
+  log_retention_ms  = 259200000
+  message_max_bytes = 16777216
+
   landing_topics = {
     dfe_land = {}
     dfe_dlq  = { retention_ms = 604800000 }

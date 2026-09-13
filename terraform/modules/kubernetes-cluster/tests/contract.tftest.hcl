@@ -207,6 +207,28 @@ run "aws_network_object" {
   }
 }
 
+run "aws_network_az_count_two" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    network = { nat = "single", az_count = 2 }
+  }
+
+  assert {
+    condition     = length(output.network.azs) == 2
+    error_message = "network.az_count = 2 must span exactly two zones"
+  }
+
+  assert {
+    condition     = length(output.network.private_subnet_ids) == 2
+    error_message = "network.private_subnet_ids must carry one subnet per zone at az_count = 2"
+  }
+}
+
 run "aws_dns_zones" {
   command = plan
 

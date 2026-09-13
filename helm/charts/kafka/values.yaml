@@ -241,6 +241,10 @@ kafka:
   # ceiling, and enrichment re-enters Kafka measuring ~1.48x the source event.
   # socket.request.max.bytes is deliberately NOT rendered: the 100 MiB Kafka
   # default already leaves framing headroom above this figure.
+  # This is the chart's OWN default, for a deploy with no resolved sizing
+  # fragment. scripts/resolve_sizing.py's build_values overrides it from
+  # sizing.yaml's event.message_chain_bytes (kafka.messageMaxBytes in the
+  # emitted values.yaml) whenever a dial has been resolved.
   messageMaxBytes: 16777216
   broker:
     # Broker NIC throughput in MB/s, treated as full duplex. Cruise Control
@@ -362,6 +366,47 @@ kafka:
     # take the NIC off ingest; 300 MiB/s is about a quarter of a 10 GbE NIC, so
     # move it with kafka.broker.networkMbS rather than on its own.
     replicationThrottleBytesS: 314572800
+    # A 6-broker add-brokers rebalance with no explicit goals here left
+    # Cruise Control on its own default order, and converged replica skew to
+    # 16.8% (within a 20% target) while leader skew stayed at 57% -- one
+    # broker held 17 leaders against a mean of 29.8. The reason is priority
+    # order: Strimzi's documented default runs the seven hard goals first
+    # (RackAwareGoal..CpuCapacityGoal), then ReplicaDistributionGoal and five
+    # more soft goals, and only then LeaderReplicaDistributionGoal and
+    # LeaderBytesInDistributionGoal -- second-last and last of eighteen
+    # (Strimzi 1.2.0 documentation/modules/cruise-control/
+    # con-cruise-control-overview.adoc, "Goals order of priority"). Cruise
+    # Control satisfies earlier-listed goals first, so the leader goals
+    # rarely get the same optimisation effort.
+    #
+    # This list is that same default order with LeaderReplicaDistributionGoal
+    # and LeaderBytesInDistributionGoal PROMOTED to run immediately after the
+    # seven hard goals, ahead of the remaining soft goals -- nothing removed,
+    # nothing else reordered. Rendered into both rebalance templates'
+    # spec.goals (kafka-rebalance-templates.yaml). Strimzi documents
+    # KafkaRebalance.spec.goals as a subset of the supported goals in
+    # descending priority order, taking bare class names (not the
+    # fully-qualified com.linkedin... form Kafka.spec.cruiseControl.config
+    # uses). Set to [] to fall back to Cruise Control's untouched default.
+    goals:
+      - RackAwareGoal
+      - MinTopicLeadersPerBrokerGoal
+      - ReplicaCapacityGoal
+      - DiskCapacityGoal
+      - NetworkInboundCapacityGoal
+      - NetworkOutboundCapacityGoal
+      - CpuCapacityGoal
+      - LeaderReplicaDistributionGoal
+      - LeaderBytesInDistributionGoal
+      - ReplicaDistributionGoal
+      - PotentialNwOutGoal
+      - DiskUsageDistributionGoal
+      - NetworkInboundUsageDistributionGoal
+      - NetworkOutboundUsageDistributionGoal
+      - CpuUsageDistributionGoal
+      - TopicReplicaDistributionGoal
+      - IntraBrokerDiskCapacityGoal
+      - IntraBrokerDiskUsageDistributionGoal
     # Cruise Control's own pod. Strimzi ships NO defaults here, so an unset
     # deployment has no requests and is the first thing evicted under pressure.
     resources:

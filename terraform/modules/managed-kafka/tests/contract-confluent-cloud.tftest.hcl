@@ -141,6 +141,11 @@ variables {
     dfe_dlq  = { retention_ms = 604800000 }
   }
 
+  // No module default: the same numbers a customer dial carries, so a
+  // contract run proves what render_dial.py actually sends.
+  num_partitions   = 12
+  log_retention_ms = 259200000
+
   // 8 MiB is Confluent's own ceiling for a topic's max.message.bytes. The check
   // block in the body warns above it; these runs stay inside it.
   message_max_bytes = 8388608

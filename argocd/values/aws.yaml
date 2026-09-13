@@ -2,8 +2,11 @@
 # Stub required so Layer 2 ApplicationSet valueFiles resolution succeeds on EKS targets.
 global:
   cloud: aws
-  # registry: "123456789.dkr.ecr.us-east-1.amazonaws.com/dfe"  # Set per AWS account
-  registry: "ghcr.io/hyperi-io"  # HyperI-hosted images (shared until per-customer ECR)
+  # registry is deliberately UNSET here, matching gcp.yaml and azure.yaml: the
+  # dial's own `registry:` field (deployment.example.yaml) is the one source,
+  # reaching a deploy as the `dfe-ops cycle --registry` flag render_dial.py
+  # derives from it. A literal here would drift from that whenever a customer
+  # dial names a different registry, the way ghcr.io/hyperi-io once did.
 
 storageClass: gp3
 

@@ -83,6 +83,20 @@ kafka:
       read: 2026-09-13
       confidence: benchmark-named-hardware
       spot_test: Sweep broker vCPU on one storage profile and find where the rate stops tracking cores.
+    ## One kind-cluster run, three brokers at a 500m CPU limit each, nowhere
+    ## near saturated (summed usage 306m of the 1500m available) -- this is
+    ## the CPU cost of a light load, not a right-sizing ceiling like
+    ## mb_s_per_vcpu above, so it does not replace that number. Informational
+    ## only: 1.95 MB/s producer throughput over 0.306 summed vCPU = 6.37
+    ## MB/s per vCPU.
+    mb_s_per_vcpu_kind_check:
+      value: 6.37
+      unit: mb-per-second-per-vcpu
+      applies_to: strimzi
+      source: sizing/measurements/2026-09-13-kind-scale-proof.md
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: Re-run closer to CPU saturation and see whether the per-vCPU figure converges toward mb_s_per_vcpu.
     heap_gb:
       value: 6
       unit: gb
@@ -361,6 +375,20 @@ kraft_controller:
     read: 2026-09-13
     confidence: vendor-documented
     spot_test: Hold throughput flat, raise partitions from 12 to 96, and watch controller CPU and RSS.
+  ## One kind-cluster run, one host, three controllers -- informational
+  ## support for vcpu_floor/ram_gib_floor above, not a replacement for them.
+  ## Raising our own test topics from 36 to 96 partitions (179 to 239
+  ## cluster-wide) moved controller CPU from 27/21/17m to 25/18/19m and RAM
+  ## from 690/540/536Mi to 691/541/536Mi -- flat within measurement noise, in
+  ## line with vcpu_floor/ram_gib_floor's own spot_test wording.
+  partition_scale_footprint_delta_kind_check:
+    value: 0
+    unit: millicores-per-partition
+    applies_to: kraft-controller
+    source: sizing/measurements/2026-09-13-kind-scale-proof.md
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Repeat at a bigger partition step (e.g. 96 to 300) to confirm the flat line holds past this scale.
 
 ## ---------------------------------------------------------------------------
 ## ClickHouse.

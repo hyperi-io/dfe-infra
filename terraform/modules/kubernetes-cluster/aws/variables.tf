@@ -107,14 +107,20 @@ variable "resolved_shapes" {
 }
 
 variable "network" {
-  description = "nat = per-az puts one NAT gateway in each availability zone, so a zone failure and cross-zone data charges both stay contained. nat = single puts one in the first, which is cheaper and is the tyre-kick default."
+  description = "nat = per-az puts one NAT gateway in each availability zone, so a zone failure and cross-zone data charges both stay contained. nat = single puts one in the first, which is cheaper and is the tyre-kick default. az_count is how many zones the VPC spans -- 3 (the default here, for a caller that predates the dial field) is enough for a quorum without paying cross-zone transfer on a fourth; 2 trades that redundancy for cost, more spreads further where the region allows it."
   type = object({
-    nat = string
+    nat      = string
+    az_count = optional(number, 3)
   })
 
   validation {
     condition     = contains(["per-az", "single"], var.network.nat)
     error_message = "network.nat must be per-az or single."
+  }
+
+  validation {
+    condition     = var.network.az_count >= 2 && var.network.az_count <= 6
+    error_message = "network.az_count must be between 2 and 6 -- below 2 there is no redundancy to speak of, and no AWS region offers more than 6."
   }
 }
 

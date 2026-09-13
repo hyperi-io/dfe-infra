@@ -1,0 +1,96 @@
+// The aws-sm body's deletion-protection knob: recovery_window_days. Provider-
+// free by construction, like managed-kafka's contracts -- mock_provider means
+// no credentials, no API call and no cost.
+
+mock_provider "aws" {
+  // A policy document's generated default is a random string, and the
+  // provider rejects a policy that is not a JSON object.
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+
+  mock_data "aws_region" {
+    defaults = {
+      region = "us-west-2"
+    }
+  }
+
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "000000000000"
+    }
+  }
+
+  mock_data "aws_partition" {
+    defaults = {
+      partition = "aws"
+    }
+  }
+
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn = "arn:aws:iam::000000000000:role/mock"
+    }
+  }
+}
+
+variables {
+  project = "dfe"
+  env     = "test"
+
+  seeds = {
+    "kafka/msk" = { password = "" }
+  }
+
+  kafka_password = "contract-only-not-a-real-credential"
+
+  kms_key_arn                    = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+  cluster_name                   = "dfe-contract"
+  pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+}
+
+run "default_recovery_window_is_the_ephemeral_answer" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.seed["kafka/msk"].recovery_window_in_days == 0
+    error_message = "recovery_window_days defaults to 0 -- the ephemeral-safe answer -- when the caller sets nothing"
+  }
+}
+
+run "the_caller_sets_the_persistent_window" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    recovery_window_days = 30
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.seed["kafka/msk"].recovery_window_in_days == 30
+    error_message = "a caller-supplied recovery_window_days must reach the secret unchanged"
+  }
+}
+
+run "an_out_of_range_window_is_refused" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    recovery_window_days = 3
+  }
+
+  expect_failures = [var.recovery_window_days]
+}

@@ -52,7 +52,8 @@ using the second.
 | `broker_count` | `number` | Three at the floor, and a multiple of the availability-zone count. Replication factor and minimum in-sync replicas are the profile's, not this module's. |
 | `kafka_version` | `string` | The broker version, in the provider's own spelling. No default: the newest supported version is read from the vendor at build time, because a default rots into a deprecated line silently. |
 | `client_cidrs` | `list(string)` | Who may reach the brokers. Empty means the whole VPC the cluster module built. |
-| the tuning settings | `number` each | `num_partitions`, `log_retention_ms`, `message_max_bytes`. The canonical broker profile, already reduced to what this implementation accepts -- named and validated rather than an opaque map, because a map cannot be checked against a provider's read-only list and a setting silently dropped is the failure mode this contract exists to prevent. A body APPLIES what it is given and reports what its provider refuses; it does not decide what is applicable. |
+| the tuning settings | `number` each | `num_partitions`, `log_retention_ms`, `message_max_bytes`. The canonical broker profile, already reduced to what this implementation accepts -- named and validated rather than an opaque map, because a map cannot be checked against a provider's read-only list and a setting silently dropped is the failure mode this contract exists to prevent. A body APPLIES what it is given and reports what its provider refuses; it does not decide what is applicable. No default in any body: the root's dial states every one, so a value cannot drift between the three copies silently. |
+| `landing_topics` | `map(object({ partitions, retention_ms }))` | Read by `confluent-cloud` and `redpanda-cloud` only, keyed by topic name. Neither has a bootstrap Job of its own -- msk's landing topics are that Job's, from the chart's own values -- so tofu creates these itself, or dfe-loader crash-loops on a bare deploy (a missing `*_land` topic is fatal to it). A null `partitions` or `retention_ms` takes the tuning settings above. |
 | `kms_key_arn` | `string` | The deployment's own key, from the cluster module. Encrypts the data at rest and the credential. |
 | `eks_cluster_name`, `pod_identity`, `pod_identity_trust_policy_json` | | The workload identity the bootstrap Job runs as, for a body whose provider needs one. |
 | `autoscaling` | `object({ enabled, max_brokers, step, per_broker_capacity_mb_s, headroom })` | `msk`-only: broker-count scaling, since AWS gives Express no native equivalent. Ignored by both SaaS bodies, whose vendor already elastic-scales. |
@@ -184,7 +185,10 @@ is OpenTofu 1.11 and why `scram_password_version` exists: a write-only value
 cannot be compared between plan and apply.
 
 `allow_deletion` defaults to TRUE. Every Redpanda resource defaults it false,
-which makes `tofu destroy` refuse. A customer deployment sets it false.
+which makes `tofu destroy` refuse. The aws root sets it from the dial's
+`tags.lifecycle` -- false for anything but `ephemeral` -- so a persistent
+deployment gets the vendor's own refusal without a customer having to ask for
+it by hand.
 
 ## What `confluent-cloud/` builds
 

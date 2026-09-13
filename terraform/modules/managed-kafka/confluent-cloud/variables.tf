@@ -151,9 +151,8 @@ variable "private_network_interface_ids" {
 }
 
 variable "num_partitions" {
-  description = "Default partitions for a landing topic that does not name its own. Derived by the chart from the same rule (S1.T7): a highly divisible multiple of the broker count, at least the consumer-parallelism ceiling."
+  description = "Default partitions for a landing topic that does not name its own. Derived by the chart from the same rule (S1.T7): a highly divisible multiple of the broker count, at least the consumer-parallelism ceiling. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
   type        = number
-  default     = 12
 
   validation {
     condition     = var.num_partitions > 0
@@ -162,9 +161,8 @@ variable "num_partitions" {
 }
 
 variable "log_retention_ms" {
-  description = "How long a landing topic keeps data by default, in milliseconds. The buffer has to survive the longest consumer outage plus the archiver's lag; 259200000 is three days."
+  description = "How long a landing topic keeps data by default, in milliseconds. The buffer has to survive the longest consumer outage plus the archiver's lag; 259200000 is three days. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
   type        = number
-  default     = 259200000
 
   validation {
     condition     = var.log_retention_ms > 0
@@ -173,9 +171,8 @@ variable "log_retention_ms" {
 }
 
 variable "message_max_bytes" {
-  description = "The largest record the topics accept, and the same number the scalo producer and consumer carry. Applied per topic as max.message.bytes, because Confluent Cloud holds the broker-wide setting. Confluent caps this at 8 MiB and the check block in main.tf says so at plan."
+  description = "The largest record the topics accept, and the same number the scalo producer and consumer carry. Applied per topic as max.message.bytes, because Confluent Cloud holds the broker-wide setting. Confluent caps this at 8 MiB and the check block in main.tf says so at plan. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
   type        = number
-  default     = 16777216
 
   validation {
     condition     = var.message_max_bytes > 0

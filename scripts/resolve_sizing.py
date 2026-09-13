@@ -27,9 +27,12 @@ Two stages, because the ratios are target-agnostic and the shapes are not:
 Five artefacts come out, all under ``--out`` (the repo root by default) -- six
 on a ``cloud: onprem`` dial, which also gets ``sizing/<tier>.nodes.json``:
 
-    shapes/resolved/<cloud>.json   the committed shape answer, merged over what
-                                   is already there so another resolve's entries
-                                   survive; an API change is a reviewed diff
+    shapes/resolved/<cloud>-<region>.json   the committed shape answer, merged
+                                   over what is already there so another
+                                   resolve's entries survive; an API change is
+                                   a reviewed diff. Keyed by region -- instance
+                                   generation availability differs by region,
+                                   so one region's answer is never another's.
     sizing/<tier>.auto.tfvars.json the tofu inputs, only keys the root declares
     sizing/<tier>.values.yaml      the chart values overlay
     sizing/<tier>.report.md        what was sized, from which ratio, at which
@@ -223,9 +226,11 @@ GP3_MIB_S_PER_IOPS = 0.25
 GP3_MIN_THROUGHPUT_MIB_S = 125
 GP3_SOURCE = "https://docs.aws.amazon.com/ebs/latest/userguide/general-purpose.html"
 
-# On-demand monthly hours, and the gp3 storage price per GiB-month in us-west-2.
+# On-demand monthly hours. The gp3 storage price is NOT here: it is per region
+# (compute-shapes.yaml's clouds.<cloud>.storage_pricing), read by
+# _gp3_price_per_gib_month below, alongside the live per-region compute price
+# the A5 spend guard already uses.
 HOURS_PER_MONTH = 730
-GP3_USD_PER_GIB_MONTH = 0.08
 
 BYTES_PER_GIB = 1024**3
 BYTES_PER_GB = 10**9
@@ -1122,11 +1127,14 @@ def _fetch_msk_prices(region: str) -> tuple[tuple[str, ...], dict[str, float]]:
     return tuple(sorted(prices)), prices
 
 
-def fetch_fixtures(directory: Path) -> Catalogue:
-    """Read the captured answers instead of calling AWS."""
-    path = directory / "aws-catalogue.json"
+def fetch_fixtures(directory: Path, region: str) -> Catalogue:
+    """Read the captured answers for one region instead of calling AWS."""
+    path = directory / f"aws-catalogue-{region}.json"
     if not path.is_file():
-        raise ResolveError(f"no captured catalogue at {path} -- run the capture subcommand first")
+        raise ResolveError(
+            f"no captured catalogue at {path} -- run 'python3 scripts/resolve_sizing.py capture "
+            f"--region {region} --fixtures {directory}' first"
+        )
     doc = json.loads(path.read_text(encoding="utf-8"))
     types = {name: InstanceType(**body) for name, body in doc["types"].items()}
     return Catalogue(
@@ -1167,9 +1175,13 @@ def _scrub_findings(body: str) -> list[str]:
 
 
 def write_fixture(catalogue: Catalogue, directory: Path) -> Path:
-    """Write the catalogue as a fixture, scrubbed of anything account-specific."""
+    """Write the catalogue as a fixture, scrubbed of anything account-specific.
+
+    Named by region, so a fixtures directory can carry more than one captured
+    region and a resolve picks the one the dial asks for.
+    """
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "aws-catalogue.json"
+    path = directory / f"aws-catalogue-{catalogue.region}.json"
     doc = {
         "_provenance": (
             f"captured from the AWS EC2 and Pricing APIs in {catalogue.region} on "
@@ -1645,12 +1657,36 @@ class Finding:
     fatal: bool
 
 
+def _gp3_price_per_gib_month(shapes: dict[str, object], cloud: str, region: str) -> float:
+    """The gp3 USD/GiB-month for one region, from compute-shapes.yaml.
+
+    There is no describe-price API for EBS the way there is for EC2 and MSK, so
+    this is a doc-sourced constant per region rather than a live read -- and it
+    refuses a region the file does not name rather than silently costing the
+    deployment at another region's rate.
+    """
+    price = _at(shapes, "clouds", cloud, "storage_pricing", region, "gp3_usd_per_gib_month")
+    if price is None:
+        raise ResolveError(
+            f"compute-shapes.yaml has no clouds.{cloud}.storage_pricing.{region} -- add "
+            f"gp3_usd_per_gib_month, source and read for {region} before resolving there"
+        )
+    try:
+        return float(str(price))
+    except ValueError as err:
+        raise ResolveError(
+            f"clouds.{cloud}.storage_pricing.{region}.gp3_usd_per_gib_month is not a number"
+        ) from err
+
+
 def assert_caps(
     choice: Choice,
     entry: dict[str, object],
     catalogue: Catalogue,
     spend_warn_usd_month: float,
     focus: str = "economy",
+    *,
+    gp3_usd_per_gib_month: float,
 ) -> list[Finding]:
     """Assert the volume profile against every cap the cloud will not mention.
 
@@ -1743,7 +1779,9 @@ def assert_caps(
     storage_gib = sum(
         int(v.get("size_gib", 0) or 0) for v in choice.volumes.values() if v.get("type") == "gp3"
     )
-    monthly = (choice.price_usd_hour * HOURS_PER_MONTH + storage_gib * GP3_USD_PER_GIB_MONTH) * choice.count
+    monthly = (
+        choice.price_usd_hour * HOURS_PER_MONTH + storage_gib * gp3_usd_per_gib_month
+    ) * choice.count
     if spend_warn_usd_month and monthly > spend_warn_usd_month:
         findings.append(
             Finding(
@@ -2584,15 +2622,20 @@ def run_resolve(args: argparse.Namespace) -> int:
     notes: list[str] = []
 
     if populated:
+        # The dial's own region wins: --region is a test/CI override, never the
+        # normal path, and a dial naming no region at all falls back to the
+        # captured default rather than refusing outright.
+        region = args.region or dial.region or "us-west-2"
         if args.live:
-            catalogue = fetch_live(args.region or dial.region or "us-west-2")
+            catalogue = fetch_live(region)
         elif args.fixtures:
-            catalogue = fetch_fixtures(args.fixtures)
+            catalogue = fetch_fixtures(args.fixtures, region)
         else:
             raise ResolveError(
                 f"{dial.cloud} is a populated cloud, so the resolve needs an API: pass --live or "
                 f"--fixtures <dir>"
             )
+        gp3_price = _gp3_price_per_gib_month(shapes, dial.cloud, catalogue.region)
         focus_generation, _storage_profile = _focus_policies(sizing, core.focus)
         wanted = list(CORE_USE_CASES)
         if dial.kafka_provider == "msk-express":
@@ -2633,6 +2676,7 @@ def run_resolve(args: argparse.Namespace) -> int:
                     catalogue,
                     dial.spend_warn_usd_month if dial.spend_warn_usd_month is not None else 0.0,
                     core.focus,
+                    gp3_usd_per_gib_month=gp3_price,
                 )
             )
 
@@ -2671,7 +2715,7 @@ def run_resolve(args: argparse.Namespace) -> int:
     if catalogue is not None:
         resolved_dir = out / "shapes" / "resolved"
         resolved_dir.mkdir(parents=True, exist_ok=True)
-        resolved_path = resolved_dir / f"{dial.cloud}.json"
+        resolved_path = resolved_dir / f"{dial.cloud}-{catalogue.region}.json"
         merged = merge_resolved(resolved_path, choices, catalogue, dial.cloud)
         resolved_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
         written.append(resolved_path)

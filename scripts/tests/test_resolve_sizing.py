@@ -26,10 +26,10 @@ meant to change, then:
 and commit the golden file in the SAME commit as the ratio that moved it, so the
 review sees the cause and the effect together.
 
-The cloud answers come from `fixtures/sizing/aws-catalogue.json`, captured once
-from the live EC2 and Pricing APIs in us-west-2 and scrubbed. Re-capture with
-`python3 scripts/resolve_sizing.py capture --region us-west-2 --fixtures
-scripts/tests/fixtures/sizing`.
+The cloud answers come from `fixtures/sizing/aws-catalogue-us-west-2.json`,
+captured once from the live EC2 and Pricing APIs in us-west-2 and scrubbed.
+Re-capture with `python3 scripts/resolve_sizing.py capture --region us-west-2
+--fixtures scripts/tests/fixtures/sizing`.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sizing"
-CATALOGUE = FIXTURES / "aws-catalogue.json"
+CATALOGUE = FIXTURES / "aws-catalogue-us-west-2.json"
 GOLDEN = FIXTURES / "golden-matrix.json"
 
 sys.path.insert(0, str(SCRIPTS))
@@ -309,7 +309,20 @@ def _choice(**overrides) -> resolve_sizing.Choice:
 
 @pytest.fixture(scope="module")
 def catalogue() -> resolve_sizing.Catalogue:
-    return resolve_sizing.fetch_fixtures(FIXTURES)
+    return resolve_sizing.fetch_fixtures(FIXTURES, "us-west-2")
+
+
+def test_fetch_fixtures_refuses_an_uncaptured_region_by_name() -> None:
+    with pytest.raises(resolve_sizing.ResolveError, match="capture --region ap-southeast-2"):
+        resolve_sizing.fetch_fixtures(FIXTURES, "ap-southeast-2")
+
+
+def test_a_resolve_writes_the_resolved_shapes_file_keyed_by_region(tmp_path: Path) -> None:
+    """One region's Graviton availability is never committed under another's name."""
+    _run(_dial(tmp_path), tmp_path)
+    resolved = tmp_path / "shapes" / "resolved"
+    assert (resolved / "aws-us-west-2.json").is_file()
+    assert not (resolved / "aws.json").is_file()
 
 
 def test_a1_catches_iops_above_what_the_volume_size_allows(catalogue) -> None:
@@ -317,7 +330,7 @@ def test_a1_catches_iops_above_what_the_volume_size_allows(catalogue) -> None:
     choice = _choice(
         volumes={"data": {"type": "gp3", "size_gib": 20, "iops": 16000, "throughput_mib_s": 125}}
     )
-    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0)}
+    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)}
     assert "A1" in rules
 
 
@@ -326,7 +339,7 @@ def test_a2_catches_throughput_the_provisioned_iops_cannot_carry(catalogue) -> N
     choice = _choice(
         volumes={"data": {"type": "gp3", "size_gib": 4000, "iops": 3000, "throughput_mib_s": 1000}}
     )
-    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0)}
+    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)}
     assert "A2" in rules
 
 
@@ -340,7 +353,7 @@ def test_a3_catches_volumes_that_sum_past_the_instance_baseline(catalogue) -> No
             "data": {"type": "gp3", "size_gib": 2000, "iops": 20000, "throughput_mib_s": 500},
         },
     )
-    findings = resolve_sizing.assert_caps(choice, {}, catalogue, 0)
+    findings = resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
     assert any(f.rule == "A3" for f in findings)
     assert any("the instance is the ceiling" in f.message for f in findings)
 
@@ -361,7 +374,9 @@ def test_a4_is_fatal_only_where_the_focus_promises_the_sustained_maximum(
         volumes={"root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 125}},
     )
     findings = [
-        f for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, focus) if f.rule == "A4"
+        f
+        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, focus, gp3_usd_per_gib_month=0.08)
+        if f.rule == "A4"
     ]
     assert findings
     assert "m9g.8xlarge" in findings[0].message
@@ -376,7 +391,7 @@ def test_a4_leaves_a_burstable_size_alone_when_the_workload_is_not_sustained(cat
         maximum_iops=48000,
         volumes={"root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 125}},
     )
-    assert not [f for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0) if f.rule == "A4"]
+    assert not [f for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08) if f.rule == "A4"]
 
 
 def test_a4_honours_a_sustained_field_on_the_shape_entry(catalogue) -> None:
@@ -388,7 +403,9 @@ def test_a4_honours_a_sustained_field_on_the_shape_entry(catalogue) -> None:
         maximum_iops=48000,
         volumes={"root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 125}},
     )
-    findings = resolve_sizing.assert_caps(choice, {"sustained": "true"}, catalogue, 0)
+    findings = resolve_sizing.assert_caps(
+        choice, {"sustained": "true"}, catalogue, 0, gp3_usd_per_gib_month=0.08
+    )
     assert any(f.rule == "A4" for f in findings)
 
 
@@ -396,9 +413,37 @@ def test_a5_warns_on_spend_without_failing_the_resolve(catalogue) -> None:
     choice = _choice(
         volumes={"data": {"type": "gp3", "size_gib": 100000, "iops": 3000, "throughput_mib_s": 500}}
     )
-    findings = [f for f in resolve_sizing.assert_caps(choice, {}, catalogue, 1000) if f.rule == "A5"]
+    findings = [
+        f
+        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 1000, gp3_usd_per_gib_month=0.08)
+        if f.rule == "A5"
+    ]
     assert findings
     assert not findings[0].fatal
+
+
+def test_a5_prices_storage_at_the_regions_own_rate_not_a_flat_08(catalogue) -> None:
+    """A different region's gp3 price must move the same warning threshold."""
+    choice = _choice(
+        volumes={"data": {"type": "gp3", "size_gib": 100000, "iops": 3000, "throughput_mib_s": 500}}
+    )
+    cheap = resolve_sizing.assert_caps(choice, {}, catalogue, 1, gp3_usd_per_gib_month=0.01)
+    dear = resolve_sizing.assert_caps(choice, {}, catalogue, 1, gp3_usd_per_gib_month=1.00)
+    cheap_a5 = next(f for f in cheap if f.rule == "A5")
+    dear_a5 = next(f for f in dear if f.rule == "A5")
+    assert cheap_a5.message != dear_a5.message
+
+
+def test_gp3_price_per_gib_month_reads_the_regions_own_value() -> None:
+    shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
+    assert resolve_sizing._gp3_price_per_gib_month(shapes, "aws", "us-west-2") == 0.08
+
+
+def test_a_regions_missing_storage_price_is_refused_by_name() -> None:
+    """The estimator refuses to borrow another region's gp3 rate silently."""
+    shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
+    with pytest.raises(resolve_sizing.ResolveError, match="ap-southeast-2"):
+        resolve_sizing._gp3_price_per_gib_month(shapes, "aws", "ap-southeast-2")
 
 
 def test_a6_catches_a_storage_class_that_leaves_throughput_unset(catalogue) -> None:
@@ -406,14 +451,14 @@ def test_a6_catches_a_storage_class_that_leaves_throughput_unset(catalogue) -> N
     choice = _choice(
         volumes={"data": {"type": "gp3", "size_gib": 500, "iops": 3000, "throughput_mib_s": 0}}
     )
-    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0)}
+    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)}
     assert "A6" in rules
 
 
 def test_the_emitted_storage_classes_never_use_iops_per_gb(tmp_path: Path) -> None:
     """iopsPerGB is silently clamped and allowAutoIOPSPerGBIncrease is silently dearer."""
     _run(_dial(tmp_path), tmp_path)
-    body = (tmp_path / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8")
+    body = (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8")
     assert "iopsPerGB" not in body
     assert "allowAutoIOPSPerGBIncrease" not in body
     doc = json.loads(body)
@@ -490,7 +535,7 @@ def test_too_many_unreadable_type_names_fail_the_selection_loudly(catalogue) -> 
 def test_the_chosen_type_is_offered_in_every_availability_zone(tmp_path: Path, catalogue) -> None:
     """AZs diverge inside one region, and a type missing from one cannot place."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     for use_case, entry in doc.items():
         if use_case.startswith("_"):
             continue
@@ -501,7 +546,7 @@ def test_the_chosen_type_is_offered_in_every_availability_zone(tmp_path: Path, c
 def test_the_resolved_answer_records_the_generation_the_pricing_api_names(tmp_path: Path) -> None:
     """EC2's ProcessorInfo carries no generation; physicalProcessor is the only source."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     assert "Graviton" in doc["kafka-broker"]["physical_processor"]
     assert doc["kafka-broker"]["price_usd_hour"] > 0
 
@@ -509,7 +554,7 @@ def test_the_resolved_answer_records_the_generation_the_pricing_api_names(tmp_pa
 def test_the_clickhouse_shape_keeps_its_local_nvme(tmp_path: Path) -> None:
     """The cache wants local NVMe, so the generation policy may not drop the d modifier."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     assert "d" in doc["clickhouse"]["instance_types"][0].split(".")[0]
     assert doc["clickhouse"]["instance_store_gb"] > 0
 
@@ -560,12 +605,12 @@ def test_a_resolve_preserves_an_entry_it_did_not_size(tmp_path: Path) -> None:
     """The file is committed and diffed, so one resolve must not delete another's work."""
     resolved = tmp_path / "shapes" / "resolved"
     resolved.mkdir(parents=True)
-    (resolved / "aws.json").write_text(
+    (resolved / "aws-us-west-2.json").write_text(
         json.dumps({"_provenance": "hand-written", "msk-broker": {"instance_types": ["express.m7g.large"]}}),
         encoding="utf-8",
     )
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((resolved / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((resolved / "aws-us-west-2.json").read_text(encoding="utf-8"))
     assert doc["msk-broker"]["instance_types"] == ["express.m7g.large"]
     assert "kafka-broker" in doc
 
@@ -799,7 +844,7 @@ def test_the_committed_dial_template_parses_with_no_overrides(tmp_path: Path) ->
 
 def test_the_msk_path_resolves_a_broker_shape_with_its_price(tmp_path: Path) -> None:
     _run(_dial(tmp_path, provider="msk", estimate=1000), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     entry = doc["msk-broker"]
     assert entry["instance_types"][0].startswith("express.m7g.")
     assert entry["price_usd_hour"] > 0
@@ -811,7 +856,7 @@ def test_the_msk_broker_reads_the_same_demand_the_self_hosted_broker_would(tmp_p
         out = tmp_path / str(band)
         out.mkdir()
         _run(_dial(out, provider="msk", estimate=band), out)
-        doc = json.loads((out / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+        doc = json.loads((out / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
         assert doc["msk-broker"]["instance_types"][0] == smallest, band
 
 
@@ -840,7 +885,7 @@ def test_the_msk_path_sizes_no_broker_pvc_or_controller_pool(tmp_path: Path) -> 
 def test_the_instance_steps_up_until_it_sustains_its_own_volumes(tmp_path: Path) -> None:
     """A3 fires only when no size in the family can carry the profile."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     for use_case, entry in doc.items():
         if use_case.startswith("_") or use_case == "msk-broker":
             continue
@@ -862,7 +907,7 @@ def test_the_step_up_is_reported_with_its_price_delta(tmp_path: Path) -> None:
 def test_a_root_volume_takes_what_the_instance_has_left_to_give(tmp_path: Path) -> None:
     """A fixed 125 MiB/s root on a size whose baseline is 95 is a silent clamp."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     root = doc["kafka-broker"]["volumes"]["root"]
     assert root["source"] == "instance-baseline"
     assert root["throughput_mib_s"] >= 125
@@ -1121,7 +1166,7 @@ def test_msk_plus_ci_burst_carries_exactly_five_karpenter_pools(msk_case: Path) 
 
 
 def test_msk_broker_keeps_its_ec2_shape_out_of_karpenter(msk_case: Path) -> None:
-    doc = json.loads((msk_case / "shapes" / "resolved" / "aws.json").read_text(encoding="utf-8"))
+    doc = json.loads((msk_case / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     assert doc["msk-broker"]["instance_types"][0].startswith("express.")
     values = (msk_case / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
     assert "msk-broker" not in values.split("\nkarpenter:", 1)[1]
