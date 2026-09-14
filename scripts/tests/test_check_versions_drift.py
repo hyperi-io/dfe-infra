@@ -202,6 +202,51 @@ def test_fix_propagates_one_ssot_key_to_every_mirror() -> None:
     )
 
 
+def test_fix_moves_both_halves_of_a_contract_entry() -> None:
+    """The engine mounts each app's contract by running that app's pinned image.
+
+    The entry names tag@sha256 and the node pulls by digest, so a tag rewritten
+    on its own would name one release and run another.
+    """
+    versions = dict(drift.load_versions())
+    digest = "sha256:" + "9" * 64
+    versions["apps.dfe-loader"] = "v1.18.99"
+    versions["digests.dfe-loader"] = digest
+
+    writes, _, refused = drift.plan_fix(versions)
+    expect("propagation refuses nothing on a plain app bump", refused == [], f"{refused}")
+    values = writes.get(Path("helm/charts/dfe-engine/values.yaml"), "")
+    expect(
+        "the loader's content entry carries the new tag@sha256",
+        f'ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.99@{digest}"' in values,
+        f"{[line for line in values.splitlines() if 'dfe-loader:' in line]}",
+    )
+    expect(
+        "and the five other entries are untouched",
+        values.count("v1.18.99") == 1 and values.count(digest) == 1,
+        f"tag={values.count('v1.18.99')} digest={values.count(digest)}",
+    )
+
+
+def test_a_contract_entry_ref_is_visible_to_the_sweep() -> None:
+    """Drop its checks and the ref must come back as unswept.
+
+    `ref:` is read by nothing else in the tree, so without the sweep pattern a
+    seventh entry could be added with no check and pass.
+    """
+    original = drift.CHECKS
+    try:
+        drift.CHECKS = [c for c in original if "dfe-loader contract entry" not in c.label]
+        unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p and "content ref" in p]
+        expect(
+            "the unchecked ref surfaces, and only that one",
+            len(unswept) == 1 and "dfe-engine/values.yaml" in unswept[0],
+            f"got {unswept}",
+        )
+    finally:
+        drift.CHECKS = original
+
+
 def test_fix_refuses_rather_than_guessing() -> None:
     """A pattern that stopped matching means the file changed shape.
 

@@ -67,6 +67,12 @@ otel:
 # the records is a deployment fact and not the engine's to author.
 config: {}
 
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# last in the container's env, after the addresses and credentials above.
+extraEnv: {}
+
 # The .vrl programs this instance runs, as a list of {name, content}. Written by
 # dfe-engine into the per-instance overlay and rendered into a ConfigMap mounted at
 # transformFilesDir. A list rather than a map because a filename's own dot would be
