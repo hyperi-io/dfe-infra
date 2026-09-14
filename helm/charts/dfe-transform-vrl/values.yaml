@@ -70,7 +70,8 @@ config: {}
 # Environment keys this deployment sets on top of the derived ones, as
 # {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
 # block, for a setting the app carries and this chart does not model. Rendered
-# last in the container's env, after the addresses and credentials above.
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
 extraEnv: {}
 
 # The .vrl programs this instance runs, as a list of {name, content}. Written by
