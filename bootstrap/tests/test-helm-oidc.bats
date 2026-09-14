@@ -6,7 +6,11 @@ setup() {
 }
 
 @test "envoy-gateway-config renders without OIDC (simple auth mode)" {
+    # -f common.yaml supplies hostnames.*, the deploy-config SSoT every real
+    # render (argocd/appsets/layer2-platform.yaml) layers in; with no values
+    # files the chart's own routeHost guard correctly refuses an empty label.
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com
     [ "$status" -eq 0 ]
     [[ ! "$output" =~ "SecurityPolicy" ]]
@@ -14,6 +18,7 @@ setup() {
 
 @test "envoy-gateway-config renders with single OIDC provider" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
@@ -27,6 +32,7 @@ setup() {
 
 @test "envoy-gateway-config renders with multiple OIDC providers" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
@@ -44,6 +50,7 @@ setup() {
 
 @test "jwt_authn forwards X-Oidc-Subject and X-Oidc-Groups headers" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set jwtAuthn.enabled=true \
         --set jwtAuthn.issuer=https://accounts.google.com
@@ -55,6 +62,7 @@ setup() {
 
 @test "jwt_authn strips the identity headers before it sets them" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set jwtAuthn.enabled=true \
         --set jwtAuthn.issuer=https://accounts.google.com
@@ -108,6 +116,7 @@ setup() {
 
 @test "SecurityPolicy targets HTTPRoute not Gateway" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
