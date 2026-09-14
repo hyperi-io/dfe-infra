@@ -1,5 +1,9 @@
 {{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") .Values.kafka.controllerPool.enabled }}
 # The KRaft CONTROLLER pool -- the metadata quorum, kept off the brokers.
+# Renders only when kafka.controllerPool.enabled=true: the recommended shape
+# for a NEW deployment, but combined mode (kafka-nodepool.yaml) is the chart
+# default and stays the default on a cluster that already exists, because
+# flipping this on a live cluster re-forms the metadata quorum.
 #
 # Apache 4.3 says combined controller+broker "should be avoided in critical
 # deployment environments", and the reason is not tidiness: in combined mode the

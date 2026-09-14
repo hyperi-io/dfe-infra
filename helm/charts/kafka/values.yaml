@@ -480,12 +480,18 @@ kafka:
   # A separate KRaft controller pool at kafka.mode: cluster. Apache 4.3 says
   # combined controller+broker "should be avoided in critical deployment
   # environments": in combined mode a broker under GC or IO pressure IS the
-  # metadata quorum, so an ingest stall becomes a control-plane stall.
+  # metadata quorum, so an ingest stall becomes a control-plane stall. That
+  # makes the separate pool the recommended shape for a NEW deployment, and
+  # scripts/resolve_sizing.py sets this true in the values fragment it writes
+  # for every deployment it sizes.
   controllerPool:
-    # Set false to fall back to one combined controller+broker pool. Migrating a
-    # LIVE cluster from combined to separate is not proven on Strimzi 1.2, so
-    # this is the way back, not a sizing dial.
-    enabled: true
+    # false (combined mode) is the chart default: the on-prem status quo, and
+    # what every rc.13 deployment already runs. Flipping this to true on a
+    # cluster that already exists re-forms the metadata quorum -- combined to
+    # separate is not proven live on Strimzi 1.2, and sizing/sizing.yaml's
+    # controller_mode lock refuses the move without --migrate -- so true is a
+    # decision for a fresh deployment, never a default.
+    enabled: false
     # Three for a quorum that tolerates losing one. Controllers are sized by
     # PARTITION COUNT, not throughput, so this does not grow with ingest.
     replicas: 3

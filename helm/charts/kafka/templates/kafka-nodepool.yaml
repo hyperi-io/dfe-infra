@@ -1,10 +1,12 @@
 {{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
-# The BROKER pool. It holds the data path only: the KRaft controllers run in
-# their own pool (kafka-controller-nodepool.yaml), because in combined mode a
-# broker under GC or IO pressure is also the metadata quorum, and an ingest
-# stall becomes a control-plane stall. Set kafka.controllerPool.enabled=false to
-# fall back to one combined pool.
+# The pool that always exists. In the chart's default (combined) mode it
+# carries both broker and controller roles -- this file adds the controller
+# role, and kafka-controller-nodepool.yaml renders nothing. Set
+# kafka.controllerPool.enabled=true to split the KRaft controllers into their
+# own pool instead: recommended for a NEW deployment (a broker under GC or IO
+# pressure is otherwise also the metadata quorum), but a migration -- never a
+# default -- on a cluster that already exists.
 # replicas: cluster -> kafka.replicas (default 3, set higher). This is also the
 # ONLY field a scale-out changes, and the only change that triggers Cruise
 # Control's auto-rebalance.

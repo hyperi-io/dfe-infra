@@ -2601,6 +2601,11 @@ def build_values(
         kafka["autoscaling"] = {"maxBrokers": min(core.partitions, broker.count * 2)}
     if controller:
         kafka["controllerPool"] = {
+            # The chart default is false (combined mode), so an existing
+            # cluster's quorum never moves from a values change alone; a
+            # resolve always sizes a new deployment, so it sets the
+            # separate pool explicitly rather than relying on that default.
+            "enabled": True,
             "replicas": controller.count,
             "resources": {
                 "requests": {"cpu": str(controller.vcpu), "memory": f"{controller.ram_gib}Gi"},
