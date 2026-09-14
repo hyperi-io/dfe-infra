@@ -139,6 +139,7 @@ spec:
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-receiver
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/dfe-receiver

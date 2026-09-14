@@ -85,6 +85,25 @@ spec:
                   dst.write_bytes(r.read())
               print("content: fetched", dst)
               {{- end }}
+          {{- else if eq $entry.kind "emit" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              dir="{{ $root }}/{{ $entry.app }}"
+              # An image that carries no contract must not wedge the engine's
+              # pod: the app exits non-zero on a write failure.
+              if {{ $entry.app }} config-schema --dir "$dir"; then
+                # The contract names no image, so the writer records itself --
+                # without this the engine cannot report which pin it read.
+                printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+                  "{{ $entry.app }}" "{{ $entry.ref }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                  > "$dir/source.json"
+                echo "content: {{ $entry.app }} emitted its contract to $dir"
+              else
+                echo "content: {{ $entry.app }} emitted no contract; the mount stays empty" >&2
+              fi
           {{- else }}
           command:
             - /bin/sh
@@ -324,6 +343,12 @@ spec:
             # engine, so a content entry added later needs no env change.
             - name: DFE_LIBRARY_SEED_DIR
               value: {{ .Values.content.mountPath }}/library
+            # Where the settings API reads each app's config schema and
+            # capability catalogue. Unconditional for the same reason: a
+            # directory with no <app> subdirectory answers "no contract"
+            # rather than failing, so an entry added later needs no env change.
+            - name: DFE_APP_CONTRACT_DIR
+              value: {{ .Values.content.mountPath }}/contract
             {{- with (include "dfe-engine.catalogueFile" .) }}
             # Set only where a content entry materialises one: a path naming a
             # file nothing wrote is refused rather than answered with no sources.

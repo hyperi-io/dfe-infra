@@ -484,6 +484,41 @@ CHECKS += [
     for app in _DIGEST_MIRRORS
 ]
 
+# The engine chart mounts each app's container contract by RUNNING that app's
+# pinned image, so every content entry carries another copy of the app pin.
+# BOTH halves are checked: the ref is tag@sha256 and a deployment pulls by
+# digest, so a tag rewritten on its own would name one release and run another.
+_CONTRACT_ENTRIES = [
+    "dfe-receiver",
+    "dfe-loader",
+    "dfe-archiver",
+    "dfe-fetcher",
+    "dfe-transform-vrl",
+    "dfe-transform-vector",
+]
+
+
+def contract_ref_pattern(app: str, half: str) -> str:
+    """One half of a content entry's `ref`, anchored on the entry's own app.
+
+    All six refs sit in one file, so a bare `ref:` anchor would hand the first
+    entry's value to every check.
+    """
+    head = r"app: " + re.escape(app) + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+    return head + (r"([^\"@]+)@" if half == "tag" else r"[^\"@]+@([^\"]+)\"")
+
+
+CHECKS += [
+    Check(
+        f"{app} contract entry image {half}",
+        f"{'apps' if half == 'tag' else 'digests'}.{app}",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        contract_ref_pattern(app, half),
+    )
+    for app in _CONTRACT_ENTRIES
+    for half in ("tag", "digest")
+]
+
 # The hyperdx chart runs an init container on the ENGINE image to materialise the
 # dashboards the engine owns. Helm cannot read a sibling chart's appVersion, so
 # the engine tag has a second copy here and needs watching like any other.
@@ -624,6 +659,9 @@ SWEEP_PATTERNS = (
     ("image ref", r'(?m)^[^\S\n]*image:[^\S\n]*"?[\w./-]+:([^"\s#@]+)'),
     ("provider constraint", r'(?m)^[^\S\n]*version[^\S\n]*=[^\S\n]*"([^"]+)"'),
     ("stack pin", r'(?m)^[^\S\n]*pin:[^\S\n]*"?([^"\s#]+)"?'),
+    # A content entry's ref is an image pin under a key nothing else here reads,
+    # so a seventh entry added with no check would otherwise pass unseen.
+    ("content ref", r'(?m)^[^\S\n]*ref:[^\S\n]*"[\w./-]+:([^"\s#@]+)'),
 )
 
 _HAS_DIGIT = re.compile(r"\d")

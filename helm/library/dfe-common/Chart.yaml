@@ -2,6 +2,12 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.11.0: add _extraenv.tpl (dfe-common.extraEnv -- the overlay's `extraEnv`
+#        block as env entries, for the settings an app carries and its chart
+#        does not model). Six app charts call it as the last entry in their env
+#        block. A .helmignore now keeps tests/ out of the package: the lint
+#        harness vendors this library, so packaging it nested a copy of this
+#        archive inside every consumer's copy.
 # 0.10.0: add dfe-common.enrichmentTablesConfig -- the `enrichment_tables[]`
 #        entries for the tables the chart mounts, which the engine cannot write
 #        because the mount directory is the chart's. Without them the VRL
@@ -46,4 +52,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.10.0
+version: 0.11.0

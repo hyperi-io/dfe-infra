@@ -54,10 +54,12 @@ service:
   type: ClusterIP
   port: 8000
 
-# Authored files another repo ships and this engine serves: the reference
-# transform pipelines the library and the console's copy-paste view show, and the
-# source catalogue a transform ships. Each entry becomes ONE init container that
-# fills a shared emptyDir before the engine starts.
+# Files this engine serves that another image owns: the reference transform
+# pipelines the library and the console's copy-paste view show, the source
+# catalogue a transform ships, and each app's own container contract -- the
+# config schema and capability catalogue the settings API reads. Each entry
+# becomes ONE init container that fills a shared emptyDir before the engine
+# starts.
 #
 # NOT a ConfigMap and not a values blob: the elastic catalogue alone is 344 KB, so
 # either form re-serialises it into etcd on every Argo sync.
@@ -66,20 +68,30 @@ service:
 #   name   the versions.yaml content pin this materialises, and the container name
 #   kind   the vehicle -- `image` copies files out of a pinned app image the
 #          deployment already has pull rights to; `asset` downloads a release
-#          asset over the engine image's python
-#   ref    the pinned image (tag@sha256) for `image`, the asset URL for `asset`
+#          asset over the engine image's python; `emit` runs the pinned app image
+#          so the app writes its own contract, which no image carries as a file
+#   ref    the pinned image (tag@sha256) for `image` and `emit`, the asset URL for
+#          `asset`
 #   role   where the files land, and so what reads them: `library` puts them under
 #          <mountPath>/library/<kind>, `catalogue` under <mountPath>/catalogue and
-#          sets DFE_SOURCE_CATALOGUE_FILE. Vehicle and role are independent.
+#          sets DFE_SOURCE_CATALOGUE_FILE, `contract` under
+#          <mountPath>/contract/<app> where DFE_APP_CONTRACT_DIR points. Vehicle
+#          and role are independent.
+#   app    the service the entry speaks for: the subdirectory it writes, and the
+#          command an `emit` entry runs. Required for `emit`.
 #   files  [{from, to}] -- `from` is a path inside the image or a name inside the
-#          asset, `to` is relative to the role's root
+#          asset, `to` is relative to the role's root. Absent for `emit`, where
+#          the app decides what it writes.
 #
-# EMPTY, and the pins in versions.yaml say why: neither transform release carries
-# its files as an asset, and neither Dockerfile copies them into the image, so
-# there is nothing to fetch yet. Each app that ships its files makes its entry
-# live -- the mechanism needs no change. The live block for the two content pins:
+# The contract entries carry a second copy of the versions.yaml apps + digests
+# pins, so check_versions_drift.py reads both halves of each ref and --fix moves
+# them with the SSoT. A deployment mirroring images elsewhere overrides the ref.
+# dfe-transform-elastic gets an entry when it publishes an image.
 #
-#   entries:
+# The two LIBRARY pins are still empty, and the pins in versions.yaml say why:
+# neither transform release carries its files as an asset, and neither Dockerfile
+# copies them into the image, so there is nothing to fetch yet. The live block:
+#
 #     - name: dfe-transform-vector-templates
 #       kind: image
 #       ref: "ghcr.io/hyperi-io/dfe-transform-vector:<tag>@<digest>"
@@ -99,7 +111,37 @@ content:
   # The catalogue's filename is the engine's contract, not a deployment choice:
   # the app manifest binds a catalogue by the name its app ships it under.
   catalogueFile: sources.yaml
-  entries: []
+  entries:
+    - name: dfe-receiver-contract
+      kind: emit
+      role: contract
+      app: dfe-receiver
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.35@sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
+    - name: dfe-loader-contract
+      kind: emit
+      role: contract
+      app: dfe-loader
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.36@sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
+    - name: dfe-archiver-contract
+      kind: emit
+      role: contract
+      app: dfe-archiver
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.22@sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
+    - name: dfe-fetcher-contract
+      kind: emit
+      role: contract
+      app: dfe-fetcher
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.22@sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
+    - name: dfe-transform-vrl-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vrl
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.23@sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
+    - name: dfe-transform-vector-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vector
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.39@sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
 
 config:
   mountPath: /config
