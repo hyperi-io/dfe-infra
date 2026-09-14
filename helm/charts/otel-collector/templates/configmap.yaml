@@ -451,7 +451,11 @@ data:
     receivers:
       filelog:
         include: [/var/log/pods/*/*/*.log]
-        exclude: [/var/log/pods/*/otc-container/*.log]
+        # Must match the daemonset's own container name (below) -- kubelet builds
+        # this path from it. `otc-container` was the UPSTREAM chart's name, so
+        # the exclusion never matched and the collector shipped its own logs,
+        # one error line per failed export.
+        exclude: [/var/log/pods/*/{{ include "otel-collector.daemonsetContainerName" . }}/*.log]
         # Checkpointed, so a restart resumes at the offset it stopped at.
         storage: file_storage/filelog
         # First run only -- the checkpoint decides every later start. A fresh

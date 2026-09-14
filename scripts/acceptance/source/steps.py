@@ -521,6 +521,13 @@ def search_results(frame, name: str) -> tuple[bool, str]:
     picker.click(timeout=STEP_TIMEOUT_MS)
     picker.fill(name)
     option = frame.get_by_role("option").filter(has_text=name)
+    # count() takes no auto-wait, so right after fill() it can read the dropdown
+    # before a slow render populates it. A genuinely absent option still falls
+    # through to the count() check below.
+    try:
+        option.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+    except Exception:  # absence is decided by count() below, not this wait
+        pass
     if not option.count():
         return False, ""
     option.first.click(timeout=STEP_TIMEOUT_MS)

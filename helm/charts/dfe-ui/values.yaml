@@ -53,7 +53,6 @@ config:
   # Full HyperDX base URL override; empty derives from hyperdxHostname+domain.
   hyperdxUrl: ""
   nextPublicApiUrl: ""           # https://dfe.{domain}/api
-  nextPublicHyperdxUrl: ""       # https://hyperdx.{domain}
   # Node heap cap. Default tracks the pod memory limit via the cgroup-aware
   # percentage flag (Node 24+); override only for a non-standard runtime.
   nodeOptions: "--max-old-space-size-percentage=70"
