@@ -286,9 +286,23 @@ apps:
         sources: config.sources
         output: config.output
       scope: instance
-    # The families dfe-fetcher ships, from its docs/capability-catalog.yaml.
-    # Each name is also the config key its stanza sits under in config.sources.
+    # What dfe-fetcher can fetch. Each name is the config key its stanza sits
+    # under in config.sources, and the engine refuses a source whose declared
+    # type is not here.
+    #
+    # The first three are SHAPES, not vendors: each is a keyed map of instances
+    # (sources.rest.<id>, and the same for db and file) driven by a profile or a
+    # connection, so one of them covers many upstreams. They are deliberately
+    # absent from the fetcher's docs/capability-catalog.yaml, which is derived
+    # from its typed per-vendor blocks alone. runZero, for one, is not a family:
+    # it ships as a profile and is configured under sources.rest.
+    #
+    # The rest are the typed per-vendor families, and those DO come from that
+    # capability catalogue.
     source_types:
+      - rest
+      - db
+      - file
       - aws
       - azure
       - m365
