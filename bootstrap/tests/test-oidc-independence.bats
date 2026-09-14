@@ -19,6 +19,7 @@ setup() {
     # use a backendRef to dfe-engine's Service. This ensures Envoy applies
     # OIDC auth at the route level — dfe-engine doesn't need to be running.
     helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
@@ -40,6 +41,7 @@ setup() {
 
 @test "OIDC config comes entirely from Helm values, not runtime API" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=test-provider' \
@@ -71,6 +73,7 @@ setup() {
 
 @test "forwarded headers are hardcoded in Envoy config, not dynamic" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set jwtAuthn.enabled=true \
         --set jwtAuthn.issuer=https://accounts.google.com
@@ -84,6 +87,7 @@ setup() {
 @test "entire stack renders with oidc.enabled=false (simple auth)" {
     local exit_code=0
     helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com || exit_code=$?
     [ "$exit_code" -eq 0 ]
 
@@ -96,6 +100,7 @@ setup() {
 
 @test "adding a new OIDC provider requires only values, no template changes" {
     run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+        -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=custom-keycloak' \
