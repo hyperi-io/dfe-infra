@@ -144,16 +144,31 @@ A few things hold for every deployment:
   assumed role, an instance profile or a Lambda role all work; the entry
   names the IAM role -- with its `aws-reserved/sso.amazonaws.com/<region>/`
   path for SSO -- not the STS session ARN.
-- `eval "$(tofu output -raw kubeconfig_command)"` gets you `kubectl`;
-  `python3 bootstrap/bridge.py --tf-dir terraform/environments/aws` reads
-  the rest of the `DFE_*` outputs into the bootstrap run, and needs
-  `DFE_VAULT_ADDR` / `DFE_VAULT_ROLE_ID` only when `secrets.backend` is
+- `eval "$(tofu output -raw kubeconfig_command)"` gets you `kubectl`. The
+  driver is `python3 scripts/dfe-ops stack-deploy --stack <version> --mode
+  scale --from-terraform terraform/environments/aws --kubeconfig <path>` --
+  the same one the k8s team deploys with. It assembles the bootstrap env
+  from the tofu outputs, sets the stack version, runs the offline
+  pin/drift/render preflight, then `bootstrap.sh`, the readiness gate and
+  the two default end-to-end tests; `--check-only` runs the preflight
+  alone, with no cluster contact. `bootstrap/bridge.py` is the reader it
+  imports, not a command an operator runs.
+- The AWS path is an rc.14 deployment: the pins it needs -- karpenter, the
+  load balancer controller, `aws-msk-iam-auth`, the toolbox images, the AWS
+  tofu providers -- live in the `2.2.0-rc.14` stack block, which sits on
+  the rc.14 cut branch until that cut merges to `main` and moves `current`.
+  So deploy with `--stack 2.2.0-rc.14` from a checkout carrying that block;
+  on a tree whose `current` is still rc.13 the drift check prints NOTE
+  lines for those keys instead of failing, and `dfe-ops bastion up` refuses
+  because the toolbox tool versions are empty.
+- Set `DFE_VAULT_ADDR` / `DFE_VAULT_ROLE_ID` only when `secrets.backend` is
   `openbao`. `k8s.repo_url` is this repo -- dfe-infra, which stays private
   until GA -- so `DFE_REPO_TOKEN` (an HTTPS token with read access;
   `bootstrap.sh` turns it into the Argo repository credential) is required
   today: without it every Layer 2 Application stays `Unknown` with
   "authentication required". `DFE_PULL_SECRET_TOKEN` (a GHCR pull token) is
-  required the same way, for the dfe-* app images.
+  required the same way, for the dfe-* app images -- export both, or carry
+  them in an `--env-file`.
 - On a cluster with no default StorageClass, `bootstrap.sh` creates one
   named `k8s.storage_class` -- provisioner `ebs.csi.aws.com`, gp3 baseline
   3,000 IOPS / 125 MiB/s, encrypted with the account's default EBS key,
@@ -217,7 +232,9 @@ A few things hold for every deployment:
 ### ClickHouse
 
 - ClickHouse's storage model on a cloud deploy is `cached-object`: parts sit
-  in S3, behind a local read-through cache. The AWS ClickHouse shape pins a
+  in the S3 bucket `terraform/modules/kubernetes-cluster/aws/object-store.tf`
+  provisions, authenticated through its own Pod Identity role rather than a
+  static key, behind a local read-through cache. The AWS ClickHouse shape pins a
   local-NVMe family (`r*d`, generation floor 8), and the resolver sizes a
   dedicated instance-store cache disk for it and points
   `clickhouse.objectStore.cache.volume` at `instance-store`, so the cache runs

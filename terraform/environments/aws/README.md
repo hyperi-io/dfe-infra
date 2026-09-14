@@ -97,12 +97,20 @@ If you asked for a public zone, `tofu output public_zone_name_servers` gives the
 NS set. Public names resolve only once the parent zone delegates to them, and
 cert-manager's DNS-01 challenges fail until it does.
 
-Then run the bootstrap, which reads the `DFE_*` outputs from here:
+Then deploy, which reads the `DFE_*` outputs from here:
 
 ```bash
 cd ../../..
-python3 bootstrap/bridge.py --tf-dir terraform/environments/aws
+python3 scripts/dfe-ops stack-deploy --stack <version> --mode scale \
+    --from-terraform terraform/environments/aws --kubeconfig <path>
 ```
+
+That is the driver -- the same one the k8s team deploys with. It assembles
+the bootstrap env from the tofu outputs, sets the stack version, runs the
+offline pin/drift/render preflight, then `bootstrap.sh`, the readiness gate
+and the two default end-to-end tests. `bootstrap/bridge.py` is the reader it
+imports, not a command to run by hand; `--check-only` runs the preflight
+alone, with no cluster contact.
 
 ## Nodes are arm64
 

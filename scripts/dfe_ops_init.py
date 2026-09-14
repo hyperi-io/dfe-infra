@@ -864,13 +864,15 @@ def _next_commands(dial_out: Path, a: Answers) -> str:
                 "  tofu -chdir=terraform/environments/aws init",
                 "  tofu -chdir=terraform/environments/aws plan -out=deployment.tfplan",
                 "  tofu -chdir=terraform/environments/aws apply deployment.tfplan",
-                "  bash bootstrap/bootstrap.sh",
+                "  eval \"$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)\"",
+                "  python3 scripts/dfe-ops stack-deploy --stack <version> --mode scale \\",
+                "      --from-terraform terraform/environments/aws --kubeconfig <path>",
             )
         )
     return "\n".join(
         (
             f"  python3 scripts/render_dial.py --dial {rel}",
-            "  bash bootstrap/bootstrap.sh",
+            "  python3 scripts/dfe-ops stack-deploy --stack <version> --mode <mode> --kubeconfig <path>",
         )
     )
 
