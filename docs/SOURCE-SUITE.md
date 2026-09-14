@@ -9,7 +9,7 @@ calls the same runner. The cycle these hang off is
 ## What runs it
 
 `scripts/acceptance/source/` -- `run.py` is the order the steps happen in,
-`steps.py` what every source shares, `cases.py` the two kinds, `fetcher.py` the
+`steps.py` what every source shares, `cases.py` the kinds, `fetcher.py` the
 AWS upstreams -- over `acceptance/clients.py`, the engine and datastore both
 suites use. dfe-ops supplies the port-forwards, the `DFE_E2E_*` env, the
 archiver exec prefix (`--archive-selector` names the pods, one exec per replica
@@ -37,12 +37,38 @@ Proof: the transform instance reports, the receiver routes, new rows in
 under `<name>_land` in the archiver, and the engine lists a HyperDX source for
 it.
 
-Last, for both cases, the `observe` step opens the console's Observe search,
+Last, for every case, the `observe` step opens the console's Observe search,
 picks the source in the embedded HyperDX and reads a non-zero results line. The
 console iframes HyperDX from a second origin, so this is the step that meets
 what a tester meets: the embed's frame-ancestors, the login shared across the
 two origins and the source's own view. A frame the browser refused fails the
 step with the console's own error line.
+
+## `elastic`
+
+The same push and the same meta schema as `filebeat`, against
+dfe-transform-elastic instead. Two things differ.
+
+The app carries one compiled-in transform per Elastic data stream and an
+instance runs one of them, so the source's `transform` block needs a `variant`
+as well as an `engine`: `filebeat.cisco_ios.default`, which is
+dfe-transform-elastic's `sources.yaml` entry rendered through this repo's
+`apps.yaml` `catalogue.variant_pattern`, and which the deploy writes to the
+instance's own `config.source.name`. The console's Transform tab has no control
+for it, so `attach-transform` is an `api-fallback` whose detail names how far
+the console got. Without the variant the engine writes nothing to that key and
+the instance starts on no transform at all.
+
+And there is no `upload-program`: the app declares no file sets, so the step
+records `skipped` and the run writes nothing to the instance.
+
+The corpus is narrowed to its `cisco_ios` module, which is the entry the variant
+names. cisco_umbrella is delivered out of an S3 bucket and takes no receiver
+intake; cisco_meraki's pipeline reads a body rather than a syslog line.
+
+Proof: new rows in `<name>` carry `source_ip`. `meta/beats/filebeat` declares
+it, the cisco_ios transform reads it out of the syslog body, and the posted
+`{message, tags, _source}` record carries nothing of the sort.
 
 ## `cloudwatch`, run as `--aws-service cloudtrail`
 

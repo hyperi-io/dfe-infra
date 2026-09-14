@@ -114,11 +114,14 @@ def run(args: argparse.Namespace) -> int:
         password=os.environ.get("DFE_E2E_CH_PASSWORD", ""),
         database=os.environ.get("DFE_E2E_CH_DB", "dfe"),
     )
+    case = cases.build(args)
     engine_repo = Path(args.engine_repo).resolve()
-    transform_repo = (
-        Path(args.transform_repo).resolve() if args.transform_repo
-        else companion(engine_repo, "dfe-transform-vrl")
-    )
+    if args.transform_repo:
+        transform_repo = Path(args.transform_repo).resolve()
+    elif case.companion_repo:
+        transform_repo = companion(engine_repo, case.companion_repo)
+    else:
+        transform_repo = engine_repo
     verify = not args.insecure
     # The API calls go straight to the engine when a forward is up: a deploy or a
     # delete can outlast a gateway's timeout. The console still goes through the gateway.
@@ -127,7 +130,6 @@ def run(args: argparse.Namespace) -> int:
     archive_exec = [shlex.split(one) for one in args.archive_exec]
     restart_exec = shlex.split(args.restart_exec)
 
-    case = cases.build(args)
     shots = Path(args.shots_dir)
     with sync_playwright() as play:
         launch_args = [f"--host-resolver-rules=MAP {host} {ip}" for host, ip in args.resolve]
@@ -175,7 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ui-url", required=True, help="console base URL")
     parser.add_argument("--engine-url", required=True, help="engine API base URL")
     parser.add_argument("--engine-repo", required=True, help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)")
-    parser.add_argument("--transform-repo", default="", help="dfe-transform-vrl checkout holding the bundled pipeline and corpus (default: beside the engine repo)")
+    parser.add_argument("--transform-repo", default="", help="checkout holding the corpus archive, and the program a case uploads; both pushed cases name dfe-transform-vrl, the elastic transform being compiled into its own image (default: the case's own, beside the engine repo)")
     parser.add_argument("--access-summary", default="", metavar="FILE", help="the deploy's own summary, for the login when not run through dfe-ops")
     parser.add_argument("--org", default="acceptance", help="organisation to create when the deployment still owes its setup wizard")
     parser.add_argument("--first-user", default="operator", help="first user to create when the deployment still owes its setup wizard")
@@ -187,9 +189,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="command prefix that restarts one app by service name, for the apps the "
                              "engine reports it cannot apply where they stand (docker: docker "
                              "restart); unused on Kubernetes, where the controller rolls the pod")
-    parser.add_argument("--case", default="filebeat", choices=("filebeat", "cloudwatch"),
-                        help="filebeat pushes real lines at the receiver; cloudwatch authors a meta "
-                             "schema and lets a fetcher pull an AWS upstream")
+    parser.add_argument("--case", default="filebeat", choices=tuple(cases.CASES),
+                        help="filebeat pushes real lines at the receiver through the bundled VRL; "
+                             "elastic pushes cisco_ios lines at a transform compiled into its app; "
+                             "cloudwatch authors a meta schema and lets a fetcher pull an AWS upstream")
     parser.add_argument("--aws-service", default="cloudwatch_logs", choices=tuple(sorted(fetcher.AWS_CASES)),
                         help="the AWS service the cloudwatch case's fetcher polls")
     parser.add_argument("--aws-region", default=os.environ.get("DFE_E2E_AWS_REGION", ""),
