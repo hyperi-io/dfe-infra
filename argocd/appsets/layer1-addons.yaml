@@ -193,6 +193,9 @@ spec:
             # kubernetes.io/cluster/<name> and finds its subnets by that tag.
             clusterName: '{{ index .metadata.annotations "dfe.hyperi.io/cluster_name" }}'
             region: '{{ index .metadata.annotations "dfe.hyperi.io/region" }}'
+            # IMDS is two hops from a pod, and the managed node groups keep the
+            # hop limit at 1 -- so the controller is told its VPC here.
+            vpcId: '{{ index .metadata.annotations "dfe.hyperi.io/vpc_id" }}'
             # Named, not generated. The chart would otherwise derive the account
             # name from the release name, and the cluster module's Pod Identity
             # association names kube-system/aws-load-balancer-controller.

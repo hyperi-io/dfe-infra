@@ -66,6 +66,7 @@ using the second.
 | Output | Type | Meaning |
 |--------|------|---------|
 | `bootstrap` | `string` | NORMALISED to bare `host:port`, comma-separated. MSK, Confluent and Redpanda each return this differently -- with a scheme, with a suffix, as a list -- and every DFE reader downstream wants one spelling. |
+| `bootstrap_port` | `number` | The SASL/SCRAM (or, for Confluent, SASL/PLAIN) client port -- `9096` on `msk`, `9092` on `confluent-cloud` and `redpanda-cloud`. A LITERAL known at plan time, unlike `bootstrap`'s host, so a consumer can key a `for_each` on the target before the broker exists. |
 | `bootstrap_iam` | `string` | The IAM-authenticated endpoint, where the provider has one. The bootstrap Job's path; empty on a body with no such mechanism. |
 | `auth_type` | `string` | `scram`, `plain` or `iam`. The chart's `external.auth.type` takes it unchanged. |
 | `credential_ref` | `string` | A REFERENCE into the secrets store, never a value. |

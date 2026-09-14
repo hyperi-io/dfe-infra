@@ -258,6 +258,15 @@ locals {
       module.confluent[*].bootstrap,
       module.redpanda[*].bootstrap,
     ))
+    // one(), not join(): the port is a number, not a string, and var.kafka.
+    // provider selects at most one body, so the concat is 0 or 1 elements --
+    // one() reads that single element, or returns null when no body is
+    // selected at all.
+    bootstrap_port = one(concat(
+      module.kafka[*].bootstrap_port,
+      module.confluent[*].bootstrap_port,
+      module.redpanda[*].bootstrap_port,
+    ))
     bootstrap_iam = join("", concat(
       module.kafka[*].bootstrap_iam,
       module.confluent[*].bootstrap_iam,
@@ -327,21 +336,25 @@ locals {
     }
   }
 
-  // local.managed_kafka.bootstrap is normalised to comma-separated bare
-  // host:port pairs (managed-kafka/CONTRACT.md) -- empty on a brokerless
-  // profile or an in-cluster (strimzi/redpanda) deployment neither of which
-  // this root builds a network path to from outside the cluster. One target
-  // PER broker, because a single fixed-host forward only ever reaches one
-  // broker and a Kafka client's metadata response names the others by their
-  // real (unreachable from outside) hostnames -- see docs/deployment/toolbox.md.
-  toolbox_kafka_brokers = local.managed_kafka.bootstrap != "" ? split(",", local.managed_kafka.bootstrap) : []
-  toolbox_kafka_targets = {
-    for idx, broker in local.toolbox_kafka_brokers :
-    "kafka-${idx}" => {
-      host = split(":", broker)[0]
-      port = tonumber(split(":", broker)[1])
+  // for_each keys must be known at plan; only the VALUES may stay unknown
+  // until apply. local.managed_kafka.bootstrap (the broker host) is unknown
+  // until a managed broker actually exists, but the key here ("kafka") and
+  // the port (managed-kafka/CONTRACT.md's bootstrap_port, a literal each
+  // body's outputs.tf hardcodes) are both known from var.kafka.provider
+  // alone -- which is what lets the toolbox be enabled on a fresh apply,
+  // before MSK/Confluent/Redpanda has ever been created. A single target
+  // reaches ONE bootstrap broker, which proves reachability, TLS and SASL;
+  // a client that must follow Kafka's own metadata response to the other
+  // brokers runs ON the instance itself (`dfe-ops bastion shell`, kcat is
+  // installed), because the brokers' advertised hostnames only resolve
+  // inside the VPC -- see docs/deployment/toolbox.md.
+  managed_kafka_selected = contains(["msk", "confluent-cloud", "redpanda-cloud"], var.kafka.provider)
+  toolbox_kafka_targets = local.managed_kafka_selected ? {
+    kafka = {
+      host = split(":", split(",", local.managed_kafka.bootstrap)[0])[0]
+      port = local.managed_kafka.bootstrap_port
     }
-  }
+  } : {}
 
   // endpoints.clickhouse_host is estate-specific and blank in the committed
   // dial template (deployment.example.yaml) -- when the deployer has not

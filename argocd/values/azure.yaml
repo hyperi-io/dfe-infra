@@ -2,7 +2,9 @@
 global:
   cloud: azure
 
-storageClass: managed-premium
+# AKS ships managed-csi, managed-csi-premium and managed-csi-premium-v2;
+# managed-premium is the retired in-tree name and binds nothing (#294).
+storageClass: managed-csi
 
 envoyGateway:
   service:

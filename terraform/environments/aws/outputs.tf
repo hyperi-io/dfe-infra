@@ -150,6 +150,11 @@ output "DFE_KUBE_CLUSTER_NAME" {
   value       = module.cluster.cluster_name
 }
 
+output "DFE_VPC_ID" {
+  description = "The VPC the cluster sits in, for the load balancer controller that must not learn it from instance metadata."
+  value       = module.cluster.network.vpc_id
+}
+
 output "DFE_KARPENTER_DISCOVERY_TAG" {
   description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_discovery_tag annotation, which layer2-platform.yaml carries into karpenter-pools' karpenter.cluster.discoveryTag."
   value       = module.cluster.karpenter.discovery_tag

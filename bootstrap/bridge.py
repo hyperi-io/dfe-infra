@@ -74,6 +74,33 @@ def _outputs_from_state(tf_dir: str) -> dict[str, tuple[str, bool]]:
     return outputs
 
 
+def _required_vars(env_vars: dict[str, str]) -> set[str]:
+    """The DFE_* outputs bootstrap.sh cannot run without.
+
+    DFE_VAULT_ADDR and DFE_VAULT_ROLE_ID are openbao-only: the aws root never
+    emits them, and sets DFE_SECRETS_BACKEND=aws-sm instead, where ESO
+    authenticates through EKS Pod Identity and needs neither.
+    """
+    required = {
+        "DFE_ENV",
+        "DFE_CLOUD",
+        "DFE_REGION",
+        "DFE_DOMAIN",
+        "DFE_PROFILE",
+        "DFE_REPO_URL",
+        "DFE_TARGET_REVISION",
+        "DFE_STORAGE_CLASS",
+        "DFE_NAMESPACE",
+        "DFE_CLICKHOUSE_HOST",
+        "DFE_KAFKA_BOOTSTRAP",
+        "DFE_OTEL_ENDPOINT",
+        "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
+    }
+    if env_vars.get("DFE_SECRETS_BACKEND", "openbao") == "openbao":
+        required |= {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}
+    return required
+
+
 def get_tf_outputs(tf_dir: str) -> dict[str, tuple[str, bool]]:
     """Run `terraform output -json` and return name -> (value, sensitive).
 
@@ -148,23 +175,7 @@ def main() -> None:
         sys.exit(1)
 
     # Validate required vars
-    required = {
-        "DFE_ENV",
-        "DFE_CLOUD",
-        "DFE_REGION",
-        "DFE_DOMAIN",
-        "DFE_PROFILE",
-        "DFE_REPO_URL",
-        "DFE_TARGET_REVISION",
-        "DFE_STORAGE_CLASS",
-        "DFE_NAMESPACE",
-        "DFE_CLICKHOUSE_HOST",
-        "DFE_KAFKA_BOOTSTRAP",
-        "DFE_OTEL_ENDPOINT",
-        "DFE_VAULT_ADDR",
-        "DFE_VAULT_ROLE_ID",
-        "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
-    }
+    required = _required_vars(env_vars)
     missing = required - set(env_vars.keys())
     if missing:
         print(f"ERROR: Missing required outputs: {', '.join(sorted(missing))}", file=sys.stderr)

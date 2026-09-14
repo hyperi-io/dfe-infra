@@ -7,3 +7,7 @@
 # never committed.
 *.auto.tfvars.json
 dfe-test.*
+# The resolver's per-deployment artefacts written under --out belong to the
+# deployment, not the repo -- the committed answer is repo-root shapes/resolved/.
+shapes/
+sizing/

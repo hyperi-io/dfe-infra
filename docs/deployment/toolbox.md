@@ -75,7 +75,15 @@ dfe-ops bastion down                # terminate, then PROVE nothing remains
 ```
 
 `forward` reaches a named target `bastion status` lists: the EKS API, one
-entry per Kafka broker, and ClickHouse when the dial names a host.
+`kafka` target reaching a single bootstrap broker, and ClickHouse when the
+dial names a host. `kafka`'s key and port are known at plan time (the
+bootstrap broker's own), so the target can be enabled in the dial before the
+first apply, and reaching it proves reachability, TLS and SASL against the
+cluster. A client that must follow metadata to the other brokers -- most
+real Kafka clients do -- runs on the instance instead: `dfe-ops bastion
+shell` opens a logged interactive session there, with kcat installed, because
+the brokers' advertised hostnames resolve only inside the VPC.
+
 Each target has its OWN Session document with the host and port fixed in the
 document body -- `--parameters host=...` against one fails as an unknown
 parameter -- the reason a forward cannot reach the instance's own metadata

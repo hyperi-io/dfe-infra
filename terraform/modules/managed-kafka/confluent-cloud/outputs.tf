@@ -5,6 +5,11 @@ output "bootstrap" {
   value       = replace(confluent_kafka_cluster.this.bootstrap_endpoint, "/^[a-zA-Z0-9_+.-]+:\\/\\//", "")
 }
 
+output "bootstrap_port" {
+  description = "The Kafka client port, 9092 -- a literal known at plan time, unlike the bootstrap host, so a caller can key a for_each on the target before the cluster exists."
+  value       = 9092
+}
+
 output "bootstrap_iam" {
   description = "Empty. Confluent Cloud has no IAM-authenticated endpoint -- the contract carries this for MSK, where the in-cluster bootstrap Job needs one."
   value       = ""

@@ -5,6 +5,11 @@ output "bootstrap" {
   value       = aws_msk_cluster.this.bootstrap_brokers_sasl_scram
 }
 
+output "bootstrap_port" {
+  description = "The SASL/SCRAM client port, 9096 -- a literal known at plan time, unlike the bootstrap host, so a caller can key a for_each on the target before the cluster exists."
+  value       = 9096
+}
+
 output "bootstrap_iam" {
   description = "The SASL/IAM bootstrap string on port 9098. The bootstrap Job uses it; nothing in DFE does."
   value       = aws_msk_cluster.this.bootstrap_brokers_sasl_iam

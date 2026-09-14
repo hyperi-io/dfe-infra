@@ -54,17 +54,24 @@ A few things hold for every deployment:
 - Estimate `sizing.ingest_gb_per_day` in GB/day, or leave it blank for the
   tyre-kick floor -- the smallest shape that runs the profile without an
   out-of-memory kill, with whatever throughput it happens to carry reported
-  rather than targeted. On AWS economy focus that floor is verified at
-  USD 2,316/month compute: `m9g.large` for kafka-broker and eks-system,
-  `m9g.medium` for kraft-controller (a 1 vCPU/4 GiB floor with no data
-  volume of its own), `r9gd.large` for clickhouse, and `m9g.2xlarge` for
-  keeper -- its own 6,000-IOPS fsync demand is the one workload that still
-  needs it, plus the fixed `general` (`m9g.xlarge`) and `ci-burst`
-  (`c8gd.4xlarge`) pools. There is no blanket `xlarge` minimum: each
-  workload floors at its own vCPU/RAM/IOPS demand plus the mandatory gp3
-  root volume's own small demand (10 MiB/s, 300 IOPS), so kraft-controller
-  and eks-system clear at `medium`/`large` while keeper's fsync target
-  alone keeps it at `2xlarge`.
+  rather than targeted. On AWS economy focus with `kafka.provider: msk` the
+  resolver's own live run resolves that floor at USD 2,245/month compute:
+  `m9g.large` for eks-system, `m9g.xlarge` for general, `r9gd.large` for
+  clickhouse, `m9g.large` for keeper, three `express.m7g.large` for
+  msk-broker, and `c8gd.4xlarge` for ci-burst. With Kafka running in-cluster
+  (`kafka.provider: strimzi`) the same floor drops to USD 1,673/month:
+  kafka-broker and eks-system both sit on `m9g.large`, kraft-controller
+  drops to `m9g.medium`, and there is no MSK line -- clickhouse, keeper,
+  general and ci-burst are unchanged. Both figures are on-demand Linux
+  pricing from the AWS Pricing API, taken 2026-09-13 -- they drift, and the
+  resolver's own `sizing/<profile>.report.md` (written under `--out`) is
+  the current answer, not this paragraph. At the floor the resolver's A4
+  check WARNS rather than fails: `r9gd.large` and `m9g.large` sustain only
+  3,600 IOPS / 95 MiB/s on their EBS baseline and can burst above it for 30
+  minutes a day, while ClickHouse and Keeper write continuously. The floor
+  is the smallest shape that runs, not a throughput target -- set
+  `sizing.ingest_gb_per_day` once you know it, so the resolver sizes for
+  the workload instead of the minimum.
 
 ### Resolving sizing artefacts
 
@@ -132,10 +139,34 @@ A few things hold for every deployment:
 - The root creates the VPC and its subnets, the EKS cluster and its node
   groups, the MSK cluster when the dial asks for one, the deployment's KMS
   key, the Route 53 zones and the Secrets Manager store -- and nothing that
-  runs inside Kubernetes. `eval "$(tofu output -raw kubeconfig_command)"`
-  gets you `kubectl`; `python3 bootstrap/bridge.py --tf-dir
-  terraform/environments/aws` reads the rest of the `DFE_*` outputs into the
-  bootstrap run.
+  runs inside Kubernetes. The deploying principal's EKS access entry uses
+  `data.aws_iam_session_context.issuer_arn`, so an SSO permission set, an
+  assumed role, an instance profile or a Lambda role all work; the entry
+  names the IAM role -- with its `aws-reserved/sso.amazonaws.com/<region>/`
+  path for SSO -- not the STS session ARN.
+- `eval "$(tofu output -raw kubeconfig_command)"` gets you `kubectl`;
+  `python3 bootstrap/bridge.py --tf-dir terraform/environments/aws` reads
+  the rest of the `DFE_*` outputs into the bootstrap run, and needs
+  `DFE_VAULT_ADDR` / `DFE_VAULT_ROLE_ID` only when `secrets.backend` is
+  `openbao`. `k8s.repo_url` is this repo -- dfe-infra, which stays private
+  until GA -- so `DFE_REPO_TOKEN` (an HTTPS token with read access;
+  `bootstrap.sh` turns it into the Argo repository credential) is required
+  today: without it every Layer 2 Application stays `Unknown` with
+  "authentication required". `DFE_PULL_SECRET_TOKEN` (a GHCR pull token) is
+  required the same way, for the dfe-* app images.
+- On a cluster with no default StorageClass, `bootstrap.sh` creates one
+  named `k8s.storage_class` -- provisioner `ebs.csi.aws.com`, gp3 baseline
+  3,000 IOPS / 125 MiB/s, encrypted with the account's default EBS key,
+  `WaitForFirstConsumer`, marked default -- because EKS 1.30+ ships only
+  `gp2` with no default class and the CSI add-on creates none itself.
+  Per-use-case classes are a follow-on. The same run's internal-CA persist
+  step renders the gateway chart with the identical value files Argo layers
+  afterwards: `argocd/values/common.yaml`, `argocd/values/<cloud>.yaml`,
+  `argocd/values/profile-<profile>.yaml`.
+- The AWS Load Balancer Controller is given `vpcId` (the `DFE_VPC_ID`
+  output, carried on the cluster secret as `dfe.hyperi.io/vpc_id`) and
+  `region` explicitly rather than discovering them itself; node IMDS hop
+  limit stays at 1.
 
 ## Kafka and ClickHouse
 

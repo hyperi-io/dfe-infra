@@ -81,12 +81,23 @@ mock_provider "aws" {
 
   // The deploying principal aws_eks_access_entry.creator names, so the
   // implicit bootstrap_cluster_creator_admin_permissions grant it replaces is
-  // made explicit rather than left to whoever ran apply.
+  // made explicit rather than left to whoever ran apply. Shaped as the STS
+  // session ARN every assumed role returns -- SSO permission set, cross-
+  // account AssumeRole, instance profile, Lambda -- which is what
+  // aws_iam_session_context below has to resolve back to an IAM role ARN.
   mock_data "aws_caller_identity" {
     defaults = {
       account_id = "000000000000"
-      arn        = "arn:aws:iam::000000000000:role/mock-deployer"
+      arn        = "arn:aws:sts::000000000000:assumed-role/mock-deployer/mock-session"
       user_id    = "AROAMOCKMOCKMOCKMOCK"
+    }
+  }
+
+  // The IAM role ARN, path included, that issued the assumed-role session
+  // above -- what EKS's CreateAccessEntry actually accepts.
+  mock_data "aws_iam_session_context" {
+    defaults = {
+      issuer_arn = "arn:aws:iam::000000000000:role/aws-reserved/sso.amazonaws.com/us-west-2/mock-deployer"
     }
   }
 }
@@ -200,8 +211,13 @@ run "aws_cluster_creator_is_named_not_implied" {
   }
 
   assert {
-    condition     = aws_eks_access_entry.creator.principal_arn == data.aws_caller_identity.current.arn
-    error_message = "the deploying principal's access entry must name the caller"
+    condition     = aws_eks_access_entry.creator.principal_arn == data.aws_iam_session_context.current.issuer_arn
+    error_message = "the deploying principal's access entry must name the session context's issuer_arn -- the IAM role EKS accepts, not the STS session ARN"
+  }
+
+  assert {
+    condition     = aws_eks_access_entry.creator.principal_arn != data.aws_caller_identity.current.arn
+    error_message = "the access entry must never be the raw STS assumed-role session ARN, which EKS's CreateAccessEntry rejects"
   }
 
   assert {

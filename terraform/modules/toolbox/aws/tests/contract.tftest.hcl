@@ -78,7 +78,7 @@ variables {
 
   targets = {
     eks-api    = { host = "ABCDEF1234.gr7.us-west-2.eks.amazonaws.com", port = 443 }
-    kafka-0    = { host = "b-1.mock.kafka.us-west-2.amazonaws.com", port = 9096 }
+    kafka      = { host = "b-1.mock.kafka.us-west-2.amazonaws.com", port = 9096 }
     clickhouse = { host = "dfe-clickhouse.dfe.svc.cluster.local", port = 9440 }
   }
 
@@ -137,7 +137,7 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
     condition = length([
       for r in aws_vpc_security_group_egress_rule.targets : r if r.from_port == 9096
     ]) == 1
-    error_message = "the kafka-0 target's port (9096) must have its own egress rule"
+    error_message = "the kafka target's port (9096) must have its own egress rule"
   }
 
   assert {
