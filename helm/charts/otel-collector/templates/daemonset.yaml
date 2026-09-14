@@ -26,7 +26,7 @@ spec:
       serviceAccountName: {{ include "dfe-common.fullname" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
-        - name: otel-collector
+        - name: {{ include "otel-collector.daemonsetContainerName" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["--config=/etc/otel/daemonset-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}

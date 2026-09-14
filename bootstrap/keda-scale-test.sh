@@ -44,7 +44,6 @@ SCALE_IN_TIMEOUT="${DFE_SCALE_IN_TIMEOUT:-420}"
 # Phase 2: the real app whose shipped ScaledObject carries the shim trigger.
 REAL_DEP="${DFE_KEDA_REAL_DEPLOYMENT:-dfe-receiver}"
 REAL_OUT_TIMEOUT=150    # the app's 15s pollingInterval plus the HPA's own sync
-REAL_HOLD=90            # seconds of sustained pressure, a row every 10s
 REAL_ZERO_HOLD=60       # seconds of zeros, one full shim averaging window
 HOLD_PID=""
 
@@ -195,7 +194,17 @@ if [ -z "${REAL_URL}" ]; then
     log "SKIP: ${REAL_SO} has no metrics-api trigger, so pressure does not drive it here"
     exit 0
 fi
-# The ServiceName to inject is the one the shim is asked for, not the deployment name.
+# The ServiceName to inject is the one the shim is asked for, not the deployment
+# name. `##*service=` returns the URL unchanged when there is no match, so a
+# trigger URL with no service= param would otherwise inject pressure for the
+# whole URL string instead of skipping.
+case "${REAL_URL}" in
+    *service=*) ;;
+    *)
+        log "SKIP: ${REAL_SO}'s metrics-api trigger URL has no service= param"
+        exit 0
+        ;;
+esac
 REAL_SERVICE="${REAL_URL##*service=}"
 REAL_SERVICE="${REAL_SERVICE%%&*}"
 REAL_MIN="$(kubectl -n "${NS}" get scaledobject "${REAL_SO}" -o jsonpath='{.spec.minReplicaCount}')"
@@ -203,8 +212,11 @@ REAL_MIN="${REAL_MIN:-1}"
 REAL_OUT=$((REAL_MIN + 1))
 log "${REAL_DEP}: floor ${REAL_MIN} replicas, shim ServiceName '${REAL_SERVICE}'"
 
-log "holding dfe_scaling_pressure=100 for '${REAL_SERVICE}' (${REAL_HOLD}s)"
-hold_pressure "${REAL_SERVICE}" 100 "${REAL_HOLD}" &
+# Held for the full scale-out window: the shim averages the last 60s, so
+# pressure that stops early lets the average decay before a slow HPA sync
+# finishes and the assertion runs.
+log "holding dfe_scaling_pressure=100 for '${REAL_SERVICE}' (${REAL_OUT_TIMEOUT}s)"
+hold_pressure "${REAL_SERVICE}" 100 "${REAL_OUT_TIMEOUT}" &
 HOLD_PID=$!
 
 log "asserting SCALE-OUT to ${REAL_OUT} (bounded ${REAL_OUT_TIMEOUT}s)..."
