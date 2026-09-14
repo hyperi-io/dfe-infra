@@ -51,6 +51,8 @@ spec:
               protocol: {{ .protocol | default "TCP" }}
             {{- end }}
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_RECEIVER_") | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # Same flat-env contract as the SASL block below (mod.rs:261, prefix
@@ -139,7 +141,6 @@ spec:
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-receiver
-            {{- include "dfe-common.extraEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/dfe-receiver
