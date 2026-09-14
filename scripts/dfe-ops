@@ -194,6 +194,8 @@ DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 # bootstrap.sh's required env (validated up-front so a missing var fails the
 # driver before it touches the cluster, not mid-run). DFE_KAFKA_BOOTSTRAP is
 # intentionally omitted -- it is empty in the brokerless modes (gRPC transport).
+# Backend-independent: the two OpenBao AppRole outputs live in
+# bootstrap_required() below, since the aws-sm root never emits them.
 BOOTSTRAP_REQUIRED = (
     "DFE_ENV",
     "DFE_CLOUD",
@@ -206,10 +208,28 @@ BOOTSTRAP_REQUIRED = (
     "DFE_NAMESPACE",
     "DFE_CLICKHOUSE_HOST",
     "DFE_OTEL_ENDPOINT",
-    "DFE_VAULT_ADDR",
-    "DFE_VAULT_ROLE_ID",
     "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
 )
+
+
+def bootstrap_required(env: Mapping[str, str]) -> tuple[str, ...]:
+    """Required env for a deploy, adding the vault two only on the OpenBao backend.
+
+    DFE_VAULT_ADDR and DFE_VAULT_ROLE_ID are AppRole outputs the OpenBao
+    secrets backend emits; on aws-sm the store's own identity (the instance
+    or pod role) is the credential, so those two never exist to check.
+
+    Args:
+        env: The assembled deploy env, read for DFE_SECRETS_BACKEND.
+
+    Returns:
+        BOOTSTRAP_REQUIRED, plus the vault two when the backend is openbao
+        (the default when DFE_SECRETS_BACKEND is unset).
+    """
+    if env.get("DFE_SECRETS_BACKEND", "openbao") == "openbao":
+        return (*BOOTSTRAP_REQUIRED, "DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID")
+    return BOOTSTRAP_REQUIRED
+
 
 # A representative set of app charts is rendered alongside the mode's substrate
 # charts, so an app-side profile break is caught before deploy.
@@ -2706,7 +2726,7 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     env["DFE_STACK_VERSION"] = args.stack
 
     # Fail early on incomplete env -- clearer than a mid-bootstrap abort.
-    missing = [v for v in BOOTSTRAP_REQUIRED if not env.get(v)]
+    missing = [v for v in bootstrap_required(env) if not env.get(v)]
     if missing:
         print(f"ERROR: missing required deploy env: {', '.join(missing)}", file=sys.stderr)
         print(
