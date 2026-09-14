@@ -160,6 +160,11 @@ run "msk_contract_outputs" {
   }
 
   assert {
+    condition     = output.bootstrap_port == 9096
+    error_message = "bootstrap_port must be the SASL/SCRAM port MSK serves on, a literal known at plan time"
+  }
+
+  assert {
     condition     = strcontains(output.bootstrap_iam, ":9098")
     error_message = "bootstrap_iam must be the SASL/IAM endpoint, which MSK serves on 9098"
   }

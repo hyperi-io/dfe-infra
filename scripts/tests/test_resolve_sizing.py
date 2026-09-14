@@ -1604,7 +1604,7 @@ secrets:
 k8s:
   env: test
   storage_class: gp3
-  repo_url: https://github.com/example/dfe-deploy.git
+  repo_url: https://github.com/example/dfe-infra.git
   target_revision: main
 endpoints:
   clickhouse_host: ""

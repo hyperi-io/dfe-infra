@@ -54,11 +54,14 @@ SCRATCH_KUBECONFIG = REPO_ROOT / ".tmp" / "toolbox-eks-api.kubeconfig"
 # instance/security-group/IAM-role/documents) plus the two EKS access-entry
 # resources the aws root grants alongside it. Not the whole root: applying it
 # in full would also reconcile drift on the cluster and Kafka, which is a
-# bigger and slower operation than "bring the toolbox up".
+# bigger and slower operation than "bring the toolbox up". Both access-entry
+# resources live INSIDE module.cluster (kubernetes-cluster/aws/eks.tf,
+# "Toolbox operator"), not at the aws root, so the target address must be
+# module-qualified or tofu reports "Resource not found in module".
 TOOLBOX_TARGETS = (
     "-target=module.toolbox",
-    "-target=aws_eks_access_entry.toolbox_operator",
-    "-target=aws_eks_access_policy_association.toolbox_operator_view",
+    "-target=module.cluster.aws_eks_access_entry.toolbox_operator",
+    "-target=module.cluster.aws_eks_access_policy_association.toolbox_operator_view",
 )
 
 DEFAULT_WAIT_TIMEOUT = 300.0

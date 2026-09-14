@@ -142,10 +142,10 @@ TOOLBOX_OUTPUTS = {
                 "port": 443,
                 "document_name": "dfe-test-toolbox-forward-eks-api",
             },
-            "kafka-0": {
+            "kafka": {
                 "host": "b-1.mock.kafka.us-west-2.amazonaws.com",
                 "port": 9096,
-                "document_name": "dfe-test-toolbox-forward-kafka-0",
+                "document_name": "dfe-test-toolbox-forward-kafka",
             },
         }
     },
@@ -200,6 +200,8 @@ def test_up_sets_enabled_applies_and_waits_for_online(
     assert any("render_dial.py" in str(part) for part in tofu_calls[0])
     assert "apply" in tofu_calls[1]
     assert "-target=module.toolbox" in tofu_calls[1]
+    assert "-target=module.cluster.aws_eks_access_entry.toolbox_operator" in tofu_calls[1]
+    assert "-target=module.cluster.aws_eks_access_policy_association.toolbox_operator_view" in tofu_calls[1]
     assert any("describe-instance-information" in call for call in aws_calls)
 
 
@@ -292,13 +294,13 @@ def test_forward_invokes_start_session_with_the_named_targets_document(
     calls: list[list[str]] = []
     monkeypatch.setattr(bastion, "_run_interactive", lambda cmd: calls.append(cmd) or 0)
 
-    rc = bastion.cmd_bastion_forward(_args(target="kafka-0", local_port=19096))
+    rc = bastion.cmd_bastion_forward(_args(target="kafka", local_port=19096))
 
     assert rc == 0
     assert calls[0] == [
         "aws", "ssm", "start-session",
         "--target", "i-0123456789abcdef0",
-        "--document-name", "dfe-test-toolbox-forward-kafka-0",
+        "--document-name", "dfe-test-toolbox-forward-kafka",
         "--parameters", "localPortNumber=19096",
     ]
 
@@ -315,7 +317,7 @@ def test_forward_prints_that_the_session_is_not_recorded(
 ) -> None:
     _mock_outputs(monkeypatch)
     monkeypatch.setattr(bastion, "_run_interactive", lambda cmd: 0)
-    bastion.cmd_bastion_forward(_args(target="kafka-0", local_port=19096))
+    bastion.cmd_bastion_forward(_args(target="kafka", local_port=19096))
     assert "NOT recorded" in capsys.readouterr().err
 
 
@@ -346,7 +348,7 @@ def test_forward_to_kafka_writes_no_kubeconfig(tmp_path: Path, monkeypatch: pyte
     scratch = tmp_path / "toolbox-eks-api.kubeconfig"
     monkeypatch.setattr(bastion, "SCRATCH_KUBECONFIG", scratch)
 
-    bastion.cmd_bastion_forward(_args(target="kafka-0", local_port=19096))
+    bastion.cmd_bastion_forward(_args(target="kafka", local_port=19096))
 
     assert not scratch.exists()
 
@@ -515,4 +517,4 @@ def test_status_reports_ping_and_active_sessions(
     assert "Online" in err
     assert "active sessions: 1" in err
     assert "eks-api" in err
-    assert "kafka-0" in err
+    assert "kafka" in err

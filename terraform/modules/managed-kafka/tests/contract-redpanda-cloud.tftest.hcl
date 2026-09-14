@@ -114,6 +114,11 @@ run "redpanda_cloud_contract_outputs" {
     error_message = "bootstrap must be the Kafka API endpoint, which Redpanda serves on 9092"
   }
 
+  assert {
+    condition     = output.bootstrap_port == 9092
+    error_message = "bootstrap_port must be the Kafka API client port, a literal known at plan time"
+  }
+
   // Private connectivity is the default, so the PRIVATE seed brokers are what a
   // caller gets without asking for anything.
   assert {

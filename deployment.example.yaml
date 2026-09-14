@@ -460,9 +460,9 @@ k8s:
   cloud: local               # DFE_CLOUD -- local | aws | gcp | azure | rancher
   region: local              # DFE_REGION
   domain: ""                 # DFE_DOMAIN -- estate, blank in template
-  storage_class: local-path  # DFE_STORAGE_CLASS -- local-path | gp3 | pd-ssd | managed-csi
-  repo_url: ""               # DFE_REPO_URL -- the dfe-infra chart source (Argo repo), estate
-  target_revision: main      # DFE_TARGET_REVISION -- Argo targetRevision (versionSet ref)
+  storage_class: local-path  # DFE_STORAGE_CLASS -- local-path | gp3 | standard-rwo | managed-csi
+  repo_url: ""               # DFE_REPO_URL -- this repo's URL (dfe-infra); private until GA, so DFE_REPO_TOKEN is required, estate
+  target_revision: main      # DFE_TARGET_REVISION -- the ref under deployment (versionSet ref)
   workload_identity_annotations: "{}"  # DFE_WORKLOAD_IDENTITY_ANNOTATIONS -- IRSA / WI, cloud
   ## Cloud-swap knobs. Blank = the cluster/chart default (local-path, ClusterIP).
   ## Set per cloud (see the AWS worked example below). These layer onto the

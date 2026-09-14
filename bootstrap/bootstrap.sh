@@ -28,7 +28,10 @@
 #   DFE_REPO_SSH_KEY         optional; path to an SSH key when the chart repo is
 #                            private and DFE_REPO_URL is an SSH URL
 #   DFE_TARGET_REVISION      Git branch/tag (e.g. main)
-#   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard
+#   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard. On DFE_CLOUD=aws,
+#                            bootstrap.sh creates this class itself (gp3, the
+#                            free-tier baseline) when the cluster does not
+#                            already have one by this name -- step [1b/7].
 #   DFE_NAMESPACE            K8s namespace for DFE apps (e.g. dfe-prod)
 #   DFE_CLICKHOUSE_HOST      ClickHouse service hostname
 #   DFE_KAFKA_BOOTSTRAP      Kafka bootstrap servers
@@ -82,6 +85,12 @@
 #                            Balancer Controller appset's cluster_name
 #                            annotation; empty omits the annotation (non-EKS
 #                            clouds)
+#   DFE_VPC_ID               the EKS cluster's VPC id, for the AWS Load
+#                            Balancer Controller appset's vpcId annotation --
+#                            the controller's node is one IMDS hop from a pod
+#                            and the managed node groups keep the hop limit at
+#                            1, so it cannot learn its VPC from metadata; empty
+#                            omits the annotation (non-EKS clouds)
 #   DFE_KARPENTER_DISCOVERY_TAG      the karpenter.sh/discovery tag value, for
 #                            karpenter-pools' karpenter.cluster.discoveryTag;
 #                            empty omits the annotation (non-AWS clouds)
@@ -344,6 +353,9 @@ export DFE_EKS_AUDIT_LOG_GROUP="${DFE_EKS_AUDIT_LOG_GROUP:-}"
 # The EKS cluster name for the LBC appset's cluster_name annotation, rendered only when set.
 export DFE_KUBE_CLUSTER_NAME="${DFE_KUBE_CLUSTER_NAME:-}"
 export DFE_KUBE_CLUSTER_NAME_ANNOTATION="${DFE_KUBE_CLUSTER_NAME:+dfe.hyperi.io/cluster_name: \"${DFE_KUBE_CLUSTER_NAME}\"}"
+# The EKS cluster's VPC id for the LBC appset's vpcId annotation, rendered only when set.
+export DFE_VPC_ID="${DFE_VPC_ID:-}"
+export DFE_VPC_ID_ANNOTATION="${DFE_VPC_ID:+dfe.hyperi.io/vpc_id: \"${DFE_VPC_ID}\"}"
 # The karpenter-pools chart's three cluster facts, each rendered only when set --
 # empty on a non-AWS cloud, where Karpenter does not run.
 export DFE_KARPENTER_DISCOVERY_TAG="${DFE_KARPENTER_DISCOVERY_TAG:-}"
@@ -471,11 +483,19 @@ else
 fi
 
 echo "==> [1b/7] StorageClass (detect-or-install)"
-# DFE assumes only a bare cluster. If a default StorageClass exists -> ADOPT it.
-# If StorageClasses exist but none is default -> use DFE_STORAGE_CLASS as-is. If
-# NONE exist (bare RKE2/EKS) -> INSTALL local-path-provisioner (pinned) and mark
-# it default, so the substrate's PVCs (CH/Gitea/CNPG) can bind with no deployer
-# input. This is the onboarding-contract storage derive.
+# DFE assumes only a bare cluster, and the cluster shows up in one of four
+# states:
+#   1. a default StorageClass already exists            -> ADOPT it
+#   2. StorageClass(es) exist, none default              -> use DFE_STORAGE_CLASS
+#      as-is (the common case below covers when that class does not exist yet)
+#   3. no StorageClass at all (bare RKE2)                 -> INSTALL
+#      local-path-provisioner (pinned) and mark it default, so the data pods'
+#      PVCs (CH/Gitea/CNPG) can bind with no deployer input
+#   4. DFE_CLOUD=aws and DFE_STORAGE_CLASS still does not exist after the
+#      above -- EKS 1.30+ ships gp2 with no default, and the aws-ebs-csi-driver
+#      add-on makes gp3 POSSIBLE but creates no StorageClass object of its own
+#                                                         -> CREATE it (checked
+#      after this if/elif/else, once the state above is known)
 if kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null | grep -q true; then
   echo "  default StorageClass present -> ADOPT"
 elif [[ -n "$(kubectl get storageclass -o name 2>/dev/null)" ]]; then
@@ -501,6 +521,18 @@ else
       kubectl -n local-path-storage rollout restart deployment/local-path-provisioner
       kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
     fi
+  fi
+fi
+# Case 4: AWS-only, and independent of which branch above ran -- EKS 1.30+
+# ships gp2 with no default, so DFE_STORAGE_CLASS (gp3) can still be missing
+# after the detect logic decides "use it as-is". Create the free-tier baseline
+# so the data pods' PVCs have something to bind to with no deployer input.
+if [[ "${DFE_CLOUD}" == "aws" ]] && ! kubectl get storageclass "${DFE_STORAGE_CLASS}" >/dev/null 2>&1; then
+  echo "  AWS: DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS} does not exist -> creating it (gp3, ebs.csi.aws.com)"
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/storageclass-aws.yaml.tpl | kubectl apply -f -"
+  else
+    envsubst < "${TEMPLATES_DIR}/storageclass-aws.yaml.tpl" | kubectl apply -f -
   fi
 fi
 
@@ -660,15 +692,30 @@ elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
   echo "  client must trust it again after a rebuild. Set DFE_VAULT_SECRET_ID so the deployment"
   echo "  has a working secret store, or DFE_CA_PERSIST=true to force it."
 elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-  echo "[DRY-RUN] helm template envoy-gateway-config -s templates/internal-ca-persist.yaml | kubectl apply -f -"
+  echo "[DRY-RUN] helm template envoy-gateway-config -f common.yaml -f ${DFE_CLOUD}.yaml -f profile-${DFE_PROFILE}.yaml --set domain=${DFE_DOMAIN} --set tls.internalCA.persist.enabled=true -s templates/internal-ca-persist.yaml | kubectl apply -f -"
 else
   kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -
+  # --show-only still renders EVERY template before filtering to the one named,
+  # and _routes.tpl's routeHost helper fail()s on a route whose hostname it
+  # cannot resolve against the chart's own bare defaults. Layer the same value
+  # files Argo does (argocd/appsets/layer2-platform.yaml), in the same order,
+  # so this render sees what a real deploy would.
+  ca_value_files=()
+  for ca_values_file in \
+    "${REPO_ROOT}/argocd/values/common.yaml" \
+    "${REPO_ROOT}/argocd/values/${DFE_CLOUD}.yaml" \
+    "${REPO_ROOT}/argocd/values/profile-${DFE_PROFILE}.yaml"; do
+    [[ -f "${ca_values_file}" ]] && ca_value_files+=(-f "${ca_values_file}")
+  done
   helm template dfe-internal-ca "${REPO_ROOT}/helm/charts/envoy-gateway-config" \
     --namespace cert-manager \
     --show-only templates/internal-ca-persist.yaml \
+    "${ca_value_files[@]}" \
     --set "env=${DFE_ENV}" \
     --set "cloud=${DFE_CLOUD}" \
+    --set "domain=${DFE_DOMAIN}" \
     --set "tls.internalCA.persist.secretStoreName=${DFE_CA_SECRET_STORE:-dfe-secret-store}" \
+    --set "tls.internalCA.persist.enabled=true" \
     | kubectl apply -f -
   # A poll, not `kubectl wait --for=create`: that needs kubectl >= 1.31.
   # A first bootstrap has nothing to restore, so the timeout is expected.

@@ -25,7 +25,7 @@ node_shapes:
 
 storage_classes:
   state: managed
-  reason: "compute-shapes.yaml sets storage_class_owner: terraform for aws -- the StorageClasses are created by tofu, one per use case, with both iops and throughput set explicitly (A6 in resolve_sizing.py refuses an unset throughput or an iopsPerGB field)."
+  reason: "compute-shapes.yaml sets storage_class_owner: bootstrap for aws -- bootstrap.sh creates the baseline gp3 class (3,000 IOPS / 125 MiB/s, the free tier) when the cluster has none; per-use-case classes with the resolved iops and throughput (A6 in resolve_sizing.py refuses an unset throughput or an iopsPerGB field) are a follow-on, not yet built."
 
 karpenter_generation_floor:
   state: managed

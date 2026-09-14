@@ -11,6 +11,20 @@ data "aws_partition" "current" {}
 // the cluster" rule.
 data "aws_caller_identity" "current" {}
 
+// aws_caller_identity.current.arn is the STS session ARN for an assumed role
+// (arn:aws:sts::<acct>:assumed-role/<role>/<session>) -- an SSO permission
+// set, a cross-account AssumeRole, an instance profile or a Lambda role all
+// return this shape, and EKS's CreateAccessEntry rejects it outright. The
+// bare role name recovered from that ARN is rejected too: an SSO role's real
+// ARN carries a path (arn:aws:iam::<acct>:role/aws-reserved/sso.amazonaws.com/
+// <region>/<name>) that no regex on the STS ARN can reconstruct.
+// aws_iam_session_context resolves the session ARN back to the IAM role that
+// issued it, path included, and is a no-op (issuer_arn == arn) for a plain
+// IAM user.
+data "aws_iam_session_context" "current" {
+  arn = data.aws_caller_identity.current.arn
+}
+
 locals {
   // AWS-managed policies are addressed by name under the aws-managed account;
   // only the partition varies, which is why it is read rather than written.
@@ -107,14 +121,14 @@ resource "aws_eks_cluster" "this" {
 // read back rather than being inferred from whoever happened to run apply.
 resource "aws_eks_access_entry" "creator" {
   cluster_name  = aws_eks_cluster.this.name
-  principal_arn = data.aws_caller_identity.current.arn
+  principal_arn = data.aws_iam_session_context.current.issuer_arn
 
   type = "STANDARD"
 }
 
 resource "aws_eks_access_policy_association" "creator_admin" {
   cluster_name  = aws_eks_cluster.this.name
-  principal_arn = data.aws_caller_identity.current.arn
+  principal_arn = data.aws_iam_session_context.current.issuer_arn
   policy_arn    = "arn:${data.aws_partition.current.partition}:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
 
   access_scope {

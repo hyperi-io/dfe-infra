@@ -127,6 +127,41 @@ def test_json_output_reads_sensitive_flag_with_no_second_call() -> None:
     )
 
 
+_BASE_ENV = {
+    "DFE_ENV": "prod",
+    "DFE_CLOUD": "aws",
+    "DFE_REGION": "us-east-1",
+    "DFE_DOMAIN": "dfe.example.com",
+    "DFE_PROFILE": "scale",
+    "DFE_REPO_URL": "https://example.com/repo.git",
+    "DFE_TARGET_REVISION": "main",
+    "DFE_STORAGE_CLASS": "gp3",
+    "DFE_NAMESPACE": "dfe-prod",
+    "DFE_CLICKHOUSE_HOST": "clickhouse.example.com",
+    "DFE_KAFKA_BOOTSTRAP": "broker:9092",
+    "DFE_OTEL_ENDPOINT": "otel:4317",
+    "DFE_WORKLOAD_IDENTITY_ANNOTATIONS": "{}",
+}
+
+
+def test_aws_sm_backend_with_no_vault_vars_passes_validation() -> None:
+    """The aws root never emits DFE_VAULT_ADDR/DFE_VAULT_ROLE_ID -- they are
+    openbao-only, and an aws-sm deployment must not be refused for lacking
+    them."""
+    env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": "aws-sm"}
+    missing = bridge._required_vars(env_vars) - set(env_vars.keys())
+    expect("an aws-sm deployment has nothing missing", not missing, f"{missing}")
+
+
+def test_openbao_backend_with_no_vault_vars_still_fails_naming_both_keys() -> None:
+    """openbao is the default backend, and without the AppRole address/role_id
+    ESO can never authenticate."""
+    env_vars = dict(_BASE_ENV)
+    missing = bridge._required_vars(env_vars) - set(env_vars.keys())
+    expect("DFE_VAULT_ADDR is named as missing", "DFE_VAULT_ADDR" in missing, f"{missing}")
+    expect("DFE_VAULT_ROLE_ID is named as missing", "DFE_VAULT_ROLE_ID" in missing, f"{missing}")
+
+
 def test_binary_finder_returns_none_rather_than_exiting() -> None:
     """It must be non-fatal now, or the fallback below it is unreachable."""
     result = bridge._find_tf_binary()

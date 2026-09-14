@@ -5,6 +5,11 @@ output "bootstrap" {
   value       = local.bootstrap
 }
 
+output "bootstrap_port" {
+  description = "The Kafka API client port, 9092 -- a literal known at plan time, unlike the bootstrap host, so a caller can key a for_each on the target before the cluster exists."
+  value       = 9092
+}
+
 output "bootstrap_iam" {
   description = "Empty. Redpanda Cloud has no IAM-authenticated endpoint -- the contract carries this for MSK, where the in-cluster bootstrap Job needs one."
   value       = ""

@@ -32,6 +32,11 @@ metadata:
     # empty on non-EKS clouds, where DFE_KUBE_CLUSTER_NAME_ANNOTATION is unset
     # and this line renders blank rather than an empty-valued annotation.
     ${DFE_KUBE_CLUSTER_NAME_ANNOTATION}
+    # The EKS cluster's VPC id, so the LBC does not have to learn it from
+    # instance metadata -- the controller's pod is two IMDS hops away and the
+    # managed node groups keep the hop limit at 1. Blank on non-EKS clouds,
+    # same as the cluster_name annotation above.
+    ${DFE_VPC_ID_ANNOTATION}
     # The karpenter-pools chart's three cluster facts; each renders blank on a
     # non-AWS cloud, same as the cluster_name annotation above.
     ${DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION}
