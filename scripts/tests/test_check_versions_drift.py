@@ -401,6 +401,55 @@ def test_dropping_the_metallb_reason_reports_the_pin_dead() -> None:
            "bootstrap.metallb" in captured.getvalue(), captured.getvalue())
 
 
+def test_stack_flag_selects_a_different_block() -> None:
+    """`--stack` must change which block is flattened, not just be accepted."""
+    rc12 = drift.load_versions("2.2.0-rc.12")
+    rc13 = drift.load_versions("2.2.0-rc.13")
+    expect("rc.12 and rc.13 pin dfe-engine differently",
+           rc12["apps.dfe-engine"] != rc13["apps.dfe-engine"],
+           f"{rc12['apps.dfe-engine']!r} vs {rc13['apps.dfe-engine']!r}")
+    expect("the selected stack id travels as pointers.current",
+           rc12["pointers.current"] == "2.2.0-rc.12" and rc13["pointers.current"] == "2.2.0-rc.13")
+
+
+def test_default_stack_matches_the_current_pointer() -> None:
+    """No --stack means the same thing it always did: whatever `current` names."""
+    default = drift.load_versions()
+    explicit = drift.load_versions(default["pointers.current"])
+    expect("an explicit --stack matching current agrees with the default",
+           default == explicit)
+
+
+def test_unknown_stack_is_fatal() -> None:
+    raised = False
+    try:
+        drift.load_versions("not-a-real-stack")
+    except SystemExit:
+        raised = True
+    expect("an unknown --stack value is fatal", raised)
+
+
+def test_pending_note_fires_when_the_stack_lacks_the_key_entirely() -> None:
+    """rc.13 does not carry the AWS-only keys at all -- still worth a note."""
+    versions = drift.load_versions("2.2.0-rc.13")
+    covered = {c.key for c in drift.CHECKS}
+    notes = drift.pending_notes(versions, "2.2.0-rc.13", covered)
+    expect("toolbox is noted as absent from rc.13",
+           any("toolbox.*" in n and "does not carry" in n for n in notes), f"{notes}")
+
+
+def test_parse_args_ignores_flags_it_does_not_own() -> None:
+    """main() is called directly by this suite under the test runner's own
+    argv -- an unrelated flag (e.g. -q, a file path) must not be rejected."""
+    original = sys.argv
+    try:
+        sys.argv = ["check_versions_drift.py", "-q", "some/path", "--stack", "2.2.0-rc.13"]
+        args = drift._parse_args()
+        expect("an unrelated flag is tolerated", args.stack == "2.2.0-rc.13")
+    finally:
+        sys.argv = original
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):

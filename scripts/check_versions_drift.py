@@ -17,6 +17,16 @@ Run from the repo root (or anywhere -- paths resolve relative to this file's
 parent's parent). Exits non-zero on any mismatch, listing each one.
 
     python3 scripts/check_versions_drift.py
+    python3 scripts/check_versions_drift.py --stack 2.2.0-rc.12
+
+`--stack` picks which `stacks.<version>` block the appset pins, Chart.yaml
+appVersions and every other mirror are checked against; it defaults to the
+`current` pointer, so an existing caller with no flag sees no change. Some
+CHECKS entries watch a key that is pinned starting the 2.2.0-rc.14 block (cut
+on a separate branch, not merged here): a stack older than rc.14 carries no
+value for that key at all, so auditing it there is NOTED rather than failed --
+see PENDING_MIRRORS. A stack that does carry the key is compared strictly,
+like any other pin.
 
 No third-party deps required: versions.yaml and the structured files are parsed
 with a tiny purpose-built reader (the values we check are all simple
@@ -25,6 +35,7 @@ with a tiny purpose-built reader (the values we check are all simple
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from dataclasses import dataclass
@@ -66,29 +77,34 @@ def _parse_nested(text: str) -> dict:
     return root
 
 
-def load_versions() -> dict[str, str]:
-    """Flatten the CURRENT stack's sections into dotted keys -> value.
+def load_versions(stack: str | None = None) -> dict[str, str]:
+    """Flatten the SELECTED stack's sections into dotted keys -> value.
 
-    versions.yaml is NESTED (stacks: -> <version> -> <section> -> key). Read the
-    `current` pointer, descend into stacks[current], and flatten THAT stack's
-    sections (e.g. operators.keda, services.clickhouse-version). The drift-check
-    always validates the stack under development.
+    versions.yaml is NESTED (stacks: -> <version> -> <section> -> key). Read
+    the `current` pointer, resolve the selected stack (the `stack` argument if
+    given, else `current`), descend into stacks[selected], and flatten THAT
+    stack's sections (e.g. operators.keda, services.clickhouse-version). The
+    default keeps every existing caller checking the stack under development;
+    `--stack` lets a caller audit a different block (e.g. an in-flight cut)
+    without moving `current`.
 
-    The `current` pointer is also returned, as `pointers.current`.
+    The selected stack id is also returned, as `pointers.current` -- the name
+    is kept rather than renamed to `pointers.selected` because every existing
+    Check against deployment.example.yaml / dfe-stack/Chart.yaml already reads
+    that key, and what those files SHOULD say is exactly "the stack being
+    audited", default or overridden.
     """
     root = _parse_nested(VERSIONS_FILE.read_text())
     current = root.get("current")
     stacks = root.get("stacks", {})
-    if not current or current not in stacks:
+    selected = stack or current
+    if not selected or selected not in stacks:
         raise SystemExit(
-            f"versions.yaml: `current` ({current!r}) not found in stacks: "
+            f"versions.yaml: stack {selected!r} not found in stacks: "
             f"({', '.join(stacks) or 'none'})"
         )
-    # The `current` pointer is itself a pin -- deployment.example.yaml names a
-    # stack version the same way a chart names an image tag -- so it is exposed
-    # under a synthetic section rather than left unreachable to the checks.
-    flat: dict[str, str] = {"pointers.current": current}
-    for section, body in stacks[current].items():
+    flat: dict[str, str] = {"pointers.current": selected}
+    for section, body in stacks[selected].items():
         if isinstance(body, dict):
             for key, value in body.items():
                 if isinstance(value, str):
@@ -801,6 +817,66 @@ def unconsumed_reason(key: str) -> str | None:
     return UNCONSUMED.get(f"{section}.*")
 
 
+# Keys whose mirror (a chart, an appset entry, a Dockerfile ARG, a terraform
+# provider block) already exists in this tree, but whose versions.yaml pin
+# starts only with the 2.2.0-rc.14 block on a branch not merged here. A stack
+# older than rc.14 predates the key and carries no value to compare against,
+# so it is NOTED rather than failed; a stack that carries the key is compared
+# strictly, like any other pin. Unlike UNCONSUMED, this is temporary -- drop
+# the entry once this tree's `current` stack reaches rc.14 or later. Patterns
+# are exact keys or `section.*`, same convention as UNCONSUMED.
+PENDING_MIRRORS: dict[str, str] = {
+    "operators.karpenter": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "operators.aws-load-balancer-controller": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "operators.karpenter-al2023-ami": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.aws-msk-iam-auth": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.cruise-control-ui": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "toolbox.*": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.hashicorp-aws": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.confluentinc-confluent": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.redpanda-data-redpanda": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.hashicorp-archive": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+}
+
+
+def pending_reason(key: str) -> str | None:
+    """The recorded reason this key's mirror has not landed yet, or None."""
+    if key in PENDING_MIRRORS:
+        return PENDING_MIRRORS[key]
+    section = key.split(".", 1)[0]
+    return PENDING_MIRRORS.get(f"{section}.*")
+
+
+def pending_notes(versions: dict[str, str], stack: str, covered: set[str]) -> list[str]:
+    """One NOTE per PENDING_MIRRORS entry, run unconditionally either way.
+
+    A stack that predates rc.14 (rc.13, rc.12, ...) simply lacks these keys,
+    so nothing in the reactive per-check or coverage loops ever asks about
+    them -- this walks PENDING_MIRRORS itself so a caller auditing that stack
+    still sees which rc.14-only pins it has no value for yet. `covered`
+    excludes a key that has since gained a real CHECKS entry: from that point
+    it is compared strictly, like any other pin, and this function goes quiet
+    for it.
+    """
+    notes: list[str] = []
+    for pattern, reason in sorted(PENDING_MIRRORS.items()):
+        if pattern.endswith(".*"):
+            section = pattern[:-2]
+            keys = sorted(k for k in versions if k.split(".", 1)[0] == section)
+        else:
+            keys = [pattern] if pattern in versions else []
+        if not keys:
+            notes.append(f"  [note] {pattern}: stack '{stack}' does not carry this key yet -- {reason}")
+            continue
+        for key in keys:
+            if key in covered or unconsumed_reason(key):
+                continue
+            notes.append(
+                f"  [note] {key}: stack '{stack}' carries this key with no CHECKS entry yet -- {reason}"
+            )
+    return notes
+
+
 # CHECKS runs SSoT -> file, so a literal in a file no check points at is
 # invisible to it -- which is how a component ends up with a second, unwatched
 # pin. The sweep runs the other way: find the pin-shaped literals on the
@@ -963,16 +1039,18 @@ def reverse_sweep() -> list[str]:
     return problems
 
 
-def dead_guards(versions: dict[str, str]) -> list[str]:
+def dead_guards(versions: dict[str, str], stack: str) -> list[str]:
     """Constraint rules whose `when-equals` no longer matches its key.
 
     A `when-equals` guard is an exact match, so bumping the pin it watches
     leaves the rule present, green and inert. Any such rule is reported: either
-    re-point it at the new value or delete it.
+    re-point it at the new value or delete it. `stack` is the SELECTED stack
+    id (from `load_versions`'s `pointers.current`), so this follows `--stack`
+    rather than always reading the block `current` points at.
     """
     root = _parse_nested(VERSIONS_FILE.read_text())
-    stack = root.get("stacks", {}).get(root.get("current"), {})
-    rel = stack.get("constraints") if isinstance(stack, dict) else None
+    block = root.get("stacks", {}).get(stack, {})
+    rel = block.get("constraints") if isinstance(block, dict) else None
     if not rel:
         return []
     path = REPO_ROOT / rel
@@ -1031,6 +1109,8 @@ def plan_fix(
         for check in checks:
             expected = versions.get(check.key)
             if expected is None:
+                if pending_reason(check.key):
+                    continue
                 refused.append(f"  [refused] {check.label}: versions.yaml has no key '{check.key}'")
                 continue
             found = extract_span(check)
@@ -1082,9 +1162,22 @@ def apply_fix(versions: dict[str, str]) -> tuple[list[str], list[str]]:
     return fixed, refused
 
 
+def _parse_args() -> argparse.Namespace:
+    """`parse_known_args`, not `parse_args`: main() is called directly by the
+    test suite under the test runner's own argv, which carries flags this
+    script does not own (e.g. `-q`) -- those must be ignored, not rejected."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--fix", action="store_true")
+    parser.add_argument("--stack", default=None)
+    args, _unknown = parser.parse_known_args(sys.argv[1:])
+    return args
+
+
 def main() -> int:
-    fix = "--fix" in sys.argv[1:]
-    versions = load_versions()
+    args = _parse_args()
+    fix = args.fix
+    versions = load_versions(args.stack)
+    stack = versions["pointers.current"]
 
     if fix:
         fixed, refused = apply_fix(versions)
@@ -1103,12 +1196,19 @@ def main() -> int:
         # Fall through and verify, so --fix never reports success on its own say-so.
 
     failures: list[str] = []
+    notes: list[str] = []
     checked = 0
 
     for check in CHECKS:
         label, key = check.label, check.key
         expected = versions.get(key)
         if expected is None:
+            reason = pending_reason(key)
+            if reason:
+                notes.append(
+                    f"  [note] {label}: stack '{stack}' carries no key '{key}' yet -- {reason}"
+                )
+                continue
             failures.append(f"  [config] {label}: versions.yaml key '{key}' not found")
             continue
         actual = extract_value(check)
@@ -1122,15 +1222,18 @@ def main() -> int:
             )
 
     # Coverage: a key read by nothing is dead config, and it stays green forever
-    # unless something asks.
+    # unless something asks -- UNLESS it is a known PENDING_MIRRORS key, which
+    # pending_notes (below) reports on its own terms, so this loop just skips
+    # it rather than reporting twice.
     covered = {check.key for check in CHECKS}
     for key in sorted(versions):
-        if key in covered or unconsumed_reason(key):
+        if key in covered or unconsumed_reason(key) or pending_reason(key):
             continue
         failures.append(
             f"  [dead]    versions.yaml key '{key}' is read by no check -- add a "
             f"CHECKS entry, or an UNCONSUMED reason saying why it has no second copy"
         )
+    notes.extend(pending_notes(versions, stack, covered))
 
     # Stale UNCONSUMED entries rot the same way the pins do.
     for pattern in sorted(UNCONSUMED):
@@ -1142,10 +1245,14 @@ def main() -> int:
             continue
         failures.append(f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml")
 
-    failures.extend(dead_guards(versions))
+    failures.extend(dead_guards(versions, stack))
 
     # The other direction: a literal in a file no check points at.
     failures.extend(reverse_sweep())
+
+    if notes:
+        print("\n".join(notes))
+        print()
 
     if failures:
         print(
@@ -1158,10 +1265,11 @@ def main() -> int:
 
     # Say what the sweep looked at, not just that it found nothing: a silent
     # pass reads the same whether it swept the tree or swept nothing.
+    note_suffix = f"; {len(notes)} note(s) on pins pending a mirror" if notes else ""
     print(
-        f"OK -- all {checked} version pins match versions.yaml; "
+        f"OK -- all {checked} version pins match stack '{stack}' in versions.yaml; "
         f"{len(versions)} key(s) accounted for; "
-        f"{len(sweep_files())} file(s) swept for pins no check reads."
+        f"{len(sweep_files())} file(s) swept for pins no check reads{note_suffix}."
     )
     return 0
 

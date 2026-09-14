@@ -172,11 +172,18 @@ fi
 
 # Read versions from SSOT (versions.yaml)
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.cert-manager)
-EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
-ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
-LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
-METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.metallb)
+# Same DFE_STACK_VERSION dfe-ops names below for check_platform.py: read THAT
+# stack's bootstrap pins rather than whatever `current` happens to point at,
+# so a deploy of an in-flight cut (e.g. rc.14) installs its own versions.
+version_args=(--file "${REPO_ROOT}/versions.yaml")
+if [[ -n "${DFE_STACK_VERSION:-}" ]]; then
+  version_args+=(--stack "${DFE_STACK_VERSION}")
+fi
+CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.cert-manager)
+EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.external-secrets)
+ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.argocd)
+LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.local-path-provisioner)
+METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.metallb)
 echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION} metallb=${METALLB_VERSION}"
 
 # Each operator below states its own Kubernetes window, so an under-floor cluster
