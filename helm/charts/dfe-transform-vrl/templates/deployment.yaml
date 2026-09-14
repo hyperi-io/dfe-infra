@@ -101,6 +101,7 @@ spec:
             # binary name, so two instances are indistinguishable in the otel tables.
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/dfe-transform-vrl

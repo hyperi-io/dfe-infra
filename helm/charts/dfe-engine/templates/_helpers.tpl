@@ -44,13 +44,19 @@ the refuse-on-default-password check and gitops auto-merge.
 {{/*
 dfe-engine.contentRoot -- where one content entry's files land, from its role.
 
-The role is the destination, the kind is the vehicle, and the two are
-independent: an image and an asset can each carry either sort of file.
+The role is the destination and the kind is the vehicle, and the two are
+independent: a copy out of an image, a download or an app's own emit can each
+carry any of the three sorts of file.
 */}}
 {{- define "dfe-engine.contentRoot" -}}
 {{- $mount := .ctx.Values.content.mountPath -}}
-{{- if eq (.entry.role | default "library") "catalogue" -}}
+{{- $role := .entry.role | default "library" -}}
+{{- if eq $role "catalogue" -}}
 {{ printf "%s/catalogue" $mount }}
+{{- else if eq $role "contract" -}}
+{{- /* One directory per app under this root, so the engine reads a service's
+       contract by name without being told which image wrote it. */ -}}
+{{ printf "%s/contract" $mount }}
 {{- else -}}
 {{ printf "%s/library" $mount }}
 {{- end -}}

@@ -92,6 +92,12 @@ dlq:
 # also takes the instance out of idle whether or not anything ever posts to it.
 config: {}
 
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# last in the container's env, after the addresses and credentials above.
+extraEnv: {}
+
 # OTel service.name for this instance. Empty falls back to the app name, which
 # leaves two instances of one app indistinguishable in the otel tables.
 otelServiceName: ""

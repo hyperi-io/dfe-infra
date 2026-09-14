@@ -143,6 +143,7 @@ spec:
             # indistinguishable in the otel tables.
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
           {{- with .Values.credentials.secretName }}
           # The upstream's credentials, by env rather than in the config blob:
           # the source's stanza carries `env:NAME` references and the engine
