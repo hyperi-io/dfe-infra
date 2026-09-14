@@ -70,6 +70,21 @@ output "audit_log_group" {
   value       = aws_cloudwatch_log_group.cluster.name
 }
 
+output "clickhouse_object_store_bucket" {
+  description = "The S3 bucket ClickHouse's cached-object storage model writes its bulk parts to (object-store.tf). Empty consumers never read this; the endpoint output below is the one the chart actually takes."
+  value       = aws_s3_bucket.clickhouse_object_store.id
+}
+
+output "clickhouse_object_store_endpoint" {
+  description = "The bucket URL in the form ClickHouse's S3 disk takes -- clickhouse.objectStore.endpoint, trailing slash included. Carried onto the cluster secret as DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT."
+  value       = "https://${aws_s3_bucket.clickhouse_object_store.id}.s3.${var.provision.region}.amazonaws.com/dfe/"
+}
+
+output "clickhouse_object_store_role_arn" {
+  description = "The Pod Identity role clickhouse_object_store_namespace/clickhouse_object_store_service_account authenticates as. Not consumed by the cluster secret today -- EKS Pod Identity resolves the credential by namespace + service account alone, the same reason the MSK bootstrap Job's role ARN is carried for completeness only (bootstrap.sh, DFE_KAFKA_BOOTSTRAP_ROLE_ARN)."
+  value       = aws_iam_role.clickhouse_object_store.arn
+}
+
 output "karpenter" {
   description = "What the karpenter chart and the karpenter-pools chart have to be told: the queue to watch, the profile a node launches with, and the tag its subnets and security groups are found by. AWS-only -- a body on another cloud names its own provisioner here or nothing at all."
   value = {

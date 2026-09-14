@@ -49,6 +49,14 @@ envoyGateway:
 # StorageClass (dfe-engine chart config.persistence) -- no per-cloud
 # storage seam needed.
 
+# ClickHouse's object store is the bucket the cluster module creates
+# (kubernetes-cluster/aws/object-store.tf), reached through EKS Pod Identity:
+# no static key, so the chart's ExternalSecret and credential env vars stay
+# off. The endpoint itself arrives per deployment from the cluster secret.
+clickhouse:
+  objectStore:
+    usePodIdentity: true
+
 # The gateway Service above is internet-facing, so the infra-class kill switch
 # (envoy-gateway-config's exposure.infraUisExternal) defaults OFF here: Argo
 # CD, Kafbat, HyperDX, Forgejo, links and Cruise Control all stay off the

@@ -60,7 +60,7 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
               value: "1"
-            {{- if eq (include "dfe-clickhouse.storageBulk" .) "object" }}
+            {{- if and (eq (include "dfe-clickhouse.storageBulk" .) "object") (not .Values.clickhouse.objectStore.usePodIdentity) }}
             {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 12 }}
             {{- end }}
           volumeMounts:

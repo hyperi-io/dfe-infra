@@ -37,6 +37,12 @@ metadata:
     # managed node groups keep the hop limit at 1. Blank on non-EKS clouds,
     # same as the cluster_name annotation above.
     ${DFE_VPC_ID_ANNOTATION}
+    # The ClickHouse object-store bucket URL, for layer2-data.yaml's
+    # clickhouse.objectStore.endpoint parameter -- the fact that activates the
+    # cached-object storage model (docs/deployment/storage.md). Blank on a
+    # non-AWS cloud or a deploy that resolved storageModel: local, same as the
+    # cluster_name annotation above.
+    ${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION}
     # The karpenter-pools chart's three cluster facts; each renders blank on a
     # non-AWS cloud, same as the cluster_name annotation above.
     ${DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION}

@@ -228,6 +228,29 @@ def test_clickhouse_cached_object_keeps_credentials_out_of_git() -> None:
     expect("an ExternalSecret materialises them", "ExternalSecret" in kinds(docs))
 
 
+def test_clickhouse_cached_object_pod_identity_skips_the_static_key() -> None:
+    """usePodIdentity: true must render no ExternalSecret and no credential env
+    vars -- a static AWS_ACCESS_KEY_ID in the pod's environment would shadow the
+    EKS Pod Identity Agent's injected credentials, which the AWS SDK's default
+    credential chain checks first (helm/charts/clickhouse-cluster/templates/
+    _storage.tpl)."""
+    docs = render("clickhouse-cluster", *CACHED_OBJECT_SETS, "clickhouse.objectStore.usePodIdentity=true")
+    disk = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"][
+        "storage_configuration"]["disks"]["s3_object"]
+    expect("the disk still takes credentials from the environment",
+           disk.get("use_environment_credentials") is True)
+    env = one(docs, "ClickHouseCluster")["spec"]["containerTemplate"].get("env", [])
+    expect("no static credential env vars are rendered", env == [], f"got {env}")
+    object_store_secrets = [
+        d for d in docs if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "dfe-clickhouse-s3"
+    ]
+    # admin-secret.yaml still mints its own unrelated ExternalSecret for the
+    # cluster's admin password whenever mode != external, so the assertion
+    # names the object-store secret specifically rather than the kind.
+    expect("no ExternalSecret is minted for the object store", object_store_secrets == [],
+           f"got {object_store_secrets}")
+
+
 def test_the_object_store_timeouts_are_unset_by_default_and_settable() -> None:
     """Left at the server defaults a read against an unreachable store blocked
     over nine minutes on the rig; 1 / 2000 / 5000 failed the same read in 10.4s.
@@ -549,6 +572,7 @@ def main() -> int:
         test_the_credential_binding_defaults_to_the_dfe_seeded_path()
         test_the_credential_binding_follows_an_existing_store_entry()
         test_clickhouse_cached_object_keeps_credentials_out_of_git()
+        test_clickhouse_cached_object_pod_identity_skips_the_static_key()
         test_the_object_store_timeouts_are_unset_by_default_and_settable()
         test_clickhouse_tiered_block_ranks_two_local_volumes()
         test_the_cold_volume_sorts_after_the_hot_one()

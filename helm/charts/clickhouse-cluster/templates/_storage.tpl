@@ -136,8 +136,14 @@ settings.extraConfig (cluster mode) and the config.d ConfigMap (single mode). A
 second spelling would give the two modes different on-disk layouts.
 
 An object bulk store carries no credentials here: use_environment_credentials
-makes the server read AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from its
-environment, which both paths wire from the ESO-materialised Secret.
+makes the server read the AWS SDK's default credential chain from its
+environment. objectStore.usePodIdentity: false (the default, every target but
+AWS Pod Identity) wires AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the
+ESO-materialised Secret (objectStoreEnv below); usePodIdentity: true renders
+neither that Secret nor those env vars, so the chain falls through to the EKS
+Pod Identity Agent's injected credentials instead -- a static key in the
+environment would shadow them, since the SDK checks environment variables
+first.
 
 DISK AND VOLUME NAMES ARE ORDER-BEARING IN BOTH FAMILIES, and they are runtime
 identity -- renaming one on a live deployment is a rebuild, not a values edit.

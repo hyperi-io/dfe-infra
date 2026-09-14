@@ -220,6 +220,18 @@ variable "toolbox_operator_role_arn" {
   default     = ""
 }
 
+variable "clickhouse_object_store_namespace" {
+  description = "Namespace the clickhouse-cluster chart deploys into (argocd/appsets/layer2-data.yaml pins it to \"clickhouse\"), for the S3 object-store Pod Identity association (object-store.tf)."
+  type        = string
+  default     = "clickhouse"
+}
+
+variable "clickhouse_object_store_service_account" {
+  description = "Service account the ClickHouse server pods run as. The chart renders no ServiceAccount of its own for clickhouse.yaml/clickhouse-single.yaml, so they run under the release namespace's default account -- the Pod Identity association targets that account by name."
+  type        = string
+  default     = "default"
+}
+
 variable "tags" {
   description = "The governance tag set. Validated here and applied by the root's provider default_tags, so no resource in this module carries the map itself."
   type        = map(string)

@@ -117,6 +117,14 @@
 #                            OTel tables included (default 90; 0 = no default
 #                            TTL). A source or a dfe-schemas definition with its
 #                            own TTL overrides it.
+#   DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT  the S3 bucket URL the aws root's
+#                            object-store.tf provisions, for the
+#                            clickhouse-cluster chart's
+#                            clickhouse.objectStore.endpoint -- the fact that
+#                            activates the cached-object storage model
+#                            (docs/deployment/storage.md); empty omits the
+#                            annotation (non-AWS clouds, or a deploy that
+#                            resolved storageModel: local).
 #   DFE_CERTMANAGER_SECRET_ID  AppRole SecretID cert-manager authenticates to the
 #                            estate Vault/OpenBao PKI with, for the gateway
 #                            chart's tls.vault issuer mode. Set it and the edge
@@ -363,6 +371,11 @@ export DFE_KUBE_CLUSTER_NAME_ANNOTATION="${DFE_KUBE_CLUSTER_NAME:+dfe.hyperi.io/
 # The EKS cluster's VPC id for the LBC appset's vpcId annotation, rendered only when set.
 export DFE_VPC_ID="${DFE_VPC_ID:-}"
 export DFE_VPC_ID_ANNOTATION="${DFE_VPC_ID:+dfe.hyperi.io/vpc_id: \"${DFE_VPC_ID}\"}"
+# The ClickHouse object-store bucket URL for the clickhouse-cluster chart's
+# clickhouse.objectStore.endpoint, rendered only when set -- empty on a
+# non-AWS cloud or a deploy that resolved storageModel: local.
+export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:-}"
+export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:+dfe.hyperi.io/clickhouse_object_store_endpoint: \"${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT}\"}"
 # The karpenter-pools chart's three cluster facts, each rendered only when set --
 # empty on a non-AWS cloud, where Karpenter does not run.
 export DFE_KARPENTER_DISCOVERY_TAG="${DFE_KARPENTER_DISCOVERY_TAG:-}"

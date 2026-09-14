@@ -24,7 +24,7 @@ spec:
       limits:
         cpu: {{ .Values.clickhouse.resources.limits.cpu }}
         memory: {{ .Values.clickhouse.resources.limits.memory }}
-    {{- if eq (include "dfe-clickhouse.storageBulk" .) "object" }}
+    {{- if and (eq (include "dfe-clickhouse.storageBulk" .) "object") (not .Values.clickhouse.objectStore.usePodIdentity) }}
     env:
       {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 6 }}
     {{- end }}

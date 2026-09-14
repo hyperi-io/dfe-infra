@@ -784,3 +784,217 @@ run "aws_toolbox_operator_gets_read_only_access_entry" {
     error_message = "the toolbox operator must never share the creator's cluster-admin policy"
   }
 }
+
+// The ClickHouse object-store bucket: encrypted, unreachable from the
+// internet, and torn down according to the same lifecycle dial as the KMS
+// deletion window above -- never a fixed answer either way.
+run "aws_clickhouse_object_store_bucket_is_locked_down" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.block_public_acls == true
+    error_message = "the object-store bucket must block public ACLs"
+  }
+
+  assert {
+    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.block_public_policy == true
+    error_message = "the object-store bucket must block public bucket policies"
+  }
+
+  assert {
+    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.ignore_public_acls == true
+    error_message = "the object-store bucket must ignore any public ACL that somehow gets set"
+  }
+
+  assert {
+    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.restrict_public_buckets == true
+    error_message = "the object-store bucket must restrict public bucket policies"
+  }
+
+  assert {
+    // rule and apply_server_side_encryption_by_default are both sets of
+    // objects (no addressable index), so one() is what reaches inside.
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).sse_algorithm == "aws:kms"
+    error_message = "the object-store bucket must be SSE-KMS, not SSE-S3"
+  }
+
+  assert {
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).kms_master_key_id == aws_kms_key.this.arn
+    error_message = "the object-store bucket must be encrypted with the deployment's own key -- the same one EKS secrets, MSK and the EBS volumes use"
+  }
+
+  // No versioning assertion here: this module declares no
+  // aws_s3_bucket_versioning resource for this bucket at all (unlike
+  // cloudtrail.tf's own bucket in the root), so there is nothing to reference
+  // -- the absence itself is the contract (object-store.tf, "No versioning").
+
+  assert {
+    condition     = aws_s3_bucket_lifecycle_configuration.clickhouse_object_store.rule[0].abort_incomplete_multipart_upload[0].days_after_initiation == 7
+    error_message = "an abandoned multipart upload must be aborted after 7 days, or a killed insert leaves the bucket growing forever"
+  }
+
+  // The default test tags carry lifecycle = "throwaway", not "ephemeral" --
+  // the persistent branch, so force_destroy must be off.
+  assert {
+    condition     = aws_s3_bucket.clickhouse_object_store.force_destroy == false
+    error_message = "a deployment whose tags.lifecycle is not \"ephemeral\" must keep the safer default and refuse force_destroy"
+  }
+}
+
+// An ephemeral (tyre-kick) deployment gets the fast, no-confirmation teardown
+// on this bucket too -- the same dial the KMS deletion window and the root's
+// CloudTrail/toolbox buckets already follow.
+run "aws_clickhouse_object_store_force_destroy_follows_lifecycle" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    tags = {
+      "service-name"      = "dfe"
+      "service-namespace" = "hyperi"
+      "environment"       = "test"
+      "owner"             = "owner@example.com"
+      "cost-center"       = "experiments"
+      "lifecycle"         = "ephemeral"
+      "iac-source"        = "dfe-infra/terraform/modules/kubernetes-cluster/tests"
+    }
+  }
+
+  assert {
+    condition     = aws_s3_bucket.clickhouse_object_store.force_destroy == true
+    error_message = "tags.lifecycle = ephemeral must force_destroy the object-store bucket, matching the KMS deletion window's own rule"
+  }
+}
+
+// The Pod Identity role's policy must name only this bucket (and the
+// deployment key it is encrypted with) -- never a wildcard, never another
+// bucket, or a compromised pod could read or overwrite something else.
+run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "ListBucket"][0] == aws_s3_bucket.clickhouse_object_store.arn
+    error_message = "ListBucket must be scoped to this bucket's own ARN"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "ReadWriteObjects"][0] == "${aws_s3_bucket.clickhouse_object_store.arn}/*"
+    error_message = "object read/write must be scoped to this bucket's own objects"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "UseTheDeploymentKey"][0] == aws_kms_key.this.arn
+    error_message = "the KMS grant must be scoped to the deployment's own key"
+  }
+
+  assert {
+    // No fourth statement, and no statement's Resource is anything but this
+    // bucket, its objects, or the deployment key -- the policy names only
+    // what this role needs and nothing else in the account.
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement :
+      contains(
+        [
+          aws_s3_bucket.clickhouse_object_store.arn,
+          "${aws_s3_bucket.clickhouse_object_store.arn}/*",
+          aws_kms_key.this.arn,
+        ],
+        s.Resource
+      )
+    ])
+    error_message = "the policy must name only this bucket, its objects and the deployment key -- nothing else"
+  }
+}
+
+// The association has to target the namespace and service account the
+// clickhouse-cluster chart actually renders its pods into, or Pod Identity
+// grants a role nothing authenticates as.
+run "aws_clickhouse_object_store_association_targets_the_chart_default" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.clickhouse_object_store.cluster_name == aws_eks_cluster.this.name
+    error_message = "the association must target this cluster"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.clickhouse_object_store.namespace == "clickhouse"
+    error_message = "the default namespace must match argocd/appsets/layer2-data.yaml's clickhouse-cluster destination namespace"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.clickhouse_object_store.service_account == "default"
+    error_message = "the default service account must match the release namespace's default -- the chart renders no ServiceAccount of its own for the server pods"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.clickhouse_object_store.role_arn == aws_iam_role.clickhouse_object_store.arn
+    error_message = "the association must name the role this file mints, not any other"
+  }
+}
+
+// A caller with a chart deployed under a different namespace or service
+// account can still point Pod Identity at it.
+run "aws_clickhouse_object_store_association_honours_overrides" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    clickhouse_object_store_namespace       = "data"
+    clickhouse_object_store_service_account = "clickhouse"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.clickhouse_object_store.namespace == "data"
+    error_message = "a caller-supplied namespace must reach the association"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.clickhouse_object_store.service_account == "clickhouse"
+    error_message = "a caller-supplied service account must reach the association"
+  }
+}
+
+// clickhouse_object_store_endpoint is the value clickhouse.objectStore.endpoint
+// actually takes -- the S3 disk config's own trailing-slash requirement
+// (values.yaml) makes a missing slash a render-time contract break downstream.
+run "aws_clickhouse_object_store_endpoint_shape" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = endswith(output.clickhouse_object_store_endpoint, "/")
+    error_message = "the endpoint must carry a trailing slash -- the chart's S3 disk config requires one"
+  }
+
+  assert {
+    condition     = strcontains(output.clickhouse_object_store_endpoint, output.clickhouse_object_store_bucket)
+    error_message = "the endpoint must name the bucket this file provisions"
+  }
+
+  assert {
+    condition     = strcontains(output.clickhouse_object_store_endpoint, "/dfe/")
+    error_message = "the endpoint must carry the dfe/ prefix every other derived object-store path uses"
+  }
+}

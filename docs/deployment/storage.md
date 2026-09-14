@@ -91,6 +91,20 @@ above still reads `local` as default because
 `cached-object` is render-verified only; it becomes the cluster-tier default
 when it is live-proven, and the table changes then, not before.
 
+**Where the AWS bucket comes from.** `terraform/modules/kubernetes-cluster/aws/object-store.tf`
+provisions the S3 bucket `cached-object` needs on AWS -- SSE-KMS on the
+deployment's own key, all public access blocked, no versioning, a lifecycle
+rule aborting an incomplete multipart upload after 7 days -- and mints a Pod
+Identity role scoped to that bucket alone. `bootstrap.sh` carries the bucket's
+URL onto the cluster secret as the `dfe.hyperi.io/clickhouse_object_store_endpoint`
+annotation, and `argocd/appsets/layer2-data.yaml` passes it through as
+`clickhouse.objectStore.endpoint` -- the value `dfe-clickhouse.storageModel`
+above actually derives `cached-object` from, so an AWS deploy with no bucket
+still resolves `local` rather than a render that never had anywhere to write.
+Set `clickhouse.objectStore.usePodIdentity: true` alongside it and the pod
+authenticates as that role instead of the static-key ExternalSecret every
+other target uses (Dimension 4: credential binding, below).
+
 The two refusals share one guard in `dfe-clickhouse.validateStorageModel`:
 
 ```

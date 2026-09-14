@@ -109,6 +109,16 @@ clickhouse:
     # required, e.g. https://my-bucket.s3.ap-southeast-2.amazonaws.com/clickhouse/
     endpoint: ""
     region: ""
+    # AWS only: true skips the static-key ExternalSecret and the credential
+    # env vars below (objectStoreEnv), leaving use_environment_credentials
+    # (always on, templates/_storage.tpl) to resolve through EKS Pod Identity
+    # alone -- a static AWS_ACCESS_KEY_ID in the pod's own environment would
+    # shadow the Pod Identity Agent's injected credentials, which the AWS
+    # SDK's default credential chain checks first. false (every other target:
+    # on-prem MinIO, GCS, a BYO S3-compatible endpoint) keeps the current
+    # byte-for-byte behaviour: the server authenticates with secretName /
+    # secretStoreName / remoteKey below. See docs/deployment/storage.md.
+    usePodIdentity: false
     # cached-object only: a fixed cache size, which OVERRIDES the ratio below
     # when set. Under cache.volume: pvc this stays optional -- empty leaves the
     # cache tracking the PVC it is given -- and a value here must sit BELOW

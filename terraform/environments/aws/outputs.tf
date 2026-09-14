@@ -155,6 +155,11 @@ output "DFE_VPC_ID" {
   value       = module.cluster.network.vpc_id
 }
 
+output "DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT" {
+  description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/clickhouse_object_store_endpoint annotation, which layer2-data.yaml carries into the clickhouse-cluster chart's clickhouse.objectStore.endpoint -- the fact that activates cached-object storage on this cloud (docs/deployment/storage.md)."
+  value       = module.cluster.clickhouse_object_store_endpoint
+}
+
 output "DFE_KARPENTER_DISCOVERY_TAG" {
   description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_discovery_tag annotation, which layer2-platform.yaml carries into karpenter-pools' karpenter.cluster.discoveryTag."
   value       = module.cluster.karpenter.discovery_tag

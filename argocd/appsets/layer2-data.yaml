@@ -136,6 +136,17 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}'
               - name: kafka.brokerHosts
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
+              # The ClickHouse object-store bucket URL, from the aws root's
+              # object-store.tf. Empty leaves the chart's own default (also
+              # empty) untouched, so a non-AWS deploy or one that resolved
+              # storageModel: local renders exactly what it would without this
+              # parameter. Only clickhouse-cluster reads it; harmless elsewhere.
+              - name: clickhouse.objectStore.endpoint
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_object_store_endpoint" | default "" }}'
+              # The S3 disk signs requests for one region; the deployment's own
+              # region is the right one whenever the endpoint above is set.
+              - name: clickhouse.objectStore.region
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/region" | default "" }}'
             # `values` (a YAML string) rather than a structured parameters block,
             # same reason layer2-platform.yaml gives: a per-element conditional
             # cannot live in a field this file's own tests parse as plain YAML
