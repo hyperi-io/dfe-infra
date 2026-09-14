@@ -20,9 +20,14 @@ The dfe-engine image the dashboard init container runs.
 dfe-common.image reads .Values.component, which is "hyperdx" here, so the engine
 reference is built rather than borrowed. An explicit dashboards.image.repository
 wins, for a mirrored or renamed registry.
+
+dashboards.image.digest is appended as tag@sha256, the same immutable half
+dfe-common.image carries.
 */}}
 {{- define "hyperdx.dashboardsImage" -}}
 {{- $tag := .Values.dashboards.image.tag -}}
+{{- /* Optional, and it wins over the tag it is pulled with: an overlay moving dashboards.image.tag must move dashboards.image.digest too. */ -}}
+{{- with .Values.dashboards.image.digest }}{{- $tag = printf "%s@%s" $tag . -}}{{- end -}}
 {{- with .Values.dashboards.image.repository -}}
 {{- printf "%s:%s" . $tag -}}
 {{- else -}}
