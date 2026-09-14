@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         test_extra_env.py
 #  Purpose:      Prove the overlay's extraEnv block reaches the container, and
-#                reaches it after the env the chart derives.
+#                that a chart-derived name always overrides it.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -11,14 +11,14 @@
 
 An app's settings surface is wider than the dials its chart declares, so
 dfe-engine writes a key the chart does not model into the overlay's `extraEnv`
-block. One library helper renders it, called last in every env block -- six
+block. One library helper renders it, called first in every env block -- six
 identical copies would be six places to get the ordering wrong.
 
 Four things are checked:
 
 1. A custom key renders as a container env entry, with its value quoted.
-2. It renders AFTER the derived entries, which for dfe-transform-vrl are the
-   broker addresses and SASL credentials the deployment computes.
+2. A custom key sharing a chart-derived name renders BEFORE that chart entry,
+   so kubernetes (which keeps the last duplicate) keeps the chart's value.
 3. Every one of the six charts declares the key and renders it.
 4. An absent or empty block renders the env the chart rendered before.
 
@@ -54,6 +54,9 @@ APPS = (
 )
 
 CUSTOM = {"extraEnv": {"DFE_HOUSE_KEY": "kept", "DFE_HOUSE_PORT": 8123}}
+
+# A name dfe-transform-vrl also derives, to prove the chart wins the collision.
+COLLIDING = {"extraEnv": {"DFE_TRANSFORM_SOURCE_BROKERS": "custom"}}
 
 
 def render(chart: str, values: dict | None = None) -> dict:
@@ -106,25 +109,33 @@ def test_a_custom_key_becomes_container_env() -> None:
     )
 
 
-def test_the_custom_block_renders_after_the_derived_one() -> None:
-    """The entries above it are the deployment's own wiring.
+def test_a_colliding_custom_key_renders_before_the_chart_entry() -> None:
+    """Kubernetes keeps the LAST duplicate name, so the chart's value must win.
 
-    dfe-transform-vrl derives its broker addresses, topics and SASL credentials
-    from the profile; a custom key interleaved with those hides a collision.
+    A custom key sharing a name dfe-transform-vrl also derives (its broker
+    address) is the exact collision extraEnv's ordering exists to resolve: the
+    chart's own entry has to render after it, not the other way round.
     """
-    doc = render("dfe-transform-vrl", CUSTOM)
+    doc = render("dfe-transform-vrl", COLLIDING)
     names = env_names(doc)
-    derived = [n for n in names if n.startswith("DFE_TRANSFORM_")]
+    hits = [i for i, n in enumerate(names) if n == "DFE_TRANSFORM_SOURCE_BROKERS"]
     expect(
-        "the derived block is present to be ordered against",
-        "DFE_TRANSFORM_SOURCE_BROKERS" in derived,
+        "the name renders twice: the custom entry and the chart's derived one",
+        len(hits) == 2,
         f"{names}",
     )
     expect(
-        "every custom key sits after every derived one",
-        min(names.index(k) for k in ("DFE_HOUSE_KEY", "DFE_HOUSE_PORT"))
-        > max(names.index(n) for n in derived),
+        "the custom entry sits before the chart's, so the chart's is the one kubernetes keeps",
+        hits[0] < hits[1],
         f"{names}",
+    )
+    # A dict comprehension over the list keeps the LAST occurrence, same as
+    # kubernetes -- so this has to be the chart's derived broker, not "custom".
+    kept = {e["name"]: e.get("value") for e in app_container(doc).get("env") or []}
+    expect(
+        "the value kubernetes would keep is the chart's, not the custom override",
+        kept.get("DFE_TRANSFORM_SOURCE_BROKERS") != "custom",
+        f"{kept.get('DFE_TRANSFORM_SOURCE_BROKERS')!r}",
     )
 
 
