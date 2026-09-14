@@ -159,3 +159,79 @@ def test_an_app_whose_work_arrives_without_a_config_change_never_idles() -> None
     that idled there would stay idle when its work turned up."""
     assert composition.idle_when("dfe-receiver") == ()
     assert composition.idle_when("dfe-loader") == ()
+
+
+def _snapshot_checkout(tmp_path: Path, text: str) -> Path:
+    """A fake dfe-engine checkout whose bundled apps.yaml holds *text*."""
+    checkout = tmp_path / "engine-checkout"
+    snapshot = checkout / composition.ENGINE_SNAPSHOT_PATH
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text(text, encoding="utf-8")
+    return checkout
+
+
+def _set_manifest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str) -> Path:
+    """Point `composition.MANIFEST` at a throwaway apps.yaml holding *text*."""
+    manifest = tmp_path / "apps.yaml"
+    manifest.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(composition, "MANIFEST", manifest)
+    return manifest
+
+
+def test_the_engine_snapshot_check_agrees_regardless_of_key_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same declarations, keys in a different order, still agree."""
+    _set_manifest(
+        monkeypatch,
+        tmp_path,
+        "apps:\n  dfe-engine:\n    multiplicity: single\n    scale_deployed: true\n",
+    )
+    checkout = _snapshot_checkout(
+        tmp_path,
+        "apps:\n  dfe-engine:\n    scale_deployed: true\n    multiplicity: single\n",
+    )
+    assert composition.check_engine_snapshot(str(checkout)) == 0
+
+
+def test_the_engine_snapshot_check_fails_and_names_the_differing_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real disagreement -- the fetcher's ingest default, once -- fails CI."""
+    _set_manifest(
+        monkeypatch, tmp_path, "apps:\n  dfe-fetcher:\n    multiplicity: per_config\n"
+    )
+    checkout = _snapshot_checkout(
+        tmp_path, "apps:\n  dfe-fetcher:\n    multiplicity: single\n"
+    )
+    assert composition.check_engine_snapshot(str(checkout)) == 1
+    err = capsys.readouterr().err
+    assert "apps.dfe-fetcher.multiplicity" in err
+    assert "per_config" in err
+    assert "single" in err
+
+
+def test_the_engine_snapshot_check_ignores_a_comment_only_difference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last real divergence was a comment hunk; a comment alone must pass."""
+    _set_manifest(
+        monkeypatch,
+        tmp_path,
+        "# this repo's own re-render command, meaningless inside the engine image\n"
+        "apps:\n  dfe-engine:\n    multiplicity: single\n",
+    )
+    checkout = _snapshot_checkout(tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n")
+    assert composition.check_engine_snapshot(str(checkout)) == 0
+
+
+def test_an_unreadable_engine_snapshot_is_exit_2_not_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A network or checkout failure is unverified, never reported as drift."""
+    _set_manifest(monkeypatch, tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n")
+    empty_checkout = tmp_path / "no-such-snapshot-here"
+    empty_checkout.mkdir()
+    assert composition.check_engine_snapshot(str(empty_checkout)) == 2
+    err = capsys.readouterr().err
+    assert "UNVERIFIED" in err
