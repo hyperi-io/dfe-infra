@@ -157,6 +157,15 @@ jobs:
         run: python3 -m pip install --quiet --require-hashes -r scripts/tests/requirements-ci.txt
       - run: python3 -m pytest scripts/tests -q -p no:cacheprovider
 
+      # A step of its own, not a pytest case: it fetches the engine's bundled
+      # copy over the network (gh api), unlike --check-catalogue's pytest
+      # case above, which stays offline. This repo holds the SSoT and already
+      # owns that check, so the third copy is compared here too (dfe-infra#306).
+      - name: Engine's bundled apps.yaml snapshot matches the SSoT
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/composition.py --check-engine-snapshot
+
       # An over-wide egress policy renders green and passes a dry-run, so the
       # derived external-service egress is checked by set equality per mode.
       - name: External-service egress derives per mode
