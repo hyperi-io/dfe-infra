@@ -41,7 +41,11 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "dfe-common.selectorLabels" . | nindent 8 }}
+        # NOT dfe-common.selectorLabels: that is exactly what the headless broker
+        # Service selects on, so this pod would join the endpoints clients resolve
+        # for the bootstrap address -- with no readiness probe, for the whole
+        # broker wait plus every topic create, and listening on nothing.
+        app.kubernetes.io/name: {{ printf "%s-%s-bootstrap-topics" .Values.project .Values.component | quote }}
     spec:
       restartPolicy: Never
       {{- include "dfe-common.scheduling" . | nindent 6 }}
