@@ -64,6 +64,8 @@ deployRepo:
     - dfe-engine
     - dfe-loader
     - dfe-receiver
+    - dfe-transform-elastic
+    - dfe-transform-vrl
     - dfe-ui
     - hyperdx
 # END seeded apps
