@@ -31,9 +31,9 @@ values merge in this order (later wins):
 helm/charts/<app>/values.yaml        chart defaults
 argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides
-argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale)
+argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale / mesh)
 deploy repo infra/common.yaml        deployment-wide (every appset)
-deploy repo infra/<chart>.yaml       one substrate/platform chart
+deploy repo infra/<chart>.yaml       one data-layer or platform chart
 deploy repo values/<app>-...yaml     engine-authored overlay (Layer 2 apps)
 ```
 
@@ -41,16 +41,26 @@ Everything from `infra/` down is the DEPLOYER's, and it is last, so
 `clickhouse.mode`, `kafka.mode` and the storage models are reachable
 without editing this repo. The profile file is a tier DEFAULT, not a lock.
 
-Substrate therefore depends on the deploy repo resolving. On a bundled
+The data layer therefore depends on the deploy repo resolving. On a bundled
 deploy (no external git) the git host is `layer2-deploy-repo`'s own
-single-source Application, so the substrate and platform Applications
+single-source Application, so the data-layer and platform Applications
 report ComparisonError until it is up and then converge.
 
-Tier composition (what each enables by default) is documented suite-side
-in dfe-engine `docs/deployment/index.md` - one home for that table. Kafka
-on tier `single` uses the non-operator single-broker KRaft path
+Kafka on tier `single` uses the non-operator single-broker KRaft path
 (`helm/charts/kafka`, `kafka.mode: single`); the Strimzi operator installs
 only on `scale` clusters (`layer-scale.yaml`).
+
+Which APPS a tier deploys is `apps.yaml`'s, not the profile file's --
+[composition.md](composition.md) has the table and the derivation.
+
+The `mesh` tier is `scale` without a broker: the stages hand records to each
+other over gRPC. That makes two things its own. `mesh.enabled` puts a
+Gateway API listener in front of every stage pool, because a Kubernetes
+Service balances per connection and gRPC holds one open, so a sender would
+otherwise pin itself to one pod however many replicas KEDA adds. And the
+receiver's buffer is raised, because with no broker downstream what it
+holds is the only slack in the chain -- an outage shorter than the buffer
+is invisible to senders, a longer one back-pressures them.
 
 ## Storage model - decided at deploy, not after
 
@@ -80,6 +90,32 @@ refuses a post-deploy edit. See the deploy repo's `infra/README.md`.
 [storage.md](storage.md)** - the deploy-time matrix, including the cells
 that are refused and the ones not built yet.
 
+## Upgrading onto the generated JWT signing key
+
+Releases before the ESO-generated key minted `dfe-engine-jwt` from the chart
+template. On the first upgrade past that, the ExternalSecret adopts the
+existing Secret (`creationPolicy: Owner`) and writes a new key into it, so
+every token issued before the upgrade stops verifying and the engine rolls
+once - operators and any machine caller log in again, and nothing else is
+affected. `refreshPolicy: CreatedOnce` then holds that key for the life of the
+deployment: on the rc.12 deployment the Secret's `resourceVersion` moved on
+that first reconcile and held across the two renders after it. A deployment
+that cannot take even one invalidation sets `auth.jwtSecret` to the key it
+already has, which renders a plain Secret and no generator.
+
+## Upgrading onto the `main` landing table
+
+The landing table and the catch-all source are both named `main`. A deployment
+cut before that rename landed has a `default` table holding its rows, and
+nothing moves or drops it: the engine's DDL writer creates `main` alongside it,
+the receiver stamps an unmatched record `_source: main`, and the loader writes
+new records to `main`. Query the old table directly for anything older than the
+upgrade, and drop it once nothing needs it.
+
+The Kafka landing topic moves with the source name, from `default_land` to
+`main_land`. The kafka chart pre-creates the new one; the old topic keeps
+whatever it already holds until it is deleted.
+
 ## Version pins
 
 `versions.yaml` is the single source for chart, operator, and image
@@ -90,6 +126,17 @@ and `dfe-stack verify` re-checks digests against GHCR). A dfe-infra release
 tag certifies the whole set as one stack version (`stack:` metadata +
 lockstep `content:` repo tags); the full release model is in dfe-docs
 `deployment/stack-versioning.md`.
+
+`content:` also pins the authored files an app ships and the engine serves -
+the reference transform pipelines, and the source catalogue a transform ships.
+The engine chart's `content.entries` turns each pin into one init container
+that fills `/etc/dfe-engine/content` from the pinned app image or the release
+asset, and the engine reads that directory through `DFE_LIBRARY_SEED_DIR` and
+`DFE_SOURCE_CATALOGUE_FILE`. The files never travel through a value or a
+ConfigMap: the elastic catalogue alone is 344 KB, and either form
+re-serialises it into etcd on every Argo sync. `entries` is empty while no
+release carries its files as an asset and no Dockerfile copies them into the
+image; each app that ships its files makes its entry live.
 
 ## Version check
 
@@ -113,9 +160,20 @@ versionCheck:
 ## Related
 
 - [architecture.md](../architecture.md) - where this repo sits in the suite
+- [composition.md](composition.md) - which apps a profile deploys by default,
+  how apps.yaml's `default_in` reaches Argo and Compose, and what an app with
+  nothing to do does instead of crash-looping
 - [storage.md](storage.md) - the storage-deploy matrix: service x mode x
   storage model, with the status and evidence behind every cell
+- [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on,
+  the private-CA IdP shape, and what Envoy Gateway cannot do with a groups claim
+- [edge-vpn.md](edge-vpn.md) - the opt-in tunnel a field appliance dials in on:
+  the two ports, the reserved client range, and how it reaches receivers only
 - [rke2.md](rke2.md) - the default distribution
+- [DEPLOY-HELPERS.md](../DEPLOY-HELPERS.md) - the release and deploy-overlay
+  helpers, the logins a deploy carries, and the end-to-end recipe
+- [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) - which CA signs the gateway
+  certificate: the self-signed default, estate PKI, and trusting the root once
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
 - [clickhouse.md](clickhouse.md) - CH target matrix (official operator / ClickHouse Cloud / private-cloud swap; Altinity untested) + operator history
 - [deployment-logs/](deployment-logs/TEMPLATE.md) - record every deploy

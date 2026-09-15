@@ -4,8 +4,12 @@
   which serves the listener named `http`. Any OTHER listener marked exposed has
   no path at all in this mode, so fail the render rather than deploy a listener
   that silently receives nothing.
+
+  vpn mode is not caught by this: the tunnel delivers a client onto the pod
+  network and it dials the ClusterIP directly, so every exposed listener is
+  reachable there without a gateway route.
 */}}
-{{- if ne (.Values.exposure.mode | default "public") "public" }}
+{{- if eq (.Values.exposure.mode | default "public") "internal" }}
 {{- range .Values.listeners }}
 {{- if and .exposed (ne .name "http") }}
 {{- fail (printf "dfe-receiver: listener %q (%v/%s) is exposed but exposure.mode is %q, and the cluster Gateway routes only the http listener. Either set exposure.mode: public so it gets a LoadBalancer, or add a dedicated Gateway listener plus a TCPRoute/UDPRoute for it and mark this listener exposed: false." .name .port (.protocol | default "TCP") $.Values.exposure.mode) }}
@@ -29,6 +33,9 @@ spec:
       targetPort: {{ .name }}
       protocol: {{ .protocol | default "TCP" }}
       name: {{ .name }}
+      {{- with .appProtocol }}
+      appProtocol: {{ . }}
+      {{- end }}
     {{- end }}
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
@@ -69,6 +76,10 @@ metadata:
   {{- end }}
 spec:
   type: {{ $pub.serviceType | default "LoadBalancer" }}
+  {{- /* The TCP door only: a second Service cannot hold the same address. */}}
+  {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerIP }}
+  loadBalancerIP: {{ $pub.loadBalancerIP }}
+  {{- end }}
   {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
   loadBalancerClass: {{ $pub.loadBalancerClass }}
   {{- end }}

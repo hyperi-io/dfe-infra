@@ -2,3 +2,18 @@ project: dfe
 component: test
 env: dev
 cloud: local
+
+# Absent `kafka` on purpose: dfe-common.transport must read a chart with no
+# broker settings at all (dfe-engine is one) as the bus default rather than
+# failing the render. The tests set kafka.mode to exercise the other branch.
+
+# One replica by default, so the PDB harness renders nothing until a test raises
+# either the replica count or KEDA's floor.
+replicaCount: 1
+
+config:
+  routing:
+    source_rules:
+      - field: _source
+  clickhouse:
+    protocol: http

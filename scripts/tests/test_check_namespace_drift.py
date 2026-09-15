@@ -28,6 +28,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "check_namespace_drift.py"
 
@@ -48,17 +50,6 @@ APPSETS = {
     "strimzi-kafka-operator": {"strimzi"},
     "cloudnative-pg": {"cnpg-system"},
 }
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def test_baseline_agrees() -> None:
@@ -133,15 +124,15 @@ def test_unmapped_operator_is_not_a_silent_pass() -> None:
 
 
 def main() -> int:
-    test_baseline_agrees()
-    test_committed_tree_agrees()
-    test_appset_installs_elsewhere()
-    test_netpol_default_diverges()
-    test_netpol_missing_an_operator()
-    test_operator_absent_from_every_appset()
-    test_unmapped_operator_is_not_a_silent_pass()
-    print(f"\n{_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        test_baseline_agrees()
+        test_committed_tree_agrees()
+        test_appset_installs_elsewhere()
+        test_netpol_default_diverges()
+        test_netpol_missing_an_operator()
+        test_operator_absent_from_every_appset()
+        test_unmapped_operator_is_not_a_silent_pass()
+        return summary()
 
 
 if __name__ == "__main__":

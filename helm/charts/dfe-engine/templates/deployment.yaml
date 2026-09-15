@@ -7,7 +7,9 @@ metadata:
   annotations:
     {{- include "dfe-common.reloadAnnotations" . | nindent 4 }}
 spec:
-  {{- include "dfe-common.replicas" . }}
+  # One replica whatever the profile says: each replica serves its own copy of
+  # the source registry (dfe-engine#361), and the config PVC is ReadWriteOnce.
+  replicas: 1
   {{- if .Values.config.persistence.enabled }}
   # The config PVC is ReadWriteOnce: a rolling update can strand the new pod
   # on another node waiting for the attach the old pod still holds.
@@ -17,6 +19,8 @@ spec:
   # strips nulls, so the sync cannot clear it itself.
   strategy:
     type: Recreate
+  {{- else }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
   {{- end }}
   selector:
     matchLabels:
@@ -27,6 +31,9 @@ spec:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
+        # The engine reads the app manifest once at startup, so a manifest edit
+        # reaches a running deployment only by moving the pod template.
+        checksum/app-catalogue: {{ include (print $.Template.BasePath "/app-catalogue.yaml") . | sha256sum }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -46,8 +53,86 @@ spec:
       # the deploy was pinned to v1.10.3, BEHIND the setting that collides.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap }}
+      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap .Values.authConfig.caBundleConfigMap .Values.content.entries }}
       initContainers:
+        {{- range $entry := .Values.content.entries }}
+        {{- $root := include "dfe-engine.contentRoot" (dict "ctx" $ "entry" $entry) }}
+        # One container per content pin, running the vehicle that carries the
+        # files, so a pin moves without touching this template.
+        - name: content-{{ $entry.name }}
+          {{- if eq $entry.kind "asset" }}
+          # The engine image, for its python3: an asset is a download, and no DFE
+          # image is guaranteed to carry curl.
+          image: {{ include "dfe-common.image" $ | quote }}
+          {{- else }}
+          image: {{ $entry.ref | quote }}
+          {{- end }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" $ | nindent 10 }}
+          {{- if eq $entry.kind "asset" }}
+          command:
+            - python3
+            - -c
+            - |
+              import urllib.request
+              from pathlib import Path
+              {{- range $f := $entry.files }}
+              dst = Path("{{ $root }}/{{ $f.to }}")
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              # A private release needs a credential the pod does not carry, so
+              # the URL has to be reachable as it stands.
+              with urllib.request.urlopen("{{ $entry.ref }}/{{ $f.from }}") as r:
+                  dst.write_bytes(r.read())
+              print("content: fetched", dst)
+              {{- end }}
+          {{- else if eq $entry.kind "emit" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              dir="{{ $root }}/{{ $entry.app }}"
+              # An image that carries no contract must not wedge the engine's
+              # pod: the app exits non-zero on a write failure.
+              if {{ $entry.app }} config-schema --dir "$dir"; then
+                # The contract names no image, so the writer records itself --
+                # without this the engine cannot report which pin it read.
+                printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+                  "{{ $entry.app }}" "{{ $entry.ref }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                  > "$dir/source.json"
+                echo "content: {{ $entry.app }} emitted its contract to $dir"
+              else
+                echo "content: {{ $entry.app }} emitted no contract; the mount stays empty" >&2
+              fi
+          {{- else }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              {{- range $f := $entry.files }}
+              src="{{ $f.from }}"
+              dst="{{ $root }}/{{ $f.to }}"
+              # An app that has not shipped its files yet must not wedge the
+              # engine's pod: report the absence and let the seed find nothing.
+              if [ -d "$src" ]; then
+                mkdir -p "$dst"
+                cp -R "$src/." "$dst/"
+                echo "content: copied $src to $dst"
+              elif [ -f "$src" ]; then
+                mkdir -p "$(dirname "$dst")"
+                cp "$src" "$dst"
+                echo "content: copied $src to $dst"
+              else
+                echo "content: {{ $entry.ref }} carries no $src; nothing seeded" >&2
+              fi
+              {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: content
+              mountPath: {{ $.Values.content.mountPath }}
+        {{- end }}
+      {{- if or .Values.authConfig.providersConfigMap .Values.authConfig.groupsConfigMap .Values.authConfig.caBundleConfigMap }}
         # Seed auth config into the writable config volume; a direct nested
         # mount leaves kubelet-created root-owned dirs the engine cannot
         # write beside, and copies keep group CRUD writable.
@@ -60,6 +145,7 @@ spec:
             - -c
             - |
               import shutil
+              import ssl
               from pathlib import Path
               for src, dst in (
                   ("/seed/oidc-providers", "{{ .Values.config.mountPath }}/auth/oidc-providers"),
@@ -74,6 +160,20 @@ spec:
                       if f.is_file():
                           shutil.copyfile(f, d / f.name)
                           print("seeded", d / f.name)
+              # SSL_CERT_FILE REPLACES the trust store, it does not add to it, so a
+              # private-CA bundle on its own fails every PUBLIC TLS peer -- a hosted
+              # IdP's discovery fetch dies on certificate_verify_failed. Merge the
+              # image's own roots in and point SSL_CERT_FILE at the result.
+              ca = Path("/seed/ca/ca-bundle.pem")
+              if ca.is_file():
+                  merged = Path("{{ .Values.config.mountPath }}/auth/ca-bundle.pem")
+                  merged.parent.mkdir(parents=True, exist_ok=True)
+                  text = ca.read_text(encoding="utf-8")
+                  roots = Path(ssl.get_default_verify_paths().openssl_cafile or "")
+                  if roots.is_file():
+                      text += "\n" + roots.read_text(encoding="utf-8")
+                  merged.write_text(text, encoding="utf-8", newline="\n")
+                  print("merged", merged)
           volumeMounts:
             - name: config
               mountPath: {{ .Values.config.mountPath }}
@@ -87,6 +187,12 @@ spec:
               mountPath: /seed/groups
               readOnly: true
             {{- end }}
+            {{- if .Values.authConfig.caBundleConfigMap }}
+            - name: ca-bundle
+              mountPath: /seed/ca
+              readOnly: true
+            {{- end }}
+      {{- end }}
       {{- end }}
       containers:
         - name: engine
@@ -118,6 +224,81 @@ spec:
             # there with 409 scaling_unsupported.
             - name: DFE_DEPLOYMENT_TARGET
               value: "kubernetes"
+            # What this deployment can carry a source's records on, from the one
+            # deployment-wide kafka.mode the profile sets. Without it the engine
+            # defaults to bus and accepts sources on a transport the brokerless
+            # profiles do not run. DFE_KAFKA_ENSURE_TOPICS is deliberately NOT
+            # set here: the engine derives topic creation from bus_present, and
+            # a second dial saying the same thing is a second thing to get wrong.
+            - name: DFE_TRANSPORT_DEFAULT
+              value: {{ include "dfe-common.transport" . | quote }}
+            - name: DFE_TRANSPORT_BUS_PRESENT
+              value: {{ ternary "true" "false" (eq (include "dfe-common.transport" .) "bus") | quote }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
+            # On the bus the engine creates each source's _land/_load topics, so
+            # it dials the broker with the same SASL user the data plane uses
+            # (settings.py: DFE_KAFKA_*; the provider derives the mechanism).
+            - name: DFE_KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- if .Values.kafka.saslSecretName }}
+            # The profiles point every app at the broker's internal plain
+            # listener, so the protocol and the mechanism are set the way the
+            # data-plane charts set them (the provider contract would derive
+            # SASL_SSL and fail the handshake -- dfe-engine#332).
+            - name: DFE_KAFKA_SECURITY_PROTOCOL
+              value: "SASL_PLAINTEXT"
+            - name: DFE_KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
+            - name: DFE_KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            {{- end }}
+            {{- end }}
+            # Whether the stage pools sit behind a listener here, and where that
+            # listener lives. The engine compiles a sender's destination, so it
+            # has to address the pool the same way the charts front it -- the
+            # shape of the address is apps.yaml's `mesh.host_pattern`, and these
+            # two are the deployment's half of it. Absent means the pools are
+            # dialled directly, which is every profile but mesh.
+            - name: DFE_MESH_ENABLED
+              value: {{ ternary "true" "false" (eq (include "dfe-common.meshEnabled" .) "true") | quote }}
+            {{- if (include "dfe-common.meshEnabled" .) }}
+            - name: DFE_MESH_NAMESPACE
+              value: {{ .Values.mesh.gateway.namespace | quote }}
+            {{- end }}
+            {{- with .Values.stackVersion }}
+            # The certified stack this deployment runs, from the cluster secret's
+            # stack_version annotation the appset reads. GET
+            # /api/v1/system/version prefers the deploy repo's pins.yaml and
+            # falls back to this, so a deploy whose pins carry no base still
+            # answers with a stack rather than nothing.
+            - name: DFE_STACK_VERSION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.profile }}
+            # The tier this deployment was stood up as, from the SAME cluster
+            # secret annotation that selects profile-<x>.yaml above. Without it
+            # the console lists every optional app, because an engine that does
+            # not know its tier cannot rule any of them out.
+            - name: DFE_PROFILE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.uiVersion }}
+            # The dfe-ui pin this deployment renders, so the engine can report it
+            # when the deploy repo's pins name no ui override.
+            - name: DFE_UI_VERSION
+              value: {{ . | quote }}
+            {{- end }}
             # Reconcile the CH tenant fence on startup: tier roles, the _org_id row
             # policies, the deny policies over tables without one, and a CH user per
             # org/group. Set false only for a deployment with no tenant isolation.
@@ -139,6 +320,10 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: DFE_CLICKHOUSE_SECURE
               value: "false"
+            # Default TTL for every time-series table; 0 = none; a source or a
+            # dfe-schemas TTL overrides it. The dfe-schema Job carries the same value.
+            - name: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS
+              value: {{ .Values.retention.defaultTtlDays | quote }}
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             # Config-registry directories. WITHOUT these the engine leaves every
             # registry uninitialised and the config API returns 503 not_configured.
@@ -150,11 +335,25 @@ spec:
               value: {{ .Values.config.mountPath }}/services
             - name: DFE_DEPLOYMENT_CONFIG_DIR
               value: {{ .Values.config.mountPath }}/deployments
-            {{- if .Values.appCatalogue }}
             # Points the management API at the mounted manifest, so a new or
             # changed app reflects without an engine release.
             - name: DFE_APP_CATALOGUE_FILE
               value: /etc/dfe-engine/catalogue/apps.yaml
+            # Unconditional because an absent directory is a no-op in the
+            # engine, so a content entry added later needs no env change.
+            - name: DFE_LIBRARY_SEED_DIR
+              value: {{ .Values.content.mountPath }}/library
+            # Where the settings API reads each app's config schema and
+            # capability catalogue. Unconditional for the same reason: a
+            # directory with no <app> subdirectory answers "no contract"
+            # rather than failing, so an entry added later needs no env change.
+            - name: DFE_APP_CONTRACT_DIR
+              value: {{ .Values.content.mountPath }}/contract
+            {{- with (include "dfe-engine.catalogueFile" .) }}
+            # Set only where a content entry materialises one: a path naming a
+            # file nothing wrote is refused rather than answered with no sources.
+            - name: DFE_SOURCE_CATALOGUE_FILE
+              value: {{ . | quote }}
             {{- end }}
             - name: DFE_SCHEMAS_DIR
               value: {{ .Values.config.mountPath }}/schemas
@@ -174,6 +373,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
+            {{- if .Values.api.forwardedAllowIps }}
+            # The peers whose X-Forwarded-Proto is believed. An OIDC redirect URI
+            # is built from that scheme, so an unset value sends the IdP an http
+            # callback and a hosted IdP refuses to register one.
+            - name: DFE_API_FORWARDED_ALLOW_IPS
+              value: {{ .Values.api.forwardedAllowIps | quote }}
+            {{- end }}
             # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
             # the WRITABLE config mount. The default ./.secrets resolves to
             # /app/.secrets on the root-owned WORKDIR (non-writable) -> the engine
@@ -208,16 +414,41 @@ spec:
                   name: {{ .Values.seedAuth.secretName }}
                   key: seed-accounts
             {{- end }}
-            {{- if .Values.seedAuth.adminPassword }}
-            # Stable break-glass admin password. Seeded only into an EMPTY store,
-            # so a fresh install/rebuild gets a known admin login instead of a
-            # random one; a rotated password persisted to the deploy repo still
-            # wins over this on later boots. Empty -> engine mints a random admin.
+            {{- if .Values.auth.adminSecretName }}
+            # The MINTED admin password (#233). The engine reasserts it on every
+            # boot and refuses to start on an unset or `changeme` value unless
+            # env is a dev posture. An empty adminSecretName is the dev-only
+            # no-Secret case.
             - name: DFE_AUTH_LOCAL_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.seedAuth.secretName }}
-                  key: admin-password
+                  name: {{ .Values.auth.adminSecretName }}
+                  key: {{ .Values.auth.adminSecretKey }}
+            # The engine composes the login page's credential-fetch command from
+            # these and the namespace below.
+            - name: DFE_AUTH_LOCAL_ADMIN_SECRET_NAME
+              value: {{ .Values.auth.adminSecretName | quote }}
+            - name: DFE_AUTH_LOCAL_ADMIN_SECRET_KEY
+              value: {{ .Values.auth.adminSecretKey | quote }}
+            {{- end }}
+            - name: DFE_DEPLOYMENT_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- with .Values.auth.adminSecretPath }}
+            # Set = the rotate-password endpoint writes through the scalo secrets
+            # seam instead of answering 501 with the kubectl patch command.
+            - name: DFE_AUTH_LOCAL_ADMIN_PASSWORD_SECRET_PATH
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.auth.breakglassSecretName }}
+            # First-boot break-glass password: the engine hashes it into the
+            # deploy repo once and ignores it afterwards.
+            - name: DFE_AUTH_BREAKGLASS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.breakglassSecretName }}
+                  key: {{ .Values.auth.breakglassSecretKey }}
             {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
@@ -273,9 +504,11 @@ spec:
           {{- end }}
           {{- end }}
           {{- if .Values.authConfig.caBundleConfigMap }}
-            # Private-CA IdPs and datastores verify against this bundle.
+            # Private-CA IdPs and datastores verify against this bundle. It is the
+            # init container's MERGE of the configured CA and the image's public
+            # roots, not the ConfigMap itself -- see the seed script.
             - name: SSL_CERT_FILE
-              value: /etc/dfe-ca/ca-bundle.pem
+              value: {{ .Values.config.mountPath }}/auth/ca-bundle.pem
           {{- end }}
           volumeMounts:
             # Config is WRITABLE: the engine is a git-native config control plane
@@ -289,19 +522,17 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.appCatalogue }}
             - name: app-catalogue
               mountPath: /etc/dfe-engine/catalogue
               readOnly: true
-            {{- end }}
+            # Read-only here, writable in the init containers that fill it: the
+            # engine reads this content, the pins own it.
+            - name: content
+              mountPath: {{ .Values.content.mountPath }}
+              readOnly: true
             {{- if .Values.gitops.enabled }}
             - name: deploy-repo
               mountPath: {{ dir .Values.gitops.localPath }}
-            {{- end }}
-            {{- if .Values.authConfig.caBundleConfigMap }}
-            - name: ca-bundle
-              mountPath: /etc/dfe-ca
-              readOnly: true
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -329,11 +560,13 @@ spec:
           {{- end }}
         - name: tmp
           emptyDir: {}
-        {{- if .Values.appCatalogue }}
+        # Pod-local: the content is re-materialised from the pins on every start,
+        # so there is nothing here worth surviving the pod.
+        - name: content
+          emptyDir: {}
         - name: app-catalogue
           configMap:
             name: {{ include "dfe-common.fullname" . }}-app-catalogue
-        {{- end }}
         {{- if .Values.authConfig.providersConfigMap }}
         - name: oidc-providers
           configMap:

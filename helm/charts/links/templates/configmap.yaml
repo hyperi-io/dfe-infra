@@ -5,6 +5,8 @@
 {{- $domain := .Values.domain | default (dig "domain" "" (.Values.global | default dict)) }}
 {{- $desc := .Values.page.description }}
 {{- $defaults := list }}
+{{- /* Kafbat manages a broker, so a brokerless profile must not advertise it. */}}
+{{- $hasKafka := ne (dig "mode" "disabled" (.Values.kafka | default dict)) "disabled" }}
 {{- if .Values.page.includeDefaults }}
 {{- /* HyperDX is never listed separately: it is an iframe inside dfe-ui. */}}
 {{- if $domain }}
@@ -23,9 +25,11 @@
 {{- end }}
 {{- $data := list
       (dict "name" "ClickHouse Play" "url" "http://localhost:18124/play"
-            "note" (printf "no gateway route -- kubectl -n clickhouse port-forward svc/%s-clickhouse 18124:8123" $p))
-      (dict "name" "Kafbat (Kafka UI)" "url" (printf "https://%s.%s" $h.kafbat $domain)
-            "note" "infra surface; its own OIDC guards it") }}
+            "note" (printf "no gateway route -- kubectl -n clickhouse port-forward svc/%s-clickhouse 18124:8123" $p)) }}
+{{- if $hasKafka }}
+{{- $data = append $data (dict "name" "Kafbat (Kafka UI)" "url" (printf "https://%s.%s" $h.kafbat $domain)
+      "note" "infra surface; its own OIDC guards it") }}
+{{- end }}
 {{- $gitops := list
       (dict "name" "Argo CD" "url" (printf "https://%s.%s" $h.argocd $domain)
             "note" "GitOps control plane")
@@ -52,9 +56,11 @@
 {{- end }}
 {{- $data := list
       (dict "name" "ClickHouse Play" "url" "http://localhost:18124/play"
-            "note" (printf "kubectl -n clickhouse port-forward svc/%s-clickhouse 18124:8123" $p))
-      (dict "name" "Kafbat (Kafka UI)" "url" "http://localhost:18082"
-            "note" (printf "kubectl -n kafka port-forward svc/%s-kafbat 18082:8080" $p)) }}
+            "note" (printf "kubectl -n clickhouse port-forward svc/%s-clickhouse 18124:8123" $p)) }}
+{{- if $hasKafka }}
+{{- $data = append $data (dict "name" "Kafbat (Kafka UI)" "url" "http://localhost:18082"
+      "note" (printf "kubectl -n kafka port-forward svc/%s-kafbat 18082:8080" $p)) }}
+{{- end }}
 {{- $gitops := list
       (dict "name" "Argo CD" "url" "http://localhost:18081"
             "note" "kubectl -n argocd port-forward svc/argocd-server 18081:80")
@@ -80,6 +86,11 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 data:
+  # The link model as data, for a reader that is not a browser -- the engine
+  # serves the admin links from here, and the alternative is parsing them back
+  # out of the page's inline JSON. Same $model as the page below, so the two
+  # cannot disagree about what this deployment exposes.
+  links.json: {{ $model | toJson | quote }}
   index.html: |
     <!DOCTYPE html>
     <html lang="en">

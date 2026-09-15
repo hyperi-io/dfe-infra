@@ -1,0 +1,16 @@
+# A stand-in for an app's config ConfigMap, shaped like the real ones: an opaque
+# blob from the values plus a key the chart derives from the transport. The
+# deployment below checksums it, so a change here must move the pod template.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- $cfg := deepCopy (.Values.config | default dict) }}
+    {{- if eq (include "dfe-common.transport" .) "direct" }}
+    {{- $_ := set $cfg "loader" (dict "transport" "grpc") }}
+    {{- end }}
+    {{- toYaml $cfg | nindent 4 }}

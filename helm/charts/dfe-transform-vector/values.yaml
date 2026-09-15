@@ -13,12 +13,29 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-transform-vector (drift-checked).
-  digest: "sha256:1e7da14a0bfe28ac37cefb968d0dc6b1e159d8f3da8990c3f1c051f3da724e64"
+  digest: "sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
+# Internal Service for the scalo Push listener, rendered on the direct transport
+# only (dfe-common.pushService). 6000 is the DFE gRPC convention.
+service:
+  pushPort: 6000
+
+# gRPC target on the direct transport (kafka.mode: disabled): the LOADER's
+# Service name + grpcPort. The transform's gRPC output is a scalo Transport/Push
+# client, which the loader serves and the receiver does not (its :6000 speaks the
+# Vector protocol). A URI, unlike the receiver's host:port loaderGrpcAddress:
+# scalo's GrpcConfig.endpoint is parsed as one. Point it at another transform's
+# push Service to chain two transforms.
+loaderGrpcAddress: "http://dfe-loader:6000"
+
 kafka:
+  # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
+  # values. Templates read it through dfe-common.transport, never by comparing
+  # this string themselves.
+  mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
   # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
@@ -44,7 +61,19 @@ otel:
 # deployment-specific addresses in a product chart, and Helm's map merge would
 # silently leave stale keys behind when the engine's overlay does not overwrite
 # them.
+#
+# One exception, in the ConfigMap rather than here: source.transport and
+# sink.transport (plus source.listen and sink.endpoint on direct) are derived
+# from kafka.mode by dfe-common.transformConfig, because which transport carries
+# the records is a deployment fact and not the engine's to author.
 config: {}
+
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
 
 # The Vector transform YAML this instance runs, as a list of {name, content}.
 # Written by dfe-engine into the per-instance overlay and rendered into a ConfigMap
@@ -78,14 +107,16 @@ serviceAccount:
   create: true
   annotations: {}
 
-# KEDA autoscaling -- folded into the chart. The DEFAULT trigger is CPU (native KEDA
-# cpu scaler, no shim needed). scalo ScalingPressure (dfe_scaling_pressure, 0-100) is
-# the OPT-IN advanced signal: the composite fuses Kafka CG lag + container-contract
-# metrics (buffer, memory) AND hard-gates to 0 when the downstream sink is unreachable
-# (circuit-breaker open), so pressure never scales out pods that would not help when
-# the real bottleneck is downstream. It routes through the fail-safe dfe-keda-shim (a
-# metric outage FREEZES scaling, never runs replicas up). Transforms are multi-instance;
-# set pressure.service per instance. minReplicaCount stays 1 (scale-to-zero is 2.2 backlog).
+# KEDA autoscaling -- folded into the chart. The SHIPPED trigger is the native KEDA
+# cpu scaler; scalo ScalingPressure (dfe_scaling_pressure, 0-100) is opt-in until
+# every app emits the gauge (dfe-infra #302), and the HPA takes the higher of the two
+# where both render. Pressure is the advanced signal: the composite fuses Kafka CG lag
+# + container-contract metrics (buffer, memory) AND hard-gates to 0 when the downstream
+# sink is unreachable (circuit-breaker open), so pressure never scales out pods that
+# would not help when the real bottleneck is downstream. It routes through the fail-safe
+# dfe-keda-shim (a metric outage FREEZES scaling, never runs replicas up). Transforms are
+# multi-instance; set pressure.service per instance. minReplicaCount stays 1
+# (scale-to-zero is 2.2 backlog).
 keda:
   enabled: true
   minReplicaCount: 1
@@ -93,12 +124,12 @@ keda:
   cooldownPeriod: 300
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # opt-in: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
     # service: dfe-transform-vector   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

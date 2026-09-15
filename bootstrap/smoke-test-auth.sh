@@ -14,7 +14,9 @@ FAIL=0
 check() {
     local name="${1}"
     local cmd="${2}"
-    if eval "${cmd}" > /dev/null 2>&1; then
+    # pipefail is off for the check itself: a check ending in grep -q closes the
+    # pipe on the first match, and the producer's SIGPIPE would fail a passing check.
+    if ( set +o pipefail; eval "${cmd}" ) > /dev/null 2>&1; then
         echo "  [PASS] ${name}"
         (( PASS++ )) || true
     else

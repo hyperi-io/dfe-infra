@@ -64,9 +64,11 @@ carries those inputs is specified in
 ## Layout
 
 See [docs/architecture.md](docs/architecture.md) for where this repo sits in
-the suite (and the hard dfe-engine boundary), and
+the suite (and the hard dfe-engine boundary),
 [docs/deployment/index.md](docs/deployment/index.md) for layers, tiers, and
-the values cascade.
+the values cascade, and [docs/suite-graph.md](docs/suite-graph.md) for which
+repos are suite members and what moves when one of them releases
+(`suite.yaml` is the source).
 
 - `terraform/` - reusable HCL modules (OpenTofu).
 - `helm/charts/` - one chart per DFE service and data component

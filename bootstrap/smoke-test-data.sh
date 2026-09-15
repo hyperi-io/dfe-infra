@@ -18,7 +18,9 @@ FAIL=0
 check() {
     local name="${1}"
     local cmd="${2}"
-    if eval "${cmd}" > /dev/null 2>&1; then
+    # pipefail is off for the check itself: a check ending in grep -q closes the
+    # pipe on the first match, and the producer's SIGPIPE would fail a passing check.
+    if ( set +o pipefail; eval "${cmd}" ) > /dev/null 2>&1; then
         echo "  [PASS] ${name}"
         (( PASS++ )) || true
     else
@@ -35,9 +37,14 @@ NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
 NS_OTEL="${DFE_OTEL_NS:-otel}"
 
-# slim and single run the datastores as plain StatefulSets from the charts; only
-# scale hands them to their operators, so only scale has CRs and operator labels.
+# slim and single run the datastores as plain StatefulSets from the charts; the
+# scale tiers hand them to their operators, so only those carry CRs and operator
+# labels.
 PROFILE="${DFE_PROFILE:-}"
+
+# profile_has_kafka() -- generated from scripts/profiles.py, the one mode table.
+# shellcheck source-path=SCRIPTDIR source=scripts/profiles.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/profiles.sh"
 
 running_pods() {  # ns, label-selector -- at least one Running pod matches
     kubectl -n "${1}" get pods -l "${2}" --field-selector=status.phase=Running \
@@ -52,10 +59,10 @@ echo "--- Namespaces ---"
 check "cnpg namespace (also hosts FerretDB)" "kubectl get ns ${NS_CNPG}"
 check "clickhouse namespace" "kubectl get ns ${NS_CH}"
 check "otel namespace" "kubectl get ns ${NS_OTEL}"
-if [ "${PROFILE}" = "slim" ]; then
-    skip "kafka namespace -- slim is brokerless (receiver feeds loader directly)"
-else
+if profile_has_kafka; then
     check "kafka namespace" "kubectl get ns ${NS_KAFKA}"
+else
+    skip "kafka namespace -- no broker on profile ${PROFILE:-unknown} (receiver feeds loader directly)"
 fi
 
 echo ""
@@ -71,8 +78,8 @@ fi
 
 echo ""
 echo "--- Kafka ---"
-if [ "${PROFILE}" = "slim" ]; then
-    skip "kafka broker -- slim is brokerless"
+if ! profile_has_kafka; then
+    skip "kafka broker -- not deployed on profile ${PROFILE:-unknown}"
 elif kubectl -n "${NS_KAFKA}" get kafka dfe-kafka >/dev/null 2>&1; then
     check "Kafka CR ready" \
       "kubectl -n ${NS_KAFKA} get kafka dfe-kafka -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
