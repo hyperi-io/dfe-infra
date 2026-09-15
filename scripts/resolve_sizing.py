@@ -2744,7 +2744,12 @@ def build_values(
     return out
 
 
-def build_resolved(core: Core, dial: Dial, catalogue: Catalogue | None) -> dict[str, object]:
+def build_resolved(
+    core: Core,
+    dial: Dial,
+    catalogue: Catalogue | None,
+    choices: dict[str, Choice] | None = None,
+) -> dict[str, object]:
     """The committed resolved-state document a re-resolve diffs against.
 
     Carries just enough identity to say what this run resolved -- tier, focus,
@@ -2754,6 +2759,13 @@ def build_resolved(core: Core, dial: Dial, catalogue: Catalogue | None) -> dict[
     deployer-set chart-values overrides this script never computes, so they
     carry no entry -- a re-size can only be compared on what a resolve
     actually produces, never on what a deployer later hand-sets.
+
+    ``compute_usd_per_hour`` is the same on-demand arithmetic the report's own
+    shape table prints, summed over every shape this resolve picked. It is here
+    as well as there because the report is prose an operator reads once, and
+    this file is what a tool reads later -- an ephemeral deployment's own
+    running cost has to be legible after the report is gone. Compute only: EBS
+    and the managed broker's storage are usage-based and are not in it.
     """
     locked: dict[str, object] = {
         "partition_count": core.partitions,
@@ -2762,7 +2774,7 @@ def build_resolved(core: Core, dial: Dial, catalogue: Catalogue | None) -> dict[
     }
     if catalogue is not None:
         locked["az_count"] = len(catalogue.azs)
-    return {
+    doc: dict[str, object] = {
         "tier": core.tier,
         "focus": core.focus,
         "cloud": dial.cloud,
@@ -2770,8 +2782,13 @@ def build_resolved(core: Core, dial: Dial, catalogue: Catalogue | None) -> dict[
         "estimated": core.estimated,
         "ingest_gb_per_day": round(core.ingest_gb_per_day, 1),
         "resolved": datetime.now(UTC).date().isoformat(),
-        "locked": locked,
     }
+    if choices:
+        doc["compute_usd_per_hour"] = round(
+            sum(choice.price_usd_hour * max(choice.count, 1) for choice in choices.values()), 4
+        )
+    doc["locked"] = locked
+    return doc
 
 
 @dataclass(frozen=True, slots=True)
@@ -3177,7 +3194,7 @@ def run_resolve(args: argparse.Namespace) -> int:
 
     core.notes.extend(notes)
 
-    resolved_doc = build_resolved(core, dial, catalogue)
+    resolved_doc = build_resolved(core, dial, catalogue, choices if populated else None)
     locked_changes: list[LockedChange] = []
     if args.previous is not None:
         previous_doc = _load(args.previous)

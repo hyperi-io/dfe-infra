@@ -212,12 +212,14 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #   resolve_pins -- `pin`, so the standalone tool and `dfe-ops pin` are one code
 #                   path (dfe-infra#116).
 #   tester_idp   -- `idp`, whose render functions are unit-testable cluster-free.
+#   yaml_subset  -- the one reader every ops script parses a YAML SSoT with.
 sys.path.insert(0, str(SCRIPTS))
 import access_summary as access_summary_file  # noqa: E402
 import capacity  # noqa: E402
 import composition  # noqa: E402
 import envfile  # noqa: E402
 import profiles  # noqa: E402
+import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
@@ -3429,9 +3431,74 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+# --- the ephemeral-deployment banner -----------------------------------------
+# An ephemeral deployment is a create-prove-destroy cycle, and the one number
+# that decides whether to keep proving is how long it has been up against what
+# it costs an hour. Both are already on disk and neither was ever surfaced, so
+# a cycle ran on someone's memory of when it started.
+
+DIAL = REPO_ROOT / "deployment.yaml"
+SIZING_RESOLVED = REPO_ROOT / "sizing" / "resolved.yaml"
+TF_ENVIRONMENTS = REPO_ROOT / "terraform" / "environments"
+
+
+def _dial_tree() -> dict[str, object]:
+    """The dial, or an empty tree -- a missing or unreadable dial is never fatal."""
+    try:
+        return yaml_subset.parse(DIAL.read_text(encoding="utf-8", errors="replace"), source=str(DIAL))
+    except (OSError, yaml_subset.YamlSubsetError):
+        return {}
+
+
+def _state_created_at(cloud: str) -> float | None:
+    """When this deployment's tofu state came into being, as an epoch time.
+
+    The backend record `tofu init` writes is the reading: it is created with the
+    state and no later apply rewrites it, unlike terraform.tfstate, whose mtime
+    moves on every apply. A local backend has no such record, so the state file
+    itself stands in there.
+    """
+    root = TF_ENVIRONMENTS / cloud
+    for candidate in (root / ".terraform" / "terraform.tfstate", root / "terraform.tfstate"):
+        try:
+            return candidate.stat().st_mtime
+        except OSError:
+            continue
+    return None
+
+
+def _elapsed(seconds: float) -> str:
+    hours, rest = divmod(int(seconds), 3600)
+    return f"{hours}h{rest // 60:02d}m"
+
+
+def _ephemeral_notice() -> str | None:
+    """One line for a deployment the dial marks ephemeral, or None for any other."""
+    tree = _dial_tree()
+    if yaml_subset.at(tree, ("tags", "lifecycle")) != "ephemeral":
+        return None
+    cloud = yaml_subset.at(tree, ("target", "provision", "cloud")) or "aws"
+    parts = [f"ephemeral deployment ({cloud})"]
+    created = _state_created_at(str(cloud))
+    parts.append(f"up {_elapsed(time.time() - created)}" if created else "up (no tofu state found)")
+    rate = None
+    try:
+        resolved = yaml_subset.parse(
+            SIZING_RESOLVED.read_text(encoding="utf-8", errors="replace"), source=str(SIZING_RESOLVED)
+        )
+        rate = yaml_subset.at(resolved, ("compute_usd_per_hour",))
+    except (OSError, yaml_subset.YamlSubsetError):
+        rate = None
+    parts.append(f"compute {rate} USD/hour" if rate else "compute rate not resolved")
+    return " -- ".join(parts)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
     args = ap.parse_args(argv)
+    notice = _ephemeral_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     return args.func(args)
 
 
