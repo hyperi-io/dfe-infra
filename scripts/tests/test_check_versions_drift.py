@@ -65,6 +65,46 @@ def test_sweep_reaches_the_repo_root() -> None:
     )
 
 
+def test_the_operators_own_dial_is_not_swept() -> None:
+    """deployment.yaml is the checker's INPUT, not a mirror of versions.yaml.
+
+    It carries a stack pin no check can ever read, so sweeping it reported it
+    unswept forever and `dfe-ops stack-deploy` refused every deploy that put the
+    dial where the tooling documents. It is gitignored, and so is every other
+    local artefact the sweep must stay out of.
+    """
+    dial = REPO_ROOT / "deployment.yaml"
+    pre_existing = dial.is_file()
+    try:
+        if not pre_existing:
+            dial.write_text('version:\n  pin: "2.2.0-rc.14"\n', encoding="utf-8")
+        drift.sweep_files.cache_clear()
+        files = drift.sweep_files()
+        expect(
+            "the gitignored dial is outside the swept set",
+            Path("deployment.yaml") not in files,
+            f"root files swept: {[f for f in files if f.parent == Path('.')]}",
+        )
+        expect(
+            "the tracked example is still inside it",
+            Path("deployment.example.yaml") in files,
+            "the exclusion is too broad",
+        )
+    finally:
+        if not pre_existing and dial.is_file():
+            dial.unlink()
+        drift.sweep_files.cache_clear()
+
+
+def test_the_exclusion_reads_gitignore_rather_than_one_filename() -> None:
+    """A second local artefact at the root must stay out without another edit."""
+    names = drift.root_ignored_names()
+    expect("deployment.yaml is root-anchored in .gitignore", "deployment.yaml" in names,
+           f"got {sorted(names)}")
+    expect("a tracked root file is not excluded", "deployment.example.yaml" not in names,
+           "the example would vanish from the sweep")
+
+
 def test_stack_pin_surfaces_without_its_check() -> None:
     """Drop the check and the example's stack pin must come back as unswept.
 

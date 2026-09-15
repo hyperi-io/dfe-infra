@@ -942,6 +942,35 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
 
 
 @cache
+def root_ignored_names() -> frozenset[str]:
+    """Root-anchored .gitignore entries, as bare names.
+
+    An operator's own deployment.yaml sits at the repo root and carries a stack
+    pin, which is an INPUT to this checker rather than a mirror of versions.yaml
+    -- no check can ever read it, so the sweep would report it unswept forever
+    and refuse a deploy that followed the documented flow. Matching .gitignore
+    rather than one filename keeps every other local artefact out too.
+
+    Read from .gitignore rather than asked of git: this checker runs offline,
+    and a worked tree with no git at all still has to sweep the same set.
+    """
+    ignore = REPO_ROOT / ".gitignore"
+    if not ignore.is_file():
+        return frozenset()
+    names = set()
+    for raw in ignore.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        # A leading slash anchors the pattern to the repo root, which is the
+        # only depth this sweep reads unrecursed; a deeper path is not a name.
+        if not line.startswith("/") or line.startswith("/#"):
+            continue
+        entry = line.lstrip("/")
+        if "/" not in entry:
+            names.add(entry)
+    return frozenset(names)
+
+
+@cache
 def sweep_files() -> tuple[Path, ...]:
     """Every file on the deployable surface the sweep reads, repo-relative.
 
@@ -964,11 +993,13 @@ def sweep_files() -> tuple[Path, ...]:
         ]
     # The repo root itself, NOT recursed -- a new top-level file is then swept
     # without anyone remembering to list it. deployment.example.yaml pins a
-    # stack version up here, outside every root above.
+    # stack version up here, outside every root above; the operator's own
+    # deployment.yaml is gitignored and stays out.
+    ignored = root_ignored_names()
     found += [
         p.relative_to(REPO_ROOT)
         for p in REPO_ROOT.iterdir()
-        if p.is_file() and p.suffix in SWEEP_SUFFIXES
+        if p.is_file() and p.suffix in SWEEP_SUFFIXES and p.name not in ignored
     ]
     return tuple(sorted(found))
 
