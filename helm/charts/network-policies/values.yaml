@@ -188,8 +188,9 @@ externalEgress:
       - dfe-transform-vrl
       - dfe-transform-vector
       - dfe-transform-elastic
-      - dfe-transform-splack
-      - dfe-transform-wasm
+      # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
+      # - dfe-transform-splack
+      # - dfe-transform-wasm
     # The managed-broker listener range. 9092-9096 covers the SASL_SSL and
     # SASL_PLAINTEXT listeners Confluent Cloud, MSK and Redpanda Cloud publish
     # between them, and 9098 is MSK's IAM listener.
