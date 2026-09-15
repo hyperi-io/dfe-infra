@@ -20,6 +20,53 @@ Usage:
 {{- end }}
 
 {{/*
+dfe-kafka.providerIdentity -- the auth identity of the broker this deploy talks
+to, as a key in the shared provider table (dfe-common/templates/_kafka.tpl).
+
+It is NOT .Values.kafka.provider: that names the broker to DEPLOY (strimzi or
+redpanda), while the identity also carries how the deployed broker is dialled.
+Both CRs here serve SASL on a TLS-off listener -- kafka-single.yaml declares
+`listeners=SASL_PLAINTEXT://:9092` and redpanda.yaml sets `tls.enabled: false`
+-- so a DFE-owned broker is the `-no-tls` key, and the bare provider name would
+claim a TLS endpoint nothing in this chart stands up (dfe-infra#191).
+
+mode=external carries a broker somebody else runs, so its identity comes from
+kafka.external.provider verbatim. mode=disabled dials nothing and renders empty.
+
+Usage:
+  sasl.mechanism: {{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) | quote }}
+*/}}
+{{- define "dfe-kafka.providerIdentity" -}}
+{{- if eq .Values.kafka.mode "external" -}}
+{{ .Values.kafka.external.provider }}
+{{- else if or (eq .Values.kafka.mode "single") (eq .Values.kafka.mode "cluster") -}}
+{{ printf "%s-no-tls" .Values.kafka.provider }}
+{{- end -}}
+{{- end }}
+
+{{/*
+dfe-kafka.validateExternalProvider -- keep the IAM credential shape quarantined
+at the mode=external seam.
+
+msk_iam is the one identity with no username/password pair: it authenticates
+through IRSA/workload-identity, so it renders no credential Secret. Naming it on
+one dial and not the other renders a deploy that is half IAM and half SCRAM, and
+the mismatch only surfaces as an auth failure against the broker.
+*/}}
+{{- define "dfe-kafka.validateExternalProvider" -}}
+{{- if eq .Values.kafka.mode "external" -}}
+{{- $provider := .Values.kafka.external.provider -}}
+{{- $authType := .Values.kafka.external.auth.type -}}
+{{- if and (eq $provider "msk_iam") (ne $authType "msk_iam") -}}
+{{- fail (printf "kafka: external.provider=msk_iam authenticates through IAM and mints no static credential, so external.auth.type must be msk_iam (got %q)." $authType) -}}
+{{- end -}}
+{{- if and (eq $authType "msk_iam") $provider (ne $provider "msk_iam") -}}
+{{- fail (printf "kafka: external.auth.type=msk_iam renders no credential Secret, so external.provider must be msk_iam or left empty (got %q)." $provider) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 dfe-kafka.bootstrapTopics -- the ONE list of topics a deploy guarantees exist
 before the apps start: the default landing topic plus the per-app DLQ topics.
 
