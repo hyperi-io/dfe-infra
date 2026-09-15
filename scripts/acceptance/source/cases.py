@@ -1,7 +1,7 @@
 #  Project:      dfe-infra
 #  File:         acceptance/source/cases.py
-#  Purpose:      The two source kinds the suite stands up, each as one object:
-#                how it is created, how records reach it, and what proves they
+#  Purpose:      The source kinds the suite stands up, each as one object: how
+#                it is created, how records reach it, and what proves they
 #                arrived. Everything between those halves is in steps.py.
 #  Language:     Python
 #
@@ -11,8 +11,8 @@
 
 A case owns its own constants, its create/provision/feed/prove hooks and the
 step names its waits report under. The runner calls those hooks in one fixed
-order and supplies every step they have in common, so neither case carries a
-second copy of a poll.
+order and supplies every step they have in common, so no case carries a second
+copy of a poll.
 
 Console first, API second. Where the console has the control the case drives it
 and the row reads ``done``; where it does not, the API does the same work and
@@ -64,6 +64,9 @@ class Case:
 
     #: The per-source app this kind's source deploys.
     service: str = ""
+    #: The checkout beside the engine repo this kind reads its inputs from, for
+    #: a run that was given no --transform-repo. Empty when it reads none.
+    companion_repo: str = ""
     #: What the two shared waits report as, so the report keeps this kind's words.
     instance_step: str = ""
     reporting_step: str = ""
@@ -117,6 +120,11 @@ class FilebeatCase(Case):
     PROGRAM = "pipelines/filebeat/filebeat.vrl"
     ENRICHMENT = "pipelines/filebeat/timezones.csv"
     CORPUS = "tests/fixtures/filebeat/filebeat-testdata.tar.gz"
+    # Corpus modules to feed; empty is every module the wrapper names.
+    MODULES: tuple[str, ...] = ()
+    # Display name and description the console form is filled with.
+    DISPLAY = "Filebeat source test"
+    DESCRIPTION = "Post-deploy source test: real filebeat lines through the bundled VRL, archived."
     # A column only the transform sets on the umbrella branch; absent from the body.
     TRANSFORMED_COLUMN = "log_file_path"
     # The file sets the transform app declares (dfe-infra apps.yaml).
@@ -126,12 +134,15 @@ class FilebeatCase(Case):
     TRANSFORM_DEADLINE = 300.0
 
     service = f"dfe-transform-{TRANSFORM_ENGINE}"
+    companion_repo = "dfe-transform-vrl"
     instance_step = "transform-instance"
     reporting_step = "transform-reporting"
+    #: Prefix of the source name this kind mints, which the sweep knows.
+    prefix = "fb"
 
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(args)
-        self.name = fetcher.new_name("fb")
+        self.name = fetcher.new_name(self.prefix)
         self._posted = 0
         self._before = 0
         self._before_transformed = 0
@@ -145,10 +156,8 @@ class FilebeatCase(Case):
         page.wait_for_url("**/sources**", timeout=STEP_TIMEOUT_MS)
         driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
         page.get_by_placeholder("Enter source").fill(self.name)
-        page.get_by_placeholder("Enter display name").fill(f"Filebeat source test {self.name}")
-        page.get_by_placeholder("Enter description").fill(
-            "Post-deploy source test: real filebeat lines through the bundled VRL, archived."
-        )
+        page.get_by_placeholder("Enter display name").fill(f"{self.DISPLAY} {self.name}")
+        page.get_by_placeholder("Enter description").fill(self.DESCRIPTION)
         # The switches are Enabled (on) then Archive (off); the archive one is second.
         page.get_by_role("switch").nth(1).click(timeout=STEP_TIMEOUT_MS)
         page.get_by_placeholder("Enter field").fill(self.MATCH_FIELD)
@@ -194,8 +203,8 @@ class FilebeatCase(Case):
         """The attach-transform row, read back off the engine rather than off the form."""
         console_detail, api_detail = "", ""
         if not refused:
-            attached = self._attached_engine(run)
-            if attached == self.TRANSFORM_ENGINE:
+            attached = self._attached_transform(run)
+            if attached == self._transform_body():
                 console_detail = (
                     f"the console's Transform tab set {self.service}; {self.name} reads "
                     f"back with transform {attached}"
@@ -207,9 +216,24 @@ class FilebeatCase(Case):
         status, detail = steps.console_outcome(console_detail, refused, api_detail)
         run.driver.record("attach-transform", status, detail)
 
-    def _attached_engine(self, run: Run) -> str:
+    def _transform_body(self) -> dict[str, str]:
+        """The transform block this source is meant to carry.
+
+        A kind whose app selects one of several compiled-in programs adds the
+        key naming it; the read-back is compared against exactly this.
+        """
+        return {"engine": self.TRANSFORM_ENGINE}
+
+    def _attached_transform(self, run: Run) -> dict[str, str]:
+        """The keys of that block the source actually reads back with.
+
+        The engine answers every key of its transform model, so only the ones
+        asked for are read and an unset one is left out rather than compared as
+        an empty string.
+        """
         current = run.engine.call("GET", f"/sources/{self.name}")
-        return str(((current.body or {}).get("transform") or {}).get("engine") or "")
+        attached = (current.body or {}).get("transform") or {}
+        return {key: str(attached[key]) for key in self._transform_body() if attached.get(key)}
 
     def _attach_by_api(self, run: Run) -> str:
         """The same transform through the engine, for a console without the control."""
@@ -217,6 +241,7 @@ class FilebeatCase(Case):
         current = engine.call("GET", f"/sources/{self.name}")
         if current.status != 200:
             raise RuntimeError(f"cannot read {self.name} back: {current.status} {current.body}")
+        transform = self._transform_body()
         body = {
             "source": self.name,
             "display_name": current.body.get("display_name"),
@@ -224,13 +249,13 @@ class FilebeatCase(Case):
             "match": current.body.get("match"),
             "header": {"type": self.HEADER, "version": self.HEADER_VERSION},
             "schema": {"meta_schema": self.META_SCHEMA, "meta_schema_version": self.META_SCHEMA_VERSION},
-            "transform": {"engine": self.TRANSFORM_ENGINE},
+            "transform": transform,
             "archive": True,
         }
         updated = engine.call("PUT", f"/sources/{self.name}", body)
         if updated.status != 200:
             raise RuntimeError(f"attaching the transform was refused: {updated.status} {updated.body}")
-        return f"transform {self.TRANSFORM_ENGINE} set on {self.name}"
+        return f"transform {transform} set on {self.name}"
 
     # -- provision ------------------------------------------------------------
 
@@ -340,7 +365,7 @@ class FilebeatCase(Case):
         corpus = run.transform_repo / self.CORPUS
         detail = steps.wait_routed(
             run.receiver_url, run.verify, run.engine_repo, corpus, run.store, self.name,
-            steps.ROUTING_DEADLINE,
+            steps.ROUTING_DEADLINE, self.MODULES,
         )
         run.driver.record("routed", "done" if detail.startswith("routed") else "failed", detail)
         self._before = run.store.scalar(f"SELECT count() FROM {self.name}")
@@ -349,7 +374,7 @@ class FilebeatCase(Case):
         )
         self._posted = steps.post_corpus(
             run.receiver_url, run.verify, run.engine_repo, corpus, self.name,
-            run.run_id, run.args.per_module,
+            run.run_id, run.args.per_module, self.MODULES,
         )
         run.driver.record("feed", "done",
                           f"posted {self._posted} corpus records tagged e2e_run:{run.run_id}")
@@ -378,6 +403,63 @@ class FilebeatCase(Case):
     @property
     def _transformed_where(self) -> str:
         return f" WHERE {self.TRANSFORMED_COLUMN} IS NOT NULL"
+
+
+# --- elastic: the same lines, through a transform compiled into the image -----
+
+
+class ElasticCase(FilebeatCase):
+    """Real cisco_ios lines pushed at the receiver, through dfe-transform-elastic.
+
+    The same push and the same meta schema as the filebeat case, with two halves
+    of its own. The app carries one transform per Elastic data stream and an
+    instance runs one of them, named by ``transform.variant``, so the create has
+    a second field the console has no control for. There is no program to write
+    either: the transform is compiled in and the app declares no file sets.
+    """
+
+    TRANSFORM_ENGINE = "elastic"
+    # dfe-transform-elastic sources.yaml `filebeat.<entry>.<transform>`, which
+    # apps.yaml's catalogue.variant_pattern builds and the deploy writes to the
+    # app's own config.source.name.
+    VARIANT = "filebeat.cisco_ios.default"
+    # The one corpus module this variant transforms. cisco_umbrella is delivered
+    # from an S3 bucket and takes no receiver intake; cisco_meraki's pipeline is
+    # framed as a body rather than a syslog line.
+    MODULES = ("cisco_ios",)
+    # ECS source.ip, which meta/beats/filebeat declares and the cisco_ios
+    # transform reads out of the syslog body; the posted record carries no
+    # such field.
+    TRANSFORMED_COLUMN = "source_ip"
+    DISPLAY = "Elastic transform source test"
+    DESCRIPTION = (
+        "Post-deploy source test: real cisco_ios lines through the compiled-in "
+        "elastic transform, archived."
+    )
+
+    service = f"dfe-transform-{TRANSFORM_ENGINE}"
+    prefix = "el"
+
+    def _transform_body(self) -> dict[str, str]:
+        """Engine and variant together, because one without the other deploys nothing.
+
+        The engine writes the variant into the instance's config only when the
+        source carries one, so an instance created without it starts on no
+        transform at all.
+        """
+        return {"engine": self.TRANSFORM_ENGINE, "variant": self.VARIANT}
+
+    def provision(self, run: Run) -> list[str]:
+        """Nothing to write, and one row saying why.
+
+        dfe-transform-elastic declares no file sets: the transform is compiled
+        into the image and selected by name.
+        """
+        run.driver.record(
+            "upload-program", "skipped",
+            f"{self.service} reads no authored files; {self.VARIANT} is compiled in",
+        )
+        return []
 
 
 # --- a fetched AWS upstream --------------------------------------------------
@@ -470,6 +552,15 @@ class FetchedAwsCase(Case):
         )]
 
 
+#: Every case a run may ask for, which is also the runner's --case choices, so
+#: a case cannot exist without being reachable.
+CASES: dict[str, type[Case]] = {
+    "filebeat": FilebeatCase,
+    "cloudwatch": FetchedAwsCase,
+    "elastic": ElasticCase,
+}
+
+
 def build(args: argparse.Namespace) -> Case:
     """The case this run was asked for."""
-    return FetchedAwsCase(args) if args.case == "cloudwatch" else FilebeatCase(args)
+    return CASES[args.case](args)

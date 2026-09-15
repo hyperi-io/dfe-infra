@@ -1324,6 +1324,9 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                               ("--aws-log-group", "DFE_AWS_LOG_GROUP")):
                 if settings.get(key):
                     runner += [flag, settings[key]]
+            # Both pushed cases read their corpus out of this one archive; the
+            # elastic transform is compiled into its own image and publishes no
+            # file the run needs.
             transform_repo = _sibling_repo("dfe-transform-vrl", "DFE_TRANSFORM_VRL_REPO")
             if transform_repo:
                 runner += ["--transform-repo", str(transform_repo)]
@@ -3249,9 +3252,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip the wizard half of the onboarding suite on a deploy already set up, and prove the console half alone")
     ac.add_argument("--keep", action="store_true",
                     help="the source suite leaves the source it made deployed, for a look")
-    ac.add_argument("--source-case", default="filebeat", choices=("filebeat", "cloudwatch"),
-                    help="which source the source suite creates: filebeat pushed at the receiver, or "
-                         "an AWS upstream a fetcher polls")
+    ac.add_argument("--source-case", default="filebeat", choices=("filebeat", "cloudwatch", "elastic"),
+                    help="which source the source suite creates: filebeat pushed at the receiver "
+                         "through the bundled VRL, elastic pushed at a compiled-in transform, or an "
+                         "AWS upstream a fetcher polls")
     ac.add_argument("--aws-service", default="cloudwatch_logs",
                     help="the AWS service the cloudwatch case polls")
     ac.add_argument("--fetcher-credentials-vault-path", default="", metavar="PATH",
