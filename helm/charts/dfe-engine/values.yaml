@@ -140,7 +140,7 @@ content:
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.39@sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.41@sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract

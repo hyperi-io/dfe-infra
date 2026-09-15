@@ -2105,7 +2105,7 @@ stacks:
       dfe-archiver: "v1.7.22"       # rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup, not what the allocator asked for.
       dfe-fetcher: "v1.4.24"        # #104: every source runs on one generic framework (the rest, db and file shapes in apps.yaml); #108: the PGO profile names the gcp service it declares; #109: the generated chart restored (its KEDA TriggerAuthentication) behind a drift guard. Rebuilt on scalo-rs 2.12.2.
       dfe-transform-vrl: "v1.1.23"   # rebuilt on scalo-rs 2.12.2 (the memory guard above).
-      dfe-transform-vector: "v1.0.39"  # direct transport through the supervisor bridge, copy-paste templates; rebuilt on scalo-rs 2.12.2 (the memory guard above).
+      dfe-transform-vector: "v1.0.41"  # #77 #78: PGO- and BOLT-optimised on both arches for the direct-transport path and the supervisor (the bus path's per-record CPU is inside the downloaded upstream Vector binary, which no build of ours reaches), and metrics-manifest lists the app's 42 metrics instead of an empty catalogue.
       dfe-transform-elastic: "v1.1.2" # first GHCR image (multi-arch, dfe-transform-elastic#17): Elastic ingest pipelines compiled in, parity 99.86 % over the tested sources, idles until a source names it (#52), seeded idle on every tier (#320). Bus transport only until #19; the sources.yaml catalogue asset follows #18.
       # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
       # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
@@ -2132,7 +2132,7 @@ stacks:
       dfe-archiver: "sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
       dfe-fetcher: "sha256:cbf7a83fa756060000c6c7f479cb283da347099f1ccc433ca33804498c139e03"
       dfe-transform-vrl: "sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
-      dfe-transform-vector: "sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
+      dfe-transform-vector: "sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
       # The multi-arch INDEX digest; a per-platform digest under it would strand the other architecture.
       dfe-transform-elastic: "sha256:a2f5073d0a78c1143ab8cedf738c159fff01dd14292c50fd88aecbf31c09517c"
       # Keyed here rather than under content:, which carries versions and
