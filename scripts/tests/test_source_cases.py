@@ -596,6 +596,16 @@ class TestTheObserveStep:
         assert steps.search_results(frame, "fb1") == (True, "3 Results")
         assert "option:" not in frame.visited
 
+    def test_a_frame_still_loading_its_sources_is_given_time(self, monkeypatch):
+        """The picker is empty until the frame's source list arrives, so the step waits for a value."""
+        monkeypatch.setattr(steps.time, "sleep", lambda seconds: None)
+        frame = FakePage(missing=("option:",))
+        values = iter(["", "", "fb1"])
+        frame.input_value = lambda **kwargs: next(values, "fb1")
+
+        assert steps.search_results(frame, "fb1") == (True, "3 Results")
+        assert "option:" not in frame.visited
+
 
 class TestWhatTheRunTidiesUp:
     def test_the_fetched_case_removes_the_schema_it_authored(self):
