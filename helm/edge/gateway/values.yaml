@@ -270,6 +270,25 @@ ui:
     links: false
     forgejo: false
 
+  # The engine API on the product's own public hostname. dfe-ui leaves
+  # NEXT_PUBLIC_API_URL empty, so the browser calls the engine at
+  # window.location.origin under /api/v1 -- without a route there, every API call
+  # a public dfe-ui makes lands on dfe-ui itself. The key names are the dial's
+  # (edge.engine_api.*), the convention the rest of this block follows.
+  engine_api:
+    # The engine rides dfe-ui's public hostname, listener and certificate: no
+    # second Gateway listener and no second Certificate is rendered for it.
+    # false renders no public engine route at all, and so does
+    # ui.public.dfe_ui: false, because the hostname belongs to dfe-ui.
+    with_product: true
+    # Adds the path families the `dfe` CLI uses, and /openapi.json with them --
+    # the CLI is generated from the live spec, so a CLI used from outside the
+    # cluster needs the document. Off, because a browser uses neither.
+    cli_families_public: false
+    # Adds /api/v1/scim/v2. An external SaaS IdP provisions over the internet and
+    # needs it; an in-cluster IdP reaches the engine on its Service and does not.
+    scim_public: false
+
   # Who may reach a public UI, comma-separated; empty = any address. Enforced
   # twice -- at Envoy (SecurityPolicy authorization) and at the cloud load
   # balancer (loadBalancerSourceRanges) -- so a gateway misconfiguration is not
@@ -362,6 +381,70 @@ routes:
     # /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
     # origin (the docker proxy draws the same line).
     pathPrefix: /api/v1
+    # Whose public listener and certificate this route answers on -- dfe-ui's,
+    # because the browser calls the engine at its own origin. The listener, the
+    # Certificate and the public-TLS policy all skip a route naming one.
+    publicListenerOf: dfeUi
+    # THE PATH FAMILIES, supplied by the engine team (hyperi-io/dfe-engine#395).
+    # A Gateway API PathPrefix matches whole path elements, so /api/v1/auth does
+    # not match /api/v1/authoring and /api/v1/sample does not match
+    # /api/v1/samples -- naming a family here opens that family and nothing else.
+    #
+    # What the browser calls, and therefore what the public route carries by
+    # default. `config/client` is TWO segments: the prefix is
+    # /api/v1/config/client, never /api/v1/config.
+    browserFamilies:
+      - auth
+      - config/client
+      - system
+      - orgs
+      - sources
+      - services
+      - service-surfaces
+      - deployments
+      - field-maps
+      - rules
+      - alerts
+      - transforms
+      - schemas
+      - hunts
+      - governance
+      - helm
+      - apps
+      - backing-services
+      - library
+      - gitops
+      - lifecycle
+      - repository
+    # Engine-owned ROOT paths the browser needs: JWKS and OIDC discovery, public
+    # by design so peers and the edge jwt_authn can verify DFE tokens.
+    browserPaths:
+      - /.well-known
+    # The families the `dfe` CLI uses, private until cli_families_public above
+    # opens them together.
+    privateFamilies:
+      - queries
+      - discovery
+      - sigma
+      - cel
+      - pipeline
+      - authoring
+      - app-contracts
+      - tasks
+      - synthetic-data
+      - sample
+      - samples
+      - hyperdx
+    # Opened by the same flag: the CLI is generated from the live spec, so a CLI
+    # run from outside needs the document the families belong to.
+    privatePaths:
+      - /openapi.json
+    # SCIM has its own opt-in (ui.engine_api.scim_public): an external SaaS IdP
+    # provisions over the internet, an in-cluster one does not.
+    scimPrefix: /api/v1/scim/v2
+    # NEVER public, under any flag, so no key here names them: /api/e2e is the
+    # test harness's, /docs and /redoc are the Swagger surface, and /livez and
+    # /readyz are the kubelet's.
 
   # Argo CD. common.yaml disables its bundled Dex because the edge owns its
   # OIDC, so the group check belongs here and Argo's own RBAC maps the same

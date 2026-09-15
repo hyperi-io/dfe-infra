@@ -363,6 +363,8 @@ _EDGE_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
     ("edge", "product", "rate_limit", "enabled"): True,
     ("edge", "product", "tls", "hsts"): True,
     ("edge", "engine_api", "with_product"): True,
+    ("edge", "engine_api", "cli_families_public"): False,
+    ("edge", "engine_api", "scim_public"): False,
     ("edge", "admin_uis", "external"): False,
     ("edge", "admin_uis", "public", "kafbat"): False,
     ("edge", "admin_uis", "public", "cruise_control"): False,
@@ -464,8 +466,10 @@ ADMIN_UIS = ("kafbat", "cruise_control", "hyperdx", "argocd", "links", "forgejo"
 # Every tier-2 key, the values that turn it on, the cost bucket it carries when
 # it is, and the pricing model behind that bucket. Buckets are relative to the
 # deployment's own compute and never a rate
-# (docs/deployment/aws.md#how-costs-are-described).
-_EDGE_TIER2: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+# (docs/deployment/aws.md#how-costs-are-described). An EMPTY bucket is a key that
+# is tier 2 by EXPOSURE rather than by spend -- it opens a door on a hostname the
+# deployment already publishes, and adds no cloud resource at all.
+_EDGE_TIER2: tuple[tuple[str, tuple[object, ...], str, str], ...] = (
     ("edge.ingest.receiver.mode", ("public",), "L",
      "a load balancer billed per GB processed, against terabytes a day of ingest"),
     ("edge.ingest.tunnel.address.mode", ("forwarder",), "XS",
@@ -474,6 +478,11 @@ _EDGE_TIER2: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
      "managed rules billed per request, on a CDN in front of the gateway"),
     ("edge.aws.cloudfront.mode", ("cloudfront",), "S",
      "a distribution billed per GB served"),
+    ("edge.engine_api.cli_families_public", (True,), "",
+     "the CLI path families and /openapi.json on the product's own public hostname"),
+    ("edge.engine_api.scim_public", (True,), "",
+     "/api/v1/scim/v2 on the product's own public hostname, for an IdP that"
+     " provisions from outside"),
 )
 
 
@@ -559,10 +568,13 @@ def _edge_refusals(
     which is worse than an error because it looks applied.
     """
     families, label = _edge_scalar(dial, ("edge", "engine_api", "private_path_families"))
-    if families is not None and families not in ("[]", "{}"):
+    if families is not None:
         raise DialError(
-            f"{label} names {families!r}, and no route splits a path family off the "
-            "product route -- the engine team has not named the families, so leave it []"
+            f"{label} is retired and nothing reads it -- the engine team named the path "
+            "families, so the chart carries them as data and the dial carries the two "
+            "switches over them: edge.engine_api.cli_families_public opens the CLI "
+            "families and /openapi.json, edge.engine_api.scim_public opens "
+            "/api/v1/scim/v2. Delete the key"
         )
     if flags["edge.ingest.otel.public"] and enums["edge.ingest.otel.auth"] != "required":
         raise DialError(
@@ -711,13 +723,42 @@ def _edge(dial: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _edge_tier2_on(enums: dict[str, str]) -> list[str]:
-    """Each tier-2 key the dial turns on, with its bucket and pricing model."""
-    return [
-        f"{path}: {enums[path]} -- bucket {bucket}, {model}"
-        for path, on_values, bucket, model in _EDGE_TIER2
-        if enums.get(path) in on_values
-    ]
+def _edge_tier2_on(enums: dict[str, str], flags: dict[str, bool] | None = None) -> list[str]:
+    """Each tier-2 key the dial turns on, with its bucket and pricing model.
+
+    Enums and booleans are read through one mapping, because a key is tier 2 for
+    what it opens rather than for the shape of its value. A row with no bucket
+    costs nothing and says so, rather than printing a bucket it does not have.
+    """
+    settings: dict[str, object] = {**enums, **(flags or {})}
+    lines: list[str] = []
+    for path, on_values, bucket, model in _EDGE_TIER2:
+        value = settings.get(path)
+        if value not in on_values:
+            continue
+        # A boolean is reported in the dial's own spelling, not Python's.
+        shown = str(value).lower() if isinstance(value, bool) else value
+        cost = f"bucket {bucket}, {model}" if bucket else f"no spend, {model}"
+        lines.append(f"{path}: {shown} -- {cost}")
+    return lines
+
+
+def _engine_api_summary(flags: dict[str, bool]) -> str:
+    """Which of the engine's path families answer on the product's public hostname.
+
+    The families themselves are chart data (helm/edge/gateway values.yaml
+    routes.dfeEngine), so this reports what the two switches open and never
+    restates the lists -- a dial that named them would drift on every router the
+    engine adds.
+    """
+    if not flags["edge.engine_api.with_product"]:
+        return "off -- the engine answers on no public hostname"
+    opened = ["browser families only"]
+    if flags["edge.engine_api.cli_families_public"]:
+        opened = ["browser families", "plus the CLI families and /openapi.json"]
+    if flags["edge.engine_api.scim_public"]:
+        opened.append("plus SCIM")
+    return ", ".join(opened)
 
 
 def _number(dial: dict[str, object], path: tuple[str, ...]) -> int:
@@ -1286,7 +1327,8 @@ def main() -> int:
     public = ["dfe-ui"] if edge_flags["edge.product.public"] else []
     public += [name for name in ADMIN_UIS if edge_flags[f"edge.admin_uis.public.{name}"]]
     ingest_mode = edge_enums["edge.ingest.receiver.mode"]
-    tier2 = _edge_tier2_on(edge_enums)
+    tier2 = _edge_tier2_on(edge_enums, edge_flags)
+    engine_api = _engine_api_summary(edge_flags)
 
     print(file=sys.stderr)
     print(
@@ -1297,6 +1339,10 @@ def main() -> int:
     print(
         "  public hostnames (edge.product.public, edge.admin_uis.public.*): "
         + (", ".join(public) if public else "none"),
+        file=sys.stderr,
+    )
+    print(
+        f"  engine API on the product hostname (edge.engine_api.*): {engine_api}",
         file=sys.stderr,
     )
     print(

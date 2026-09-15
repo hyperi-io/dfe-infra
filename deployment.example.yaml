@@ -192,17 +192,26 @@ edge:
       managed_rules: ""      # reserved
 
   ## GROUP (b) -- the engine's API, which dfe-ui consumes from the same origin.
+  ## The browser calls it at window.location.origin, so it answers on the
+  ## product's own hostname, listener and certificate -- and only on the path
+  ## families the browser uses. Those families are CHART data
+  ## (routes.dfeEngine in helm/edge/gateway/values.yaml), because they move every
+  ## time the engine adds a router; the two switches below are all the dial owns.
   engine_api:
-    ## It rides the product's own hostname and certificate. Tier 1, and the only
-    ## value today: no route splits it onto a hostname of its own.
+    ## Tier 1. false renders no public engine route, and so does
+    ## `product.public: false`, because the hostname belongs to dfe-ui.
     with_product: true
     ## /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
     ## origin (the chart's routes.dfeEngine.pathPrefix).
     path_prefix: /api/v1
-    ## Tier 2, refused while it names anything: the engine team has not named
-    ## which path families would go private, and no route splits one off the
-    ## product route, so a value here would look applied and do nothing.
-    private_path_families: []
+    ## Adds the path families the `dfe` CLI uses, and /openapi.json with them --
+    ## the CLI is generated from the live spec. Tier 2 by EXPOSURE, no spend:
+    ## nothing new is created, a hostname you already publish answers more paths.
+    cli_families_public: false
+    ## Adds /api/v1/scim/v2, for an IdP that provisions from outside the cluster.
+    ## An in-cluster IdP reaches the engine on its Service and needs none of it.
+    ## Tier 2 by exposure, no spend.
+    scim_public: false
 
   ## GROUP (c) -- the ops surfaces. Every one of them is opt-in, one at a time.
   admin_uis:

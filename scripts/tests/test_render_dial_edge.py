@@ -163,21 +163,25 @@ def test_a_dial_on_the_new_block_alone_reports_no_deprecation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_named_private_path_family_is_refused() -> None:
-    """No route splits a path family off the product route, so a value here
-    would look applied and do nothing."""
-    parsed = dial("edge:\n  engine_api:\n    private_path_families: [hunt]\n")
+@pytest.mark.parametrize("value", ["[hunt]", "[]"])
+def test_the_retired_private_path_family_key_is_refused_by_name(value: str) -> None:
+    """Empty too: the key is gone, and a dial still carrying it is a dial whose
+    author thinks something reads it."""
+    parsed = dial(f"edge:\n  engine_api:\n    private_path_families: {value}\n")
     with pytest.raises(render_dial.DialError, match=r"private_path_families"):
         render_dial._edge_refusals(
             parsed, render_dial._edge_flags(parsed), render_dial._edge_enums(parsed)
         )
 
 
-def test_an_empty_private_path_family_list_is_accepted() -> None:
+def test_the_refusal_names_the_two_switches_that_replaced_it() -> None:
     parsed = dial("edge:\n  engine_api:\n    private_path_families: []\n")
-    render_dial._edge_refusals(
-        parsed, render_dial._edge_flags(parsed), render_dial._edge_enums(parsed)
-    )
+    with pytest.raises(render_dial.DialError) as raised:
+        render_dial._edge_refusals(
+            parsed, render_dial._edge_flags(parsed), render_dial._edge_enums(parsed)
+        )
+    assert "edge.engine_api.cli_families_public" in str(raised.value)
+    assert "edge.engine_api.scim_public" in str(raised.value)
 
 
 def test_a_public_otel_door_with_no_auth_is_refused() -> None:
@@ -241,12 +245,18 @@ def test_the_defaults_and_an_omitted_block_both_read_through() -> None:
 
 def test_the_shipped_example_turns_on_no_tier_two_key() -> None:
     """Tier 1 is the default posture; every costed door is the deployer's act."""
-    assert render_dial._edge_tier2_on(render_dial._edge_enums(example())) == []
+    parsed = example()
+    tier2 = render_dial._edge_tier2_on(
+        render_dial._edge_enums(parsed), render_dial._edge_flags(parsed)
+    )
+    assert tier2 == []
 
 
 def test_a_tier_two_key_is_named_with_its_bucket_and_never_a_rate() -> None:
     parsed = dial("edge:\n  ingest:\n    receiver:\n      mode: public\n")
-    lines = render_dial._edge_tier2_on(render_dial._edge_enums(parsed))
+    lines = render_dial._edge_tier2_on(
+        render_dial._edge_enums(parsed), render_dial._edge_flags(parsed)
+    )
     assert len(lines) == 1, lines
     assert "edge.ingest.receiver.mode: public" in lines[0]
     assert "bucket L" in lines[0]
@@ -254,9 +264,27 @@ def test_a_tier_two_key_is_named_with_its_bucket_and_never_a_rate() -> None:
     assert not re.search(r"\$|USD|\d+\s*/\s*(month|hour)", lines[0]), lines[0]
 
 
-def test_every_tier_two_row_names_a_key_the_enums_carry() -> None:
-    """A row keyed on a path no enum validates would never fire."""
+def test_a_tier_two_key_that_costs_nothing_says_no_spend_instead_of_a_bucket() -> None:
+    """Exposure and spend are different reasons to be tier 2, and a bucket on a
+    key that creates nothing would read as a charge the deployer cannot find."""
+    # The cloud is named so the receiver's own door takes the overlay's vpn
+    # default and this reads the two engine rows alone.
+    parsed = dial(
+        "k8s:\n  cloud: aws\n"
+        "edge:\n  engine_api:\n    cli_families_public: true\n    scim_public: true\n"
+    )
+    lines = render_dial._edge_tier2_on(
+        render_dial._edge_enums(parsed), render_dial._edge_flags(parsed)
+    )
+    assert len(lines) == 2, lines
+    assert all("no spend" in line for line in lines), lines
+    assert not any("bucket" in line for line in lines), lines
+
+
+def test_every_tier_two_row_names_a_key_the_dial_validates() -> None:
+    """A row keyed on a path no enum and no boolean validates would never fire."""
     known = {".".join(p) for p in render_dial._EDGE_ENUMS}
+    known |= {".".join(p) for p in render_dial._EDGE_BOOL_DEFAULTS}
     assert {row[0] for row in render_dial._EDGE_TIER2} <= known
 
 

@@ -779,6 +779,169 @@ def test_login_fails_when_nothing_answers_at_all(
 
 
 # ---------------------------------------------------------------------------
+# 9 -- the engine API on the product's own hostname
+# ---------------------------------------------------------------------------
+
+
+def test_engine_expectation_has_the_browser_families_and_the_keys_answer() -> None:
+    absent, why = probe.engine_path_expectation("engine browser family", _settings())
+    assert absent is False
+    assert "cannot use the product without it" in why
+    assert probe.engine_path_expectation("engine jwks", _settings())[0] is False
+
+
+def test_engine_expectation_keeps_the_cli_families_private_until_their_switch() -> None:
+    absent, why = probe.engine_path_expectation("engine cli family", _settings())
+    assert absent is True
+    assert "edge.engine_api.cli_families_public is false" in why
+    opened = _settings(engine_cli_families_public=True)
+    assert probe.engine_path_expectation("engine cli family", opened)[0] is False
+
+
+def test_engine_expectation_opens_the_spec_with_the_cli_families() -> None:
+    """The CLI is generated from the live spec, so the two move together."""
+    assert probe.engine_path_expectation("engine openapi", _settings())[0] is True
+    opened = _settings(engine_cli_families_public=True)
+    assert probe.engine_path_expectation("engine openapi", opened)[0] is False
+
+
+def test_engine_expectation_gives_scim_its_own_switch() -> None:
+    assert probe.engine_path_expectation("engine scim", _settings())[0] is True
+    assert probe.engine_path_expectation(
+        "engine scim", _settings(engine_cli_families_public=True)
+    )[0] is True
+    assert probe.engine_path_expectation(
+        "engine scim", _settings(engine_scim_public=True)
+    )[0] is False
+
+
+def test_engine_expectation_keeps_the_swagger_surface_off_under_every_switch() -> None:
+    for settings in (
+        _settings(),
+        _settings(engine_cli_families_public=True),
+        _settings(engine_scim_public=True),
+        _settings(engine_cli_families_public=True, engine_scim_public=True),
+    ):
+        absent, why = probe.engine_path_expectation("engine docs", settings)
+        assert absent is True
+        assert "never on the public route" in why
+
+
+def test_engine_browser_family_passes_when_the_product_hostname_answers_it(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway.routes[(PRODUCT, probe.ENGINE_BROWSER_PATH)] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_engine_path(
+        _settings(), "engine browser family", probe.ENGINE_BROWSER_PATH, PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.PASS
+    assert "answered 200" in check.evidence
+
+
+def test_engine_browser_family_fails_on_a_404_because_that_is_the_whole_fault(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """dfe-ui loads and every call it makes lands on dfe-ui, which is the shape
+    of a public product with no engine route behind it."""
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_engine_path(
+        _settings(), "engine browser family", probe.ENGINE_BROWSER_PATH, PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.FAIL
+    assert "carries no route for it" in check.evidence
+
+
+def test_engine_private_family_passes_on_a_404(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_engine_path(
+        _settings(), "engine cli family", probe.ENGINE_CLI_PATH, PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.PASS
+    assert "no route is programmed for it" in check.evidence
+
+
+def test_engine_private_family_fails_when_it_answers_with_its_switch_off(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway.routes[(PRODUCT, probe.ENGINE_CLI_PATH)] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_engine_path(
+        _settings(), "engine cli family", probe.ENGINE_CLI_PATH, PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.FAIL
+    assert "edge.engine_api.cli_families_public is false" in check.evidence
+
+
+def test_engine_private_family_fails_on_a_404_once_its_switch_is_on(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The expectation flips with the dial, so an opt-in that rendered nothing
+    is a failure rather than a quiet pass."""
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_engine_path(
+        _settings(engine_cli_families_public=True), "engine cli family",
+        probe.ENGINE_CLI_PATH, PRODUCT, "127.0.0.1",
+    )
+    assert check.verdict == probe.FAIL
+
+
+def test_engine_docs_and_spec_pass_on_a_404(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    for name, path in (("engine docs", probe.ENGINE_DOCS_PATH),
+                       ("engine openapi", probe.ENGINE_SPEC_PATH)):
+        check = probe.check_engine_path(_settings(), name, path, PRODUCT, "127.0.0.1")
+        assert check.verdict == probe.PASS, check
+
+
+def test_engine_docs_fails_even_with_both_switches_on(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway.routes[(PRODUCT, probe.ENGINE_DOCS_PATH)] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    settings = _settings(engine_cli_families_public=True, engine_scim_public=True)
+    check = probe.check_engine_path(
+        settings, "engine docs", probe.ENGINE_DOCS_PATH, PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.FAIL
+
+
+def test_engine_jwks_fails_when_the_keys_do_not_answer(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A peer that cannot fetch the keys cannot verify a DFE token."""
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_engine_path(
+        _settings(), "engine jwks", probe.ENGINE_JWKS_PATH, PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.FAIL
+
+
+def test_every_engine_check_skips_when_the_engine_is_off_the_public_hostname(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    settings = _settings(engine_with_product=False)
+    for name, path in probe.ENGINE_PATHS:
+        check = probe.check_engine_path(settings, name, path, PRODUCT, "127.0.0.1")
+        assert check.verdict == probe.SKIP
+        assert "edge.engine_api.with_product is false" in check.evidence
+
+
+def test_parse_edge_reads_the_engine_api_switches() -> None:
+    settings = probe.parse_edge(probe.parse_yaml_subset(
+        DIAL_TEXT + "  engine_api:\n    cli_families_public: true\n    scim_public: true\n"
+    ))
+    assert settings.engine_with_product is True
+    assert settings.engine_cli_families_public is True
+    assert settings.engine_scim_public is True
+
+
+# ---------------------------------------------------------------------------
 # The whole run
 # ---------------------------------------------------------------------------
 
@@ -787,6 +950,8 @@ def _healthy_gateway(stub: StubGateway) -> None:
     """The routes a deployment that has done everything right answers on."""
     stub.routes[(PRODUCT, "/")] = 200
     stub.routes[(PRODUCT, probe.LOGIN_PATH)] = 200
+    stub.routes[(PRODUCT, probe.ENGINE_BROWSER_PATH)] = 200
+    stub.routes[(PRODUCT, probe.ENGINE_JWKS_PATH)] = 200
     stub.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     stub.burst = 3
 

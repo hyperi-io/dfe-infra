@@ -4,8 +4,9 @@
 #  Purpose:      `dfe-ops edge-probe` -- prove from the operator's own machine,
 #                from OUTSIDE the cluster, which doors the edge module actually
 #                opens: the TLS floor, HSTS, the rate limit, the CIDR filter,
-#                the receiver, the otel route, every admin UI route, and the
-#                product login. Split into its own module the way
+#                the receiver, the otel route, every admin UI route, the product
+#                login and the engine API path families that sit on the product's
+#                own hostname. Split into its own module the way
 #                dfe_ops_bastion.py is, and imported into dfe-ops's
 #                build_parser() the same way.
 #  Language:     Python
@@ -94,6 +95,21 @@ OTEL_LABEL = "otel"
 # drives the same path), so this is the one route that must answer.
 LOGIN_PATH = "/login"
 
+# One path per group of the engine's API, on the product's own hostname. Each is
+# a real unauthenticated endpoint, so a 404 here is the GATEWAY saying it carries
+# no route for the path rather than the engine saying it has no such handler.
+#   browser -- the auth family's setup document, which dfe-ui itself reads first
+#   cli     -- the queries family, private until cli_families_public opens it
+#   spec    -- the OpenAPI document the `dfe` CLI is generated from
+#   docs    -- the Swagger surface, never public under any flag
+#   jwks    -- the signing keys, public by design so peers can verify DFE tokens
+ENGINE_BROWSER_PATH = "/api/v1/auth/setup-status"
+ENGINE_CLI_PATH = "/api/v1/queries"
+ENGINE_SCIM_PATH = "/api/v1/scim/v2/Users"
+ENGINE_SPEC_PATH = "/openapi.json"
+ENGINE_DOCS_PATH = "/docs"
+ENGINE_JWKS_PATH = "/.well-known/jwks.json"
+
 # A local rate limit counts per route per proxy replica, so proving it costs one
 # request per unit of burst. Past this many the probe says so rather than
 # spending an operator's morning on a limit sized for a day.
@@ -137,6 +153,9 @@ class EdgeSettings:
     admin_uis_public: dict[str, bool] = field(default_factory=dict)
     receiver_mode: str = ""
     otel_public: bool = False
+    engine_with_product: bool = True
+    engine_cli_families_public: bool = False
+    engine_scim_public: bool = False
 
 
 def _scalar(tree: dict[str, object], path: tuple[str, ...]) -> str | None:
@@ -204,6 +223,11 @@ def parse_edge(tree: dict[str, object]) -> EdgeSettings:
         },
         receiver_mode=_scalar(tree, ("edge", "ingest", "receiver", "mode")) or "",
         otel_public=_flag(tree, ("edge", "ingest", "otel", "public"), False),
+        engine_with_product=_flag(tree, ("edge", "engine_api", "with_product"), True),
+        engine_cli_families_public=_flag(
+            tree, ("edge", "engine_api", "cli_families_public"), False
+        ),
+        engine_scim_public=_flag(tree, ("edge", "engine_api", "scim_public"), False),
     )
 
 
@@ -406,6 +430,7 @@ def check_names() -> tuple[str, ...]:
         "otel private",
         *(f"admin ui {ui}" for ui in ADMIN_UIS),
         "ui login",
+        *(name for name, _ in ENGINE_PATHS),
     )
 
 
@@ -468,6 +493,41 @@ def public_listener_reason(settings: EdgeSettings) -> str:
     if not settings.domain:
         return "edge.product.domain is empty -- this deployment publishes no public name"
     return ""
+
+
+# The engine API's path groups, in the order the probe reports them.
+ENGINE_PATHS: tuple[tuple[str, str], ...] = (
+    ("engine browser family", ENGINE_BROWSER_PATH),
+    ("engine cli family", ENGINE_CLI_PATH),
+    ("engine scim", ENGINE_SCIM_PATH),
+    ("engine openapi", ENGINE_SPEC_PATH),
+    ("engine docs", ENGINE_DOCS_PATH),
+    ("engine jwks", ENGINE_JWKS_PATH),
+)
+
+
+def engine_path_expectation(name: str, settings: EdgeSettings) -> tuple[bool, str]:
+    """(must this path be absent, why), for one group of the engine's API.
+
+    The browser families and the JWKS keys are what a public dfe-ui cannot work
+    without, so they must answer. Everything else is off until its own switch
+    opens it, and the Swagger surface is off under every combination.
+    """
+    if name == "engine cli family":
+        if settings.engine_cli_families_public:
+            return False, "edge.engine_api.cli_families_public is true"
+        return True, "edge.engine_api.cli_families_public is false"
+    if name == "engine openapi":
+        if settings.engine_cli_families_public:
+            return False, "edge.engine_api.cli_families_public is true, which opens the spec"
+        return True, "edge.engine_api.cli_families_public is false, so the spec is not published"
+    if name == "engine scim":
+        if settings.engine_scim_public:
+            return False, "edge.engine_api.scim_public is true"
+        return True, "edge.engine_api.scim_public is false"
+    if name == "engine docs":
+        return True, "the Swagger surface is never on the public route"
+    return False, "the browser cannot use the product without it"
 
 
 # --- the checks --------------------------------------------------------------
@@ -774,6 +834,43 @@ def check_login(settings: EdgeSettings, host: str, address: str) -> Check:
     return Check(name, PASS, f"{host}{LOGIN_PATH} answered {answer.status}")
 
 
+def check_engine_path(
+    settings: EdgeSettings, name: str, path: str, host: str, address: str
+) -> Check:
+    """One group of the engine's API answers, or 404s, as the dial says it should.
+
+    The browser calls the engine at the product's own origin, so this is where a
+    missing public engine route shows up: /api/v1 lands on dfe-ui and 404s while
+    the UI itself still loads.
+    """
+    reason = public_listener_reason(settings)
+    if reason:
+        return Check(name, SKIP, reason)
+    if not settings.engine_with_product:
+        return Check(
+            name, SKIP,
+            "edge.engine_api.with_product is false -- the engine answers on no public name",
+        )
+    absent, why = engine_path_expectation(name, settings)
+    answer = _reach(Request(host=host, address=address, path=path))
+    if not answer.reached:
+        if absent:
+            return Check(name, PASS, f"{host}{path} answered nothing ({why}): {answer.error}")
+        return Check(name, FAIL, f"{host}{path} answered nothing: {answer.error}")
+    if absent:
+        if answer.status == 404:
+            return Check(
+                name, PASS, f"{host}{path} answered 404 ({why}) -- no route is programmed for it"
+            )
+        return Check(name, FAIL, f"{host}{path} answered {answer.status} while {why}")
+    if answer.status == 404:
+        return Check(
+            name, FAIL,
+            f"{host}{path} answered 404 and {why} -- the public hostname carries no route for it",
+        )
+    return Check(name, PASS, f"{host}{path} answered {answer.status} -- {why}")
+
+
 def run_checks(settings: EdgeSettings, *, target: str = "") -> list[Check]:
     """Every check, in report order, against one deployment."""
     if not settings.enabled:
@@ -795,6 +892,10 @@ def run_checks(settings: EdgeSettings, *, target: str = "") -> list[Check]:
         check_otel_private(settings, address),
         *(check_admin_ui(settings, ui, address) for ui in ADMIN_UIS),
         check_login(settings, host, address),
+        *(
+            check_engine_path(settings, name, path, host, address)
+            for name, path in ENGINE_PATHS
+        ),
     ]
 
 

@@ -1,4 +1,7 @@
-{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- /* Attached by listener, so the routes that own one are the whole list -- a
+       route riding another's (routes.<key>.publicListenerOf) is already covered
+       by its owner's entry, and naming it again would be a duplicate targetRef. */}}
+{{- $public := include "envoy-gateway-config.publicListenerRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- if $public }}
 {{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.trusted_proxy_cidrs) | fromJsonArray }}
 # Edge settings for the public listeners only, attached by sectionName. A

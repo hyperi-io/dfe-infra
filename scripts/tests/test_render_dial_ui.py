@@ -108,3 +108,83 @@ def test_the_new_block_silences_the_deprecation_for_that_key_alone() -> None:
     lines = " ".join(render_dial._edge_deprecations(dial))
     assert "ui.public.dfe_ui" not in lines
     assert "ui.public.kafbat moved to edge.admin_uis.public.kafbat" in lines
+
+
+# ---------------------------------------------------------------------------
+# The engine API on the product's public hostname
+# ---------------------------------------------------------------------------
+#
+# The path families are chart data (routes.dfeEngine), so the dial owns the two
+# switches over them and the summary line that says which doors they leave open.
+
+
+def test_the_engine_api_switches_default_to_the_browsers_families_alone() -> None:
+    flags = render_dial._edge_flags(parse_dial("substrate: k8s\n", source="test-dial"))
+    assert flags["edge.engine_api.with_product"] is True
+    assert flags["edge.engine_api.cli_families_public"] is False
+    assert flags["edge.engine_api.scim_public"] is False
+
+
+def test_the_engine_api_switches_read_through_quoted_or_not() -> None:
+    dial = parse_dial(
+        "edge:\n"
+        "  engine_api:\n"
+        '    cli_families_public: "true"\n'
+        "    scim_public: true\n",
+        source="test-dial",
+    )
+    flags = render_dial._edge_flags(dial)
+    assert flags["edge.engine_api.cli_families_public"] is True
+    assert flags["edge.engine_api.scim_public"] is True
+
+
+@pytest.mark.parametrize("key", ["with_product", "cli_families_public", "scim_public"])
+def test_an_engine_api_switch_that_is_not_a_boolean_is_refused_by_name(key: str) -> None:
+    dial = parse_dial(
+        f"edge:\n  engine_api:\n    {key}: sometimes\n", source="test-dial"
+    )
+    with pytest.raises(render_dial.DialError, match=rf"edge\.engine_api\.{key}"):
+        render_dial._edge_flags(dial)
+
+
+def test_the_retired_families_key_is_refused_and_names_both_switches() -> None:
+    """A dial still carrying it thinks something reads it, so it stops rather
+    than rendering with a key that has no reader."""
+    dial = parse_dial(
+        "edge:\n  engine_api:\n    private_path_families: []\n", source="test-dial"
+    )
+    with pytest.raises(render_dial.DialError, match=r"private_path_families") as raised:
+        render_dial._edge_refusals(
+            dial, render_dial._edge_flags(dial), render_dial._edge_enums(dial)
+        )
+    assert "cli_families_public" in str(raised.value)
+    assert "scim_public" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("cli", "scim", "expected"),
+    [
+        (False, False, "browser families only"),
+        (True, False, "browser families, plus the CLI families and /openapi.json"),
+        (False, True, "browser families only, plus SCIM"),
+        (True, True, "browser families, plus the CLI families and /openapi.json, plus SCIM"),
+    ],
+)
+def test_the_summary_line_says_which_families_answer(
+    cli: bool, scim: bool, expected: str
+) -> None:
+    flags = {
+        "edge.engine_api.with_product": True,
+        "edge.engine_api.cli_families_public": cli,
+        "edge.engine_api.scim_public": scim,
+    }
+    assert render_dial._engine_api_summary(flags) == expected
+
+
+def test_the_summary_line_says_the_engine_is_off_the_public_hostname() -> None:
+    flags = {
+        "edge.engine_api.with_product": False,
+        "edge.engine_api.cli_families_public": True,
+        "edge.engine_api.scim_public": True,
+    }
+    assert "no public hostname" in render_dial._engine_api_summary(flags)

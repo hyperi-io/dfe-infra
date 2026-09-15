@@ -22,6 +22,11 @@ engine reads whatever provider YAML is under
 | dfe-engine | `auth.trustProxyHeaders` | whether the engine believes `X-Oidc-*` on an inbound request |
 | envoy-gateway-config | `oidc.enabled` + `oidc.providers` + `oidc.targetRoutes` | which routes get an OIDC SecurityPolicy, and against which IdP |
 
+`oidc.targetRoutes` names `dfe-engine`, and the engine's PUBLIC route follows it
+-- so an edge policy on a cloud deploy also fronts
+`GET /api/v1/auth/oidc/{provider}/callback`, which is where it collides with the
+engine's own external-IdP login ([edge.md](edge.md#what-the-engine-apis-split-gets-wrong)).
+
 ## A private-CA IdP is not discoverable
 
 An IdP the deployment hosts for itself is the common shape, because the gateway

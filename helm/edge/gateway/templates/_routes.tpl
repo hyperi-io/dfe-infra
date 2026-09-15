@@ -80,7 +80,14 @@ uiRouteKey    -- the routes.<key> a ui.public.<name> flag names; "" when the
 publicRoutes  -- JSON array of the route keys that answer on a public hostname,
   so the listener, the certificate, the route, the policies and the rate limit
   cannot disagree about which UIs are exposed. Empty while ui.public_domain is.
-publicHost    -- the fully qualified public hostname of a route.
+publicListenerRoutes -- the subset of those that own a listener and a
+  certificate. A route carrying publicListenerOf answers on another route's, so
+  it appears in publicRoutes and not here.
+publicListenerOwner -- which route key supplies a public route's listener,
+  certificate and hostname: itself, or the one publicListenerOf names.
+publicHost    -- the fully qualified public hostname of a route, taken from its
+  listener owner so the listener, the certificate and the route share one name.
+publicPaths   -- JSON array of the PathPrefix values a public route matches.
 cidrList      -- a comma-separated dial scalar as a YAML list of trimmed entries.
 validateUi    -- the render guards; templates/validate.yaml runs them.
 */}}
@@ -129,12 +136,64 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* The engine API rides dfe-ui's hostname rather than a flag of its own,
+       because the browser calls it at window.location.origin -- so it is public
+       exactly when dfe-ui is, and ui.engine_api.with_product is the opt-out. */}}
+{{- if and (has "dfeUi" $keys) .ctx.Values.ui.engine_api.with_product -}}
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" .ctx "key" "dfeEngine") -}}
+{{- $keys = append $keys "dfeEngine" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- $keys | sortAlpha | toJson -}}
 {{- end -}}
 
+{{- define "envoy-gateway-config.publicListenerRoutes" -}}
+{{- $keys := list -}}
+{{- range $key := include "envoy-gateway-config.publicRoutes" (dict "ctx" .ctx) | fromJsonArray -}}
+{{- if not (index $.ctx.Values.routes $key).publicListenerOf -}}
+{{- $keys = append $keys $key -}}
+{{- end -}}
+{{- end -}}
+{{- $keys | toJson -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.publicListenerOwner" -}}
+{{- $r := index .ctx.Values.routes .key -}}
+{{- $r.publicListenerOf | default .key -}}
+{{- end -}}
+
 {{- define "envoy-gateway-config.publicHost" -}}
-{{- include "envoy-gateway-config.routeHost" . -}}.{{ .ctx.Values.ui.public_domain -}}
+{{- $owner := include "envoy-gateway-config.publicListenerOwner" . -}}
+{{- include "envoy-gateway-config.routeHost" (dict "ctx" .ctx "key" $owner) -}}.{{ .ctx.Values.ui.public_domain -}}
+{{- end -}}
+
+{{- /* A route carrying browserFamilies is matched family by family; every other
+       one answers on the single pathPrefix it already declares. One rule carries
+       the lot, within the 64 the HTTPRoute CRD caps rules[].matches at (Gateway
+       API v1.6.1, as bundled by envoy-gateway v1.9.1); validateUi checks it. */}}
+{{- define "envoy-gateway-config.publicPaths" -}}
+{{- $r := index .ctx.Values.routes .key -}}
+{{- $paths := list -}}
+{{- if $r.browserFamilies -}}
+{{- $engine := .ctx.Values.ui.engine_api -}}
+{{- range $family := $r.browserFamilies -}}
+{{- $paths = append $paths (printf "%s/%s" $r.pathPrefix $family) -}}
+{{- end -}}
+{{- $paths = concat $paths ($r.browserPaths | default list) -}}
+{{- if $engine.cli_families_public -}}
+{{- range $family := $r.privateFamilies -}}
+{{- $paths = append $paths (printf "%s/%s" $r.pathPrefix $family) -}}
+{{- end -}}
+{{- $paths = concat $paths ($r.privatePaths | default list) -}}
+{{- end -}}
+{{- if $engine.scim_public -}}
+{{- $paths = append $paths $r.scimPrefix -}}
+{{- end -}}
+{{- else if $r.pathPrefix -}}
+{{- $paths = append $paths $r.pathPrefix -}}
+{{- end -}}
+{{- $paths | toJson -}}
 {{- end -}}
 
 {{- define "envoy-gateway-config.validateUi" -}}
@@ -213,6 +272,7 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
        Anything else is an unauthenticated public UI. */ -}}
 {{- $appSide := dict
       "dfeUi" "dfe-ui authenticates app-side through NextAuth"
+      "dfeEngine" "the engine authenticates every call itself, from a DFE token or an API key"
       "kafbat" "kafbat runs its own OIDC against the same provider"
       "hyperdx" "hyperdx authenticates from the dfe_token cookie, because an OIDC redirect cannot complete inside the dfe-ui iframe" -}}
 {{- $edgeRoutes := list -}}
@@ -224,7 +284,13 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- $hasProviders := and $.ctx.Values.oidc.enabled $.ctx.Values.oidc.providers -}}
 {{- $edge := and $hasProviders (or $r.edgePolicy (has $r.routeName $edgeRoutes)) -}}
 {{- if not (or $edge (hasKey $appSide $key)) -}}
-{{- fail (printf "route %s is public and carries no authentication -- it takes no edge OIDC policy (routes.%s.edgePolicy, or oidc.targetRoutes naming it, with oidc.enabled and a provider set) and only dfe-ui, kafbat and hyperdx are admitted on app-side auth. A public UI with no login is refused" $r.routeName $key) -}}
+{{- fail (printf "route %s is public and carries no authentication -- it takes no edge OIDC policy (routes.%s.edgePolicy, or oidc.targetRoutes naming it, with oidc.enabled and a provider set) and only dfe-ui, the engine API, kafbat and hyperdx are admitted on app-side auth. A public UI with no login is refused" $r.routeName $key) -}}
+{{- end -}}
+{{- /* One rule carries every match, and the CRD rejects the object above 64
+       rather than truncating it, so the count is checked before it is written. */}}
+{{- $paths := include "envoy-gateway-config.publicPaths" (dict "ctx" $.ctx "key" $key) | fromJsonArray -}}
+{{- if gt (len $paths) 64 -}}
+{{- fail (printf "route %s matches %d paths on its public route and the Gateway API HTTPRoute CRD caps rules[].matches at 64 -- split routes.%s's path lists across several rules carrying the same backendRef and the same filters" $r.routeName (len $paths) $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

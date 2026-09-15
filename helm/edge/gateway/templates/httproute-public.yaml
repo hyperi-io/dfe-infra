@@ -1,12 +1,17 @@
 {{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- range $key := $public }}
 {{- $r := index $.Values.routes $key }}
+{{- $paths := include "envoy-gateway-config.publicPaths" (dict "ctx" $ "key" $key) | fromJsonArray }}
 ---
 # The public face of an internal route: same backend, own hostname, own
 # listener. A second HTTPRoute rather than a second hostname on the first one,
 # because the policies that make a public route safe -- the CIDR filter, the
 # rate limit, the login on the public callback URL -- attach to a route and must
 # not reach the internal one.
+#
+# A route pinned to another's listener (routes.<key>.publicListenerOf) shares
+# that hostname and certificate and carries its own path matches, which is how
+# the engine API answers on dfe-ui's name without a listener of its own.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -22,18 +27,20 @@ spec:
       kind: Gateway
       name: {{ $.Values.gateway.name }}
       namespace: {{ $.Values.gateway.namespace }}
-      # Pinned to its own listener, so the public hostname cannot be served off
-      # the internal wildcard listener and its certificate.
-      sectionName: https-public-{{ $r.routeName }}
+      # Pinned to one public listener, so the public hostname cannot be served
+      # off the internal wildcard listener and its certificate.
+      sectionName: https-public-{{ (index $.Values.routes (include "envoy-gateway-config.publicListenerOwner" (dict "ctx" $ "key" $key))).routeName }}
   hostnames:
     - {{ include "envoy-gateway-config.publicHost" (dict "ctx" $ "key" $key) | quote }}
   rules:
     -
-      {{- with $r.pathPrefix }}
+      {{- with $paths }}
       matches:
+        {{- range . }}
         - path:
             type: PathPrefix
             value: {{ . }}
+        {{- end }}
       {{- end }}
       {{- if $.Values.ui.tls.hsts }}
       # Told once over TLS, a browser refuses to try this name over plaintext

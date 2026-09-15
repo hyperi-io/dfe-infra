@@ -1,4 +1,6 @@
-{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- /* One certificate per public LISTENER, so a route riding another's hostname
+       (routes.<key>.publicListenerOf) asks for none of its own. */}}
+{{- $public := include "envoy-gateway-config.publicListenerRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- if and $public .Values.tls.public.email }}
 # Let's Encrypt by DNS-01 on Route 53, for the handful of hostnames whose users
 # sit outside the VPC. Separate from tls.issuerName, which stays on the internal

@@ -1,4 +1,7 @@
-{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- /* The routes that own a listener, not every public route: one that names
+       another's (routes.<key>.publicListenerOf) answers on that hostname and
+       gets no listener and no certificate of its own. */}}
+{{- $public := include "envoy-gateway-config.publicListenerRoutes" (dict "ctx" .) | fromJsonArray }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
