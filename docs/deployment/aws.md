@@ -41,6 +41,18 @@ A few things hold for every deployment:
   Karpenter, the AWS Load Balancer Controller, external-dns, cert-manager --
   gets it through EKS Pod Identity, associated to its own service account by
   the cluster module. Nothing here carries a static key.
+- external-dns runs `policy: sync` with a per-deployment `txtOwnerId`
+  (`argocd/appsets/layer1-addons.yaml`), so a deleted Service or Ingress has
+  its record actively removed -- the chart's own default, `upsert-only`,
+  never deletes anything it published. That covers every teardown except
+  `tofu destroy` itself: the EKS cluster and every node go down in the same
+  run, so whatever external-dns last published is still in the private zone
+  with no controller left to react. `terraform/modules/kubernetes-cluster/
+  aws/dns.tf` carries a destroy-time cleanup for exactly that case -- it
+  empties the zone of everything but its own apex NS/SOA pair, using the
+  `aws` CLI directly, before the zone itself is destroyed. It runs under
+  whatever AWS identity `tofu destroy` is already authenticated as, so the
+  one added prerequisite is the `aws` CLI on the machine running the destroy.
 - One file drives all of it: the deployment dial, `deployment.yaml`, copied
   from `deployment.example.yaml`.
 

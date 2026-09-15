@@ -195,6 +195,21 @@ spec:
             serviceAccount:
               create: true
               name: external-dns
+            # sync, not the chart's own upsert-only default: upsert-only never
+            # removes a record it published, so a deleted Service or Ingress
+            # leaves its DNS record behind for as long as the zone exists.
+            # txtOwnerId must be unique per deployment, or two controllers
+            # sharing a zone can delete records neither of them still owns.
+            # '{{ .name }}' is the cluster generator's own field -- the Argo
+            # cluster secret's stringData.name (bootstrap/templates/
+            # cluster-secret.yaml.tpl, "dfe-${DFE_CLOUD}-${DFE_ENV}") -- and it
+            # is present on every managed cluster regardless of cloud. The
+            # dfe.hyperi.io/cluster_name annotation is AWS-only (blank on any
+            # other cloud) and this generator's selector is not cloud-gated,
+            # so reading it here would fail goTemplate's missingkey=error on
+            # the day a second cloud declares a dns-provider.
+            policy: sync
+            txtOwnerId: '{{ .name }}'
             {{- end }}
             {{- if eq .chart "aws-load-balancer-controller" }}
             # The EKS cluster's own name, not the name Argo registered the

@@ -455,6 +455,37 @@ run "aws_private_zone_stands_alone_whatever_the_deployment_publishes" {
   }
 }
 
+// The destroy-time cleanup that empties the private zone of everything but
+// its own apex NS/SOA pair before `tofu destroy` reaches the zone itself.
+// Its provisioner block cannot be asserted here directly -- a destroy-time
+// command may reference only self (dns.tf), so the fact that matters is
+// what gets captured into that self in the first place. The provisioner's
+// own shape (when = destroy, the zone id flowing from self.output) is
+// proven instead by scripts/tests/test_external_dns_teardown.py, which
+// reads dns.tf as text.
+run "aws_private_zone_teardown_captures_the_zone_to_empty" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = terraform_data.private_zone_teardown.input.zone_id == aws_route53_zone.private.zone_id
+    error_message = "the destroy-time cleanup must capture THIS deployment's own zone id, not a reconstructed one"
+  }
+
+  assert {
+    condition     = terraform_data.private_zone_teardown.input.region == var.provision.region
+    error_message = "the destroy-time cleanup must run its aws CLI calls against the deployment's own region, not wherever the operator's default happens to point"
+  }
+
+  assert {
+    condition     = terraform_data.private_zone_teardown.triggers_replace[0] == aws_route53_zone.private.zone_id
+    error_message = "a zone replacement must replace the cleanup resource too, or a renamed zone is emptied under the OLD zone id"
+  }
+}
+
 // The private endpoint is always on. The public one is off unless asked for,
 // and this is the assertion that keeps it that way.
 run "aws_private_endpoint_only" {

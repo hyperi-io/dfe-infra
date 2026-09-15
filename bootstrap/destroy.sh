@@ -66,6 +66,13 @@ echo "==> [4/7] Deleting DFE namespaces"
 # teardown, which then blocks a clean redeploy.
 # clickhouse-operator is the pre-rc.7 namespace, kept so a teardown of an older
 # deploy cannot leave a second operator reconciling the same CRs.
+# Deleting the external-dns namespace here does not itself clean up the DNS
+# records it published on AWS: sync policy only removes a record once it has
+# reconciled the Service/Ingress deletion from step 1, and this script gives
+# it no guaranteed time to do that before its pod is gone. That is what
+# terraform/modules/kubernetes-cluster/aws/dns.tf's destroy-time cleanup is
+# for -- it empties the private zone itself, independent of whether
+# external-dns ever got the chance.
 for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
@@ -105,9 +112,12 @@ echo "  metallb-system and its address pool left in place -- an adopted LoadBala
 echo ""
 echo "=== Teardown complete ==="
 echo ""
-echo "To also destroy Terraform state:"
-echo "  cd terraform/environments/local && terraform destroy"
+echo "To also destroy OpenTofu state:"
+echo "  cd terraform/environments/local && tofu destroy"
+echo "  (AWS: cd terraform/environments/aws && tofu destroy -- the private DNS"
+echo "  zone empties itself of what external-dns published as its own last"
+echo "  step, so it needs no manual record cleanup first; see docs/deployment/aws.md)"
 echo ""
 echo "To redeploy:"
-echo "  cd terraform/environments/local && terraform apply"
+echo "  cd terraform/environments/local && tofu apply"
 echo "  python3 bootstrap/bridge.py --tf-dir terraform/environments/local"
