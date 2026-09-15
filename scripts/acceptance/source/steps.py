@@ -518,19 +518,22 @@ def search_results(frame, name: str) -> tuple[bool, str]:
     """Pick *name* in the frame's source picker and read the results line."""
     picker = frame.get_by_placeholder("Data Source")
     picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    picker.click(timeout=STEP_TIMEOUT_MS)
-    picker.fill(name)
-    option = frame.get_by_role("option").filter(has_text=name)
-    # count() takes no auto-wait, so right after fill() it can read the dropdown
-    # before a slow render populates it. A genuinely absent option still falls
-    # through to the count() check below.
-    try:
-        option.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    except Exception:  # absence is decided by count() below, not this wait
-        pass
-    if not option.count():
-        return False, ""
-    option.first.click(timeout=STEP_TIMEOUT_MS)
+    # The frame opens on a source of its own choosing; when that is already this
+    # one the picker holds its name and the dropdown does not list it again.
+    if picker.input_value().strip() != name:
+        picker.click(timeout=STEP_TIMEOUT_MS)
+        picker.fill(name)
+        option = frame.get_by_role("option").filter(has_text=name)
+        # count() takes no auto-wait, so right after fill() it can read the dropdown
+        # before a slow render populates it. A genuinely absent option still falls
+        # through to the count() check below.
+        try:
+            option.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        except Exception:  # absence is decided by count() below, not this wait
+            pass
+        if not option.count():
+            return False, ""
+        option.first.click(timeout=STEP_TIMEOUT_MS)
     frame.get_by_role("button", name="Run", exact=True).click(timeout=STEP_TIMEOUT_MS)
     line = frame.get_by_text(RESULTS_LINE)
     until = time.monotonic() + OBSERVE_DEADLINE
