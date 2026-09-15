@@ -824,6 +824,107 @@ class TestTheObserveStep:
         assert "option:" not in frame.visited
 
 
+class TestTheReportingVerdict:
+    """`reporting` says a container is up; it does not say this instance is working.
+
+    On Compose one container serves the app and every instance of it, so an idle
+    app answers the status call the same way a working instance does (#327).
+    """
+
+    SERVICE = "dfe-transform-elastic"
+    UP = "dfe-transform-elastic/el1 reporting after 0s up"
+
+    class IdleStore(FakeStore):
+        """A datastore whose otel tables carry pipeline_idle samples."""
+
+        def __init__(self, samples: int = 0, since: int = 4, raises: bool = False) -> None:
+            self.samples, self.since, self.raises = samples, since, raises
+
+        def query(self, _sql):
+            if self.raises:
+                raise OSError("connection refused")
+            return [[self.samples, self.since]]
+
+    def verdict(self, store, telemetry):
+        """The verdict for a status body the engine answered `reporting` to."""
+        status = {"reporting": True, "telemetry_name": telemetry, "uptime_seconds": 0}
+        return steps.reporting_verdict(store, self.SERVICE, self.UP, status)
+
+    def test_an_instance_doing_work_reads_done(self):
+        state, detail = self.verdict(self.IdleStore(samples=0), f"{self.SERVICE}-el1")
+
+        assert state == "done"
+        assert "no pipeline_idle sample" in detail
+
+    def test_an_idle_app_is_unproven_not_done(self):
+        """The case in the issue: two green rows in front of three real failures."""
+        state, detail = self.verdict(self.IdleStore(samples=6), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "6 pipeline_idle sample(s)" in detail
+        assert "an app holding no work" in detail
+
+    def test_telemetry_the_whole_app_shares_is_unproven(self):
+        """One container per app on Compose, so the app's own name proves nothing per instance."""
+        state, detail = self.verdict(self.IdleStore(), self.SERVICE)
+
+        assert state == "unproven"
+        assert "every instance of the app shares" in detail
+
+    def test_a_run_that_cannot_read_the_datastore_is_unproven(self):
+        class NoStore(FakeStore):
+            host = ""
+
+        state, detail = self.verdict(NoStore(), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "no datastore access" in detail
+
+    def test_an_otel_table_that_does_not_answer_is_unproven(self):
+        state, detail = self.verdict(self.IdleStore(raises=True), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "did not answer" in detail
+
+    def test_an_instance_that_never_reported_still_fails(self):
+        """The old row read its own message back: "not reporting after 900s" contains
+        "reporting after", so a timed-out wait recorded done."""
+        state, detail = steps.reporting_verdict(
+            FakeStore(), self.SERVICE, f"{self.SERVICE}/el1 not reporting after 900s; last 200", {}
+        )
+
+        assert state == "failed"
+        assert "not reporting" in detail
+
+    def test_an_instance_the_engine_never_listed_fails_its_own_row(self):
+        driver, engine = FakeDriver(FakePage()), FakeEngine()
+        engine.instance = "someone-else"
+
+        steps.record_instance_up(
+            driver, engine, self.IdleStore(), self.SERVICE, "el1",
+            "transform-instance", 0.0, "transform-reporting", 0.0,
+        )
+
+        assert driver.status("transform-instance") == "failed"
+
+    def test_the_row_the_run_lands_goes_through_the_verdict(self):
+        """The wait and the verdict are one step, so no caller can record the raw wait."""
+        driver, engine = FakeDriver(FakePage()), FakeEngine(transform="elastic")
+        engine.instance = "el1"
+
+        steps.record_instance_up(
+            driver, engine, self.IdleStore(samples=3), self.SERVICE, "el1",
+            "transform-instance", 0.0, "transform-reporting", 0.0,
+        )
+
+        assert driver.status("transform-reporting") == "unproven"
+
+    def test_an_unproven_row_is_not_a_failure_either(self):
+        from acceptance.onboarding import wizard
+
+        assert wizard.exit_code([wizard.StepResult("transform-reporting", "unproven", "")]) == 0
+
+
 class TestWhatTheRunTidiesUp:
     def test_the_fetched_case_removes_the_schema_it_authored(self):
         driver, engine = FakeDriver(FakePage()), FakeEngine()

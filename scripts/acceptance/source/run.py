@@ -60,7 +60,7 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
     )
     steps.record_table(run.driver, run.store, case.name)
     steps.record_instance_up(
-        run.driver, run.engine, case.service, case.name,
+        run.driver, run.engine, run.store, case.service, case.name,
         case.instance_step, case.instance_deadline,
         case.reporting_step, case.reporting_deadline,
     )
@@ -164,6 +164,11 @@ def run(args: argparse.Namespace) -> int:
 
     print()
     print(wizard.report_table(driver.results))
+    unproven = [row.slug for row in driver.results if row.status == "unproven"]
+    if unproven:
+        # A row that ran and could not decide is neither a pass nor a failure,
+        # and is said again here so a long table cannot be read as green.
+        print(f"\nUNPROVEN: {', '.join(unproven)} -- read the detail before claiming the source works")
     print(f"\nscreenshots: {shots}")
     return wizard.exit_code(driver.results)
 

@@ -512,7 +512,7 @@ class FetchedAwsCase(Case):
     def feed(self, run: Run) -> None:
         """A fetched source feeds itself; what this records is that it had work."""
         service_name = fetcher.telemetry_name(run.engine, self.name)
-        samples, since = fetcher.idle_history(run.store, service_name, int(self.reporting_deadline))
+        samples, since = steps.idle_history(run.store, service_name, int(self.reporting_deadline))
         run.driver.record(
             "fetcher-idle", "done",
             f"{service_name} published {samples} pipeline_idle sample(s)"
