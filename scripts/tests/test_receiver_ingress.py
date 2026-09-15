@@ -11,11 +11,13 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """The receiver's ingress door must not be priced by volume on AWS, because DFE
 pushes terabytes a day through it -- docs/deployment/aws.md#receiver-ingress
-carries the rates. argocd/values/aws.yaml now defaults exposure.mode to vpn and
-points culvert at a NodePort instead of a LoadBalancer; this proves both hold
-under the REAL cascade an AWS deploy gets (common.yaml + aws.yaml +
-profile-scale.yaml), not just the chart's own defaults, and that the costed
-public opt-in still renders correctly for a deployer who wants it.
+carries the rates. argocd/values/aws.yaml defaults exposure.mode to vpn and
+argocd/values/edge-aws.yaml points culvert at a NodePort instead of a
+LoadBalancer; this proves both hold under the REAL cascade each Application
+gets, not just the chart's own defaults, and that the costed public opt-in
+still renders correctly for a deployer who wants it. The two cascades differ:
+the receiver is fanned out by layer2-apps and reads no flavour file, while
+culvert is one of the edge module's two Applications and reads edge-aws.yaml.
 
 The cascade also sets oidc.enabled: true for the gateway's edge OIDC in the
 SAME pass, which used to break culvert's render outright (it read the same
@@ -49,6 +51,20 @@ VALUES = REPO_ROOT / "argocd" / "values"
 # layer2-platform's own cascade), matching test_storage_model.py's
 # test_the_aws_cascade_is_what_turns_pod_identity_on.
 AWS_CASCADE = [VALUES / "common.yaml", VALUES / "aws.yaml", VALUES / "profile-scale.yaml"]
+
+# The edge module's own cascade, which layer2-edge.yaml layers for the tunnel:
+# the same files plus the flavour overlay the module's tier table lives in.
+EDGE_AWS_CASCADE = [
+    VALUES / "common.yaml",
+    VALUES / "aws.yaml",
+    VALUES / "edge-aws.yaml",
+    VALUES / "profile-scale.yaml",
+]
+
+# The Secret holding ca.crt, server.crt and server.key. The cloud flavours set
+# pki.mode: external and the chart refuses to render until a deployment names
+# one, so every culvert render under that cascade supplies it.
+EXTERNAL_PKI = ["--set", "pki.existingSecret=dfe-culvert-pki"]
 
 # The annotations docs/deployment/aws.md documents for the costed public
 # opt-in -- proven here to reach the rendered Service verbatim.
@@ -107,12 +123,12 @@ def test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service() -> None
 
 
 def test_the_aws_cascade_renders_culvert_with_no_load_balancer() -> None:
-    """The real AWS cascade, unmodified: aws.yaml sets oidc.enabled: true for
-    the gateway's edge OIDC AND exposure.serviceType: NodePort for culvert in
-    the same pass -- the two used to collide (culvert read the same
-    oidc.enabled as its own tunnel-login switch), which is fixed by moving
-    culvert's OIDC fields to vpn.oidc.*."""
-    docs = render("culvert")
+    """The real edge cascade, unmodified: aws.yaml sets oidc.enabled: true for
+    the gateway's edge OIDC AND edge-aws.yaml sets exposure.serviceType:
+    NodePort for culvert in the same pass -- the two used to collide (culvert
+    read the same oidc.enabled as its own tunnel-login switch), which is fixed
+    by moving culvert's OIDC fields to vpn.oidc.*."""
+    docs = render("culvert", *EXTERNAL_PKI, values=EDGE_AWS_CASCADE)
     types = {d["spec"]["type"] for d in docs if d.get("kind") == "Service"}
     expect("no Service is a LoadBalancer", "LoadBalancer" not in types, f"got {types}")
     expect("the public door is a NodePort instead", "NodePort" in types, f"got {types}")
@@ -122,12 +138,16 @@ def test_the_tunnels_allow_list_is_refused_where_it_would_not_filter() -> None:
     """Kubernetes only filters on loadBalancerSourceRanges for a LoadBalancer,
     and the AWS cascade makes culvert a NodePort -- so an allow-list set there
     is refused rather than rendered into a Service that ignores it."""
-    err = render_error("culvert", "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}")
+    err = render_error("culvert", *EXTERNAL_PKI,
+                       "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}",
+                       values=EDGE_AWS_CASCADE)
     expect("an allow-list under NodePort is refused by name",
            "Kubernetes only filters on that field for a LoadBalancer" in err, err.strip()[-300:])
-    docs = render("culvert", "--set", "exposure.serviceType=LoadBalancer",
+    docs = render("culvert", *EXTERNAL_PKI,
+                  "--set", "exposure.serviceType=LoadBalancer",
                   "--set", "exposure.externalTrafficPolicy=Local",
-                  "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}")
+                  "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}",
+                  values=EDGE_AWS_CASCADE)
     ranges = {
         tuple(d["spec"].get("loadBalancerSourceRanges", []))
         for d in docs if d.get("kind") == "Service" and d["spec"]["type"] == "LoadBalancer"

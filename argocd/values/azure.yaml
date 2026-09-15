@@ -9,16 +9,18 @@ global:
 # fsync is the workload that notices.
 storageClass: managed-csi-premium
 
-envoyGateway:
-  service:
-    type: LoadBalancer
+# THE EDGE MODULE'S OWN AZURE KEYS LIVE IN argocd/values/edge-azure.yaml,
+# layered after this file by argocd/appsets/layer2-edge.yaml: the gateway
+# Service and culvert's PKI mode. That file carries the Azure tier table in one
+# place; what stays here is what a chart OUTSIDE the edge module reads as well.
 
 # THE RECEIVER'S FRONT DOOR -- same rule as AWS (argocd/values/aws.yaml's
 # exposure: block, docs/deployment/aws.md#receiver-ingress): Azure's load
 # balancers bill by volume too, so the receiver stays off one by default.
-# The receiver only: culvert keeps its chart-default LoadBalancer here, so a
-# deployment that brings the tunnel pays Azure's per-GB rate on the tunnel's
-# bytes until this overlay carries aws.yaml's NodePort override as well.
+# dfe-receiver is not an edge chart, so this key stays here. The receiver only:
+# culvert keeps its chart-default LoadBalancer on this flavour, so a deployment
+# that brings the tunnel pays Azure's per-GB rate on the tunnel's bytes until
+# edge-azure.yaml carries edge-aws.yaml's NodePort override as well.
 exposure:
   mode: vpn
 

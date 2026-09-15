@@ -146,7 +146,7 @@ ingest:
 # Public exposure. A VPN nobody can dial is pointless, so the chart's OWN
 # default is a LoadBalancer -- the dial is WHO may reach it, not whether. A
 # cloud whose load balancer bills by the GB overrides serviceType to
-# NodePort instead (argocd/values/aws.yaml), reached through an address the
+# NodePort instead (argocd/values/edge-aws.yaml), reached through an address the
 # deployer brings -- see docs/deployment/aws.md#receiver-ingress.
 exposure:
   serviceType: LoadBalancer

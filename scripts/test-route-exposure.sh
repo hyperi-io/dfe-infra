@@ -199,7 +199,7 @@ assert_render_succeeds "internet-facing-cidr" \
   --set ui.allowed_cidrs=203.0.113.0/24 --set ui.trusted_proxy_cidrs=203.0.113.0/24
 
 echo ""
-echo "case 12 -- internet-facing with the kill switch OFF (the aws.yaml default) renders clean"
+echo "case 12 -- internet-facing with the kill switch OFF (the edge-aws.yaml default) renders clean"
 assert_render_succeeds "internet-facing-killswitch-off" \
   --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=false
 
@@ -213,9 +213,12 @@ assert_render_refused "ui-rate-limit-type-guard" "ui.rate_limit.enabled" --set-s
 assert_render_refused "ui-tls-hsts-type-guard" "ui.tls.hsts" --set-string ui.tls.hsts=true
 
 echo ""
-echo "case 15 -- the AWS overlay's own defaults render clean: OIDC on, no admin UI on the public edge"
+echo "case 15 -- the AWS cascade's own defaults render clean: OIDC on, no admin UI on the public edge"
+# Both files, in the order layer2-edge.yaml layers them: the edge module's tier
+# table sits on top of the cloud overlay, and the kill switch is in the former
+# while oidc.enabled stays in the latter.
 R="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-system \
-  -f argocd/values/common.yaml -f argocd/values/aws.yaml \
+  -f argocd/values/common.yaml -f argocd/values/aws.yaml -f argocd/values/edge-aws.yaml \
   --set appNamespace=dfe-local --set domain=dfe.example.com 2>/dev/null \
   | awk '/^kind: /{k=$2} /^  name: /{if (k=="HTTPRoute") print $2}')"
 for r in argocd hyperdx forgejo kafbat links; do

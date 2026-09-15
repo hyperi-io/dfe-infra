@@ -10,40 +10,12 @@ global:
 
 storageClass: gp3
 
-# The HTTP plane's front door, owned by the AWS Load Balancer Controller that
-# layer1-addons installs on this cloud.
-envoyGateway:
-  service:
-    type: LoadBalancer
-    # The chart's own cloud-agnostic exposure signal (values.yaml), read by
-    # envoy-gateway-config.validateUi's render guard -- set alongside the
-    # internet-facing scheme annotation below, not derived from it.
-    internetFacing: true
-    annotations:
-      # `external`, not `nlb`: the controller reconciles only `nlb-ip` and
-      # `external`, and ignores anything else. `nlb` was read by nothing, which
-      # left the in-tree cloud provider making the load balancer instead.
-      service.beta.kubernetes.io/aws-load-balancer-type: "external"
-      # Targets are pod IPs, so a request reaches Envoy in one hop and the node
-      # port hop that hides the client address is gone.
-      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-      # The UIs' users are outside the VPC. Everything else DFE runs stays
-      # private, and internal Services keep the default `internal` scheme.
-      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
-      # Without this the target sees the load balancer's address, every request
-      # comes from one IP, and both the CIDR filter and the rate limit become
-      # decorations.
-      service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: "preserve_client_ip.enabled=true"
-      # NO aws-load-balancer-security-groups here, deliberately. Left absent,
-      # the controller creates a frontend security group AT CREATION and opens
-      # it to the Service's loadBalancerSourceRanges -- and creation is the only
-      # time an NLB can be given one, so an NLB born without a security group
-      # can never gain one afterwards. Naming a group here would also turn the
-      # backend rule management below off by default.
-      # With preserve_client_ip on and IP targets, the node and pod security
-      # groups have to admit the CLIENT address rather than the load balancer's;
-      # this is what keeps those rules in step.
-      service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+# THE EDGE MODULE'S OWN AWS KEYS LIVE IN argocd/values/edge-aws.yaml, layered
+# after this file by argocd/appsets/layer2-edge.yaml: the gateway Service and
+# its controller annotations, the infra-class kill switch, the tunnel's Service
+# type and traffic policy, and culvert's PKI mode. That file carries the AWS
+# tier table in one place; what stays here is what a chart OUTSIDE the edge
+# module reads as well.
 
 # The engine's runtime store is a PVC against the cluster's default
 # StorageClass (dfe-engine chart config.persistence) -- no per-cloud
@@ -57,19 +29,10 @@ clickhouse:
   objectStore:
     usePodIdentity: true
 
-# The gateway Service above is internet-facing, so the infra-class kill switch
-# (envoy-gateway-config's exposure.infraUisExternal) defaults OFF here: Argo
-# CD, Kafbat, HyperDX, Forgejo, links and Cruise Control all stay off the
-# public load balancer until an operator's own overlay opts one back on.
-# dfe-ui is unaffected -- it is class product, and the kill switch never
-# reaches it. Turning a route back on also needs oidc.enabled (below) or
-# ui.allowed_cidrs, which the chart's render guard requires whenever the
-# Service is internet-facing and this switch is on.
-#
-# THE RECEIVER'S FRONT DOOR shares this top-level key with the switch above.
-# Three charts read it without overlap: dfe-receiver takes exposure.mode,
-# public.* and vpn.*, culvert takes exposure.serviceType and
-# externalTrafficPolicy, envoy-gateway-config takes exposure.infraUisExternal.
+# THE RECEIVER'S FRONT DOOR. dfe-receiver is not an edge chart, so its own
+# exposure.mode stays here rather than moving to edge-aws.yaml; the two edge
+# readers of this same top-level key (culvert's serviceType and
+# externalTrafficPolicy, the gateway's infraUisExternal) live there instead.
 #
 # DFE pushes terabytes a day through the receiver, and every AWS front door
 # bills by volume -- an NLB by the LCU-hour, a Classic ELB, CloudFront and
@@ -78,31 +41,20 @@ clickhouse:
 # So the default is `vpn`: ClusterIP only, no LoadBalancer, reached over
 # culvert. A public or internal NLB is the deployer's explicit, costed opt-in,
 # set as exposure.mode in the deploy repo's own values overlay -- the dial's
-# `ingest:` block documents the shape but no renderer applies it.
+# `edge.ingest.receiver:` block documents the shape but no renderer applies it.
 exposure:
-  infraUisExternal: false
   mode: vpn                       # dfe-receiver: ClusterIP only, tunnel-reached
-  # culvert must render NO LoadBalancer either, or the tunnel's own bytes hit
-  # the same per-GB NLB this block exists to avoid. NodePort carries no
-  # per-byte charge; the deployer reaches it through an address they bring,
-  # e.g. an Elastic IP on a small forwarder instance in the receiver's AZ.
-  # NodePort also makes exposure.loadBalancerSourceRanges inert, so the
-  # tunnel's allow-list belongs on the node security group -- the chart's
-  # service.yaml refuses the pair rather than render a dial that does nothing.
-  serviceType: NodePort
-  # Cluster, not the chart's own Local default: with Local a NodePort answers
-  # only on the node currently hosting culvert's one pod, and a forwarder
-  # that does not track pod placement needs every node's NodePort to work.
-  # The cost is the client's real source IP, which Cluster SNATs to a node --
-  # culvert's own PKI and OIDC identity are then the only attribution a
-  # connection carries, and a source-IP rule would have nothing to match.
-  externalTrafficPolicy: Cluster
 
-# Edge OIDC on by default for the same reason: a deployer who flips
+# Edge OIDC on by default: a deployer who flips edge-aws.yaml's
 # exposure.infraUisExternal back on for one admin route still needs a real
 # oidc.providers entry (this only sets the switch, not a provider) before that
-# route's edgePolicy has anything to authenticate against -- and the render
-# guard above refuses the internet-facing + kill-switch-on combination unless
+# route's edgePolicy has anything to authenticate against -- and the gateway's
+# render guard refuses the internet-facing + kill-switch-on combination unless
 # either this is true or ui.allowed_cidrs is set.
+#
+# IT STAYS HERE rather than moving to edge-aws.yaml because two charts outside
+# the edge module read the same switch: kafbat degrades OAUTH2 to its
+# break-glass LOGIN_FORM without it, and dfe-engine stops rendering each
+# provider's secret env vars. Moving it would change what both of them deploy.
 oidc:
   enabled: true

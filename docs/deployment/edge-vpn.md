@@ -24,9 +24,13 @@ Two doors, both on one public LoadBalancer:
 | OpenVPN | 1194/udp | the compatible one, and the one that carries OIDC login |
 
 That is the chart's own default, not a fixed fact: on AWS a LoadBalancer
-bills by the GB, so `argocd/values/aws.yaml` points culvert at a NodePort
+bills by the GB, so `argocd/values/edge-aws.yaml` points culvert at a NodePort
 instead, reached through an address the deployer brings -- see
-[aws.md](aws.md#receiver-ingress).
+[aws.md](aws.md#receiver-ingress). That file is the edge module's AWS tier
+table, one per flavour, layered by `argocd/appsets/layer2-edge.yaml` after the
+cloud overlay; it also sets `pki.mode: external`, so a tunnel on a cloud
+flavour names the Secret holding its CA, server certificate and key or the
+chart refuses to render.
 
 A client on a network that blocks UDP outright needs the OpenVPN TCP fallback:
 add `{ name: openvpn-tcp, port: 1194, protocol: TCP, exposed: true }` to

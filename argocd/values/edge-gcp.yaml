@@ -1,0 +1,38 @@
+# THE EDGE MODULE, GCP FLAVOUR -- the tier table for helm/edge/gateway and
+# helm/edge/culvert, in one file. argocd/appsets/layer2-edge.yaml layers this
+# after argocd/values/gcp.yaml and no other appset reads it, so a key here
+# reaches the two edge charts alone.
+#
+# TIER 1 is on by default and adds nothing beyond the cluster's own compute.
+# TIER 2 is a costed opt-in the deployer turns on in their own overlay.
+# TIER 3 is absent by design and no key in this file reaches it.
+# Cost is a T-shirt bucket against the cluster's compute plus a named pricing
+# model, never a rate (docs/deployment/aws.md#how-costs-are-described).
+#
+# A KEY STAYS IN gcp.yaml WHEN A CHART OUTSIDE THIS MODULE READS IT --
+# exposure.mode is the dfe-receiver chart's and stays there.
+#
+# THERE IS NO GCP TOFU ROOT (terraform/environments holds aws, aws-state and
+# local), so this flavour is values-only until one exists.
+
+# TIER 1 -- the HTTP plane's front door.
+envoyGateway:
+  service:
+    type: LoadBalancer
+
+pki:
+  # TIER 1 -- external PKI is the rebuildable shape on a cloud flavour, because
+  # local mode mints the CA inside the pod and a restart without a durable
+  # volume invalidates every client config already issued. The deployment names
+  # the Secret holding ca.crt, server.crt and server.key in its own culvert
+  # instance values file, and the chart refuses to render without it.
+  mode: external
+
+# TIER 2, no key here. The tunnel keeps the culvert chart's own LoadBalancer on
+# this flavour, so a deployment that brings the tunnel pays GCP's per-GB rate on
+# the tunnel's bytes until this file carries edge-aws.yaml's NodePort override
+# as well -- designed, not built, because there is no GCP root to bring an
+# address in front of a NodePort.
+#
+# TIER 3, absent by design. Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao and
+# the Kubernetes API are offered no door at all, on any flavour.

@@ -276,7 +276,8 @@ deployer brings one. Three ways to reach it:
 
 - **culvert**, dialled through an address the deployer brings -- e.g. an
   Elastic IP on a small forwarder instance in front of culvert's NodePort
-  (`exposure.serviceType: NodePort` on AWS). Free ingress; size the
+  (`exposure.serviceType: NodePort` in `argocd/values/edge-aws.yaml`, the edge
+  module's AWS tier table). Free ingress; size the
   instance by bandwidth, not bytes, and keep it in the receiver's
   availability zone, because cross-AZ transfer is billed per GB.
 - The deployer's own peering, VPN or Direct Connect straight to the node

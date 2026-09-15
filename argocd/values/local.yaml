@@ -31,26 +31,17 @@ nodeScheduling:
       value: dfe
       effect: NoSchedule
 
-envoyGateway:
-  service:
-    type: LoadBalancer
-    externalIPs: []
-
-# Edge wildcard-cert issuer. The chart default (dfe-letsencrypt) renders a
-# ClusterIssuer only when tls.acme.email or tls.vault.server is set; with neither
-# the gateway-shim requests against an issuer that does not exist, so
-# dfe-wildcard-tls is never created and the https listener stays
-# InvalidCertificateRef. These domains are internal split-horizon names that
-# public ACME cannot validate. The self-signed internal CA issues instantly with
-# no DNS-01 and no external credential; clients must trust dfe-internal-ca-tls
-# (ns cert-manager) or see a warning. For a browser-trusted leaf use OpenBao PKI
-# via tls.vault.* (server, path, caBundle, appRole.roleId).
-tls:
-  issuerName: dfe-internal-ca
+# THE EDGE MODULE'S OWN ON-PREM KEYS LIVE IN argocd/values/edge-onprem.yaml,
+# layered after this file by argocd/appsets/layer2-edge.yaml: the gateway
+# Service, the wildcard-cert issuer, the receiver route and the tunnel's Service
+# type. That file carries the on-prem tier table in one place; what stays here
+# is what a chart OUTSIDE the edge module reads as well.
 
 # No LoadBalancer provisioner on this cloud: the gateway's own LB Service stays
 # <pending>, so the receiver's chart default (exposure.mode: public) would render
-# Services that never get an address. Ingest routes through the gateway instead.
+# Services that never get an address. Ingest routes through the gateway instead,
+# which is what edge-onprem.yaml's routes.receiver.enabled pairs with -- break
+# the pair and devex breaks.
 exposure:
   mode: internal
 
@@ -60,15 +51,13 @@ exposure:
 # Helm REPLACES a list rather than merging it, so every listener the chart
 # defaults to has to be restated here or it disappears -- pushgrpc included, or
 # dfe-fetcher has nothing to push to in the no-kafka profile.
+# culvert reads this same key for ITS listeners, so a tunnel on this flavour has
+# to restate wireguard and openvpn-udp in its own instance values file or the
+# chart refuses to render.
 listeners:
   - { name: http, port: 8080, protocol: TCP, exposed: true }
   - { name: grpc, port: 8443, protocol: TCP, exposed: false }
   - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false }
-
-# The receiver's ingest door in internal mode (receiver.{domain}).
-routes:
-  receiver:
-    enabled: true
 
 # devex runs DFE's OWN ClickHouse (single/keeperless interim -- stops the
 # exit-231 crashloop from the prior cluster-mode instance that shared

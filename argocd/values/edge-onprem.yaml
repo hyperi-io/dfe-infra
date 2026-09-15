@@ -1,0 +1,65 @@
+# THE EDGE MODULE, ON-PREM FLAVOUR -- the tier table for helm/edge/gateway and
+# helm/edge/culvert, in one file. argocd/appsets/layer2-edge.yaml layers this
+# after argocd/values/local.yaml (the cloud fact `local` and `rancher` both
+# select this one flavour) and no other appset reads it, so a key here reaches
+# the two edge charts alone.
+#
+# TIER 1 is on by default and adds nothing beyond the cluster's own compute.
+# TIER 2 is a costed opt-in the deployer turns on in their own overlay.
+# TIER 3 is absent by design and no key in this file reaches it.
+# There is no cloud bill on this flavour at all, so every tier-2 line below is
+# about the node's own NIC and disk rather than a rate.
+#
+# A KEY STAYS IN local.yaml WHEN A CHART OUTSIDE THIS MODULE READS IT.
+# exposure.mode: internal is the dfe-receiver chart's, and the `listeners:` list
+# beside it is the receiver's too -- culvert reads that same key, so a tunnel
+# here has to restate its own listeners in its instance values file or the
+# chart refuses to render at all.
+
+# TIER 1 -- the HTTP plane's front door, addressed by MetalLB on this flavour.
+envoyGateway:
+  service:
+    type: LoadBalancer
+    externalIPs: []
+
+# TIER 1 -- the edge wildcard-cert issuer. The chart default (dfe-letsencrypt)
+# renders a ClusterIssuer only when tls.acme.email or tls.vault.server is set;
+# with neither the gateway-shim requests against an issuer that does not exist,
+# so dfe-wildcard-tls is never created and the https listener stays
+# InvalidCertificateRef. On-prem domains are internal split-horizon names that
+# public ACME cannot validate. The self-signed internal CA issues instantly with
+# no DNS-01 and no external credential; clients must trust dfe-internal-ca-tls
+# (ns cert-manager) or see a warning. For a browser-trusted leaf use OpenBao PKI
+# via tls.vault.* (server, path, caBundle, appRole.roleId).
+tls:
+  issuerName: dfe-internal-ca
+
+# TIER 1 -- the receiver's ingest door in the receiver's `internal` mode
+# (receiver.{domain}), routed through the gateway because this flavour has no
+# cloud LoadBalancer provisioner of its own. Pairing this route with
+# exposure.mode: internal is what makes ingest reachable here, and breaking the
+# pair breaks devex.
+routes:
+  receiver:
+    enabled: true
+
+exposure:
+  # TIER 1 -- the tunnel takes a real LoadBalancer here, which is the culvert
+  # chart's own default: MetalLB hands out the address, there is no per-byte
+  # charge to dodge, and the node's NIC is the only limit. This flavour states
+  # it rather than inherits it so the tier table reads in one file.
+  serviceType: LoadBalancer
+
+# TIER 1 -- pki.mode stays the chart's `local` here, the on-prem default: the
+# admin is on the LAN, the CA is minted in the pod, and a deployment that wants
+# revocation to survive a restart sets persistence.enabled in its own instance
+# values file instead. Every cloud flavour overrides it to external.
+#
+# TIER 2, no key here. exposure.loadBalancerSourceRanges narrows who may dial
+# the tunnel once the fleet's ranges are known -- empty is 0.0.0.0/0 by design,
+# because a fleet dialling from anywhere is the normal case.
+#
+# TIER 3, absent by design. The admin-peer reach-back to the EdgeStream Hub is a
+# cloud-flavour mechanism only: on-prem the admin is already on the LAN and the
+# module supplies nothing. Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao and
+# the Kubernetes API are offered no door at all, on any flavour.

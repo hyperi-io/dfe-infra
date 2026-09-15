@@ -9,8 +9,9 @@ CIDR allow-listing, rate limiting, WAF and DNS.
 
 On a cloud deploy the Gateway Service is internet-facing, so
 `exposure.infraUisExternal` defaults off rather than on.
-`argocd/values/aws.yaml` sets `exposure.infraUisExternal: false` and
-`oidc.enabled: true` -- Argo CD, Kafbat, HyperDX, Forgejo, the links page and
+`argocd/values/edge-aws.yaml` sets `exposure.infraUisExternal: false` and
+`argocd/values/aws.yaml` sets `oidc.enabled: true` -- Argo CD, Kafbat,
+HyperDX, Forgejo, the links page and
 Cruise Control all stay off the public NLB until an operator's overlay opts
 one back on. The chart's own render guard (`envoy-gateway-config.validateUi`)
 fails the render if a deploy flips the switch back on for an internet-facing
@@ -64,5 +65,5 @@ On AWS the load-balancer half of the filter is `loadBalancerSourceRanges`,
 which the AWS Load Balancer Controller turns into the NLB's frontend
 security group. That group can only be attached at creation, so the
 controller must own the Service from the start -- see the annotations and
-their reasons in `argocd/values/aws.yaml`. The ranges fence the WHOLE front
+their reasons in `argocd/values/edge-aws.yaml`. The ranges fence the WHOLE front
 door, ingest included: one Service carries every listener.

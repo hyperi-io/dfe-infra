@@ -71,9 +71,11 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   boolean by name and reports which UIs the dial marks public, but the
   values that actually reach the chart are whatever a deploy-repo overlay
   (or `argocd/values/<cloud>.yaml` directly, as below) pastes in from it.
-- Separately from that per-UI flag, `argocd/values/aws.yaml` sets the
+- Separately from that per-UI flag, `argocd/values/edge-aws.yaml` sets the
   envoy-gateway-config chart's `exposure.infraUisExternal: false` and
-  `oidc.enabled: true` by default, because this cloud's Envoy Gateway Service
+  `argocd/values/aws.yaml` sets `oidc.enabled: true` (it stays with the cloud
+  overlay because kafbat and dfe-engine read the same switch), because this
+  cloud's Envoy Gateway Service
   is `internet-facing` (an NLB with a public address). `infraUisExternal` is
   the class-wide kill switch: false takes every infra-class route (Argo CD,
   Kafbat, HyperDX, Forgejo, the links page, Cruise Control) off the edge
