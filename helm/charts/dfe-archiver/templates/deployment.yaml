@@ -33,9 +33,10 @@ spec:
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
-          # The tiered buffer spools to the RELATIVE path .tmp/archiver-spool
-          # (dfe-archiver archiver.rs:142, not a config key), so the working
-          # directory has to be the writable volume or the app exits on EROFS.
+          # Held for the images before dfe-archiver#18, which spool to the
+          # RELATIVE path .tmp/archiver-spool and exit on EROFS anywhere but a
+          # writable working directory. From the release carrying that fix the
+          # spool comes from ARCHIVER_SPOOL_DIR below, and this line goes.
           workingDir: /tmp
           # Mirrors the image CMD (dfe-archiver Dockerfile:43). Explicit so the
           # config path is visible here rather than buried in the image.
@@ -107,6 +108,11 @@ spec:
             - name: ARCHIVER_DESTINATION
               value: {{ printf "file://%s" . | quote }}
             {{- end }}
+            # The tier-2 spool is bound to the volume mounted below, so the chart
+            # is its authority rather than the engine's overlay. Same value both
+            # places, or the archiver creates a spool on the read-only rootfs.
+            - name: ARCHIVER_SPOOL_DIR
+              value: {{ .Values.spool.path | quote }}
             {{- with .Values.s3.endpoint }}
             # An S3-compatible endpoint (the AWS default when unset). Env BEATS
             # the config file in the archiver's cascade, so an empty value would
@@ -147,6 +153,10 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            # The archiver creates its tier-2 spool at construction, before it
+            # reads a message, so this mount is what lets the pod start at all.
+            - name: spool
+              mountPath: {{ .Values.spool.path | quote }}
             {{- with .Values.archive.localPath }}
             - name: archive
               mountPath: {{ . | quote }}
@@ -176,6 +186,8 @@ spec:
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
+          emptyDir: {}
+        - name: spool
           emptyDir: {}
         {{- with .Values.archive.localPath }}
         - name: archive
