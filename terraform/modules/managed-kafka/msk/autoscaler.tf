@@ -54,8 +54,8 @@ locals {
 // DFE's own monitoring on AWS goes to its OTel feed, never CloudWatch -- this
 // alarm is the one deliberate exception, and the only CloudWatch touchpoint
 // this scaler adds. It stays because MSK publishes BytesInPerSec to
-// CloudWatch regardless of what DFE does with it, and one alarm costs about
-// USD 0.10/month, which buys the only signal AWS exposes for a manual API.
+// CloudWatch regardless of what DFE does with it, and one alarm is billed per
+// alarm-month at XS, which buys the only signal AWS exposes for a manual API.
 resource "aws_cloudwatch_metric_alarm" "broker_scale_out" {
   count = local.autoscaling_enabled ? 1 : 0
 

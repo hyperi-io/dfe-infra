@@ -301,7 +301,8 @@ kafka:
       confidence: vendor-documented
       spot_test: None -- Express storage grows on its own and bills per GB-month.
     ## Express bills storage per GB-month; whether it bills the replicas as well
-    ## is unstated, and the difference is about $12k a month at the Medium band.
+    ## is unstated, and at the Medium band the difference is the whole storage
+    ## line over again, so the spot test below reads it off the bill.
     replication_disk_factor:
       value: 1
       unit: copies

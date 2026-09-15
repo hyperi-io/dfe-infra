@@ -44,6 +44,18 @@ A few things hold for every deployment:
 - One file drives all of it: the deployment dial, `deployment.yaml`, copied
   from `deployment.example.yaml`.
 
+## How costs are described
+
+Costs here are T-shirt buckets, never figures. A bucket is relative to the
+deployment's own compute, never to a currency: XS is negligible beside the
+cluster's compute, S a small fraction of it, M of the same order as one
+dedicated node, L of the same order as the whole cluster's compute, and XL
+larger than the cluster's compute. A pricing model is named wherever it decides
+whether an option is safe -- hourly, per GB processed, per request, per
+LCU-hour, per broker-hour -- but never a rate. The scale is deliberate: rates
+move by region, by account and by discount, so a deployer prices their own
+account rather than trusting a number written down here.
+
 ## From the dial to a running cluster
 
 ### Sizing the deployment
@@ -55,17 +67,18 @@ A few things hold for every deployment:
   tyre-kick floor -- the smallest shape that runs the profile without an
   out-of-memory kill, with whatever throughput it happens to carry reported
   rather than targeted. On AWS economy focus with `kafka.provider: msk` the
-  resolver's own live run resolves that floor at USD 2,245/month compute:
+  resolver's own live run resolves that floor at the smallest shapes the
+  resolver accepts, M, with the managed brokers the largest single line:
   `m9g.large` for eks-system, `m9g.xlarge` for general, `r9gd.large` for
   clickhouse, `m9g.large` for keeper, three `express.m7g.large` for
   msk-broker, and `c8gd.4xlarge` for ci-burst. With Kafka running in-cluster
-  (`kafka.provider: strimzi`) the same floor drops to USD 1,566/month:
-  kafka-broker and eks-system both sit on `m9g.large`, and there is no MSK
-  line -- clickhouse, keeper, general and ci-burst are unchanged. That is
+  (`kafka.provider: strimzi`) the same floor loses that line and stays M:
+  kafka-broker and eks-system both sit on `m9g.large` -- clickhouse, keeper,
+  general and ci-burst are unchanged. That is
   the default combined quorum, which sizes no controller node at all;
   `kafka.controller_pool: separate` adds three `m9g.medium` controllers on
-  top of it. Both figures are on-demand Linux pricing from the AWS Pricing
-  API, taken 2026-09-13 -- they drift, and the resolver's own
+  top of it. Both buckets come from on-demand Linux pricing in the AWS Pricing
+  API, read 2026-09-13 -- rates drift, and the resolver's own
   `sizing/<profile>.report.md` (written under `--out`) is the current answer,
   not this paragraph. At the floor the resolver's A4 check WARNS rather than
   fails: `r9gd.large` and `m9g.large` sustain only 3,600 IOPS / 95 MiB/s on
@@ -95,7 +108,7 @@ A few things hold for every deployment:
   tfvars variable. Under
   `<out>/sizing/`: `<tier>.values.yaml` (only the keys the ClickHouse and
   Kafka charts read), `<tier>.report.md` (what was sized, from which ratio,
-  at what price) and `resolved.yaml` (the baseline the next resolve diffs
+  in which cost bucket) and `resolved.yaml` (the baseline the next resolve diffs
   against) -- plus `<tier>.nodes.json` on an on-prem resolve, the demand
   `bootstrap.sh`'s preflight checks the cluster's real nodes against.
 - Pointing `--out` at `terraform/environments/aws` is what lands
@@ -274,11 +287,13 @@ deployer brings one. Three ways to reach it:
   `aws-load-balancer-scheme: internet-facing` (or `internal`), and
   `loadBalancerSourceRanges` set -- never left empty.
 
-An NLB costs USD 0.0225/hour plus USD 0.006 per LCU-hour, one LCU-hour
-being 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's
-Elastic Load Balancing pricing page). At 1 TB/day that is about USD
-196/month; at 10 TB/day, about USD 1,800/month, in us-east-1. AWS data
-transfer out still applies to the replies on every path, culvert included.
+An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being
+1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's Elastic Load
+Balancing pricing page). The hourly half is XS. The processing half is why
+there is no load balancer by default: the NLB bills per GB processed, and at
+terabytes a day that line is L against the cluster's compute, XL at ten times
+that. AWS data transfer out still applies to the replies on every path,
+culvert included.
 
 See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
 for node pools and images, admin UI exposure, teardown, lifecycle tags and

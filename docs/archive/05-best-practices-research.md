@@ -753,7 +753,7 @@ This pattern works for any web application. OAuth2 Proxy handles authentication 
 
 | Feature | EKS | AKS | GKE |
 |---------|-----|-----|-----|
-| **Control plane cost** | $72/month | Free (basic) / $72 with SLA | Free (1 zonal) / $72 regional |
+| **Control plane cost** | Billed hourly, XS | Free (basic) / billed hourly with SLA | Free (1 zonal) / billed hourly regional |
 | **Operational complexity** | Highest | Moderate | Lowest (Autopilot) |
 | **K8s version adoption** | 4-8 weeks | 3-6 weeks | 0-2 weeks |
 | **Autoscaling** | Karpenter, Fargate | Scale-to-zero nodes | Autopilot (pay-per-pod) |
@@ -1016,7 +1016,7 @@ Direct peer-to-peer communication between all sites. WireGuard makes this feasib
 |--------|---------------|----------------------|---------------------|
 | **Setup** | Managed, easy | 10-15 min | 30-60 min |
 | **Bandwidth** | 50 Mbps/user baseline | Line speed (kernel-level) | Moderate (userspace) |
-| **Cost** | Per-connection + hourly | EC2 instance (~$3-5/mo) | EC2 instance (~$3-5/mo) |
+| **Cost** | Per-connection + hourly | One small EC2 instance, billed hourly, XS | One small EC2 instance, billed hourly, XS |
 | **IPv6** | No | Yes | Yes |
 | **Customization** | Limited | Moderate | High |
 

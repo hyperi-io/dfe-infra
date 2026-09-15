@@ -114,15 +114,16 @@ compliance need CloudWatch itself satisfies.
 
 | Touchpoint | Under `sink: otel` | Under `sink: cloudwatch` | Cost |
 |---|---|---|---|
-| Broker logs | S3 bucket this module creates, lifecycle-expired at `retention_days` (default 2), SSE-KMS on the deployment key. The fetcher's `object_store` source reads it. | `aws_cloudwatch_log_group`, retention `retention_days` (default 7 under this sink). | S3: near-zero at broker-log volumes, storage only past the lifecycle window. CloudWatch: ingestion plus storage per GB, the more expensive path at any real broker throughput. |
+| Broker logs | S3 bucket this module creates, lifecycle-expired at `retention_days` (default 2), SSE-KMS on the deployment key. The fetcher's `object_store` source reads it. | `aws_cloudwatch_log_group`, retention `retention_days` (default 7 under this sink). | S3: XS at broker-log volumes, storage only past the lifecycle window. CloudWatch: ingestion plus storage per GB, the dearer path at any real broker throughput. |
 | EKS control-plane audit log | CloudWatch, pinned to a 1-day floor -- EKS has no other export path, so this is an unavoidable exception rather than a chosen destination (`kubernetes-cluster/CONTRACT.md`). | CloudWatch, `retention_days`. | CloudWatch ingestion plus storage either way; otel only bounds it to 1 day instead of a longer dial value. |
-| CloudTrail | S3 under both sinks -- a trail always delivers to S3, and `sink` gates only the CloudWatch Logs attachment. `LookupEvents` API access via the fetcher's `aws` source needs no bucket name at all. | Adds a CloudWatch Logs attachment at `retention_days`, on top of the S3 delivery every trail already has. | S3-only under otel: negligible at management-event volumes. cloudwatch doubles the storage (the same events land in two destinations) plus CloudWatch ingestion. |
+| CloudTrail | S3 under both sinks -- a trail always delivers to S3, and `sink` gates only the CloudWatch Logs attachment. `LookupEvents` API access via the fetcher's `aws` source needs no bucket name at all. | Adds a CloudWatch Logs attachment at `retention_days`, on top of the S3 delivery every trail already has. | S3-only under otel: XS at management-event volumes. cloudwatch doubles the storage (the same events land in two destinations) plus CloudWatch ingestion. |
 | MSK open_monitoring (JMX + node exporter) | Scraped in-cluster by the otel-collector gateway's Prometheus receiver, never delivered through either sink. | Same -- `open_monitoring` has no CloudWatch delivery option; it is always scrape-only. | No AWS-side cost; ordinary in-cluster Prometheus scrape traffic. |
-| Broker-count autoscaler Lambda log group | 1 day's retention under both sinks (see "Broker-count autoscaling" above) -- diagnostic-only, and predates the telemetry dial. | Same. | Negligible; the Lambda fires once per scale-out event. |
+| Broker-count autoscaler Lambda log group | 1 day's retention under both sinks (see "Broker-count autoscaling" above) -- diagnostic-only, and predates the telemetry dial. | Same. | XS; the Lambda fires once per scale-out event. |
 
 `terraform/modules/managed-kafka/CONTRACT.md` is the source of truth for the
 `telemetry` input's shape; this table is the cost summary a deployer reads
-before picking a sink.
+before picking a sink, in the buckets
+[aws.md](../aws.md#how-costs-are-described) defines.
 
 ## Ports the broker security group admits
 

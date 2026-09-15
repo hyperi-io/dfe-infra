@@ -108,8 +108,9 @@ is the operator's own role, authenticated at the laptop end of the tunnel.
 cluster-admin. Starting a session at all is IAM you provide, not IAM this
 module creates -- `CONTRACT.md` gives the exact policy JSON needed.
 
-Roughly the price of one `t4g.small` (~USD 0.02/hr) plus its root volume, on
-the cluster VPC's existing NAT for its 443 egress. Zero cost while
+XS on the scale in [aws.md](aws.md#how-costs-are-described): one `t4g.small`
+billed hourly plus its root volume, on the cluster VPC's existing NAT for its
+443 egress. Zero cost while
 `toolbox.enabled` is false, apart from the session-log bucket, which persists
 across an up/down cycle by design.
 
