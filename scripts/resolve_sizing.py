@@ -2318,6 +2318,13 @@ def _shape_volumes(choice: Choice) -> dict[str, dict[str, object]]:
     return out
 
 
+def _without_price(entry: object) -> object:
+    """An entry an older resolve wrote may still carry the rate this no longer writes."""
+    if not isinstance(entry, dict):
+        return entry
+    return {key: value for key, value in entry.items() if key != "price_usd_hour"}
+
+
 def merge_resolved(
     path: Path, choices: dict[str, Choice], catalogue: Catalogue, cloud: str
 ) -> dict[str, object]:
@@ -2329,7 +2336,9 @@ def merge_resolved(
     existing: dict[str, object] = {}
     if path.is_file():
         existing = json.loads(path.read_text(encoding="utf-8"))
-    out: dict[str, object] = {key: value for key, value in existing.items() if not key.startswith("_")}
+    out: dict[str, object] = {
+        key: _without_price(value) for key, value in existing.items() if not key.startswith("_")
+    }
     for use_case, choice in choices.items():
         out[use_case] = {
             # render_dial.py reads these two and nothing else; everything below
@@ -2339,7 +2348,9 @@ def merge_resolved(
             "generation": choice.generation,
             "generation_policy": choice.generation_policy,
             "price_policy": choice.price_policy,
-            "price_usd_hour": round(choice.price_usd_hour, 5),
+            # The rate that chose this shape stays in memory: a figure committed
+            # here is stale the day it lands and wrong for every account but the
+            # one it was read on.
             "physical_processor": choice.physical_processor,
             "vcpu": choice.vcpu,
             "memory_gib": round(choice.memory_gib, 2),

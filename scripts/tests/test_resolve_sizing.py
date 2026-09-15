@@ -763,7 +763,9 @@ def test_the_resolved_answer_records_the_generation_the_pricing_api_names(tmp_pa
     _run(_dial(tmp_path), tmp_path)
     doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     assert "Graviton" in doc["kafka-broker"]["physical_processor"]
-    assert doc["kafka-broker"]["price_usd_hour"] > 0
+    # The Pricing API supplies the rate as well as the generation, and only the
+    # generation is written down.
+    assert "price_usd_hour" not in doc["kafka-broker"]
 
 
 def test_the_clickhouse_shape_keeps_its_local_nvme(tmp_path: Path) -> None:
@@ -1312,12 +1314,38 @@ def test_the_committed_dial_template_parses_with_no_overrides(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
-def test_the_msk_path_resolves_a_broker_shape_with_its_price(tmp_path: Path) -> None:
+def test_the_msk_path_resolves_a_broker_shape(tmp_path: Path) -> None:
     _run(_dial(tmp_path, provider="msk", estimate=1000), tmp_path)
     doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     entry = doc["msk-broker"]
     assert entry["instance_types"][0].startswith("express.m7g.")
-    assert entry["price_usd_hour"] > 0
+    assert "price_usd_hour" not in entry
+
+
+def test_an_msk_family_with_no_price_fails_the_selection(catalogue) -> None:
+    """The broker namespace is its own, so an unpriced family must fail by name."""
+    unpriced = resolve_sizing.Catalogue(
+        region=catalogue.region,
+        azs=catalogue.azs,
+        types=catalogue.types,
+        offerings=catalogue.offerings,
+        msk_families=catalogue.msk_families,
+        msk_prices={},
+        unparsed=0,
+        seen=catalogue.seen,
+        source="test",
+        captured=catalogue.captured,
+    )
+    demand = resolve_sizing.Node("msk-broker", 3, 2, 8, 0, 0, 0, "test")
+    with pytest.raises(resolve_sizing.ResolveError, match=r"lists no express\.m7g"):
+        resolve_sizing.select_msk_shape(
+            "msk-broker",
+            {"family": "m", "generation_pin": "7", "size": "large", "volumes": {}},
+            demand,
+            unpriced,
+            ROOT_VOLUME_DEMAND_MIB_S,
+            ROOT_VOLUME_DEMAND_IOPS,
+        )
 
 
 def test_the_msk_broker_reads_the_same_demand_the_self_hosted_broker_would(tmp_path: Path) -> None:

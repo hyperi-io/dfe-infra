@@ -30,7 +30,7 @@ import importlib.util
 import sys
 import time
 import types
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -67,6 +67,10 @@ def _stamp(age_hours: float, spelling: str = "rfc3339") -> str:
     """A creation stamp `age_hours` old, in either spelling the provider renders."""
     then = datetime.fromtimestamp(time.time() - age_hours * 3600, tz=UTC)
     if spelling == "go":
+        # The literal nanoseconds below are part of the instant, so they come off
+        # it before the second is truncated rather than being added on top of a
+        # floor that has already dropped them.
+        then -= timedelta(microseconds=123457)
         return then.strftime("%Y-%m-%d %H:%M:%S.123456789 +0000 UTC")
     return then.strftime("%Y-%m-%dT%H:%M:%SZ")
 

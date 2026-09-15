@@ -12,8 +12,9 @@
 Buckets are defined once, in `docs/deployment/aws.md#how-costs-are-described`,
 and a rate written down beside them is stale the day it lands and wrong for
 every account but the one it was read on. This sweeps the docs, the dial, the
-overlays, the chart values, the OpenTofu comments and the resolver's own
-rendered output, and names the file and line of anything carrying a figure.
+overlays, the chart values, the OpenTofu comments, the committed shape
+snapshots and the resolver's own rendered output, and names the file and line
+of anything carrying a figure.
 
     python3 -m pytest scripts/tests/test_no_cost_figures.py -q
 """
@@ -70,7 +71,33 @@ def _committed_files() -> list[Path]:
     paths += sorted(REPO_ROOT.glob("helm/charts/*/values.yaml"))
     paths += sorted((REPO_ROOT / "sizing").glob("**/*.yaml"))
     paths += sorted((REPO_ROOT / "sizing").glob("**/*.md"))
+    paths += sorted((REPO_ROOT / "shapes").glob("**/*.yaml"))
+    paths += sorted((REPO_ROOT / "shapes").glob("**/*.md"))
+    paths += sorted((REPO_ROOT / "shapes").glob("**/*.json"))
     return paths
+
+
+# A rate reaches the shape snapshot as a key rather than as prose, and the JSON
+# carries no units for the prose sweep to match on.
+PRICE_KEY = re.compile(r'"[\w.]*price[\w.]*"\s*:\s*[\d.]')
+
+
+def _price_key_hits(path: Path) -> list[str]:
+    return [
+        f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()}"
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if PRICE_KEY.search(line)
+    ]
+
+
+def test_no_committed_shape_snapshot_carries_a_price_key() -> None:
+    found: list[str] = []
+    for path in sorted((REPO_ROOT / "shapes").glob("**/*.json")):
+        found += _price_key_hits(path)
+    assert not found, (
+        "priced keys found -- the rate selects the shape at resolve time and is never "
+        "committed:\n" + "\n".join(found)
+    )
 
 
 def test_no_committed_file_a_deployer_reads_carries_a_cost_figure() -> None:
