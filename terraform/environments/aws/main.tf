@@ -143,11 +143,13 @@ module "edge" {
 
   cluster_name = module.cluster.cluster_name
 
+  // The public half, because the forwarder's Elastic IP is only delivered where
+  // the subnet routes at an internet gateway.
   network = {
-    vpc_id             = module.cluster.network.vpc_id
-    cidr               = module.cluster.network.cidr
-    azs                = module.cluster.network.azs
-    private_subnet_ids = module.cluster.network.private_subnet_ids
+    vpc_id            = module.cluster.network.vpc_id
+    cidr              = module.cluster.network.cidr
+    azs               = module.cluster.network.azs
+    public_subnet_ids = module.cluster.network.public_subnet_ids
   }
 
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json

@@ -82,10 +82,10 @@ variables {
   cluster_name = "dfe-edge-contract"
 
   network = {
-    vpc_id             = "vpc-00000000000000000"
-    cidr               = "10.90.0.0/16"
-    azs                = ["mock-1a", "mock-1b", "mock-1c"]
-    private_subnet_ids = ["subnet-00000000000000001", "subnet-00000000000000002", "subnet-00000000000000003"]
+    vpc_id            = "vpc-00000000000000000"
+    cidr              = "10.90.0.0/16"
+    azs               = ["mock-1a", "mock-1b", "mock-1c"]
+    public_subnet_ids = ["subnet-0000000000000pub1", "subnet-0000000000000pub2", "subnet-0000000000000pub3"]
   }
 
   pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
@@ -507,7 +507,7 @@ run "turning_the_openvpn_listener_off_closes_its_door_end_to_end" {
 // --- the zone: cross-zone transfer is billed per GB, so the instance and
 // culvert's pod belong in the same one.
 
-run "the_forwarder_takes_the_first_private_subnets_zone_by_default" {
+run "the_forwarder_takes_the_networks_first_zone_by_default" {
   command = plan
 
   variables {
@@ -520,8 +520,28 @@ run "the_forwarder_takes_the_first_private_subnets_zone_by_default" {
   }
 
   assert {
-    condition     = aws_instance.forwarder[0].subnet_id == var.network.private_subnet_ids[0]
-    error_message = "the instance must land in the private subnet belonging to the zone it reports"
+    condition     = aws_instance.forwarder[0].subnet_id == var.network.public_subnet_ids[0]
+    error_message = "the instance must land in the public subnet belonging to the zone it reports"
+  }
+}
+
+// An Elastic IP is delivered only where the route table sends 0.0.0.0/0 at an
+// internet gateway, which is what separates the two subnet lists.
+run "the_forwarder_never_lands_in_a_subnet_outside_the_public_set" {
+  command = plan
+
+  variables {
+    tunnel = { address = { mode = "forwarder", zone = "mock-1b" } }
+  }
+
+  assert {
+    condition     = contains(var.network.public_subnet_ids, aws_instance.forwarder[0].subnet_id)
+    error_message = "the forwarder's subnet must come from network.public_subnet_ids, or its Elastic IP receives nothing"
+  }
+
+  assert {
+    condition     = var.network.public_subnet_ids[index(var.network.azs, output.tunnel_zone)] == aws_instance.forwarder[0].subnet_id
+    error_message = "the subnet the instance launches in must belong to the zone the deployment publishes to culvert's nodeSelector"
   }
 }
 
@@ -538,8 +558,8 @@ run "a_named_zone_selects_its_own_subnet" {
   }
 
   assert {
-    condition     = aws_instance.forwarder[0].subnet_id == var.network.private_subnet_ids[2]
-    error_message = "azs and private_subnet_ids are parallel lists, so the named zone selects the matching subnet"
+    condition     = aws_instance.forwarder[0].subnet_id == var.network.public_subnet_ids[2]
+    error_message = "azs and public_subnet_ids are parallel lists, so the named zone selects the matching subnet"
   }
 }
 

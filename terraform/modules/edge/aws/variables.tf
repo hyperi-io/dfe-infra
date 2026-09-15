@@ -22,12 +22,12 @@ variable "cluster_name" {
 }
 
 variable "network" {
-  description = "Where the tunnel forwarder lands (kubernetes-cluster/aws's network output). cidr scopes its egress to the cluster's own nodes; azs and private_subnet_ids are parallel lists, so the zone the forwarder pins to selects the subnet it launches in. Read only by the forwarder -- the IAM half of this module needs no network at all."
+  description = "Where the tunnel forwarder lands (kubernetes-cluster/aws's network output). cidr scopes its egress to the cluster's own nodes; azs and public_subnet_ids are parallel lists, so the zone the forwarder pins to selects the subnet it launches in. The forwarder holds an Elastic IP, which is only delivered where the subnet's route table sends 0.0.0.0/0 at an internet gateway, so it takes the PUBLIC list. Read only by the forwarder -- the IAM half of this module needs no network at all."
   type = object({
-    vpc_id             = string
-    cidr               = string
-    azs                = list(string)
-    private_subnet_ids = list(string)
+    vpc_id            = string
+    cidr              = string
+    azs               = list(string)
+    public_subnet_ids = list(string)
   })
 }
 
@@ -69,8 +69,9 @@ variable "tunnel" {
     case `toolbox`: family t, arch arm64, generation newest, size small).
 
     address.zone pins the instance to one availability zone, because a hop to a
-    node in another zone crosses a boundary billed per GB. Empty takes the zone
-    of the first private subnet.
+    node in another zone crosses a boundary billed per GB. Empty takes the
+    network's first zone, and the public subnet in that zone is what the
+    instance launches in.
 
     openvpn follows the culvert chart's own listeners list, which exposes
     WireGuard and OpenVPN over UDP by default -- false opens 51820 alone.

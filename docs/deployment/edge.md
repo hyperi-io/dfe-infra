@@ -60,7 +60,7 @@ own compute, with the pricing model named and never a rate.
 | Receiver on ClusterIP, tunnel-reached | d | 1 | `vpn` | `edge.ingest.receiver.mode` | none |
 | Receiver on its own load balancer | d | 2 | off | `edge.ingest.receiver.public` | L, per GB processed |
 | Tunnel on a NodePort | d | 1 once on | off | the engine's instance values file | none |
-| An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` (`forwarder` not usable yet, see [edge-vpn.md](edge-vpn.md#the-tunnels-address-on-aws)) | XS hourly |
+| An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` (`forwarder` not usable end to end yet, see [edge-vpn.md](edge-vpn.md#the-tunnels-address-on-aws)) | XS hourly |
 | Admin reach-back to one appliance | d | 1 | on | `edge.ingest.tunnel.admin_peer` | XS hourly |
 | OTLP route, private | d | 1 | private | `edge.ingest.otel.public` | none |
 | A CDN or managed WAF in front | a | 2 | `none` | `edge.product.waf.mode` | S, per GB and per request |

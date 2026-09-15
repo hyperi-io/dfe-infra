@@ -46,13 +46,13 @@ comes from: `edge.ingest.tunnel.address.mode` is `byo` -- an address the
 deployer already holds in front of the cluster -- or `forwarder`, the tier-2
 opt-in where `terraform/modules/edge/aws` builds one.
 
-**`forwarder` is not usable yet. Take `byo`.** The instance lands in a private
-subnet, which routes at a NAT gateway rather than an internet gateway, so its
-Elastic IP allocates, associates, gets published and answers nothing -- with
-every resource reporting healthy. The repair is a placement decision (the public
-subnet list as a module input, plus node-port ingress sourced from the
-forwarder's own security group), recorded in `forwarder.tf`'s header. The rest
-of this section describes what that instance does once it is reachable.
+**`forwarder` is not usable end to end yet. Take `byo`.** The instance now lands
+in a public subnet, so the Elastic IP receives, but the nodePort it rewrites each
+packet to is not admitted on the cluster's own security group -- EKS gives a
+managed node group that group, whose ingress is its own members alone. So the
+dial reaches a live address and the hop to a node is dropped. Closing it takes an
+ingress rule on that group sourced from the forwarder's own security group,
+recorded in `forwarder.tf`'s header.
 
 The forwarder is a small
 SSM-managed instance holding an Elastic IP, with no inbound ssh rule of any
@@ -64,7 +64,7 @@ reads that node list from `ec2:DescribeInstances` -- its only grant -- once a
 minute, which is why the flavour overlay sets `externalTrafficPolicy: Cluster`:
 any node has to forward, whichever one holds the pod. The instance is pinned to
 one availability zone (`edge.ingest.tunnel.address.zone`, defaulting to the
-first private subnet's), and both that zone and the Elastic IP are carried onto
+network's first), and both that zone and the Elastic IP are carried onto
 the cluster secret -- the zone becomes culvert's own `nodeSelector` so the hop
 from the forwarder to the pod stays inside one zone, and the address is what
 external-dns publishes `vpn.serverCN` at.

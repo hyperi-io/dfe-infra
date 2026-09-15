@@ -11,16 +11,18 @@
 // always-latest AL2023 arm64 AMI lookup, the same SSM-managed access with no
 // inbound ssh rule, and the same narrow instance role.
 //
-// KNOWN GAP, NOT YET PROVEN AGAINST A CLUSTER. The instance lands in a PRIVATE
-// subnet (`private_subnet_ids` below), whose route table sends 0.0.0.0/0 to a
-// NAT gateway. An Elastic IP is only delivered where the subnet routes at an
-// internet gateway, so as built the address allocates, associates, publishes
-// into the cluster secret and answers nothing -- with every resource reporting
-// healthy. Repairing it means taking the public subnet list as an input and
-// selecting from it by zone, plus admitting the node ports on the node or
-// cluster security group from this instance's OWN group rather than a CIDR.
-// Both are deliberate placement decisions rather than mechanical edits, so
-// `address.mode: forwarder` is not usable until they are made. `byo` is.
+// The instance lands in a PUBLIC subnet, whose route table sends 0.0.0.0/0 at
+// the internet gateway -- an Elastic IP is delivered nowhere else, and a
+// private subnet's NAT gateway route would leave the address answering nothing
+// with every resource reporting healthy.
+//
+// KNOWN GAP, NOT YET PROVEN AGAINST A CLUSTER. The nodePort half is still
+// unadmitted: EKS gives a managed node group the cluster security group, whose
+// ingress is its own members alone, so a packet the forwarder DNATs at a node
+// is dropped there. Closing it means an ingress rule on that group sourced from
+// this instance's OWN security group rather than a CIDR, which needs the
+// cluster security group as a module input. Until that lands
+// `address.mode: forwarder` is not usable end to end. `byo` is.
 
 data "aws_region" "current" {}
 
@@ -39,10 +41,10 @@ locals {
   // zone through the nodeSelector the cluster secret's annotation feeds.
   forwarder_zone = var.tunnel.address.zone != "" ? var.tunnel.address.zone : try(var.network.azs[0], "")
 
-  // azs and private_subnet_ids are parallel lists in the cluster module's own
+  // azs and public_subnet_ids are parallel lists in the cluster module's own
   // network output, so the zone selects the subnet.
   forwarder_subnet_id = try(
-    var.network.private_subnet_ids[index(var.network.azs, local.forwarder_zone)],
+    var.network.public_subnet_ids[index(var.network.azs, local.forwarder_zone)],
     "",
   )
 
@@ -219,9 +221,9 @@ resource "aws_instance" "forwarder" {
   vpc_security_group_ids = [aws_security_group.forwarder[0].id]
   iam_instance_profile   = aws_iam_instance_profile.forwarder[0].name
 
-  // The Elastic IP above is the deployment's address; the auto-assigned one a
-  // public subnet would hand out is not, and this instance sits in a private
-  // subnet regardless.
+  // The Elastic IP above is the deployment's address, so the auto-assigned one
+  // this public subnet could hand out is refused rather than left to churn on
+  // every replacement.
   associate_public_ip_address = false
 
   // An instance that rewrites a packet's destination is forwarding traffic it
@@ -265,6 +267,13 @@ resource "aws_instance" "forwarder" {
     precondition {
       condition     = contains(var.network.azs, local.forwarder_zone)
       error_message = "tunnel.address.zone is ${local.forwarder_zone == "" ? "empty and the network names no availability zone" : "'${local.forwarder_zone}', which this deployment's VPC does not span"}. Name one of ${join(", ", var.network.azs)}, or leave it empty to take the first."
+    }
+
+    // A zone with no public subnet leaves the instance placed nowhere and the
+    // Elastic IP undeliverable.
+    precondition {
+      condition     = local.forwarder_subnet_id != ""
+      error_message = "network.public_subnet_ids names no subnet in ${local.forwarder_zone}, so the forwarder's Elastic IP could never be delivered. azs and public_subnet_ids must be parallel lists."
     }
   }
 }
