@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import base64
 import os
+import re
 import subprocess
 import sys
 import time
@@ -52,6 +53,32 @@ import profiles
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
+
+# The auth this harness EXPECTS per provider identity, stated independently of
+# the chart's own table (helm/library/dfe-common/templates/_kafka.tpl) so the
+# render check below is an assertion rather than a mirror -- the same discipline
+# as CANONICAL_TABLE in scalo-rs providers.rs. It is what catches a hand-set
+# mechanism, which the DFE Kafka credential contract (dfe-engine#98) forbids.
+PROVIDER_AUTH: dict[str, tuple[str, str]] = {
+    "plaintext": ("PLAINTEXT", ""),
+    "strimzi-no-tls": ("SASL_PLAINTEXT", "SCRAM-SHA-512"),
+    "redpanda-no-tls": ("SASL_PLAINTEXT", "SCRAM-SHA-512"),
+    "strimzi": ("SASL_SSL", "SCRAM-SHA-512"),
+    "redpanda": ("SASL_SSL", "SCRAM-SHA-512"),
+    "msk": ("SASL_SSL", "SCRAM-SHA-512"),
+    "redpanda-cloud": ("SASL_SSL", "SCRAM-SHA-512"),
+    "confluent-cloud": ("SASL_SSL", "PLAIN"),
+    "msk_iam": ("SASL_SSL", "OAUTHBEARER"),
+}
+
+# A client-facing security.protocol / sasl.mechanism in the render, in either the
+# YAML or the java-properties spelling. The key is anchored so the broker's own
+# listener definitions -- listener.security.protocol.map and
+# sasl.mechanism.inter.broker.protocol, which DECLARE the listener rather than
+# dial it -- do not match.
+DERIVED_AUTH_KEY = re.compile(
+    r'(?m)^\s*(security\.protocol|sasl\.mechanism)\s*[:=]\s*"?([A-Za-z0-9_-]+)"?'
+)
 WAIT_BUDGET_SECONDS = 600
 POLL_SECONDS = 10
 # Optional label for CONCURRENT matrix runs. Each run is its own process with its
@@ -255,8 +282,42 @@ def provision_test_secrets(cell: Cell) -> tuple[bool, str]:
     return True, ""
 
 
+def provider_identity(cell: Cell) -> str:
+    """The cell's provider identity, mirroring dfe-kafka.providerIdentity.
+
+    Both DFE-owned brokers serve SASL on a TLS-off listener, so a deployed one is
+    the -no-tls key. disabled and external deploy no broker of ours, so neither
+    carries an identity this harness can expect anything of.
+    """
+    if cell.chart != "kafka" or cell.mode not in {"single", "cluster"}:
+        return ""
+    return f"{_kafka_provider(cell)}-no-tls"
+
+
+def assert_derived_auth(cell: Cell, rendered: str) -> str:
+    """The error when a rendered security.protocol / sasl.mechanism is not derived.
+
+    Every client-facing pair in the render must equal what the identity implies.
+    A value that does not is a hand-set mechanism, or a table that disagrees with
+    the listener the chart deploys -- the defect in dfe-infra#191, where kafbat
+    asked for SASL_SSL against a broker the same render served on SASL_PLAINTEXT.
+    """
+    identity = provider_identity(cell)
+    if not identity:
+        return ""
+    protocol, mechanism = PROVIDER_AUTH[identity]
+    expected = {"security.protocol": protocol, "sasl.mechanism": mechanism}
+    for key, value in DERIVED_AUTH_KEY.findall(rendered):
+        if value != expected[key]:
+            return (
+                f"{key}={value} in the render, but provider {identity} derives "
+                f"{expected[key]}"
+            )
+    return ""
+
+
 def render(cell: Cell) -> tuple[bool, str]:
-    """helm template the cell. Returns (ok, error)."""
+    """helm template the cell, then check what it derived. Returns (ok, error)."""
     chart_dir = CHARTS / cell.chart
     if not (chart_dir / "Chart.yaml").exists():
         return False, f"chart not found: {chart_dir}"
@@ -264,6 +325,9 @@ def render(cell: Cell) -> tuple[bool, str]:
     proc = _run(cmd)
     if proc.returncode != 0:
         return False, f"render failed: {proc.stderr.strip()[:400]}"
+    drift = assert_derived_auth(cell, proc.stdout)
+    if drift:
+        return False, f"derived auth wrong: {drift}"
     return True, ""
 
 
@@ -534,11 +598,14 @@ def _accept_kafka_strimzi(cell: Cell, pod: str) -> tuple[bool, str]:
         "org.apache.kafka.common.security.scram.ScramLoginModule required "
         f'username="dfe-kafka-user" password="{password}";'
     )
+    # The same derivation the chart uses, so a wrong table fails the round-trip
+    # rather than passing on a literal that agrees with nothing.
+    protocol, mechanism = PROVIDER_AUTH[provider_identity(cell)]
     topic = "dfe-acceptance"
     script = (
         "set -e; P=/tmp/mtx.props; "
-        "{ echo 'security.protocol=SASL_PLAINTEXT'; "
-        "echo 'sasl.mechanism=SCRAM-SHA-512'; "
+        f"{{ echo 'security.protocol={protocol}'; "
+        f"echo 'sasl.mechanism={mechanism}'; "
         f"echo 'sasl.jaas.config={jaas}'; }} > $P; "
         # Absolute /opt/kafka/bin path works for BOTH the single-tier apache/kafka
         # image (cwd is not /opt/kafka -> a relative bin/ fails) AND the Strimzi
@@ -581,9 +648,11 @@ def _accept_kafka_redpanda(cell: Cell, pod: str) -> tuple[bool, str]:
     # serves SASL on 9092 (kafka-single.yaml --kafka-addr ...:9092); the operator
     # (cluster) redpanda exposes its TLS-off kafka listener on 9093.
     port = "9092" if cell.mode == "single" else "9093"
+    # The same derivation the chart uses, so a wrong table fails the round-trip.
+    _, mechanism = PROVIDER_AUTH[provider_identity(cell)]
     creds = (
         f"-X user=dfe-kafka-user -X pass='{password}' "
-        f"-X sasl.mechanism=SCRAM-SHA-512 -X brokers=localhost:{port}"
+        f"-X sasl.mechanism={mechanism} -X brokers=localhost:{port}"
     )
     script = (
         "set -e; "

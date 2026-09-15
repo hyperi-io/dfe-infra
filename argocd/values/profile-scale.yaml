@@ -12,9 +12,14 @@ resources:
     cpu: "2"
     memory: 2Gi
 
+# Pressure stays on (the chart default): this tier carries a broker, so the
+# composite's kafka_lag term measures the real backlog the cpu trigger misses on an
+# I/O-bound loader. The ceiling is a DIVISOR of defaultTopic.partitions (12) -- at 10
+# replicas two consumers hold 2 partitions and eight hold 1, and the busy pair sets
+# the group's lag while the rest idle at half load.
 keda:
   minReplicaCount: 2
-  maxReplicaCount: 10
+  maxReplicaCount: 12
   pressure:
     targetValue: 70
 
@@ -75,6 +80,8 @@ deployRepo:
     - dfe-engine
     - dfe-loader
     - dfe-receiver
+    - dfe-transform-elastic
+    - dfe-transform-vrl
     - dfe-ui
     - hyperdx
 # END seeded apps

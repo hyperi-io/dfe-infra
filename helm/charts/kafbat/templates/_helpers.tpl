@@ -1,39 +1,9 @@
 {{/*
-kafbat.securityProtocol -- derive security.protocol from a provider key.
-Mirrors the canonical provider table (scalo-rs transport/kafka/providers.rs,
-scalo-py scalo.kafka.providers) -- the DFE Kafka credential contract
-(dfe-engine#98). Kept in sync by hand: if the canonical table changes, update
-here too.
+The provider table this chart derives from lives in the shared library,
+dfe-common/templates/_kafka.tpl, so kafbat cannot disagree with the broker
+rendered beside it (dfe-infra#191). The JAAS module below stays here because it
+derives from the mechanism rather than the provider.
 */}}
-{{- define "kafbat.securityProtocol" -}}
-{{- $provider := . -}}
-{{- if eq $provider "plaintext" -}}
-PLAINTEXT
-{{- else if or (eq $provider "strimzi") (eq $provider "redpanda") (eq $provider "msk") (eq $provider "redpanda-cloud") (eq $provider "confluent-cloud") (eq $provider "msk_iam") -}}
-SASL_SSL
-{{- else -}}
-{{- fail (printf "kafbat: unknown kafka provider %q; expected one of: strimzi, redpanda, msk, redpanda-cloud, confluent-cloud, plaintext, msk_iam" $provider) -}}
-{{- end -}}
-{{- end }}
-
-{{/*
-kafbat.saslMechanism -- derive sasl.mechanism from a provider key. Empty
-string for plaintext (no SASL). NEVER hand-set by an operator -- this is the
-single derivation point, matching scalo's KafkaConfig.provider behaviour.
-*/}}
-{{- define "kafbat.saslMechanism" -}}
-{{- $provider := . -}}
-{{- if eq $provider "confluent-cloud" -}}
-PLAIN
-{{- else if eq $provider "msk_iam" -}}
-OAUTHBEARER
-{{- else if eq $provider "plaintext" -}}
-{{- else if or (eq $provider "strimzi") (eq $provider "redpanda") (eq $provider "msk") (eq $provider "redpanda-cloud") -}}
-SCRAM-SHA-512
-{{- else -}}
-{{- fail (printf "kafbat: unknown kafka provider %q; expected one of: strimzi, redpanda, msk, redpanda-cloud, confluent-cloud, plaintext, msk_iam" $provider) -}}
-{{- end -}}
-{{- end }}
 
 {{/*
 kafbat.jaasModule -- pick the JAAS login module class for a sasl mechanism.
@@ -50,19 +20,6 @@ org.apache.kafka.common.security.scram.ScramLoginModule
 org.apache.kafka.common.security.plain.PlainLoginModule
 {{- else -}}
 {{- fail (printf "kafbat: no JAAS module known for sasl mechanism %q (IAM-family mechanisms need their own callback handler, not JAAS -- msk_iam cannot be wired via this chart's clusters list today)" $mechanism) -}}
-{{- end -}}
-{{- end }}
-
-{{/*
-kafbat.hasSchemaRegistry -- true when the provider ships a bundled schema
-registry (Confluent Cloud, Redpanda self-hosted + Cloud). Mirrors
-KnownProvider::schema_registry() in scalo-rs providers.rs. Renders "true" or
-"" so callers can use it with `if`.
-*/}}
-{{- define "kafbat.hasSchemaRegistry" -}}
-{{- $provider := . -}}
-{{- if or (eq $provider "confluent-cloud") (eq $provider "redpanda") (eq $provider "redpanda-cloud") -}}
-true
 {{- end -}}
 {{- end }}
 

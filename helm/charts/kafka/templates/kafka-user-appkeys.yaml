@@ -1,0 +1,42 @@
+{{- if and (eq .Values.kafka.mode "cluster") (eq .Values.kafka.provider "strimzi") (not .Values.user.password.fromSecretsStore) }}
+# The two NON-SECRET keys the apps read out of dfe-kafka-user, written whether or
+# not the credential is projected from the secrets store.
+#
+# Strimzi's User Operator owns a Secret named after the KafkaUser and puts
+# `password` + `sasl.jaas.config` in it -- no `username`, and a mechanism is not
+# something an operator would write at all. Four charts read those two keys off
+# that Secret (dfe-receiver, dfe-loader, dfe-archiver, kafbat), so on a profile
+# that turns the store projection off they name a key nothing creates and every
+# one of those pods sits in CreateContainerConfigError with no container started
+# and no application log to read (dfe-infra#187).
+#
+# clusterexternalsecret-appns.yaml carries the same two keys, but only on the
+# store-backed path and only into the APP namespace -- neither of which has
+# anything to do with a username. This covers the other path, in the broker's own
+# namespace, which on a single-namespace install is where the apps run.
+#
+# creationPolicy: Merge adds keys to the Secret the User Operator owns rather
+# than competing for the name; ESO retries until that Secret exists, so the
+# KafkaUser reconciling later is a wait, not a failure.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.user.name }}-appkeys
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  target:
+    name: {{ .Values.user.name }}
+    creationPolicy: Merge
+    template:
+      engineVersion: v2
+      data:
+        # The KafkaUser's name IS the SCRAM username, so it is templated rather
+        # than read from anywhere.
+        username: {{ .Values.user.name | quote }}
+        # Derived from the provider table, never hand-set (dfe-infra#10). The
+        # literal librdkafka spelling: dfe-receiver passes this value straight
+        # through and rejects the engine model's underscore form.
+        sasl.mechanism: {{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) | quote }}
+{{- end }}

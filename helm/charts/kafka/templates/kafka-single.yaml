@@ -86,6 +86,12 @@ spec:
                 secretKeyRef: { name: {{ .Values.user.name }}, key: password }
           ports:
             - containerPort: 9092
+          # The headless Service publishes this pod's IP only once ready; without
+          # a probe it is published at start, before the listener binds.
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            periodSeconds: 5
           volumeMounts:
             - name: data
               mountPath: /var/lib/redpanda/data
@@ -190,6 +196,12 @@ spec:
           ports:
             - containerPort: 9092
               name: sasl
+          # The headless Service publishes this pod's IP only once ready; without
+          # a probe it is published at start, before KRaft is listening.
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            periodSeconds: 5
           volumeMounts:
             - name: config
               mountPath: /mnt/config

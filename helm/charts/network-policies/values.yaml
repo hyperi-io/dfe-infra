@@ -209,8 +209,9 @@ externalEgress:
       - dfe-transform-vrl
       - dfe-transform-vector
       - dfe-transform-elastic
-      - dfe-transform-splack
-      - dfe-transform-wasm
+      # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
+      # - dfe-transform-splack
+      # - dfe-transform-wasm
     # The MSK bootstrap Job runs in `strimzi` (appsets/layer2-data.yaml pins the
     # kafka chart there) and is the FIRST thing that has to reach a managed
     # broker -- it writes the SCRAM principal's ACLs and pre-creates the landing

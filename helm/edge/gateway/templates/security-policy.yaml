@@ -1,19 +1,26 @@
-{{- if .Values.oidc.enabled }}
+{{- if and .Values.oidc.enabled .Values.oidc.providers }}
+{{- $loginName := include "envoy-gateway-config.loginProviderName" (dict "ctx" .) }}
 {{- range $provider := .Values.oidc.providers }}
+{{- if eq $provider.name $loginName }}
 {{- range $route := $.Values.oidc.targetRoutes }}
 ---
-# One SecurityPolicy per (provider x interactive route). Each route gets its
-# OWN redirectURL on its OWN hostname so the OIDC session cookie is set on the
-# host the user is actually on (a single shared redirectURL would break OIDC on
-# every subdomain except the callback host). Universal: add a route to
-# oidc.targetRoutes and it is fronted automatically -- no policy-code change.
+# One SecurityPolicy per interactive route. Each route gets its OWN redirectURL
+# on its OWN hostname so the OIDC session cookie is set on the host the user is
+# actually on (a single shared redirectURL would break OIDC on every subdomain
+# except the callback host). Universal: add a route to oidc.targetRoutes and it
+# is fronted automatically -- no policy-code change.
+#
+# Per ROUTE, not per (provider x route): two policies naming the same HTTPRoute
+# conflict and only the oldest applies, so a second provider used to disappear
+# with nothing said. spec.oidc takes one provider, so oidc.loginProvider names
+# which one owns the interactive login here.
 {{- /* A SecurityPolicy only targets routes in its own namespace, so the
        policy and its client secret live where the route does. */}}
 {{- $routeNs := $route.namespace | default $.Values.appNamespace | default $.Release.Namespace }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
-  name: dfe-oidc-{{ $provider.name }}-{{ $route.name }}
+  name: dfe-oidc-{{ $route.name }}
   namespace: {{ $routeNs }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
@@ -73,6 +80,7 @@ spec:
       {{- toYaml ($provider.scopes | default (list "openid" "email" "profile")) | nindent 6 }}
     redirectURL: "https://{{ $route.hostname }}.{{ $.Values.domain }}/oauth2/callback"
     logoutPath: "/oauth2/logout"
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

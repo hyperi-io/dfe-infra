@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_archive_destination.py
-#  Purpose:      Prove the archiver gets a destination it can WRITE to and a
-#                topic pattern to read, or stays idle by design.
+#  Purpose:      Prove the archiver gets a destination it can WRITE to, and that
+#                nothing in the chart outranks the compiled topic list.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -12,8 +12,13 @@
 Its rootfs is read-only, so a `file://` destination with no writable volume
 behind it is an archiver that reports itself healthy and drops every record on
 an EROFS. The chart therefore pairs `archive.localPath` with the emptyDir it
-mounts there, and `kafka.topicInclude` carries the landing-topic pattern the app
-manifest promises ("reads the LANDING topics, discovered").
+mounts there.
+
+Which topics it reads is not the chart's to say: they are compiled from the
+sources that asked to be archived and arrive as `config.kafka.topics` in the
+engine's overlay. The archiver applies KAFKA_TOPIC_INCLUDE after loading that
+file, so a discovery pattern in the chart turns an empty compiled list -- archive
+nothing -- into archive every topic the broker holds.
 
     python3 scripts/tests/test_archive_destination.py
 
@@ -112,17 +117,34 @@ def test_the_sasl_credential_rides_its_secret() -> None:
                ref.get("name") == "dfe-kafka-user" and ref.get("key") == key, f"got {ref!r}")
 
 
-def test_the_landing_topics_are_discovered() -> None:
+def test_the_chart_sends_no_discovery_pattern() -> None:
+    """No overlay yet, so the compiled list is empty -- and empty must archive nothing."""
     env = env_of(container(*ON_THE_BUS))
-    expect("the default pattern is the platform's landing convention",
-           env.get("KAFKA_TOPIC_INCLUDE") == "_land$", f"got {env.get('KAFKA_TOPIC_INCLUDE')!r}")
-
-
-def test_an_empty_pattern_sends_no_env() -> None:
-    """Empty is an archiver that subscribes to nothing, not one that reads every topic."""
-    env = env_of(container(*ON_THE_BUS, "--set", "kafka.topicInclude=null"))
-    expect("no pattern renders no env", "KAFKA_TOPIC_INCLUDE" not in env,
+    expect("no discovery pattern on the bus", "KAFKA_TOPIC_INCLUDE" not in env,
            f"got {env.get('KAFKA_TOPIC_INCLUDE')!r}")
+    expect("and no topic list either", "KAFKA_TOPICS" not in env,
+           f"got {env.get('KAFKA_TOPICS')!r}")
+
+
+def test_a_values_pattern_still_renders_no_env() -> None:
+    """The dial is gone, not emptied: a leftover values key must not revive the env."""
+    env = env_of(container(*ON_THE_BUS, "--set", "kafka.topicInclude={_land$}"))
+    expect("a stale topicInclude reaches nothing", "KAFKA_TOPIC_INCLUDE" not in env,
+           f"got {env.get('KAFKA_TOPIC_INCLUDE')!r}")
+
+
+def test_the_overlay_topics_survive_into_the_config() -> None:
+    """The compiled list arrives in the config blob with no env shadowing it."""
+    spec = container(*ON_THE_BUS, "--set", "config.kafka.topics={okta_land}")
+    env = env_of(spec)
+    expect("nothing outranks the compiled list", "KAFKA_TOPIC_INCLUDE" not in env,
+           f"got {env.get('KAFKA_TOPIC_INCLUDE')!r}")
+    configmap = next(d for d in render(*ON_THE_BUS, "--set", "config.kafka.topics={okta_land}")
+                     if d.get("kind") == "ConfigMap")
+    blob = yaml.safe_load(configmap["data"]["archiver.yaml"])
+    expect("and the overlay's topics reach archiver.yaml",
+           blob.get("kafka", {}).get("topics") == ["okta_land"],
+           f"got {blob.get('kafka', {}).get('topics')!r}")
 
 
 def test_the_direct_transport_reads_no_topics() -> None:
@@ -142,8 +164,9 @@ def main() -> int:
         test_the_spool_lands_on_a_writable_volume()
         test_the_broker_reaches_the_app()
         test_the_sasl_credential_rides_its_secret()
-        test_the_landing_topics_are_discovered()
-        test_an_empty_pattern_sends_no_env()
+        test_the_chart_sends_no_discovery_pattern()
+        test_a_values_pattern_still_renders_no_env()
+        test_the_overlay_topics_survive_into_the_config()
         test_the_direct_transport_reads_no_topics()
         return summary()
 

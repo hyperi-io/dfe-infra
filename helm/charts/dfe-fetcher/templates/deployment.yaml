@@ -35,6 +35,10 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      # k8s injects a Docker-link env var per Service in the namespace, and a
+      # DFE_* name that collides with an app setting shadows it. Same class the
+      # engine, loader and receiver charts already guard.
+      enableServiceLinks: false
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
@@ -65,6 +69,8 @@ spec:
               protocol: TCP
             {{- end }}
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_FETCHER_") | nindent 12 }}
             # An instance whose credentials are vault:/env: references in its own
             # stanza has no such Secret, so the refs are optional; a deployment
@@ -143,7 +149,6 @@ spec:
             # indistinguishable in the otel tables.
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
-            {{- include "dfe-common.extraEnv" . | nindent 12 }}
           {{- with .Values.credentials.secretName }}
           # The upstream's credentials, by env rather than in the config blob:
           # the source's stanza carries `env:NAME` references and the engine

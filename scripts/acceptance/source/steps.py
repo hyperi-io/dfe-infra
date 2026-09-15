@@ -41,9 +41,16 @@ INGEST_RETRY_WINDOW = 180.0
 # its buffer on the archiver's own flush_age_secs (60 s by default), so a file
 # for a topic created mid-run is two intervals away.
 ARCHIVE_DEADLINE = 300.0
+# How far back an idle reading still describes the app as it is now: scalo
+# registers pipeline_idle only while it holds no work, and drops it on the next
+# export once it does.
+IDLE_WINDOW = 120
 # Source names this suite mints, so a sweep can tell its own strays from a
 # deployment's real sources.
-RUN_PREFIXES = ("fb", "cw", "onboard")
+RUN_PREFIXES = ("fb", "cw", "el", "onboard")
+# The whole minted shape rather than the prefix alone, because a sweep removes
+# sources and a deployment may own one called `elastic` or `fbprod`.
+RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 
 
 # --- console helpers ---------------------------------------------------------
@@ -126,10 +133,14 @@ def open_console(driver, engine: Engine, admin_user: str, password: str, org: st
 
 
 def sweep_strays(engine: Engine, verify: bool) -> str:
-    """Remove sources an earlier run left behind, so this run starts clean."""
+    """Remove sources an earlier run left behind, so this run starts clean.
+
+    A name is this suite's only when it carries a run prefix and the hex a mint
+    appends, so a source the deployment authored is never removed.
+    """
     listing = engine.call("GET", "/sources")
     names = [str(item["name"]) for item in (listing.body or {}).get("items", [])]
-    strays = [n for n in names if n.startswith(RUN_PREFIXES) and n != "filebeat"]
+    strays = [n for n in names if RUN_NAME.fullmatch(n)]
     removed = [remove_source(engine.base, verify, engine.token, n, 60.0) for n in strays]
     return "; ".join(removed) if removed else "no strays"
 
@@ -165,42 +176,140 @@ def record_deploy(driver, engine: Engine, name: str) -> dict:
     return deployed
 
 
-def wait_instance(engine: Engine, service: str, name: str, deadline: float) -> str:
-    """The instance the source owns appears in the apps list."""
+def wait_instance(engine: Engine, service: str, name: str, deadline: float) -> tuple[str, bool]:
+    """The instance the source owns appears in the apps list.
+
+    The outcome comes back beside the line rather than being read back out of
+    it, because a message is not a verdict.
+    """
     until = time.monotonic() + deadline
     while True:
         apps = engine.call("GET", "/apps")
         entry = next((a for a in (apps.body or []) if a.get("service") == service), None)
         instances = [str(i) for i in (entry or {}).get("instances", [])]
         if name in instances:
-            return f"{service}/{name} is an instance the engine knows"
+            return f"{service}/{name} is an instance the engine knows", True
         if time.monotonic() >= until:
-            return f"no {service}/{name} instance after {deadline:.0f}s; instances: {instances}"
+            return f"no {service}/{name} instance after {deadline:.0f}s; instances: {instances}", False
         time.sleep(5)
 
 
-def wait_reporting(engine: Engine, service: str, name: str, deadline: float) -> str:
-    """The instance is up and reporting telemetry through the engine."""
+def wait_reporting(engine: Engine, service: str, name: str, deadline: float) -> tuple[str, dict]:
+    """The instance is up and reporting telemetry through the engine.
+
+    The status body comes back with the line, because ``reporting`` alone does
+    not say whose telemetry answered it.
+    """
     until = time.monotonic() + deadline
     last = ""
     while True:
         reply = engine.call("GET", f"/apps/{service}/{name}/status")
         if reply.status == 200 and reply.body.get("reporting"):
-            return f"{service}/{name} reporting after {int(reply.body.get('uptime_seconds') or 0)}s up"
+            uptime = int(reply.body.get("uptime_seconds") or 0)
+            return f"{service}/{name} reporting after {uptime}s up", dict(reply.body)
         last = f"{reply.status} {reply.body}"
         if time.monotonic() >= until:
-            return f"{service}/{name} not reporting after {deadline:.0f}s; last {last[:160]}"
+            return f"{service}/{name} not reporting after {deadline:.0f}s; last {last[:160]}", {}
         time.sleep(10)
 
 
-def record_instance_up(driver, engine: Engine, service: str, name: str,
+# The otel tables live beside the data tables in the database this run was given,
+# which is where the collector writes them. A hardcoded `otel` database reads as
+# an empty result on every deployment that does not have one.
+GAUGE_TABLE = "otel_metrics_gauge"
+
+
+def gauge_samples(store: Datastore, service_name: str, metric: str,
+                  window_seconds: int) -> tuple[int, int | None]:
+    """Samples of one gauge for one telemetry name, and seconds since the last."""
+    rows = store.query(
+        "SELECT count(), toUInt32(dateDiff('second', max(TimeUnix), now())) "
+        f"FROM {GAUGE_TABLE} "
+        f"WHERE ServiceName = '{service_name}' AND MetricName = '{metric}' "
+        f"AND TimeUnix >= now() - INTERVAL {window_seconds} SECOND"
+    )
+    if not rows or not rows[0]:
+        return 0, None
+    samples = int(rows[0][0])
+    return samples, (int(rows[0][1]) if samples else None)
+
+
+def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tuple[int, int | None]:
+    """How many idle samples the instance published, and how many seconds since the last.
+
+    scalo registers ``pipeline_idle`` only while the app has NO work, so the series
+    starting and then stopping is the instance going from idle to working. Read out
+    of the otel tables, which is where every other telemetry reading in this suite
+    comes from.
+    """
+    return gauge_samples(store, service_name, "pipeline_idle", window_seconds)
+
+
+def reporting_verdict(store: Datastore, service: str, detail: str, status: dict) -> tuple[str, str]:
+    """The status a reporting wait earns, once the telemetry has been attributed.
+
+    An app reports whether or not the instance this run created is doing any of
+    the work, and on Compose one container serves the app and every instance of
+    it, so ``reporting`` on its own says the container is up and nothing about
+    this instance. Where the two cannot be told apart the row is ``unproven``
+    and says which of them it could not rule out.
+
+    Args:
+        store: The datastore this run can read the otel tables from.
+        service: The app the instance belongs to.
+        detail: The line ``wait_reporting`` produced.
+        status: The engine's status body for the instance.
+
+    Returns:
+        The status and detail for ``Driver.record``.
+    """
+    if not status.get("reporting"):
+        return "failed", detail
+    telemetry = str(status.get("telemetry_name") or "")
+    if telemetry == service:
+        return "unproven", (
+            f"{detail}; the telemetry answers to {service}, which every instance of "
+            "the app shares, so this is not evidence about this instance"
+        )
+    if not store.host:
+        return "unproven", f"{detail}; no datastore access in this run, so an idle app reads the same"
+    try:
+        if not store.table_exists(GAUGE_TABLE):
+            return "unproven", (
+                f"{detail}; {store.database}.{GAUGE_TABLE} is not in this run's reach, "
+                "so the telemetry behind that answer cannot be read"
+            )
+        seen, _ = gauge_samples(store, telemetry or service, "info", IDLE_WINDOW)
+        samples, since = idle_history(store, telemetry or service, IDLE_WINDOW)
+    except Exception as exc:  # an unreadable otel table is the finding, not a traceback
+        return "unproven", f"{detail}; the otel tables did not answer: {type(exc).__name__}"
+    if not seen:
+        # The engine answers `reporting` off max(TimeUnix), which ClickHouse
+        # returns as the epoch rather than NULL when nothing matched, so the
+        # series has to be looked for rather than taken on the engine's word.
+        return "unproven", (
+            f"{detail}; no {telemetry or service} series in {store.database}.{GAUGE_TABLE} "
+            f"in the last {IDLE_WINDOW}s, so the engine's answer is not backed by telemetry "
+            "this run can see"
+        )
+    if samples:
+        return "unproven", (
+            f"{detail}; {telemetry or service} published {samples} pipeline_idle sample(s) "
+            f"in the last {IDLE_WINDOW}s"
+            + (f", the last {since}s ago" if since is not None else "")
+            + ", which is an app holding no work"
+        )
+    return "done", f"{detail}; no pipeline_idle sample in the last {IDLE_WINDOW}s"
+
+
+def record_instance_up(driver, engine: Engine, store: Datastore, service: str, name: str,
                        instance_step: str, instance_deadline: float,
                        reporting_step: str, reporting_deadline: float) -> None:
     """The two waits every per-source app gets, under the case's own step names."""
-    detail = wait_instance(engine, service, name, instance_deadline)
-    driver.record(instance_step, "done" if "knows" in detail else "failed", detail)
-    detail = wait_reporting(engine, service, name, reporting_deadline)
-    driver.record(reporting_step, "done" if "reporting after" in detail else "failed", detail)
+    detail, found = wait_instance(engine, service, name, instance_deadline)
+    driver.record(instance_step, "done" if found else "failed", detail)
+    detail, status = wait_reporting(engine, service, name, reporting_deadline)
+    driver.record(reporting_step, *reporting_verdict(store, service, detail, status))
 
 
 def record_table(driver, store: Datastore, name: str) -> None:
@@ -215,13 +324,27 @@ def record_table(driver, store: Datastore, name: str) -> None:
 # --- feeding and proving -----------------------------------------------------
 
 
-def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                name: str, run: str, per_module: int) -> int:
-    """POST the wrapped corpus, one request per record."""
+def corpus_lines(engine_repo: Path, corpus_file: Path, per_module: int,
+                 modules: tuple[str, ...] = ()) -> list[str]:
+    """The raw log lines, unwrapped, for an agent that reads them off disk."""
     sys.path.insert(0, str(engine_repo))
     from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
 
-    items = corpus.samples(corpus_file, limit=per_module)
+    items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
+    return [item.line for item in items]
+
+
+def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
+                name: str, run: str, per_module: int, modules: tuple[str, ...] = ()) -> int:
+    """POST the wrapped corpus, one request per record.
+
+    ``modules`` narrows the archive to the corpus modules a case's transform
+    handles; empty is every module the wrapper names.
+    """
+    sys.path.insert(0, str(engine_repo))
+    from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
+
+    items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
     bodies = corpus.wrap_all(items, source=name, run=run)
 
     for body in bodies:
@@ -251,7 +374,8 @@ def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
 
 
 def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                store: Datastore, name: str, deadline: float) -> str:
+                store: Datastore, name: str, deadline: float,
+                modules: tuple[str, ...] = ()) -> str:
     """Probe until a record actually reaches the source's table.
 
     Before the receiver has rolled onto the new rule the probes land in the
@@ -266,7 +390,7 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
     before = store.scalar(f"SELECT count() FROM {name}")
     passes = 0
     while True:
-        post_corpus(receiver_url, verify, engine_repo, corpus_file, name, probe, 1)
+        post_corpus(receiver_url, verify, engine_repo, corpus_file, name, probe, 1, modules)
         passes += 1
         if store.scalar(f"SELECT count() FROM {name}") > before:
             return f"routed into dfe.{name} after {passes} probe pass(es)"
@@ -478,7 +602,14 @@ def record_hyperdx_source(driver, engine: Engine, name: str, deployed: dict) -> 
 # The rows were fed minutes ago and HyperDX searches the last fifteen by default,
 # so the wait is for the query to run, not for data to arrive.
 OBSERVE_DEADLINE = 90.0
-RESULTS_LINE = re.compile(r"^(\d+) Results?$")
+# The frame groups thousands with a comma, so "1,050 Results" is a count too.
+RESULTS_LINE = re.compile(r"^([\d,]+) Results?$")
+
+
+def results_count(results: str) -> int | None:
+    """The number on the frame's results line, or None when it is not one."""
+    found = RESULTS_LINE.match(results or "")
+    return int(found.group(1).replace(",", "")) if found else None
 
 
 def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, results: str) -> tuple[str, str]:
@@ -497,9 +628,11 @@ def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, resul
     if not frame_url or frame_url.startswith("chrome-error://"):
         return "failed", f"the HyperDX frame did not load ({blocked or 'no frame on the page'})"
     if not picked:
-        return "failed", f"the frame's source picker does not offer {name}"
-    found = RESULTS_LINE.match(results or "")
-    if found and int(found.group(1)) > 0:
+        # A refusal in *results* is the exception that stopped the pick, and it
+        # names the cause where "does not offer" alone would hide it.
+        why = f" ({results})" if results else ""
+        return "failed", f"the frame's source picker does not offer {name}{why}"
+    if (results_count(results) or 0) > 0:
         return "done", f"Observe search over {name}: {results}"
     return "failed", f"Observe search over {name} returned {results or 'no results line'}"
 
@@ -518,28 +651,42 @@ def search_results(frame, name: str) -> tuple[bool, str]:
     """Pick *name* in the frame's source picker and read the results line."""
     picker = frame.get_by_placeholder("Data Source")
     picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    picker.click(timeout=STEP_TIMEOUT_MS)
-    picker.fill(name)
-    option = frame.get_by_role("option").filter(has_text=name)
-    # count() takes no auto-wait, so right after fill() it can read the dropdown
-    # before a slow render populates it. A genuinely absent option still falls
-    # through to the count() check below.
-    try:
-        option.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    except Exception:  # absence is decided by count() below, not this wait
-        pass
-    if not option.count():
-        return False, ""
-    option.first.click(timeout=STEP_TIMEOUT_MS)
+    # The frame fills its source list after the page paints, so an empty picker
+    # is one still loading, and a picker already on this source has nothing to pick.
+    until = time.monotonic() + STEP_TIMEOUT_MS / 1000
+    while not picker.input_value().strip() and time.monotonic() < until:
+        time.sleep(1)
+    if picker.input_value().strip() != name:
+        picker.click(timeout=STEP_TIMEOUT_MS)
+        # The dropdown lists nothing until the frame's source list arrives, and a
+        # name typed before then filters an empty list.
+        try:
+            frame.get_by_role("option").first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        except Exception:  # an empty list is decided by count() below, not this wait
+            pass
+        picker.fill(name)
+        option = frame.get_by_role("option").filter(has_text=name)
+        # count() takes no auto-wait, so right after fill() it can read the dropdown
+        # before a slow render populates it. A genuinely absent option still falls
+        # through to the count() check below.
+        try:
+            option.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        except Exception:  # absence is decided by count() below, not this wait
+            pass
+        if not option.count():
+            return False, ""
+        option.first.click(timeout=STEP_TIMEOUT_MS)
     frame.get_by_role("button", name="Run", exact=True).click(timeout=STEP_TIMEOUT_MS)
     line = frame.get_by_text(RESULTS_LINE)
     until = time.monotonic() + OBSERVE_DEADLINE
     results = ""
     while True:
         if line.count():
-            results = line.first.inner_text().strip()
-            found = RESULTS_LINE.match(results)
-            if found and int(found.group(1)) > 0:
+            try:
+                results = line.first.inner_text(timeout=2000).strip()
+            except Exception:  # the line re-renders between count() and the read
+                pass
+            if (results_count(results) or 0) > 0:
                 return True, results
         if time.monotonic() >= until:
             return True, results

@@ -79,9 +79,9 @@ flowchart LR
   W4 --> W5["DFE services<br/>engine, ui, receiver, loader, archiver, fetcher"]
 ```
 
-Transform services (wasm, vrl, vector, elastic, splack) sync only on clusters
-labelled with the `scale` profile. Set `DFE_DRY_RUN=true` to preview without
-applying.
+Transform services (vrl, vector, elastic) sync only on clusters labelled with
+the `scale` profile. dfe-transform-splack and dfe-transform-wasm are coming and
+sync nowhere yet. Set `DFE_DRY_RUN=true` to preview without applying.
 
 ## Test
 

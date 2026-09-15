@@ -601,6 +601,13 @@ oidc:
   adminGroups:
     - dfe-admins
     - dfe-infra
+  # Which provider owns the interactive login on every fronted route. A
+  # SecurityPolicy takes ONE oidc provider, and two policies naming the same
+  # HTTPRoute conflict -- only the oldest applies -- so the choice is declared
+  # here rather than falling out of the order of the list below. Empty takes the
+  # first entry. The others stay JWT issuers on the infra policy, so a session
+  # minted by any of them is still accepted.
+  loginProvider: ""
   providers: []
   # Example (jwksUrl feeds the admin policy's claim checks; default
   # {issuerUrl}/keys suits many IdPs -- set it for providers with another layout):
