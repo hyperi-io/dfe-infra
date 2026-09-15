@@ -35,11 +35,14 @@ renderer, not the wizard.
    Small/Medium, `confluent-cloud` at Large, `strimzi` on-prem. `msk` asks
    the broker count; the two SaaS providers ask for an extra landing topic
    beyond `main_land`, if you need one.
-4. **ClickHouse storage model.** Not a dial field -- `resolve_sizing.py`
-   derives it (`cached-object` on a shape with a local-NVMe cache volume,
-   `local` otherwise; on-prem always resolves `local`). The wizard explains
-   the derivation and offers the one lever that influences it: an
-   instance-type override for ClickHouse sizing.
+4. **ClickHouse storage model.** `sizing.storage_model`, default `auto`: the
+   chart derives it, `cached-object` when an object-store endpoint exists
+   (always on a populated cloud, on-prem once MinIO or similar is supplied)
+   and `local` otherwise. `cached-object` forces the object store and refuses
+   to render with no endpoint; `local` forces local storage even with an
+   endpoint configured (switching later is a data migration, not a values
+   edit -- see [storage.md](storage.md)). The wizard also offers the one
+   other lever that touches ClickHouse sizing: an instance-type override.
 5. **Public UIs, OIDC, CIDR, DNS.** `dfe-ui` is public by default; every
    admin UI is opt-in, one at a time. The moment any UI is public, the
    wizard demands confirmation that OIDC will be wired up for it

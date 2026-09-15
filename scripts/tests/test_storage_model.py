@@ -522,6 +522,44 @@ def test_clickhouse_storage_model_guards() -> None:
                "clickhouse-cluster", "clickhouse.mode=external", *CACHED_OBJECT_SETS))
 
 
+STORAGE_MODEL_ENDPOINT_SET = "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/parts/"
+
+
+def _renders_local(docs: list[dict]) -> bool:
+    extra = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
+    return "storage_configuration" not in extra and "merge_tree" not in extra
+
+
+def _renders_cached_object(docs: list[dict]) -> bool:
+    extra = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
+    disks = extra.get("storage_configuration", {}).get("disks", {})
+    return set(disks) == {"s3_object", "s3_object_cache"} and extra.get(
+        "merge_tree", {}
+    ).get("storage_policy") == "s3_cached"
+
+
+def test_storage_model_dial_the_six_cases() -> None:
+    """The three-value dial (auto/cached-object/local) against the two states of
+    objectStore.endpoint -- the full cross product this fix turns on. `auto`
+    derives from the endpoint exactly as an unset value always did; the other two
+    are explicit overrides that win outright, in either direction."""
+    expect("auto with no endpoint renders local",
+           _renders_local(render("clickhouse-cluster", "clickhouse.storageModel=auto")))
+    expect("auto with an endpoint derives cached-object",
+           _renders_cached_object(render("clickhouse-cluster", "clickhouse.storageModel=auto",
+                                          STORAGE_MODEL_ENDPOINT_SET)))
+    expect("cached-object with an endpoint renders cached-object",
+           _renders_cached_object(render("clickhouse-cluster", *CACHED_OBJECT_SETS)))
+    expect("cached-object with no endpoint is refused",
+           "needs clickhouse.objectStore.endpoint" in render_error(
+               "clickhouse-cluster", "clickhouse.storageModel=cached-object"))
+    expect("local with an endpoint still renders local -- the explicit opt-out wins",
+           _renders_local(render("clickhouse-cluster", "clickhouse.storageModel=local",
+                                  STORAGE_MODEL_ENDPOINT_SET)))
+    expect("local with no endpoint renders local",
+           _renders_local(render("clickhouse-cluster", "clickhouse.storageModel=local")))
+
+
 def test_the_unclaimed_cells_are_refused_rather_than_rendered_inert() -> None:
     """tiered-object and cached-block are named in the vocabulary and not built.
     Accepting either would deploy a ClickHouse that silently ignores the model."""
@@ -697,6 +735,7 @@ def main() -> int:
         test_clickhouse_cached_object_reaches_single_mode()
         test_wait_for_async_insert_guard_catches_every_falsy_spelling()
         test_clickhouse_storage_model_guards()
+        test_storage_model_dial_the_six_cases()
         test_the_unclaimed_cells_are_refused_rather_than_rendered_inert()
         test_the_object_store_batch_delete_switch_is_tri_state()
         test_kafka_local_adds_nothing()

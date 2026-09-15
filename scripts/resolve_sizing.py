@@ -367,6 +367,12 @@ class Dial:
     archiver_lag_hours: float | None
     spend_warn_usd_month: float | None
     allow_undersized: bool
+    # auto (the default) leaves clickhouse.storageModel out of the values
+    # fragment entirely, so the chart derives it from whatever objectStore
+    # endpoint the deployment actually carries. cached-object and local are
+    # explicit overrides -- see build_values below and
+    # docs/deployment/storage.md.
+    storage_model: str
     name: str
     # How many AZs the VPC spans (network.az_count, 2-6). Feeds the catalogue's
     # own zone slice (fetch_live/fetch_fixtures) and the broker-count multiple,
@@ -407,6 +413,11 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
             f"kafka.provider {provider!r} is not one of {', '.join(sorted(KAFKA_PROVIDERS))}"
         )
     kafka_provider = KAFKA_PROVIDERS[provider]
+    storage_model = (_scalar(tree, "sizing", "storage_model") or "auto").lower()
+    if storage_model not in ("auto", "cached-object", "local"):
+        raise ResolveError(
+            f"sizing.storage_model must be auto, cached-object or local, got {storage_model!r}"
+        )
     # k8s.cloud's own token for an unprovisioned/existing cluster is `local`
     # (deployment.example.yaml's default); compute-shapes.yaml has no `local`
     # key, only `onprem`, so the resolve fails outright unless the operator
@@ -446,6 +457,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         archiver_lag_hours=_dial_number(tree, "sizing", "archiver_lag_hours"),
         spend_warn_usd_month=_dial_number(tree, "sizing", "spend_warn_usd_month"),
         allow_undersized=allow == "true",
+        storage_model=storage_model,
         name=_scalar(tree, "metadata", "name") or "dfe",
         az_count=az_count,
         overrides=_read_overrides(tree),
@@ -2558,12 +2570,18 @@ def build_values(
     provider: str,
     choices: dict[str, Choice] | None = None,
     cloud_entry: dict[str, object] | None = None,
+    storage_model: str = "auto",
 ) -> dict[str, object]:
     """The chart values overlay -- only keys the charts declare today.
 
     `choices` and `cloud_entry` are None on a cloud with no live shape
     resolution (onprem, or a stub cloud) -- Karpenter does not run there, and
     the overlay carries no `karpenter` key at all rather than an empty one.
+
+    `storage_model` is the dial's own override (Dial.storage_model). auto
+    writes no clickhouse.storageModel key at all, so the chart derives it from
+    whatever objectStore.endpoint the deployment actually carries; an explicit
+    cached-object or local is written straight through.
     """
     broker = core.nodes.get("kafka-broker")
     controller = core.nodes.get("kraft-controller")
@@ -2634,23 +2652,38 @@ def build_values(
         # to the chart's own pvc default. See docs/deployment/storage.md.
         ch_choice = choices.get("clickhouse") if choices else None
         cache = ch_choice.volumes.get("cache") if ch_choice else None
-        if isinstance(cache, dict) and cache.get("size_gib"):
-            # _storage.tpl's own guard refuses cache.volume: instance-store
-            # unless storageModel is cached-object -- the model derives the
-            # object store, and a fragment that sets the cache but not the
-            # model fails the chart's render outright (helm/charts/
-            # clickhouse-cluster/templates/_storage.tpl).
+        if storage_model == "local":
+            # The explicit opt-out: keep local storage regardless of any NVMe
+            # cache the shape would otherwise carry, so the cache placement
+            # and storageModel never disagree -- instance-store needs an
+            # object-store cache to place (_storage.tpl's own guard).
+            ch["objectStore"] = {"cache": {"volume": "pvc"}}
+            ch["storageModel"] = "local"
+        elif isinstance(cache, dict) and cache.get("size_gib"):
+            # An r9gd-class AWS shape resolves a "cache" volume from
+            # compute-shapes.yaml's clickhouse.volumes.cache
+            # (nvme-instance-store): its local NVMe is what the chart's
+            # cache.volume: instance-store dial mounts, so the expensive
+            # default -- a large gp3 cache on the data PVC -- is never what a
+            # populated cloud emits. See docs/deployment/storage.md.
             ch["objectStore"] = {
                 "cache": {"volume": "instance-store"},
                 "cacheSize": f"{cache['size_gib']}Gi",
             }
-            ch["storageModel"] = "cached-object"
+            if storage_model == "cached-object":
+                ch["storageModel"] = "cached-object"
+            # auto leaves the key unset: the chart derives cached-object from
+            # the endpoint, which a populated cloud carries unconditionally,
+            # so the derivation lands on the same answer without the resolver
+            # forcing it.
         else:
-            # No object-store cache to place -- local is the model this cloud
-            # (or on-prem) resolves to unless a deploy-repo overlay says
-            # otherwise; the resolver never derives tiered-block.
+            # No NVMe cache to place -- the chart's own pvc default applies.
             ch["objectStore"] = {"cache": {"volume": "pvc"}}
-            ch["storageModel"] = "local"
+            if storage_model == "cached-object":
+                ch["storageModel"] = "cached-object"
+            # auto leaves the key unset here too, so an on-prem MinIO
+            # endpoint (or none) decides rather than the resolver forcing
+            # local ahead of it -- the bug this dial fixes.
     if keeper:
         ch["keeper"] = {
             "replicas": keeper.count,
@@ -3160,7 +3193,11 @@ def run_resolve(args: argparse.Namespace) -> int:
 
     values_path = out / "sizing" / f"{core.tier}.values.yaml"
     values = build_values(
-        core, dial.kafka_provider, choices if populated else None, cloud_entry if populated else None
+        core,
+        dial.kafka_provider,
+        choices if populated else None,
+        cloud_entry if populated else None,
+        dial.storage_model,
     )
     header = [
         "## Written by scripts/resolve_sizing.py -- do not edit by hand.",

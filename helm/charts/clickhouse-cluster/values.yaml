@@ -95,10 +95,23 @@ clickhouse:
   # Storage model, decided at deploy and refused afterwards (the engine holds
   # clickhouse.storageModel as a protected var, and the deployment repo's
   # governance/policies/storage-layout.yaml governs it post-deploy).
-  # EMPTY DERIVES IT: an objectStore.endpoint below yields `cached-object`,
-  # nothing yields `local`. Setting this is the explicit override and wins;
-  # every template reads the derived answer, never this key directly.
-  # Named <family>-<bulk>: the
+  # THREE VALUES:
+  #   auto           -> (the default, and what an empty string means too) the
+  #                     chart derives it: an objectStore.endpoint below yields
+  #                     `cached-object`, nothing yields `local`. This is the
+  #                     preferred model wherever an object store exists --
+  #                     always on a populated cloud, and on-prem whenever an
+  #                     S3-compatible store such as MinIO is supplied.
+  #   cached-object  -> explicit override. Refuses to render with no
+  #                     objectStore.endpoint set, rather than deploying
+  #                     something inert.
+  #   local          -> explicit override. Keeps local storage even when an
+  #                     endpoint IS configured -- the deploy pipeline still
+  #                     passes the endpoint through, so a later switch to
+  #                     cached-object stays possible, but that switch is a
+  #                     data migration, not a values edit (see
+  #                     docs/deployment/storage.md).
+  # An explicit value always wins over the derivation. Named <family>-<bulk>: the
   # family says whether parts MOVE to the bulk store or are COPIED to it, the
   # bulk half says what that store is. Full matrix: docs/deployment/storage.md
   #   local          -> parts live on the PVC, which is the capacity ceiling.
@@ -118,8 +131,10 @@ clickhouse:
   #                     table DDL changes. Both volumes must be durable.
   # tiered-object and cached-block are named cells this chart does not render
   # yet; the render fails on either rather than deploying something inert.
+  # tiered-block is never derived by auto -- it is reached only by setting this
+  # field directly, same as the deploy repo's infra/ overlay does today.
   # Applies to both cluster and single mode; external mode owns its own storage.
-  storageModel: ""
+  storageModel: auto
   # Object bulk store, for any model whose bulk half is `object`. Credentials
   # NEVER appear here -- the server reads them from the environment, wired from
   # a Secret the secrets store materialises (externalsecret-object-store.yaml),

@@ -786,6 +786,72 @@ def test_the_cache_volume_follows_the_shapes_instance_store() -> None:
     assert values["clickhouse"]["objectStore"] == {"cache": {"volume": "pvc"}}
 
 
+# ---------------------------------------------------------------------------
+# The storage_model dial. auto is the default and omits the chart key
+# entirely; cached-object and local are explicit overrides, and only they
+# reach the values fragment.
+# ---------------------------------------------------------------------------
+
+
+def test_storage_model_auto_omits_the_key_regardless_of_the_cache_choice() -> None:
+    core = _clickhouse_core()
+    no_cache = _choice(use_case="clickhouse", instance_type="r9g.2xlarge", instance_store_gb=0, volumes={})
+    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": no_cache}, None, "auto")
+    assert "storageModel" not in values["clickhouse"]
+
+    r9gd = _choice(
+        use_case="clickhouse",
+        instance_type="r9gd.2xlarge",
+        instance_store_gb=474,
+        volumes={"cache": {"type": "nvme-instance-store", "size_gib": 474, "source": "instance-provided"}},
+    )
+    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r9gd}, None, "auto")
+    assert "storageModel" not in values["clickhouse"]
+    assert values["clickhouse"]["objectStore"]["cache"]["volume"] == "instance-store"
+
+
+def test_storage_model_explicit_cached_object_is_written_through() -> None:
+    core = _clickhouse_core()
+    no_cache = _choice(use_case="clickhouse", instance_type="r9g.2xlarge", instance_store_gb=0, volumes={})
+    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": no_cache}, None, "cached-object")
+    assert values["clickhouse"]["storageModel"] == "cached-object"
+
+
+def test_storage_model_explicit_local_overrides_an_nvme_cache_choice() -> None:
+    """The explicit opt-out wins even on a shape that would otherwise get an
+    instance-store cache -- forcing the cache onto the pvc too, so the two
+    never disagree (instance-store needs storageBulk object, _storage.tpl)."""
+    core = _clickhouse_core()
+    r9gd = _choice(
+        use_case="clickhouse",
+        instance_type="r9gd.2xlarge",
+        instance_store_gb=474,
+        volumes={"cache": {"type": "nvme-instance-store", "size_gib": 474, "source": "instance-provided"}},
+    )
+    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r9gd}, None, "local")
+    assert values["clickhouse"]["storageModel"] == "local"
+    assert values["clickhouse"]["objectStore"] == {"cache": {"volume": "pvc"}}
+
+
+def test_dial_storage_model_defaults_to_auto(tmp_path: Path) -> None:
+    dial = resolve_sizing.read_dial(_dial(tmp_path))
+    assert dial.storage_model == "auto"
+
+
+@pytest.mark.parametrize("value", ["cached-object", "local", "AUTO"])
+def test_dial_storage_model_reads_an_explicit_value(tmp_path: Path, value: str) -> None:
+    dial = resolve_sizing.read_dial(_dial(tmp_path, extra=f"  storage_model: {value}"))
+    assert dial.storage_model == value.lower()
+
+
+def test_dial_storage_model_refuses_an_unknown_value(tmp_path: Path, capsys) -> None:
+    dial = _dial(tmp_path, extra="  storage_model: glacier")
+    assert _run(dial, tmp_path) == 1
+    err = capsys.readouterr().err
+    assert "sizing.storage_model must be auto, cached-object or local" in err
+    assert "'glacier'" in err
+
+
 def test_a_resolve_preserves_an_entry_it_did_not_size(tmp_path: Path) -> None:
     """The file is committed and diffed, so one resolve must not delete another's work."""
     resolved = tmp_path / "shapes" / "resolved"

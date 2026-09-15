@@ -341,6 +341,48 @@ def test_clickhouse_instance_override_folds_into_sizing_overrides() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ClickHouse storage model -- auto is the default, the other two are the
+# explicit override, and an unknown token is refused the same way a bad
+# kafka provider is.
+# ---------------------------------------------------------------------------
+
+
+def test_clickhouse_storage_model_defaults_to_auto() -> None:
+    io = wiz.WizardIO(answers=dict(ONPREM_ANSWERS))
+    answers = wiz.run_wizard(io)
+    assert answers.clickhouse_storage_model == "auto"
+    assert "  storage_model: auto\n" in wiz.build_dial_text(answers)
+
+
+@pytest.mark.parametrize("value", wiz.STORAGE_MODEL_CHOICES)
+def test_clickhouse_storage_model_accepts_the_three_values(value: str) -> None:
+    io = wiz.WizardIO(answers={"clickhouse_storage_model": value})
+    answers = wiz.Answers()
+    wiz.step_clickhouse_storage(io, answers)
+    assert answers.clickhouse_storage_model == value
+    assert f"  storage_model: {value}\n" in wiz.build_dial_text(answers)
+
+
+def test_clickhouse_storage_model_refuses_an_unknown_value() -> None:
+    io = wiz.WizardIO(answers={"clickhouse_storage_model": "glacier"})
+    answers = wiz.Answers()
+    with pytest.raises(wiz.InitError, match="auto, cached-object, local"):
+        wiz.step_clickhouse_storage(io, answers)
+
+
+def test_clickhouse_storage_model_reaches_what_resolve_sizing_parses(tmp_path: Path) -> None:
+    """The written dial is not just compared as text -- resolve_sizing.py's own
+    reader has to come back with the same answer the wizard collected."""
+    answers = wiz.Answers(target="on-prem", clickhouse_storage_model="local")
+    dial_path = tmp_path / "deployment.yaml"
+    dial_path.write_text(wiz.build_dial_text(answers), encoding="utf-8")
+
+    dial = wiz.resolve_sizing.read_dial(dial_path)
+
+    assert dial.storage_model == "local"
+
+
+# ---------------------------------------------------------------------------
 # run_resolve -- scale tier only, and the report survives a fatal finding
 # ---------------------------------------------------------------------------
 

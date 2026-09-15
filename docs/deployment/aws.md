@@ -232,8 +232,10 @@ A few things hold for every deployment:
 
 ### ClickHouse
 
-- ClickHouse's storage model on a cloud deploy is `cached-object`: parts sit
-  in the S3 bucket `terraform/modules/kubernetes-cluster/aws/object-store.tf`
+- ClickHouse's storage model dial (`sizing.storage_model`) defaults to `auto`:
+  object store by default wherever an endpoint exists, `local` is the explicit
+  opt-out. On AWS that means `cached-object`: parts sit in the S3 bucket
+  `terraform/modules/kubernetes-cluster/aws/object-store.tf`
   provisions, authenticated through its own Pod Identity role rather than a
   static key, behind a local read-through cache. The AWS ClickHouse shape pins a
   local-NVMe family (`r*d`, generation floor 8), and the resolver sizes a

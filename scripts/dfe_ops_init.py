@@ -19,7 +19,7 @@
     dfe-ops init --answers wizard-answers.env [--dry-run]
     dfe-ops init --answers wizard-answers.env --fixtures shapes/fixtures/aws
 
-Walks nine questions -- target, tier/ingest/focus, Kafka provider, the derived
+Walks nine questions -- target, tier/ingest/focus, Kafka provider, the
 ClickHouse storage model, public UIs + OIDC + CIDR allow-list, telemetry sink,
 lifecycle + AZ count, the toolbox, and a deployer sizing override -- in the
 order docs/deployment/wizard.md documents, over deployment.example.yaml's own
@@ -254,6 +254,7 @@ class Answers:
     kafka_provider: str = "strimzi"
     msk_broker_count: str = "3"
     kafka_extra_topic: str = ""
+    clickhouse_storage_model: str = "auto"
     clickhouse_instance_override: str = ""
     ui_public: dict[str, bool] = field(
         default_factory=lambda: {
@@ -379,12 +380,31 @@ def step_kafka(io: WizardIO, a: Answers) -> None:
         )
 
 
+STORAGE_MODEL_CHOICES = ("auto", "cached-object", "local")
+
+
 def step_clickhouse_storage(io: WizardIO, a: Answers) -> None:
     io.write(
-        "ClickHouse storage model is DERIVED by resolve_sizing.py, not set in the dial: "
-        "cached-object when the chosen shape carries a local-NVMe cache volume, local "
-        "otherwise (on-prem always resolves local -- shapes/compute-shapes.yaml lists it "
-        "as a stub, not a populated cloud). tiered-block is never auto-derived."
+        "ClickHouse storage model: auto -- the chart derives it, cached-object when an "
+        "object-store endpoint exists (always on a populated cloud, on-prem once MinIO "
+        "or similar is supplied) and local otherwise. cached-object -- force the object "
+        "store; refuses to render with no endpoint. local -- force local storage even "
+        "with an endpoint configured; switching to cached-object later is a data "
+        "migration, not a values edit."
+    )
+
+    def validate_storage_model(raw: str) -> str:
+        value = raw.lower()
+        if value not in STORAGE_MODEL_CHOICES:
+            raise ValueError(
+                f"clickhouse storage model must be one of {', '.join(STORAGE_MODEL_CHOICES)}, got {raw!r}"
+            )
+        return value
+
+    a.clickhouse_storage_model = ask(
+        io, "clickhouse_storage_model",
+        f"ClickHouse storage model ({', '.join(STORAGE_MODEL_CHOICES)})",
+        a.clickhouse_storage_model, validate=validate_storage_model,
     )
     a.clickhouse_instance_override = ask(
         io, "clickhouse_instance_override",
@@ -696,6 +716,7 @@ def build_dial_text(a: Answers) -> str:
         '  archiver_lag_hours: ""\n'
         '  spend_warn_usd_month: ""\n'
         '  allow_undersized: "false"\n'
+        f"  storage_model: {a.clickhouse_storage_model}\n"
     )
     overrides = dict(a.overrides)
     if a.clickhouse_instance_override:

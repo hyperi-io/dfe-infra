@@ -2,12 +2,20 @@
 dfe-clickhouse.storageModel -- the storage model in force, and the ONLY reading
 of it any template takes. Never read .Values.clickhouse.storageModel directly.
 
-An explicit clickhouse.storageModel wins. Left empty the model is derived from
-whether the deployment supplies an object store: an endpoint means the preferred
-`cached-object`, nothing means `local`. Derivation is skipped under
-mode=external, where the supplied ClickHouse owns its storage and a derived
-non-local model would fail the render for a value nobody set; an explicit one
-still fails there, which is the point of the guard below.
+clickhouse.storageModel is a three-value dial. `auto` (the default -- also
+what an EMPTY value means, so an older values file with storageModel: ""
+still derives) leaves the choice to whether the deployment supplies an object
+store: an endpoint means the preferred `cached-object`, nothing means `local`.
+`cached-object` and `local` are explicit overrides and WIN over that
+derivation outright -- `cached-object` with no endpoint set fails the render
+in validateStorageModel below rather than deploying something inert, and
+`local` keeps local storage even when an endpoint IS set (the appset still
+passes the endpoint through in that case, so a later switch to cached-object
+stays possible -- though switching after first deploy is a data migration,
+not a values edit; see docs/deployment/storage.md). Derivation is skipped
+under mode=external, where the supplied ClickHouse owns its storage and a
+derived non-local model would fail the render for a value nobody set; an
+explicit one still fails there, which is the point of the guard below.
 
 The model is locked at first deploy -- the operator takes no new disk on an
 existing ClickHouseCluster, and the deployment repo's
@@ -15,8 +23,9 @@ governance/policies/storage-layout.yaml refuses the change afterwards -- so this
 derivation decides once.
 */}}
 {{- define "dfe-clickhouse.storageModel" -}}
-{{- if .Values.clickhouse.storageModel -}}
-{{- .Values.clickhouse.storageModel -}}
+{{- $override := .Values.clickhouse.storageModel -}}
+{{- if and $override (ne $override "auto") -}}
+{{- $override -}}
 {{- else if and .Values.clickhouse.objectStore.endpoint (ne .Values.clickhouse.mode "external") -}}
 cached-object
 {{- else -}}

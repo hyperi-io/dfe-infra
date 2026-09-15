@@ -79,17 +79,28 @@ the reference shape. `cached-object` is our best-effort equivalent of it, and
 is the preferred model wherever an object store exists: always on Kubernetes in
 a cloud, and on-prem whenever an S3-compatible store such as MinIO is supplied.
 `local` is the last resort -- on-prem with no object store, and the slim and
-single tiers, where one volume is the point. That order is what the chart
-derives: `clickhouse.storageModel` ships EMPTY and
-`dfe-clickhouse.storageModel` reads `cached-object` from a set
-`clickhouse.objectStore.endpoint` and `local` from nothing, with a value written
-into `clickhouse.storageModel` overriding both. Every template reads the derived
-answer, so the two cannot disagree; because every model is locked at first
-deploy, the derivation runs once and the deployment repo's
-`governance/policies/storage-layout.yaml` holds it afterwards. The `cluster` row
-above still reads `local` as default because
-`cached-object` is render-verified only; it becomes the cluster-tier default
-when it is live-proven, and the table changes then, not before.
+single tiers, where one volume is the point.
+
+That order is a three-value dial: `clickhouse.storageModel` takes `auto` (the
+chart default, and what an empty value means too), `cached-object` or `local`.
+On `auto`, `dfe-clickhouse.storageModel` reads `cached-object` from a set
+`clickhouse.objectStore.endpoint` and `local` from nothing; the other two are
+explicit overrides that win outright -- `cached-object` refuses to render with
+no endpoint set, `local` keeps local storage even with one configured. Every
+template reads the derived answer, so the two cannot disagree; because every
+model is locked at first deploy, the derivation runs once and
+`governance/policies/storage-layout.yaml` holds it afterwards. The `cluster`
+row above still reads `local` as default because `cached-object` is
+render-verified only; it becomes the cluster-tier default once live-proven.
+
+The dial reaches the chart from `sizing.storage_model` in the deployment dial
+(`deployment.example.yaml`, default `auto`) -- the `dfe-ops init` wizard asks
+for it directly, and `resolve_sizing.py` writes `clickhouse.storageModel` into
+the scale-tier values fragment only on an explicit value, leaving the key out
+on `auto` so the chart derives. Scale-tier only (`resolve_sizing.py` sizes
+that tier alone); slim and single set no `clickhouse.storageModel` in
+`argocd/values/profile-{slim,single}.yaml`, so they already derive the same
+way with no dial needed.
 
 **Where the AWS bucket comes from, and what it commits you to.**
 `terraform/modules/kubernetes-cluster/aws/object-store.tf` provisions the S3
@@ -113,9 +124,11 @@ That bucket is unconditional, so **every AWS deploy derives `cached-object`**
 the opt-in the ClickHouse table still records. The model is locked at first
 deploy, so the first AWS apply is what live-proves it; until then AWS is the
 one target where the table's `opt-in` reads as `derived`. A deployment that
-wants `local` on AWS has to say so: `clickhouse.storageModel: local` in the
-deploy repo's own `infra/clickhouse-cluster.yaml` overlay, before the first
-deploy. There is no dial for it in `deployment.example.yaml` or the aws root.
+wants `local` on AWS has to say so, before the first deploy: `sizing.storage_model:
+local` in the deployment dial (the wizard asks for it), or
+`clickhouse.storageModel: local` in the deploy repo's own
+`infra/clickhouse-cluster.yaml` overlay for a deployment resolve_sizing.py
+never sizes.
 
 The two refusals share one guard in `dfe-clickhouse.validateStorageModel`:
 

@@ -280,6 +280,16 @@ sizing:
   ## On-prem only: converge anyway when the real nodes are smaller than the
   ## requirements table demands, with the warning stated in the report.
   allow_undersized: "false"
+  ## ClickHouse storage model override. auto (the default) leaves the choice
+  ## to the chart: cached-object when an objectStore.endpoint is configured
+  ## (always on a populated cloud, on-prem too once a MinIO or S3-compatible
+  ## endpoint is supplied), local otherwise. cached-object forces the object
+  ## store and refuses to render with no endpoint set. local forces local
+  ## storage even with an endpoint configured -- the deploy pipeline still
+  ## carries the endpoint through, so a later switch stays possible, but that
+  ## switch is a data migration, not a values edit. See
+  ## docs/deployment/storage.md.
+  storage_model: auto   # auto | cached-object | local
   ## Values set BY HAND, per workload, over whatever the ratios derived. Every
   ## field is optional and every one still goes through the storage-cap
   ## assertions -- an override is a different answer, not an exemption. Workloads:
