@@ -8,14 +8,14 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-ui (drift-checked).
-  digest: "sha256:647fa55da14dfd516ffa2b8721d1393801034754acd4d360469339c7ce5b1e4b"
+  digest: "sha256:f76779f97b195289bb220de00f8e653a20ab0e16423e1e4bbd79f8773927ce8f"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
-# PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2
-# (the scale profile), so single-replica deployments never get a PDB that
-# blocks node drains. The budget is maxUnavailable: 1 (autoscaler-safe: a KEDA scale-to-one pod can still evict).
+# PodDisruptionBudget (dfe-common.pdb): renders only where the workload can
+# carry two pods, so a single-replica deployment never gets a budget that blocks
+# node drains. The helper picks the form from the workload's floor.
 pdb:
   enabled: true
 
@@ -53,7 +53,6 @@ config:
   # Full HyperDX base URL override; empty derives from hyperdxHostname+domain.
   hyperdxUrl: ""
   nextPublicApiUrl: ""           # https://dfe.{domain}/api
-  nextPublicHyperdxUrl: ""       # https://hyperdx.{domain}
   # Node heap cap. Default tracks the pod memory limit via the cgroup-aware
   # percentage flag (Node 24+); override only for a non-standard runtime.
   nodeOptions: "--max-old-space-size-percentage=70"

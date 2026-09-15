@@ -13,21 +13,52 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-fetcher (drift-checked).
-  digest: "sha256:633be4ce4e8ca7d20db30ae9aa211fd65c4582049d279fd58ce8812f7d18fc86"
+  digest: "sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
 kafka:
+  # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
+  # values: it drops every kafka env + secret ref and sends the fetched records
+  # straight to the loader over gRPC instead. Templates read it through
+  # dfe-common.transport, never by comparing this string themselves.
+  mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
+  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
+  # confluent-cloud | msk_iam | plaintext). Empty = unset. When set, scalo's
+  # KafkaConfig DERIVES security_protocol + sasl_mechanism from it.
+  provider: ""
 
 # API credentials are injected via External Secrets Operator
-# ESO creates dfe-fetcher-api-creds from vault/cloud secret store
+# ESO creates dfe-fetcher-api-creds from vault/cloud secret store. The refs are
+# optional in the deployment: an instance whose credentials are vault:/env:
+# references inside its own stanza has no such Secret.
 apiCredentials:
   secretName: dfe-fetcher-api-creds
   apiKeyKey: api-key
   apiSecretKey: api-secret
+
+# Credentials for the upstream this instance polls. The source's fetcher stanza
+# names them as `env:NAME` references (dfe-fetcher src/config/resolve.rs), so
+# the Secret's KEYS are the variable names the stanza asks for and no value ever
+# reaches the engine-authored overlay. One Secret serves every instance: a key is
+# only read by the instance whose stanza names it. Optional, so a deployment that
+# fetches nothing needing credentials creates nothing.
+credentials:
+  secretName: dfe-fetcher-credentials
+
+# Cursor store. The fetcher records the window each connection resumed from at
+# cursor.file_path (/var/lib/dfe-fetcher/cursors.json by default) and the rootfs
+# is read-only, so that directory is a volume either way. Default emptyDir: the
+# slim tier is not guaranteed a StorageClass, and a lost cursor re-fetches the
+# default window rather than losing data. Turn this on where a re-fetch is
+# expensive (rate-limited or metered upstreams).
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: ""
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created
@@ -37,18 +68,40 @@ dlq:
   topic: dfe_fetcher_dlq
   mode: kafka_only
 
-# The app's scalo config, mounted VERBATIM at /etc/dfe/fetcher.yaml (the image's
-# CMD path -- dfe-fetcher Dockerfile:43). This is an OPAQUE passthrough blob: the
-# engine is the config authority and publishes it as the per-instance Argo
-# multi-source $values overlay (values/dfe-fetcher-<instance>-values.yaml), so the
-# chart never needs to know the per-app keys. Empty here on purpose -- baking
-# defaults in would put deployment-specific addresses in a product chart, and
-# Helm's map merge would silently leave stale keys behind when the engine's
-# overlay does not overwrite them.
+# The app's scalo config, mounted at /etc/dfe/fetcher.yaml (the image's CMD path
+# -- dfe-fetcher Dockerfile:43). Passthrough EXCEPT the transport: the configmap
+# derives the broker list, or the receiver gRPC output, from the values above,
+# because a deployment address authored into the engine's overlay would be wrong
+# for every other deployment of the product. Empty here on purpose -- baking
+# defaults in and letting Helm's map merge run leaves stale keys behind when the
+# engine's overlay does not overwrite them.
 #
 # A fetcher instance is 1:1 with a DFE source's fetcher config, so this blob is
-# what makes two fetcher Applications different from each other.
+# what makes two fetcher Applications different from each other. The engine
+# writes it as the per-instance Argo multi-source $values overlay
+# (values/dfe-fetcher-<source>-values.yaml) and carries:
+#   config.sources     the bound source's per-type stanza (apps.yaml routing,
+#                      compiler fetcher, scope instance)
+#   config.instance_id the source name, which keys the cursor store
+#                      (apps.yaml source_binding)
+#   otelServiceName    below
+#   component          instance-unique, to keep the objects and telemetry apart
+#
+# config.ingest.enabled is off in the app's own defaults and is the dial that
+# declares the container-extractor port 8080 on the pod here, so turning it on
+# also takes the instance out of idle whether or not anything ever posts to it.
 config: {}
+
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
+
+# OTel service.name for this instance. Empty falls back to the app name, which
+# leaves two instances of one app indistinguishable in the otel tables.
+otelServiceName: ""
 
 otel:
   endpoint: ""

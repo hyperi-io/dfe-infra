@@ -18,8 +18,9 @@
 #   DFE_ENV                  dev | stg | prod | local
 #   DFE_CLOUD                aws | gcp | az | local
 #   DFE_REGION               e.g. us-east-1, local
-#   DFE_DOMAIN               e.g. dfe.example.com
-#   DFE_PROFILE              slim | single | scale
+#   DFE_DOMAIN               e.g. dfe.example.com; derived as
+#                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
+#   DFE_PROFILE              slim | single | scale | mesh (default: scale)
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
 #   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
@@ -39,6 +40,35 @@
 #   DFE_REGISTRY_TOKEN       JFrog API token
 #
 # Optional:
+#   DFE_BASE_DOMAIN          estate domain the profile tag is prefixed to when
+#                            DFE_DOMAIN is unset (one cluster, one profile at a
+#                            time, one set of hostnames per profile)
+#   DFE_GATEWAY_IP           address the Envoy Gateway's LoadBalancer must take;
+#                            empty lets the pool choose
+#   DFE_RECEIVER_IP          address the receiver's public TCP LoadBalancer must
+#                            take; empty lets the pool choose
+#   DFE_LOCAL_PATH_DIR       directory on each node local-path-provisioner creates
+#                            its volumes under, when the bootstrap installs it
+#                            because the cluster has no StorageClass. Unset keeps
+#                            upstream's /opt/local-path-provisioner, on the root
+#                            filesystem of a node whose data disk is elsewhere.
+#   DFE_CLICKHOUSE_DEFAULT_TTL_DAYS  days every time-series table keeps rows, the
+#                            OTel tables included (default 90; 0 = no default
+#                            TTL). A source or a dfe-schemas definition with its
+#                            own TTL overrides it.
+#   DFE_CERTMANAGER_SECRET_ID  AppRole SecretID cert-manager authenticates to the
+#                            estate Vault/OpenBao PKI with, for the gateway
+#                            chart's tls.vault issuer mode. Set it and the edge
+#                            certificate chains to a root every client already
+#                            trusts; leave it unset and the deploy signs the edge
+#                            with its own private root.
+#   DFE_CA_PERSIST           true|false (default: true when DFE_VAULT_SECRET_ID
+#                            is set) -- save the private root to the deployment's
+#                            secret store and restore it on the next bootstrap,
+#                            so a rebuild reuses it and no client re-trusts.
+#   DFE_CA_SECRET_STORE      ClusterSecretStore the root is saved to and restored
+#                            from (default dfe-secret-store).
+#   DFE_CA_RESTORE_TIMEOUT   seconds to wait for the restore (default 60).
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
 #   DFE_POST=full            Power-on self test run after the deploy converges:
 #                              full       readiness gate + CORE e2e (default)
@@ -79,7 +109,23 @@ CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_R
 EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
 ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
 LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
-echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION}"
+METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.metallb)
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION} metallb=${METALLB_VERSION}"
+
+# Each operator below states its own Kubernetes window, so an under-floor cluster
+# fails inside one of them naming that operator rather than the cluster.
+# DFE_SKIP_PLATFORM_CHECK=true proceeds anyway.
+if [[ "${DFE_SKIP_PLATFORM_CHECK:-false}" == "true" ]]; then
+  echo "WARNING: DFE_SKIP_PLATFORM_CHECK=true -- not checking the cluster against platform.kubernetes" >&2
+else
+  # dfe-ops names the stack it is deploying, so check the floor of THAT stack
+  # rather than whatever `current` happens to point at.
+  platform_args=(--file "${REPO_ROOT}/versions.yaml")
+  if [[ -n "${DFE_STACK_VERSION:-}" ]]; then
+    platform_args+=(--stack "${DFE_STACK_VERSION}")
+  fi
+  python3 "${SCRIPT_DIR}/check_platform.py" "${platform_args[@]}"
+fi
 
 # Dry-run wrapper
 run() {
@@ -126,6 +172,17 @@ dfe_should_install() {
   return 0
 }
 
+# The clouds whose own controller programs a LoadBalancer Service. Everything
+# else is on-prem, whatever a deployment calls itself -- local, local-dfe, an
+# estate name -- so the list is the clouds, not the on-prem names. dfe-ops
+# preflight reads this same line so its INSTALL preview matches step [3b/7];
+# scripts/tests/test_pinned_addresses.py holds the two together.
+DFE_CLOUD_LB_PROVIDERS="aws gcp az azure"
+
+dfe_cloud_programs_loadbalancers() {
+  [[ " ${DFE_CLOUD_LB_PROVIDERS} " == *" ${DFE_CLOUD} "* ]]
+}
+
 # Validate required variables
 required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
@@ -135,15 +192,45 @@ required_vars=(
   DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
-# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim profile is gRPC (kafka disabled),
-# so it is empty there; only set when kafka.mode != disabled. Defaulted empty so
-# the cluster-secret annotation renders blank (kafka-dependent apps are gated off
-# in slim anyway).
+# DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim and mesh profiles are gRPC (kafka
+# disabled), so it is empty there; only set when kafka.mode != disabled. Defaulted
+# empty so the cluster-secret annotation renders blank (kafka-dependent apps are
+# gated off on a brokerless profile anyway).
 export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
+# external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
+# "none" deploys no external-dns, because its own default provider is aws and an
+# uncredentialled install crash-loops against Route 53 forever (#223).
+export DFE_DNS_PROVIDER="${DFE_DNS_PROVIDER:-none}"
 # devex/local enforces DFE onto its dedicated workers via a HARD nodeSelector
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is
 # satisfiable; a shared/customer cluster labels its own nodes at provisioning.
+# Deliberately NARROWER than dfe_cloud_programs_loadbalancers: that one asks who
+# programs a LoadBalancer, this one asks whether every node in the cluster is
+# ours to label, and on a shared on-prem cluster it is not.
 DFE_LABEL_WORKLOAD_NODES="${DFE_LABEL_WORKLOAD_NODES:-$([[ "${DFE_CLOUD:-}" == "local" ]] && echo true || echo false)}"
+# The certified stack version; empty when a bare bootstrap names none, and the
+# engine then falls back to the deploy repo's pins.
+export DFE_STACK_VERSION="${DFE_STACK_VERSION:-}"
+# Front-door addresses; empty renders a blank annotation and the pool chooses.
+export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
+export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
+# Deployment-wide retention, defaulted so the annotation always renders and the
+# operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
+export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"
+if ! [[ "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS must be a whole number of days (got '${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}')" >&2
+  exit 1
+fi
+echo "Default retention: ${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS} day(s) for every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)"
+# One cluster runs one profile at a time, so the profile tags the domain and no
+# two deployments publish the same hostname. dfe-ops refuses an explicit
+# DFE_DOMAIN that contradicts a declared base; a bare bootstrap trusts it.
+# A Kubernetes deploy that names no profile gets the HA tier on the bus.
+export DFE_PROFILE="${DFE_PROFILE:-scale}"
+if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" ]]; then
+  export DFE_DOMAIN="${DFE_PROFILE}.${DFE_BASE_DOMAIN}"
+  echo "Domain derived from DFE_BASE_DOMAIN: ${DFE_DOMAIN}"
+fi
 # Registry vars are optional — skip regcred if not set
 # DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 missing=()
@@ -187,6 +274,7 @@ echo "==> [0/7] Adding Helm repositories"
 run helm repo add jetstack https://charts.jetstack.io 2>/dev/null || true
 run helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
 run helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
+run helm repo add metallb https://metallb.github.io/metallb 2>/dev/null || true
 run helm repo update
 
 echo "==> [1/7] Applying ArgoCD namespace + cluster secret"
@@ -213,6 +301,23 @@ else
   run kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
   run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
   run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  # Upstream hands every node /opt/local-path-provisioner, so on a node whose data
+  # disk is mounted elsewhere every PV lands on the root filesystem.
+  if [[ -n "${DFE_LOCAL_PATH_DIR:-}" ]]; then
+    echo "  local-path volumes -> ${DFE_LOCAL_PATH_DIR}"
+    if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+      echo "[DRY-RUN] patch local-path-config config.json nodePathMap -> ${DFE_LOCAL_PATH_DIR}"
+    else
+      local_path_config="$(kubectl -n local-path-storage get configmap local-path-config \
+        -o jsonpath='{.data.config\.json}' \
+        | python3 "${SCRIPT_DIR}/local_path_dir.py" --dir "${DFE_LOCAL_PATH_DIR}")"
+      kubectl -n local-path-storage patch configmap local-path-config \
+        --type merge -p "$(python3 -c 'import json,sys; print(json.dumps({"data": {"config.json": sys.stdin.read()}}))' <<<"${local_path_config}")"
+      # The provisioner reads config.json at start; a running pod keeps the old path.
+      kubectl -n local-path-storage rollout restart deployment/local-path-provisioner
+      kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
+    fi
+  fi
 fi
 
 echo "==> [1c/7] Node labels (dedicated-worker placement)"
@@ -256,6 +361,47 @@ if dfe_should_install external-secrets clustersecretstores.external-secrets.io e
     --wait --timeout 5m
 fi
 
+echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"
+# Nothing programs a LoadBalancer Service on a bare on-prem cluster, so the
+# Envoy Gateway and the receiver's public door sit Pending forever.
+if dfe_cloud_programs_loadbalancers; then
+  echo "  DFE_CLOUD=${DFE_CLOUD}: the cloud LoadBalancer controller programs the Services -- MetalLB skipped"
+else
+  if dfe_should_install metallb ipaddresspools.metallb.io metallb-system metallb-controller; then
+    run helm upgrade --install metallb metallb/metallb \
+      --namespace metallb-system --create-namespace \
+      --version "${METALLB_VERSION}" \
+      --wait --timeout 5m
+    # The IPAddressPool webhook is failurePolicy=Fail, so the pool below is
+    # rejected until the controller serves it, and the speaker is what answers
+    # ARP for the addresses once it is accepted.
+    run kubectl -n metallb-system rollout status deployment/metallb-controller --timeout=300s
+    run kubectl -n metallb-system rollout status daemonset/metallb-speaker --timeout=300s
+  fi
+  # Applied on every on-prem run, so a rebuild that adopts MetalLB still gets
+  # the addresses this deployment's DNS records point at.
+  if [[ -z "${DFE_GATEWAY_IP}" ]] || [[ -z "${DFE_RECEIVER_IP}" ]]; then
+    echo "  WARNING: DFE_GATEWAY_IP and/or DFE_RECEIVER_IP are unset, so no address pool was created."
+    echo "           MetalLB hands out nothing it holds no pool for: the Envoy Gateway and the"
+    echo "           receiver's public Service stay Pending and every published hostname fails to"
+    echo "           resolve to a live address. Set both and re-run, unless the cluster already"
+    echo "           carried a LoadBalancer provider with a pool of its own."
+  elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/metallb-pool.yaml.tpl | kubectl apply -f -"
+  else
+    # A provider that came with the cluster already owns its addressing, and
+    # MetalLB refuses a pool whose range overlaps one it is already serving.
+    pools=$(kubectl get ipaddresspools.metallb.io -A -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+    if [[ -n "${pools}" ]] && [[ " ${pools} " != *" dfe-front-door "* ]]; then
+      echo "  Existing IPAddressPool(s) own this cluster's addressing (${pools}) -> DFE pool NOT applied."
+      echo "  The gateway and receiver addresses must fall inside one of them."
+    else
+      envsubst < "${TEMPLATES_DIR}/metallb-pool.yaml.tpl" | kubectl apply -f -
+      echo "  Applied the dfe-front-door IPAddressPool + L2Advertisement"
+    fi
+  fi
+fi
+
 echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
   echo "[DRY-RUN] seed dfe-vault-approle-secret + envsubst store + patch caBundle"
@@ -286,6 +432,53 @@ else
     kubectl patch clustersecretstore dfe-secret-store --type merge \
       -p "{\"spec\":{\"provider\":{\"vault\":{\"caBundle\":\"${DFE_VAULT_CA_BUNDLE}\"}}}}"
     echo "  Patched OpenBao CA into the ESO store"
+  fi
+fi
+
+echo "==> [4a/7] Internal CA root: restore from the secret store before cert-manager mints"
+# A rebuild that mints a new root costs every client a re-trust, and the HyperDX
+# iframe fails outright because it cannot show the interstitial (#238).
+# Rendered from the gateway chart's ONE definition, ahead of Argo, so the restore
+# lands before cert-manager sees the Certificate rather than racing it.
+# cert-manager then adopts a root that already satisfies the spec.
+# Without a secret store nothing can hold the root between rebuilds.
+if [[ -z "${DFE_CA_PERSIST:-}" ]]; then
+  # A deployment with no store SecretID has nowhere to hold the root.
+  if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then DFE_CA_PERSIST="true"; else DFE_CA_PERSIST="false"; fi
+fi
+if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
+  echo "  Vault/OpenBao issuer mode seeded -- the estate PKI owns the root, nothing to persist"
+elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
+  echo "  SKIPPED (DFE_CA_PERSIST=${DFE_CA_PERSIST}): this deploy mints a fresh root and every"
+  echo "  client must trust it again after a rebuild. Set DFE_VAULT_SECRET_ID so the deployment"
+  echo "  has a working secret store, or DFE_CA_PERSIST=true to force it."
+elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+  echo "[DRY-RUN] helm template envoy-gateway-config -s templates/internal-ca-persist.yaml | kubectl apply -f -"
+else
+  kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -
+  helm template dfe-internal-ca "${REPO_ROOT}/helm/charts/envoy-gateway-config" \
+    --namespace cert-manager \
+    --show-only templates/internal-ca-persist.yaml \
+    --set "env=${DFE_ENV}" \
+    --set "cloud=${DFE_CLOUD}" \
+    --set "tls.internalCA.persist.secretStoreName=${DFE_CA_SECRET_STORE:-dfe-secret-store}" \
+    | kubectl apply -f -
+  # A poll, not `kubectl wait --for=create`: that needs kubectl >= 1.31.
+  # A first bootstrap has nothing to restore, so the timeout is expected.
+  ca_deadline=$(( SECONDS + ${DFE_CA_RESTORE_TIMEOUT:-60} ))
+  ca_restored=false
+  while [[ "${SECONDS}" -lt "${ca_deadline}" ]]; do
+    if kubectl -n cert-manager get secret dfe-internal-ca-tls >/dev/null 2>&1; then
+      ca_restored=true
+      break
+    fi
+    sleep 3
+  done
+  if [[ "${ca_restored}" == "true" ]]; then
+    echo "  Root RESTORED from the secret store into cert-manager/dfe-internal-ca-tls"
+  else
+    echo "  No stored root (first bootstrap, or the store does not hold one yet):"
+    echo "  cert-manager will mint one and the PushSecret will save it."
   fi
 fi
 
@@ -343,6 +536,28 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
     --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
     --dry-run=client -o yaml | kubectl apply -f -
   echo "  Forgejo admin secret (forgejo ns) + engine write cred dfe-deploy-repo-auth (${DFE_NAMESPACE}) ready"
+
+  # The Forgejo -> Argo push webhook's shared secret. Forgejo signs the delivery
+  # with it and Argo verifies against argocd-secret's webhook.gogs.secret, so
+  # both ends carry the one value; minted once and reused, like the password
+  # above. argocd-secret is PATCHED, never applied over: it also holds Argo's
+  # server signing key and admin hash, adopted install or not.
+  if kubectl -n forgejo get secret dfe-argo-webhook >/dev/null 2>&1; then
+    ARGO_WEBHOOK_SECRET=$(kubectl -n forgejo get secret dfe-argo-webhook -o jsonpath='{.data.secret}' | base64 -d)
+  else
+    ARGO_WEBHOOK_SECRET=$(openssl rand -hex 24)
+  fi
+  kubectl -n forgejo create secret generic dfe-argo-webhook \
+    --from-literal=secret="${ARGO_WEBHOOK_SECRET}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  if kubectl -n argocd patch secret argocd-secret --type merge \
+      -p "{\"stringData\":{\"webhook.gogs.secret\":\"${ARGO_WEBHOOK_SECRET}\"}}" >/dev/null 2>&1; then
+    echo "  Argo push webhook secret ready (forgejo ns + argocd-secret)"
+  else
+    echo "  WARNING: could not patch argocd-secret with webhook.gogs.secret."
+    echo "           Forgejo will still register the hook, Argo will reject every"
+    echo "           delivery, and a source write waits out the 300s poll instead."
+  fi
 elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   # EXTERNAL git (GitHub/GitLab/self-hosted): register the Argo READ credential so
   # Argo can pull the deploy repo -- EITHER HTTPS+token (DFE_CONFIG_REPO_USER +
@@ -545,7 +760,7 @@ echo "=========================================="
 #   integration -- readiness proves pods are Ready; THIS proves the two DEFAULT
 #                  ingest pipelines are actually STREAMING DATA end to end:
 #                  (1) infra self-telemetry OTel -> HyperDX -> ClickHouse,
-#                  (2) receiver -> [kafka default_land ->] loader -> dfe.default.
+#                  (2) receiver -> [kafka main_land ->] loader -> dfe.main.
 #                  "The service is up so it must be working" is the trap this closes.
 # Choosing a lighter POST is legitimate (a preview, or a stand-up that runs the
 # POST separately) -- but whatever we do not run we say we did NOT verify, so a
@@ -570,8 +785,11 @@ echo "  POST: DFE_POST=${DFE_POST} (readiness=${POST_READINESS}, integration=${P
 echo ""
 if [ "${POST_READINESS}" = "true" ]; then
   # DFE_NS names the namespace the apps land in; without it the gate cannot tell
-  # an empty deploy from a healthy one.
-  if ! DFE_NS="${DFE_NAMESPACE}" "${SCRIPT_DIR}/smoke-test-readiness.sh" "${KUBECONFIG:-}"; then
+  # an empty deploy from a healthy one. DFE_ENV decides whether the deployment is
+  # allowed to be running the shipped admin password.
+  if ! DFE_NS="${DFE_NAMESPACE}" \
+       DFE_ENV="${DFE_ENV}" \
+       "${SCRIPT_DIR}/smoke-test-readiness.sh" "${KUBECONFIG:-}"; then
     echo ""
     echo "  DEPLOY NOT HEALTHY -- see the readiness failures above."
     echo "  Fix them and re-run, or set DFE_POST=off to stand up without verifying."
@@ -605,3 +823,12 @@ fi
 echo ""
 "${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${DFE_ACCESS_OUT:-dfe-access.md}" || \
   echo "  (access-summary skipped -- run bootstrap/access-summary.sh manually)"
+
+# The launcher's own copy: the two minted passwords in plaintext, 0600, on the
+# machine that ran the deploy. The summary above gives fetch commands, which
+# need a cluster login the operator does not have yet.
+echo ""
+python3 "$(cd "${SCRIPT_DIR}/.." && pwd)/scripts/dfe-ops" access-summary \
+  --out "${DFE_ACCESS_SUMMARY_OUT:-.tmp/access-summary.md}" \
+  --namespace "${DFE_NAMESPACE:-}" || \
+  echo "  (login summary skipped -- run scripts/dfe-ops access-summary manually)"

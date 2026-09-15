@@ -33,21 +33,13 @@ deployRepo:
   defaultBranch: main
   private: true
 
-  # The app set a fresh deployment starts with: the core ingest path, the control
-  # plane, and the embedded observability console. layer2-apps fans out one
+  # The app set a fresh deployment starts with. layer2-apps fans out one
   # Application per values/*-values.yaml, so an unseeded repo deploys no apps.
-  # archiver, fetcher and the transform workers are opt-in -- an operator adds a
-  # values file to enable one. Override per tier in
-  # argocd/values/profile-<mode>.yaml; a Helm list is replaced rather than
-  # merged, so an override states the whole set.
-  seedApps:
-    - dfe-engine
-    - dfe-ui
-    - dfe-receiver
-    - dfe-loader
-    # dfe-ui embeds HyperDX in an iframe, so the console is not optional -- the
-    # UI's observability pages are blank without it.
-    - hyperdx
+  # EMPTY here on purpose: the set is the profile's, and every deploy layers
+  # argocd/values/profile-<mode>.yaml over this chart, where a generated block
+  # states it from apps.yaml's `default_in`. A default list here would be a
+  # second copy of the composition that nothing keeps in step.
+  seedApps: []
   # Instance name for the seeded files -- values/<svc>-<instance>-values.yaml.
   # Multi-instance services get one file per instance, added by hand or by the
   # engine.
@@ -56,6 +48,23 @@ deployRepo:
   # adding one reaches an existing deploy while a deleted values file stays
   # deleted.
   seedMarker: .seeded-apps
+
+# The push hook that refreshes Argo CD, instead of waiting out its 300 s poll
+# plus 60 s jitter -- the 5 to 9 minutes an engine source write takes to reach a
+# pod without it. Registered as type `gogs`: Argo CD's handler has no gitea or
+# forgejo parser, and Forgejo sends the X-Gogs-* headers the gogs one reads.
+# The external git path configures the same hook on GitHub or GitLab --
+# docs/DEPLOY-HELPERS.md carries that recipe.
+webhook:
+  enabled: true
+  # Split into host and path because the host is also the webhook allow-list
+  # entry (see gitea.env) and the two must not drift.
+  argocdHost: argocd-server.argocd.svc.cluster.local
+  path: /api/webhook
+  # Minted by bootstrap.sh, which writes the same value into argocd-secret's
+  # webhook.gogs.secret. Absent, the setup Job registers no hook and says so.
+  secretName: dfe-argo-webhook
+  secretKey: secret
 
 # Image for the PostSync repo-creation Job (needs curl).
 setup:

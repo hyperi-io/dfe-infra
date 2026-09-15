@@ -20,6 +20,7 @@ metadata:
     dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
 spec:
   replicas: 1
+  {{- include "dfe-common.rollout" . | nindent 2 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-keda-shim

@@ -8,8 +8,6 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 DRY_RUN="${DFE_DRY_RUN:-false}"
 run() {
     if [[ "${DRY_RUN}" == "true" ]]; then
@@ -32,8 +30,15 @@ if [[ "${DRY_RUN}" != "true" ]] && [[ "${1:-}" != "--force" ]]; then
 fi
 
 echo "==> [1/7] Deleting ArgoCD Applications + ApplicationSets"
+# KEDA scalers carry finalizer.keda.sh, which only the KEDA operator clears, so
+# they go before Argo's concurrent cascade can reap the operator ahead of them.
+run kubectl delete scaledobject --all -A 2>/dev/null || true
+run kubectl delete scaledjob --all -A 2>/dev/null || true
+run kubectl delete triggerauthentication --all -A 2>/dev/null || true
 run kubectl -n argocd delete applicationset --all 2>/dev/null || true
-run kubectl -n argocd delete app --all 2>/dev/null || true
+# Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
+# app.catalog.cattle.io and every Argo Application survives the teardown.
+run kubectl -n argocd delete applications.argoproj.io --all 2>/dev/null || true
 
 echo "==> [2/7] Waiting for ArgoCD to clean up managed resources..."
 if [[ "${DRY_RUN}" != "true" ]]; then
@@ -61,7 +66,7 @@ echo "==> [4/7] Deleting DFE namespaces"
 # teardown, which then blocks a clean redeploy.
 # clickhouse-operator is the pre-rc.7 namespace, kept so a teardown of an older
 # deploy cannot leave a second operator reconciling the same CRs.
-for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx keda reloader external-dns redpanda-operator forgejo gitea links; do
+for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
 # KEDA registers the external-metrics APIService cluster-wide; deleting its
@@ -77,6 +82,8 @@ if [[ "${DRY_RUN}" != "true" ]]; then
 else
     echo "[DRY-RUN] kubectl delete ns dfe-*"
 fi
+# Last, once no ScaledObject can still need its operator.
+run kubectl delete ns keda --ignore-not-found 2>/dev/null || true
 
 echo "==> [5/7] Uninstalling ArgoCD + Valkey"
 run helm uninstall argocd -n argocd 2>/dev/null || true
@@ -90,6 +97,10 @@ echo "==> [7/7] Cleaning up namespaces"
 for ns in argocd cert-manager external-secrets envoy-gateway-system; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
+# destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
+# already carried, and removing an adopted LoadBalancer provider would strand
+# every other tenant's Service on the cluster.
+echo "  metallb-system and its address pool left in place -- an adopted LoadBalancer provider is never removed"
 
 echo ""
 echo "=== Teardown complete ==="

@@ -15,7 +15,7 @@ image:
   repository: nginxinc/nginx-unprivileged
   tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
   # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
-  digest: "sha256:d9083fe47768377ef55dedafd67d4da7c2f2bc2bece7554954f29359deb0dce9"
+  digest: "sha256:aa8c9087d36d93e9d650c5365f883b421e8214aedbad24ade52b844c583358f1"
   pullPolicy: IfNotPresent
   # Public Docker Hub image: suppress the fleet-wide imagePullSecrets.
   public: true
@@ -46,6 +46,12 @@ domain: ""
 # Canonical service-name map, supplied by the deploy-config SSoT
 # (argocd/values/common.yaml) -- never redefined here.
 hostnames: {}
+
+# Read-only here: the same kafka.mode every other chart branches on, so the page
+# lists Kafbat only where a broker is deployed. The profile cascade supplies it
+# (the umbrella maps it under `links:`); disabled matches the brokerless default.
+kafka:
+  mode: disabled
 
 # The page content. The chart renders a DEFAULT page covering every standard
 # stack surface: gateway https URLs derived from `domain` + `hostnames` when

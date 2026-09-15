@@ -11,6 +11,13 @@
 line-length = 100
 target-version = "py312"
 
+# The two CLIs carry no .py suffix, so without this ruff never reads them and an
+# undefined name reaches a live run.
+extend-include = [
+    "scripts/dfe-ops",
+    "scripts/dfe-stack",
+]
+
 extend-exclude = [
     ".tmp",
     "helm",
@@ -36,6 +43,11 @@ ignore = [
     "S311",  # seeded random in loadgen -- reproducibility, not cryptography
     "N814",  # a deliberate short local alias for a long ruamel class
 ]
+
+[lint.isort]
+# _expect is the shared check helper sitting beside the tests that import it,
+# so it belongs in the first-party group rather than beside PyPI packages.
+known-first-party = ["_expect"]
 
 [lint.per-file-ignores]
 # Test helpers load the script under test by path, which needs the import

@@ -1,6 +1,6 @@
 dependencies:
 - name: dfe-common
   repository: file://../../
-  version: 0.7.0
-digest: sha256:6f11cb893103adc481aeaa1fede652a5a96c03740ba3d1302381fecbb91f9898
-generated: "2026-09-02T16:41:51.9487464+10:00"
+  version: 0.11.0
+digest: sha256:eccc317c8fcbcd297652e6114aefda162d22b29ea56c9e74d8864d4e3da91c84
+generated: "2026-09-14T12:05:34.861394058+10:00"

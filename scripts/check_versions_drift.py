@@ -219,6 +219,15 @@ CHECKS += [
         Path("argocd/appsets/layer-scale.yaml"),
         r"charts\.redpanda\.com\n\s*chart: operator\n\s*targetRevision:\s*\"([^\"]+)\"",
     ),
+    # The mesh appset repeats the operator pin, and a check reads its FIRST
+    # match only, so this one is anchored on that appset's profile selector.
+    Check(
+        "clickhouse-operator appset (mesh)",
+        "operators.clickhouse-operator",
+        Path("argocd/appsets/layer-scale.yaml"),
+        r"dfe\.hyperi\.io/profile: mesh[\s\S]{0,400}?chart: clickhouse-operator-helm"
+        r"[\s\S]{0,300}?version:\s*\"([^\"]+)\"",
+    ),
     Check(
         "redpanda broker tag (kafka values)",
         "services.redpanda-version",
@@ -445,6 +454,9 @@ _APP_CHARTS = [
     "dfe-transform-wasm",
     "dfe-transform-elastic",
     "dfe-transform-splack",
+    # The one app whose image is not published under the dfe- prefix; the chart
+    # spells its repository out, so only the tag and digest halves are checked.
+    "culvert",
 ]
 CHECKS += [
     Check(
@@ -472,6 +484,41 @@ CHECKS += [
     for app in _DIGEST_MIRRORS
 ]
 
+# The engine chart mounts each app's container contract by RUNNING that app's
+# pinned image, so every content entry carries another copy of the app pin.
+# BOTH halves are checked: the ref is tag@sha256 and a deployment pulls by
+# digest, so a tag rewritten on its own would name one release and run another.
+_CONTRACT_ENTRIES = [
+    "dfe-receiver",
+    "dfe-loader",
+    "dfe-archiver",
+    "dfe-fetcher",
+    "dfe-transform-vrl",
+    "dfe-transform-vector",
+]
+
+
+def contract_ref_pattern(app: str, half: str) -> str:
+    """One half of a content entry's `ref`, anchored on the entry's own app.
+
+    All six refs sit in one file, so a bare `ref:` anchor would hand the first
+    entry's value to every check.
+    """
+    head = r"app: " + re.escape(app) + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+    return head + (r"([^\"@]+)@" if half == "tag" else r"[^\"@]+@([^\"]+)\"")
+
+
+CHECKS += [
+    Check(
+        f"{app} contract entry image {half}",
+        f"{'apps' if half == 'tag' else 'digests'}.{app}",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        contract_ref_pattern(app, half),
+    )
+    for app in _CONTRACT_ENTRIES
+    for half in ("tag", "digest")
+]
+
 # The hyperdx chart runs an init container on the ENGINE image to materialise the
 # dashboards the engine owns. Helm cannot read a sibling chart's appVersion, so
 # the engine tag has a second copy here and needs watching like any other.
@@ -482,6 +529,14 @@ CHECKS += [
         Path("helm/charts/hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
     ),
+    # The immutable half of that same second copy: the init container pulls the
+    # engine image, so a re-pushed tag lands bytes `dfe-stack verify` never saw.
+    Check(
+        "hyperdx dashboards init-container engine digest",
+        "digests.dfe-engine",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # The chart directory is `hyperdx` while the pin is `apps.dfe-hyperdx`, so it
     # does not fit _APP_CHARTS' name-derived path. Left unchecked it kept upstream
     # HyperDX's own appVersion, which is not a tag the fork ever publishes.
@@ -490,6 +545,16 @@ CHECKS += [
         "content.dfe-hyperdx",
         Path("helm/charts/hyperdx/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
+    ),
+    # The immutable half of that pin, which the same name mismatch kept out of
+    # _DIGEST_MIRRORS -- so versions.yaml carried digests.dfe-hyperdx while the
+    # chart rendered a bare tag. Anchored on the fork's repository line so it
+    # cannot match the dashboards digest, which is a different image.
+    Check(
+        "hyperdx fork image digest",
+        "digests.dfe-hyperdx",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*ghcr\.io/hyperi-io/dfe-hyperdx[^\n]*\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
     # points, not an artefact of its own -- so the chart name does not match the
@@ -506,6 +571,30 @@ CHECKS += [
         Path("helm/charts/dfe-schema/values.yaml"),
         r'digest:\s*"([^"]+)"',
     ),
+    # The engine reports the deployment's dfe-ui version on
+    # GET /api/v1/system/deployment. Helm cannot read a sibling chart's
+    # appVersion, so the engine chart carries a second copy of the ui pin.
+    Check(
+        "dfe-ui version (engine values)",
+        "apps.dfe-ui",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r'uiVersion:\s*"([^"]+)"',
+    ),
+    # The git-sync sidecar in the hunt-runner pod: a THIRD-PARTY image in a chart
+    # whose own image is dfe-engine, so both halves are anchored on the repository
+    # line rather than on the file's first tag:/digest: (which are the engine's).
+    Check(
+        "hunt-runner git-sync image tag",
+        "services.git-sync",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r'git-sync/git-sync\n\s*tag:\s*"([^"@]+)"',
+    ),
+    Check(
+        "hunt-runner git-sync image digest",
+        "services-digests.git-sync",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
 ]
 
 
@@ -516,10 +605,15 @@ CHECKS += [
 #
 # Patterns are exact keys or `section.*`.
 UNCONSUMED: dict[str, str] = {
+    "platform.kubernetes": "bootstrap/check_platform.py and dfe-ops preflight both read it at runtime by name; no hardcoded copy",
+    "platform.rke2": "bootstrap/check_platform.py reads it at runtime; no hardcoded copy",
+    "platform.rancher": "DECLARED, not checked: nothing in a cluster reports the Rancher managing it, so there is no second copy to drift against",
+    "platform.eks": "a REQUIREMENT on a cluster this repo does not build -- deployment.example.yaml takes an existing cluster and argocd/values/aws.yaml is a Plan 07 stub. Give it a Check once that stub becomes real provisioning",
     "bootstrap.cert-manager": "bootstrap.sh reads it at runtime (read_versions.py); no hardcoded copy",
     "bootstrap.external-secrets": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.local-path-provisioner": "bootstrap.sh reads it at runtime; no hardcoded copy",
+    "bootstrap.metallb": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "services.cnpg-cluster-instances": "replica count, overridden per profile",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
@@ -565,6 +659,9 @@ SWEEP_PATTERNS = (
     ("image ref", r'(?m)^[^\S\n]*image:[^\S\n]*"?[\w./-]+:([^"\s#@]+)'),
     ("provider constraint", r'(?m)^[^\S\n]*version[^\S\n]*=[^\S\n]*"([^"]+)"'),
     ("stack pin", r'(?m)^[^\S\n]*pin:[^\S\n]*"?([^"\s#]+)"?'),
+    # A content entry's ref is an image pin under a key nothing else here reads,
+    # so a seventh entry added with no check would otherwise pass unseen.
+    ("content ref", r'(?m)^[^\S\n]*ref:[^\S\n]*"[\w./-]+:([^"\s#@]+)'),
 )
 
 _HAS_DIGIT = re.compile(r"\d")
@@ -593,11 +690,6 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "helm/charts/forgejo/values.yaml",
         "image ref",
         "curl for the PostSync setup Job; the tools block was deliberately dropped, and Renovate's infra-pins group watches helm-values",
-    ),
-    (
-        "helm/charts/dfe-vpn/Chart.yaml",
-        "appVersion",
-        "first-party chart with no upstream image -- appVersion is its own version",
     ),
     (
         "helm/charts/envoy-gateway-config/Chart.yaml",

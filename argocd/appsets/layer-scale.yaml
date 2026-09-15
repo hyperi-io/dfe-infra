@@ -1,8 +1,12 @@
-# Scale-profile-only apps: Kafka operator + Strimzi Kafka + transform services.
-# These deploy ONLY on clusters labelled dfe.hyperi.io/profile: scale.
-# slim + single clusters lack the label, so nothing here is generated (no
-# goTemplate skipping needed): slim has no Kafka at all, and single runs a
-# NON-operator single broker (kafka-single.yaml) that needs no operator.
+# Operators and apps the scale tiers need, selected by dfe.hyperi.io/profile.
+# dfe-scale-operators: Strimzi + the ClickHouse operator, profile scale only.
+# dfe-mesh-operators: the ClickHouse operator alone, profile mesh only
+# (that tier runs no broker).
+# dfe-redpanda-operator: scale plus an explicit redpanda provider opt-in.
+# dfe-scale-apps: the per-source transform workers, on both scale tiers; the
+# element list is empty by default (see its own header).
+# slim + single clusters match none of these: slim has no Kafka at all, and single
+# runs a NON-operator single broker (kafka-single.yaml) that needs no operator.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -39,6 +43,67 @@ spec:
                 # Namespace is upstream's own and MUST match common.yaml
                 # operatorNamespaces.clickhouse, which is what opens the
                 # NetworkPolicy the operator needs to probe Keeper and run DDL.
+                # dfe-mesh-operators below carries the same pin; both move together.
+                - chart: clickhouse-operator-helm
+                  repo: ghcr.io/clickhouse
+                  version: "0.0.7"
+                  namespace: clickhouse-operator-system
+                  wave: "3"
+                  appProject: infra
+  template:
+    metadata:
+      name: '{{ .chart }}-{{ .name }}'
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .wave }}'
+    spec:
+      project: '{{ .appProject }}'
+      source:
+        repoURL: '{{ .repo }}'
+        chart: '{{ .chart }}'
+        targetRevision: '{{ .version }}'
+        helm:
+          valuesObject:
+            global:
+              domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
+              env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: false
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+---
+# The mesh tier runs a ClickHouse cluster and no broker, so it needs the
+# ClickHouse operator without Strimzi. A separate ApplicationSet rather than a
+# wider selector on dfe-scale-operators: moving an element between ApplicationSets
+# orphans the Applications a running scale cluster already owns by name.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-mesh-operators
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                  dfe.hyperi.io/profile: mesh
+          - list:
+              elements:
+                # Same pin as dfe-scale-operators above; the two move together.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.7"
@@ -143,7 +208,10 @@ spec:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
                   dfe.hyperi.io/managed: "true"
-                  dfe.hyperi.io/profile: scale
+                matchExpressions:
+                  - key: dfe.hyperi.io/profile
+                    operator: In
+                    values: [scale, mesh]
           - list:
               elements:
                 # Kafka itself moved to layer2-data (mode-driven, all profiles).

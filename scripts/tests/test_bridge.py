@@ -28,6 +28,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "bootstrap" / "bridge.py"
 
@@ -35,17 +37,6 @@ spec = importlib.util.spec_from_file_location("bridge", SCRIPT)
 bridge = importlib.util.module_from_spec(spec)
 sys.modules["bridge"] = bridge
 spec.loader.exec_module(bridge)
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def test_state_fallback_reads_outputs() -> None:
@@ -103,11 +94,11 @@ def test_binary_finder_returns_none_rather_than_exiting() -> None:
 
 
 def main() -> int:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print(f"\n{'FAILED' if _failures else 'ALL PASSED'} -- {_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
 
 
 if __name__ == "__main__":

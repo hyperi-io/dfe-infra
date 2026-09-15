@@ -25,9 +25,13 @@ on a bare CI image.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
 from pathlib import Path
+
+from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "check_versions_drift.py"
@@ -38,17 +42,6 @@ drift = importlib.util.module_from_spec(spec)
 # module must be registered before exec_module rather than after.
 sys.modules["drift"] = drift
 spec.loader.exec_module(drift)
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def test_sweep_is_clean_as_committed() -> None:
@@ -209,6 +202,51 @@ def test_fix_propagates_one_ssot_key_to_every_mirror() -> None:
     )
 
 
+def test_fix_moves_both_halves_of_a_contract_entry() -> None:
+    """The engine mounts each app's contract by running that app's pinned image.
+
+    The entry names tag@sha256 and the node pulls by digest, so a tag rewritten
+    on its own would name one release and run another.
+    """
+    versions = dict(drift.load_versions())
+    digest = "sha256:" + "9" * 64
+    versions["apps.dfe-loader"] = "v1.18.99"
+    versions["digests.dfe-loader"] = digest
+
+    writes, _, refused = drift.plan_fix(versions)
+    expect("propagation refuses nothing on a plain app bump", refused == [], f"{refused}")
+    values = writes.get(Path("helm/charts/dfe-engine/values.yaml"), "")
+    expect(
+        "the loader's content entry carries the new tag@sha256",
+        f'ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.99@{digest}"' in values,
+        f"{[line for line in values.splitlines() if 'dfe-loader:' in line]}",
+    )
+    expect(
+        "and the five other entries are untouched",
+        values.count("v1.18.99") == 1 and values.count(digest) == 1,
+        f"tag={values.count('v1.18.99')} digest={values.count(digest)}",
+    )
+
+
+def test_a_contract_entry_ref_is_visible_to_the_sweep() -> None:
+    """Drop its checks and the ref must come back as unswept.
+
+    `ref:` is read by nothing else in the tree, so without the sweep pattern a
+    seventh entry could be added with no check and pass.
+    """
+    original = drift.CHECKS
+    try:
+        drift.CHECKS = [c for c in original if "dfe-loader contract entry" not in c.label]
+        unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p and "content ref" in p]
+        expect(
+            "the unchecked ref surfaces, and only that one",
+            len(unswept) == 1 and "dfe-engine/values.yaml" in unswept[0],
+            f"got {unswept}",
+        )
+    finally:
+        drift.CHECKS = original
+
+
 def test_fix_refuses_rather_than_guessing() -> None:
     """A pattern that stopped matching means the file changed shape.
 
@@ -333,12 +371,41 @@ def test_regressed_appversions_are_caught() -> None:
         )
 
 
+def test_the_metallb_pin_is_accounted_for_by_a_reason() -> None:
+    """bootstrap.sh is its only reader, so there is no mirror to check it against."""
+    versions = drift.load_versions()
+    expect("bootstrap.metallb is in the current stack", "bootstrap.metallb" in versions,
+           f"got {sorted(k for k in versions if k.startswith('bootstrap.'))}")
+    expect("no CHECKS entry claims it",
+           "bootstrap.metallb" not in {c.key for c in drift.CHECKS})
+    expect("an UNCONSUMED reason accounts for it instead",
+           drift.unconsumed_reason("bootstrap.metallb") is not None)
+    bootstrap_sh = (REPO_ROOT / "bootstrap" / "bootstrap.sh").read_text(encoding="utf-8")
+    expect("and the recorded reason is true -- bootstrap.sh reads the key",
+           "bootstrap.metallb" in bootstrap_sh, "no runtime read of the pin")
+
+
+def test_dropping_the_metallb_reason_reports_the_pin_dead() -> None:
+    """A pin accounted for by nothing has to FAIL the run, not pass quietly."""
+    original = drift.UNCONSUMED
+    captured = io.StringIO()
+    try:
+        drift.UNCONSUMED = {k: v for k, v in original.items() if k != "bootstrap.metallb"}
+        with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
+            rc = drift.main()
+    finally:
+        drift.UNCONSUMED = original
+    expect("an unaccounted pin fails the check", rc == 1, f"got rc={rc}")
+    expect("and the failure names the key",
+           "bootstrap.metallb" in captured.getvalue(), captured.getvalue())
+
+
 def main() -> int:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print(f"\n{'FAILED' if _failures else 'ALL PASSED'} -- {_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
 
 
 if __name__ == "__main__":

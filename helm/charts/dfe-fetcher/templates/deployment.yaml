@@ -5,7 +5,22 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  {{- include "dfe-common.replicas" . }}
+  {{- if not (and .Values.keda .Values.keda.enabled) }}
+  # PINNED at 1, deliberately not dfe-common.replicas: a fetcher is a producer
+  # bound to one external source, so N replicas of one config are N duplicate
+  # polls, and the profile files set replicaCount globally (scale sets 2).
+  # Coverage grows by adding fetcher configs; a config whose fetch mechanism does
+  # support competing consumers opts in via keda (see values.yaml).
+  replicas: 1
+  {{- end }}
+  {{- if .Values.persistence.enabled }}
+  # The cursor PVC is ReadWriteOnce: a surging replacement blocks on an attach
+  # the outgoing pod still holds, so this one replaces in place instead.
+  strategy:
+    type: Recreate
+  {{- else }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
@@ -14,8 +29,9 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
-        # Roll the pods when the config blob changes -- the app reads the file at
-        # startup only, so a ConfigMap update alone would not take effect.
+        # Roll the pods on ANY config change. One delivery mechanism for every
+        # key, so nothing depends on whether the app's own reloader would have
+        # caught it; dfe-common.rollout makes that roll a rolling update.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
@@ -43,20 +59,74 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+            {{- $ingest := default dict (get (default dict .Values.config) "ingest") }}
+            {{- if $ingest.enabled }}
+            # The container-extractor listener, declared only when this instance
+            # turns it on: off, the app binds nothing (dfe-fetcher
+            # src/config/mod.rs IngestConfig::default).
+            - name: ingest
+              containerPort: 8080
+              protocol: TCP
+            {{- end }}
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_FETCHER_") | nindent 12 }}
-            - name: KAFKA_BOOTSTRAP_SERVERS
-              value: {{ .Values.kafka.bootstrapServers | quote }}
+            # An instance whose credentials are vault:/env: references in its own
+            # stanza has no such Secret, so the refs are optional; a deployment
+            # that provisions one still gets it injected.
             - name: DFE_FETCHER_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.apiCredentials.secretName }}
                   key: {{ .Values.apiCredentials.apiKeyKey }}
+                  optional: true
             - name: DFE_FETCHER_API_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.apiCredentials.secretName }}
                   key: {{ .Values.apiCredentials.apiSecretKey }}
+                  optional: true
+            {{- if (include "dfe-common.transportIsBus" .) }}
+            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if .Values.kafka.saslSecretName }}
+            # SASL credential by env, not in the config blob: the engine-authored
+            # YAML carries a MASKED password, and env is applied after the
+            # unmarshal (apply_flat_env, config/mod.rs:199) so it wins.
+            #
+            # Names are the fetcher's own flat-env contract (config/mod.rs:483-513,
+            # prefix DFE_FETCHER at :36). It spells it USER like dfe-receiver, where
+            # dfe-loader spells it USERNAME -- an upstream inconsistency.
+            #
+            # The mechanism MUST be supplied too: setting only user and password
+            # leaves sasl.mechanism "" (mod.rs:486), which librdkafka rejects. It is
+            # a RAW PASSTHROUGH (src/output.rs:265), so the secret's librdkafka
+            # spelling `SCRAM-SHA-512` is the one that works -- dfe-loader's
+            # `scram_sha_512` enum spelling dies here.
+            - name: DFE_FETCHER_KAFKA_SASL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_FETCHER_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            - name: DFE_FETCHER_KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
+            {{- end }}
+            {{- end }}
+            {{- /* The DLQ writes to the bus, so it follows the INSTANCE's compiled
+                   output rather than the deployment's transport: on a bus deploy
+                   the engine still compiles a direct source's fetcher to
+                   output.type grpc, and the fetcher refuses kafka_only with no
+                   kafka output. */}}
+            {{- $output := default dict (get (default dict .Values.config) "output") }}
+            {{- if and (include "dfe-common.transportIsBus" .) (ne (toString (default "kafka" (get $output "type"))) "grpc") }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
             # pre-created by the kafka chart (kafka.dlqTopics); names are the
@@ -65,12 +135,29 @@ spec:
               value: {{ .Values.dlq.topic | quote }}
             - name: DFE_FETCHER_DLQ_MODE
               value: {{ .Values.dlq.mode | quote }}
+            {{- else }}
+            # No bus behind this instance's output, and the fetcher's mode
+            # vocabulary has no "disabled" word.
+            - name: DFE_FETCHER_DLQ_ENABLED
+              value: "false"
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
             {{- end }}
+            # Per-instance: the app name alone leaves every fetcher instance
+            # indistinguishable in the otel tables.
             - name: OTEL_SERVICE_NAME
-              value: dfe-fetcher
+              value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
+          {{- with .Values.credentials.secretName }}
+          # The upstream's credentials, by env rather than in the config blob:
+          # the source's stanza carries `env:NAME` references and the engine
+          # commits that stanza to git, so the value must live outside it.
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+                optional: true
+          {{- end }}
           volumeMounts:
             - name: config
               mountPath: /etc/dfe
@@ -80,6 +167,11 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            # The cursor store's directory (cursor.file_path defaults to
+            # /var/lib/dfe-fetcher/cursors.json), unwritable on the read-only
+            # rootfs without a volume.
+            - name: cursor
+              mountPath: /var/lib/dfe-fetcher
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           # WAS `exec: pgrep dfe-fetcher` -- a process-existence check that stays
@@ -106,3 +198,12 @@ spec:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        - name: cursor
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-cursor
+          {{- else }}
+          # Default: a lost cursor re-fetches the default window rather than
+          # losing data, and the slim tier is not guaranteed a StorageClass.
+          emptyDir: {}
+          {{- end }}

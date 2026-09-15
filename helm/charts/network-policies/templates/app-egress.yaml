@@ -8,6 +8,7 @@
   cannot reach pod/service space. DNS is NOT repeated here (baseline covers it).
 */}}
 {{- $eg := .Values.internetEgress }}
+{{- $except := $eg.exceptCIDRs | default (include "network-policies.internalCIDRs" . | fromYamlArray) }}
 {{- range $ns := .Values.dfeNamespaces }}
 {{- range $app := $eg.apps }}
 ---
@@ -29,7 +30,7 @@ spec:
     - to:
         - ipBlock:
             cidr: {{ $cidr }}
-            {{- with $eg.exceptCIDRs }}
+            {{- with $except }}
             except:
               {{- toYaml . | nindent 14 }}
             {{- end }}

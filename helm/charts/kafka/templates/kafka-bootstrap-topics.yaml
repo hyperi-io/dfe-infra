@@ -13,12 +13,12 @@ process exits. On a clean install nobody has published yet, so no *_land topic
 exists, so the loader crashloops until the first event arrives -- but the first
 event cannot be loaded by a loader that is down. Live-proven 2026-07-17:
 creating this topic took the loader straight from that fatal to "Resolved Kafka
-topics: [default_land]" and a running pipeline.
+topics: [main_land]" and a running pipeline.
 
 The landing topic's name is NOT arbitrary: dfe-receiver derives it as
-`{routing.default_source}{routing.topic_suffix}` = default + _land
+`{routing.default_source}{routing.topic_suffix}` = main + _land
 (src/routing/mod.rs:79), and it is dfe-loader's own GrpcConfig.default_topic
-(config/kafka.rs:109). Both sides already agree on `default_land`; this makes
+(config/kafka.rs:109). Both sides already agree on `main_land`; this makes
 the broker agree too, before either starts.
 
 Why the DLQ topics are pre-created: the fleet's containers run a read-only

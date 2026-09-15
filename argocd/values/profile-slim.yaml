@@ -45,6 +45,13 @@ kafka:
 kafbat:
   enabled: false
 
+# Its HTTPRoute lives in the kafka namespace, which slim never creates; left on,
+# envoy-gateway-config stays OutOfSync forever on `namespaces "kafka" not found`.
+# `routes:` is a key only that chart carries.
+routes:
+  kafbat:
+    enabled: false
+
 # CNPG -- single instance (no HA).
 cluster:
   instances: 1
@@ -56,3 +63,18 @@ clusterTelemetry:
     enabled: false
   kafka:
     enabled: false
+
+# BEGIN seeded apps -- rendered by `python3 scripts/composition.py --write-seed`
+# The apps this tier deploys by default. Derived from apps.yaml's
+# `default_in`, which is where the default composition is declared; edit
+# the manifest, then re-render. A Helm list is replaced rather than merged,
+# so this states the whole set.
+deployRepo:
+  seedApps:
+    - dfe-archiver
+    - dfe-engine
+    - dfe-loader
+    - dfe-receiver
+    - dfe-ui
+    - hyperdx
+# END seeded apps

@@ -1,0 +1,99 @@
+# Default user fixture for `dfe-ops idp` -- the glauth directory the tester Dex
+# authenticates against.
+#
+# glauth config-backend schema: users carry a primarygroup (and optional
+# othergroups) by gidNumber; groups carry a gidNumber, and includegroups nests
+# one inside another. `dfe-ops idp deploy` appends the dex bind service account
+# and substitutes {{DFE_FIXTURE_PASS_SHA256}} with the sha256 of the password it
+# generates, so no credential is ever committed here.
+#
+# The set is deliberately WIDER than a happy-path login: a user with no mapped
+# group (dfe-nobody), a user in two groups (dfe-multi-viewer), and a nested
+# group (dfe-nested-child includes dfe-nested-parent) each exist so a group ->
+# role mapping can be proven to resolve exactly one way and not another.
+#
+# Pass a different file with --users-file to test against another directory
+# shape. Group NAMES are the contract with the engine's group -> role files;
+# uid/gid numbers are internal to glauth.
+
+[[users]]
+  name = "dfe-admin"
+  uidnumber = 6001
+  primarygroup = 5000
+  mail = "dfe-admin@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[users]]
+  name = "dfe-analyst"
+  uidnumber = 6006
+  primarygroup = 5003
+  mail = "dfe-analyst@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[users]]
+  name = "dfe-viewer"
+  uidnumber = 6008
+  primarygroup = 5005
+  mail = "dfe-viewer@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[users]]
+  name = "dfe-operator"
+  uidnumber = 6009
+  primarygroup = 5006
+  mail = "dfe-operator@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+# Two groups at once -- proves a multi-group claim resolves to the union of the
+# roles, not to whichever group the directory happened to list first.
+[[users]]
+  name = "dfe-multi-viewer"
+  uidnumber = 6010
+  primarygroup = 5005
+  othergroups = [5003]
+  mail = "dfe-multi-viewer@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+# Authenticates but maps to no role: the authn-succeeds-authz-denies case.
+[[users]]
+  name = "dfe-nobody"
+  uidnumber = 6003
+  primarygroup = 5999
+  mail = "dfe-nobody@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[users]]
+  name = "dfe-nested-member"
+  uidnumber = 6011
+  primarygroup = 5010
+  mail = "dfe-nested-member@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[groups]]
+  name = "dfe-admins"
+  gidnumber = 5000
+
+[[groups]]
+  name = "dfe-analysts"
+  gidnumber = 5003
+
+[[groups]]
+  name = "dfe-viewers"
+  gidnumber = 5005
+
+[[groups]]
+  name = "dfe-operators"
+  gidnumber = 5006
+
+[[groups]]
+  name = "dfe-nested-parent"
+  gidnumber = 5009
+
+[[groups]]
+  name = "dfe-nested-child"
+  gidnumber = 5010
+  includegroups = [5009]
+
+[[groups]]
+  name = "dfe-nogroup"
+  gidnumber = 5999
