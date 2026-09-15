@@ -144,8 +144,14 @@ class BastionError(RuntimeError):
 _KEY_LINE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z_][A-Za-z0-9_-]*):(?P<rest>\s*(#.*)?$|\s+\S.*$)")
 
 
-def _set_toolbox_field(text: str, field: str, value: str) -> str:
+def _set_toolbox_field(text: str, field: str, value: str, *, quoted: bool = True) -> str:
     """Set a scalar field inside the dial's top-level `toolbox:` block.
+
+    `quoted` is the caller's statement about the field's TYPE, not a style
+    choice: render_dial.py reads `enabled` as a quoted string, while
+    `ttl_minutes` is a number the toolbox module validates against a numeric
+    range, and the dial's own comment records that the chart refuses a quoted
+    boolean -- the same coercion in the other direction.
 
     A focused editor, not a general YAML writer: it walks from the `toolbox:`
     line (column 0) to the next column-0, non-blank line, tracking the key path
@@ -190,7 +196,8 @@ def _set_toolbox_field(text: str, field: str, value: str) -> str:
             path.pop()
         path.append((indent, match.group("key")))
         if not found and [key for _, key in path] == wanted:
-            out.append(f'{match.group("indent")}{match.group("key")}: "{value}"')
+            rendered_value = f'"{value}"' if quoted else value
+            out.append(f'{match.group("indent")}{match.group("key")}: {rendered_value}')
             found = True
             continue
         out.append(line)
@@ -216,7 +223,7 @@ def _read_dial() -> str:
 def _set_toolbox_enabled(enabled: bool, *, ttl_minutes: int | None = None) -> None:
     text = _set_toolbox_field(_read_dial(), "enabled", "true" if enabled else "false")
     if ttl_minutes is not None:
-        text = _set_toolbox_field(text, "ttl_minutes", str(ttl_minutes))
+        text = _set_toolbox_field(text, "ttl_minutes", str(ttl_minutes), quoted=False)
     DIAL.write_text(text, encoding="utf-8")
     print(f"dfe-ops bastion: set toolbox.enabled = {str(enabled).lower()} in {DIAL.name}", file=sys.stderr)
 

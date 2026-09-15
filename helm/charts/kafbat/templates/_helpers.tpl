@@ -79,14 +79,29 @@ the ConfigMap.
 
 {{/*
 kafbat.effectiveAuthType -- the auth type actually rendered. OAUTH2 is only
-honoured when the oidc block is filled (oidc.enabled=true); without it the
-chart degrades to LOGIN_FORM (break-glass) so a vanilla deployment with an
-empty overlay still BOOTS -- kafbat exits 1 ("OAuth2 authentication is
-enabled but no providers specified") if auth.type=OAUTH2 reaches it bare.
-OIDC takes over the moment the overlay fills oidc.*. DISABLED passes through.
+honoured when the oidc block is FILLED, which takes more than oidc.enabled:
+the issuer, the client id and the client secret's name are all required.
+
+enabled alone is not enough, and the gap is not cosmetic. The cloud values
+overlays set oidc.enabled for the whole deployment, so a deployment with no
+kafbat provider yet rendered OAUTH_CLIENT_SECRET with an empty secretKeyRef
+name, which the API server REJECTS -- the Deployment never applied and the
+Application could not sync at all.
+
+Without a filled block the chart degrades to LOGIN_FORM (break-glass) so a
+vanilla deployment with an empty overlay still BOOTS -- kafbat exits 1
+("OAuth2 authentication is enabled but no providers specified") if
+auth.type=OAUTH2 reaches it bare. OIDC takes over the moment the overlay
+fills oidc.*. DISABLED passes through.
 */}}
+{{- define "kafbat.oidcIsUsable" -}}
+{{- if and .Values.oidc.enabled .Values.oidc.issuerUri .Values.oidc.clientId .Values.oidc.clientSecretName -}}
+true
+{{- end -}}
+{{- end }}
+
 {{- define "kafbat.effectiveAuthType" -}}
-{{- if and (eq .Values.auth.type "OAUTH2") (not .Values.oidc.enabled) -}}
+{{- if and (eq .Values.auth.type "OAUTH2") (not (include "kafbat.oidcIsUsable" .)) -}}
 LOGIN_FORM
 {{- else -}}
 {{- .Values.auth.type -}}

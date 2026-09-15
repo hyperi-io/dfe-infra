@@ -121,10 +121,22 @@ spec:
               # LB pool choose, which re-rolls the edge address on a rebuild.
               - name: envoyGateway.service.loadBalancerIP
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/gateway_address" }}'
-              # Where the DFE apps run, so the network policies name the same
-              # namespace the apps are actually placed in.
+              # Where the DFE apps run, for the charts here that read it.
               - name: appNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # network-policies reads dfeNamespaces, NOT appNamespace, and a
+              # NetworkPolicy aimed at a namespace that does not exist is
+              # REJECTED -- which fails the whole Application sync and leaves
+              # the cluster with no policies at all rather than with wrong ones.
+              - name: dfeNamespaces[0]
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # The deployment's own posture and cloud. Every chart here labels
+              # what it renders from these, and the chart defaults say local, so
+              # without them an AWS deployment's objects claim to be a local one.
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              - name: cloud
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               # The toolbox pod's own dial facts (deployment.yaml's
               # toolbox.pod.*, carried onto the cluster secret by bootstrap.sh
               # the same way retention.defaultTtlDays is in layer2-apps.yaml).

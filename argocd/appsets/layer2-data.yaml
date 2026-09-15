@@ -129,6 +129,14 @@ spec:
               # its gateway-first URLs; harmless elsewhere.
               - name: domain
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # The deployment's own posture and cloud. Every chart labels what
+              # it renders from these and the chart defaults say local, so
+              # without them a cloud deployment's objects claim to be a local
+              # one and anything selecting on those labels misses.
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              - name: cloud
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               # Deployment-wide retention, the SAME annotation layer2-apps hands
               # the engine, so the schema apply and the engine cannot disagree
               # about a table's TTL. Only dfe-schema reads it; harmless elsewhere.

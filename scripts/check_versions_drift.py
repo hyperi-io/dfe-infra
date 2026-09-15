@@ -871,6 +871,21 @@ def _pattern_is_pinned(pattern: str, versions: dict[str, str]) -> bool:
     return pattern in versions
 
 
+def stacks_needing_pending_mirrors() -> list[str]:
+    """Selectable stacks that do NOT pin every PENDING_MIRRORS key.
+
+    Each one would start failing its own check the moment the list is deleted,
+    which is exactly what PENDING_MIRRORS exists to stop.
+    """
+    stacks = _parse_nested(VERSIONS_FILE.read_text()).get("stacks", {})
+    needing = []
+    for stack in stacks:
+        versions = load_versions(stack)
+        if not all(_pattern_is_pinned(p, versions) for p in PENDING_MIRRORS):
+            needing.append(stack)
+    return needing
+
+
 # CHECKS runs SSoT -> file, so a literal in a file no check points at is
 # invisible to it -- which is how a component ends up with a second, unwatched
 # pin. The sweep runs the other way: find the pin-shaped literals on the
@@ -1283,14 +1298,28 @@ def main(argv: list[str] | None = None) -> int:
             f"CHECKS entry, or an UNCONSUMED reason saying why it has no second copy"
         )
 
-    # PENDING_MIRRORS is temporary by construction: once the selected stack pins
-    # every key on it, it has done its job and must go, or it rots into a
+    # PENDING_MIRRORS is temporary by construction: once EVERY selectable stack
+    # pins every key on it, it has done its job and must go, or it rots into a
     # permanent exemption nobody revisits.
-    if PENDING_MIRRORS and all(_pattern_is_pinned(p, versions) for p in PENDING_MIRRORS):
-        failures.append(
-            f"  [stale]   stack '{stack}' pins every PENDING_MIRRORS key -- delete "
-            f"PENDING_MIRRORS; each of those keys is now a normal pin"
-        )
+    #
+    # Every stack, not the selected one: the list exists so a stack that
+    # PREDATES a key has nothing to compare against, and deleting it while such
+    # a stack is still selectable makes that stack's own check fail. The advice
+    # therefore has to wait for the older stack to be retired.
+    if PENDING_MIRRORS:
+        still_needed = stacks_needing_pending_mirrors()
+        if not still_needed:
+            failures.append(
+                "  [stale]   every stack pins every PENDING_MIRRORS key -- delete "
+                "PENDING_MIRRORS; each of those keys is now a normal pin"
+            )
+        elif all(_pattern_is_pinned(p, versions) for p in PENDING_MIRRORS):
+            print(
+                f"  [note]    stack '{stack}' pins every PENDING_MIRRORS key, but "
+                f"{', '.join(still_needed)} does not -- delete PENDING_MIRRORS once "
+                f"the older stack is retired, not before",
+                file=sys.stderr,
+            )
 
     # Stale UNCONSUMED entries rot the same way the pins do.
     for pattern in sorted(UNCONSUMED):

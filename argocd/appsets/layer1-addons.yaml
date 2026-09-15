@@ -210,6 +210,18 @@ spec:
             # the day a second cloud declares a dns-provider.
             policy: sync
             txtOwnerId: '{{ .name }}'
+            # The HTTP plane is Gateway API: the gateway chart renders Gateways
+            # and HTTPRoutes and never an Ingress, so the chart's own
+            # service+ingress default can publish no HTTPRoute hostname at all.
+            # It has been working only because the gateway annotates its own
+            # LoadBalancer Service with the hostname, which makes that one
+            # annotation the single point of failure for every DFE hostname.
+            # The chart grants the httproutes RBAC from this list, so naming
+            # the source is the whole change.
+            sources:
+              - service
+              - ingress
+              - gateway-httproute
             {{- end }}
             {{- if eq .chart "aws-load-balancer-controller" }}
             # The EKS cluster's own name, not the name Argo registered the

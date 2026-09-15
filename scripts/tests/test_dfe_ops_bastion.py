@@ -704,7 +704,12 @@ def test_up_with_ttl_overrides_ttl_minutes(tmp_path: Path, monkeypatch: pytest.M
     rc = bastion.cmd_bastion_up(_args(ttl=30))
 
     assert rc == 0
-    assert '  ttl_minutes: "30"' in dial.read_text(encoding="utf-8")
+    # A NUMBER, unquoted: the toolbox module validates ttl_minutes against a
+    # numeric range, where enabled is a string render_dial.py reads quoted.
+    text = dial.read_text(encoding="utf-8")
+    assert "  ttl_minutes: 30" in text
+    assert 'ttl_minutes: "30"' not in text
+    assert '  enabled: "true"' in text
 
 
 def test_up_fails_when_tofu_apply_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
