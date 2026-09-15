@@ -3,6 +3,12 @@
 # fleet tunnel (helm/edge/culvert) are one module because they are the same job
 # -- a door -- and they are turned off together.
 #
+# THIS FILE SERVES NEW CLUSTERS ONLY UNTIL rc.15. A cluster secret written before
+# the edge module carries no dfe.hyperi.io/edge key, so the gate below never
+# matches it; layer2-platform.yaml and layer2-apps.yaml keep generating the same
+# two Applications for exactly those clusters, under the same names, and both
+# hand over here at rc.15 (dfe-infra#342).
+#
 # THE OFF SWITCH is the cluster secret's own dfe.hyperi.io/edge, and it gates
 # both ApplicationSets below. A cluster secret written before this module
 # carries no such key, and In alone already excludes it -- a label selector's
@@ -90,7 +96,7 @@ spec:
           # `index` rather than `.chart`, because goTemplateOptions is
           # missingkey=error and a field lookup on an element that states no
           # chart would fail the render instead of falling back to the name.
-          path: 'helm/{{ index . "chart" | default .app }}'
+          path: 'helm/{{ index . "chart" | default (printf "charts/%s" .app) }}'
           helm:
             ignoreMissingValueFiles: true
             valueFiles:

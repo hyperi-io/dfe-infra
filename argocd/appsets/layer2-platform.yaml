@@ -27,9 +27,6 @@ spec:
                   dfe.hyperi.io/managed: "true"
           - list:
               elements:
-                # envoy-gateway-config moved to appsets/layer2-edge.yaml with its
-                # name and its wave unchanged; the edge module owns it now.
-                #
                 # Default-deny plus the explicit allows between DFE namespaces.
                 - app: network-policies
                   namespace: default
@@ -43,6 +40,41 @@ spec:
                 # generic platform namespace, not a DFE app or data one.
                 - app: dfe-toolbox
                   namespace: default
+                  wave: "2"
+                  appProject: infra
+    # envoy-gateway-config, for THIS RELEASE ONLY -- it moves to
+    # appsets/layer2-edge.yaml at rc.15 (dfe-infra#342).
+    #
+    # The edge module gates on the cluster secret's own dfe.hyperi.io/edge, and a
+    # secret written before that module carries no such key -- so layer2-edge
+    # generates nothing for an existing cluster, and without this generator the
+    # Application would simply disappear. Nothing sets preserveResourcesOnDeletion,
+    # so that would take the live Gateway, every HTTPRoute and every public
+    # Certificate with it.
+    #
+    # DoesNotExist, not NotIn: the gate is "this secret predates the module", not
+    # "the module is off". A deployer who set the key to false turned the edge off
+    # deliberately and gets no Gateway from here either -- NotIn would match that
+    # cluster too and quietly override the switch. So exactly one appset generates
+    # the Application for any cluster, and neither does when it is off.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/edge
+                    operator: DoesNotExist
+          - list:
+              elements:
+                # Name and wave unchanged from before the chart moved under
+                # helm/edge, so Argo adopts the live objects rather than
+                # deleting and recreating them.
+                - app: envoy-gateway-config
+                  chart: edge/gateway
+                  namespace: envoy-gateway-system
                   wave: "2"
                   appProject: infra
     # karpenter-pools: the NodePools and EC2NodeClasses a workload actually
@@ -91,7 +123,9 @@ spec:
           # `index` rather than `.chart`, because goTemplateOptions is
           # missingkey=error and a field lookup on an element that states no
           # chart would fail the render instead of falling back to the name.
-          path: 'helm/charts/{{ index . "chart" | default .app }}'
+          # The default keeps the charts/ prefix, so only a chart living outside
+          # helm/charts (the edge module's two) has to state its directory.
+          path: 'helm/{{ index . "chart" | default (printf "charts/%s" .app) }}'
           helm:
             ignoreMissingValueFiles: true
             valueFiles:
