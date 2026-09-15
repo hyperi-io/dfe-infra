@@ -71,10 +71,11 @@ kafbat:
     secretName: dfe-kafbat-breakglass
     generate: true             # ESO-generated on a bare cluster
 
-  # Manage the deployed DFE Kafka.
+  # Manage the deployed DFE Kafka. -no-tls because both DFE-owned brokers serve
+  # SASL on a TLS-off listener; a supplied broker over TLS takes the bare key.
   kafka:
     clusters:
       - name: dfe
-        provider: strimzi
+        provider: strimzi-no-tls
         bootstrapServers: dfe-kafka-bootstrap.kafka.svc:9092
         credentialsSecretName: dfe-kafka-user

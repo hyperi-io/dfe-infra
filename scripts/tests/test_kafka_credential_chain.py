@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         test_kafka_credential_chain.py
+#  Purpose:      The Kafka credential chain end to end in a render: the keys the
+#                apps read, the provider table they are derived from, and the
+#                external-mode contract.
+#  Language:     Python
+#
+#  License:      BUSL-1.1
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""Rendered assertions for dfe-infra #187, #191, #10, #190 and the chart half of #9.
+
+**#187 -- two keys nothing wrote.** The scale profile turns the cross-namespace
+credential projection off, because the broker namespace IS the app namespace
+there. That also switched off the only template writing `username` and
+`sasl.mechanism` into `dfe-kafka-user`, which have nothing to do with
+namespaces. Four charts name those keys in a non-optional secretKeyRef, so every
+one of their pods sat in CreateContainerConfigError with no container started.
+
+**#191 and #10 -- the provider table.** kafbat asked for SASL_SSL against a
+broker the same render served on SASL_PLAINTEXT, because the table had no key
+for a DFE-owned broker on its TLS-off listener. The table now lives in
+dfe-common, both `-no-tls` keys are in it, and everything that needs a protocol
+or a mechanism derives from it instead of carrying a literal.
+
+**#9 -- external mode.** Naming the supplied broker's provider gets the same
+credential shape the DFE-owned tiers produce, so a Confluent Cloud target is
+expressible: SASL_SSL with PLAIN, the one sanctioned exception to SCRAM-SHA-512.
+
+    python3 scripts/tests/test_kafka_credential_chain.py
+
+Needs `helm` on PATH. No test runner, matching the other checks here.
+"""
+
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+from _expect import expect, standalone, summary
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+CHARTS = REPO_ROOT / "helm" / "charts"
+KAFKA = CHARTS / "kafka"
+LIBRARY_HARNESS = REPO_ROOT / "helm" / "library" / "dfe-common" / "tests" / "lint-test"
+STACK = REPO_ROOT / "helm" / "dfe-stack"
+PROFILES = STACK / "profiles"
+KAFKA_TPL = REPO_ROOT / "helm" / "library" / "dfe-common" / "templates" / "_kafka.tpl"
+
+_loader = importlib.machinery.SourceFileLoader(
+    "deploy_matrix", str(REPO_ROOT / "scripts" / "deploy_matrix.py")
+)
+_spec = importlib.util.spec_from_loader("deploy_matrix", _loader)
+deploy_matrix = importlib.util.module_from_spec(_spec)
+sys.modules["deploy_matrix"] = deploy_matrix
+_loader.exec_module(deploy_matrix)
+
+# The DFE Kafka credential contract (dfe-engine#98) as this file expects to find
+# it rendered: provider identity -> (security.protocol, sasl.mechanism).
+CONTRACT_TABLE = {
+    "plaintext": ("PLAINTEXT", ""),
+    "strimzi-no-tls": ("SASL_PLAINTEXT", "SCRAM-SHA-512"),
+    "redpanda-no-tls": ("SASL_PLAINTEXT", "SCRAM-SHA-512"),
+    "strimzi": ("SASL_SSL", "SCRAM-SHA-512"),
+    "redpanda": ("SASL_SSL", "SCRAM-SHA-512"),
+    "msk": ("SASL_SSL", "SCRAM-SHA-512"),
+    "redpanda-cloud": ("SASL_SSL", "SCRAM-SHA-512"),
+    "confluent-cloud": ("SASL_SSL", "PLAIN"),
+    "msk_iam": ("SASL_SSL", "OAUTHBEARER"),
+}
+
+# Providers that ship a schema registry, so kafbat only wires the URL where one
+# exists to answer it.
+WITH_REGISTRY = {"confluent-cloud", "redpanda", "redpanda-no-tls", "redpanda-cloud"}
+
+# The charts naming dfe-kafka-user keys in a non-optional secretKeyRef.
+SECRET_CONSUMERS = ("dfe-receiver", "dfe-loader", "kafbat", "dfe-engine")
+
+
+def _helm(chart: Path, *sets: str, values: Path | None, show: str = "") -> subprocess.CompletedProcess[str]:
+    cmd = ["helm", "template", chart.name, str(chart)]
+    if values is not None:
+        cmd += ["-f", str(values)]
+    if show:
+        cmd += ["--show-only", show]
+    for s in sets:
+        cmd += ["--set", s]
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
+def render(chart: Path, *sets: str, values: Path | None = None, show: str = "") -> list[dict]:
+    """Rendered docs. Raises with helm's own message when the chart refuses."""
+    out = _helm(chart, *sets, values=values, show=show)
+    if out.returncode != 0:
+        raise SystemExit(f"helm template failed for {chart.name} {sets}:\n{out.stderr}")
+    return [d for d in yaml.safe_load_all(out.stdout) if d]
+
+
+def render_text(chart: Path, *sets: str, values: Path | None = None) -> str:
+    out = _helm(chart, *sets, values=values)
+    if out.returncode != 0:
+        raise SystemExit(f"helm template failed for {chart.name} {sets}:\n{out.stderr}")
+    return out.stdout
+
+
+def render_error(chart: Path, *sets: str, values: Path | None = None) -> str:
+    """helm's stderr when the chart refuses to render, or "" when it rendered."""
+    out = _helm(chart, *sets, values=values)
+    return out.stderr if out.returncode != 0 else ""
+
+
+def build_deps(chart: Path) -> None:
+    """Vendor a chart's dependencies once, where they are not committed."""
+    if (chart / "charts").is_dir():
+        return
+    out = subprocess.run(
+        ["helm", "dependency", "build", str(chart)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"helm dependency build failed for {chart.name}:\n{out.stderr}")
+
+
+def build_harness_deps() -> None:
+    build_deps(LIBRARY_HARNESS)
+
+
+def stack(profile: str) -> list[dict]:
+    """The umbrella rendered with one profile overlay."""
+    build_deps(STACK)
+    return render(STACK, values=PROFILES / profile)
+
+
+def derived(provider: str) -> dict[str, str]:
+    """What the library table derives for one provider key."""
+    build_harness_deps()
+    docs = render(
+        LIBRARY_HARNESS,
+        f"kafka.provider={provider}",
+        show="templates/kafka-configmap.yaml",
+    )
+    return docs[0]["data"]
+
+
+def secret_key_refs(docs: list[dict], secret: str) -> set[str]:
+    """Every key named on `secret` by a container env in these docs."""
+    keys: set[str] = set()
+    for doc in docs:
+        spec = doc.get("spec", {})
+        pod = spec.get("template", {}).get("spec") or spec.get("jobTemplate", {})
+        for container in (pod or {}).get("containers", []):
+            for env in container.get("env", []):
+                ref = (env.get("valueFrom") or {}).get("secretKeyRef") or {}
+                if ref.get("name") == secret:
+                    keys.add(ref["key"])
+    return keys
+
+
+def written_keys(docs: list[dict], secret: str) -> set[str]:
+    """Every key an ExternalSecret in these docs puts INTO `secret`."""
+    keys: set[str] = set()
+    for doc in docs:
+        if doc.get("kind") == "ExternalSecret":
+            spec = doc["spec"]
+        elif doc.get("kind") == "ClusterExternalSecret":
+            spec = doc["spec"]["externalSecretSpec"]
+        else:
+            continue
+        if spec.get("target", {}).get("name") != secret:
+            continue
+        keys |= set(spec.get("target", {}).get("template", {}).get("data", {}))
+        keys |= {d["secretKey"] for d in spec.get("data", [])}
+    return keys
+
+
+# --- #187: the keys the apps read ------------------------------------------
+
+
+def test_the_scale_profile_writes_the_keys_its_apps_read() -> None:
+    """The defect: turning the projection off dropped username and the mechanism."""
+    docs = stack("scale.yaml")
+    written = written_keys(docs, "dfe-kafka-user")
+    expect(
+        "the scale render writes username into dfe-kafka-user",
+        "username" in written,
+        f"got {sorted(written)}",
+    )
+    expect(
+        "and sasl.mechanism",
+        "sasl.mechanism" in written,
+        f"got {sorted(written)}",
+    )
+
+
+def test_every_consumer_key_is_one_the_scale_render_supplies() -> None:
+    """A secretKeyRef on a missing KEY starts no container and writes no log."""
+    docs = stack("scale.yaml")
+    read = secret_key_refs(docs, "dfe-kafka-user")
+    expect("the consumers do read that secret", read, "no chart referenced dfe-kafka-user")
+    written = written_keys(docs, "dfe-kafka-user") | {"password"}
+    expect(
+        "every key the apps read is written by the same render",
+        read <= written,
+        f"unwritten: {sorted(read - written)}",
+    )
+
+
+def test_the_keys_do_not_depend_on_the_projection_flag() -> None:
+    """username and a mechanism have nothing to do with a cross-namespace copy."""
+    for from_store in ("true", "false"):
+        docs = render(
+            KAFKA,
+            "kafka.mode=cluster",
+            "kafka.provider=strimzi",
+            "appNamespace=dfe-local",
+            f"user.password.fromSecretsStore={from_store}",
+        )
+        written = written_keys(docs, "dfe-kafka-user")
+        expect(
+            f"fromSecretsStore={from_store} still writes username",
+            "username" in written,
+            f"got {sorted(written)}",
+        )
+        expect(
+            f"fromSecretsStore={from_store} still writes sasl.mechanism",
+            "sasl.mechanism" in written,
+            f"got {sorted(written)}",
+        )
+
+
+def test_the_app_keys_merge_rather_than_claim_the_name() -> None:
+    """The User Operator owns dfe-kafka-user; a second owner would fight it."""
+    docs = render(
+        KAFKA,
+        "kafka.mode=cluster",
+        "kafka.provider=strimzi",
+        "appNamespace=dfe-local",
+        "user.password.fromSecretsStore=false",
+    )
+    appkeys = [
+        d for d in docs
+        if d.get("kind") == "ExternalSecret"
+        and d["metadata"]["name"].endswith("-appkeys")
+    ]
+    expect("the app-keys ExternalSecret renders", len(appkeys) == 1, f"got {len(appkeys)}")
+    policy = appkeys[0]["spec"]["target"]["creationPolicy"]
+    expect("it merges into the operator's Secret", policy == "Merge", f"got {policy}")
+
+
+def test_the_single_tier_still_carries_the_same_shape() -> None:
+    """Both tiers present one credential shape, so clients are identical."""
+    docs = stack("single.yaml")
+    written = written_keys(docs, "dfe-kafka-user")
+    expect(
+        "the single render writes all three keys",
+        {"username", "password", "sasl.mechanism"} <= written,
+        f"got {sorted(written)}",
+    )
+
+
+# --- #191 and #10: the provider table ---------------------------------------
+
+
+def test_the_table_derives_the_contract_pair_for_every_provider() -> None:
+    for provider, (protocol, mechanism) in CONTRACT_TABLE.items():
+        got = derived(provider)
+        expect(
+            f"{provider} derives {protocol}",
+            got["securityProtocol"] == protocol,
+            f"got {got['securityProtocol']}",
+        )
+        expect(
+            f"{provider} derives {mechanism or 'no mechanism'}",
+            got["saslMechanism"] == mechanism,
+            f"got {got['saslMechanism']}",
+        )
+
+
+def test_plain_never_crosses_a_cleartext_transport() -> None:
+    """The one hard floor: a PLAIN password rides SASL_SSL or it does not ride."""
+    plain = [k for k, (_, mech) in CONTRACT_TABLE.items() if mech == "PLAIN"]
+    expect("confluent-cloud is the only PLAIN target", plain == ["confluent-cloud"], f"got {plain}")
+    for provider in plain:
+        got = derived(provider)
+        expect(
+            f"{provider} carries PLAIN over SASL_SSL",
+            got["securityProtocol"] == "SASL_SSL",
+            f"got {got['securityProtocol']}",
+        )
+
+
+def test_the_registry_flag_follows_the_provider() -> None:
+    for provider in CONTRACT_TABLE:
+        got = derived(provider)["hasSchemaRegistry"]
+        expect(
+            f"{provider} schema registry is {provider in WITH_REGISTRY}",
+            bool(got) is (provider in WITH_REGISTRY),
+            f"got {got!r}",
+        )
+
+
+def test_an_unknown_provider_refuses_to_render() -> None:
+    """Guessing a default here is how a deployment ends up in the clear."""
+    build_harness_deps()
+    err = render_error(LIBRARY_HARNESS, "kafka.provider=kinesis")
+    expect("an unknown provider fails the render", "kinesis" in err, f"got {err!r}")
+    expect(
+        "and the message names the accepted keys",
+        "strimzi-no-tls" in err and "confluent-cloud" in err,
+        f"got {err!r}",
+    )
+
+
+def test_kafbat_matches_the_broker_in_its_own_render() -> None:
+    """The defect: one render carried both the wrong protocol and the right one."""
+    for profile in ("single.yaml", "scale.yaml"):
+        docs = stack(profile)
+        config = [
+            d for d in docs
+            if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("kafbat-config")
+        ]
+        expect(f"{profile}: kafbat renders a config", len(config) == 1, f"got {len(config)}")
+        cluster = yaml.safe_load(config[0]["data"]["application-local.yml"])["kafka"]["clusters"][0]
+        expect(
+            f"{profile}: kafbat speaks SASL_PLAINTEXT to a DFE-owned broker",
+            cluster["properties"]["security.protocol"] == "SASL_PLAINTEXT",
+            f"got {cluster['properties']['security.protocol']}",
+        )
+        expect(
+            f"{profile}: on the mechanism the broker serves",
+            cluster["properties"]["sasl.mechanism"] == "SCRAM-SHA-512",
+            f"got {cluster['properties']['sasl.mechanism']}",
+        )
+
+
+def test_the_topics_job_dials_what_the_broker_serves() -> None:
+    """kafbat and the Job disagreed about the same endpoint in one render."""
+    text = render_text(KAFKA, "kafka.mode=single", "kafka.provider=strimzi")
+    expect(
+        "the single-tier topics Job authenticates over SASL_PLAINTEXT",
+        "security.protocol=SASL_PLAINTEXT" in text,
+        "no derived security.protocol in the Job's client properties",
+    )
+    expect(
+        "with the derived mechanism",
+        "sasl.mechanism=SCRAM-SHA-512" in text,
+        "no derived sasl.mechanism in the Job's client properties",
+    )
+
+
+def test_the_matrix_expects_what_the_chart_derives() -> None:
+    """deploy_matrix asserts the derivation, so its table must be the contract."""
+    expect(
+        "the matrix table is the contract table",
+        deploy_matrix.PROVIDER_AUTH == CONTRACT_TABLE,
+        f"got {deploy_matrix.PROVIDER_AUTH}",
+    )
+    for provider, (protocol, mechanism) in CONTRACT_TABLE.items():
+        got = derived(provider)
+        expect(
+            f"the chart agrees with the matrix on {provider}",
+            (got["securityProtocol"], got["saslMechanism"]) == (protocol, mechanism),
+            f"got {got}",
+        )
+
+
+def test_the_matrix_catches_a_hand_set_mechanism() -> None:
+    """A check that passes on anything is what #10 asks this to stop being."""
+    cell = deploy_matrix.Cell("kafka", "cluster", "scale", ("kafka.provider=strimzi",))
+    clean = "  security.protocol: SASL_PLAINTEXT\n  sasl.mechanism: SCRAM-SHA-512\n"
+    expect("a derived render passes", not deploy_matrix.assert_derived_auth(cell, clean))
+    handset = "  sasl.mechanism: PLAIN\n"
+    expect(
+        "a hand-set mechanism fails",
+        "PLAIN" in deploy_matrix.assert_derived_auth(cell, handset),
+        deploy_matrix.assert_derived_auth(cell, handset),
+    )
+    broker_own = "    sasl.mechanism.inter.broker.protocol=SCRAM-SHA-512\n"
+    expect(
+        "the broker's own listener keys are not read as client config",
+        not deploy_matrix.assert_derived_auth(cell, broker_own),
+        deploy_matrix.assert_derived_auth(cell, broker_own),
+    )
+
+
+# --- #190: the note that was wrong in one direction -------------------------
+
+
+def test_the_provider_env_note_matches_the_vendored_scalo() -> None:
+    """The note told a reader the dial might not work; it half did."""
+    note = KAFKA_TPL.read_text(encoding="utf-8")
+    expect(
+        "the stale claim is gone",
+        "does not yet read a PROVIDER suffix" not in note,
+        "the template still says scalo cannot read the suffix",
+    )
+    expect(
+        "the reader is told what does consume it",
+        "from_env" in note and "dfe-transform-elastic" in note,
+        "the note names neither the reader nor the one app that uses it",
+    )
+
+
+# --- #9: the external-mode contract -----------------------------------------
+
+
+def test_naming_the_external_provider_gives_the_shared_secret_shape() -> None:
+    """Confluent Cloud's API key IS the username, so a password alone cannot express it."""
+    docs = render(
+        KAFKA,
+        "kafka.mode=external",
+        "kafka.external.bootstrap=pkc-1.ap-southeast-2.aws.confluent.cloud:9092",
+        "kafka.external.provider=confluent-cloud",
+    )
+    written = written_keys(docs, "dfe-kafka-external")
+    expect(
+        "the external credential carries all three keys",
+        {"username", "password", "sasl.mechanism"} <= written,
+        f"got {sorted(written)}",
+    )
+    secrets = [d for d in docs if d.get("kind") == "ExternalSecret"]
+    mechanism = secrets[0]["spec"]["target"]["template"]["data"]["sasl.mechanism"]
+    expect("with PLAIN derived for Confluent Cloud", mechanism == "PLAIN", f"got {mechanism}")
+
+
+def test_an_unnamed_external_provider_renders_the_pre_contract_shape() -> None:
+    """A deployment that seeded only a password keeps resolving."""
+    docs = render(KAFKA, "kafka.mode=external", "kafka.external.bootstrap=broker:9092")
+    written = written_keys(docs, "dfe-kafka-external")
+    expect("only the password is read", written == {"password"}, f"got {sorted(written)}")
+
+
+def test_iam_stays_quarantined_at_the_external_seam() -> None:
+    """msk_iam mints no static credential, so half-naming it renders a broken deploy."""
+    err = render_error(
+        KAFKA,
+        "kafka.mode=external",
+        "kafka.external.provider=msk_iam",
+        "kafka.external.auth.type=scram",
+    )
+    expect("provider msk_iam with a static auth type refuses", "msk_iam" in err, f"got {err!r}")
+    err = render_error(
+        KAFKA,
+        "kafka.mode=external",
+        "kafka.external.provider=confluent-cloud",
+        "kafka.external.auth.type=msk_iam",
+    )
+    expect("and the reverse mismatch refuses too", "msk_iam" in err, f"got {err!r}")
+
+
+def main() -> int:
+    with standalone():
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        return summary()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
