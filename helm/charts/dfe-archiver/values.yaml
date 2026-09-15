@@ -8,12 +8,21 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-archiver (drift-checked).
-  digest: "sha256:40eccf53458f21d0ff1415feb2149130106816fb7852f480edeee54df8d42036"
+  digest: "sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
+# Internal Service for the scalo Push listener, rendered on the direct transport
+# only (dfe-common.pushService). 6000 is the DFE gRPC convention.
+service:
+  pushPort: 6000
+
 kafka:
+  # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
+  # values. Templates read it through dfe-common.transport, never by comparing
+  # this string themselves.
+  mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
   # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
@@ -22,10 +31,34 @@ kafka:
   # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
   # DFE Kafka credential contract (dfe-engine#98).
   provider: ""
+  # Wire protocol for the broker's listener (PLAINTEXT | SASL_PLAINTEXT | SSL |
+  # SASL_SSL). Empty leaves the app's own PLAINTEXT default; the deployment's
+  # kafka layer names it beside bootstrapServers.
+  securityProtocol: ""
+  # Regex a discovered topic must match to be archived (KAFKA_TOPIC_INCLUDE).
+  # The platform convention is {source}_land, so this archives every source's
+  # landing topic and a source added later needs no restart. An empty list
+  # subscribes to nothing and the archiver reports itself idle.
+  topicInclude:
+    - "_land$"
 
+# Local disk INSIDE the pod: an emptyDir mounted at this path, with the
+# destination pointed at it (ARCHIVER_DESTINATION). Empty by default -- a
+# pod-local directory loses every file when the pod is replaced, so it proves
+# the path rather than keeping archives. A deployment with object storage sets
+# s3.* and leaves this empty.
+archive:
+  localPath: ""
+
+# Archive destination. Both keys are rendered as env (S3_ENDPOINT / S3_BUCKET,
+# the archiver's flat-env contract) and env BEATS the config file, so a value set
+# here would override whatever the engine's overlay authored. Both are EMPTY for
+# that reason -- the engine is the config authority, and a chart default here is
+# an override nobody asked for. Empty is omitted rather than sent blank, so a
+# deployment that sets one in its own values still wins.
 s3:
   endpoint: ""
-  bucket: dfe-archive
+  bucket: ""
   secretName: dfe-archiver-s3
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
@@ -46,6 +79,13 @@ dlq:
 # overlay does not overwrite them.
 config: {}
 
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
+
 otel:
   endpoint: ""
 
@@ -61,9 +101,10 @@ serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
 
-# KEDA autoscaling -- DEFAULT trigger is CPU (native cpu scaler, no shim). scalo
-# ScalingPressure (0-100) is OPT-IN via the fail-safe dfe-keda-shim (a metric outage
-# FREEZES scaling, never runs replicas up). minReplicaCount stays 1.
+# KEDA autoscaling -- the SHIPPED trigger is the native cpu scaler; scalo
+# ScalingPressure (0-100) via the fail-safe dfe-keda-shim is opt-in until every app
+# emits the gauge (dfe-infra #302), and the HPA takes the higher of the two where
+# both render. minReplicaCount stays 1.
 keda:
   enabled: true
   minReplicaCount: 1
@@ -71,12 +112,12 @@ keda:
   cooldownPeriod: 300
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # opt-in: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
     # service: dfe-archiver   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

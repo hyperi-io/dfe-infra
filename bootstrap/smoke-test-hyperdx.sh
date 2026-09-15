@@ -47,7 +47,9 @@ OTEL_LOGS_TABLE="${DFE_OTEL_LOGS_TABLE:-otel_logs}"
 PASS=0; FAIL=0; SKIP=0
 check() {
   local name="$1" cmd="$2"
-  if eval "$cmd" >/dev/null 2>&1; then echo "  [PASS] $name"; PASS=$((PASS+1)); else echo "  [FAIL] $name"; FAIL=$((FAIL+1)); fi
+  # pipefail is off for the check itself: a check ending in grep -q closes the
+  # pipe on the first match, and the producer's SIGPIPE would fail a passing check.
+  if ( set +o pipefail; eval "$cmd" ) >/dev/null 2>&1; then echo "  [PASS] $name"; PASS=$((PASS+1)); else echo "  [FAIL] $name"; FAIL=$((FAIL+1)); fi
 }
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 note() { echo "         $1"; }

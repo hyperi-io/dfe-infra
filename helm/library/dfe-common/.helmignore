@@ -1,0 +1,3 @@
+# The lint harness is a chart inside this chart, and it vendors this library in
+# turn -- packaged, it nests a copy of this archive inside every consumer's.
+tests/

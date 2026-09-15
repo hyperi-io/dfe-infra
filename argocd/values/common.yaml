@@ -27,6 +27,7 @@ hostnames:
   links: links
   otel: otel          # platform OTLP ingest
   receiver: receiver  # data ingest, used only by exposure.mode: internal
+  vpn: vpn            # edge-fleet tunnel door; culvert's server certificate CN
 
 # THE canonical operator-namespace map: network-policies allows data-namespace
 # ingress from these, and otel-collector scrapes their controllers' metrics.
@@ -90,9 +91,43 @@ otel:
 # and named differently, so profile-scale.yaml overrides this.
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
+  # The shipped broker authenticates with SCRAM over its plain listener. A
+  # deployment on a TLS listener moves this to SASL_SSL with bootstrapServers.
+  securityProtocol: SASL_PLAINTEXT
   sasl:
     enabled: true
     mechanism: SCRAM-SHA-512
+
+# The pool balancer for the direct transport. A Kubernetes Service balances per
+# CONNECTION and gRPC holds one connection open, so a sender pins itself to one
+# pod of the pool it dials. `enabled` puts a Gateway API listener in front of
+# every pool instead: the sender addresses the listener, and the proxy spreads
+# each REQUEST across the pool. Only the mesh profile turns it on -- the
+# single-replica tiers have nothing to spread, and the brokered tiers balance
+# through the broker's consumer group.
+#
+# The listener is Gateway API, so the implementation is the class name:
+# `dfe-envoy` is the in-cluster Envoy Gateway the deployment already runs at its
+# edge, and a cloud provider's Gateway API class is the swap where the class
+# name is the whole difference.
+mesh:
+  enabled: false
+  gateway:
+    name: dfe-mesh
+    className: dfe-envoy
+    # Where the Gateway and its proxy pods live. The pool aliases are Services
+    # in this namespace selecting those pods, so it is also the namespace half
+    # of every pool's mesh hostname.
+    namespace: envoy-gateway-system
+    # How a pool alias finds the proxy pods. These are Envoy Gateway's own
+    # ownership labels; a different Gateway API implementation supplies its
+    # equivalents here rather than in a template.
+    proxySelector:
+      gateway.envoyproxy.io/owning-gateway-name: dfe-mesh
+      gateway.envoyproxy.io/owning-gateway-namespace: envoy-gateway-system
+  # The port the listener answers on, matching the platform push port every
+  # stage's listener already uses (dfe-common.pushPort).
+  port: 6000
 
 # Read only by the kafka chart, which projects the SCRAM credential into the
 # namespaces that need it beyond appNamespace. The collector's kafka_metrics
@@ -141,8 +176,24 @@ vault:
 elasticsearch:
   endpoint: ""
 
-receiver:
-  listenCIDR: "100.64.0.0/10"
+# THE cluster network model: the ranges the CNI and kube-proxy hand out. These
+# are what the cluster was installed with, so a deployment on different ranges
+# changes them HERE and nowhere else. network-policies carves them out of every
+# internet allow (a compromised pod cannot then reach pod or service space) and
+# culvert pushes the service range as the route a tunnel client may take.
+networkModel:
+  podCIDR: "198.18.0.0/16"
+  serviceCIDR: "198.19.0.0/16"
+  # Cloud metadata and the rest of link-local, never a destination for a DFE pod.
+  linkLocalCIDR: "169.254.0.0/16"
+
+# Edge-fleet VPN (the culvert chart). clientCIDR is the CGNAT range (RFC 6598)
+# reserved for tunnel clients and never for pod or service ranges, so an
+# appliance's own LAN and the cluster cannot collide with it; the chart carves
+# one /24 per tunnel out of it. Declared here because the reservation binds the
+# whole deployment's addressing, not just the app that consumes it.
+vpn:
+  clientCIDR: "100.64.0.0/10"
 
 # Key names mirror the ScaledObject spec fields the library helper writes; the
 # earlier minReplicas/maxReplicas spelling matched nothing and never applied.

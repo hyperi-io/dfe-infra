@@ -1,0 +1,86 @@
+{{- $ca := .Values.tls.internalCA -}}
+{{- $p := $ca.persist -}}
+{{- $key := $p.remoteKey | default (printf "%s/%s/pki/internal-ca" .Values.project .Values.env) -}}
+{{- if and $ca.enabled $p.enabled $p.secretStoreName (not .Values.tls.vault.server) }}
+# Root PERSISTENCE for the self-signed internal CA (#238). Two halves against ONE
+# store path: the ExternalSecret RESTORES the root, the PushSecret SAVES it.
+# First bootstrap: nothing to restore, cert-manager mints, the push stores it.
+# Later bootstraps: the restore writes dfe-internal-ca-tls and cert-manager
+# adopts a CA that already satisfies the Certificate spec.
+# bootstrap.sh applies this same rendered file ahead of Argo, so the restore is
+# ordered before the Certificate rather than racing it.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: dfe-internal-ca-restore
+  namespace: {{ $ca.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # The Secret outlives this ExternalSecret: cert-manager owns it from the
+    # moment it adopts the restored root.
+    helm.sh/resource-policy: keep
+spec:
+  # Only while dfe-internal-ca-tls is absent. Once it exists -- restored here or
+  # minted by cert-manager -- this never writes again, so it cannot fight
+  # cert-manager over a live root.
+  refreshPolicy: CreatedOnce
+  refreshInterval: "0"
+  secretStoreRef:
+    name: {{ $p.secretStoreName }}
+    kind: {{ $p.secretStoreKind }}
+  target:
+    name: dfe-internal-ca-tls
+    # Orphan, not Owner: no ownerReference, so pruning this ExternalSecret does
+    # not garbage-collect the root out from under cert-manager.
+    creationPolicy: Orphan
+    template:
+      engineVersion: v2
+      type: kubernetes.io/tls
+      data:
+        tls.crt: "{{ `{{ .cert }}` }}"
+        tls.key: "{{ `{{ .key }}` }}"
+  data:
+    - secretKey: cert
+      remoteRef:
+        key: {{ $key }}
+        property: {{ $p.certProperty }}
+    - secretKey: key
+      remoteRef:
+        key: {{ $key }}
+        property: {{ $p.keyProperty }}
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: dfe-internal-ca-persist
+  namespace: {{ $ca.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  # IfNotExists is the CreatedOnce half of the pair: the first deployment to
+  # reach the path wins it, and no later rebuild overwrites a stored root with
+  # the one it just minted.
+  updatePolicy: IfNotExists
+  # The stored root must survive this deployment being torn down -- surviving a
+  # teardown is the whole point.
+  deletionPolicy: None
+  secretStoreRefs:
+    - name: {{ $p.secretStoreName }}
+      kind: {{ $p.secretStoreKind }}
+  selector:
+    secret:
+      name: dfe-internal-ca-tls
+  data:
+    - match:
+        secretKey: tls.crt
+        remoteRef:
+          remoteKey: {{ $key }}
+          property: {{ $p.certProperty }}
+    - match:
+        secretKey: tls.key
+        remoteRef:
+          remoteKey: {{ $key }}
+          property: {{ $p.keyProperty }}
+{{- end }}

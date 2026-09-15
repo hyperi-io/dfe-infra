@@ -68,6 +68,10 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: DFE_CLICKHOUSE_SECURE
               value: "false"
+            # The apply reconciles existing tables, so the TTL the engine runs
+            # with has to reach this Job too.
+            - name: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS
+              value: {{ .Values.retention.defaultTtlDays | quote }}
             {{- with .Values.clickhouse.user }}
             - name: DFE_CLICKHOUSE_USERNAME
               value: {{ . | quote }}

@@ -1,0 +1,111 @@
+# Profile overlay: MESH -- HA replicas and a ClickHouse cluster with NO
+# Kafka; the receiver feeds the loader over direct gRPC.
+# Source: argocd/values/profile-mesh.yaml, mapped onto the umbrella's
+# per-subchart keys (endpoints shortened for the single-namespace install).
+#
+# EXTRA prerequisites over slim/single (pins: versions.yaml `operators:`):
+#   - clickhouse-operator 0.0.7    (ClickHouseCluster + KeeperCluster CRs)
+#   - keda 2.20.1                  (the app charts' ScaledObjects)
+# NOT strimzi-kafka-operator: this profile runs no broker.
+# At this tier the ArgoCD product path (argocd/appsets/) is the right vehicle;
+# this overlay exists so the umbrella's composition can be exercised end to end.
+# Usage: helm template dfe helm/dfe-stack -n dfe -f helm/dfe-stack/profiles/mesh.yaml
+
+# NO POOL BALANCER HERE. The argocd path turns `mesh.enabled` on; this one
+# cannot, because the umbrella installs the apps alone into one namespace and
+# the Gateway the pool listeners attach to belongs to the platform layer
+# (envoy-gateway-config) that the umbrella does not carry. What the umbrella
+# exercises is the composition, not the edge.
+
+x-mesh-shared:
+  # Source: argocd/values/profile-mesh.yaml `resources:` -- 4Gi rather
+  # than scale's 2Gi because no broker holds records between stages here.
+  resources: &meshResources
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  # No broker: each stage hands records to the next over gRPC, at the address
+  # the engine compiles into that stage's overlay.
+  kafka: &meshKafka
+    mode: disabled
+  # Source: argocd/values/profile-mesh.yaml `keda:`.
+  keda: &meshKeda
+    enabled: true
+    minReplicaCount: 2
+    maxReplicaCount: 10
+
+clickhouse-cluster:
+  clickhouse:
+    # Source: argocd/values/profile-mesh.yaml `clickhouse:` -- operator
+    # cluster with DFE-owned Keeper, ReplicatedMergeTree.
+    mode: cluster
+    replicas: 3
+    shardsCount: 1
+
+cnpg-cluster:
+  cluster:
+    # Source: argocd/values/profile-mesh.yaml `cluster.instances` (HA).
+    instances: 3
+
+# Source: argocd/values/profile-mesh.yaml `kafbat.enabled` (no Kafka to manage).
+kafbat:
+  enabled: false
+
+dfe-engine:
+  # The operator cluster emits only a headless client Service.
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *meshResources
+
+dfe-ui:
+  replicaCount: 2
+  resources: *meshResources
+  keda: *meshKeda
+
+dfe-receiver:
+  replicaCount: 2
+  kafka: *meshKafka
+  resources: *meshResources
+  keda: *meshKeda
+  receiver:
+    # Source: argocd/values/profile-mesh.yaml `receiver.buffer` -- with no
+    # broker downstream this is the only slack in the chain, so 3 GiB of the
+    # pod's 4Gi plus 20 GiB of spool.
+    buffer:
+      memoryLimit: 3221225472
+      spillover:
+        enabled: true
+        sizeLimit: 20Gi
+
+dfe-loader:
+  replicaCount: 2
+  kafka: *meshKafka
+  # The operator cluster emits only a headless client Service.
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *meshResources
+  keda: *meshKeda
+
+dfe-hyperdx:
+  replicaCount: 2
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  resources: *meshResources
+
+dfe-schema:
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+
+otel-collector:
+  clickhouse:
+    host: "dfe-clickhouse-clickhouse-headless"
+  # Source: argocd/values/profile-mesh.yaml `clusterTelemetry:` -- no broker
+  # to scrape.
+  clusterTelemetry:
+    kubeletStats:
+      enabled: true
+    kafka:
+      enabled: false

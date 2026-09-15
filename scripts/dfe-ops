@@ -28,8 +28,8 @@ Subcommands:
   deploy       Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
                terraform -> bridge -> bootstrap -> Argo).
   stack-deploy Drive one END-TO-END deploy of a PINNED stack version in a chosen
-               MODE (slim|single|scale) onto an EXISTING cluster: offline
-               pre-flight (pins resolve, no drift, mode charts render) ->
+               MODE (slim|single|scale|mesh) onto an EXISTING cluster:
+               offline pre-flight (pins resolve, no drift, mode charts render) ->
                bootstrap (Layer 0/1 + Argo sync of the mode's profile at the
                SSoT-pinned versions) -> bounded readiness gate -> the two default
                E2E tests -> access summary. Provisions NOTHING (deploy ONTO, not
@@ -44,10 +44,33 @@ Subcommands:
                stack-deploy (+ the 2 default E2E tests) -> full smoke suite ->
                destroy. Every estate-specific value comes from --env-file;
                --keep skips the destroy for dev-cluster debugging.
+  creds        Print the fetch command for every login this deploy carries --
+               admin, break-glass, Argo CD, the deploy-repo git host,
+               ClickHouse, Kafbat -- and mark any secret the cluster does not
+               carry. Never prints a value. The access summary prints the same
+               block, so there is one list of credentials, not two.
+  ca           Print the deployment's edge ROOT certificate (public half) and the
+               lines that install it into a Linux or macOS trust store, so a
+               developer box trusts a self-signed deploy once instead of after
+               every rebuild. --install does the non-root half; --status is the
+               issuer-mode report the readiness gate and access summary carry.
   teardown     Tear the deployment down (wraps bootstrap/destroy.sh); optionally
                also destroy terraform state.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
                or just the readiness gate.
+  refresh      Upgrade a PERSISTENT deploy in place: hard-refresh every Argo
+               Application so a pushed commit on the tracked ref lands NOW
+               rather than at the next poll, WAIT for those syncs to finish,
+               then re-prove the deploy with the readiness gate and the same
+               smoke suite `verify` runs. Deploys nothing itself -- Argo already
+               tracks the ref, so `git push` is the change and this is the
+               "land it and prove it" half.
+  idp          Stand up (or tear down) a throwaway Dex + glauth tester IdP in
+               the deployment's own cluster, routed on its own gateway, so
+               external-OIDC login can be exercised end to end without editing
+               a shared provider's redirect URIs or restarting it. Users,
+               groups, hostname, gateway and redirect URIs are all flags;
+               passwords are generated per deploy into a 0600 file.
   pin          Resolve a pinned version (tag) to its current GHCR digest and,
                with --write, set the current stack's digests: in versions.yaml
                (supply-chain cooldown honoured). --check is the read-only "are my
@@ -88,6 +111,17 @@ this file is committed publicly, so substitute your own node):
     python3 scripts/dfe-ops cycle --mode single --kubeconfig .tmp/dfe.kubeconfig \
         --env-file bootstrap/.env
 
+    # Land a push on the persistent deploy's tracked ref, then re-prove it:
+    python3 scripts/dfe-ops refresh --mode slim --kubeconfig .tmp/dfe.kubeconfig \
+        --env-file bootstrap/.env
+
+    # Where does each login come from on this cluster?
+    python3 scripts/dfe-ops creds --kubeconfig .tmp/dfe.kubeconfig
+
+    # Trust this deployment's edge certificate on a developer box:
+    python3 scripts/dfe-ops ca --kubeconfig .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops ca --install --kubeconfig .tmp/dfe.kubeconfig
+
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
     python3 scripts/dfe-ops teardown --force --with-terraform
@@ -101,10 +135,16 @@ VAULT_* env, ...). stack-deploy's pre-flight needs only python3 + helm.
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import json
 import os
+import platform
+import re
+import secrets
+import shlex
 import shutil
+import socket
 import ssl
 import subprocess
 import sys
@@ -112,7 +152,9 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -124,24 +166,34 @@ DFE_STACK = SCRIPTS / "dfe-stack"
 DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
 NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 
-# `pin` (version -> registry digest resolve/check/write) lives in resolve_pins so
-# the standalone tool and `dfe-ops pin` are one code path (dfe-infra#116).
+# Sibling modules, so each shared mechanism has one implementation:
+#   access_summary -- the launcher's login file, rendered by the deploy and read
+#                   back by the acceptance suites that sign in with it.
+#   capacity     -- resource.Quantity parsing and the memory readings the lane
+#                   gate and the pre-flight capacity check both judge.
+#   composition  -- which apps a profile deploys by default, from apps.yaml.
+#   envfile      -- every tool parses an operator's env file the same way.
+#   profiles     -- the deploy MODES and what follows from one (broker, substrate
+#                   charts, capacity floor); the bootstrap smoke tests read the
+#                   same table through a generated shell fragment.
+#   resolve_pins -- `pin`, so the standalone tool and `dfe-ops pin` are one code
+#                   path (dfe-infra#116).
+#   tester_idp   -- `idp`, whose render functions are unit-testable cluster-free.
 sys.path.insert(0, str(SCRIPTS))
+import access_summary as access_summary_file  # noqa: E402
+import capacity  # noqa: E402
+import composition  # noqa: E402
+import envfile  # noqa: E402
+import profiles  # noqa: E402
+from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
+from tester_idp import add_idp_subparser  # noqa: E402
 
-# The deploy MODES (== the appset profile value each selects). One lever --
-# DFE_PROFILE -- drives the whole stack: the cluster secret's label (which gates
-# the scale-only operator appsets) AND its annotation (which selects
-# argocd/values/profile-<mode>.yaml). slim = gRPC, no Kafka, single-node CH;
-# single = one node of everything WITH Kafka (non-operator broker); scale = HA,
-# operator ClickHouse cluster + Strimzi Kafka.
-MODES = ("slim", "single", "scale")
-DEFAULT_STACK = "2.2.0-rc.1"
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
 # bootstrap.sh's required env (validated up-front so a missing var fails the
 # driver before it touches the cluster, not mid-run). DFE_KAFKA_BOOTSTRAP is
-# intentionally omitted -- it is empty in slim (gRPC transport).
+# intentionally omitted -- it is empty in the brokerless modes (gRPC transport).
 BOOTSTRAP_REQUIRED = (
     "DFE_ENV",
     "DFE_CLOUD",
@@ -159,16 +211,8 @@ BOOTSTRAP_REQUIRED = (
     "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
 )
 
-# Substrate charts each mode actually deploys -- drives the offline helm-render
-# pre-flight. slim: single-node ClickHouse only (no Kafka). single/scale: also
-# Kafka (single renders a non-operator StatefulSet; scale renders the Strimzi CR,
-# whose operator layer-scale.yaml installs). A representative set of app charts is
-# always rendered too, so an app-side profile break is caught before deploy.
-_MODE_SUBSTRATE = {
-    "slim": ("clickhouse-cluster",),
-    "single": ("clickhouse-cluster", "kafka"),
-    "scale": ("clickhouse-cluster", "kafka"),
-}
+# A representative set of app charts is rendered alongside the mode's substrate
+# charts, so an app-side profile break is caught before deploy.
 _PREFLIGHT_APPS = ("dfe-receiver", "dfe-loader", "dfe-engine")
 
 # --- kubeconfig defaults -----------------------------------------------------
@@ -184,7 +228,7 @@ _LOOPBACK_SERVERS = ("https://127.0.0.1:6443", "https://[::1]:6443")
 # --- shared shell helpers ----------------------------------------------------
 def _run_capture(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run a subprocess, capturing output; raise CalledProcessError on failure."""
-    return subprocess.run(  # noqa: S603 - args are built from validated flags
+    return subprocess.run(
         cmd, capture_output=True, check=True
     )
 
@@ -192,7 +236,7 @@ def _run_capture(cmd: list[str]) -> subprocess.CompletedProcess:
 def _run_streaming(cmd: list[str], *, env: dict | None = None) -> int:
     """Run a subprocess inheriting stdio (live output); return its exit code."""
     print(f"==> {' '.join(cmd)}", file=sys.stderr)
-    return subprocess.run(cmd, env=env).returncode  # noqa: S603
+    return subprocess.run(cmd, env=env).returncode
 
 
 # --- kubeconfig subcommand ---------------------------------------------------
@@ -282,7 +326,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
         args.url, data=body, headers=headers, method=args.method.upper()
     )
     try:
-        with urllib.request.urlopen(  # noqa: S310 - explicit URL from flags
+        with urllib.request.urlopen(
             req, timeout=args.timeout, context=ctx
         ) as resp:
             status = resp.status
@@ -346,7 +390,7 @@ def cmd_deploy_values(args: argparse.Namespace) -> int:
     sha = None
     listing = None
     try:
-        with urllib.request.urlopen(  # noqa: S310 - URL from flags
+        with urllib.request.urlopen(
             urllib.request.Request(url, headers=headers), timeout=args.timeout
         ) as resp:
             info = json.loads(resp.read())
@@ -371,7 +415,7 @@ def cmd_deploy_values(args: argparse.Namespace) -> int:
         if sha is None:
             print(f"absent: {args.path}")
             return 1
-        with urllib.request.urlopen(  # noqa: S310
+        with urllib.request.urlopen(
             urllib.request.Request(url, headers=headers), timeout=args.timeout
         ) as resp:
             print(base64.b64decode(json.loads(resp.read())["content"]).decode())
@@ -400,7 +444,7 @@ def cmd_deploy_values(args: argparse.Namespace) -> int:
             method="PUT" if sha else "POST",
         )
     try:
-        with urllib.request.urlopen(req, timeout=args.timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
             print(f"HTTP {resp.status} - {args.action} {args.path}")
     except urllib.error.HTTPError as exc:
         print(f"{args.action} failed: HTTP {exc.code} {exc.read().decode('utf-8', 'replace')[:300]}", file=sys.stderr)
@@ -455,18 +499,41 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     return _run_streaming(tf_cmd, env=env)
 
 
-def cmd_verify(args: argparse.Namespace) -> int:
-    """Run the smoke suite against the SAME env the deploy used.
+def _apply_domain(env: dict[str, str], mode: str | None, *, deploying: bool = True) -> dict[str, str]:
+    """Tag the domain with the profile when the deploy declares only a base one.
 
-    Without the env files the suite falls back to its compiled-in namespace
-    defaults -- `dfe` rather than the deployed `dfe-local` -- and then reports a
-    healthy stack as broken, one FAIL per namespace-scoped check.
+    One cluster runs one profile at a time, so each mode publishes
+    <profile>.<base> and a rebuild in another mode cannot claim the hostnames the
+    previous one's DNS still names. An explicit DFE_DOMAIN alone is a fixed
+    domain; beside a base domain it must be the convention's value. A verify
+    observes the domain a stack already has, so it never refuses one.
     """
-    name = "smoke-test-readiness.sh" if args.readiness_only else "run-all-smoke-tests.sh"
-    script = _require_script(name)
-    if script is None:
-        return 1
+    base = env.get("DFE_BASE_DOMAIN")
+    explicit = env.get("DFE_DOMAIN")
+    if deploying and explicit and base and mode and explicit != f"{mode}.{base}":
+        # A base domain declares the <mode>.<base> convention, so an explicit
+        # domain that contradicts it is a stale override, not a choice.
+        raise SystemExit(
+            f"ERROR: DFE_DOMAIN={explicit} contradicts DFE_BASE_DOMAIN={base} for "
+            f"--mode {mode}: this deploy would publish under {explicit} while the "
+            f"convention (and the DNS) names {mode}.{base}. Drop the DFE_DOMAIN "
+            "override (check every .tmp/*.env this run loaded) or set it to "
+            f"{mode}.{base}."
+        )
+    if explicit or not base or not mode:
+        return env
+    env["DFE_DOMAIN"] = f"{mode}.{base}"
+    print(f"  domain derived from DFE_BASE_DOMAIN: {env['DFE_DOMAIN']}", file=sys.stderr)
+    return env
 
+
+def _suite_env(args: argparse.Namespace) -> dict[str, str]:
+    """The deploy's own env for a bootstrap test script: terraform, then env files.
+
+    Every check in those scripts is namespace-scoped, so without these vars they
+    read the compiled-in default namespace -- `dfe` rather than the deployed
+    `dfe-local` -- and report a healthy stack as broken.
+    """
     env = dict(os.environ)
     if args.from_terraform:
         sys.path.insert(0, str(BOOTSTRAP))
@@ -478,14 +545,213 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print(f"  loaded {len(tf)} DFE_* var(s) from terraform {args.from_terraform}",
               file=sys.stderr)
     for env_file in args.env_file:
-        loaded = _parse_env_file(env_file)
+        loaded = envfile.parse_env_file(Path(env_file))
         env.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
     if args.kubeconfig:
         env["KUBECONFIG"] = args.kubeconfig
     if args.mode:
         env["DFE_PROFILE"] = args.mode
-    return _run_streaming(["bash", str(script)], env=env)
+    return _apply_domain(env, args.mode, deploying=False)
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Run the smoke suite against the SAME env the deploy used."""
+    name = "smoke-test-readiness.sh" if args.readiness_only else "run-all-smoke-tests.sh"
+    script = _require_script(name)
+    if script is None:
+        return 1
+    return _run_streaming(["bash", str(script)], env=_suite_env(args))
+
+
+# --- refresh subcommand (upgrade a persistent deploy in place) ----------------
+# Seconds between Application polls while the annotated syncs run.
+_SYNC_POLL_INTERVAL = 10
+# Cluster-secret annotations naming the repos this deploy tracks.
+_TRACKED_REPO_ANNOTATIONS = ("dfe.hyperi.io/repo_url", "dfe.hyperi.io/config_repo_url")
+
+
+def _refresh_failed(stage: str, rc: int, detail: str = "") -> int:
+    """The one shape every refresh stage failure prints; returns the code to exit."""
+    print(f">>> refresh FAILED at stage {stage} (rc {rc})"
+          f"{': ' + detail if detail else ''}", file=sys.stderr)
+    return rc
+
+
+def _normalise_repo(url: str) -> str:
+    """A repo URL reduced to what two spellings of the same repo share."""
+    url = url.strip().rstrip("/")
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+    return url.lower()
+
+
+def _tracked_repos(kube: list[str], argocd_namespace: str, env: dict) -> tuple[list[str], str]:
+    """The repos this deploy tracks, as (repo URLs, read error).
+
+    A secret that cannot be read is an error rather than an empty list, which
+    would silently widen the wait to every Application on the cluster.
+    """
+    rc, doc, err = _kubectl_json(
+        [*kube, "-n", argocd_namespace, "get", "secret", "dfe-cluster"], env=env
+    )
+    if rc != 0:
+        return [], _last_line(err) or f"kubectl exited {rc}"
+    ann = (doc.get("metadata") or {}).get("annotations") or {}
+    return [_normalise_repo(ann[k]) for k in _TRACKED_REPO_ANNOTATIONS if ann.get(k)], ""
+
+
+def _app_repos(app: dict) -> list[str]:
+    """Every repo an Application draws from, single-source or multi-source."""
+    spec = app.get("spec") or {}
+    sources = list(spec.get("sources") or [])
+    if spec.get("source"):
+        sources.append(spec["source"])
+    return [_normalise_repo(s["repoURL"]) for s in sources if s.get("repoURL")]
+
+
+def _converging(apps: list[dict], repos: list[str]) -> list[str]:
+    """One `<app> (<why>)` line per tracked Application that has not settled.
+
+    Sync status alone would pass an Application whose operation is still Running,
+    which is the window a gate run straight after the annotate lands in.
+    """
+    pending = []
+    for app in apps:
+        if repos and not any(r in repos for r in _app_repos(app)):
+            continue
+        name = (app.get("metadata") or {}).get("name", "<unnamed>")
+        status = app.get("status") or {}
+        sync = (status.get("sync") or {}).get("status") or "Unknown"
+        health = (status.get("health") or {}).get("status") or "Unknown"
+        phase = (status.get("operationState") or {}).get("phase") or ""
+        if phase == "Running":
+            pending.append(f"{name} (operation Running)")
+        elif sync != "Synced":
+            pending.append(f"{name} (sync {sync})")
+        elif health != "Healthy":
+            pending.append(f"{name} (health {health})")
+    return pending
+
+
+def _wait_for_sync(kube: list[str], argocd_namespace: str, repos: list[str],
+                   timeout: int, env: dict) -> int:
+    """Block until every tracked Application is Synced, Healthy and not operating.
+
+    The readiness gate exits on its FIRST clean poll, so run without this it
+    judges the pods the previous revision left behind.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        rc, doc, err = _kubectl_json(
+            [*kube, "-n", argocd_namespace, "get", "applications.argoproj.io"], env=env
+        )
+        if rc == 0:
+            apps = doc.get("items") or []
+            pending = _converging(apps, repos)
+            if not pending:
+                print(f"    {len(apps)} Application(s) Synced and Healthy",
+                      file=sys.stderr)
+                return 0
+            detail = ", ".join(pending[:8])
+            if len(pending) > 8:
+                detail += f", +{len(pending) - 8} more"
+        else:
+            detail = f"cannot read Applications: {err}"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _refresh_failed(
+                "argo-sync", 1, f"still converging after {timeout}s -- {detail}"
+            )
+        print(f"    still converging: {detail}", file=sys.stderr)
+        time.sleep(min(_SYNC_POLL_INTERVAL, remaining))
+
+
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Land the tracked ref on a persistent deploy now, then re-prove it.
+
+    Argo already tracks the git ref, so the push IS the change and this deploys
+    nothing: the hard refresh only decides WHEN the change lands -- now, rather
+    than at the next poll. The gate and the smoke suite then judge what came
+    back, so "updated" never means "annotated and hoped".
+    """
+    env = _suite_env(args)
+    namespace = args.namespace or env.get("DFE_NAMESPACE", "")
+    # Every dfe-namespace suite fails on `namespaces "dfe" not found` without
+    # this, so it is refused before anything is annotated.
+    if not namespace and not args.skip_verify:
+        print(">>> refresh REFUSED: the smoke suite needs the app namespace and none "
+              "is known -- pass --env-file (DFE_NAMESPACE) or --namespace. "
+              "--skip-verify runs the gate alone, which needs no namespace.",
+              file=sys.stderr)
+        return 2
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+
+    print(f"\n>>> refresh stage: argo hard-refresh (ns {args.argocd_namespace})",
+          file=sys.stderr)
+    rc, out, err = _run_text([
+        *kube, "-n", args.argocd_namespace, "annotate", "applications.argoproj.io",
+        "--all", "argocd.argoproj.io/refresh=hard", "--overwrite",
+    ], env=env)
+    if rc != 0:
+        return _refresh_failed("argo-refresh", rc, _last_line(err) or _last_line(out))
+    annotated = len([ln for ln in out.splitlines() if ln.strip()])
+    print(f"    {annotated} Application(s) annotated", file=sys.stderr)
+    if annotated == 0:
+        print(f"    [warn] no Applications in {args.argocd_namespace} -- nothing was "
+              "asked to sync; the stages below judge the deploy as it already is",
+              file=sys.stderr)
+
+    print(f"\n>>> refresh stage: argo sync (up to {args.readiness_timeout}s)",
+          file=sys.stderr)
+    repos, repo_err = _tracked_repos(kube, args.argocd_namespace, env)
+    if repo_err:
+        return _refresh_failed(
+            "argo-sync", 1, f"cannot read the dfe-cluster secret: {repo_err}"
+        )
+    if repos:
+        print(f"    tracking {', '.join(repos)}", file=sys.stderr)
+    else:
+        print("    [warn] no dfe-cluster repo annotations -- waiting on every "
+              f"Application in {args.argocd_namespace}", file=sys.stderr)
+    rc = _wait_for_sync(kube, args.argocd_namespace, repos,
+                        args.readiness_timeout, env)
+    if rc != 0:
+        return rc
+
+    print(f"\n>>> refresh stage: readiness gate (up to {args.readiness_timeout}s)",
+          file=sys.stderr)
+    script = _require_script("smoke-test-readiness.sh")
+    if script is None:
+        return 1
+    gate_env = dict(env)
+    gate_env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
+    # The gate's presence check -- did the deploy produce any workload at all --
+    # is the one check it skips when DFE_NS is empty.
+    if namespace:
+        gate_env["DFE_NS"] = namespace
+    else:
+        print("    [warn] no namespace (DFE_NAMESPACE or --namespace) -- the gate "
+              "cannot tell an empty deploy from a healthy one", file=sys.stderr)
+    rc = _run_streaming(["bash", str(script)], env=gate_env)
+    if rc != 0:
+        return _refresh_failed("readiness", rc)
+
+    if args.skip_verify:
+        print("\n>>> refresh OK: the tracked ref landed, the deploy is Ready "
+              "(--skip-verify: the smoke suite did not run)", file=sys.stderr)
+        return 0
+
+    print("\n>>> refresh stage: smoke suite", file=sys.stderr)
+    rc = cmd_verify(args)
+    if rc != 0:
+        return _refresh_failed("smoke", rc)
+    print("\n>>> refresh OK: the tracked ref landed, the deploy is Ready and the "
+          "smoke suite passed", file=sys.stderr)
+    return 0
 
 
 # --- acceptance subcommand (the live pytest suite over port-forwards) --------
@@ -498,18 +764,48 @@ def _forward(label: str, kube: list[str], namespace: str, target: str,
     a single forward.
     """
     cmd = [*kube, "-n", namespace, "port-forward", target, f"{local}:{remote}"]
+    early_exits = 0
     while not stop.is_set():
+        started = time.monotonic()
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace",
         )
+        _FORWARDS.append(proc)
         while not stop.is_set() and proc.poll() is None:
             time.sleep(1)
         if proc.poll() is None:
             proc.terminate()
             return
-        if not stop.is_set():
-            print(f"  forward {label} died, restarting", file=sys.stderr)
-            time.sleep(2)
+        if stop.is_set():
+            return
+        # A forward that cannot bind or has no target exits at once, every
+        # time; restarting it only hides the reason kubectl printed.
+        early_exits = early_exits + 1 if time.monotonic() - started < 3 else 0
+        if early_exits >= 3:
+            reason = _last_line((proc.stderr.read() if proc.stderr else "") or "")
+            print(
+                f"  forward {label} ({target} -> :{local}) exits immediately: "
+                f"{reason or 'no reason printed'}",
+                file=sys.stderr,
+            )
+            return
+        print(f"  forward {label} died, restarting", file=sys.stderr)
+        time.sleep(2)
+
+
+# Every port-forward this process starts, so a run that dies on an exception
+# does not leave them holding the ports for the next run.
+_FORWARDS: list[subprocess.Popen] = []
+
+
+def _stop_forwards() -> None:
+    for proc in _FORWARDS:
+        if proc.poll() is None:
+            proc.terminate()
+
+
+atexit.register(_stop_forwards)
 
 
 def _forward_ready(url: str, label: str, timeout: float) -> bool:
@@ -546,6 +842,309 @@ def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
     return base64.b64decode(raw).decode("utf-8") if raw else ""
 
 
+# helm/charts/dfe-fetcher/values.yaml credentials.secretName, and the two keys
+# the fetcher's cloudwatch_logs service reads out of it. The Secret's keys are
+# the fetcher's environment names; a secrets store names the same two values its
+# own way, so each is looked up under either.
+FETCHER_CREDENTIALS_SECRET = "dfe-fetcher-credentials"
+FETCHER_CREDENTIAL_FIELDS = {
+    "AWS_ACCESS_KEY_ID": ("AWS_ACCESS_KEY_ID", "access_key_id"),
+    "AWS_SECRET_ACCESS_KEY": ("AWS_SECRET_ACCESS_KEY", "secret_access_key"),
+}
+FETCHER_CREDENTIAL_KEYS = tuple(FETCHER_CREDENTIAL_FIELDS)
+
+
+def _vault_kv(path: str, *, vault_cmd: str = "bao", env: dict | None = None, run=subprocess.run) -> dict:
+    """The key-value pair stored at *path*, read through the secrets CLI."""
+    done = run(
+        [vault_cmd, "kv", "get", "-format=json", path],
+        capture_output=True, text=True, env=env,
+    )
+    if done.returncode != 0:
+        first = (done.stderr or "").strip().splitlines()
+        raise RuntimeError(f"{vault_cmd} kv get {path} failed: {first[0] if first else 'no output'}")
+    payload = json.loads(done.stdout).get("data", {})
+    # kv v2 nests the pair one level deeper than kv v1.
+    return payload.get("data", payload)
+
+
+def _credential_field(values: dict, key: str) -> str:
+    """The value for one Secret key, under whichever name the store holds it."""
+    for field in FETCHER_CREDENTIAL_FIELDS[key]:
+        if values.get(field):
+            return str(values[field])
+    return ""
+
+
+def fetcher_credentials_manifest(namespace: str, values: dict, name: str = FETCHER_CREDENTIALS_SECRET) -> str:
+    """The Secret the fetcher chart references, as a manifest for kubectl to apply."""
+    data = {
+        key: base64.b64encode(_credential_field(values, key).encode("utf-8")).decode("ascii")
+        for key in FETCHER_CREDENTIAL_KEYS
+    }
+    return json.dumps(
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "type": "Opaque",
+            "metadata": {"name": name, "namespace": namespace},
+            "data": data,
+        },
+        sort_keys=True,
+    )
+
+
+def apply_fetcher_credentials(
+    kube: list[str], namespace: str, vault_path: str,
+    *, vault_cmd: str = "bao", env: dict | None = None, run=subprocess.run,
+) -> str:
+    """Put the fetcher's upstream credentials in the namespace, reading them from the store.
+
+    A fetched source needs its own credentials, and a run that mints them by hand
+    is a run nobody else can repeat. Nothing here logs a value: the caller gets
+    the key names and the path they came from.
+
+    Server-side, because a client-side apply keeps the whole submitted object in
+    kubectl.kubernetes.io/last-applied-configuration -- and kubectl describe
+    prints annotations while it redacts data, so the one command an operator
+    reaches for to check the Secret landed would print the credential.
+    --force-conflicts takes the fields back off the client-side manager on a
+    cluster where an earlier run made this Secret the old way.
+    """
+    values = _vault_kv(vault_path, vault_cmd=vault_cmd, env=env, run=run)
+    missing = [
+        " or ".join(FETCHER_CREDENTIAL_FIELDS[key])
+        for key in FETCHER_CREDENTIAL_KEYS
+        if not _credential_field(values, key)
+    ]
+    if missing:
+        raise RuntimeError(f"{vault_path} carries no {'; no '.join(missing)}")
+    done = run(
+        [*kube, "-n", namespace, "apply", "--server-side", "--force-conflicts",
+         "--field-manager=dfe-ops", "-f", "-"],
+        input=fetcher_credentials_manifest(namespace, values),
+        capture_output=True, text=True, env=env,
+    )
+    if done.returncode != 0:
+        first = (done.stderr or "").strip().splitlines()
+        raise RuntimeError(f"kubectl apply of {FETCHER_CREDENTIALS_SECRET} failed: {first[0] if first else 'no output'}")
+    return (
+        f"{FETCHER_CREDENTIALS_SECRET} in {namespace}: "
+        f"{', '.join(FETCHER_CREDENTIAL_KEYS)} from {vault_path}"
+    )
+
+
+def _pods_of(kube: list[str], namespace: str, selector: str) -> list[str]:
+    """Running pod names matching *selector*, newest-irrelevant, empty when none."""
+    done = subprocess.run(
+        [*kube, "-n", namespace, "get", "pods", "-l", selector,
+         "--field-selector", "status.phase=Running", "-o", "name"],
+        capture_output=True, text=True,
+    )
+    if done.returncode != 0:
+        return []
+    return [line.strip() for line in done.stdout.splitlines() if line.strip()]
+
+
+def _sibling_repo(name: str, env_var: str) -> str | None:
+    """Where a companion checkout lives, without hardcoding one developer's tree.
+
+    Args:
+        name: Repository directory name, e.g. dfe-engine.
+        env_var: Environment variable that overrides the location.
+
+    Returns:
+        The env var when set, else the sibling checkout beside this repo when it
+        exists, else None -- which makes the flag required.
+    """
+    override = os.environ.get(env_var)
+    if override:
+        return override
+    sibling = REPO_ROOT.parent / name
+    return str(sibling) if sibling.is_dir() else None
+
+
+def _acceptance_transport(args: argparse.Namespace) -> str:
+    """The data path the flow suite must prove: explicit, else derived from the mode."""
+    if args.transport:
+        return args.transport
+    if args.mode:
+        return "kafka" if profiles.has_kafka(args.mode) else "grpc"
+    return "both"
+
+
+def _metrics_body(url: str) -> str | None:
+    """A Prometheus exposition, or None when the metrics server did not answer."""
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except (OSError, urllib.error.HTTPError):
+        return None
+
+
+def _metrics_gauge(body: str, name: str) -> float | None:
+    """One bare gauge's value from an exposition, or None when the series is absent."""
+    for line in body.splitlines():
+        if line.startswith("#"):
+            continue
+        key, _, value = line.partition(" ")
+        if key == name:
+            try:
+                return float(value)
+            except ValueError:
+                return None
+    return None
+
+
+def _health_body(url: str) -> dict | None:
+    """scalo's /healthz body, or None when it does not answer with a JSON object.
+
+    scalo 2.12 serves no /healthz at all (scalo-rs#66), so a 404 is a normal
+    answer here and the caller falls back to the metrics gauge alone.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            body = json.loads(response.read().decode("utf-8", errors="replace"))
+    except (OSError, urllib.error.HTTPError, json.JSONDecodeError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _health_component(url: str, name: str) -> dict | None:
+    """One component's entry from scalo's /healthz body, or None if absent."""
+    body = _health_body(url)
+    if body is None:
+        return None
+    components = body.get("components")
+    if isinstance(components, dict):
+        entry = components.get(name)
+        return entry if isinstance(entry, dict) else None
+    if isinstance(components, list):
+        for entry in components:
+            if isinstance(entry, dict) and entry.get("name") == name:
+                return entry
+    return None
+
+
+def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int:
+    """Every app the profile deploys by default is Ready, and one with nothing
+    to do says so coherently.
+
+    A deployed-but-unconfigured app is the normal state of a fresh profile --
+    the archiver has no destination until an operator names one -- so the
+    assertion is not "it is working" but "it is Ready, and its idle gauge and
+    its health component agree about whether it has work". An app that reports
+    idle without a reason, or a reason without the gauge, is the failure this
+    catches: a readiness gate alone cannot tell the two apart.
+
+    Args:
+        kube: The kubectl invocation prefix, context and server already applied.
+        namespace: Where the apps run.
+        profile: The deploy profile, which decides the expected app set.
+        port: Local port to forward each app's metrics server onto, in turn.
+
+    Returns:
+        0 when every default app is Ready and coherent, 1 otherwise.
+    """
+    apps = composition.default_apps(profile)
+    print(f"  idle check: {profile} deploys {', '.join(apps)}", file=sys.stderr)
+    failures: list[str] = []
+
+    for app in apps:
+        name = composition.deployment_name(app)
+        out = subprocess.run(
+            [*kube, "-n", namespace, "get", "deploy", name, "-o", "jsonpath={.status.readyReplicas}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        ready = (out.stdout or "").strip()
+        if out.returncode != 0 or not ready or ready == "0":
+            failures.append(f"{name}: no ready replica (kubectl said {ready or 'nothing'!r})")
+            continue
+        print(f"  {name}: {ready} ready", file=sys.stderr)
+
+    for app in apps:
+        if not composition.idle_when(app):
+            continue
+        name = composition.deployment_name(app)
+        stop = threading.Event()
+        threading.Thread(
+            target=_forward,
+            args=("idle", kube, namespace, f"deploy/{name}", port, 9090, stop),
+            daemon=True,
+        ).start()
+        try:
+            if not _forward_ready(f"http://localhost:{port}/livez", name, 45.0):
+                failures.append(f"{name}: metrics port never answered")
+                continue
+            exposition = _metrics_body(f"http://localhost:{port}/metrics")
+            # scalo registers pipeline_idle only while the app HAS no work, so an
+            # absent series on an exposition that answered means it is working.
+            gauge = _metrics_gauge(exposition, "pipeline_idle") if exposition is not None else None
+            body = _health_body(f"http://localhost:{port}/healthz")
+            work = _health_component(f"http://localhost:{port}/healthz", "work_config")
+            idle = gauge == 1.0
+            reason = (work or {}).get("message") or (work or {}).get("detail") or ""
+            if exposition is None:
+                failures.append(f"{name}: /metrics did not answer")
+            elif body is None:
+                # The gauge is the only surface this scalo serves; the reason it
+                # would otherwise name is in the app's log.
+                state = "idle (gauge only: /healthz not served)" if idle else "working"
+                print(f"  {name}: {state}", file=sys.stderr)
+            elif idle and not reason:
+                failures.append(
+                    f"{name}: pipeline_idle is 1 but /healthz names no work_config reason"
+                )
+            elif not idle and work and work.get("status", "").lower() == "degraded":
+                failures.append(
+                    f"{name}: /healthz says work_config is Degraded but pipeline_idle is not 1"
+                )
+            else:
+                state = f"idle -- {reason}" if idle else "working"
+                print(f"  {name}: {state}", file=sys.stderr)
+        finally:
+            stop.set()
+
+    for failure in failures:
+        print(f"  IDLE CHECK FAILED {failure}", file=sys.stderr)
+    return 1 if failures else 0
+
+
+# The engine-repo paths each pytest suite lives at. The onboarding suite is not
+# one of them: it drives the console in a browser and lives in this repo.
+_PYTEST_SUITES = {
+    "flows": ("tests/e2e/flows",),
+}
+ONBOARDING_SUITE = "onboarding"
+ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
+# The post-deploy source test: a real source with a transform and an archive,
+# created through the console and proven at every hop. Not part of `all`: it
+# runs after POST on the deployments that showcase the data path.
+SOURCE_SUITE = "source"
+SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
+BROWSER_SUITES = (ONBOARDING_SUITE, SOURCE_SUITE)
+
+# `all` runs onboarding FIRST: a deployment nobody could have onboarded has
+# failed whatever the data path then does. The flow suite creates every source
+# shape and removes it again, so it proves a fresh deploy. A suite that reads a
+# source the deployment must already carry is run through the pytest passthrough.
+SUITES = (ONBOARDING_SUITE, "flows", SOURCE_SUITE, "all")
+
+
+def suite_steps(suite: str) -> tuple[str, ...]:
+    """The suites one --suite value runs, in order.
+
+    Args:
+        suite: One of SUITES.
+
+    Returns:
+        The individual suite names.
+    """
+    if suite == "all":
+        return (ONBOARDING_SUITE, "flows")
+    return (suite,)
+
+
 def cmd_acceptance(args: argparse.Namespace) -> int:
     """Run the live acceptance suite against a deployed stack.
 
@@ -556,7 +1155,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     """
     settings = dict(os.environ)
     for env_file in args.env_file:
-        loaded = _parse_env_file(env_file)
+        loaded = envfile.parse_env_file(Path(env_file))
         settings.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
@@ -565,6 +1164,8 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     ch_namespace = args.ch_namespace or settings.get("DFE_CH_NAMESPACE", "clickhouse")
     ch_secret = args.ch_secret or settings.get("DFE_CH_SECRET", "clickhouse-admin-password")
     server = args.server or settings.get("DFE_KUBE_SERVER")
+    transport = _acceptance_transport(args)
+    print(f"  data path the suite must prove: {transport}", file=sys.stderr)
 
     kube = ["kubectl"]
     if args.kubeconfig:
@@ -576,12 +1177,34 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     if server:
         kube += ["--server", server]
 
+    steps = suite_steps(args.suite)
     stop = threading.Event()
+    ch_target = args.ch_target or _profile_clickhouse_target(args.mode)
     forwards = [
         ("receiver", namespace, args.receiver_target, args.receiver_port, 8080),
-        ("datastore", ch_namespace, args.ch_target, args.ch_port, 8123),
+        ("datastore", ch_namespace, ch_target, args.ch_port, 8123),
         ("engine", namespace, args.engine_target, args.engine_port, 8000),
     ]
+    # The onboarding suite goes through the gateway, never a forward to the
+    # console pod: the pod bounces a browser's /api call to /login, because
+    # routing /api to the engine is the gateway's job.
+    ui_url, resolve = "", list(args.resolve)
+    if any(step in BROWSER_SUITES for step in steps):
+        ui_url = args.ui_url or _console_urls(kube, namespace)[0]
+        if "localhost" in ui_url:
+            print(
+                "the onboarding suite needs the console's gateway URL and this deployment "
+                "has no domain annotation; pass --ui-url", file=sys.stderr,
+            )
+            return 1
+        host = urllib.parse.urlsplit(ui_url).hostname or ""
+        if not resolve and not _resolves(host):
+            address = _gateway_address(kube)
+            if not address:
+                print(f"{host} does not resolve here and the gateway has no address to map it to", file=sys.stderr)
+                return 1
+            resolve = [f"{host}:{address}"]
+            print(f"  {host} does not resolve here: mapping it to the gateway at {address}", file=sys.stderr)
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
@@ -599,6 +1222,17 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         print("the suite needs ingest and the datastore; neither is optional", file=sys.stderr)
         return 1
 
+    # Before the data path: every app the profile deploys by default is up, and
+    # one with nothing to do says so on both surfaces. The readiness gate
+    # passes an idle app by design, so nothing else catches an app that is
+    # Ready and silently doing nothing. Without --mode there is no expected app
+    # set to check against.
+    if args.mode is None:
+        print("  no --mode: skipping the idle check (no expected app set)", file=sys.stderr)
+    elif _idle_check(kube, namespace, args.mode, args.idle_port) != 0:
+        stop.set()
+        return 1
+
     env = dict(os.environ)
     env.update({
         "DFE_E2E_RECEIVER_URL": f"http://localhost:{args.receiver_port}/ingest",
@@ -607,20 +1241,832 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         "DFE_E2E_CH_USER": args.ch_user,
         "DFE_E2E_CH_PASSWORD": _secret_value(kube, namespace, ch_secret, "password"),
         "DFE_E2E_CH_DB": args.ch_database,
+        "DFE_E2E_TRANSPORT": transport,
     })
     if engine_up:
         env["DFE_E2E_ENGINE_URL"] = f"http://localhost:{args.engine_port}"
+        # Both suites authenticate as the deploy's own minted admin: the flow
+        # suite writes sources, and the onboarding suite signs in as a human.
+        try:
+            user, password = admin_credential(
+                "k8s",
+                kube=kube,
+                namespace=namespace,
+                settings=settings,
+                user=args.engine_user,
+                access_summary=Path(args.access_summary) if args.access_summary else None,
+            )
+        except CredentialNotFoundError as exc:
+            stop.set()
+            print(f"acceptance: {exc}", file=sys.stderr)
+            return 1
+        env["DFE_E2E_ENGINE_USER"] = user
+        env["DFE_E2E_ENGINE_PASSWORD"] = password
+        env["DFE_E2E_ADMIN_PASSWORD"] = password
     else:
         env.pop("DFE_E2E_ENGINE_URL", None)
-        print("  engine forward down: the transform class will skip", file=sys.stderr)
+        stop.set()
+        print(
+            "engine forward down: every suite goes through the engine, so none of them "
+            "can run without it",
+            file=sys.stderr,
+        )
+        return 1
 
-    pytest_args = args.pytest_args or [
-        "tests/e2e/test_filebeat_pipeline.py", "-m", "live", "-v",
-        "--no-cov", "-p", "no:randomly",
-    ]
-    done = subprocess.run(
-        ["uv", "run", "pytest", *pytest_args], cwd=args.repo, env=env
+    rc = 0
+    for step in steps:
+        print(f"\n>>> acceptance suite: {step}", file=sys.stderr)
+        if step == ONBOARDING_SUITE:
+            runner = [
+                sys.executable, str(ONBOARDING_RUNNER),
+                "--ui-url", ui_url,
+                "--engine-url", ui_url,
+                "--shots-dir", args.shots_dir,
+            ]
+            if args.insecure:
+                runner.append("--insecure")
+            if args.console_only:
+                runner.append("--console-only")
+            for pair in resolve:
+                runner += ["--resolve", pair]
+            rc = subprocess.run(runner, env=env).returncode
+        elif step == SOURCE_SUITE:
+            # Before the runner, not inside it: the fetcher's pod mounts the
+            # Secret at start, so a source deployed without it never polls.
+            if args.fetcher_credentials_vault_path:
+                bao_env = dict(env)
+                if settings.get("DFE_VAULT_ADDR") and not bao_env.get("VAULT_ADDR"):
+                    bao_env["VAULT_ADDR"] = settings["DFE_VAULT_ADDR"]
+                try:
+                    print(
+                        f"  fetcher credentials: {apply_fetcher_credentials(kube, namespace, args.fetcher_credentials_vault_path, vault_cmd=args.vault_cmd, env=bao_env)}",
+                        file=sys.stderr,
+                    )
+                except (RuntimeError, json.JSONDecodeError, OSError) as exc:
+                    stop.set()
+                    print(f"acceptance: fetcher credentials: {exc}", file=sys.stderr)
+                    return 1
+            # The receiver, the datastore and the engine come from the same
+            # forwards and DFE_E2E_* env the flow suite gets; the console and
+            # the engine's login go through the gateway like onboarding.
+            runner = [
+                sys.executable, str(SOURCE_RUNNER),
+                "--ui-url", ui_url,
+                "--engine-url", ui_url,
+                "--engine-repo", str(args.repo),
+                "--shots-dir", args.shots_dir,
+                "--case", args.source_case,
+                "--aws-service", args.aws_service,
+            ]
+            # The upstream a fetched case polls is a property of the DEPLOYMENT,
+            # so it comes from the env files rather than from this script.
+            for flag, key in (("--aws-region", "DFE_AWS_REGION"),
+                              ("--aws-log-group", "DFE_AWS_LOG_GROUP")):
+                if settings.get(key):
+                    runner += [flag, settings[key]]
+            # Both pushed cases read their corpus out of this one archive; the
+            # elastic transform is compiled into its own image and publishes no
+            # file the run needs.
+            transform_repo = _sibling_repo("dfe-transform-vrl", "DFE_TRANSFORM_VRL_REPO")
+            if transform_repo:
+                runner += ["--transform-repo", str(transform_repo)]
+            # The whole way in, not its parts: the docker lane passes its own.
+            # One per replica, because the consumer group splits the topic's
+            # partitions and each replica archives only what it was assigned.
+            for pod in _pods_of(kube, namespace, args.archive_selector):
+                runner += ["--archive-exec", shlex.join([*kube, "-n", namespace, "exec", pod, "--"])]
+            if args.insecure:
+                runner.append("--insecure")
+            if args.keep:
+                runner.append("--keep")
+            for pair in resolve:
+                runner += ["--resolve", pair]
+            rc = subprocess.run(runner, env=env).returncode
+            # The suite removes what it made: a run that minted the Secret takes
+            # it back out, so the namespace does not keep AWS keys between runs.
+            if args.fetcher_credentials_vault_path and not args.keep:
+                _run_text([*kube, "-n", namespace, "delete", "secret",
+                           FETCHER_CREDENTIALS_SECRET, "--ignore-not-found"], env=env)
+        else:
+            # Serial (-n 0, since the repo's addopts pin -n): every source the
+            # flow suite writes rolls the receiver, so parallel workers would
+            # post into a pod that is restarting.
+            pytest_args = [a for a in args.pytest_args if a != "--"] or [
+                *_PYTEST_SUITES[step], "-m", "live", "-v", "--no-cov",
+                "-p", "no:randomly", "-n", "0",
+            ]
+            rc = subprocess.run(["uv", "run", "pytest", *pytest_args], cwd=args.repo, env=env).returncode
+        if rc != 0:
+            # A deployment nobody could onboard is not one to keep testing.
+            break
+    stop.set()
+    return rc
+
+
+# --- creds subcommand (where every login of this deploy comes from) ----------
+# One row per login this deploy carries: (label, namespace, secret, keys).
+# _APP_NS resolves to the deployment's own app namespace. The SSoT for the set:
+# bootstrap/access-summary.sh prints this rather than keeping its own copy.
+_APP_NS = "\0app\0"
+# helm/charts/dfe-engine/values.yaml auth.* defaults, used when the engine
+# Deployment cannot be read; both names are values, so neither is a constant.
+_ENGINE_ADMIN = ("dfe-engine-admin", "admin-password")
+_ENGINE_BREAKGLASS = ("dfe-engine-breakglass", "breakglass-password")
+_CLUSTER_CREDENTIALS = (
+    ("Argo CD initial admin", "argocd", "argocd-initial-admin-secret", ("password",)),
+    ("Deploy-repo git admin (Forgejo)", "forgejo", "dfe-forgejo-admin", ("username", "password")),
+    ("ClickHouse admin", "clickhouse", "clickhouse-admin-password", ("password",)),
+    ("Kafbat break-glass admin", "kafka", "dfe-kafbat-breakglass", ("username", "password")),
+)
+
+
+def credential_rows(
+    admin: tuple[str, str] = _ENGINE_ADMIN,
+    breakglass: tuple[str, str] = _ENGINE_BREAKGLASS,
+) -> tuple[tuple[str, str, str, tuple[str, ...]], ...]:
+    """Every login this deploy carries, with the engine's two names resolved."""
+    return (
+        ("DFE admin (user `admin`)", _APP_NS, admin[0], (admin[1],)),
+        ("DFE break-glass (user `breakglass`)", _APP_NS, breakglass[0], (breakglass[1],)),
+        *_CLUSTER_CREDENTIALS,
     )
+
+
+def engine_secret_names(
+    kube: list[str], namespace: str, deployment: str = "dfe-engine"
+) -> tuple[tuple[str, str], tuple[str, str]]:
+    """The admin and break-glass (secret, key) the live engine actually reads.
+
+    A renamed Secret is a values edit, so the chart defaults would print a fetch
+    line for a Secret that is not there and mark it absent.
+    """
+    rc, doc, _ = _kubectl_json([*kube, "-n", namespace, "get", "deployment", deployment])
+    if rc != 0:
+        return _ENGINE_ADMIN, _ENGINE_BREAKGLASS
+    spec = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+    env: dict[str, dict] = {}
+    for container in spec.get("containers") or []:
+        for item in container.get("env") or []:
+            if item.get("name"):
+                env[item["name"]] = item
+
+    def ref(name: str) -> dict:
+        return ((env.get(name) or {}).get("valueFrom") or {}).get("secretKeyRef") or {}
+
+    admin_ref = ref("DFE_AUTH_LOCAL_ADMIN_PASSWORD")
+    admin = (
+        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") or {}).get("value")
+        or admin_ref.get("name")
+        or _ENGINE_ADMIN[0],
+        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_KEY") or {}).get("value")
+        or admin_ref.get("key")
+        or _ENGINE_ADMIN[1],
+    )
+    breakglass_ref = ref("DFE_AUTH_BREAKGLASS_PASSWORD")
+    breakglass = (
+        breakglass_ref.get("name") or _ENGINE_BREAKGLASS[0],
+        breakglass_ref.get("key") or _ENGINE_BREAKGLASS[1],
+    )
+    return admin, breakglass
+
+
+# Where docker's `make init` writes the minted admin login. Kubernetes keeps the
+# same pair in a Secret, so the two lanes differ only in where they are read from.
+DOCKER_ADMIN_USER_KEY = "DFE_AUTH_LOCAL_ADMIN_NAME"
+DOCKER_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
+# A password the caller fed the deploy, so a test run knows it without reading
+# anything back.
+FED_ADMIN_PASSWORD_VAR = "DFE_E2E_ADMIN_PASSWORD"
+
+ADMIN_USER = "admin"
+BREAKGLASS_USER = "breakglass"
+
+
+class CredentialNotFoundError(RuntimeError):
+    """The lane carries no admin password to authenticate with."""
+
+
+def admin_credential(
+    lane: str,
+    *,
+    kube: list[str] | None = None,
+    namespace: str = "",
+    settings: Mapping[str, str] | None = None,
+    user: str = "",
+    access_summary: Path | None = None,
+) -> tuple[str, str]:
+    """The admin login of the deployment under test, for whichever lane runs it.
+
+    Every deploy MINTS this password, so there is no default to fall back on and
+    nothing may carry a literal. One function because both lanes and every suite
+    need the same answer: a second reader would drift the moment a chart renamed
+    a Secret or docker moved a key.
+
+    The access summary is read FIRST so a test signs in with exactly what the
+    person who ran the deploy is holding - if that file is wrong, the suite finds
+    out rather than quietly using a better source.
+
+    Args:
+        lane: ``k8s`` reads the engine Deployment's own Secret reference; ``docker``
+            reads the key ``make init`` wrote into the stack's env file.
+        kube: kubectl argv prefix, for the k8s lane.
+        namespace: Namespace the engine runs in, for the k8s lane.
+        settings: Env-file values merged over os.environ, for the docker lane and
+            for a fed password.
+        user: Username override.
+        access_summary: The launcher's summary file, when one was written.
+
+    Returns:
+        (username, password).
+
+    Raises:
+        CredentialNotFoundError: The lane has no password to hand over.
+        ValueError: The lane is not one of the two.
+    """
+    values = dict(settings or os.environ)
+    if access_summary and Path(access_summary).is_file():
+        rows = access_summary_file.parse(Path(access_summary).read_text(encoding="utf-8"))
+        row = rows.get(access_summary_file.ADMIN_LABEL)
+        if row:
+            return (user or row[0]), row[1]
+        raise CredentialNotFoundError(
+            f"{access_summary} carries no admin row, so the deploy's own summary "
+            f"cannot say how to sign in"
+        )
+    name = user or values.get(DOCKER_ADMIN_USER_KEY) or ADMIN_USER
+    if lane == "docker":
+        password = values.get(DOCKER_ADMIN_PASSWORD_KEY) or values.get(FED_ADMIN_PASSWORD_VAR, "")
+        if not password:
+            raise CredentialNotFoundError(
+                f"the docker stack mints its admin password into its env file as "
+                f"{DOCKER_ADMIN_PASSWORD_KEY}; pass --env-file, or feed one in as "
+                f"{FED_ADMIN_PASSWORD_VAR}"
+            )
+        return name, password
+    if lane != "k8s":
+        raise ValueError(f"lane must be docker or k8s, got {lane!r}")
+    secret, key = engine_secret_names(kube or ["kubectl"], namespace)[0]
+    password = _secret_value(kube or ["kubectl"], namespace, secret, key)
+    if not password:
+        password = values.get(FED_ADMIN_PASSWORD_VAR, "")
+    if not password:
+        raise CredentialNotFoundError(
+            f"the deploy mints its admin password into {namespace}/{secret} key {key}, "
+            f"and it could not be read; feed one in as {FED_ADMIN_PASSWORD_VAR} instead"
+        )
+    return name, password
+
+
+def _console_urls(kube: list[str], namespace: str) -> tuple[str, str]:
+    """(console, engine API) for this deployment, from its own cluster annotation."""
+    domain = _cluster_annotation(kube, "domain")
+    if not domain:
+        return (
+            f"http://localhost:3000 (no domain annotation; port-forward svc/dfe-ui in {namespace})",
+            f"http://localhost:8000 (port-forward svc/dfe-engine in {namespace})",
+        )
+    return f"https://dfe.{domain}", f"https://dfe.{domain}/api/v1"
+
+
+def emit_access_summary(
+    kube: list[str], namespace: str, out: Path
+) -> tuple[Path, dict[str, tuple[str, str]]]:
+    """Write the launcher's access summary and say where it went.
+
+    The ONE implementation: stack-deploy, cycle and bootstrap.sh all end here, so
+    a deploy started any of the three ways hands the same file to the same person.
+
+    Args:
+        kube: kubectl argv prefix, carrying the kubeconfig the deploy ran with.
+        namespace: The app namespace.
+        out: Where to write the file.
+
+    Returns:
+        (path written, the logins it carries).
+
+    Raises:
+        CredentialNotFoundError: Neither minted password could be read back.
+    """
+    admin_ref, breakglass_ref = engine_secret_names(kube, namespace)
+    admin = (ADMIN_USER, _secret_value(kube, namespace, admin_ref[0], admin_ref[1]))
+    breakglass = (
+        BREAKGLASS_USER,
+        _secret_value(kube, namespace, breakglass_ref[0], breakglass_ref[1]),
+    )
+    if not admin[1] and not breakglass[1]:
+        raise CredentialNotFoundError(
+            f"neither {namespace}/{admin_ref[0]} nor {namespace}/{breakglass_ref[0]} could be "
+            f"read with this kubeconfig, so the deploy cannot hand over a login"
+        )
+    console, engine = _console_urls(kube, namespace)
+    access_summary_file.write(
+        out, access_summary_file.render(console, engine, admin, breakglass)
+    )
+    return out, {
+        access_summary_file.ADMIN_LABEL: admin,
+        access_summary_file.BREAKGLASS_LABEL: breakglass,
+    }
+
+
+def cmd_access_summary(args: argparse.Namespace) -> int:
+    """Write the launcher's copy of this deployment's two minted logins."""
+    settings = dict(os.environ)
+    envfile.load_env_files(args.env_file, settings)
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    context = args.context or settings.get("DFE_KUBE_CONTEXT")
+    if context:
+        kube += ["--context", context]
+    namespace = (
+        args.namespace
+        or settings.get("DFE_NAMESPACE")
+        or _cluster_annotation(kube, "dfe_namespace")
+        or "dfe"
+    )
+    out = Path(args.out) if args.out else (
+        access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode) / access_summary_file.FILENAME
+    )
+    try:
+        path, logins = emit_access_summary(kube, namespace, out)
+    except CredentialNotFoundError as exc:
+        print(f"access-summary: {exc}", file=sys.stderr)
+        return 1
+    # To a terminal only, the same rule dfe-docker's `make creds` follows: a
+    # redirected run leaves the values in the file and nowhere else.
+    if sys.stdout.isatty():
+        for label, (user, password) in logins.items():
+            print(f"  {label}: {user} / {password}")
+    print(f"==> access summary written to {path} (mode 0600) -- delete it once recorded")
+    return 0
+
+
+def _profile_clickhouse_target(mode: str | None) -> str:
+    """The datastore Service a profile's apps talk to, as a port-forward target.
+
+    The operator-managed cluster tiers name the service after the operator's
+    convention, so the profile values are the one place the name is written.
+    """
+    from ruamel.yaml import YAML
+
+    yaml = YAML(typ="safe")
+    host = ""
+    files = [ARGO_VALUES / "common.yaml"]
+    if mode:
+        files.append(REPO_ROOT / profiles.PROFILES[mode].argocd_values)
+    for path in files:
+        doc = yaml.load(path.read_text(encoding="utf-8")) or {}
+        host = ((doc.get("clickhouse") or {}).get("host") or host) if isinstance(doc, dict) else host
+    return f"svc/{host.split('.')[0]}" if host else "svc/dfe-clickhouse"
+
+
+def _gateway_address(kube: list[str]) -> str:
+    """The address the deployment's Gateway is programmed on, or empty."""
+    rc, doc, _ = _kubectl_json([*kube, "get", "gateway", "-A"])
+    if rc != 0:
+        return ""
+    for item in doc.get("items") or []:
+        for address in (item.get("status") or {}).get("addresses") or []:
+            if address.get("value"):
+                return str(address["value"])
+    return ""
+
+
+def _resolves(host: str) -> bool:
+    """Whether this machine can resolve the host at all."""
+    try:
+        socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    return True
+
+
+def _cluster_annotation(kube: list[str], name: str) -> str:
+    """One dfe-cluster annotation, or empty when the secret cannot be read."""
+    rc, doc, _ = _kubectl_json([*kube, "-n", "argocd", "get", "secret", "dfe-cluster"])
+    if rc != 0:
+        return ""
+    return ((doc.get("metadata") or {}).get("annotations") or {}).get(
+        f"dfe.hyperi.io/{name}", ""
+    )
+
+
+def _secret_exists(kube: list[str], namespace: str, name: str) -> bool:
+    """Whether a Secret is readable. Never reads its values."""
+    rc, _, _ = _run_text(
+        [*kube, "-n", namespace, "get", "secret", name, "-o", "name"]
+    )
+    return rc == 0
+
+
+def _fetch_line(namespace: str, secret: str, key: str) -> str:
+    """One credential's fetch command, in the shape setup-status serves the login page."""
+    return (
+        f"kubectl -n {namespace} get secret {secret} "
+        f"-o jsonpath='{{.data.{key}}}' | base64 -d; echo"
+    )
+
+
+def creds_lines(
+    app_namespace: str,
+    present: dict[str, bool] | None = None,
+    rows: tuple[tuple[str, str, str, tuple[str, ...]], ...] | None = None,
+) -> list[str]:
+    """The credential block, as commented fetch commands. Never a value.
+
+    `present` maps "<namespace>/<secret>" to whether it was found; a missing one
+    is marked rather than dropped, so a turned-off break-glass reads as turned
+    off instead of as an omission.
+    """
+    out: list[str] = []
+    for label, namespace, secret, keys in rows or credential_rows():
+        ns = app_namespace if namespace == _APP_NS else namespace
+        status = ""
+        if present is not None:
+            status = "" if present.get(f"{ns}/{secret}") else "   [not on this cluster]"
+        out.append(f"# {label}{status}")
+        out.extend(_fetch_line(ns, secret, key) for key in keys)
+    return out
+
+
+def cmd_creds(args: argparse.Namespace) -> int:
+    """Print where every login of this deploy comes from.
+
+    The deploy mints the admin and break-glass passwords (#233), so each
+    deployment's credentials live only in its own secret store. This prints the
+    fetch command for each, never the value, so the output is safe in a log.
+
+    Both Secret names come off the live engine Deployment, since a deployment
+    may rename either through auth.adminSecretName / auth.breakglassSecretName.
+    """
+    settings = dict(os.environ)
+    envfile.load_env_files(args.env_file, settings)
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    context = args.context or settings.get("DFE_KUBE_CONTEXT")
+    if context:
+        kube += ["--context", context]
+
+    namespace = (
+        args.namespace
+        or settings.get("DFE_NAMESPACE")
+        or _cluster_annotation(kube, "dfe_namespace")
+        or "dfe"
+    )
+
+    rows = credential_rows()
+    present: dict[str, bool] | None = None
+    if not args.no_cluster:
+        rows = credential_rows(*engine_secret_names(kube, namespace, args.engine_deployment))
+        present = {}
+        for _, ns, secret, _keys in rows:
+            resolved = namespace if ns == _APP_NS else ns
+            present[f"{resolved}/{secret}"] = _secret_exists(kube, resolved, secret)
+
+    lines = creds_lines(namespace, present, rows)
+    if args.markdown:
+        print("```sh")
+        print("\n".join(lines))
+        print("```")
+    else:
+        print("\n".join(lines))
+    return 0
+
+
+# --- ca subcommand (export + trust the deployment's edge root) ----------------
+# The two Secrets the edge trust chain lives in, and the internal-CA issuer the
+# self-signed mode uses. Names are flags; these are the chart defaults.
+_INTERNAL_CA_NS = "cert-manager"
+_INTERNAL_CA_SECRET = "dfe-internal-ca-tls"
+_INTERNAL_CA_ISSUER = "dfe-internal-ca"
+_WILDCARD_NS = "envoy-gateway-system"
+_WILDCARD_SECRET = "dfe-wildcard-tls"
+_RESTORE_EXTERNALSECRET = "dfe-internal-ca-restore"
+
+
+def _secret_key(kube: list[str], namespace: str, secret: str, key: str) -> str:
+    """One base64 Secret key, decoded. Empty when the Secret or key is absent."""
+    rc, doc, _ = _kubectl_json([*kube, "-n", namespace, "get", "secret", secret])
+    if rc != 0:
+        return ""
+    raw = (doc.get("data") or {}).get(key)
+    if not raw:
+        return ""
+    return base64.b64decode(raw).decode("utf-8", "replace")
+
+
+def _first_pem(text: str) -> str:
+    """The FIRST certificate of a PEM bundle -- the leaf, or a lone CA."""
+    marker = "-----END CERTIFICATE-----"
+    head, sep, _ = text.partition(marker)
+    return f"{head}{sep}\n" if sep else ""
+
+
+def _cert_field(pem: str, *openssl_args: str) -> str:
+    """One openssl x509 field of a PEM, or empty when openssl cannot read it."""
+    if not shutil.which("openssl") or not pem:
+        return ""
+    proc = subprocess.run(
+        ["openssl", "x509", "-noout", *openssl_args],
+        input=pem,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _issuer_mode(kube: list[str], issuer_name: str) -> tuple[str, str]:
+    """(mode, issuer) for the edge wildcard: 'self-signed' | 'vault' | 'acme'.
+
+    Read off the ClusterIssuer the wildcard Certificate actually names, not off a
+    values file -- a deployment sets the mode in its own overlay, so the cluster
+    is the only honest answer.
+    """
+    rc, doc, _ = _kubectl_json(
+        [*kube, "-n", _WILDCARD_NS, "get", "certificate", _WILDCARD_SECRET]
+    )
+    named = ((doc.get("spec") or {}).get("issuerRef") or {}).get("name", "") if rc == 0 else ""
+    if not named:
+        return "unknown", ""
+    if named == issuer_name:
+        return "self-signed", named
+    rc, doc, _ = _kubectl_json([*kube, "get", "clusterissuer", named])
+    spec = doc.get("spec") or {} if rc == 0 else {}
+    if "vault" in spec:
+        return "vault", named
+    if "acme" in spec:
+        return "acme", named
+    return "unknown", named
+
+
+def _ca_status_lines(kube: list[str], args: argparse.Namespace) -> list[str]:
+    """The issuer-mode report the readiness gate and the access summary print."""
+    mode, issuer = _issuer_mode(kube, args.issuer)
+    out = [f"edge TLS issuer mode: {mode} (ClusterIssuer {issuer or 'none'})"]
+    if mode == "self-signed":
+        root = _secret_key(kube, args.namespace, args.secret, "tls.crt")
+        if not root:
+            out.append(f"  the root Secret {args.namespace}/{args.secret} is not on this cluster")
+            return out
+        # Restored vs newly minted: the restore ExternalSecret is the only
+        # component that can have written this Secret from the store.
+        rc, doc, _ = _kubectl_json(
+            [*kube, "-n", args.namespace, "get", "externalsecret", args.restore]
+        )
+        if rc != 0:
+            origin = (
+                "newly minted, and NOT persisted -- the next rebuild mints another root. "
+                "Turn on tls.internalCA.persist.enabled where the deployment has a secret store"
+            )
+        else:
+            conditions = (doc.get("status") or {}).get("conditions") or []
+            ready = next((c for c in conditions if c.get("type") == "Ready"), {})
+            if ready.get("status") == "True":
+                origin = "RESTORED from the secret store"
+            else:
+                origin = (
+                    "newly minted; the restore ExternalSecret is not Ready "
+                    f"({ready.get('reason', 'no status')}) -- the store does not hold the root yet"
+                )
+        out.append(f"  root: {origin}")
+        out.append(f"  {_cert_field(root, '-subject') or 'subject unavailable (no openssl)'}")
+        out.append(f"  {_cert_field(root, '-fingerprint', '-sha256') or ''}".rstrip())
+        out.append(f"  {_cert_field(root, '-dates') or ''}".rstrip().replace('\n', ' '))
+        out.append("  export it for a developer box with: dfe-ops ca")
+    elif mode in ("vault", "acme"):
+        chain = _secret_key(kube, _WILDCARD_NS, _WILDCARD_SECRET, "ca.crt") or _secret_key(
+            kube, _WILDCARD_NS, _WILDCARD_SECRET, "tls.crt"
+        )
+        subject = _cert_field(_first_pem(chain), "-subject")
+        out.append(f"  issuing CA: {subject or 'unavailable'}")
+        if mode == "vault":
+            out.append("  clients trust the estate PKI already -- nothing to install")
+    return [line for line in out if line.strip()]
+
+
+def _ca_install_lines(path: str, name: str, system: str | None = None) -> list[str]:
+    """The root install commands that need root, for one OS or for both.
+
+    `system` is a platform.system() value. None prints both, which is what an
+    operator reading the export wants; a value prints only that OS's, which is
+    what --install has to print after doing the rest.
+    """
+    linux = [
+        "# Linux (system trust store -- curl, python, the JVM):",
+        f"sudo cp {path} /usr/local/share/ca-certificates/{name}.crt",
+        "sudo update-ca-certificates",
+        "",
+        "# Chromium-family browsers (Brave, Chrome, Edge) read their OWN NSS store,",
+        "# not the system one. Needs libnss3-tools (apt install libnss3-tools):",
+        f"certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n {name} -i {path}",
+    ]
+    # macOS Chrome and Safari read the system keychain, so there is no NSS step.
+    darwin = [
+        "# macOS (system keychain -- covers Safari and Chrome):",
+        f"sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain {path}",
+    ]
+    if system == "Darwin":
+        return darwin
+    if system is not None:
+        return linux
+    return [*linux, "", *darwin]
+
+
+def _ca_nonroot_install(
+    path: Path, name: str, system: str, nssdb: Path | None = None
+) -> list[str]:
+    """Do the install steps that do not need root, and report what happened.
+
+    Linux only: the NSS store at ~/.pki/nssdb is what Chromium-family browsers
+    read there. macOS Chrome and Safari read the system keychain, which is the
+    sudo step, so there is nothing to do without root. `nssdb` is a parameter so
+    the branch is testable off whatever the running machine happens to have.
+    """
+    if system == "Darwin":
+        return ["macOS trusts through the system keychain, so nothing runs without root"]
+    nssdb = nssdb or Path.home() / ".pki" / "nssdb"
+    if not shutil.which("certutil"):
+        return ["certutil not found -- install libnss3-tools for the browser store"]
+    if not nssdb.is_dir():
+        return [f"no NSS store at {nssdb} -- start a Chromium-family browser once, then re-run"]
+    rc, _, err = _run_text(
+        ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", name, "-i", str(path)]
+    )
+    if rc == 0:
+        return [f"trusted in the browser NSS store at {nssdb}"]
+    return [f"certutil failed: {err.strip()}"]
+
+
+def cmd_ca(args: argparse.Namespace) -> int:
+    """Export the deployment's edge root so a developer box can trust it (#238).
+
+    Prints the PUBLIC half only. The private key stays in the cluster and in the
+    deployment's secret store; nothing here can print it.
+    """
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    if args.context:
+        kube += ["--context", args.context]
+
+    if args.status:
+        print("\n".join(_ca_status_lines(kube, args)))
+        return 0
+
+    mode, issuer = _issuer_mode(kube, args.issuer)
+    if mode == "vault":
+        print(
+            f"# This deployment issues its edge certificate from {issuer}, a Vault/OpenBao\n"
+            "# PKI. Its root is the estate's, so trust it the way the estate publishes it\n"
+            "# -- there is no deployment-specific root to install.",
+            file=sys.stderr,
+        )
+        return 3
+
+    root = _secret_key(kube, args.namespace, args.secret, "tls.crt")
+    if not root:
+        print(
+            f"no root certificate in {args.namespace}/{args.secret} "
+            "(wrong cluster, or the deployment is not in self-signed mode)",
+            file=sys.stderr,
+        )
+        return 1
+
+    out_path = Path(args.out_dir) / f"{args.name}.crt"
+    if args.install:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(root, encoding="utf-8", newline="\n")
+        print(f"wrote {out_path}")
+        system = platform.system()
+        print("\n".join(_ca_nonroot_install(out_path, args.name, system)))
+        print("\n# Still to run yourself -- these need root:")
+        print("\n".join(_ca_install_lines(str(out_path), args.name, system)))
+        return 0
+
+    print(root, end="" if root.endswith("\n") else "\n")
+    print(f"\n# Save the block above as {out_path}, then:")
+    print("\n".join(_ca_install_lines(str(out_path), args.name)))
+    print("\n# Or let dfe-ops do the non-root half: dfe-ops ca --install")
+    return 0
+
+
+# --- ui subcommand (the dfe-ui Playwright acceptance specs over port-forwards) -
+def _rotate_break_glass(engine_url: str, name: str, current: str) -> str:
+    """Rotate the break-glass password through the product API; return the new one.
+
+    In-process on purpose: the token never reaches a command line or a log.
+    """
+    new_password = secrets.token_urlsafe(24)
+    login = urllib.request.Request(
+        f"{engine_url}/api/v1/auth/login",
+        data=json.dumps({"username": name, "password": current}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(login, timeout=15) as response:
+        token = json.loads(response.read())["access_token"]
+    reset = urllib.request.Request(
+        f"{engine_url}/api/v1/auth/accounts/{name}/reset-password",
+        data=json.dumps({"new_password": new_password}).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(reset, timeout=15) as response:
+        response.read()
+    return new_password
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    """Run the dfe-ui acceptance specs against a deployed stack.
+
+    `acceptance` proves the data path with the engine's pytest suite. This
+    drives the UI, which sits on top of the gateway, the engine API, auth and
+    the datastore, so one pass exercises all of them.
+
+    The break-glass password is rotated FIRST and the suite gets the new value
+    as E2E_ADMIN_PASSWORD (docs/ACCEPTANCE-AUTOMATION.md: the stack under test
+    must differ from the build defaults). The bootstrap value it replaces comes
+    from DFE_AUTH_LOCAL_ADMIN_PASSWORD in the env file, else the seed default.
+
+    Reach the UI at --ui-url when a gateway serves it. The port-forward is a
+    fallback and is announced as one: next-auth builds its callback URLs from
+    the deployment's NEXTAUTH_URL, so a localhost origin can refuse the login
+    round-trip.
+    """
+    settings = dict(os.environ)
+    for env_file in args.env_file:
+        loaded = envfile.parse_env_file(Path(env_file))
+        settings.update(loaded)
+        print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
+
+    context = args.context or settings.get("DFE_KUBE_CONTEXT")
+    namespace = args.namespace or settings.get("DFE_NAMESPACE", "dfe-local")
+    server = args.server or settings.get("DFE_KUBE_SERVER")
+
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    if context:
+        kube += ["--context", context]
+    if server:
+        kube += ["--server", server]
+
+    stop = threading.Event()
+    forwards = [("engine", namespace, args.engine_target, args.engine_port, 8000)]
+    if not args.ui_url:
+        print(
+            "  no --ui-url: forwarding the UI to localhost. next-auth may refuse "
+            "the login round-trip on this origin; a gateway URL is the real test.",
+            file=sys.stderr,
+        )
+        forwards.append(("ui", namespace, args.ui_target, args.ui_port, 3000))
+    for label, ns, target, local, remote in forwards:
+        threading.Thread(
+            target=_forward,
+            args=(label, kube, ns, target, local, remote, stop),
+            daemon=True,
+        ).start()
+
+    engine_url = f"http://localhost:{args.engine_port}"
+    ui_url = args.ui_url or f"http://localhost:{args.ui_port}"
+    ready = _forward_ready(f"{engine_url}/livez", "engine", 90.0)
+    ready = _forward_ready(f"{ui_url}/livez", "ui", 90.0) and ready
+    if not ready:
+        stop.set()
+        print("the suite needs the engine and the UI; neither is optional", file=sys.stderr)
+        return 1
+
+    admin = settings.get("DFE_AUTH_LOCAL_ADMIN_NAME") or "admin"
+    bootstrap = settings.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD") or "changeme"
+    if args.no_rotate:
+        rotated = bootstrap
+        print("  --no-rotate: the suite runs on the bootstrap credential", file=sys.stderr)
+    else:
+        try:
+            rotated = _rotate_break_glass(engine_url, admin, bootstrap)
+        except (urllib.error.HTTPError, urllib.error.URLError, KeyError) as exc:
+            stop.set()
+            print(f"break-glass rotation failed, so the run would prove nothing: {exc}", file=sys.stderr)
+            return 1
+        print(f"  break-glass '{admin}' rotated for this run", file=sys.stderr)
+
+    env = dict(os.environ)
+    env.update({
+        "BASE_URL": ui_url,
+        "NEXT_PUBLIC_API_URL": engine_url,
+        "E2E_ADMIN_PASSWORD": rotated,
+        "E2E_BOOTSTRAP_PASSWORD": bootstrap,
+        "CI": "1",
+    })
+    cmd = ["yarn", "playwright", "test", "--grep", args.grep, *args.playwright_args]
+    done = subprocess.run(cmd, cwd=Path(args.ui_repo) / "apps" / "dfe-core-ui", env=env)
     stop.set()
     return done.returncode
 
@@ -633,7 +2079,7 @@ def _run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
     replacement so a stray non-ASCII byte under LC_ALL=C degrades instead of
     raising UnicodeDecodeError.
     """
-    proc = subprocess.run(  # noqa: S603 - argv is built from validated flags
+    proc = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
@@ -656,85 +2102,121 @@ def _current_stack() -> str:
     return out.strip() if rc == 0 else ""
 
 
-def _parse_env_file(path: str) -> dict[str, str]:
-    """Parse a flat KEY=VALUE env file into a dict.
+def _platform_k8s_requirement() -> str:
+    """The current stack's `platform.kubernetes` string, empty if unreadable.
 
-    Handles the ``KEY="value"`` shape of bootstrap/local.env.example (optional
-    ``export`` prefix, ``#`` comments, surrounding single/double quotes stripped).
-    Deliberately NOT a shell interpreter: no ``$VAR`` expansion or command
-    substitution -- it is a pin file, not a script.
-
-    Args:
-        path: Path to the env file.
-
-    Returns:
-        Mapping of variable name to value.
+    Preflight and bootstrap/check_platform.py have to refuse the same clusters,
+    so preflight reads the same key instead of carrying a literal floor that
+    goes stale the moment the stack moves.
     """
-    out: dict[str, str] = {}
-    for raw in Path(path).read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
-        if "=" not in line:
-            continue
-        key, val = line.split("=", 1)
-        key, val = key.strip(), val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
-        out[key] = val
-    return out
+    sys.path.insert(0, str(BOOTSTRAP))
+    from check_platform import load_versions
+
+    try:
+        root = load_versions(REPO_ROOT / "versions.yaml")
+    except OSError:
+        return ""
+    stack = (root.get("stacks") or {}).get(root.get("current")) or {}
+    return str((stack.get("platform") or {}).get("kubernetes") or "")
+
+
+def _resolve_stack(args: argparse.Namespace) -> int:
+    """Fill in an unset --stack from versions.yaml, which owns that pointer.
+
+    A literal default here is a second copy of it, and it goes stale the moment
+    the stack moves: every deploy that does not pass --stack then aims at
+    whatever version the copy was written against.
+    """
+    if args.stack:
+        return 0
+    args.stack = _current_stack()
+    if not args.stack:
+        print(
+            "cannot read versions.yaml `current` (scripts/dfe-stack current), so there is "
+            "no stack to deploy; pass --stack explicitly",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
+# --- capacity-check subcommand (the lane gate, before and during a deploy) ----
+def _docker_reading(host: str | None) -> capacity.Reading:
+    """The docker lane's memory, from the daemon's host.
+
+    Read over ssh when a host is named, else from this machine - the daemon may
+    be remote, and gating on the wrong machine's memory is worse than no gate.
+    /proc/meminfo first because it is the kernel's own estimate; `free -b` is the
+    fallback for a host that will not hand the file over.
+    """
+    remote = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host] if host else []
+    rc, out, err = _run_text([*remote, "cat", "/proc/meminfo"] if remote else ["cat", "/proc/meminfo"])
+    if rc == 0:
+        return capacity.meminfo_available(out)
+    rc, out, free_err = _run_text([*remote, "free", "-b"] if remote else ["free", "-b"])
+    if rc != 0:
+        raise RuntimeError(f"could not read the docker host's memory: {err.strip() or free_err.strip()}")
+    return capacity.free_output_available(out)
+
+
+def _k8s_reading(kube: list[str]) -> capacity.Reading:
+    """The Kubernetes lane's headroom: allocatable minus what is already requested."""
+    rc, nodes, err = _kubectl_json(kube, "get", "nodes")
+    if rc != 0:
+        raise RuntimeError(f"could not list nodes: {err or 'kubectl failed'}")
+    rc, pods, err = _kubectl_json(kube, "get", "pods", "-A")
+    if rc != 0:
+        raise RuntimeError(f"could not list pods: {err or 'kubectl failed'}")
+    return capacity.node_headroom(nodes, pods)
+
+
+def _lane_reading(args: argparse.Namespace) -> capacity.Reading:
+    if args.lane == "docker":
+        return _docker_reading(args.docker_host)
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    if args.context:
+        kube += ["--context", args.context]
+    return _k8s_reading(kube)
+
+
+def cmd_capacity_check(args: argparse.Namespace) -> int:
+    """Refuse a lane the host cannot carry, and abort it if the host runs out.
+
+    The docker and Kubernetes lanes share one hypervisor, so the second lane to
+    start is the one that decides whether the host swaps. --watch is the same
+    check on a timer: it returns non-zero the moment the floor is breached, so
+    the caller running the NEWER lane brings it down rather than the host taking
+    both.
+    """
+    floor = args.floor_bytes if args.floor_bytes else profiles.lane_floor(args.mode)
+    deadline = time.monotonic() + args.watch if args.watch else None
+
+    while True:
+        try:
+            reading = _lane_reading(args)
+        except (RuntimeError, ValueError) as exc:
+            print(f"capacity-check: {exc}", file=sys.stderr)
+            return 2
+        ok, line = capacity.verdict(reading, floor)
+        print(f"  {line}", file=sys.stderr)
+        if not ok:
+            print(
+                f"capacity-check: the {args.lane} lane may not run here - free "
+                f"{reading.free / 1024**3:.1f}Gi, floor {floor / 1024**3:.1f}Gi",
+                file=sys.stderr,
+            )
+            return 1
+        if deadline is None:
+            return 0
+        if time.monotonic() >= deadline:
+            print(f"capacity-check: {args.lane} held the floor for the whole watch", file=sys.stderr)
+            return 0
+        time.sleep(args.interval)
 
 
 # --- preflight subcommand (ONLINE, read-only cluster-contract check) ----------
-def _parse_cpu(q: str) -> float:
-    """Parse a Kubernetes CPU quantity ('4', '3500m', '1500000000n') to cores."""
-    q = q.strip()
-    if q.endswith("n"):
-        return float(q[:-1]) / 1_000_000_000.0
-    if q.endswith("u"):
-        return float(q[:-1]) / 1_000_000.0
-    if q.endswith("m"):
-        return float(q[:-1]) / 1000.0
-    return float(q)
-
-
-# BinarySI + DecimalSI suffixes (k8s resource.Quantity). DecimalSI kilo is
-# LOWERCASE k; the uppercase forms are kept liberally for hand-written values.
-_MEM_SUFFIX = {
-    "Ki": 1024,
-    "Mi": 1024**2,
-    "Gi": 1024**3,
-    "Ti": 1024**4,
-    "k": 1000,
-    "K": 1000,
-    "M": 1000**2,
-    "G": 1000**3,
-    "T": 1000**4,
-}
-
-
-def _parse_mem(q: str) -> int:
-    """Parse a Kubernetes memory quantity ('16Gi', '104857600k', '2000000') to bytes."""
-    q = q.strip()
-    if q.endswith("m"):  # milli-bytes -- rare but a legal Quantity emission
-        return int(float(q[:-1]) / 1000)
-    for suffix in ("Ki", "Mi", "Gi", "Ti", "k", "K", "M", "G", "T"):
-        if q.endswith(suffix):
-            return int(float(q[: -len(suffix)]) * _MEM_SUFFIX[suffix])
-    return int(float(q))
-
-
-# Guidance capacity floors per mode -- allocatable across READY nodes. These are
-# operating-experience numbers (the 3-node dev cluster runs `scale`
-# comfortably), not published minimums: breach -> WARN, never FAIL.
-_MODE_CAPACITY = {
-    "slim": (2.0, 4 * 1024**3, 1),
-    "single": (4.0, 8 * 1024**3, 1),
-    "scale": (6.0, 12 * 1024**3, 3),
-}
-
 # Cluster-singleton operators bootstrap detect-or-installs. (name, CRD, deploy
 # name substring) -- deploy is matched by substring across ALL namespaces
 # because an adopted operator may live anywhere.
@@ -748,9 +2230,25 @@ _ADOPT_OR_INSTALL = (
 _LB_CONTROLLER_HINTS = ("metallb", "svclb", "cloud-controller", "cilium-operator", "aws-load-balancer")
 
 
-def _kubectl_json(base: list[str], *argv: str) -> tuple[int, dict, str]:
+def _cloud_programs_loadbalancers(cloud: str) -> bool:
+    """Whether *cloud* brings its own LoadBalancer controller, as bootstrap decides it.
+
+    One decision, one place: the list is bootstrap.sh's DFE_CLOUD_LB_PROVIDERS,
+    read rather than copied, so preflight's INSTALL preview cannot say one thing
+    while step [3b/7] does another. An unreadable bootstrap.sh means on-prem,
+    which is the preview that names MetalLB.
+    """
+    try:
+        body = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    found = re.search(r'^DFE_CLOUD_LB_PROVIDERS="([^"]*)"', body, re.MULTILINE)
+    return bool(found) and cloud in found.group(1).split()
+
+
+def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple[int, dict, str]:
     """Run kubectl ... -o json and parse. Returns (rc, parsed-or-{}, stderr)."""
-    rc, out, err = _run_text([*base, *argv, "-o", "json"])
+    rc, out, err = _run_text([*base, *argv, "-o", "json"], env=env)
     if rc != 0:
         return rc, {}, err.strip()
     try:
@@ -777,8 +2275,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         from bridge import get_tf_outputs
 
         file_env.update({k: v for k, v in get_tf_outputs(args.from_terraform).items() if k.startswith("DFE_")})
-    for env_file in args.env_file:
-        file_env.update(_parse_env_file(env_file))
+    envfile.load_env_files(args.env_file, file_env)
     namespace = args.namespace or file_env.get("DFE_NAMESPACE") or "dfe-local"
     storage_class = args.storage_class or file_env.get("DFE_STORAGE_CLASS") or ""
     context = args.context or file_env.get("DFE_KUBE_CONTEXT") or ""
@@ -825,15 +2322,34 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         sv = (int(server.get("major", "0")), int(server.get("minor", "0").rstrip("+")))
     except ValueError:
         sv = (0, 0)
-    try:
-        floor = tuple(int(p.rstrip("+")) for p in args.min_k8s.split("."))
-    except ValueError:
-        print(f"  [FAIL] --min-k8s {args.min_k8s!r} is not a version (want e.g. 1.28)", file=sys.stderr)
+    # The floor is versions.yaml's, read through check_platform's own parser, so
+    # preflight refuses exactly what bootstrap refuses. The ceiling stays
+    # bootstrap's warning to give: --strict here would make it a failure.
+    min_k8s = args.min_k8s or _platform_k8s_requirement()
+    if not min_k8s:
+        print(
+            "  [FAIL] versions.yaml declares no platform.kubernetes for the current "
+            "stack; pass --min-k8s",
+            file=sys.stderr,
+        )
         return 2
-    if sv >= floor:
-        ok(f"API server {git_version} (>= {args.min_k8s})")
+    sys.path.insert(0, str(BOOTSTRAP))
+    from check_platform import as_tuple, parse_requirement
+
+    floor_text = parse_requirement(min_k8s)[0]
+    floor = as_tuple(floor_text)
+    if not floor:
+        print(
+            f"  [FAIL] --min-k8s {min_k8s!r} is not a version (want e.g. 1.34 "
+            f"or 1.34-1.36)",
+            file=sys.stderr,
+        )
+        return 2
+    # The server reports major.minor, so judge the floor at that precision.
+    if sv >= floor[: len(sv)]:
+        ok(f"API server {git_version} (>= {floor_text})")
     else:
-        fail(f"API server {git_version} is below the supported floor {args.min_k8s}")
+        fail(f"API server {git_version} is below the supported floor {floor_text}")
     if "+rke2" in git_version:
         ok("RKE2 distribution detected (the on-prem baseline)")
 
@@ -860,12 +2376,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     # degrade to a warning -- never a traceback in a tool that promises a
     # verdict for every check.
     try:
-        cpu = sum(_parse_cpu(n["status"]["allocatable"].get("cpu", "0")) for n in ready_nodes)
-        mem = sum(_parse_mem(n["status"]["allocatable"].get("memory", "0")) for n in ready_nodes)
+        cpu = sum(capacity.parse_cpu(n["status"]["allocatable"].get("cpu", "0")) for n in ready_nodes)
+        mem = sum(capacity.parse_mem(n["status"]["allocatable"].get("memory", "0")) for n in ready_nodes)
     except ValueError as exc:
         warn(f"could not parse node allocatable quantities ({exc}) -- capacity check skipped")
     else:
-        min_cpu, min_mem, min_nodes = _MODE_CAPACITY[args.mode]
+        min_cpu, min_mem, min_nodes = profiles.capacity(args.mode)
         cap = f"allocatable {cpu:.1f} CPU / {mem / 1024**3:.1f}Gi across {len(ready_nodes)} Ready node(s)"
         if cpu >= min_cpu and mem >= min_mem and len(ready_nodes) >= min_nodes:
             ok(f"{cap} (guidance floor for {args.mode}: {min_cpu:.0f} CPU / {min_mem / 1024**3:.0f}Gi / {min_nodes} node(s))")
@@ -925,6 +2441,11 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         ok(f"LoadBalancer provider working ({len(lb_live)} Service(s) hold an address)")
     elif lb_ctrl:
         ok(f"LoadBalancer controller present: {lb_ctrl[0]}")
+    elif not _cloud_programs_loadbalancers(file_env.get("DFE_CLOUD") or ""):
+        # The same on-prem gate bootstrap's MetalLB step reads, so the preview
+        # says INSTALL only where the step will actually run.
+        ok("no LoadBalancer provider -> bootstrap INSTALLS MetalLB + the dfe-front-door pool "
+           "(DFE_GATEWAY_IP/DFE_RECEIVER_IP)")
     else:
         warn("no LoadBalancer provider detected -- bootstrap installs MetalLB on-prem; on a cloud target the cloud LB controller must exist")
 
@@ -1045,20 +2566,21 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     if rc != 0 and args.strict_compat:
         hard_fail += 1
 
+    common = ARGO_VALUES / "common.yaml"
+    profile = REPO_ROOT / profiles.PROFILES[args.mode].argocd_values
+
     # 5. Render the mode's charts at the pinned versions (catch a broken profile
     #    offline). helm optional -- a missing binary warns, it does not fail.
     if shutil.which("helm") is None:
         print("  [warn] helm not on PATH -- skipping the chart-render pre-flight.", file=sys.stderr)
     else:
-        common = ARGO_VALUES / "common.yaml"
-        profile = ARGO_VALUES / f"profile-{args.mode}.yaml"
         # appNamespace is an estate value the appset supplies at deploy from the
         # cluster's dfe.hyperi.io/dfe_namespace annotation; scale's kafka chart
         # fail-fasts without it (fromSecretsStore needs a target namespace to
         # project the credential into). Offline there is no annotation, so feed a
         # synthetic one -- this is a structural render check, the output is
         # discarded, and the fail-fast still guards real deploys.
-        for chart in (*_MODE_SUBSTRATE[args.mode], *_PREFLIGHT_APPS):
+        for chart in (*profiles.substrate(args.mode), *_PREFLIGHT_APPS):
             tmp = tempfile.mkdtemp(prefix=f"dfe-render-{chart}-")
             try:
                 rc, _out, err = _run_text(
@@ -1077,6 +2599,41 @@ def _offline_preflight(args: argparse.Namespace) -> int:
             else:
                 print(f"  [ok]   helm render {chart} ({args.mode})", file=sys.stderr)
 
+    # 6. The engine mounts apps.yaml, which is what makes a new or changed app a
+    #    manifest edit rather than an engine release. A deploy that renders no
+    #    catalogue silently answers off the snapshot baked into the engine image.
+    if composition.write_catalogue(check_only=True) != 0:
+        hard_fail += 1
+    elif shutil.which("helm") is None:
+        print(
+            "  [warn] helm not on PATH -- the rendered app catalogue was not checked.",
+            file=sys.stderr,
+        )
+    else:
+        rc, out, err = _run_text(
+            [
+                "helm", "template", "dfe-engine", str(HELM_CHARTS / "dfe-engine"),
+                "-f", str(common), "-f", str(profile),
+                "--set", "appNamespace=preflight",
+            ]
+        )
+        # Whole lines, not substrings: a renamed variable still contains the old
+        # name, and the check would keep passing over it.
+        missing = [
+            what
+            for what, marker in (
+                ("the manifest", composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ") + "\n"),
+                ("DFE_APP_CATALOGUE_FILE", "name: DFE_APP_CATALOGUE_FILE\n"),
+            )
+            if marker not in out
+        ]
+        if rc != 0 or missing:
+            why = _last_line(err) or f"{', '.join(missing)} not rendered"
+            print(f"  [FAIL] engine app catalogue: {why}", file=sys.stderr)
+            hard_fail += 1
+        else:
+            print("  [ok]   engine mounts apps.yaml and is pointed at it", file=sys.stderr)
+
     if hard_fail:
         print(f"=== PRE-FLIGHT FAILED ({hard_fail} issue(s)) -- fix before deploying ===", file=sys.stderr)
         return 1
@@ -1090,8 +2647,8 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     The forced overrides are the whole point of the driver: DFE_PROFILE = the
     chosen mode (the single lever that selects the deploy profile end to end) and,
     optionally, the Argo git ref for the pinned charts. Later sources win, so a
-    terraform-supplied DFE_PROFILE (one of slim|single|scale) is always replaced
-    by the requested mode.
+    terraform-supplied DFE_PROFILE (one of MODES) is always replaced by the
+    requested mode.
     """
     env = dict(os.environ)
 
@@ -1107,17 +2664,24 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         print(f"  loaded {len(dfe)} DFE_* var(s) from terraform {args.from_terraform}", file=sys.stderr)
 
     for env_file in args.env_file:
-        loaded = _parse_env_file(env_file)
+        loaded = envfile.parse_env_file(Path(env_file))
         env.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
     env["DFE_PROFILE"] = args.mode
+    _apply_domain(env, args.mode)
     if args.target_revision:
         env["DFE_TARGET_REVISION"] = args.target_revision
     if args.kubeconfig:
         env["KUBECONFIG"] = args.kubeconfig
     env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
     env["DFE_ACCESS_OUT"] = args.access_out
+    # The launcher's own copy: bootstrap.sh calls `dfe-ops access-summary --out`
+    # with this, so a deploy started by hand or through the cycle writes the
+    # same file to the same place.
+    env["DFE_ACCESS_SUMMARY_OUT"] = str(
+        access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode) / access_summary_file.FILENAME
+    )
     if args.skip_e2e:
         env["DFE_SKIP_INTEGRATION_TESTS"] = "true"
     if args.dry_run:
@@ -1130,6 +2694,8 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     if args.mode not in MODES:
         print(f"--mode must be one of {', '.join(MODES)}", file=sys.stderr)
         return 2
+    if _resolve_stack(args) != 0:
+        return 2
 
     if _offline_preflight(args) != 0:
         return 1
@@ -1138,6 +2704,9 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
         return 0
 
     env = _assemble_env(args)
+    # The certified stack, as its own annotation: the engine reports it and the
+    # git ref Argo tracks is not a version.
+    env["DFE_STACK_VERSION"] = args.stack
 
     # Fail early on incomplete env -- clearer than a mid-bootstrap abort.
     missing = [v for v in BOOTSTRAP_REQUIRED if not env.get(v)]
@@ -1165,14 +2734,33 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print("=== stack-deploy ===", file=sys.stderr)
     print(f"  Stack:      {args.stack}", file=sys.stderr)
     print(f"  Mode:       {args.mode} (DFE_PROFILE={env['DFE_PROFILE']})", file=sys.stderr)
+    print(f"  Domain:     {env.get('DFE_DOMAIN')}", file=sys.stderr)
     print(f"  Namespace:  {env.get('DFE_NAMESPACE')}", file=sys.stderr)
     print(f"  Cloud/env:  {env.get('DFE_CLOUD')}/{env.get('DFE_ENV')}", file=sys.stderr)
     print(f"  Git ref:    {env.get('DFE_TARGET_REVISION')}", file=sys.stderr)
+    print(
+        f"  Retention:  {env.get('DFE_CLICKHOUSE_DEFAULT_TTL_DAYS') or '90'} day(s), "
+        "every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)",
+        file=sys.stderr,
+    )
     print(f"  Kubeconfig: {env.get('KUBECONFIG', '(current context)')}", file=sys.stderr)
     print(f"  Readiness:  bounded at {env['READINESS_TIMEOUT']}s", file=sys.stderr)
     print(f"  E2E tests:  {'SKIPPED' if args.skip_e2e else 'ON (data path + self-monitoring)'}", file=sys.stderr)
     print(f"  Dry run:    {'yes (no cluster changes)' if args.dry_run else 'no'}", file=sys.stderr)
     print("", file=sys.stderr)
+
+    # A bus profile takes the Kafka user's password from the secrets store, and
+    # on the OpenBao path ESO reaches the store only with the AppRole SecretID:
+    # without it the whole data plane sits in CreateContainerConfigError after a
+    # 25-minute readiness wait.
+    if profiles.has_kafka(args.mode) and env.get("DFE_VAULT_ADDR") and not env.get("DFE_VAULT_SECRET_ID"):
+        print(
+            f"  [FAIL] --mode {args.mode} runs a broker whose credential comes from the "
+            f"secrets store at {env['DFE_VAULT_ADDR']}, and DFE_VAULT_SECRET_ID (the ESO "
+            "AppRole SecretID) is unset: pass it in an --env-file or via --from-terraform",
+            file=sys.stderr,
+        )
+        return 1
 
     rc = _run_streaming(["bash", str(script)], env=env)
     if rc != 0:
@@ -1190,7 +2778,19 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     )
     if not args.skip_e2e:
         print("  Two default E2E tests passed (receiver->CH data path + self-monitoring OTel).", file=sys.stderr)
-    print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    if Path(args.access_out).is_file():
+        print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    else:
+        print(
+            f"  Access summary NOT written to {args.access_out}: bootstrap/access-summary.sh "
+            "did not run (see above)",
+            file=sys.stderr,
+        )
+    print(
+        f"  Your logins are in {env['DFE_ACCESS_SUMMARY_OUT']} (mode 0600, plaintext) "
+        "-- record them and delete it.",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -1211,6 +2811,8 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     interactive debugging on a dev cluster. A FAILED deploy still destroys,
     so a broken run never strands a half-stack.
     """
+    if _resolve_stack(args) != 0:
+        return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
     passthrough_kube = ["--kubeconfig", args.kubeconfig] if args.kubeconfig else []
     passthrough_env = [flag for f in args.env_file for flag in ("--env-file", f)]
@@ -1229,6 +2831,12 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         stage_env["KUBECONFIG"] = str(Path(args.kubeconfig).resolve())
 
     stages: list[tuple[str, list[str]]] = []
+    # Before anything is deployed: the other lane may already hold the host.
+    if not args.skip_capacity_check:
+        stages.append((
+            "capacity",
+            [*self_cmd, "capacity-check", "--lane", "k8s", "--mode", args.mode, *passthrough_kube],
+        ))
     if not args.skip_preflight:
         preflight_cmd = [
             *self_cmd, "preflight", "--mode", args.mode,
@@ -1258,6 +2866,15 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     if args.from_terraform:
         smoke_cmd += ["--from-terraform", args.from_terraform]
     stages.append(("smoke", smoke_cmd))
+    # The UI stage is opt-in: it needs a dfe-ui checkout and node, which not
+    # every cycle runner has, and a cycle that starts failing for want of a
+    # browser would be worse than one that says the stage did not run.
+    if args.ui_repo:
+        ui_cmd = [*self_cmd, "ui", "--ui-repo", args.ui_repo,
+                  *passthrough_kube, *passthrough_env]
+        if args.ui_url:
+            ui_cmd += ["--ui-url", args.ui_url]
+        stages.append(("ui", ui_cmd))
 
     results: list[tuple[str, int, float]] = []
     aborted = False
@@ -1377,15 +2994,16 @@ def build_parser() -> argparse.ArgumentParser:
     # stack-deploy
     sd = sub.add_parser(
         "stack-deploy",
-        help="deploy a pinned stack version in a mode (slim|single|scale) + run the 2 default E2E tests",
+        help=f"deploy a pinned stack version in a mode ({'|'.join(MODES)}) + run the 2 default E2E tests",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    sd.add_argument("--stack", default=DEFAULT_STACK, help="versions.yaml stack version to deploy/validate")
+    sd.add_argument("--stack", default="", help="versions.yaml stack version to deploy/validate (default: its `current` pointer)")
     sd.add_argument(
         "--mode",
-        required=True,
+        default=DEFAULT_MODE,
         choices=list(MODES),
-        help="deploy profile: slim (gRPC, no Kafka), single (1 node + Kafka), scale (HA + operators)",
+        help=f"deploy profile (default: {DEFAULT_MODE}) -- "
+        + "; ".join(f"{m}: {p.description}" for m, p in profiles.PROFILES.items()),
     )
     sd.add_argument(
         "--kubeconfig",
@@ -1430,7 +3048,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="READ-ONLY check: is this cluster right for a DFE deployment?",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    pf.add_argument("--mode", default="single", choices=list(MODES), help="deploy profile the cluster is being sized for")
+    pf.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy profile the cluster is being sized for")
     pf.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
     pf.add_argument("--context", default=None, help="kubeconfig context name (default: DFE_KUBE_CONTEXT from --env-file, else current)")
     pf.add_argument("--namespace", default=None, help="target app namespace (default: DFE_NAMESPACE from --env-file, else dfe-local)")
@@ -1439,7 +3057,10 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* defaults from a terraform env dir (env files win over it)")
     pf.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="a node label Ready workers MUST carry (repeatable) -- catches the wrong-cluster trap")
     pf.add_argument("--registry", default="ghcr.io", help="registry HOST to check reachability of (from this machine)")
-    pf.add_argument("--min-k8s", default="1.28", help="minimum Kubernetes server version (guidance floor)")
+    # Resolved in cmd_preflight, not here: build_parser runs for every subcommand
+    # and for --help, and a versions.yaml this could not parse would take all of
+    # them down naming preflight.
+    pf.add_argument("--min-k8s", default="", help="minimum Kubernetes server version; defaults to the current stack's platform.kubernetes in versions.yaml, the floor bootstrap enforces")
     pf.add_argument("--strict", action="store_true", help="treat warnings as failures")
     pf.set_defaults(func=cmd_preflight)
 
@@ -1449,8 +3070,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="THE validation cycle: preflight -> stack-deploy+E2E -> smoke suite -> destroy",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    cy.add_argument("--mode", required=True, choices=list(MODES), help="deploy profile to cycle")
-    cy.add_argument("--stack", default=DEFAULT_STACK, help="versions.yaml stack version to deploy")
+    cy.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy profile to cycle")
+    cy.add_argument("--stack", default="", help="versions.yaml stack version to deploy (default: its `current` pointer)")
     cy.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
     cy.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
     cy.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* outputs from a terraform env dir")
@@ -1458,7 +3079,13 @@ def build_parser() -> argparse.ArgumentParser:
     cy.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix")
     cy.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="node label the preflight must find (repeatable)")
     cy.add_argument("--skip-preflight", action="store_true", help="skip the online cluster preflight stage")
+    cy.add_argument("--skip-capacity-check", action="store_true",
+                    help="deploy without asking whether the host can carry this lane beside the other one")
     cy.add_argument("--keep", action="store_true", help="do NOT destroy at the end (dev-cluster debugging only; cloud cycles must destroy)")
+    cy.add_argument("--ui-repo", default=None, metavar="DIR",
+                    help="dfe-ui checkout; given, the ui stage runs after smoke (needs node + a browser)")
+    cy.add_argument("--ui-url", default=None,
+                    help="the gateway URL the UI is served on; without it the ui stage port-forwards and says so")
     cy.set_defaults(func=cmd_cycle)
 
     # teardown
@@ -1495,6 +3122,81 @@ def build_parser() -> argparse.ArgumentParser:
                     help="read DFE_* outputs from this terraform environment, as the deploy did (supplies DFE_NAMESPACE)")
     vf.set_defaults(func=cmd_verify)
 
+    # refresh
+    rf = sub.add_parser(
+        "refresh",
+        help="land the tracked git ref on a persistent deploy now, then re-prove it",
+        description="Upgrade-in-place for a persistent deploy: hard-refresh every Argo "
+                    "Application so a pushed commit lands now instead of at the next "
+                    "poll, wait for every Application on a tracked repo to report "
+                    "Synced and Healthy, then run the readiness gate and the same "
+                    "smoke suite `verify` runs. Deploys nothing -- Argo already "
+                    "tracks the ref. The smoke stage needs the app namespace, so "
+                    "without --env-file or --namespace it refuses unless --skip-verify.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    rf.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    rf.add_argument("--env-file", action="append", default=[], metavar="PATH",
+                    help="DFE_* env file the deploy used (repeatable; later wins) -- supplies DFE_NAMESPACE")
+    rf.add_argument("--from-terraform", default=None, metavar="TF_DIR",
+                    help="read DFE_* outputs from a terraform env dir, as the deploy did (env files win over it)")
+    rf.add_argument("--mode", choices=MODES,
+                    help="deploy profile, so the smoke suite knows whether a broker is expected")
+    rf.add_argument("--namespace", default=None,
+                    help="app namespace the readiness gate asserts workloads in (default: DFE_NAMESPACE from --env-file)")
+    rf.add_argument("--argocd-namespace", default="argocd",
+                    help="namespace holding the Argo Applications to hard-refresh")
+    rf.add_argument("--readiness-timeout", type=int, default=600,
+                    help="bounded wait in seconds, applied to the Argo sync and again to the readiness gate (sets READINESS_TIMEOUT)")
+    rf.add_argument("--skip-verify", action="store_true",
+                    help="stop after the readiness gate (the run then proves Ready, not working)")
+    # cmd_verify runs on this same namespace, so the flag it reads must exist here.
+    rf.set_defaults(func=cmd_refresh, readiness_only=False)
+
+    asum = sub.add_parser(
+        "access-summary",
+        help="write the launcher's copy of this deployment's two minted logins",
+        description="The person who ran the deploy has to get in, and every other "
+                    "route to these passwords needs a cluster login they do not "
+                    "have yet. Writes them in plaintext, mode 0600, outside the "
+                    "cluster, with what to do next. Delete it once recorded.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    asum.add_argument("--out", default="", help="where to write it (default: .tmp/<stack>-<mode>/access-summary.md)")
+    asum.add_argument("--stack", default="current", help="stack version, for the default path")
+    asum.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy mode, for the default path")
+    asum.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig the deploy ran with")
+    asum.add_argument("--context", default=None, help="kubeconfig context")
+    asum.add_argument("--namespace", default=None, help="app namespace (default: the cluster annotation)")
+    asum.add_argument("--env-file", action="append", default=[], metavar="FILE", help="env file (repeatable)")
+    asum.set_defaults(func=cmd_access_summary)
+
+    cc = sub.add_parser(
+        "capacity-check",
+        help="refuse a lane the host cannot carry, or watch one that is running",
+        description="The docker and Kubernetes lanes share a hypervisor, so each "
+                    "asks before it deploys and again while it runs. --watch "
+                    "returns non-zero at the floor, so the caller running the "
+                    "newer lane aborts it rather than the host swapping.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    cc.add_argument("--lane", required=True, choices=("docker", "k8s"),
+                    help="which lane is asking; docker reads its host's memory, k8s the node headroom")
+    cc.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES),
+                    help="deploy mode, which sets the floor from scripts/profiles.py")
+    cc.add_argument("--floor-bytes", type=int, default=0,
+                    help="override the mode's floor (bytes); 0 keeps the profile's")
+    cc.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the k8s lane")
+    cc.add_argument("--context", default=None, help="kubeconfig context for the k8s lane")
+    cc.add_argument("--docker-host", default=os.environ.get("DFE_DOCKER_HOST"),
+                    help="ssh target running the docker daemon (default: $DFE_DOCKER_HOST, else this machine)")
+    cc.add_argument("--watch", type=float, default=0.0, metavar="SECONDS",
+                    help="keep checking for this long, returning non-zero at the first breach")
+    cc.add_argument("--interval", type=float, default=30.0, help="seconds between --watch readings")
+    cc.set_defaults(func=cmd_capacity_check)
+
     ac = sub.add_parser(
         "acceptance",
         help="run the live pytest acceptance suite over supervised port-forwards",
@@ -1513,21 +3215,149 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--server", default=None,
                     help="API address, for a kubeconfig whose server name does not resolve here (default: DFE_KUBE_SERVER)")
     ac.add_argument("--receiver-target", default="svc/dfe-receiver", help="port-forward target for ingest")
-    ac.add_argument("--ch-target", default="svc/dfe-clickhouse", help="port-forward target for the datastore")
+    ac.add_argument("--ch-target", default=None,
+                    help="port-forward target for the datastore (default: the service the --mode profile's clickhouse.host names, else svc/dfe-clickhouse)")
     ac.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
+    ac.add_argument("--archive-selector", default="app.kubernetes.io/name=dfe-archiver",
+                    help="label selector for the pods the source suite runs its archive assertion inside")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
     ac.add_argument("--ch-port", type=int, default=18123, help="local port for the datastore")
     ac.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
     ac.add_argument("--ch-user", default="default", help="datastore user the suite connects as")
     ac.add_argument("--ch-database", default="dfe", help="datastore database the assertions read")
-    ac.add_argument("--repo", default="/projects/dfe-engine", help="engine checkout the suite runs from")
+    engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
+    ac.add_argument("--repo", default=engine_repo, required=engine_repo is None,
+                    help="engine checkout the suite runs from (default: $DFE_ENGINE_REPO, else the dfe-engine checkout beside this repo; required when there is neither)")
+    ac.add_argument("--mode", default=None, choices=list(MODES),
+                    help="deploy profile the stack runs, which sets the default --transport and the app set the idle check expects")
+    ac.add_argument("--idle-port", type=int, default=19090,
+                    help="local port the idle check forwards each app's metrics server onto, one at a time")
+    ac.add_argument("--transport", default=None, choices=("grpc", "kafka", "both"),
+                    help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
+    ac.add_argument("--suite", default="all", choices=SUITES,
+                    help="onboarding drives the wizard and the console in a browser; flows creates every source shape and removes it again; all runs onboarding then flows")
+    ac.add_argument("--engine-user", default="",
+                    help="engine login the suites authenticate as (default: the deploy's own minted admin)")
+    ac.add_argument("--access-summary", default="", metavar="FILE",
+                    help="the deploy's access summary, so the suites sign in with exactly what its launcher holds")
+    ac.add_argument("--ui-url", default="",
+                    help="console URL through the gateway for the onboarding suite (default: https://dfe.<domain> from the cluster annotation)")
+    ac.add_argument("--resolve", action="append", default=[], metavar="HOST:IP",
+                    help="resolve the console host to this address in the browser and the run (default: the gateway's address when the host does not resolve here)")
+    ac.add_argument("--insecure", action="store_true",
+                    help="accept a gateway certificate this machine does not trust")
+    ac.add_argument("--shots-dir", default=".tmp/onboarding",
+                    help="where the onboarding suite writes its per-step screenshots")
+    ac.add_argument("--console-only", action="store_true",
+                    help="skip the wizard half of the onboarding suite on a deploy already set up, and prove the console half alone")
+    ac.add_argument("--keep", action="store_true",
+                    help="the source suite leaves the source it made deployed, for a look")
+    ac.add_argument("--source-case", default="filebeat", choices=("filebeat", "cloudwatch", "elastic"),
+                    help="which source the source suite creates: filebeat pushed at the receiver "
+                         "through the bundled VRL, elastic pushed at a compiled-in transform, or an "
+                         "AWS upstream a fetcher polls")
+    ac.add_argument("--aws-service", default="cloudwatch_logs",
+                    help="the AWS service the cloudwatch case polls")
+    ac.add_argument("--fetcher-credentials-vault-path", default="", metavar="PATH",
+                    help=f"secrets-store path holding {' and '.join(FETCHER_CREDENTIAL_KEYS)}; the source "
+                         f"suite puts them in the {FETCHER_CREDENTIALS_SECRET} Secret the fetcher chart "
+                         "references, before it creates a fetched source (default: leave the Secret alone)")
+    ac.add_argument("--vault-cmd", default=DEFAULT_VAULT_CMD,
+                    help="secrets CLI the credentials are read with: bao or vault")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
-                    help="arguments passed through to pytest (default: the live filebeat suite)")
+                    help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)
+
+    ui = sub.add_parser(
+        "ui",
+        help="run the dfe-ui Playwright acceptance specs against a deployed stack",
+        description="Beside `acceptance`, which proves the data path. This rotates the "
+                    "break-glass password, then drives the UI with the dfe-ui suite's "
+                    "acceptance-tagged specs.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ui.add_argument("--env-file", action="append", default=[], metavar="PATH",
+                    help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
+    ui.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
+    ui.add_argument("--context", default=None, help="kubeconfig context (default: DFE_KUBE_CONTEXT from --env-file)")
+    ui.add_argument("--namespace", default=None, help="namespace the apps run in (default: DFE_NAMESPACE, else dfe-local)")
+    ui.add_argument("--server", default=None,
+                    help="API address, for a kubeconfig whose server name does not resolve here (default: DFE_KUBE_SERVER)")
+    ui.add_argument("--ui-url", default=None, help="the gateway URL the UI is served on (omit to port-forward, with a warning)")
+    ui.add_argument("--ui-target", default="svc/dfe-ui", help="port-forward target for the UI when --ui-url is not given")
+    ui.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
+    ui.add_argument("--ui-port", type=int, default=13000, help="local port for the UI forward")
+    ui.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
+    ui_repo = _sibling_repo("dfe-ui", "DFE_UI_REPO")
+    ui.add_argument("--ui-repo", default=ui_repo, required=ui_repo is None,
+                    help="dfe-ui checkout the suite runs from (default: $DFE_UI_REPO, else the dfe-ui checkout beside this repo; required when there is neither)")
+    ui.add_argument("--grep", default="@acceptance", help="Playwright --grep selecting the acceptance-tier specs")
+    ui.add_argument("--no-rotate", action="store_true", help="skip the break-glass rotation (the run then proves less)")
+    ui.add_argument("playwright_args", nargs=argparse.REMAINDER,
+                    help="arguments passed through to playwright test")
+    ui.set_defaults(func=cmd_ui)
+
+    cr = sub.add_parser(
+        "creds",
+        help="print the fetch command for every login this deploy carries (never a value)",
+        description="The deploy mints its admin and break-glass passwords, so "
+                    "each deployment's credentials live only in its own secret "
+                    "store. This prints one fetch command per login and marks "
+                    "any secret the cluster does not carry. The access summary "
+                    "prints the same block.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    cr.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    cr.add_argument("--context", default=None, help="kubeconfig context (default: DFE_KUBE_CONTEXT from --env-file)")
+    cr.add_argument("--namespace", default=None,
+                    help="app namespace (default: DFE_NAMESPACE, else the dfe-cluster annotation, else dfe)")
+    cr.add_argument("--env-file", action="append", default=[], metavar="PATH",
+                    help="DFE_* env file supplying defaults (repeatable; later wins)")
+    cr.add_argument("--markdown", action="store_true", help="wrap the block in a Markdown sh fence, for the access summary")
+    cr.add_argument("--no-cluster", action="store_true",
+                    help="do not read the cluster; print the commands without the present/absent marks")
+    cr.add_argument("--engine-deployment", default="dfe-engine",
+                    help="engine Deployment the admin and break-glass Secret names are read from")
+    cr.set_defaults(func=cmd_creds)
+
+    ca = sub.add_parser(
+        "ca",
+        help="print the deployment's edge root certificate and how to trust it",
+        description="A self-signed deployment serves its edge from its own "
+                    "private root, so a developer box must trust it once. This "
+                    "prints the PUBLIC half plus the install lines for Linux and "
+                    "macOS; --install writes the file and runs the steps that do "
+                    "not need root. A Vault/OpenBao deployment chains to the "
+                    "estate PKI and has nothing to install.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ca.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    ca.add_argument("--context", default=None, help="kubeconfig context")
+    ca.add_argument("--namespace", default=_INTERNAL_CA_NS,
+                    help="namespace the root Secret lives in (cert-manager's cluster-resource-namespace)")
+    ca.add_argument("--secret", default=_INTERNAL_CA_SECRET, help="Secret holding the root")
+    ca.add_argument("--issuer", default=_INTERNAL_CA_ISSUER,
+                    help="the internal-CA ClusterIssuer name, which identifies self-signed mode")
+    ca.add_argument("--restore", default=_RESTORE_EXTERNALSECRET,
+                    help="the restore ExternalSecret, whose Ready condition says the root was restored")
+    ca.add_argument("--name", default="dfe-internal-ca",
+                    help="file basename and trust-store nickname")
+    ca.add_argument("--out-dir", default=".tmp", help="where --install writes the certificate")
+    ca.add_argument("--install", action="store_true",
+                    help="write the file and run the non-root install steps, printing the rest")
+    ca.add_argument("--status", action="store_true",
+                    help="one-block issuer-mode report (what the readiness gate and access summary print)")
+    ca.set_defaults(func=cmd_ca)
 
     # pin -- resolve a version's registry digest and (with --write) set the
     # current stack's digests: in versions.yaml. Registered from resolve_pins.
     add_pin_subparser(sub)
+
+    # idp -- a throwaway Dex + glauth IdP on the deployment's own gateway, so an
+    # external-OIDC login can be proven without borrowing a shared provider.
+    add_idp_subparser(sub)
 
     return ap
 

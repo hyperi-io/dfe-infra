@@ -18,18 +18,15 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
     spec:
-      # Root, unlike every other DFE pod: node pod-log files are root-owned
-      # (0640), so a non-root filelog receiver silently opens zero files.
-      # Rootfs stays read-only and all capabilities stay dropped.
-      securityContext:
-        runAsUser: 0
-        runAsGroup: 0
-        seccompProfile:
-          type: RuntimeDefault
+      # Root, unlike every other DFE pod (see daemonset.podSecurityContext).
+      # The shared helper reads .Values.podSecurityContext, so the daemonset's
+      # own ids are handed to it as a synthesised context -- one hardening
+      # definition for both workloads in this chart.
+      {{- include "dfe-common.podSecurityContext" (dict "Values" (dict "podSecurityContext" .Values.daemonset.podSecurityContext)) | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.fullname" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
-        - name: otel-collector
+        - name: {{ include "otel-collector.daemonsetContainerName" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           args: ["--config=/etc/otel/daemonset-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
@@ -40,6 +37,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            # The Go runtime otherwise sizes its heap against the NODE, not this
+            # container's limit, and collects too late to stay under it.
+            - name: GOMEMLIMIT
+              value: {{ include "otel-collector.goMemLimit" (include "otel-collector.daemonsetMemory" .) | quote }}
           ports:
             - name: health
               containerPort: {{ .Values.healthCheckPort }}
@@ -66,6 +67,8 @@ spec:
             - name: varlogpods
               mountPath: /var/log/pods
               readOnly: true
+            - name: checkpoint
+              mountPath: {{ .Values.daemonset.checkpoint.mountPath }}
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -75,5 +78,11 @@ spec:
         - name: varlogpods
           hostPath:
             path: /var/log/pods
+        # A node directory, not an emptyDir: the offsets have to survive the pod
+        # being replaced, which is exactly when the replay would happen.
+        - name: checkpoint
+          hostPath:
+            path: {{ .Values.daemonset.checkpoint.hostPath }}
+            type: DirectoryOrCreate
         - name: tmp
           emptyDir: {}

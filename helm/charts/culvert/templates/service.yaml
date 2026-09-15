@@ -1,0 +1,115 @@
+# Internal Service (always). ClusterIP -- carries EVERY listener so the health
+# probes and the metrics scrape hit the same ports the container listens on.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    {{- range .Values.listeners }}
+    - port: {{ .port }}
+      targetPort: {{ .name }}
+      protocol: {{ .protocol | default "TCP" }}
+      name: {{ .name }}
+    {{- end }}
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+{{- /*
+  Public exposure. Mixed TCP+UDP in one Service is not portable across cloud LB
+  controllers, so ONE LoadBalancer per protocol family that has exposed
+  listeners: WireGuard and OpenVPN/UDP on the UDP LB, the OpenVPN TCP fallback
+  and any OIDC callback port on the TCP LB.
+*/}}
+{{- $exposedTCP := list }}
+{{- $exposedUDP := list }}
+{{- range .Values.listeners }}
+  {{- if .exposed }}
+    {{- if eq (.protocol | default "TCP") "UDP" }}
+      {{- $exposedUDP = append $exposedUDP . }}
+    {{- else }}
+      {{- $exposedTCP = append $exposedTCP . }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- if not (or $exposedTCP $exposedUDP) }}
+{{- fail "culvert: no listener is exposed, so no client could ever reach the tunnel. Mark at least one of wireguard / openvpn-udp exposed: true." }}
+{{- end }}
+{{- $pub := .Values.exposure }}
+{{- if gt (len $exposedUDP) 0 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-public-udp
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    dfe.hyperi.io/exposure: public
+  {{- with $pub.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $pub.serviceType | default "LoadBalancer" }}
+  {{- /* The UDP door only: a second Service cannot hold the same address, and
+       the UDP door is the one every client config names. */}}
+  {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerIP }}
+  loadBalancerIP: {{ $pub.loadBalancerIP }}
+  {{- end }}
+  {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
+  loadBalancerClass: {{ $pub.loadBalancerClass }}
+  {{- end }}
+  {{- with $pub.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $pub.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  ports:
+    {{- range $exposedUDP }}
+    - port: {{ .port }}
+      targetPort: {{ .name }}
+      protocol: UDP
+      name: {{ .name }}
+    {{- end }}
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+{{- end }}
+{{- if gt (len $exposedTCP) 0 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-public
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    dfe.hyperi.io/exposure: public
+  {{- with $pub.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $pub.serviceType | default "LoadBalancer" }}
+  {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
+  loadBalancerClass: {{ $pub.loadBalancerClass }}
+  {{- end }}
+  {{- with $pub.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $pub.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  ports:
+    {{- range $exposedTCP }}
+    - port: {{ .port }}
+      targetPort: {{ .name }}
+      protocol: TCP
+      name: {{ .name }}
+    {{- end }}
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+{{- end }}

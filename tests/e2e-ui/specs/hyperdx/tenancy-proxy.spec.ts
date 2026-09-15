@@ -22,7 +22,7 @@ test('per-connection isolation and override refusal via the proxy', async ({
 
   const counts: Record<string, number> = {};
   for (const [name, id] of byName) {
-    counts[name] = await chCount(api, id, 'SELECT count() FROM dfe.default');
+    counts[name] = await chCount(api, id, 'SELECT count() FROM dfe.main');
   }
   expect(counts).toEqual({ nerk: 3, acme: 2 });
 
@@ -35,7 +35,7 @@ test('per-connection isolation and override refusal via the proxy', async ({
   const attack = await chQuery(
     api,
     nerkId,
-    "SELECT count() FROM dfe.default SETTINGS SQL_current_tenant_id='acme'",
+    "SELECT count() FROM dfe.main SETTINGS SQL_current_tenant_id='acme'",
   );
   expect(attack.ok()).toBeFalsy();
   const body = await attack.text();

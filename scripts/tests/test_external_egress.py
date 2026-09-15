@@ -29,6 +29,8 @@ from pathlib import Path
 
 import yaml
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHART = REPO_ROOT / "helm" / "charts" / "network-policies"
 COMMON = REPO_ROOT / "argocd" / "values" / "common.yaml"
@@ -54,17 +56,6 @@ KAFKA_APPS = {
     "dfe-transform-splack",
     "dfe-transform-wasm",
 }
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def render(*sets: str) -> list[dict]:
@@ -233,6 +224,40 @@ def test_default_carve_out_survives() -> None:
     )
 
 
+def test_the_network_model_is_declared_once() -> None:
+    """Every carve-out reads networkModel; a second literal is a range that drifts."""
+    offenders = []
+    for values in sorted((REPO_ROOT / "helm" / "charts").glob("*/values.yaml")):
+        in_model = False
+        for number, line in enumerate(values.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.startswith(" "):
+                in_model = line.startswith("networkModel:")
+            if in_model:
+                continue
+            if "198.18.0.0/16" in line or "198.19.0.0/16" in line:
+                offenders.append(f"{values.relative_to(REPO_ROOT)}:{number}")
+    expect("the cluster ranges are named once per chart", offenders == [], f"got {offenders}")
+
+
+def test_a_deployment_can_move_the_ranges() -> None:
+    """A cluster on different ranges changes networkModel and nothing else."""
+    policies = external(
+        render(
+            "clickhouse.mode=external",
+            "networkModel.podCIDR=10.42.0.0/16",
+            "networkModel.serviceCIDR=10.43.0.0/16",
+        ),
+        "clickhouse",
+    )
+    blocks = [r["to"][0]["ipBlock"] for p in policies for r in p["spec"]["egress"]]
+    expect(
+        "the carve-out follows the model",
+        all(set(b.get("except", [])) == {"10.42.0.0/16", "10.43.0.0/16", "169.254.0.0/16"}
+            for b in blocks),
+        f"got {blocks}",
+    )
+
+
 def test_internet_egress_is_unchanged() -> None:
     """fetcher and archiver semantics must not move when external egress lands."""
     docs = render("clickhouse.mode=external", "kafka.mode=external")
@@ -249,23 +274,25 @@ def test_internet_egress_is_unchanged() -> None:
 
 
 def main() -> int:
-    test_all_internal_opens_nothing()
-    test_clickhouse_external_on()
-    test_clickhouse_external_excludes_the_internet_egress_apps()
-    test_clickhouse_internal_modes_open_nothing()
-    test_kafka_external_on()
-    test_kafka_external_does_not_open_clickhouse()
-    test_kafka_internal_modes_open_nothing()
-    test_oidc_is_engine_only_on_443()
-    test_secret_backend_derives_from_the_address()
-    test_elasticsearch_does_not_reach_the_transform()
-    test_external_otel_is_namespace_wide()
-    test_otel_endpoint_override_also_declares()
-    test_pinned_cidr_drops_the_shared_carve_out()
-    test_default_carve_out_survives()
-    test_internet_egress_is_unchanged()
-    print(f"\n{_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        test_all_internal_opens_nothing()
+        test_clickhouse_external_on()
+        test_clickhouse_external_excludes_the_internet_egress_apps()
+        test_clickhouse_internal_modes_open_nothing()
+        test_kafka_external_on()
+        test_kafka_external_does_not_open_clickhouse()
+        test_kafka_internal_modes_open_nothing()
+        test_oidc_is_engine_only_on_443()
+        test_secret_backend_derives_from_the_address()
+        test_elasticsearch_does_not_reach_the_transform()
+        test_external_otel_is_namespace_wide()
+        test_otel_endpoint_override_also_declares()
+        test_pinned_cidr_drops_the_shared_carve_out()
+        test_default_carve_out_survives()
+        test_the_network_model_is_declared_once()
+        test_a_deployment_can_move_the_ranges()
+        test_internet_egress_is_unchanged()
+        return summary()
 
 
 if __name__ == "__main__":

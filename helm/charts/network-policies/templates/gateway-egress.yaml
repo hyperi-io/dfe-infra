@@ -1,0 +1,48 @@
+# DFE app egress to the deployment's OWN gateway.
+#
+# baseline-egress rule 3 permits TCP 443 to anywhere, which reads as "pods may
+# reach the gateway". They cannot: the Envoy Service maps 443 to container port
+# 10443, NetworkPolicy is evaluated AFTER DNAT, so the packet is judged against
+# 10443 and dropped. The tell is refused-vs-timeout -- 443 straight at the proxy
+# pod is refused by the kernel, 10443 never arrives (#223).
+#
+# Anything that has to use a public hostname rather than a Service name makes
+# this hop; the engine's OIDC discovery fetch is the first. On a deployment that
+# balances its stage pools behind a listener, the whole data plane makes it too:
+# every stage dials the next one at the mesh proxy rather than at the pool.
+{{- $gw := .Values.gatewayEgress }}
+{{- $ports := $gw.ports }}
+{{- if and .Values.mesh .Values.mesh.enabled }}
+{{- /* The mesh listener's port is unprivileged, so Envoy Gateway does not
+       offset it the way it offsets 443 and 80 -- the container port is the
+       listener port, and this rule is what makes the pool reachable at all. */}}
+{{- $ports = append $ports (dict "port" .Values.mesh.port "protocol" "TCP") }}
+{{- end }}
+{{- if $gw.enabled }}
+{{- range .Values.dfeNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress
+  namespace: {{ . }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.gatewayNamespace }}
+          # The managed proxy pods, not the whole gateway namespace -- the
+          # control plane is in there too and nothing in DFE calls it.
+          podSelector:
+            matchLabels:
+              {{- toYaml $gw.podLabels | nindent 14 }}
+      ports:
+        {{- toYaml $ports | nindent 8 }}
+{{- end }}
+{{- end }}

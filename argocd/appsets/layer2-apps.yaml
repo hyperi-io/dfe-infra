@@ -74,6 +74,31 @@ spec:
               # carry placeholders). dfe-ui derives NEXTAUTH_URL from it.
               - name: domain
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # The deployment's posture, from the same annotation the cluster
+              # label carries, so DFE_ENV cannot drift from what the deploy
+              # declared. Left at the chart's `local` default, every deployment
+              # self-identifies as dev -- which is what the engine's gitcrud
+              # commit policy and the default-admin-password check gate on (#233).
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              # The ingest door's address, for the same reason the gateway has
+              # one. Only dfe-receiver reads it; the other charts ignore it.
+              - name: exposure.public.loadBalancerIP
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/receiver_address" }}'
+              # Deployment-wide retention; layer2-data hands the dfe-schema Job the
+              # same annotation. A cluster secret without it falls back to 90.
+              - name: retention.defaultTtlDays
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_default_ttl_days" | default "90" }}'
+              # The stack the base charts above are pinned at, so the engine can
+              # report it when the deploy repo's pins name no base. Only
+              # dfe-engine reads it; the other charts ignore it.
+              - name: stackVersion
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
+              # The tier, from the same annotation that picks the profile values
+              # file above -- so what the engine reports and what the charts were
+              # rendered with are one value. Only dfe-engine reads it.
+              - name: profile
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values
