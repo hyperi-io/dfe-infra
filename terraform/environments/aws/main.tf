@@ -454,6 +454,11 @@ locals {
     local.toolbox_kafka_targets,
     local.toolbox_clickhouse_target,
   )
+
+  // The reserved range every appliance's tunnel address is issued out of --
+  // helm/edge/culvert/values.yaml vpn.clientCIDR, which no tofu input carries.
+  // scripts/tests/test_tunnel_forwarder_facts.py holds the two in step.
+  tunnel_client_cidr = "100.64.0.0/10"
 }
 
 module "toolbox" {
@@ -483,9 +488,15 @@ module "toolbox" {
   // The fleet tunnel's address and listeners, so `dfe-ops bastion join` can
   // dial the hub as an admin peer. Both empty unless the edge module built a
   // forwarder, and an empty address renders no egress rule at all.
+  //
+  // client_cidr and reach are the OTHER half, and they do not need the address:
+  // the reach-back that works today routes the client range at the culvert pod
+  // rather than dialling in, so it is TCP to a tunnel address inside the VPC.
   tunnel = {
-    address = try(one(module.edge[*].tunnel_address), "")
-    ports   = try(one(module.edge[*].tunnel_listener_ports), [])
+    address     = try(one(module.edge[*].tunnel_address), "")
+    ports       = try(one(module.edge[*].tunnel_listener_ports), [])
+    client_cidr = var.edge.tunnel.admin_peer.enabled ? local.tunnel_client_cidr : ""
+    reach       = var.edge.tunnel.admin_peer.reach
   }
 
   // The one group the toolbox needs admitting to that it does not own -- the

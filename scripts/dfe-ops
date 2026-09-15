@@ -82,10 +82,11 @@ Subcommands:
                (terraform/modules/toolbox/aws). up flips toolbox.enabled in
                the dial and applies just that target; forward is NOT recorded
                by Session Manager (toolbox/aws/CONTRACT.md); down proves
-               nothing remains rather than trusting the apply alone. join
-               makes the instance an admin peer on the fleet tunnel so hub
-               reaches one appliance through it, and down revokes that peer
-               before the instance is terminated.
+               nothing remains rather than trusting the apply alone. hub
+               routes the fleet tunnel's client range at the culvert pod and
+               opens the logged shell onto one appliance; join, which makes
+               the instance a PEER instead, is refused until
+               hyperi-io/culvert#40 lands.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,

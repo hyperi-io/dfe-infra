@@ -318,6 +318,63 @@ run "rejects_a_tunnel_address_that_is_not_an_ip" {
   expect_failures = [var.tunnel]
 }
 
+// The reach-back is TCP to an appliance's tunnel address through the culvert
+// pod, so it needs no tunnel address -- a deployment that brings its own
+// address still gets these rules.
+run "the_reach_back_opens_tcp_egress_to_the_client_range_with_no_tunnel_address" {
+  command = plan
+
+  variables {
+    tunnel = {
+      address     = ""
+      ports       = []
+      client_cidr = "100.64.0.0/10"
+      reach       = [22, 443]
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for r in aws_vpc_security_group_egress_rule.tunnel_reach :
+      r.ip_protocol == "tcp" && r.cidr_ipv4 == "100.64.0.0/10" && r.from_port == r.to_port
+    ])
+    error_message = "the reach-back rules must be TCP to the client range alone, one port each"
+  }
+
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_egress_rule.tunnel_reach : r.from_port
+    ]) == toset([22, 443])
+    error_message = "each reach port must get its own egress rule"
+  }
+}
+
+// The admin class off is an empty client_cidr, and a hole nobody asked for is
+// the one thing a default must never open.
+run "no_client_range_opens_no_reach_back_egress" {
+  command = plan
+
+  assert {
+    condition     = length(aws_vpc_security_group_egress_rule.tunnel_reach) == 0
+    error_message = "an empty tunnel.client_cidr must render no reach-back rule"
+  }
+}
+
+run "rejects_a_client_range_that_is_not_a_cidr" {
+  command = plan
+
+  variables {
+    tunnel = {
+      address     = ""
+      ports       = []
+      client_cidr = "100.64.0.0"
+      reach       = [22]
+    }
+  }
+
+  expect_failures = [var.tunnel]
+}
+
 run "rejects_a_target_scope_outside_the_two" {
   command = plan
 

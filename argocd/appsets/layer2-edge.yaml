@@ -246,6 +246,31 @@ spec:
                 nodeSelector:
                   topology.kubernetes.io/zone: {{ $tunnelZone | quote }}
               {{- end }}
+              {{- $cloud := index .metadata.annotations "dfe.hyperi.io/cloud" }}
+              {{- if not (or (eq $cloud "local") (eq $cloud "rancher")) }}
+              # culvert writes its revocations and its WireGuard peer
+              # allocations into the pod's PKI directory, so a restart without a
+              # volume re-issues a revoked peer's address and forgets which
+              # appliance is which. Set here rather than in the flavour overlay
+              # because persistence.enabled is a key other charts read, and on-
+              # prem is left alone because not every cluster has a StorageClass.
+              persistence:
+                enabled: true
+              {{- end }}
+              {{- $adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr" }}
+              {{- if $adminCIDR }}
+              # The subnet the toolbox instance lands in
+              # (terraform/modules/toolbox/aws pins the first private subnet).
+              # It is the one shape culvert's admin hole matches today -- a
+              # source off the pod's ethernet side, never a peer -- so an
+              # operator reaches one appliance by routing the client range at
+              # this pod rather than by dialling in.
+              peers:
+                classes:
+                  admin:
+                    adminCIDRs:
+                      - {{ $adminCIDR | quote }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

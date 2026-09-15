@@ -1,13 +1,12 @@
 {{- if .Values.persistence.enabled }}
 {{- /*
-  Local-PKI durability. The server mints its CA on first start and writes it to
-  /etc/vpn/pki; on the container's writable layer that means every restart
-  mints a new CA and every client config issued against the old one stops
-  working. External PKI needs no volume, so the two are mutually exclusive.
+  /etc/vpn/pki is written in BOTH pki modes, so this volume is not a local-mode
+  concern. local mints the CA there on first start, and a restart without the
+  volume mints a new one and invalidates every config already issued. external
+  delivers the CA and server certificate by Secret, and culvert still writes its
+  revocations and its WireGuard peer allocations here -- losing those re-issues
+  a revoked peer's address and forgets which appliance is which.
 */}}
-{{- if eq .Values.pki.mode "external" }}
-{{- fail "culvert: persistence.enabled with pki.mode: external. External PKI is delivered by Secret and writes nothing durable, so the volume would sit empty -- turn one of the two off." }}
-{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

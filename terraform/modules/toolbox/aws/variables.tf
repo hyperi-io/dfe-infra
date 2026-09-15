@@ -125,10 +125,12 @@ variable "targets" {
 }
 
 variable "tunnel" {
-  description = "The fleet tunnel this instance dials when it joins the hub as an admin peer (`dfe-ops bastion join`, docs/deployment/edge-vpn.md). address is the edge module's own tunnel_address output and ports are its tunnel_listener_ports, so neither is restated here. Both are empty on edge.tunnel.address.mode byo, where the deployer holds an address this deployment never sees, and on a deployment with no tunnel at all -- an empty address renders NO egress rule, so a deployer bringing their own address opens that egress themselves. This is the only UDP egress the toolbox has: every other rule here is TCP, and without it a WireGuard handshake leaves and nothing answers, which reads as a broken peer config and is not."
+  description = "The fleet tunnel this instance dials when it joins the hub as an admin peer (`dfe-ops bastion join`, docs/deployment/edge-vpn.md). address is the edge module's own tunnel_address output and ports are its tunnel_listener_ports, so neither is restated here. Both are empty on edge.tunnel.address.mode byo, where the deployer holds an address this deployment never sees, and on a deployment with no tunnel at all -- an empty address renders NO egress rule, so a deployer bringing their own address opens that egress themselves. This is the only UDP egress the toolbox has: every other rule here is TCP, and without it a WireGuard handshake leaves and nothing answers, which reads as a broken peer config and is not. client_cidr and reach are the reach-back's own half and need no address: an operator reaches one appliance by routing the client range at the culvert pod, so those rules are TCP to a tunnel address and are absent when the admin class is off."
   type = object({
-    address = string
-    ports   = list(number)
+    address     = string
+    ports       = list(number)
+    client_cidr = optional(string, "")
+    reach       = optional(list(number), [])
   })
   default = { address = "", ports = [] }
 
@@ -140,6 +142,16 @@ variable "tunnel" {
   validation {
     condition     = alltrue([for p in var.tunnel.ports : p > 0 && p < 65536])
     error_message = "every tunnel.ports entry must be a UDP port between 1 and 65535."
+  }
+
+  validation {
+    condition     = var.tunnel.client_cidr == "" || can(cidrnetmask(var.tunnel.client_cidr))
+    error_message = "tunnel.client_cidr must be the tunnel's reserved client range as a CIDR, or empty. Got ${var.tunnel.client_cidr}."
+  }
+
+  validation {
+    condition     = alltrue([for p in var.tunnel.reach : p > 0 && p < 65536])
+    error_message = "every tunnel.reach entry must be a TCP port between 1 and 65535."
   }
 }
 

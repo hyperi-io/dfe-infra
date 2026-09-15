@@ -28,14 +28,20 @@ pki:
   # instance values file, and the chart refuses to render without it.
   mode: external
 
+# TIER 1, and NOT a key in this file: culvert writes revocations and WireGuard
+# peers into the pod's PKI directory, so a restart without a volume loses both.
+# persistence.enabled is read by charts outside this module, so the value is set
+# per cloud in argocd/appsets/layer2-edge.yaml, where it reaches culvert alone.
+
 peers:
   classes:
     admin:
       # TIER 1 -- the reach-back an operator administers one appliance through
-      # (`dfe-ops bastion join`), opt-out on every cloud flavour and absent
-      # on-prem, where the operator is already on the LAN. The class declares
-      # the intent and the ports; its server-side isolation exception waits on
-      # hyperi-io/culvert#40, and appliance isolation stays on either way.
+      # (`dfe-ops bastion hub`), opt-out on every cloud flavour and absent
+      # on-prem, where the operator is already on the LAN. The ranges it is
+      # reached FROM arrive on the cluster secret; an admin that dials in as a
+      # PEER instead waits on hyperi-io/culvert#40, and appliance isolation
+      # stays on either way.
       enabled: true
 
 # TIER 2, no key here. The tunnel keeps the culvert chart's own LoadBalancer on

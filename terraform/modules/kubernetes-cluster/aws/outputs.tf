@@ -45,6 +45,11 @@ output "network" {
   }
 }
 
+output "private_subnet_cidrs" {
+  description = "The private subnets' own ranges, in the same order as network.private_subnet_ids. Its own output rather than a field on network, because that object is passed whole to sibling modules whose variable declares an exact shape. Read by the aws root to name the subnet the toolbox lands in."
+  value       = [for az in local.azs : aws_subnet.private[az].cidr_block]
+}
+
 output "private_zone_id" {
   description = "Route 53 zone every internal name resolves in (external-dns --zone-id-filter)."
   value       = aws_route53_zone.private.zone_id

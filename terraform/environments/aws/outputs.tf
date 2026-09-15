@@ -106,6 +106,11 @@ output "DFE_TUNNEL_ZONE" {
   value       = try(one(module.edge[*].tunnel_zone), "")
 }
 
+output "DFE_TOOLBOX_ADMIN_CIDR" {
+  description = "The subnet the toolbox instance lands in -- modules/toolbox/aws pins private_subnet_ids[0], so this is that subnet and not the whole VPC. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/toolbox_admin_cidr annotation, which layer2-edge.yaml turns into culvert's peers.classes.admin.adminCIDRs: the one shape culvert's admin exception matches is a source arriving off the pod's ethernet side, never a peer. Every workload holding an address in this subnet is inside that hole."
+  value       = try(module.cluster.private_subnet_cidrs[0], "")
+}
+
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
   description = "Empty on this cloud. EKS Pod Identity binds a role to a service account from OUTSIDE the cluster, so no service account carries an annotation -- unlike IRSA, Workload Identity Federation and Entra Workload ID, which all need one."
   value       = "{}"

@@ -415,6 +415,10 @@ TUNNEL_FORWARDER_TYPE = "t4g.small"
 # Pinned rather than allocated, because whatever stands in front of a NodePort
 # has to be told the number before the Service exists.
 TUNNEL_NODE_PORTS = {"wireguard": 31820, "openvpn": 31194}
+# The appliance ports an operator's reach-back initiates to, which the toolbox
+# security group opens against the tunnel's client range. Mirrors
+# helm/edge/culvert/values.yaml peers.classes.admin.reach.
+TUNNEL_ADMIN_REACH = (22, 443)
 OTEL_AUTH = ("required", "none")
 
 _EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
@@ -582,6 +586,24 @@ def _tunnel_address_mode(dial: dict[str, object]) -> str:
     return value
 
 
+def _edge_ports(dial: dict[str, object], path: tuple[str, ...], default: tuple[int, ...]) -> list[int]:
+    """A dial list of whole numbers written inline, as `reach: [22, 443]`.
+
+    The restricted reader hands a flow list back as its own text, so the
+    brackets come off here rather than through a second YAML parser.
+    """
+    raw = _scalar(dial, path)
+    if raw is None:
+        return list(default)
+    label = ".".join(path)
+    ports: list[int] = []
+    for item in split_list(raw.strip().lstrip("[").rstrip("]")):
+        if not item.isdigit() or not 0 < int(item) < 65536:
+            raise DialError(f"{label} must be whole port numbers between 1 and 65535, got {item!r}")
+        ports.append(int(item))
+    return ports
+
+
 def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
     """The tunnel's cloud-side address, the one part of the tunnel tofu builds.
 
@@ -602,6 +624,12 @@ def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
         "node_ports": {
             "wireguard": _optional_number(dial, (*at, "node_ports", "wireguard"), TUNNEL_NODE_PORTS["wireguard"]),
             "openvpn": _optional_number(dial, (*at, "node_ports", "openvpn"), TUNNEL_NODE_PORTS["openvpn"]),
+        },
+        # The reach-back is a security-group rule on the toolbox, so its two
+        # fields travel to tofu while the rest of the class stays a chart value.
+        "admin_peer": {
+            "enabled": _edge_bool(dial, (*at, "admin_peer", "enabled")),
+            "reach": _edge_ports(dial, (*at, "admin_peer", "reach"), TUNNEL_ADMIN_REACH),
         },
     }
 

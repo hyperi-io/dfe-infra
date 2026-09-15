@@ -66,6 +66,25 @@
 {{- fail (printf "culvert: peers.classes.admin.peerCIDR %q sits outside vpn.clientCIDR %q, so no peer is ever issued an address in it." $admin.peerCIDR .Values.vpn.clientCIDR) }}
 {{- end }}
 {{- end }}
+{{- /*
+  An adminCIDR is matched on the pod's ETHERNET side, so a range inside the
+  client range names a peer source, which the client-to-client verdict drops
+  before the admin ACCEPT is ever reached. 0.0.0.0/0 hands every appliance to
+  anything that can route the client range at this pod.
+*/}}
+{{- range $cidr := $admin.adminCIDRs }}
+{{- $parts := splitList "/" $cidr }}
+{{- $octets := splitList "." (index $parts 0) }}
+{{- if or (ne (len $parts) 2) (ne (len $octets) 4) }}
+{{- fail (printf "culvert: peers.classes.admin.adminCIDRs entry %q is not an IPv4 CIDR." $cidr) }}
+{{- end }}
+{{- if eq $cidr "0.0.0.0/0" }}
+{{- fail "culvert: peers.classes.admin.adminCIDRs carries 0.0.0.0/0, which reaches every appliance from anywhere that can route the client range at this pod. Name the subnet the admin machine sits in." }}
+{{- end }}
+{{- if eq (printf "%s.%s" (index $octets 0) (index $octets 1)) (include "culvert.clientPrefix" $) }}
+{{- fail (printf "culvert: peers.classes.admin.adminCIDRs entry %q sits inside vpn.clientCIDR %q, so it names a peer source -- culvert drops peer-to-peer traffic before the admin exception, and hyperi-io/culvert#40 is what would carry it." $cidr $.Values.vpn.clientCIDR) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

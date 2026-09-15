@@ -136,12 +136,16 @@ routes:
 # `admin` is the single peer an operator dials in from to administer one
 # appliance -- `dfe-ops bastion join`, docs/deployment/edge-vpn.md.
 #
-# THE ADMIN CLASS RENDERS NO SERVER-SIDE EXCEPTION YET, and waits on
-# hyperi-io/culvert#40. culvert carries one global client_isolation boolean, its
-# one admin exception admits only a source arriving OFF a tunnel interface, and
-# it allocates every peer an address out of one /24 with no way to pin one -- so
-# there is no admin range for a rule to name. The class declares the intent and
-# the ports meanwhile, and nothing here weakens the isolation default.
+# AN ADMIN THAT DIALS IN AS A PEER GETS NO EXCEPTION, and waits on
+# hyperi-io/culvert#40. culvert installs the client-to-client DROP over every
+# pair of tunnel interfaces BEFORE the admin ACCEPT, and it allocates every peer
+# an address out of one /24 with no way to pin one, so a peer source is dropped
+# before any rule naming it is reached.
+#
+# AN ADMIN THAT IS NOT A PEER WORKS TODAY, which is what adminCIDRs is. culvert
+# appends `-o <tun> -s <cidr> -j ACCEPT` with a NAT RETURN beside it for a source
+# arriving off the pod's ethernet side, so a machine that ROUTES the client range
+# at this pod reaches an appliance while appliance isolation stays on.
 peers:
   classes:
     appliance:
@@ -153,6 +157,12 @@ peers:
       # On in the cloud flavour overlays; absent on-prem, where the operator
       # is already on the LAN.
       enabled: false
+      # The ranges an admin reaches appliances FROM, on the pod's ethernet
+      # side -- the toolbox subnet on a cloud flavour, written here by
+      # argocd/appsets/layer2-edge.yaml off the cluster secret. Every workload
+      # holding an address in these ranges is inside the hole, so the
+      # appliance's own ssh and TLS authentication is what bounds it.
+      adminCIDRs: []
       # The range the admin peer's tunnel address is issued into, which has to
       # sit inside vpn.clientCIDR. Empty until the deployment names one.
       peerCIDR: ""

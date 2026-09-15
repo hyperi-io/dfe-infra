@@ -40,6 +40,8 @@ CULVERT_VALUES = REPO_ROOT / "helm" / "edge" / "culvert" / "values.yaml"
 FORWARDER_TF = REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "forwarder.tf"
 EDGE_VARIABLES_TF = REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "variables.tf"
 AWS_ROOT_OUTPUTS = REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf"
+AWS_ROOT_MAIN = REPO_ROOT / "terraform" / "environments" / "aws" / "main.tf"
+RENDER_DIAL = REPO_ROOT / "scripts" / "render_dial.py"
 
 FACTS = {
     "DFE_TUNNEL_ADDRESS": "dfe.hyperi.io/tunnel_address",
@@ -107,6 +109,39 @@ def test_the_appset_turns_the_zone_into_culverts_own_node_selector() -> None:
     # nodeScheduling.nodeSelector is the shared library's own key
     # (helm/library/dfe-common/templates/_scheduling.tpl), not one invented here.
     assert "nodeScheduling:" in text
+
+
+def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class() -> None:
+    """The range an operator reaches an appliance FROM is a cloud fact, and a
+    chart that never receives it renders an admin class with no hole at all."""
+    assert 'output "DFE_TOOLBOX_ADMIN_CIDR"' in AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    assert 'export DFE_TOOLBOX_ADMIN_CIDR="${DFE_TOOLBOX_ADMIN_CIDR:-}"' in bootstrap
+    assert "${DFE_TOOLBOX_ADMIN_CIDR:+dfe.hyperi.io/toolbox_admin_cidr:" in bootstrap
+    assert "${DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION}" in CLUSTER_SECRET.read_text(encoding="utf-8")
+    appset = APPSET.read_text(encoding="utf-8")
+    assert '$adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr"' in appset
+    assert "{{- if $adminCIDR }}" in appset
+    assert "adminCIDRs:" in appset
+
+
+def test_the_root_and_the_chart_agree_on_the_reserved_client_range() -> None:
+    """The toolbox's reach-back egress is aimed at the range appliances are
+    issued out of, and no tofu input carries it."""
+    values = yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8"))
+    match = re.search(r"^\s*tunnel_client_cidr\s*=\s*\"([^\"]+)\"", AWS_ROOT_MAIN.read_text(encoding="utf-8"), re.M)
+    assert match is not None, "the aws root declares no tunnel_client_cidr local"
+    assert match.group(1) == values["vpn"]["clientCIDR"]
+
+
+def test_the_renderer_and_the_chart_agree_on_the_appliance_ports() -> None:
+    """One list is a security-group rule and the other is a NetworkPolicy, so a
+    drift opens one and not the other and neither reports it."""
+    values = yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8"))
+    match = re.search(r"^TUNNEL_ADMIN_REACH = \(([^)]*)\)", RENDER_DIAL.read_text(encoding="utf-8"), re.M)
+    assert match is not None, "render_dial.py declares no TUNNEL_ADMIN_REACH"
+    ports = [int(item) for item in match.group(1).split(",") if item.strip()]
+    assert ports == values["peers"]["classes"]["admin"]["reach"]
 
 
 def _culvert_listeners() -> dict[str, dict]:

@@ -238,6 +238,77 @@ def test_the_admin_class_needs_a_range_inside_the_client_range() -> None:
            "empty peers.classes.admin.reach" in err, err.strip()[-300:])
 
 
+def test_the_admin_hole_takes_a_source_off_the_pods_ethernet_side() -> None:
+    """culvert's admin exception matches a source arriving off eth0, so a range
+    there renders the hole while appliance isolation stays on."""
+    out = render("culvert",
+                 "--set", "peers.classes.admin.enabled=true",
+                 "--set", "peers.classes.admin.adminCIDRs={10.20.0.0/24}")
+    env = env_of(one(out, "Deployment", "dfe-culvert"))
+    expect("the admin range reaches culvert's own key",
+           env.get("CULVERT_DOWNSTREAM_ADMIN_CIDRS") == "10.20.0.0/24",
+           f"got {env.get('CULVERT_DOWNSTREAM_ADMIN_CIDRS')!r}")
+    expect("and appliance isolation is untouched",
+           env["CULVERT_CLIENT_ISOLATION"] == "true", f"got {env.get('CULVERT_CLIENT_ISOLATION')!r}")
+
+    policy = one(out, "NetworkPolicy", "dfe-culvert")
+    admitted = [rule for rule in policy["spec"]["ingress"]
+                if any("ipBlock" in source for source in rule.get("from", []))]
+    expect("the NetworkPolicy admits that range", len(admitted) == 1, f"got {policy['spec']['ingress']!r}")
+    expect("from the admin range alone",
+           admitted[0]["from"] == [{"ipBlock": {"cidr": "10.20.0.0/24"}}], f"got {admitted[0]['from']!r}")
+    expect("on the appliance's own ports, which no listener rule carries",
+           {port["port"] for port in admitted[0]["ports"]} == {22, 443},
+           f"got {admitted[0]['ports']!r}")
+
+
+def test_an_admin_range_inside_the_client_range_is_refused() -> None:
+    """A peer source is dropped by the client-to-client verdict before the
+    admin exception is reached, so naming one is a hole that never opens."""
+    err = fails("culvert",
+                "--set", "peers.classes.admin.enabled=true",
+                "--set", "peers.classes.admin.adminCIDRs={100.64.2.0/24}")
+    expect("a range inside vpn.clientCIDR is refused by name",
+           "sits inside vpn.clientCIDR" in err and "culvert#40" in err, err.strip()[-300:])
+    err = fails("culvert",
+                "--set", "peers.classes.admin.enabled=true",
+                "--set", "peers.classes.admin.adminCIDRs={0.0.0.0/0}")
+    expect("and the whole internet is refused",
+           "reaches every appliance from anywhere" in err, err.strip()[-300:])
+
+
+def test_the_hole_stays_shut_until_a_range_names_it() -> None:
+    out = render("culvert", "--set", "peers.classes.admin.enabled=true")
+    env = env_of(one(out, "Deployment", "dfe-culvert"))
+    expect("the class alone renders no admin hole",
+           "CULVERT_DOWNSTREAM_ADMIN_CIDRS" not in env, f"got {sorted(env)}")
+    policy = one(out, "NetworkPolicy", "dfe-culvert")
+    expect("and the NetworkPolicy admits no ipBlock",
+           not any("ipBlock" in source
+                   for rule in policy["spec"]["ingress"] for source in rule.get("from", [])),
+           f"got {policy['spec']['ingress']!r}")
+
+
+def test_a_cloud_flavour_keeps_its_pki_directory_across_a_restart() -> None:
+    """culvert writes revocations and WireGuard peers into the pod's PKI
+    directory in BOTH pki modes, so a restart without a volume loses both."""
+    appset = (REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml").read_text(encoding="utf-8")
+    expect("the appset turns the volume on off the cloud fact",
+           '{{- if not (or (eq $cloud "local") (eq $cloud "rancher")) }}' in appset
+           and "persistence:\n                enabled: true" in appset,
+           "no cloud-gated persistence block in layer2-edge.yaml")
+    out = render("culvert",
+                 "--set", "pki.mode=external",
+                 "--set", "pki.existingSecret=dfe-culvert-pki",
+                 "--set", "persistence.enabled=true")
+    expect("external PKI keeps the volume rather than refusing it",
+           one(out, "PersistentVolumeClaim", "dfe-culvert-pki")["spec"]["accessModes"] == ["ReadWriteOnce"],
+           "no PersistentVolumeClaim rendered alongside external PKI")
+    onprem = yaml.safe_load((VALUES / "edge-onprem.yaml").read_text(encoding="utf-8"))
+    expect("on-prem states neither the admin class nor a volume",
+           "peers" not in onprem and "persistence" not in onprem, f"got {sorted(onprem)}")
+
+
 def test_the_admin_class_is_a_cloud_flavour_mechanism() -> None:
     """On-prem the operator is on the LAN, so the module supplies nothing."""
     for flavour in ("aws", "gcp", "azure"):
@@ -398,6 +469,10 @@ def main() -> int:
         test_peer_isolation_is_the_appliance_classs_own_switch()
         test_the_admin_class_renders_without_weakening_the_appliance_class()
         test_the_admin_class_needs_a_range_inside_the_client_range()
+        test_the_admin_hole_takes_a_source_off_the_pods_ethernet_side()
+        test_an_admin_range_inside_the_client_range_is_refused()
+        test_the_hole_stays_shut_until_a_range_names_it()
+        test_a_cloud_flavour_keeps_its_pki_directory_across_a_restart()
         test_the_admin_class_is_a_cloud_flavour_mechanism()
         test_the_tunnels_own_oidc_lives_under_vpn()
         test_the_cascades_edge_oidc_switch_is_harmless_to_the_tunnel()

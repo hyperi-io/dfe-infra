@@ -419,6 +419,12 @@ export DFE_TUNNEL_ADDRESS="${DFE_TUNNEL_ADDRESS:-}"
 export DFE_TUNNEL_ADDRESS_ANNOTATION="${DFE_TUNNEL_ADDRESS:+dfe.hyperi.io/tunnel_address: \"${DFE_TUNNEL_ADDRESS}\"}"
 export DFE_TUNNEL_ZONE="${DFE_TUNNEL_ZONE:-}"
 export DFE_TUNNEL_ZONE_ANNOTATION="${DFE_TUNNEL_ZONE:+dfe.hyperi.io/tunnel_zone: \"${DFE_TUNNEL_ZONE}\"}"
+# The subnet the toolbox instance lands in, which is the only shape culvert's
+# admin hole matches -- a source off the pod's ethernet side, never a peer.
+# Empty on every flavour with no toolbox module, and the annotation is left out
+# rather than rendered blank, same as the two above.
+export DFE_TOOLBOX_ADMIN_CIDR="${DFE_TOOLBOX_ADMIN_CIDR:-}"
+export DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION="${DFE_TOOLBOX_ADMIN_CIDR:+dfe.hyperi.io/toolbox_admin_cidr: \"${DFE_TOOLBOX_ADMIN_CIDR}\"}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
 export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"

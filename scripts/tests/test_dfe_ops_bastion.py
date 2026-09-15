@@ -251,19 +251,31 @@ class FakeCulvert:
     it reads the changed state rather than a fixture that never moves.
     """
 
-    def __init__(self, *, tunnel_address: str = "198.51.100.7", handshake: str = "1789000000") -> None:
+    def __init__(self, *, tunnel_address: str = "198.51.100.7", handshake: str = "1789000000",
+                 pod_ip: str = "10.20.30.40", wg_network: str = "100.64.2.0/24") -> None:
         self.tunnel_address = tunnel_address
         self.allocations = {"hub-appliance-1": "100.64.2.2", bastion.ADMIN_PEER_NAME: "100.64.2.5"}
         self.allowed = {APPLIANCE_KEY: "100.64.2.2/32", ADMIN_KEY: "100.64.2.5/32"}
         self.handshakes = {APPLIANCE_KEY: handshake, ADMIN_KEY: handshake}
+        self.pod_ip = pod_ip
+        self.wg_network = wg_network
         self.revoke_sticks = True
         self.calls: list[list[str]] = []
 
     def _table(self, rows: dict[str, str]) -> str:
         return "".join(f"{key}\t{value}\n" for key, value in rows.items())
 
+    def _pod(self) -> dict[str, object]:
+        env = [{"name": bastion.WG_NETWORK_ENV, "value": self.wg_network}] if self.wg_network else []
+        return {
+            "status": {"podIP": self.pod_ip},
+            "spec": {"containers": [{"name": "culvert", "env": env}]},
+        }
+
     def __call__(self, args: list[str]) -> subprocess.CompletedProcess:
         self.calls.append(args)
+        if "pod" in args and "json" in args:
+            return _text(json.dumps(self._pod()))
         if "pods" in args:
             return _text("dfe-culvert-7d9f")
         if bastion.CLUSTER_SECRET in args:
@@ -309,6 +321,12 @@ def _mock_admin_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     state = tmp_path / "bastion-admin-peer.json"
     monkeypatch.setattr(bastion, "ADMIN_STATE", state)
     return state
+
+
+def _join_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The join path as it behaves once hyperi-io/culvert#40 lands, which is
+    what keeps it exercised while the verb itself refuses."""
+    monkeypatch.setattr(bastion, "ADMIN_PEER_SUPPORTED", True)
 
 
 # ---------------------------------------------------------------------------
@@ -371,9 +389,23 @@ def test_admin_config_pins_the_endpoint_drops_dns_and_narrows_allowed_ips() -> N
     assert bastion.PRIVATE_KEY_PLACEHOLDER in out
 
 
+def test_join_refuses_and_names_the_upstream_change_it_waits_on(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A minted peer that every isolation rule then drops looks like a working
+    join and reaches nothing, so the verb refuses and points at the route."""
+    _mock_kubectl(monkeypatch)
+    _mock_outputs(monkeypatch)
+    assert bastion.cmd_bastion_join(_args()) == 1
+    err = capsys.readouterr().err
+    assert "hyperi-io/culvert#40" in err
+    assert "bastion hub" in err
+
+
 def test_join_mints_the_private_key_on_the_instance_and_ships_only_the_public_half(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _join_enabled(monkeypatch)
     hub = _mock_kubectl(monkeypatch)
     _mock_admin_state(tmp_path, monkeypatch)
     _mock_outputs(monkeypatch)
@@ -397,6 +429,7 @@ def test_join_refuses_with_no_tunnel_address_on_the_cluster_secret(
 ) -> None:
     """byo brings an address this deployment never sees, so there is nothing to
     dial and no UDP egress rule aimed at it."""
+    _join_enabled(monkeypatch)
     _mock_kubectl(monkeypatch, FakeCulvert(tunnel_address=""))
     _mock_admin_state(tmp_path, monkeypatch)
     _mock_outputs(monkeypatch)
@@ -408,6 +441,7 @@ def test_join_refuses_when_no_handshake_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     """wg-quick reports success on a config that reaches nothing."""
+    _join_enabled(monkeypatch)
     _mock_kubectl(monkeypatch)
     state = _mock_admin_state(tmp_path, monkeypatch)
     _mock_outputs(monkeypatch)
@@ -421,6 +455,7 @@ def test_join_refuses_when_no_handshake_lands(
 def test_join_records_the_peer_and_its_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _join_enabled(monkeypatch)
     _mock_kubectl(monkeypatch)
     state = _mock_admin_state(tmp_path, monkeypatch)
     _mock_outputs(monkeypatch)
@@ -437,6 +472,7 @@ def test_join_records_the_peer_and_its_deadline(
 def test_join_refuses_without_an_instance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    _join_enabled(monkeypatch)
     _mock_kubectl(monkeypatch)
     _mock_admin_state(tmp_path, monkeypatch)
     _mock_outputs(monkeypatch, {})
@@ -449,21 +485,61 @@ def test_join_refuses_without_an_instance(
 # ---------------------------------------------------------------------------
 
 
-def test_hub_opens_the_logged_shell_session_for_a_known_peer(
+def test_hub_routes_the_client_range_at_the_pod_then_opens_the_logged_session(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    """The route is what reaches the appliance, and it is re-programmed here
+    rather than assumed, because a roll gives the pod a new address."""
     _mock_kubectl(monkeypatch)
     _mock_outputs(monkeypatch)
+    aws_calls = _mock_aws(monkeypatch, *_ssm(""))
     calls: list[list[str]] = []
     monkeypatch.setattr(bastion, "_run_interactive", lambda cmd: calls.append(cmd) or 0)
 
     assert bastion.cmd_bastion_hub(_args(peer="hub-appliance-1", port=22)) == 0
     err = capsys.readouterr().err
 
+    sent = " ".join(" ".join(call) for call in aws_calls)
+    assert "ip route replace 100.64.2.0/24 via 10.20.30.40" in sent
     assert "100.64.2.2:22" in err
     assert calls[0][:3] == ["aws", "ssm", "start-session"]
     assert "--document-name" in calls[0]
     assert calls[0][calls[0].index("--document-name") + 1] == "dfe-test-toolbox-shell"
+
+
+def test_hub_names_the_vpc_route_the_instance_route_does_not_cover(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A VPC delivers on the destination address, so the instance route alone
+    reaches nothing and an operator hitting silence needs to be told where."""
+    _mock_kubectl(monkeypatch)
+    _mock_outputs(monkeypatch)
+    _mock_aws(monkeypatch, *_ssm(""))
+    monkeypatch.setattr(bastion, "_run_interactive", lambda cmd: 0)
+
+    assert bastion.cmd_bastion_hub(_args(peer="hub-appliance-1", port=22)) == 0
+    err = capsys.readouterr().err
+    assert "source/destination check" in err
+
+
+def test_hub_refuses_a_peer_outside_the_range_the_hub_forwards(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A route to a range the peer does not sit in is a reach-back that times
+    out against a tunnel reporting healthy."""
+    _mock_kubectl(monkeypatch, FakeCulvert(wg_network="100.64.9.0/24"))
+    _mock_outputs(monkeypatch)
+    assert bastion.cmd_bastion_hub(_args(peer="hub-appliance-1", port=22)) == 1
+    assert "outside the 100.64.9.0/24" in capsys.readouterr().err
+
+
+def test_hub_refuses_when_the_tunnel_runs_no_wireguard_listener(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _mock_kubectl(monkeypatch, FakeCulvert(wg_network=""))
+    _mock_outputs(monkeypatch)
+    assert bastion.cmd_bastion_hub(_args(peer="hub-appliance-1", port=22)) == 1
+    assert "no CULVERT_WG_NETWORK" in capsys.readouterr().err
 
 
 def test_hub_refuses_a_port_outside_the_admin_classs_reach(
@@ -482,6 +558,12 @@ def test_hub_refuses_an_unknown_peer(
     _mock_outputs(monkeypatch)
     assert bastion.cmd_bastion_hub(_args(peer="not-a-peer", port=443)) == 1
     assert "unknown peer" in capsys.readouterr().err
+
+
+def test_covers_reads_a_range_rather_than_matching_text() -> None:
+    assert bastion._covers("100.64.2.0/24", "100.64.2.2")
+    assert not bastion._covers("100.64.2.0/24", "100.64.20.2")
+    assert not bastion._covers("100.64.2.0/24", "not-an-address")
 
 
 # ---------------------------------------------------------------------------

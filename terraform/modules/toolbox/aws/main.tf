@@ -110,6 +110,24 @@ resource "aws_vpc_security_group_egress_rule" "tunnel" {
   description = "Fleet tunnel listener ${each.value}/udp at ${var.tunnel.address}"
 }
 
+// The reach-back's own egress, aimed at the tunnel's CLIENT range rather than
+// at one appliance, because the hub allocates a peer's tunnel address and no
+// plan can know it. Absent when the admin class is off, and it carries no
+// dependency on the tunnel address: this path routes the client range at the
+// culvert pod instead of dialling the tunnel.
+resource "aws_vpc_security_group_egress_rule" "tunnel_reach" {
+  for_each = var.enabled && var.tunnel.client_cidr != "" ? toset([for p in var.tunnel.reach : tostring(p)]) : toset([])
+
+  security_group_id = aws_security_group.this[0].id
+
+  cidr_ipv4   = var.tunnel.client_cidr
+  ip_protocol = "tcp"
+  from_port   = tonumber(each.value)
+  to_port     = tonumber(each.value)
+
+  description = "Appliance ${each.value}/tcp through the fleet tunnel"
+}
+
 // The one rule this module puts on a security group it does not own. Egress on
 // 443 is not enough to reach the Kubernetes API: the control plane's own group
 // admits nodes and pods and nothing else, so the eks-api forward target times

@@ -15,12 +15,12 @@
     dfe-ops bastion up [--ttl MIN]     flip toolbox.enabled on in the dial,
                                        apply just the toolbox target, wait for
                                        SSM to report PingStatus Online.
-    dfe-ops bastion join [--ttl MIN]  mint an admin peer on the fleet tunnel,
-                                       install it on the instance over SSM Run
-                                       Command, and prove a handshake.
+    dfe-ops bastion join [--ttl MIN]  mint an admin peer on the fleet tunnel --
+                                       REFUSED until hyperi-io/culvert#40 lands.
     dfe-ops bastion peers             the hub's peers: name, tunnel address and
                                        last handshake.
-    dfe-ops bastion hub <peer>        reach one appliance through the tunnel.
+    dfe-ops bastion hub <peer>        route the tunnel's client range at the
+                                       culvert pod and reach one appliance.
     dfe-ops bastion shell             open the logged shell Session.
     dfe-ops bastion forward <t> <p>   port-forward to a named target on local
                                        port <p> -- NOT recorded by Session
@@ -41,11 +41,19 @@ its pod, so they share one kubectl boundary the way `_run` is the tofu one. The
 admin peer's PRIVATE key is minted on the instance and never leaves it: culvert
 takes the public half (`generate-client --pubkey`) and writes a placeholder the
 instance substitutes locally, so no private key ever rides an SSM parameter.
+
+`hub` NEEDS NO JOIN. culvert's admin exception matches a source arriving off the
+pod's ethernet side and its client-to-client verdict drops a peer source before
+that exception is reached, so the reach-back that works today is a ROUTE: the
+toolbox sends the tunnel's client range at the culvert pod, which the VPC CNI
+gives a VPC address, and culvert forwards it to the appliance. The route is
+re-programmed on every `hub` call, because a roll gives the pod a new address.
 """
 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -116,6 +124,15 @@ DEFAULT_ADMIN_TTL_MINUTES = 60
 # Mirrors peers.classes.admin.reach in helm/edge/culvert/values.yaml -- the
 # ports an appliance accepts from the admin peer on its tunnel interface.
 ADMIN_REACH = (22, 443)
+# Whether the hub can carry an admin that dials in AS A PEER. culvert installs
+# the client-to-client DROP over every pair of tunnel interfaces before the
+# admin ACCEPT, so a peer source is dropped before any rule naming it is
+# reached; hyperi-io/culvert#40 is the peer class that would carry it, and
+# `join` refuses until it lands. `hub` routes instead and needs none of it.
+ADMIN_PEER_SUPPORTED = False
+# The WireGuard /24 culvert carves out of vpn.clientCIDR, read off the pod's own
+# environment rather than recomputed here (helm/edge/culvert/_helpers.tpl).
+WG_NETWORK_ENV = "CULVERT_WG_NETWORK"
 
 
 class BastionError(RuntimeError):
@@ -305,6 +322,56 @@ def _culvert(namespace: str, pod: str, argv: list[str]) -> str:
     if result.returncode != 0:
         raise BastionError(f"culvert `{' '.join(argv)}` failed: {result.stderr.strip()}")
     return result.stdout
+
+
+def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
+    """The culvert pod's own address and the client range it forwards into.
+
+    One `kubectl get pod -o json` for both, because they are read together and
+    a second call could answer about a different pod after a roll.
+    """
+    result = _kubectl(["-n", namespace, "get", "pod", pod, "-o", "json"])
+    if result.returncode != 0:
+        raise BastionError(f"cannot read the culvert pod {pod}: {result.stderr.strip()}")
+    try:
+        body = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as error:
+        raise BastionError(f"the culvert pod {pod} returned no readable JSON") from error
+
+    pod_ip = str((body.get("status") or {}).get("podIP") or "")
+    if not pod_ip:
+        raise BastionError(f"the culvert pod {pod} carries no podIP yet -- wait for it to be Running")
+
+    containers = (body.get("spec") or {}).get("containers") or [{}]
+    env = {str(item.get("name")): str(item.get("value", "")) for item in containers[0].get("env") or []}
+    client_range = env.get(WG_NETWORK_ENV, "")
+    if not client_range:
+        raise BastionError(
+            f"the culvert pod {pod} carries no {WG_NETWORK_ENV}, so the tunnel runs no WireGuard"
+            " listener and there is no client range to route"
+        )
+    return pod_ip, client_range
+
+
+def _covers(client_range: str, address: str) -> bool:
+    """Whether a routed range actually carries a peer's tunnel address."""
+    try:
+        return ipaddress.ip_address(address) in ipaddress.ip_network(client_range, strict=False)
+    except ValueError:
+        return False
+
+
+def _program_hub_route(instance_id: str, client_range: str, pod_ip: str) -> None:
+    """Point the tunnel's client range at the culvert pod, on this call.
+
+    `replace` rather than `add`, because the pod address changes on every roll
+    and a stale route is a reach-back that times out against a healthy tunnel.
+    """
+    _ssm_run(instance_id, [
+        "set -eu",
+        f"ip route replace {client_range} via {pod_ip}",
+        f"ip route get {client_range.split('/')[0]}",
+    ], comment="route the tunnel client range at the culvert pod")
 
 
 def _tunnel_address() -> str:
@@ -539,6 +606,19 @@ def _record_admin_peer(namespace: str, ttl_minutes: int) -> None:
 def cmd_bastion_join(args: argparse.Namespace) -> int:
     namespace = _namespace(args)
     ttl_minutes = args.ttl or DEFAULT_ADMIN_TTL_MINUTES
+    # Minting a peer that every isolation rule then drops looks like a working
+    # join and reaches nothing, so the verb says which upstream change it waits
+    # on rather than issuing a credential for a hole that is not open.
+    if not ADMIN_PEER_SUPPORTED:
+        print(
+            "dfe-ops bastion: joining the hub AS A PEER reaches no appliance yet. culvert installs"
+            " the client-to-client DROP over every pair of tunnel interfaces before its admin"
+            " ACCEPT, so a peer source is dropped first, and hyperi-io/culvert#40 is the peer class"
+            " that would carry the exception. Use `dfe-ops bastion hub <peer>`, which routes the"
+            " client range at the culvert pod and needs no peer at all.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         instance_id = _instance_id()
         pod = _culvert_pod(namespace)
@@ -609,11 +689,19 @@ def cmd_bastion_hub(args: argparse.Namespace) -> int:
                 f"port {args.port} is outside the admin class's reach {list(ADMIN_REACH)}"
                 " (peers.classes.admin.reach in helm/edge/culvert/values.yaml)"
             )
-        peers = _peers(namespace, _culvert_pod(namespace))
+        pod = _culvert_pod(namespace)
+        peers = _peers(namespace, pod)
         peer = next((p for p in peers if p["name"] == args.peer), None)
         if peer is None:
             names = ", ".join(p["name"] for p in peers) or "(none)"
             raise BastionError(f"unknown peer {args.peer!r} -- the hub carries: {names}")
+        pod_ip, client_range = _route_facts(namespace, pod)
+        if not _covers(client_range, peer["address"]):
+            raise BastionError(
+                f"peer {peer['name']} is at {peer['address']}, outside the {client_range} the hub"
+                " forwards -- a route to that range would not carry it"
+            )
+        _program_hub_route(instance_id, client_range, pod_ip)
     except BastionError as error:
         print(f"dfe-ops bastion: {error}", file=sys.stderr)
         return 1
@@ -622,12 +710,20 @@ def cmd_bastion_hub(args: argparse.Namespace) -> int:
     # and port at PLAN time (toolbox/aws/CONTRACT.md), and a peer's tunnel
     # address is not known then. The logged shell is the session that can.
     print(
-        f"dfe-ops bastion: {peer['name']} is at {peer['address']}:{args.port} through the"
-        f" tunnel, last handshake {peer['handshake']}",
+        f"dfe-ops bastion: {client_range} routed at the culvert pod {pod_ip}; {peer['name']} is at"
+        f" {peer['address']}:{args.port} through the tunnel, last handshake {peer['handshake']}",
         file=sys.stderr,
     )
     reach = f"ssh {peer['address']}" if args.port == 22 else f"curl https://{peer['address']}/"
     print(f"  {reach}", file=sys.stderr)
+    # The instance route is one half: a VPC delivers a packet by looking its
+    # DESTINATION up, so the tunnel range also needs a VPC route at the culvert
+    # node's interface with that interface's source/destination check off.
+    print(
+        f"The VPC must also route {client_range} at the culvert node's network interface, with that"
+        " interface's source/destination check off, or the packet never leaves the subnet.",
+        file=sys.stderr,
+    )
     print(
         "This is the LOGGED shell session; a forward cannot reach a peer, because"
         " every forward document fixes its host and port at plan time.",
@@ -1070,7 +1166,7 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
 
     join = with_namespace(actions.add_parser(
         "join",
-        help="mint an admin peer on the fleet tunnel, install it over SSM, prove a handshake",
+        help="mint an admin peer on the fleet tunnel -- refused until hyperi-io/culvert#40 lands",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     ))
     join.add_argument(
@@ -1088,7 +1184,7 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
 
     hub = with_namespace(actions.add_parser(
         "hub",
-        help="reach one appliance through the tunnel, in the LOGGED shell Session",
+        help="route the client range at the culvert pod and reach one appliance, in the LOGGED shell Session",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     ))
     hub.add_argument("peer", help="a name from `dfe-ops bastion peers`")

@@ -92,6 +92,13 @@ a CULVERT_ key twice and the deployment carries no hand-written env block.
   "CULVERT_BLOCK_LINK_LOCAL" "true"
   "CULVERT_PKI_MODE" .Values.pki.mode
 -}}
+{{- /* The admin hole culvert carries today matches a source off the pod's
+     ethernet side, so it is named only where a deployment routes the client
+     range at this pod (argocd/appsets/layer2-edge.yaml). */ -}}
+{{- $admin := .Values.peers.classes.admin -}}
+{{- if and $admin.enabled $admin.adminCIDRs -}}
+{{- $_ := set $env "CULVERT_DOWNSTREAM_ADMIN_CIDRS" (join "," $admin.adminCIDRs) -}}
+{{- end -}}
 {{- /* One /24 per tunnel out of the reserved range, in listener order. */ -}}
 {{- if $udp -}}
 {{- $_ := set $env "CULVERT_UDP_PORT" (toString (int $udp.port)) -}}

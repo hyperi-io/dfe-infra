@@ -105,7 +105,7 @@ variable "dns" {
 // ---------------------------------------------------------------------------
 
 variable "edge" {
-  description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, the external-dns and cert-manager identities that write it, and the fleet tunnel's own address. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable. tunnel is the dial's edge.ingest.tunnel block; its address.mode defaults to byo, so nothing here is created until a deployment asks for the forwarder. Every field is described in the module's own variables.tf."
+  description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, the external-dns and cert-manager identities that write it, and the fleet tunnel's own address. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable. tunnel is the dial's edge.ingest.tunnel block; its address.mode defaults to byo, so nothing here is created until a deployment asks for the forwarder. tunnel.admin_peer is the operator's reach-back to one appliance, and only its two fields travel here because they are a security-group rule on the toolbox -- the rest of the class is a chart value. Every field is described in the module's own variables.tf."
   type = object({
     enabled = optional(bool, true)
     tunnel = optional(object({
@@ -119,6 +119,10 @@ variable "edge" {
       node_ports = optional(object({
         wireguard = optional(number, 31820)
         openvpn   = optional(number, 31194)
+      }), {})
+      admin_peer = optional(object({
+        enabled = optional(bool, true)
+        reach   = optional(list(number), [22, 443])
       }), {})
     }), {})
   })

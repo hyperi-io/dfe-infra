@@ -16,7 +16,13 @@
   address under the default externalTrafficPolicy, so an ipBlock would match
   the node rather than the client. exposure.loadBalancerSourceRanges is where
   the client allow-list belongs.
+
+  The admin rule below is the one exception, and it is not a client CIDR: it
+  matches a machine on the pod's ethernet side whose packets arrive here
+  addressed to an appliance's tunnel address, which the listener-port rule
+  above does not admit.
 */}}
+{{- $admin := .Values.peers.classes.admin }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -45,6 +51,20 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Values.networkPolicy.otelNamespace }}
+    {{- end }}
+    {{- if and $admin.enabled $admin.adminCIDRs }}
+    # The reach-back is forwarded, not terminated, so the admitted port is the
+    # appliance's own rather than any listener this pod carries.
+    - from:
+        {{- range $admin.adminCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range $admin.reach }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
     {{- end }}
   egress:
     # The receiver's ingest listeners, and nothing else in the namespace.
