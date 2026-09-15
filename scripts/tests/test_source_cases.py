@@ -579,6 +579,19 @@ class TestTheObserveStep:
         assert status == "failed"
         assert "does not offer fb1" in detail
 
+    def test_a_pick_that_raised_names_the_exception(self):
+        refused = steps.refusal(TimeoutError("Locator.click: Timeout 30000ms exceeded"))
+        status, detail = steps.observe_outcome("fb1", self.FRAME, "", False, refused)
+
+        assert status == "failed"
+        assert "does not offer fb1" in detail
+        assert "TimeoutError" in detail
+
+    def test_a_count_with_a_thousands_separator_is_a_pass(self):
+        assert steps.results_count("1,050 Results") == 1050
+        assert steps.observe_outcome("cw1", self.FRAME, "", True, "1,050 Results") == (
+            "done", "Observe search over cw1: 1,050 Results")
+
     def test_zero_rows_is_a_failed_row_that_quotes_the_line(self):
         status, detail = steps.observe_outcome("fb1", self.FRAME, "", True, "0 Results")
 
