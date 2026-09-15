@@ -347,7 +347,10 @@ edge:
       ## `ttl_minutes` and `peer_cidr` belong to the PEER shape -- an admin peer
       ## minted per session with a one-way isolation exception -- which waits on
       ## hyperi-io/culvert#40 and which `dfe-ops bastion join` refuses until then.
-      ## Both are read and recorded, and neither reaches a rendered resource yet.
+      ## Neither reaches a rendered resource yet, so render_dial.py REFUSES a
+      ## value other than the two below rather than accepting one and dropping
+      ## it. End a session with `dfe-ops bastion down`, which is what closes the
+      ## reach-back today.
       admin_peer:
         enabled: true
         ttl_minutes: 60

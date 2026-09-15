@@ -420,6 +420,11 @@ TUNNEL_NODE_PORTS = {"wireguard": 31820, "openvpn": 31194}
 # security group opens against the tunnel's client range. Mirrors
 # helm/edge/culvert/values.yaml peers.classes.admin.reach.
 TUNNEL_ADMIN_REACH = (22, 443)
+# The upstream change the admin PEER shape waits on, and the two dial fields
+# that belong to it. Until it lands neither reaches a rendered resource, so a
+# value other than these is refused rather than accepted and dropped.
+ADMIN_PEER_ISSUE = "hyperi-io/culvert#40"
+ADMIN_PEER_TTL_MINUTES = 60
 OTEL_AUTH = ("required", "none")
 
 _EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
@@ -630,6 +635,37 @@ def _edge_cidrs(dial: dict[str, object], path: tuple[str, ...]) -> list[str]:
     return ranges
 
 
+def _admin_peer_inert(dial: dict[str, object], at: tuple[str, ...]) -> None:
+    """Refuse the two admin-peer fields that reach nothing yet.
+
+    Both describe the admin PEER -- one minted per session with a one-way
+    isolation exception -- which culvert cannot carry until its peer classes
+    land, so a dial setting either gets a value it can read back and a
+    deployment that behaves as though it had not. Refused by name for the same
+    reason the culvert chart refuses exposure.loadBalancerSourceRanges on a
+    NodePort: a field that silently does nothing is worse than one that stops.
+
+    Checked from _edge_tunnel, so the tofu render refuses it as well as the
+    summary pass.
+    """
+    ttl = _optional_number(dial, (*at, "ttl_minutes"), ADMIN_PEER_TTL_MINUTES)
+    if ttl != ADMIN_PEER_TTL_MINUTES:
+        raise DialError(
+            f"{'.'.join((*at, 'ttl_minutes'))} is {ttl}, and nothing reads it -- it bounds the"
+            f" admin PEER, which waits on {ADMIN_PEER_ISSUE} and which `dfe-ops bastion join`"
+            f" refuses until then. Leave it at {ADMIN_PEER_TTL_MINUTES} and end the session with"
+            " `dfe-ops bastion down`, which is what actually closes the reach-back today."
+        )
+    peer_cidr = _text(dial, (*at, "peer_cidr"))
+    if peer_cidr:
+        raise DialError(
+            f"{'.'.join((*at, 'peer_cidr'))} is {peer_cidr!r}, and nothing reads it -- it carves"
+            f" the range an admin PEER is issued into, which waits on {ADMIN_PEER_ISSUE}. Leave it"
+            " empty: the reach-back that works today routes the tunnel's client range at the"
+            " culvert pod and issues no peer at all."
+        )
+
+
 def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
     """The tunnel's cloud-side address, the one part of the tunnel tofu builds.
 
@@ -639,6 +675,7 @@ def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
     and Kubernetes would otherwise allocate one nothing could know in advance.
     """
     at = ("edge", "ingest", "tunnel")
+    _admin_peer_inert(dial, (*at, "admin_peer"))
     return {
         "address": {
             "mode": _tunnel_address_mode(dial),

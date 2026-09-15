@@ -165,9 +165,13 @@ dfe-ops bastion join            # refused until hyperi-io/culvert#40 lands
 dfe-ops bastion down            # revoke anything joined, THEN terminate
 ```
 
-`edge.ingest.tunnel.admin_peer.ttl_minutes` is recorded rather than enforced,
-because a WireGuard peer carries no expiry of its own -- the deadline is a fact
-on disk that `bastion status` reports.
+`edge.ingest.tunnel.admin_peer.ttl_minutes` and `peer_cidr` both belong to the
+admin PEER, which waits on `hyperi-io/culvert#40`, so neither reaches a rendered
+resource today. `render_dial.py` refuses a dial that sets either to anything but
+its default and names that issue -- a field an operator sets, sees accepted and
+gets nothing from is worse than one that stops, which is why the culvert chart
+already refuses `exposure.loadBalancerSourceRanges` on a NodePort. What ends a
+session is `dfe-ops bastion down`, which revokes and then terminates.
 
 ### How wide the hole is
 

@@ -197,6 +197,44 @@ def test_a_public_otel_door_with_auth_required_is_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The admin peer's two inert fields
+# ---------------------------------------------------------------------------
+
+
+def _admin_peer(body: str) -> dict[str, object]:
+    return render_dial._edge_tunnel(dial(f"edge:\n  ingest:\n    tunnel:\n      admin_peer:\n{body}"))
+
+
+def test_an_admin_peer_ttl_other_than_the_default_is_refused_by_name() -> None:
+    """A field nothing reads is worse than one that stops: the operator sets a
+    deadline, sees it accepted, and gets a session nothing bounds."""
+    with pytest.raises(render_dial.DialError, match=r"admin_peer\.ttl_minutes"):
+        _admin_peer("        ttl_minutes: 90\n")
+
+
+def test_the_refusal_names_the_upstream_change_and_what_to_do_instead() -> None:
+    with pytest.raises(render_dial.DialError) as raised:
+        _admin_peer("        ttl_minutes: 90\n")
+    assert render_dial.ADMIN_PEER_ISSUE in str(raised.value)
+    assert "bastion down" in str(raised.value)
+
+
+def test_an_admin_peer_cidr_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"admin_peer\.peer_cidr"):
+        _admin_peer('        peer_cidr: "100.64.1.0/24"\n')
+    with pytest.raises(render_dial.DialError) as raised:
+        _admin_peer('        peer_cidr: "100.64.1.0/24"\n')
+    assert render_dial.ADMIN_PEER_ISSUE in str(raised.value)
+
+
+def test_the_defaults_and_an_omitted_block_both_read_through() -> None:
+    """The example dial writes both fields, so the value it ships must pass."""
+    _admin_peer(f"        ttl_minutes: {render_dial.ADMIN_PEER_TTL_MINUTES}\n        peer_cidr: \"\"\n")
+    render_dial._edge_tunnel(dial("substrate: k8s\n"))
+    render_dial._edge(example())
+
+
+# ---------------------------------------------------------------------------
 # The printed summary
 # ---------------------------------------------------------------------------
 
