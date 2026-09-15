@@ -53,8 +53,10 @@ KAFKA_APPS = {
     "dfe-transform-vrl",
     "dfe-transform-vector",
     "dfe-transform-elastic",
-    "dfe-transform-splack",
-    "dfe-transform-wasm",
+    # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
+    # uncomment when they ship and the chart's kafka.apps list carries them again.
+    # "dfe-transform-splack",
+    # "dfe-transform-wasm",
 }
 
 

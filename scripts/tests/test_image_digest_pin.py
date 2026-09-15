@@ -224,10 +224,12 @@ def test_a_chart_with_no_digest_renders_what_it_always_did() -> None:
     Rendered with no `global:` block at all, which is what bare `helm lint` and
     a chart-only template do -- the nil-guard case.
     """
-    rendered = images(render("dfe-transform-wasm"))
+    app = "dfe-transform-elastic"
+    tag = current_stack()["apps"][app]
+    rendered = images(render(app))
     expect(
         "no digest and no global block still renders a plain repo:tag",
-        rendered == ["dfe-transform-wasm:2.2.0"],
+        rendered == [f"{app}:{tag}"],
         f"{rendered}",
     )
 

@@ -52,16 +52,17 @@ valid pull spec, so the digest flows through values. docker: `.env`
 | dfe-fetcher | apps.dfe-fetcher | DFE_FETCHER_VERSION | yes |
 | dfe-transform-vrl | apps.dfe-transform-vrl | DFE_TRANSFORM_VRL_VERSION | yes |
 | dfe-transform-vector | apps.dfe-transform-vector | DFE_TRANSFORM_VECTOR_VERSION | yes |
-| dfe-transform-wasm | apps.dfe-transform-wasm | (n/a) | NO - alpha |
 | dfe-transform-elastic | apps.dfe-transform-elastic | (n/a) | NO - alpha |
-| dfe-transform-splack | apps.dfe-transform-splack | (n/a) | NO - alpha |
 | dfe-hyperdx (fork) | content.dfe-hyperdx | DFE_HYPERDX_VERSION | NO - first image pending |
 
 Notes:
-- The three transforms (wasm/elastic/splack) are PRE-GA/alpha and NOT published
-  to GHCR (no digest). `dfe-stack` already excludes any app without a digest from
-  rendered manifests - loudly. They stay excluded from a stack cut until they
-  publish. Do not render them.
+- dfe-transform-splack and dfe-transform-wasm are COMING, not members. Alpha and
+  unpublished, so their `apps:` pins are commented out and their charts stay in
+  the tree as placeholders. Grep the marker `are coming: alpha, unpublished` for
+  every line to uncomment when they ship.
+- dfe-transform-elastic is PRE-GA/alpha and NOT published to GHCR (no digest).
+  `dfe-stack` already excludes any app without a digest from rendered manifests -
+  loudly. It stays excluded from a stack cut until it publishes. Do not render it.
 - dfe-hyperdx is the HyperDX fork. k8s chart pulls `ghcr.io/hyperi-io/dfe-hyperdx`
   (tag = fork CODE_VERSION via appVersion). docker pulls
   `ghcr.io/hyperi-io/hyperi-hyperdx` (NOTE: a DIFFERENT image name than k8s -

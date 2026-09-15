@@ -40,10 +40,12 @@ PRESSURE_CHARTS = [
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-elastic",
-    "dfe-transform-splack",
     "dfe-transform-vector",
     "dfe-transform-vrl",
-    "dfe-transform-wasm",
+    # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
+    # uncomment when they ship.
+    # "dfe-transform-splack",
+    # "dfe-transform-wasm",
 ]
 
 

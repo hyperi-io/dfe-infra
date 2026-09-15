@@ -52,7 +52,9 @@ APPS = {
     "dfe-transform-vrl": "sink.topic",
     "dfe-transform-vector": "sink.topic",
     "dfe-transform-elastic": "source.name",
-    "dfe-transform-wasm": "sink.topic",
+    # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
+    # uncomment when they ship.
+    # "dfe-transform-wasm": "sink.topic",
 }
 
 # Workloads that hold a ReadWriteOnce volume cannot surge past themselves, so
@@ -61,9 +63,8 @@ RECREATE = {
     ("dfe-engine", "dfe-engine"): "the config PVC is ReadWriteOnce",
 }
 
-# dfe-transform-wasm is left out: it is an unpublished alpha with no apps.yaml
-# entry and no transport dial, so its chart has nothing to branch on.
-TRANSPORT_AWARE = sorted(set(APPS) - {"dfe-transform-wasm"})
+# Every chart in APPS carries a transport dial, so the set is the same list.
+TRANSPORT_AWARE = sorted(APPS)
 
 EXPECTED = {
     "type": "RollingUpdate",
