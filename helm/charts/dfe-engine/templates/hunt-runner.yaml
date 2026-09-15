@@ -241,7 +241,7 @@ spec:
       metricType: AverageValue
       metadata:
         targetValue: {{ .Values.huntRunner.autoscaling.targetBacklog | default 10 | quote }}
-        url: {{ printf "http://%s/keda/hunt-backlog" (.Values.huntRunner.autoscaling.shimAddress | default "dfe-keda-shim.dfe.svc.cluster.local:8080") | quote }}
+        url: {{ printf "http://%s/keda/hunt-backlog" (.Values.huntRunner.autoscaling.shimAddress | default (include "dfe-common.kedaShimAddress" .)) | quote }}
         valueLocation: "value"
 {{- end }}
 {{- end }}

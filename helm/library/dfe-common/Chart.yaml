@@ -2,6 +2,12 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.13.0: add dfe-common.kedaShimAddress -- the dfe-keda-shim Service address
+#        derived from the release namespace, replacing the literal
+#        dfe-keda-shim.dfe.svc.cluster.local default in the ScalingPressure
+#        trigger. Any namespace other than `dfe` rendered a metric URL that
+#        never answered, and a failing external metric stops the HPA scaling
+#        at all, CPU trigger included (dfe-infra#301).
 # 0.12.0: _kafka.tpl carries the DFE Kafka provider table -- kafkaSecurityProtocol,
 #        kafkaSaslMechanism and kafkaHasSchemaRegistry, one derivation for kafbat,
 #        the topics Job and the credential projections instead of a copy per
@@ -58,4 +64,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.12.0
+version: 0.13.0

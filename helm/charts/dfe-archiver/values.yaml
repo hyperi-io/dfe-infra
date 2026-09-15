@@ -35,12 +35,13 @@ kafka:
   # SASL_SSL). Empty leaves the app's own PLAINTEXT default; the deployment's
   # kafka layer names it beside bootstrapServers.
   securityProtocol: ""
-  # Regex a discovered topic must match to be archived (KAFKA_TOPIC_INCLUDE).
-  # The platform convention is {source}_land, so this archives every source's
-  # landing topic and a source added later needs no restart. An empty list
-  # subscribes to nothing and the archiver reports itself idle.
-  topicInclude:
-    - "_land$"
+  # No topicInclude dial, and no KAFKA_TOPIC_INCLUDE env: the landing topics are
+  # COMPILED from the sources that asked to be archived (apps.yaml, dfe-archiver
+  # routing.compiler: archiver) and reach the app as config.kafka.topics in the
+  # engine's overlay. A discovery pattern here outranks that answer in the only
+  # case where the two differ -- an empty compiled list means archive nothing,
+  # and a pattern turns it into archive everything the broker holds, which also
+  # keeps the app out of the idle state its manifest declares.
 
 # Local disk INSIDE the pod: an emptyDir mounted at this path, with the
 # destination pointed at it (ARCHIVER_DESTINATION). Empty by default -- a
@@ -101,10 +102,12 @@ serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
 
-# KEDA autoscaling -- the SHIPPED trigger is the native cpu scaler; scalo
-# ScalingPressure (0-100) via the fail-safe dfe-keda-shim is opt-in until every app
-# emits the gauge (dfe-infra #302), and the HPA takes the higher of the two where
-# both render. minReplicaCount stays 1.
+# KEDA autoscaling -- two triggers render and the HPA takes the higher: the native
+# cpu scaler (no component in the path) and the scalo ScalingPressure composite
+# (0-100) via the fail-safe dfe-keda-shim, which matches this ServiceName's gauge
+# under any metric prefix (dfe-engine#379). Pressure needs the shim in the release
+# namespace (the engine chart ships it); the slim profile turns it off because that
+# tier carries no broker. minReplicaCount stays 1.
 keda:
   enabled: true
   minReplicaCount: 1
@@ -114,10 +117,10 @@ keda:
   cpu:
     targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
+    enabled: true             # scalo ScalingPressure via the fail-safe dfe-keda-shim
     # service: dfe-archiver   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

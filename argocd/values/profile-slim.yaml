@@ -20,10 +20,14 @@ resources:
     cpu: 500m
     memory: 1Gi
 
+# Pressure OFF on this tier: slim runs no broker (receiver -> loader direct gRPC),
+# so the composite's kafka_lag term has nothing to measure and the native cpu scaler
+# is the honest signal. The other tiers carry a broker and keep the chart default on.
 keda:
   minReplicaCount: 1
   maxReplicaCount: 2
   pressure:
+    enabled: false
     targetValue: 75
 
 # ClickHouse -- single standalone node (keeperless, MergeTree).

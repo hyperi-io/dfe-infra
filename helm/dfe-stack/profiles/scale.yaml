@@ -28,7 +28,7 @@ x-scale-shared:
   keda: &scaleKeda
     enabled: true
     minReplicaCount: 2
-    maxReplicaCount: 10
+    maxReplicaCount: 12
 
 clickhouse-cluster:
   clickhouse:
@@ -50,7 +50,7 @@ kafka:
     replicas: 3
     defaultTopic:
       # Source: argocd/values/profile-scale.yaml -- partitions cap consumer
-      # parallelism; sized from the KEDA ceiling of 10.
+      # parallelism, and the KEDA ceiling is a divisor of this count.
       partitions: 12
   user:
     password:
