@@ -66,6 +66,7 @@ variables {
     aws-session-manager-plugin = "1.2.707.0"
     clickhouse-client          = "26.3.17.56"
     psql                       = "17"
+    kafka-cli                  = "4.2.0"
   }
 
   session = {
@@ -562,6 +563,51 @@ run "targets_output_carries_each_documents_name" {
   assert {
     condition     = output.targets["eks-api"].port == 443
     error_message = "the targets output must carry the target's port"
+  }
+}
+
+// A target may not be advertised without the resources that make it work --
+// the live finding this guards against: the output used to read straight
+// from var.targets, so a target could render with a document_name pointing
+// at nothing (`try(..., "")`) after a partial apply left the document and its
+// egress rule uncreated.
+run "the_targets_output_never_advertises_a_target_with_no_document_or_rule" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for name, t in output.targets : can(aws_ssm_document.forward[name].name)
+    ])
+    error_message = "every key in the targets output must have a real forward document behind it"
+  }
+
+  assert {
+    condition = alltrue([
+      for name, t in output.targets :
+      t.port == 443 || contains(
+        keys(aws_vpc_security_group_egress_rule.targets),
+        "${var.targets[name].scope}-${var.targets[name].port}"
+      )
+    ])
+    error_message = "every key in the targets output must either sit on the control-plane port (already open) or have its own egress rule -- a document with no open port is the same defect one layer down"
+  }
+
+  assert {
+    condition     = toset(keys(output.targets)) == toset(keys(var.targets))
+    error_message = "a normal, complete apply must advertise every named target -- this fixture carries no gap between var.targets and what actually gets created"
+  }
+}
+
+run "a_disabled_toolbox_advertises_no_forward_targets" {
+  command = plan
+
+  variables {
+    enabled = false
+  }
+
+  assert {
+    condition     = output.targets == {}
+    error_message = "enabled = false must render no forward documents, so the targets output must be empty too, never a target with a blank document_name"
   }
 }
 

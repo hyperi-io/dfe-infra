@@ -9,13 +9,17 @@ output "ssm_session_document" {
 }
 
 output "targets" {
-  description = "Every named forward target, plus the per-target Session document `dfe-ops bastion forward <name>` invokes -- host and port are informational here; the document is what actually fixes them."
+  description = "Every forward target that HAS both its Session document and an open egress rule, derived from those resources rather than from var.targets -- a target the module did not finish building is absent here instead of advertised, because `dfe-ops bastion status` reads this as the list of what works. A target on the control-plane port needs no rule of its own, that egress being open already. host and port are informational; document_name is what fixes them."
   value = {
-    for name, target in var.targets : name => {
-      host          = target.host
-      port          = target.port
-      document_name = try(aws_ssm_document.forward[name].name, "")
+    for name, doc in aws_ssm_document.forward : name => {
+      host          = var.targets[name].host
+      port          = var.targets[name].port
+      document_name = doc.name
     }
+    if var.targets[name].port == local.control_egress_port || contains(
+      keys(aws_vpc_security_group_egress_rule.targets),
+      "${var.targets[name].scope}-${var.targets[name].port}"
+    )
   }
 }
 
