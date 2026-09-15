@@ -625,4 +625,57 @@ run "the_user_data_carries_the_cluster_tag_and_the_port_map" {
     condition     = strcontains(aws_instance.forwarder[0].user_data, "VPC_CIDR=\"${var.network.cidr}\"")
     error_message = "the return path is masqueraded towards this VPC, so the instance has to know its CIDR"
   }
+
+  // ec2:DescribeInstances takes no resource scope, so the tag alone would let
+  // anyone able to tag an instance in the account join the DNAT target set.
+  assert {
+    condition     = strcontains(aws_instance.forwarder[0].user_data, "Name=vpc-id,Values=$VPC_ID")
+    error_message = "the node list must be filtered to this deployment's own VPC, not the whole account"
+  }
+
+  // ip_forward is on and the source/destination check is off, so the kernel's
+  // own FORWARD ACCEPT would route anything handed to this instance.
+  assert {
+    condition     = strcontains(aws_instance.forwarder[0].user_data, "iptables -P FORWARD DROP")
+    error_message = "the forwarder must route the flows it rewrites and refuse everything else"
+  }
+
+  assert {
+    condition = strcontains(
+      aws_instance.forwarder[0].user_data,
+      "iptables -A DFE_TUNNEL_FWD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+    )
+    error_message = "a FORWARD default of DROP needs the return half of an established flow accepted"
+  }
+
+  // A blanket MASQUERADE to the VPC would cover traffic the DNAT chain never
+  // rewrote, which is the same hole one table down.
+  assert {
+    condition = !strcontains(
+      aws_instance.forwarder[0].user_data, "POSTROUTING -d \"$VPC_CIDR\" -j MASQUERADE"
+    )
+    error_message = "the masquerade must be scoped to the rewritten UDP flows, not the whole VPC"
+  }
+}
+
+// A replaced instance keeps the address; a stopped and started one keeps the OLD
+// DNAT chain, because cloud-init runs this script once per instance.
+run "a_changed_port_map_rebuilds_the_instance_rather_than_restarting_it" {
+  command = plan
+
+  variables {
+    tunnel = { address = { mode = "forwarder" } }
+  }
+
+  assert {
+    condition     = aws_instance.forwarder[0].user_data_replace_on_change == true
+    error_message = "a user_data change must replace the forwarder, or its rules and its security group drift apart"
+  }
+
+  // The address is a separate resource and is attached by association, which is
+  // what lets the instance be replaced without re-rolling what clients dial.
+  assert {
+    condition     = aws_eip_association.forwarder[0].allocation_id == aws_eip.forwarder[0].id
+    error_message = "the address must attach by association, not as an argument on the instance"
+  }
 }

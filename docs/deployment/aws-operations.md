@@ -29,6 +29,20 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   is always scrape-only, read by the OTel collector gateway. Intelligent
   rebalancing is turned on, so a broker added later gets existing
   partitions moved onto it.
+- The alarm names one CloudWatch metric per broker, and a metric math
+  expression takes at most ten, so `autoscaling.enabled` is refused above
+  `broker_count: 10`. Refused at plan, because at apply the cluster, the
+  Lambda, the SNS topic and the IAM all exist before `PutMetricAlarm` rejects
+  it. A larger cluster scales by hand.
+- **Building the broker on its own.** `module.kafka` carries no module-wide
+  `depends_on`, so `tofu apply -target='module.kafka[0].aws_msk_cluster.this'`
+  plans the broker plus the VPC, its subnets and the KMS key and key policy --
+  and nothing else. Targeting the whole `module.kafka` also pulls the EKS
+  control plane in, because the bootstrap Job's Pod Identity association names
+  the cluster and cannot exist without it; the node groups, the addons and
+  Karpenter stay out of both. **`-target` and `-exclude` cannot be combined**
+  ("The target and exclude planning options are mutually-exclusive"), so an
+  MSK-only apply targets the module and excludes nothing.
 
 ## Nodes and images
 
@@ -99,6 +113,14 @@ tier, by which dial key. What is AWS's own:
   the S3 backend leaves none here -- so the control plane's own stamp is the
   reading, and a dial with no cluster behind it reports the age unavailable.
   Neither reading may fail the command.
+- **An untargeted `tofu destroy` on an MSK dial fails with `Client
+  configuration missing` until the Redpanda credentials are in the
+  environment.** The root declares `provider "redpanda"`, OpenTofu configures
+  every provider the configuration requires whether or not the dial selects
+  it, and that provider's client resolves `REDPANDA_CLIENT_ID` and
+  `REDPANDA_CLIENT_SECRET` or fails. Until the root stops requiring it, either
+  export those two with any value for the run, or destroy by target. Do NOT
+  reach for `-exclude`: it cannot be combined with `-target`.
 - Tear down with `tofu destroy` in `terraform/environments/aws`, deleting
   the Kubernetes workloads first -- anything that made a load balancer, a
   volume or a DNS record did so through a controller, and `tofu destroy`

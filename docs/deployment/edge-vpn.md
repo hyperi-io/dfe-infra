@@ -44,7 +44,17 @@ it needs a publicly trusted certificate and buys an ingest fleet nothing.
 A NodePort has no address of its own, and on AWS the dial decides where one
 comes from: `edge.ingest.tunnel.address.mode` is `byo` -- an address the
 deployer already holds in front of the cluster -- or `forwarder`, the tier-2
-opt-in where `terraform/modules/edge/aws` builds one. The forwarder is a small
+opt-in where `terraform/modules/edge/aws` builds one.
+
+**`forwarder` is not usable yet. Take `byo`.** The instance lands in a private
+subnet, which routes at a NAT gateway rather than an internet gateway, so its
+Elastic IP allocates, associates, gets published and answers nothing -- with
+every resource reporting healthy. The repair is a placement decision (the public
+subnet list as a module input, plus node-port ingress sourced from the
+forwarder's own security group), recorded in `forwarder.tf`'s header. The rest
+of this section describes what that instance does once it is reachable.
+
+The forwarder is a small
 SSM-managed instance holding an Elastic IP, with no inbound ssh rule of any
 kind, admitting the tunnel's own UDP listeners from
 `edge.ingest.tunnel.loadBalancerSourceRanges` (empty is 0.0.0.0/0, as
@@ -122,7 +132,9 @@ Beyond that, culvert authenticates each client:
   `server.key` and optionally `crl.pem` and `tc.key`. **Both modes want the
   volume**: culvert writes its revocations and its WireGuard peer allocations
   into the same directory, so a restart without it re-issues a revoked peer's
-  address, and the cloud flavours turn it on for that reason.
+  address. `argocd/appsets/layer2-edge.yaml` turns it on for every cloud
+  flavour for that reason, and sets it there rather than in the flavour file
+  because `persistence.enabled` is a key other charts read.
 - **OIDC** -- `vpn.oidc.enabled` with the issuer and client id, the client
   secret riding a pre-created Secret. It sits under `vpn` because the cloud
   overlays set a top-level `oidc.enabled` for the gateway's edge OIDC on the
@@ -156,6 +168,38 @@ dfe-ops bastion down            # revoke anything joined, THEN terminate
 `edge.ingest.tunnel.admin_peer.ttl_minutes` is recorded rather than enforced,
 because a WireGuard peer carries no expiry of its own -- the deadline is a fact
 on disk that `bastion status` reports.
+
+### How wide the hole is
+
+`peers.classes.admin.adminCIDRs` is the toolbox instance's whole SUBNET, and
+under the VPC CNI a pod takes its address from the same subnet as its node. So
+the exception admits the toolbox, every cluster node in that zone and every pod
+on them -- not one host. A `/32` would be exact and would go stale, because the
+bastion is terminated and rebuilt on every `dfe-ops bastion up` while the range
+is written once at bootstrap.
+
+Delivery is the bound that survives. A packet only reaches an appliance if
+something ROUTES the client range at the culvert pod, which takes the host
+network namespace: an ordinary pod cannot do it from inside its own, and node
+root can. Behind that stands the appliance's own ssh and TLS authentication.
+The range is written only when the deployment asked for the reach-back --
+`toolbox.enabled` and `edge.ingest.tunnel.admin_peer.enabled` together -- and no
+annotation is written otherwise, so culvert renders neither the env key nor the
+NetworkPolicy rule.
+
+### What a live run still has to prove
+
+None of this has been exercised against a cluster. Two claims carry the weight:
+
+- culvert's pinned image honours `CULVERT_DOWNSTREAM_ADMIN_CIDRS` with an
+  ethernet-side ACCEPT and a NAT RETURN beside it, ahead of nothing that drops
+  it first.
+- An appliance accepts ssh on 22 and https on 443 on its tunnel interface from
+  the admin's address. **That is an assumption to confirm with the EdgeStream
+  Hub team**, not a fact this repo can check.
+
+Run the isolation regression in the same window, and on every change to
+`peers.classes`: one appliance peer still cannot reach another.
 
 ## One replica, and why
 

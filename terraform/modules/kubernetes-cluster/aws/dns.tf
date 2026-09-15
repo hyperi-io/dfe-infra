@@ -40,6 +40,10 @@ resource "terraform_data" "private_zone_teardown" {
   input = {
     zone_id = aws_route53_zone.private.zone_id
     region  = var.provision.region
+    // The apex name, so the filter below can spare the apex NS/SOA pair alone.
+    // A delegation's own NS record is not the apex's and has to go, or the zone
+    // still refuses to delete.
+    apex = aws_route53_zone.private.name
   }
 
   // A zone replacement (the private_zone name changing) is exactly the case
@@ -50,11 +54,18 @@ resource "terraform_data" "private_zone_teardown" {
 
   // Runs under whatever AWS identity is already authenticated for `tofu
   // destroy` -- the same one that created the zone -- so it carries no IAM
-  // of its own. Deletes every record but the apex NS/SOA pair Route 53
+  // of its own. Deletes every record but the APEX NS/SOA pair Route 53
   // manages itself, which is exactly what ChangeResourceRecordSets requires
   // to be true before the zone can be deleted. --query does the filtering
   // and reshaping so the only external dependency is the aws CLI already
-  // needed to authenticate this destroy, not a second tool.
+  // needed to authenticate this destroy, not a second tool. The CLI
+  // auto-paginates the list, so the filter sees every record.
+  //
+  // One batch, and ChangeResourceRecordSets caps one at 1000 changes: a zone
+  // holding more than that is rejected whole and falls through to the zone's
+  // own HostedZoneNotEmpty below. external-dns publishes one record per exposed
+  // Service, so passing that cap means something other than this deployment has
+  // been writing into the zone.
   provisioner "local-exec" {
     when = destroy
     // A zone already emptied or already deleted by hand must not wedge the
@@ -66,9 +77,11 @@ resource "terraform_data" "private_zone_teardown" {
       set -eu
       zone="${self.output.zone_id}"
       region="${self.output.region}"
+      apex="${self.output.apex}"
+      apex="$${apex%.}."
       batch="$(aws route53 list-resource-record-sets \
         --hosted-zone-id "$zone" --region "$region" --output json \
-        --query "{Changes: ResourceRecordSets[?Type!='NS' && Type!='SOA'].{Action: 'DELETE', ResourceRecordSet: @}}")"
+        --query "{Changes: ResourceRecordSets[?!(Name=='$apex' && (Type=='NS' || Type=='SOA'))].{Action: 'DELETE', ResourceRecordSet: @}}")"
       case "$batch" in
         *'"Action"'*)
           aws route53 change-resource-record-sets \

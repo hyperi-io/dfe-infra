@@ -258,6 +258,25 @@ def test_a_dial_setting_both_spellings_fails_the_render(tmp_path: Path) -> None:
     assert "edge.product.public and ui.public.dfe_ui" in result.stderr
 
 
+def test_a_dial_on_the_old_spelling_alone_renders_and_prints_the_deprecation(
+    tmp_path: Path
+) -> None:
+    """_edge_deprecations is tested as a function; this is the line that has to
+    reach the operator, and deleting the loop in main() leaves that green."""
+    dial = EXAMPLE.read_text(encoding="utf-8").replace(
+        "  product:\n    public: true", '  product:\n    public: ""'
+    ) + "\nui:\n  public:\n    dfe_ui: false\n"
+    (tmp_path / "deployment.yaml").write_text(dial, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "render_dial.py"),
+         "--dial", str(tmp_path / "deployment.yaml"),
+         "--out", str(tmp_path / "bootstrap.env")],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "render_dial: deprecated -- ui.public.dfe_ui moved to edge.product.public" in result.stderr
+
+
 def test_the_shipped_example_parses_and_validates() -> None:
     parsed = example()
     assert render_dial._edge_alias_conflicts(parsed) == []

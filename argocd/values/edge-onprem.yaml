@@ -38,7 +38,7 @@ tls:
 # (receiver.{domain}), routed through the gateway because this flavour has no
 # cloud LoadBalancer provisioner of its own. Pairing this route with
 # exposure.mode: internal is what makes ingest reachable here, and breaking the
-# pair breaks devex.
+# pair leaves an on-prem deployment with no ingest door at all.
 routes:
   receiver:
     enabled: true

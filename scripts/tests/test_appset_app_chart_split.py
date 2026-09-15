@@ -29,11 +29,13 @@ No test runner, matching the other checks here.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 import yaml
 
+from _charts import CHART_TREES, chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -210,6 +212,63 @@ def test_every_edge_applicationset_is_gated_on_the_module_switch() -> None:
                    selector.get("matchExpressions"))
 
 
+def test_every_first_party_chart_is_reachable_through_the_shared_resolver() -> None:
+    """A chart tree left out of _charts is a silent hole rather than a failure:
+    the repo-wide sweeps that run over CHART_TREES stop covering it, and the
+    name-keyed lookups resolve to a path that does not exist."""
+    trees = {tree.name for tree in CHART_TREES}
+    on_disk = {
+        chart_file.parent
+        for chart_file in (REPO_ROOT / "helm").glob("*/*/Chart.yaml")
+        # helm/library holds the shared template library and helm/dfe-stack is
+        # the umbrella, neither of which renders as a chart of its own here.
+        if chart_file.parent.parent.name not in ("library", "dfe-stack")
+    }
+    expect("every first-party chart sits in a tree _charts sweeps",
+           {d.parent.name for d in on_disk} <= trees,
+           sorted({d.parent.name for d in on_disk} - trees))
+    # The same map is restated in two other languages, and a chart that moves has
+    # to move in all three: the drift checker resolves a pin's file from it, and
+    # validate-charts.sh prints [SKIP] rather than failing when a path is wrong.
+    drift = (SCRIPTS / "check_versions_drift.py").read_text(encoding="utf-8")
+    validate = (SCRIPTS / "validate-charts.sh").read_text(encoding="utf-8")
+    for directory in sorted(on_disk):
+        declared = yaml.safe_load((directory / "Chart.yaml").read_text(encoding="utf-8"))["name"]
+        expect(f"chart_dir({declared!r}) resolves to where it actually lives",
+               chart_dir(declared) == directory, f"{chart_dir(declared)} != {directory}")
+        if directory.parent.name == "charts":
+            continue
+        relative = str(directory.relative_to(REPO_ROOT))
+        expect(f"check_versions_drift.py resolves {declared} to {relative}",
+               f'"{declared}": "{relative}"' in drift, f"no {declared} entry naming {relative}")
+        expect(f"validate-charts.sh resolves {declared} to {relative}",
+               re.search(rf"^\s*{re.escape(declared)}\)\s+echo \"{re.escape(relative)}\"", validate, re.M)
+               is not None,
+               f"no {declared} case naming {relative}")
+
+
+def test_the_gateway_keeps_the_wave_the_load_balancer_controller_needs() -> None:
+    """The controller is a wave-1 addon and the gateway config is wave 2, so the
+    door goes in after the thing that provisions its load balancer -- and before
+    the workloads its routes name, which report NotFound until they exist."""
+    gateway = next(
+        element
+        for appset in appsets("layer2-edge.yaml")
+        for element in elements(appset)
+        if element.get("app") == "envoy-gateway-config"
+    )
+    expect("the gateway element pins wave 2", gateway.get("wave") == "2", gateway)
+
+    controller = next(
+        element
+        for appset in appsets("layer1-addons.yaml")
+        for element in elements(appset)
+        if element.get("chart") == "aws-load-balancer-controller"
+    )
+    expect("and the load balancer controller is on an earlier wave",
+           int(controller["wave"]) < int(gateway["wave"]), (controller, gateway))
+
+
 def test_the_tunnel_keeps_the_name_and_the_wave_layer2_apps_gave_it() -> None:
     culvert = next(
         a for a in appsets("layer2-edge.yaml") if any(git_paths(a))
@@ -355,6 +414,8 @@ def main() -> int:
         test_an_element_stating_no_chart_falls_back_to_its_app_name()
         test_the_deployer_overlay_follows_the_name_not_the_directory()
         test_every_edge_applicationset_is_gated_on_the_module_switch()
+        test_every_first_party_chart_is_reachable_through_the_shared_resolver()
+        test_the_gateway_keeps_the_wave_the_load_balancer_controller_needs()
         test_the_tunnel_keeps_the_name_and_the_wave_layer2_apps_gave_it()
         test_exactly_one_applicationset_fans_out_the_tunnels_values_file()
         test_the_gateway_left_the_platform_appset()

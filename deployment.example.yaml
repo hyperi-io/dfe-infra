@@ -326,12 +326,27 @@ edge:
         ## is carried onto the cluster secret and becomes culvert's own
         ## nodeSelector. Empty takes the first private subnet's zone.
         zone: ""
+        ## KEEP mode ON `byo` FOR NOW. `forwarder` builds an instance in a
+        ## private subnet, where an Elastic IP is never delivered, so the
+        ## address answers nothing while every resource reports healthy --
+        ## docs/deployment/edge-vpn.md#the-tunnels-address-on-aws.
       ## The reach-back an operator uses to reach one appliance through the
-      ## tunnel: a peer minted per session, never stored, with a one-way
-      ## isolation exception so the admin may initiate and appliance peers may
-      ## not. Tier 1 on a cloud flavour and opt-out; absent on-prem, where the
-      ## operator is already on the LAN. `reach` is the ports an appliance
-      ## accepts from the admin peer on its tunnel interface.
+      ## tunnel. Tier 1 on a cloud flavour and opt-out; absent on-prem, where the
+      ## operator is already on the LAN.
+      ##
+      ## WHAT `enabled: true` ACTUALLY OPENS TODAY: culvert accepts a source
+      ## arriving off the pod's ethernet side, so `dfe-ops bastion hub <peer>`
+      ## routes the tunnel's client range at the culvert pod rather than dialling
+      ## in. The range it accepts from is the toolbox instance's whole SUBNET,
+      ## which under the VPC CNI also holds cluster nodes and their pods -- see
+      ## docs/deployment/edge-vpn.md#how-wide-the-hole-is. Nothing is written at
+      ## all unless toolbox.enabled is true as well.
+      ##
+      ## `reach` is the ports an appliance accepts on its tunnel interface.
+      ## `ttl_minutes` and `peer_cidr` belong to the PEER shape -- an admin peer
+      ## minted per session with a one-way isolation exception -- which waits on
+      ## hyperi-io/culvert#40 and which `dfe-ops bastion join` refuses until then.
+      ## Both are read and recorded, and neither reaches a rendered resource yet.
       admin_peer:
         enabled: true
         ttl_minutes: 60

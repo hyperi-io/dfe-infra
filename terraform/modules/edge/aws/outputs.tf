@@ -24,8 +24,8 @@ output "tunnel_address" {
 }
 
 output "tunnel_listener_ports" {
-  description = "The UDP ports clients dial, following the culvert chart's own listeners list. What the toolbox opens egress to when it joins the hub as an admin peer, so the ports are named once here rather than restated by every caller."
-  value       = [for p in local.tunnel_ports : p.port]
+  description = "The UDP ports clients dial, following the culvert chart's own listeners list. What the toolbox opens egress to when it joins the hub as an admin peer, so the ports are named once here rather than restated by every caller. Empty on address.mode byo, travelling with tunnel_address: a port with no address to aim it at renders an egress rule to `/32`."
+  value       = local.forwarder_enabled ? [for p in local.tunnel_ports : p.port] : []
 }
 
 output "tunnel_zone" {

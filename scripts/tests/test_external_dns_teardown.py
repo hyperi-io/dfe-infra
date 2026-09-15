@@ -91,14 +91,32 @@ def test_private_zone_teardown_runs_before_the_zone_is_destroyed() -> None:
     # Route 53 refuses to delete a hosted zone still carrying anything but its
     # own apex NS/SOA pair -- so the cleanup must delete everything else and
     # leave those two alone, never the reverse.
-    expect("the filter excludes NS and SOA -- Route 53 manages those itself and rejects deleting them",
-           "Type!='NS'" in block and "Type!='SOA'" in block, block)
+    expect("the filter spares NS and SOA at the APEX NAME, not every NS in the zone -- "
+           "a sub-delegation's NS record is not Route 53's and blocks the delete if it stays",
+           "Name=='$apex'" in block and "Type=='NS'" in block and "Type=='SOA'" in block, block)
+    expect("the apex name travels through the resource's own input, since a destroy-time "
+           "command may read nothing but self",
+           "apex = aws_route53_zone.private.name" in block and "self.output.apex" in block, block)
+
+
+def test_the_cluster_is_destroyed_before_the_zone_it_publishes_into_is_emptied() -> None:
+    """external-dns runs until the cluster goes. A record it republishes between
+    the delete and DeleteHostedZone fails the destroy with HostedZoneNotEmpty and
+    succeeds on a re-run, which reads as a flake rather than a fault."""
+    eks = (DNS_TF.parent / "eks.tf").read_text(encoding="utf-8")
+    start = eks.index('resource "aws_eks_cluster" "this"')
+    block = eks[start : eks.index("\n}\n", start)]
+
+    expect("the cluster names the teardown in depends_on, which is what puts the cluster's "
+           "DESTROY ahead of it -- a dependent is destroyed before what it depends on",
+           "terraform_data.private_zone_teardown" in block, block)
 
 
 def main() -> int:
     with standalone():
         test_external_dns_runs_sync_with_a_deployment_unique_owner_id()
         test_private_zone_teardown_runs_before_the_zone_is_destroyed()
+        test_the_cluster_is_destroyed_before_the_zone_it_publishes_into_is_emptied()
         return summary()
 
 

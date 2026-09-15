@@ -108,10 +108,19 @@ resource "aws_eks_cluster" "this" {
 
   // The log group has to exist before enabled_cluster_log_types takes effect,
   // or EKS auto-creates one of its own with no expiration set.
+  //
+  // The private zone's teardown is in this list for the DESTROY order, which is
+  // the reverse: a dependent is destroyed BEFORE what it depends on, so naming
+  // the cleanup here is what puts the cluster's destruction ahead of it. Without
+  // it the two are siblings under the VPC and external-dns can still be running
+  // when the zone is emptied, republishing a record between the delete and
+  // DeleteHostedZone -- which fails with HostedZoneNotEmpty and succeeds on a
+  // re-run, so it reads as a flaky destroy.
   depends_on = [
     aws_iam_role_policy_attachment.cluster,
     aws_iam_role_policy.cluster_kms,
     aws_cloudwatch_log_group.cluster,
+    terraform_data.private_zone_teardown,
   ]
 }
 

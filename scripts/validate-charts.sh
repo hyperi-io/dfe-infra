@@ -121,9 +121,10 @@ echo "    values:    ${VALUES_FILES}"
 echo "    namespace: ${RENDER_NS}"
 echo ""
 
-PASS=0; FAIL=0; SKIPPED=0
+PASS=0; FAIL=0; SKIPPED=0; EMPTY=0
 FAILED=""
 UNVALIDATED=""
+EMPTIED=""
 
 for chart in ${CHARTS}; do
   dir="$(chart_dir "${chart}")"
@@ -156,6 +157,7 @@ for chart in ${CHARTS}; do
   # non-zero size, and kubectl rejects it as "no objects passed to apply".
   if ! grep -q '^kind:' "${OUT}/${chart}.yaml"; then
     echo "  [EMPTY] ${chart} -- rendered no objects with these values (not validated)"
+    EMPTY=$((EMPTY+1)); EMPTIED="${EMPTIED} ${chart}"
     continue
   fi
 
@@ -187,11 +189,16 @@ for chart in ${CHARTS}; do
 done
 
 echo ""
-echo "=== ${PASS} passed, ${FAIL} failed, ${SKIPPED} not validated ==="
+# Every chart the sweep read lands in exactly one column, so the four add up to
+# the fleet and a chart cannot go missing between them.
+echo "=== ${PASS} passed, ${FAIL} failed, ${SKIPPED} not validated, ${EMPTY} rendered empty ==="
 if [ "${SKIPPED}" -gt 0 ]; then
   echo "    NOT VALIDATED (cluster missing CRDs):${UNVALIDATED}"
   echo "    Those charts were neither proven good nor bad here. Install the"
   echo "    operators they need, or validate them against a cluster that has them."
+fi
+if [ "${EMPTY}" -gt 0 ]; then
+  echo "    RENDERED EMPTY (every template gated off):${EMPTIED}"
 fi
 if [ "${FAIL}" -gt 0 ]; then
   echo "    failed:${FAILED}"

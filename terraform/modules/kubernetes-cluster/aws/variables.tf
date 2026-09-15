@@ -14,6 +14,14 @@ variable "provision" {
     error_message = "provision.account must be a 12-digit AWS account id."
   }
 
+  // The region is interpolated into the private zone's destroy-time local-exec
+  // (dns.tf), which runs under the destroying operator's own credentials, so it
+  // is shaped here rather than trusted.
+  validation {
+    condition     = can(regex("^[a-z]{2}(-gov)?-[a-z]+-[0-9]$", var.provision.region))
+    error_message = "provision.region must be an AWS region code such as us-west-2 or ap-southeast-2."
+  }
+
   validation {
     condition     = can(cidrsubnet(var.provision.cidr, 4, 0))
     error_message = "provision.cidr must be a CIDR block with room for at least 16 subnets (a /20 or larger)."

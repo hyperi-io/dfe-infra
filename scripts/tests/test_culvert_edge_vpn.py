@@ -309,14 +309,18 @@ def test_a_cloud_flavour_keeps_its_pki_directory_across_a_restart() -> None:
            "peers" not in onprem and "persistence" not in onprem, f"got {sorted(onprem)}")
 
 
-def test_the_admin_class_is_a_cloud_flavour_mechanism() -> None:
-    """On-prem the operator is on the LAN, so the module supplies nothing."""
-    for flavour in ("aws", "gcp", "azure"):
+def test_the_admin_class_is_on_only_where_a_root_can_supply_its_ranges() -> None:
+    """The class renders nothing without adminCIDRs, and those come off the
+    cluster secret from a toolbox module -- which only the AWS root builds. So
+    on gcp and azure it would be a switch reporting nothing either way, and
+    on-prem the operator is on the LAN and the module supplies nothing."""
+    aws = yaml.safe_load((VALUES / "edge-aws.yaml").read_text(encoding="utf-8"))
+    expect("aws turns the admin class on",
+           aws["peers"]["classes"]["admin"]["enabled"] is True, f"got {aws.get('peers')!r}")
+    for flavour in ("gcp", "azure", "onprem"):
         tree = yaml.safe_load((VALUES / f"edge-{flavour}.yaml").read_text(encoding="utf-8"))
-        expect(f"{flavour} turns the admin class on",
-               tree["peers"]["classes"]["admin"]["enabled"] is True, f"got {tree.get('peers')!r}")
-    onprem = yaml.safe_load((VALUES / "edge-onprem.yaml").read_text(encoding="utf-8"))
-    expect("on-prem carries no admin class at all", "peers" not in onprem, f"got {sorted(onprem)}")
+        expect(f"{flavour} carries no admin class at all",
+               "peers" not in tree, f"got {sorted(tree)}")
 
 
 def test_the_tunnels_own_oidc_lives_under_vpn() -> None:
@@ -473,7 +477,7 @@ def main() -> int:
         test_an_admin_range_inside_the_client_range_is_refused()
         test_the_hole_stays_shut_until_a_range_names_it()
         test_a_cloud_flavour_keeps_its_pki_directory_across_a_restart()
-        test_the_admin_class_is_a_cloud_flavour_mechanism()
+        test_the_admin_class_is_on_only_where_a_root_can_supply_its_ranges()
         test_the_tunnels_own_oidc_lives_under_vpn()
         test_the_cascades_edge_oidc_switch_is_harmless_to_the_tunnel()
         test_the_old_oidc_path_is_refused_by_name()

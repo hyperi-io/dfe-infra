@@ -42,6 +42,7 @@ dial's k8s slice is scalar / nested-map only, so scripts/yaml_subset.py reads it
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import re
 import shutil
@@ -604,6 +605,31 @@ def _edge_ports(dial: dict[str, object], path: tuple[str, ...], default: tuple[i
     return ports
 
 
+def _edge_cidrs(dial: dict[str, object], path: tuple[str, ...]) -> list[str]:
+    """A dial list of CIDRs written inline, as `loadBalancerSourceRanges: [10.0.0.0/8]`.
+
+    The brackets come off the way `_edge_ports` takes them off, and each entry is
+    parsed here: a range OpenTofu cannot read must not reach a security group,
+    and `[]` left unstripped is one bogus entry where the operator meant none.
+    """
+    raw = _scalar(dial, path)
+    if raw is None:
+        return []
+    label = ".".join(path)
+    ranges: list[str] = []
+    for item in split_list(raw.strip().lstrip("[").rstrip("]")):
+        try:
+            ipaddress.ip_network(item, strict=False)
+        except ValueError as error:
+            raise DialError(f"{label} must be CIDR ranges, got {item!r}") from error
+        # A bare address parses as a /32 here and is refused by the security
+        # group API, so the prefix is required where the mistake is still cheap.
+        if "/" not in item:
+            raise DialError(f"{label} needs a prefix length on every range, got {item!r}")
+        ranges.append(item)
+    return ranges
+
+
 def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
     """The tunnel's cloud-side address, the one part of the tunnel tofu builds.
 
@@ -620,7 +646,7 @@ def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
             "zone": _text(dial, (*at, "address", "zone")),
         },
         "openvpn": _edge_bool(dial, (*at, "openvpn")),
-        "source_ranges": list(split_list(_scalar(dial, (*at, "loadBalancerSourceRanges")))),
+        "source_ranges": _edge_cidrs(dial, (*at, "loadBalancerSourceRanges")),
         "node_ports": {
             "wireguard": _optional_number(dial, (*at, "node_ports", "wireguard"), TUNNEL_NODE_PORTS["wireguard"]),
             "openvpn": _optional_number(dial, (*at, "node_ports", "openvpn"), TUNNEL_NODE_PORTS["openvpn"]),

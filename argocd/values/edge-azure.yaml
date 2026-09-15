@@ -33,16 +33,12 @@ pki:
 # persistence.enabled is read by charts outside this module, so the value is set
 # per cloud in argocd/appsets/layer2-edge.yaml, where it reaches culvert alone.
 
-peers:
-  classes:
-    admin:
-      # TIER 1 -- the reach-back an operator administers one appliance through
-      # (`dfe-ops bastion hub`), opt-out on every cloud flavour and absent
-      # on-prem, where the operator is already on the LAN. The ranges it is
-      # reached FROM arrive on the cluster secret; an admin that dials in as a
-      # PEER instead waits on hyperi-io/culvert#40, and appliance isolation
-      # stays on either way.
-      enabled: true
+# TIER 1 on aws, and NOT a key here. The reach-back an operator administers one
+# appliance through (`dfe-ops bastion hub`) needs the ranges it is reached FROM,
+# which come off the cluster secret from a toolbox module -- and there is no
+# Azure root to build one. `peers.classes.admin.enabled: true` with no
+# adminCIDRs renders no env key and no NetworkPolicy rule, so it would be a
+# switch that reports nothing either way. Add it with the root, not before.
 
 # TIER 2, no key here. The tunnel keeps the culvert chart's own LoadBalancer on
 # this flavour, so a deployment that brings the tunnel pays Azure's per-GB rate

@@ -88,10 +88,39 @@ def test_disabling_removes_the_rule() -> None:
                f"got {rules}")
 
 
+def refused(*sets: str) -> str:
+    """The render's own error, for a values pair the chart must not accept."""
+    cmd = ["helm", "template", "network-policies", str(CHART), "-f", str(COMMON)]
+    for s in sets:
+        cmd += ["--set", s]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if out.returncode == 0:
+        raise AssertionError(f"helm template accepted {sets}, which it must refuse")
+    return out.stderr
+
+
+def test_the_metadata_service_cannot_be_opened_to_every_namespace() -> None:
+    """169.254.169.254 on port 80 hands the caller the NODE's role, and policy is
+    additive -- so every pod in every DFE namespace would hold it and no later
+    policy could take it back. One character from the agent's own address."""
+    err = refused("podIdentityAgent.address=169.254.169.254")
+    expect("the metadata service address is refused by name",
+           "169.254.169.254 is the instance metadata service" in err, err.strip()[-300:])
+
+
+def test_only_the_credentials_port_may_be_opened() -> None:
+    """2703 is the agent's own webhook port; no application pod calls it."""
+    err = refused("podIdentityAgent.port=2703")
+    expect("a port other than 80 is refused by name",
+           "only 80, the credentials endpoint" in err, err.strip()[-300:])
+
+
 def main() -> int:
     with standalone():
         test_baseline_admits_pod_identity_everywhere()
         test_disabling_removes_the_rule()
+        test_the_metadata_service_cannot_be_opened_to_every_namespace()
+        test_only_the_credentials_port_may_be_opened()
         return summary()
 
 

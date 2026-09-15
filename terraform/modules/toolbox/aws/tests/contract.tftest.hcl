@@ -279,13 +279,15 @@ run "the_tunnel_address_opens_udp_egress_on_each_listener_and_nowhere_else" {
 }
 
 // byo carries no address this deployment ever sees, so there is nothing to aim
-// a rule at and the instance keeps its TCP-only egress.
-run "no_tunnel_address_opens_no_udp_egress_at_all" {
+// a rule at and the instance keeps its TCP-only egress. The edge module empties
+// the PORTS alongside the address for exactly this, because the rule set is
+// keyed on the ports and an Elastic IP is unknown until apply.
+run "no_tunnel_listener_ports_open_no_udp_egress_at_all" {
   command = plan
 
   assert {
     condition     = length(aws_vpc_security_group_egress_rule.tunnel) == 0
-    error_message = "an empty tunnel.address must render no egress rule"
+    error_message = "an empty tunnel.ports must render no egress rule"
   }
 }
 
@@ -566,31 +568,19 @@ run "targets_output_carries_each_documents_name" {
   }
 }
 
-// A target may not be advertised without the resources that make it work --
+// A target may not be advertised without the document that makes it work --
 // the live finding this guards against: the output used to read straight
 // from var.targets, so a target could render with a document_name pointing
-// at nothing (`try(..., "")`) after a partial apply left the document and its
-// egress rule uncreated.
-run "the_targets_output_never_advertises_a_target_with_no_document_or_rule" {
+// at nothing (`try(..., "")`) after a partial apply left the document
+// uncreated.
+//
+// One assertion, deliberately. A fixture cannot produce a partial apply, so the
+// property that the output DROPS an unbuilt target is not provable here; what is
+// provable is that a complete apply advertises every named target, which fails
+// the moment the output's `for` stops covering them. Assertions restating the
+// output's own expression back to it were removed -- they held by construction.
+run "a_complete_apply_advertises_every_named_target" {
   command = plan
-
-  assert {
-    condition = alltrue([
-      for name, t in output.targets : can(aws_ssm_document.forward[name].name)
-    ])
-    error_message = "every key in the targets output must have a real forward document behind it"
-  }
-
-  assert {
-    condition = alltrue([
-      for name, t in output.targets :
-      t.port == 443 || contains(
-        keys(aws_vpc_security_group_egress_rule.targets),
-        "${var.targets[name].scope}-${var.targets[name].port}"
-      )
-    ])
-    error_message = "every key in the targets output must either sit on the control-plane port (already open) or have its own egress rule -- a document with no open port is the same defect one layer down"
-  }
 
   assert {
     condition     = toset(keys(output.targets)) == toset(keys(var.targets))

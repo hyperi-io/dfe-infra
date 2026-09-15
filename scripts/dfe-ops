@@ -2720,6 +2720,10 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     optionally, the Argo git ref for the pinned charts. Later sources win, so a
     terraform-supplied DFE_PROFILE (one of MODES) is always replaced by the
     requested mode.
+
+    DFE_REGISTRY is NOT in that set: --registry overrides the env file when it is
+    given, and the shipped default is the floor under both, so a deployer whose
+    env file names their own registry keeps it on a call with no flag.
     """
     env = dict(os.environ)
 
@@ -2745,8 +2749,10 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     env["DFE_PROFILE"] = args.mode
     # The dial's registry reaches the charts ONLY through this variable: the
     # --registry flag otherwise stops at `dfe-stack render`, which expands the
-    # version set and never touches what a pod pulls from.
-    env["DFE_REGISTRY"] = args.registry
+    # version set and never touches what a pod pulls from. An unset flag leaves
+    # the env file's own value standing, because overwriting it deploys every
+    # dfe-* pod against a registry the deployer holds no pull secret for.
+    env["DFE_REGISTRY"] = args.registry or env.get("DFE_REGISTRY") or DEFAULT_REGISTRY
     _apply_domain(env, args.mode)
     if args.target_revision:
         env["DFE_TARGET_REVISION"] = args.target_revision
@@ -2919,7 +2925,7 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         preflight_cmd = [
             *self_cmd, "preflight", "--mode", args.mode,
             *passthrough_kube, *passthrough_env,
-            "--registry", args.registry.split("/")[0],
+            "--registry", (args.registry or DEFAULT_REGISTRY).split("/")[0],
         ]
         if args.from_terraform:
             preflight_cmd += ["--from-terraform", args.from_terraform]
@@ -2929,9 +2935,12 @@ def cmd_cycle(args: argparse.Namespace) -> int:
 
     deploy_cmd = [
         *self_cmd, "stack-deploy", "--mode", args.mode, "--stack", args.stack,
-        "--registry", args.registry,
         *passthrough_kube, *passthrough_env,
     ]
+    # Passed on only when the operator gave it, so an unset flag reaches
+    # stack-deploy unset and its own env file still decides.
+    if args.registry:
+        deploy_cmd += ["--registry", args.registry]
     if args.from_terraform:
         deploy_cmd += ["--from-terraform", args.from_terraform]
     if args.target_revision:
@@ -3112,7 +3121,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=900,
         help="bounded readiness wait in seconds (never wait-forever; sets READINESS_TIMEOUT)",
     )
-    sd.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix (passthrough to dfe-stack)")
+    sd.add_argument("--registry", default=None,
+                    help=f"image registry prefix (passthrough to dfe-stack); unset keeps an env "
+                         f"file's own DFE_REGISTRY, then {DEFAULT_REGISTRY}")
     sd.add_argument("--access-out", default="dfe-access.md", help="where the post-deploy access summary is written")
     sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
     sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
@@ -3154,7 +3165,9 @@ def build_parser() -> argparse.ArgumentParser:
     cy.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
     cy.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* outputs from a terraform env dir")
     cy.add_argument("--target-revision", default=None, help="Argo git ref for the pinned charts")
-    cy.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix")
+    cy.add_argument("--registry", default=None,
+                    help=f"image registry prefix; unset keeps an env file's own DFE_REGISTRY, "
+                         f"then {DEFAULT_REGISTRY}")
     cy.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="node label the preflight must find (repeatable)")
     cy.add_argument("--skip-preflight", action="store_true", help="skip the online cluster preflight stage")
     cy.add_argument("--skip-capacity-check", action="store_true",

@@ -10,6 +10,17 @@
 // The instance follows terraform/modules/toolbox/aws throughout -- the same
 // always-latest AL2023 arm64 AMI lookup, the same SSM-managed access with no
 // inbound ssh rule, and the same narrow instance role.
+//
+// KNOWN GAP, NOT YET PROVEN AGAINST A CLUSTER. The instance lands in a PRIVATE
+// subnet (`private_subnet_ids` below), whose route table sends 0.0.0.0/0 to a
+// NAT gateway. An Elastic IP is only delivered where the subnet routes at an
+// internet gateway, so as built the address allocates, associates, publishes
+// into the cluster secret and answers nothing -- with every resource reporting
+// healthy. Repairing it means taking the public subnet list as an input and
+// selecting from it by zone, plus admitting the node ports on the node or
+// cluster security group from this instance's OWN group rather than a CIDR.
+// Both are deliberate placement decisions rather than mechanical edits, so
+// `address.mode: forwarder` is not usable until they are made. `byo` is.
 
 data "aws_region" "current" {}
 
@@ -235,8 +246,15 @@ resource "aws_instance" "forwarder" {
     region       = data.aws_region.current.region
     cluster_name = var.cluster_name
     vpc_cidr     = var.network.cidr
+    vpc_id       = var.network.vpc_id
     port_map     = local.forwarder_port_map
   })
+
+  // A changed port map has to REBUILD the instance, not stop and start it:
+  // cloud-init runs this script once per instance, so a restarted one keeps the
+  // old DNAT chain while the security group moves to the new port. The Elastic
+  // IP is a separate resource for exactly this, so the address survives.
+  user_data_replace_on_change = true
 
   tags = merge(var.tags, {
     Name                      = "${var.name}-tunnel-forwarder"

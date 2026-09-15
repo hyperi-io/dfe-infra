@@ -23,6 +23,7 @@ are the only things supplied by hand.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import socket
 import sys
 import threading
@@ -493,16 +494,45 @@ def test_cidr_filter_skips_when_this_machine_is_on_the_list(
     assert "inside the allow-list" in check.evidence
 
 
-def test_cidr_filter_fails_when_an_off_list_address_gets_an_answer(
+def _sourced_at(gateway: StubGateway, source: str) -> Callable:
+    """The stub, answering as though the dial left from a given address.
+
+    Substituted because a real socket here always reports loopback, which is
+    neither of the two addresses these branches turn on.
+    """
+    plain = _at_stub(gateway)
+
+    def reach(request: probe.Request) -> probe.Answer:
+        return replace(plain(request), source=source)
+
+    return reach
+
+
+def test_cidr_filter_fails_when_an_off_list_public_address_gets_an_answer(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gateway.routes[(PRODUCT, "/")] = 200
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    monkeypatch.setattr(probe, "_reach", _sourced_at(gateway, "198.51.100.9"))
     check = probe.check_cidr_filter(
         _settings(allowed_cidrs=("203.0.113.0/24",)), PRODUCT, "127.0.0.1"
     )
     assert check.verdict == probe.FAIL
     assert "outside the allow-list" in check.evidence
+
+
+def test_cidr_filter_skips_rather_than_failing_a_deployment_probed_from_behind_nat(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The operator's laptop reads its own private address, so the address the
+    filter actually judged is not knowable here -- FAIL would block a healthy
+    deployment on the one check that proves the allow-list bites."""
+    gateway.routes[(PRODUCT, "/")] = 200
+    monkeypatch.setattr(probe, "_reach", _sourced_at(gateway, "192.168.1.20"))
+    check = probe.check_cidr_filter(
+        _settings(allowed_cidrs=("203.0.113.0/24",)), PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.SKIP
+    assert "behind NAT" in check.evidence
 
 
 def test_cidr_filter_passes_when_the_listener_refuses_this_machine(
@@ -521,25 +551,83 @@ def test_cidr_filter_passes_when_the_listener_refuses_this_machine(
 # ---------------------------------------------------------------------------
 
 
-def test_receiver_passes_when_every_ingest_port_refuses(
+def _resolving(**names: str) -> Callable:
+    """DNS as this probe reads it: host -> the one address it answers with.
+
+    A literal address resolves to itself, matching getaddrinfo, so a --target
+    and a published name compare through the same call.
+    """
+    def resolved(host: str) -> set[str]:
+        try:
+            return {str(ipaddress.ip_address(host))}
+        except ValueError:
+            pass
+        key = host.split(".", 1)[0]
+        return {names[key]} if key in names else set()
+
+    return resolved
+
+
+def test_receiver_passes_when_no_record_was_published_for_it(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name that does not resolve is a door that was never opened, and it is
+    the only thing provable from outside when the receiver holds a ClusterIP."""
+    monkeypatch.setattr(probe, "_resolved", _resolving(dfe="203.0.113.10"))
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    check = probe.check_receiver_private(_settings(), "203.0.113.10")
+    assert check.verdict == probe.PASS
+    assert "does not resolve" in check.evidence
+
+
+def test_receiver_skips_rather_than_passing_on_the_gateways_own_address(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gateway carries the HTTP plane's listeners only, so its refusal on
+    8080 and 8443 is true in every configuration and proves nothing."""
+    monkeypatch.setattr(
+        probe, "_resolved", _resolving(dfe="203.0.113.10", receiver="203.0.113.10")
+    )
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    check = probe.check_receiver_private(_settings(), "203.0.113.10")
+    assert check.verdict == probe.SKIP
+    assert "not the receiver's door in any configuration" in check.evidence
+
+
+def test_receiver_passes_when_its_own_load_balancer_refuses_every_ingest_port(
     gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        probe, "_resolved", _resolving(dfe="203.0.113.10", receiver="203.0.113.11")
+    )
     closed = dict.fromkeys(probe.RECEIVER_INGEST_PORTS, closed_port)
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway, closed))
-    check = probe.check_receiver_private(_settings(), "127.0.0.1")
+    check = probe.check_receiver_private(_settings(), "203.0.113.10")
     assert check.verdict == probe.PASS
     assert "8080, 8443" in check.evidence
 
 
-def test_receiver_fails_when_an_ingest_port_accepts_a_connection(
+def test_receiver_fails_when_its_own_load_balancer_accepts_a_connection(
     gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One open port is the whole finding: the tunnel is not the only way in."""
+    monkeypatch.setattr(
+        probe, "_resolved", _resolving(dfe="203.0.113.10", receiver="203.0.113.11")
+    )
     closed = {probe.RECEIVER_INGEST_PORTS[1]: closed_port}
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway, closed))
-    check = probe.check_receiver_private(_settings(), "127.0.0.1")
+    check = probe.check_receiver_private(_settings(), "203.0.113.10")
     assert check.verdict == probe.FAIL
     assert "8080" in check.evidence
+
+
+def test_receiver_skips_when_no_public_domain_is_named(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    check = probe.check_receiver_private(_settings(domain=""), "203.0.113.10")
+    assert check.verdict == probe.SKIP
+    assert "no receiver name is published" in check.evidence
 
 
 def test_receiver_skips_when_the_mode_is_not_vpn() -> None:
@@ -581,7 +669,7 @@ def test_otel_fails_when_the_route_answers(
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     check = probe.check_otel_private(_settings(), "127.0.0.1")
     assert check.verdict == probe.FAIL
-    assert "the otel route is public" in check.evidence
+    assert "while edge.ingest.otel.public is false" in check.evidence
 
 
 def test_otel_skips_on_the_onprem_flavour() -> None:
@@ -749,6 +837,10 @@ def test_every_check_is_reported_on_its_own_line(
 
     for name in probe.check_names():
         assert f"] {name}:" in err
+    # And the converse, or a check added to run_checks and not to check_names
+    # would go missing from the all-skip path with nothing failing.
+    reported = {line.split("] ", 1)[1].split(":", 1)[0] for line in err.splitlines() if "] " in line}
+    assert reported == set(probe.check_names())
 
 
 def test_an_edge_that_is_switched_off_skips_everything_and_exits_zero(
@@ -763,6 +855,51 @@ def test_an_edge_that_is_switched_off_skips_everything_and_exits_zero(
     assert rc == 0
     assert err.count(f"[{probe.SKIP}]") == len(probe.check_names())
     assert "edge.enabled is false" in err
+
+
+LEGACY_DIAL_TEXT = """\
+profile: scale
+ui:
+  public:
+    dfe_ui: true
+    kafbat: true
+  public_domain: example.test
+  allowed_cidrs: "203.0.113.0/24"
+ingest:
+  mode: public
+"""
+
+
+def test_a_dial_still_on_the_deprecated_spellings_is_read_rather_than_skipped() -> None:
+    """render_dial.py reads ui: and ingest: for one release, so a deployment on
+    them is real -- a probe that skipped every check against it would exit zero
+    and be read as a pass on a door nobody looked at."""
+    settings = probe.parse_edge(probe.parse_yaml_subset(LEGACY_DIAL_TEXT))
+    assert settings.domain == "example.test"
+    assert settings.product_public is True
+    assert settings.admin_uis_public["kafbat"] is True
+    assert settings.receiver_mode == "public"
+    assert tuple(settings.allowed_cidrs) == ("203.0.113.0/24",)
+
+
+def test_an_inline_allow_list_loses_its_brackets_before_any_address_is_weighed() -> None:
+    settings = probe.parse_edge(probe.parse_yaml_subset(
+        DIAL_TEXT.replace('allowed_cidrs: ""', "allowed_cidrs: [10.0.0.0/8, 192.168.0.0/16]")
+    ))
+    assert tuple(settings.allowed_cidrs) == ("10.0.0.0/8", "192.168.0.0/16")
+
+
+def test_a_run_that_proved_nothing_says_so_rather_than_reading_as_a_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    dial = _dial_file(tmp_path, DIAL_TEXT.replace("enabled: true", "enabled: false", 1))
+
+    rc = probe.cmd_edge_probe(_args(dial))
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    assert "NOTHING WAS PROVEN" in err
 
 
 def test_a_name_that_does_not_resolve_and_no_target_skips_rather_than_guesses(

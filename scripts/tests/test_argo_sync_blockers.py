@@ -99,10 +99,12 @@ def test_the_platform_appset_sets_the_namespace_the_policies_target() -> None:
            "the chart would keep its own default namespace")
 
 
-def test_both_layer2_appsets_state_the_deployments_posture() -> None:
+def test_every_layer2_appset_states_the_deployments_posture() -> None:
     """Every chart labels what it renders from env and cloud, and the chart
-    defaults name a local deployment."""
-    for appset in ("layer2-data.yaml", "layer2-platform.yaml"):
+    defaults name a local deployment. layer2-edge is in this list because the
+    edge charts render the objects an inventory or ownership query most wants to
+    find by posture -- the Gateway, the routes and the public certificates."""
+    for appset in ("layer2-data.yaml", "layer2-platform.yaml", "layer2-edge.yaml"):
         body = (APPSETS / appset).read_text(encoding="utf-8")
         for key, annotation in (("env", "dfe.hyperi.io/env"), ("cloud", "dfe.hyperi.io/cloud")):
             lines = body.splitlines()

@@ -391,6 +391,56 @@ run "msk_rejects_standard_broker_type" {
   ]
 }
 
+// One CloudWatch metric per broker, and a metric math expression takes ten. The
+// refusal belongs at plan: at apply the cluster, the Lambda, the SNS topic and
+// the IAM all exist by the time PutMetricAlarm rejects the alarm.
+run "msk_autoscaling_refuses_more_brokers_than_one_alarm_can_name" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    broker_count = 12
+    autoscaling = {
+      enabled                  = true
+      max_brokers              = 12
+      per_broker_capacity_mb_s = 50
+      headroom                 = 1.3
+    }
+  }
+
+  expect_failures = [
+    var.autoscaling,
+  ]
+}
+
+// Scaling by hand is the way past that ceiling, so the ceiling must not refuse a
+// cluster that never asked for an alarm.
+run "msk_a_large_cluster_plans_cleanly_with_autoscaling_off" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    broker_count = 12
+    autoscaling = {
+      enabled                  = false
+      max_brokers              = 12
+      per_broker_capacity_mb_s = 50
+      headroom                 = 1.3
+    }
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.broker_scale_out) == 0
+    error_message = "autoscaling off must render no alarm, whatever the broker count"
+  }
+}
+
 // S1: the alarm threshold arithmetic -- broker_count x per_broker_capacity_mb_s
 // x 1e6 x headroom, with none of the four factors a literal in the resource.
 run "msk_autoscaler_threshold_arithmetic" {

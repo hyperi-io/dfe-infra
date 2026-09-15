@@ -319,9 +319,11 @@ project's own console scripts (`kafka-topics.sh`,
 `kafka-consumer-groups.sh`, `kafka-broker-api-versions.sh`) instead, fetched
 from `archive.apache.org` (which keeps every past release indefinitely,
 unlike the rotating current-release mirror network) at the version
-`tool_versions["kafka-cli"]` names -- `services.kafka-version`, the SAME
-broker version this deployment runs, never a pin of its own (see "Where the
-tool versions come from"). Java 17 (`java-17-amazon-corretto-headless`, an
+`tool_versions["kafka-cli"]` names -- `services.kafka-version`, never a pin of
+its own (see "Where the tool versions come from"). That is the IN-CLUSTER
+broker's version exactly. An MSK deployment names `kafka.msk.broker_version`
+in its own dial, so on that path the two can differ and the CLI is whichever
+`services.kafka-version` says. Java 17 (`java-17-amazon-corretto-headless`, an
 AL2023 base-repo package) is installed first: Kafka 4.0 raised the console
 tools' own minimum to Java 17 (KIP-1013), even though the client library
 itself still runs on 11. Each script lands in `$BIN` as a wrapper that

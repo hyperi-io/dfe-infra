@@ -98,17 +98,19 @@ output "DFE_EKS_AUDIT_LOG_GROUP" {
 
 output "DFE_TUNNEL_ADDRESS" {
   description = "The Elastic IP the fleet tunnel answers on. Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/tunnel_address annotation, which is what external-dns publishes vpn.serverCN at. Empty unless edge.tunnel.address.mode is forwarder -- on byo the deployer already holds the address and names it themselves."
-  value       = try(one(module.edge[*].tunnel_address), "")
+  value       = join("", module.edge[*].tunnel_address)
 }
 
 output "DFE_TUNNEL_ZONE" {
   description = "The availability zone the tunnel forwarder is pinned to. Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/tunnel_zone annotation, which the edge flavour overlay turns into culvert's own zone nodeSelector -- a hop to a node in another zone crosses a boundary billed per GB. Empty unless the forwarder exists."
-  value       = try(one(module.edge[*].tunnel_zone), "")
+  value       = join("", module.edge[*].tunnel_zone)
 }
 
 output "DFE_TOOLBOX_ADMIN_CIDR" {
-  description = "The subnet the toolbox instance lands in -- modules/toolbox/aws pins private_subnet_ids[0], so this is that subnet and not the whole VPC. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/toolbox_admin_cidr annotation, which layer2-edge.yaml turns into culvert's peers.classes.admin.adminCIDRs: the one shape culvert's admin exception matches is a source arriving off the pod's ethernet side, never a peer. Every workload holding an address in this subnet is inside that hole."
-  value       = try(module.cluster.private_subnet_cidrs[0], "")
+  description = "The subnet the toolbox instance lands in -- modules/toolbox/aws pins private_subnet_ids[0], so this is that subnet and not the whole VPC. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/toolbox_admin_cidr annotation, which layer2-edge.yaml turns into culvert's peers.classes.admin.adminCIDRs: the one shape culvert's admin exception matches is a source arriving off the pod's ethernet side, never a peer. Every workload holding an address in this subnet is inside that hole -- which is why it is EMPTY unless the deployment actually asked for the reach-back: an empty value drops the annotation, and culvert then renders neither the env key nor the NetworkPolicy ingress rule."
+  value = var.toolbox.enabled && var.edge.enabled && var.edge.tunnel.admin_peer.enabled ? (
+    try(module.cluster.private_subnet_cidrs[0], "")
+  ) : ""
 }
 
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
@@ -206,12 +208,12 @@ output "kubeconfig_command" {
 
 output "public_zone_name_servers" {
   description = "The NS set the parent zone must delegate to before any public name resolves. Empty when there is no public zone, and empty when the edge module is off -- nothing then creates one."
-  value       = try(one(module.edge[*].public_zone_name_servers), [])
+  value       = flatten(module.edge[*].public_zone_name_servers)
 }
 
 output "public_zone_id" {
   description = "Route 53 zone the public names resolve in. Empty when there is no public zone or the edge module is off."
-  value       = try(one(module.edge[*].public_zone_id), "")
+  value       = join("", module.edge[*].public_zone_id)
 }
 
 output "kms_key_arn" {

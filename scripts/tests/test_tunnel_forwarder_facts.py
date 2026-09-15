@@ -182,3 +182,40 @@ def test_the_module_admits_the_listen_ports_the_chart_exposes() -> None:
         assert f'name = "{name}", port = {port}' in forwarder, (
             f"the module's tunnel_ports does not carry {name} on {port}, which the chart exposes"
         )
+
+
+def test_the_toolbox_keys_its_tunnel_egress_on_the_ports_and_never_the_address() -> None:
+    """An Elastic IP is unknown until apply, so a for_each that reads it refuses
+    to plan at all on the run that creates it -- and a second plan then succeeds,
+    which reads as a flake rather than a fault."""
+    main = (REPO_ROOT / "terraform" / "modules" / "toolbox" / "aws" / "main.tf").read_text(encoding="utf-8")
+    block = main.split('resource "aws_vpc_security_group_egress_rule" "tunnel" {', 1)[1].split("\n}", 1)[0]
+    for_each = next(line for line in block.splitlines() if "for_each" in line)
+    assert "var.tunnel.address" not in for_each, (
+        "the tunnel egress for_each reads the address, which is unknown until apply"
+    )
+    assert "length(var.tunnel.ports)" in for_each, (
+        "the tunnel egress must be gated on the port list, which is known at plan"
+    )
+
+
+def test_the_edge_module_empties_the_listener_ports_with_the_address() -> None:
+    """The toolbox is gated on the ports now, so a port list that outlived the
+    address would render an egress rule aimed at a bare `/32`."""
+    outputs = (REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "outputs.tf").read_text(encoding="utf-8")
+    block = outputs.split('output "tunnel_listener_ports" {', 1)[1].split("\n}", 1)[0]
+    assert "local.forwarder_enabled ?" in block, (
+        "tunnel_listener_ports must travel with tunnel_address, empty on address.mode byo"
+    )
+
+
+def test_the_aws_root_never_hands_a_null_down_from_a_disabled_edge() -> None:
+    """`one([])` is null and `try` catches only an error, so the toolbox module
+    would take a null address and fail its own validation before any plan
+    could be read -- the documented `edge.enabled: false` never works."""
+    main = AWS_ROOT_MAIN.read_text(encoding="utf-8")
+    outputs = AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
+    for name, text in (("main.tf", main), ("outputs.tf", outputs)):
+        assert "try(one(module.edge" not in text, (
+            f"{name} reads a disabled edge module with try(one(...)), which resolves to null"
+        )

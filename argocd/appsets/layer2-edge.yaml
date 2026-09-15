@@ -4,9 +4,11 @@
 # -- a door -- and they are turned off together.
 #
 # THE OFF SWITCH is the cluster secret's own dfe.hyperi.io/edge, and it gates
-# both ApplicationSets below. Absent renders nothing at all, which is why the
-# selector pairs Exists with In: In alone matches a cluster secret that never
-# carried the key, the same trap layer1-addons.yaml records for its cloud gate.
+# both ApplicationSets below. A cluster secret written before this module
+# carries no such key, and In alone already excludes it -- a label selector's
+# In does not match an absent key, unlike NotIn, which is the trap
+# layer1-addons.yaml records for its cloud gate. The Exists term beside it says
+# that requirement out loud rather than leaving it to be inferred.
 # The gate reads the LABEL rather than the annotation of that name, because an
 # ApplicationSet cluster selector matches labels only -- bootstrap.sh writes
 # both, the way it already does for cloud and profile.
@@ -121,6 +123,14 @@ spec:
               # apps are actually placed in.
               - name: appNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # The deployment's own posture and cloud. Every object this chart
+              # renders is labelled from these and the chart defaults say local,
+              # so without them an AWS deployment's Gateway, routes, policies and
+              # public certificates all claim to be a local one.
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              - name: cloud
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
             # `values` (a YAML string) rather than a structured block, same
             # reason layer1-addons.yaml gives: a conditional cannot live in a
             # field this file's own tests parse as plain YAML before any Go
@@ -221,11 +231,13 @@ spec:
               # no server CN of its own.
               - name: domain
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
-              # The deployment's posture, from the same annotation the cluster
-              # label carries, so the chart cannot drift from what the deploy
-              # declared.
+              # The deployment's posture and cloud, from the same annotations the
+              # cluster labels carry, so the chart cannot drift from what the
+              # deploy declared and its objects are not labelled as a local one.
               - name: env
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              - name: cloud
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               # The stack the base chart is pinned at, carried for the same
               # reason layer2-apps carries it.
               - name: stackVersion

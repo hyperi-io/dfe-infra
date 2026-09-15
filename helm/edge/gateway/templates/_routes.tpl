@@ -151,7 +151,7 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
        about to publish anyway. */ -}}
 {{- range $name, $val := $ui.public -}}
 {{- if not (kindIs "bool" $val) -}}
-{{- fail (printf "ui.public.%s is %v (a %s), not a bool -- copy deployment.example.yaml's edge: block in unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
+{{- fail (printf "ui.public.%s is %v (a %s), not a bool -- this chart's ui.public is the dial's edge.admin_uis.public (and ui.public.dfe_ui is edge.product.public); copy those booleans across unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
 {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $ui.rate_limit.enabled) -}}

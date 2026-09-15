@@ -11,6 +11,12 @@ Application at all; the apps then stay on ClusterIP behind whatever the deployer
 brings. Turning it off AFTER a load balancer exists ORPHANS that load balancer,
 so the off path is destroy, then disable.
 
+Switching it off also takes external-dns's and the load balancer controller's
+IAM identities, which live in this module. Both controllers keep running -- they
+are layer-1 Applications gated on other facts -- and start failing AccessDenied
+while reporting Ready, so the PRIVATE zone stops being published too. The
+tunnel's PKI volume survives (`Prune=false,Delete=false`); nothing else does.
+
 The tier table is per flavour. The same dial keys carry different defaults on
 `aws`, `gcp`, `azure` and `onprem`, and the per-flavour file is
 `argocd/values/edge-<flavour>.yaml`.
@@ -54,7 +60,7 @@ own compute, with the pricing model named and never a rate.
 | Receiver on ClusterIP, tunnel-reached | d | 1 | `vpn` | `edge.ingest.receiver.mode` | none |
 | Receiver on its own load balancer | d | 2 | off | `edge.ingest.receiver.public` | L, per GB processed |
 | Tunnel on a NodePort | d | 1 once on | off | the engine's instance values file | none |
-| An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` | XS hourly |
+| An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` (`forwarder` not usable yet, see [edge-vpn.md](edge-vpn.md#the-tunnels-address-on-aws)) | XS hourly |
 | Admin reach-back to one appliance | d | 1 | on | `edge.ingest.tunnel.admin_peer` | XS hourly |
 | OTLP route, private | d | 1 | private | `edge.ingest.otel.public` | none |
 | A CDN or managed WAF in front | a | 2 | `none` | `edge.product.waf.mode` | S, per GB and per request |
@@ -116,6 +122,11 @@ Session Manager shell. The subnet the toolbox lands in is what
 client range or the whole internet. A VPC also has to route the client range at
 the culvert node's interface, with that interface's source/destination check
 off, or the packet never leaves the subnet.
+
+**That subnet is wider than the bastion**, and none of the reach-back has been
+exercised against a cluster.
+[edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) carries how
+wide, what bounds it, and the two claims a live run still has to prove.
 
 **Once `hyperi-io/culvert#40` lands**, the admin becomes a peer with a one-way
 isolation exception, minted per session and never stored, and `dfe-ops bastion

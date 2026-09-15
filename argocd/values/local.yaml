@@ -41,7 +41,7 @@ nodeScheduling:
 # <pending>, so the receiver's chart default (exposure.mode: public) would render
 # Services that never get an address. Ingest routes through the gateway instead,
 # which is what edge-onprem.yaml's routes.receiver.enabled pairs with -- break
-# the pair and devex breaks.
+# the pair and an on-prem deployment has no ingest door at all.
 exposure:
   mode: internal
 

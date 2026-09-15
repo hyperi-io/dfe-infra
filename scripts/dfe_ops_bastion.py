@@ -368,6 +368,20 @@ def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
             f"the culvert pod {pod} carries no {WG_NETWORK_ENV}, so the tunnel runs no WireGuard"
             " listener and there is no client range to route"
         )
+
+    # Both values are read off a pod spec and then spliced into a root shell
+    # command over SSM, so anyone able to create a pod matching the selector
+    # chooses what is run -- they are parsed here rather than trusted.
+    try:
+        ipaddress.ip_address(pod_ip)
+    except ValueError as error:
+        raise BastionError(f"the culvert pod {pod} reports {pod_ip!r} as its podIP, which is not an address") from error
+    try:
+        ipaddress.ip_network(client_range, strict=False)
+    except ValueError as error:
+        raise BastionError(
+            f"the culvert pod {pod} carries {WG_NETWORK_ENV}={client_range!r}, which is not a CIDR"
+        ) from error
     return pod_ip, client_range
 
 
@@ -439,11 +453,20 @@ def _peers(namespace: str, pod: str) -> list[dict[str, str]]:
     handshakes = _wg_table(
         _culvert(namespace, pod, ["wg", "show", HUB_INTERFACE, "latest-handshakes"])
     )
+    # culvert's own allocations file, read as a flat name -> tunnel address map.
+    # Any other shape leaves every peer named "(unallocated)" rather than raising,
+    # because the handshake table above is the half that matters here.
     try:
         allocations = json.loads(_culvert(namespace, pod, ["cat", CULVERT_ALLOCATIONS]) or "{}")
     except json.JSONDecodeError:
         allocations = {}
-    by_address = {str(address): str(name) for name, address in allocations.items()}
+    if not isinstance(allocations, dict):
+        allocations = {}
+    by_address = {
+        str(address): str(name)
+        for name, address in allocations.items()
+        if isinstance(address, str)
+    }
 
     peers: list[dict[str, str]] = []
     for pubkey, allowed_ips in allowed.items():

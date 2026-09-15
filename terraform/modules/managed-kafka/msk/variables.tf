@@ -311,6 +311,14 @@ variable "autoscaling" {
     error_message = "autoscaling.per_broker_capacity_mb_s must be positive -- it is what the alarm threshold scales with broker_count."
   }
 
+  // AWS/Kafka publishes BytesInPerSec per broker and never as a cluster total,
+  // and PutMetricAlarm rejects a SEARCH expression, so the alarm names one
+  // metric per broker -- and a metric math expression takes at most ten.
+  validation {
+    condition     = !var.autoscaling.enabled || var.broker_count <= 10
+    error_message = "autoscaling.enabled needs broker_count of 10 or fewer: the scale-out alarm names one CloudWatch metric per broker, and a metric math expression takes at most ten metrics. Refused at plan rather than at apply, where MSK, the Lambda, the SNS topic and the IAM all exist before PutMetricAlarm rejects it. Turn autoscaling off, or scale this cluster by hand."
+  }
+
   validation {
     condition     = var.autoscaling.headroom > 1
     error_message = "autoscaling.headroom must be greater than 1 -- it is a margin ABOVE full utilisation, not a fraction of it."

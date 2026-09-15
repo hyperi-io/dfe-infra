@@ -493,9 +493,12 @@ module "toolbox" {
   // client_cidr and reach are the OTHER half, and they do not need the address:
   // the reach-back that works today routes the client range at the culvert pod
   // rather than dialling in, so it is TCP to a tunnel address inside the VPC.
+  // `join`/`flatten` rather than `one`, because `one([])` is null and `try` only
+  // catches an error -- a disabled edge would hand this module a null address and
+  // fail its own variable validation before any plan could be read.
   tunnel = {
-    address     = try(one(module.edge[*].tunnel_address), "")
-    ports       = try(one(module.edge[*].tunnel_listener_ports), [])
+    address     = join("", module.edge[*].tunnel_address)
+    ports       = flatten(module.edge[*].tunnel_listener_ports)
     client_cidr = var.edge.tunnel.admin_peer.enabled ? local.tunnel_client_cidr : ""
     reach       = var.edge.tunnel.admin_peer.reach
   }

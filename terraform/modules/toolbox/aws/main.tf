@@ -97,8 +97,13 @@ resource "aws_vpc_security_group_egress_rule" "targets" {
 // Scoped to the one address the edge module built, so it reaches the tunnel and
 // nothing else on the internet, and absent entirely when there is no such
 // address (variables.tf `tunnel`).
+//
+// Keyed on the PORTS and never on the address: the address is an Elastic IP that
+// is unknown until apply, and a for_each that reads it refuses to plan at all on
+// the run that creates it. The ports travel with the address, so an empty list
+// is the same "no forwarder" case the address's own emptiness names.
 resource "aws_vpc_security_group_egress_rule" "tunnel" {
-  for_each = var.enabled && var.tunnel.address != "" ? toset([for p in var.tunnel.ports : tostring(p)]) : toset([])
+  for_each = var.enabled && length(var.tunnel.ports) > 0 ? toset([for p in var.tunnel.ports : tostring(p)]) : toset([])
 
   security_group_id = aws_security_group.this[0].id
 

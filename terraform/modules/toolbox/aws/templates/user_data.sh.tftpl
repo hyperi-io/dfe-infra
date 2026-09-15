@@ -168,10 +168,11 @@ dnf install -y java-17-amazon-corretto-headless
 # --- Kafka CLI -- kcat is not an AL2023 package (AWS publishes none in the
 # base repos, unlike the Debian the container image installs it from), so
 # this instance carries the Apache project's own console scripts instead,
-# pinned to the SAME version this deployment's broker runs
-# (versions.yaml services.kafka-version, never a pin of its own) so the CLI
-# can never skew from the server it debugs -- the identical pattern
-# clickhouse-client and psql already follow above. Pulled from
+# pinned to versions.yaml services.kafka-version and never to a pin of its
+# own -- the identical pattern clickhouse-client and psql already follow
+# above. That is the IN-CLUSTER broker's version exactly; an MSK deployment
+# names its own kafka.msk.broker_version in the dial, so the two can differ
+# and the CLI is then the newer of the pair. Pulled from
 # archive.apache.org rather than the current-release mirror network, which
 # drops a version the moment it is no longer the latest. Scala 2.13 is the
 # only build the 4.x line publishes, so it is a constant here rather than a

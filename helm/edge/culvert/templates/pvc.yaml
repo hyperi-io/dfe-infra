@@ -13,6 +13,19 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}-pki
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    {{- /*
+      Two annotations because the two deletion paths are separate. Argo CD does
+      not take Helm's uninstall path, so the Helm policy alone leaves this claim
+      pruned on a sync and cascade-deleted with the Application -- which is what
+      turning the edge module off does. Prune=false covers the claim leaving
+      desired state; Delete=false covers the Application being deleted.
+
+      The CA, the CRL entries and every WireGuard peer allocation live here, so
+      losing the claim kills every client config already issued.
+    */}}
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   accessModes:
     - {{ .Values.persistence.accessMode }}

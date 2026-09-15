@@ -46,6 +46,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from render_dial import _EDGE_ALIASES
 from yaml_subset import YamlSubsetError, at, split_list
 from yaml_subset import parse as parse_yaml_subset
 
@@ -83,8 +84,10 @@ ADMIN_UI_HOSTNAMES = {
 }
 ADMIN_UIS = tuple(ADMIN_UI_HOSTNAMES)
 
-# The product surface and the platform OTLP door, off the same canonical map.
+# The product surface, the ingest door and the platform OTLP door, off the same
+# canonical hostname map (argocd/values/common.yaml `hostnames`).
 PRODUCT_LABEL = "dfe"
+RECEIVER_LABEL = "receiver"
 OTEL_LABEL = "otel"
 
 # dfe-ui serves its sign-in page here (scripts/acceptance/onboarding/run.py
@@ -137,9 +140,20 @@ class EdgeSettings:
 
 
 def _scalar(tree: dict[str, object], path: tuple[str, ...]) -> str | None:
-    """The non-empty scalar at `path`, else None -- render_dial.py's own walk."""
-    node = at(tree, path)
-    return node.strip() if isinstance(node, str) and node.strip() else None
+    """The non-empty scalar at `path`, else at its deprecated spelling.
+
+    The renderer reads the old `ui:` and `ingest:` paths for one release, so a
+    dial still on them renders a real deployment. A probe that read only the new
+    block would skip every check against it and exit zero, which is the one
+    answer a gate must never get from a door it did not look at.
+    """
+    for candidate in (path, _EDGE_ALIASES.get(path)):
+        if candidate is None:
+            continue
+        node = at(tree, candidate)
+        if isinstance(node, str) and node.strip():
+            return node.strip()
+    return None
 
 
 def _flag(tree: dict[str, object], path: tuple[str, ...], default: bool) -> bool:
@@ -179,7 +193,11 @@ def parse_edge(tree: dict[str, object]) -> EdgeSettings:
         rate_limit_enabled=_flag(tree, ("edge", "product", "rate_limit", "enabled"), True),
         rate_limit_requests=_number(tree, ("edge", "product", "rate_limit", "requests"), 300),
         rate_limit_unit=_scalar(tree, ("edge", "product", "rate_limit", "unit")) or "Minute",
-        allowed_cidrs=split_list(at(tree, ("edge", "product", "allowed_cidrs"))),
+        # Through _scalar so the deprecated spelling is read too, and stripped of
+        # the brackets an inline list carries, which the dial writes elsewhere.
+        allowed_cidrs=split_list(
+            (_scalar(tree, ("edge", "product", "allowed_cidrs")) or "").strip().lstrip("[").rstrip("]")
+        ),
         admin_uis_external=_flag(tree, ("edge", "admin_uis", "external"), False),
         admin_uis_public={
             ui: _flag(tree, ("edge", "admin_uis", "public", ui), False) for ui in ADMIN_UIS
@@ -217,13 +235,21 @@ def published_host(label: str, domain: str) -> str:
     return f"{label}.{domain}" if domain else ""
 
 
+def _resolved(host: str) -> set[str]:
+    """Every address this machine resolves the host to, empty when it cannot.
+
+    An address resolves to itself, so a `--target` and a published name can be
+    compared through this without the caller knowing which it holds.
+    """
+    try:
+        return {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except OSError:
+        return set()
+
+
 def _resolves(host: str) -> bool:
     """Whether this machine can resolve the host at all."""
-    try:
-        socket.getaddrinfo(host, None)
-    except OSError:
-        return False
-    return True
+    return bool(_resolved(host))
 
 
 def dial_address(host: str, target: str) -> str:
@@ -447,6 +473,11 @@ def public_listener_reason(settings: EdgeSettings) -> str:
 # --- the checks --------------------------------------------------------------
 
 
+# Every dial here runs with verification off, so a floor that passes says
+# nothing about the certificate behind it.
+UNVERIFIED = "; chain not verified"
+
+
 def check_tls_floor(settings: EdgeSettings, host: str, address: str) -> Check:
     """The negotiated protocol meets the floor, and below it is refused."""
     name = "tls floor"
@@ -462,13 +493,17 @@ def check_tls_floor(settings: EdgeSettings, host: str, address: str) -> Check:
         return Check(name, FAIL, f"{host} negotiated {negotiated}, under the {floor} floor")
     cap = BELOW_FLOOR.get(floor, "")
     if not cap:
-        return Check(name, PASS, f"{host} negotiated {negotiated}, at or above the {floor} floor")
+        return Check(
+            name, PASS,
+            f"{host} negotiated {negotiated}, at or above the {floor} floor{UNVERIFIED}",
+        )
     capped = _reach(Request(host=host, address=address, tls_cap=cap))
     if capped.client_capped:
         return Check(
             name, PASS,
             f"{host} negotiated {negotiated}; a {cap} handshake cannot be offered from "
-            f"this machine, so the floor is proven from the negotiated protocol alone",
+            f"this machine, so the floor is proven from the negotiated protocol alone"
+            f"{UNVERIFIED}",
         )
     if capped.reached:
         return Check(
@@ -476,7 +511,8 @@ def check_tls_floor(settings: EdgeSettings, host: str, address: str) -> Check:
         )
     return Check(
         name, PASS,
-        f"{host} negotiated {negotiated} and refused a {cap} handshake ({capped.error})",
+        f"{host} negotiated {negotiated} and refused a {cap} handshake "
+        f"({capped.error}){UNVERIFIED}",
     )
 
 
@@ -538,13 +574,43 @@ def check_rate_limit(settings: EdgeSettings, host: str, address: str) -> Check:
     )
 
 
+# The ranges a machine behind NAT holds on its own side of it: RFC 1918, the
+# CGNAT range a carrier hands out, loopback and link-local. Named rather than
+# read off `is_global`, which also excludes the documentation ranges an operator
+# may legitimately be allow-listing.
+NAT_SIDE_RANGES = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                 "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16")
+)
+
+
+def dialled_from_behind_nat(address: str) -> bool:
+    """Whether a socket's own endpoint is one the deployment could never see.
+
+    A socket reports its LOCAL endpoint, so behind NAT it is an address the far
+    end never sees and weighing it against a public allow-list answers a
+    different question from the one asked.
+    """
+    try:
+        candidate = ipaddress.ip_address(address)
+    except ValueError:
+        return True
+    return any(
+        candidate.version == network.version and candidate in network
+        for network in NAT_SIDE_RANGES
+    )
+
+
 def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
     """An address off edge.product.allowed_cidrs gets nothing.
 
-    Two things can make this untestable from here, and the evidence names which:
-    an empty allow-list, or this machine sitting inside it. A deployment that
-    answers nothing AT ALL is not mistaken for a working filter -- the login
-    check fails in that case, and it is the counterweight this one leans on.
+    Three things can make this untestable from here, and the evidence names
+    which: an empty allow-list, this machine sitting inside it, or this machine
+    dialling from behind NAT, where the address the filter judged is not one
+    this process can read. A deployment that answers nothing AT ALL is not
+    mistaken for a working filter -- the login check fails in that case, and it
+    is the counterweight this one leans on.
     """
     name = "cidr filter"
     reason = public_listener_reason(settings)
@@ -569,6 +635,13 @@ def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
             f"this machine dialled from {answer.source}, inside the allow-list {listed} -- "
             f"an on-list address proves nothing about an off-list one",
         )
+    if dialled_from_behind_nat(answer.source):
+        return Check(
+            name, SKIP,
+            f"this machine's own socket reads {answer.source}, so it sits behind NAT and the "
+            f"address weighed against {listed} is not knowable here -- run the probe from a "
+            f"host holding a public address",
+        )
     return Check(
         name, FAIL,
         f"{host} answered {answer.status} to a connection from {answer.source}, "
@@ -577,7 +650,15 @@ def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
 
 
 def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
-    """The receiver's ingest ports answer nothing on the gateway address."""
+    """In vpn mode the receiver publishes no name and answers on none.
+
+    The gateway's own address carries listeners for the HTTP plane only, so a
+    refusal there is true in every configuration and proves nothing on its own.
+    What does prove something is the receiver's published name: a deployment
+    that opened a door for it has a record, and a second load balancer answers
+    on a different address entirely. So the name is resolved first, and the
+    gateway address is dialled only as the second half.
+    """
     name = "receiver private"
     if settings.receiver_mode != "vpn":
         stated = settings.receiver_mode or "unset, so the cloud overlay decides"
@@ -585,11 +666,34 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
             name, SKIP,
             f"edge.ingest.receiver.mode is {stated} -- a door other than the tunnel is intended",
         )
+
     ports = ", ".join(str(port) for port in RECEIVER_INGEST_PORTS)
+    published = published_host(RECEIVER_LABEL, settings.domain)
+    if not settings.domain:
+        return Check(
+            name, SKIP,
+            "edge.product.domain is empty, so no receiver name is published and the only "
+            f"address to dial is the gateway's, which carries no {ports} listener in any "
+            "configuration",
+        )
+    resolved = _resolved(published)
+    if not resolved:
+        return Check(
+            name, PASS,
+            f"{published} does not resolve, so no record was published for a receiver door",
+        )
+    if resolved <= _resolved(address):
+        return Check(
+            name, SKIP,
+            f"{published} resolves to the gateway's own address, where {ports} is not the "
+            "receiver's door in any configuration -- what this check can see is a SEPARATE "
+            "load balancer, and there is not one",
+        )
+
     answered = []
     errors = []
     for port in RECEIVER_INGEST_PORTS:
-        answer = _reach(Request(host="", address=address, port=port, path="", tls=False))
+        answer = _reach(Request(host="", address=published, port=port, path="", tls=False))
         if answer.reached:
             answered.append(str(port))
         else:
@@ -597,10 +701,27 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
     if answered:
         return Check(
             name, FAIL,
-            f"{address} accepted a connection on {', '.join(answered)} -- the receiver is "
-            f"reachable without the tunnel",
+            f"{published} carries its own address and accepted a connection on "
+            f"{', '.join(answered)} -- the receiver is reachable without the tunnel",
         )
-    return Check(name, PASS, f"{address} refused {ports} -- {'; '.join(errors)}")
+    return Check(
+        name, PASS,
+        f"{published} carries its own address and refused {ports} -- {'; '.join(errors)}",
+    )
+
+
+def check_route_absent(name: str, host: str, address: str, why: str) -> Check:
+    """One published name answers nothing, or answers 404 with no route behind it.
+
+    A 404 is what the gateway returns for a hostname it carries no route for, so
+    it is the same verdict as a refused connection and not a weaker one.
+    """
+    answer = _reach(Request(host=host, address=address))
+    if not answer.reached:
+        return Check(name, PASS, f"{host} on {address} answered nothing ({why}): {answer.error}")
+    if answer.status == 404:
+        return Check(name, PASS, f"{host} answered 404 ({why}) -- no route is programmed for it")
+    return Check(name, FAIL, f"{host} answered {answer.status} while {why}")
 
 
 def check_otel_private(settings: EdgeSettings, address: str) -> Check:
@@ -615,13 +736,12 @@ def check_otel_private(settings: EdgeSettings, address: str) -> Check:
         )
     if not settings.domain:
         return Check(name, SKIP, "edge.product.domain is empty -- no otel name is published")
-    host = published_host(OTEL_LABEL, settings.domain)
-    answer = _reach(Request(host=host, address=address))
-    if not answer.reached:
-        return Check(name, PASS, f"{host} on {address} answered nothing: {answer.error}")
-    if answer.status == 404:
-        return Check(name, PASS, f"{host} answered 404 -- no route is programmed for it")
-    return Check(name, FAIL, f"{host} answered {answer.status} -- the otel route is public")
+    return check_route_absent(
+        name,
+        published_host(OTEL_LABEL, settings.domain),
+        address,
+        "edge.ingest.otel.public is false",
+    )
 
 
 def check_admin_ui(settings: EdgeSettings, ui: str, address: str) -> Check:
@@ -637,12 +757,7 @@ def check_admin_ui(settings: EdgeSettings, ui: str, address: str) -> Check:
         return Check(
             name, SKIP, f"{host} is opted in -- {why}, so a route that answers is intended"
         )
-    answer = _reach(Request(host=host, address=address))
-    if not answer.reached:
-        return Check(name, PASS, f"{host} answered nothing ({why}): {answer.error}")
-    if answer.status == 404:
-        return Check(name, PASS, f"{host} answered 404 ({why}) -- no route is programmed for it")
-    return Check(name, FAIL, f"{host} answered {answer.status} while {why}")
+    return check_route_absent(name, host, address, why)
 
 
 def check_login(settings: EdgeSettings, host: str, address: str) -> Check:
@@ -702,6 +817,14 @@ def cmd_edge_probe(args: argparse.Namespace) -> int:
         f"{counts[SKIP]} skipped ===",
         file=sys.stderr,
     )
+    # A run that proved nothing exits zero, which a gate reads as green, so it
+    # has to say plainly that no door was looked at.
+    if counts[PASS] == 0 and counts[FAIL] == 0:
+        print(
+            "    NOTHING WAS PROVEN -- every check reported a precondition rather than a "
+            "verdict. Read the skips above before treating this as a pass.",
+            file=sys.stderr,
+        )
     return exit_code(checks)
 
 

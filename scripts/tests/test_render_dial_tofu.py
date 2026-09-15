@@ -499,6 +499,39 @@ def test_the_forwarder_dial_reaches_the_tofu_variables() -> None:
     assert tunnel["source_ranges"] == ["203.0.113.0/24", "198.51.100.0/24"]
 
 
+def test_an_inline_allow_list_loses_its_brackets_like_every_other_dial_list() -> None:
+    """Every other list the dial carries is written `[a, b]`, so an allow-list
+    written that way must not reach a security group as `[10.0.0.0/8`."""
+    asked = (
+        "profile: scale",
+        "profile: scale\n"
+        "edge:\n"
+        "  ingest:\n"
+        "    tunnel:\n"
+        "      loadBalancerSourceRanges: [10.0.0.0/8, 192.168.0.0/16]\n",
+    )
+    assert render(replace=asked)["edge"]["tunnel"]["source_ranges"] == ["10.0.0.0/8", "192.168.0.0/16"]
+
+
+def test_an_empty_inline_allow_list_is_no_allow_list_rather_than_one_bogus_entry() -> None:
+    """`[]` left unstripped turns "no allow-list" into an allow-list nothing
+    matches, which closes the door instead of opening it."""
+    asked = (
+        "profile: scale",
+        "profile: scale\nedge:\n  ingest:\n    tunnel:\n      loadBalancerSourceRanges: []\n",
+    )
+    assert render(replace=asked)["edge"]["tunnel"]["source_ranges"] == []
+
+
+def test_a_range_that_is_not_a_cidr_is_refused_by_name() -> None:
+    bad = (
+        "profile: scale",
+        "profile: scale\nedge:\n  ingest:\n    tunnel:\n      loadBalancerSourceRanges: 203.0.113.0\n",
+    )
+    with pytest.raises(render_dial.DialError, match=r"loadBalancerSourceRanges"):
+        render(replace=bad)
+
+
 def test_the_node_ports_default_to_what_the_culvert_chart_pins() -> None:
     ports = render()["edge"]["tunnel"]["node_ports"]
     assert ports == {"wireguard": 31820, "openvpn": 31194}
