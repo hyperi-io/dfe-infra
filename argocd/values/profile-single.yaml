@@ -13,6 +13,10 @@ resources:
     cpu: "1"
     memory: 1Gi
 
+# Pressure stays on (the chart default): this tier carries a broker, so the
+# composite's kafka_lag term measures the real backlog the cpu trigger misses on an
+# I/O-bound loader. The ceiling matches defaultTopic.partitions (3) -- a group
+# assigns at most one consumer per partition, so a 4th replica joins and idles.
 keda:
   minReplicaCount: 1
   maxReplicaCount: 3
