@@ -14,7 +14,10 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "dfe-common.selectorLabels" . | nindent 8 }}
+        # NOT dfe-common.selectorLabels: svc/dfe-forgejo selects on exactly
+        # those, so this pod would join the endpoints clients resolve while the
+        # Job runs -- and it serves nothing.
+        app.kubernetes.io/name: {{ printf "%s-%s-repo-setup" .Values.project .Values.component | quote }}
     spec:
       restartPolicy: Never
       {{- include "dfe-common.scheduling" . | nindent 6 }}
