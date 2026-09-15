@@ -195,6 +195,13 @@ networkModel:
 vpn:
   clientCIDR: "100.64.0.0/10"
 
+# The edge module -- the public gateway and the fleet tunnel -- as one switch.
+# No chart reads this key: the module's own ApplicationSet is gated on the
+# cluster secret's dfe.hyperi.io/edge annotation instead, so turning the module
+# off stops it generating Applications rather than rendering empty ones.
+edge:
+  enabled: true
+
 # The opt-in in-cluster toolbox pod (helm/charts/dfe-toolbox), always deployed
 # by argocd/appsets/layer2-platform.yaml but idle at replicas: 0 until a
 # deployment turns it on. Off everywhere by default; a deployer opts in

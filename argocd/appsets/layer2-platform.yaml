@@ -30,7 +30,10 @@ spec:
                 # envoy-gateway operator, installed at wave 3 by layer1-addons;
                 # the CRDs it depends on come with that install, so this Application
                 # reports SyncFailed until the operator lands and then converges.
+                # `chart` is stated rather than defaulted because this is the
+                # element whose directory moves.
                 - app: envoy-gateway-config
+                  chart: envoy-gateway-config
                   namespace: envoy-gateway-system
                   wave: "2"
                   appProject: infra
@@ -76,6 +79,9 @@ spec:
                   appProject: infra
   template:
     metadata:
+      # `app` is the Application NAME and `chart` is only its directory, so a
+      # chart that moves keeps the name Argo's tracking id is built from and the
+      # move adopts the live objects instead of deleting and recreating them.
       name: '{{ .app }}-{{ .name }}'
       namespace: argocd
       annotations:
@@ -89,7 +95,10 @@ spec:
       sources:
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-          path: 'helm/charts/{{ .app }}'
+          # `index` rather than `.chart`, because goTemplateOptions is
+          # missingkey=error and a field lookup on an element that states no
+          # chart would fail the render instead of falling back to the name.
+          path: 'helm/charts/{{ index . "chart" | default .app }}'
           helm:
             ignoreMissingValueFiles: true
             valueFiles:
@@ -97,8 +106,10 @@ spec:
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               # infra/common.yaml is the deployer's own common.yaml -- shared
-              # facts declared once and read by every appset; infra/<chart>.yaml
-              # is the per-chart overlay. Both optional.
+              # facts declared once and read by every appset; infra/<app>.yaml
+              # is the per-app overlay. Both optional. Keyed on the Application
+              # name rather than the chart directory, so moving a chart does not
+              # orphan the overlay a deployer already wrote.
               - '$values/infra/common.yaml'
               - '$values/infra/{{ .app }}.yaml'
             parameters:
