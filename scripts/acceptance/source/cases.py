@@ -29,7 +29,7 @@ from pathlib import Path
 
 from acceptance.clients import Datastore, Engine
 from acceptance.onboarding import wizard
-from acceptance.source import fetcher, steps
+from acceptance.source import beats, fetcher, steps
 from acceptance.source.steps import STEP_TIMEOUT_MS
 
 # The bundled filebeat program is a few hundred kilobytes, so the editor write
@@ -146,6 +146,8 @@ class FilebeatCase(Case):
         self._posted = 0
         self._before = 0
         self._before_transformed = 0
+        #: The filebeat and logstash pair, on a --via logstash run only.
+        self._pair: beats.Pair | None = None
 
     # -- create ---------------------------------------------------------------
 
@@ -372,12 +374,50 @@ class FilebeatCase(Case):
         self._before_transformed = run.store.scalar(
             f"SELECT count() FROM {self.name}{self._transformed_where}"
         )
+        if run.args.via == "logstash":
+            self._feed_through_logstash(run, corpus)
+            return
         self._posted = steps.post_corpus(
             run.receiver_url, run.verify, run.engine_repo, corpus, self.name,
             run.run_id, run.args.per_module, self.MODULES,
         )
         run.driver.record("feed", "done",
                           f"posted {self._posted} corpus records tagged e2e_run:{run.run_id}")
+
+    def _feed_through_logstash(self, run: Run, corpus: Path) -> None:
+        """The same corpus lines, shipped by a real filebeat through a real logstash.
+
+        The wrapper's ``{message, tags, _source}`` proves the transform and is not
+        what a deployment sends. This pushes the envelope Logstash's http output
+        builds, which is what the Elastic pipelines were written against.
+        """
+        driver = run.driver
+        if not run.args.beats_network:
+            driver.record("feed", "skipped",
+                          "--via logstash needs --beats-network, the docker network the stack runs on")
+            return
+        self._pair = beats.Pair(
+            network=run.args.beats_network, receiver_url=run.args.beats_receiver_url,
+            workdir=Path(run.args.shots_dir) / f"beats-{run.run_id}", run_id=run.run_id,
+        )
+        lines = steps.corpus_lines(run.engine_repo, corpus, run.args.per_module, self.MODULES)
+        beats.write_inputs(self._pair, lines, self.name)
+        ready, detail = beats.start_logstash(self._pair)
+        driver.record("logstash", "done" if ready else "failed", detail)
+        if not ready:
+            driver.record("feed", "failed", "no logstash to ship through")
+            return
+        shipping, detail = beats.start_filebeat(self._pair)
+        driver.record("filebeat", "done" if shipping else "failed", detail)
+        if not shipping:
+            driver.record("feed", "failed", "no filebeat to ship with")
+            return
+        sent, detail = beats.published(self._pair, len(lines))
+        self._posted = sent
+        driver.record(
+            "feed", "done" if sent >= len(lines) else "failed",
+            f"{detail}, lumberjack to logstash and its http output to {self._pair.receiver_url}",
+        )
 
     def prove(self, run: Run) -> None:
         if not run.receiver_url:
@@ -386,7 +426,9 @@ class FilebeatCase(Case):
         # proof is the gain in the source's own table; the catch-all still holds
         # the record as posted, so a stray there is found by the tag.
         landed = steps.wait_gain(run.store, self.name, self._before, self._posted, self.LAND_DEADLINE)
-        strayed = run.store.scalar(f"SELECT count() FROM main WHERE _raw LIKE '%{run.run_id}%'")
+        # A record shipped by filebeat carries no run tag, so the stray search is
+        # the run's own table name instead of what the wrapper put in the body.
+        strayed = run.store.scalar(f"SELECT count() FROM main WHERE _raw LIKE '%{self._stray_mark(run)}%'")
         run.driver.record(
             "landed", "done" if landed and not strayed else "failed",
             f"dfe.{self.name} gained {landed} of {self._posted} posted rows, {strayed} strayed into dfe.main",
@@ -399,10 +441,42 @@ class FilebeatCase(Case):
             "transformed", "done" if transformed else "failed",
             f"{transformed} new rows carry {self.TRANSFORMED_COLUMN}, which only the transform sets",
         )
+        if run.args.via == "logstash":
+            self._record_envelope(run)
+
+    def _record_envelope(self, run: Run) -> None:
+        """Name the envelope that reached the table, off the rows themselves.
+
+        The agent's own file path is the half the corpus wrapper cannot produce,
+        so a table without it is not evidence that this path fed anything.
+        """
+        carrying, keys, refused = beats.envelope_evidence(run.store, self.name)
+        if refused:
+            run.driver.record("envelope", "failed", refused)
+            return
+        run.driver.record(
+            "envelope", "done",
+            f"{carrying} row(s) carry log.file.path {beats.AGENT_PATH}, which only a Beats "
+            f"agent sets, and one of them arrived with {', '.join(keys)}",
+        )
 
     @property
     def _transformed_where(self) -> str:
         return f" WHERE {self.TRANSFORMED_COLUMN} IS NOT NULL"
+
+    def _stray_mark(self, run: Run) -> str:
+        """What a stray record in the catch-all is recognised by on this run.
+
+        The wrapper tags each body with the run id. A filebeat-shipped record
+        carries no such tag, so the source name it was routed on is the mark.
+        """
+        return self.name if run.args.via == "logstash" else run.run_id
+
+    def cleanup(self, run: Run) -> list[wizard.StepResult]:
+        """Take down anything this run stood up beside the stack."""
+        if self._pair is None:
+            return []
+        return [wizard.StepResult("beats-removed", "done", beats.stop(self._pair))]
 
 
 # --- elastic: the same lines, through a transform compiled into the image -----
@@ -512,7 +586,7 @@ class FetchedAwsCase(Case):
     def feed(self, run: Run) -> None:
         """A fetched source feeds itself; what this records is that it had work."""
         service_name = fetcher.telemetry_name(run.engine, self.name)
-        samples, since = fetcher.idle_history(run.store, service_name, int(self.reporting_deadline))
+        samples, since = steps.idle_history(run.store, service_name, int(self.reporting_deadline))
         run.driver.record(
             "fetcher-idle", "done",
             f"{service_name} published {samples} pipeline_idle sample(s)"

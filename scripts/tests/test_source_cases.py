@@ -259,6 +259,7 @@ class FakeStore:
     """A datastore that has the table and nothing in it."""
 
     host = "clickhouse.example"
+    database = "dfe"
 
     def table_exists(self, _name):
         return True
@@ -822,6 +823,217 @@ class TestTheObserveStep:
 
         assert steps.search_results(frame, "fb1") == (True, "3 Results")
         assert "option:" not in frame.visited
+
+
+class TestTheReportingVerdict:
+    """`reporting` says a container is up; it does not say this instance is working.
+
+    On Compose one container serves the app and every instance of it, so an idle
+    app answers the status call the same way a working instance does (#327).
+    """
+
+    SERVICE = "dfe-transform-elastic"
+    UP = "dfe-transform-elastic/el1 reporting after 0s up"
+
+    class IdleStore(FakeStore):
+        """A datastore whose otel gauge answers per metric.
+
+        `info` is the series every scalo app publishes while it runs;
+        `pipeline_idle` is the one it publishes only while it holds no work.
+        """
+
+        database = "dfe"
+
+        def __init__(self, info: int = 6, samples: int = 0, since: int = 4,
+                     raises: bool = False, table: bool = True) -> None:
+            self.info, self.samples, self.since = info, samples, since
+            self.raises, self.table = raises, table
+
+        def table_exists(self, _name):
+            return self.table
+
+        def query(self, sql):
+            if self.raises:
+                raise OSError("connection refused")
+            if "pipeline_idle" in sql:
+                return [[self.samples, self.since]]
+            return [[self.info, 2]]
+
+    def verdict(self, store, telemetry):
+        """The verdict for a status body the engine answered `reporting` to."""
+        status = {"reporting": True, "telemetry_name": telemetry, "uptime_seconds": 0}
+        return steps.reporting_verdict(store, self.SERVICE, self.UP, status)
+
+    def test_an_instance_doing_work_reads_done(self):
+        state, detail = self.verdict(self.IdleStore(samples=0), f"{self.SERVICE}-el1")
+
+        assert state == "done"
+        assert "no pipeline_idle sample" in detail
+
+    def test_an_idle_app_is_unproven_not_done(self):
+        """The case in the issue: two green rows in front of three real failures."""
+        state, detail = self.verdict(self.IdleStore(samples=6), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "6 pipeline_idle sample(s)" in detail
+        assert "an app holding no work" in detail
+
+    def test_telemetry_the_whole_app_shares_is_unproven(self):
+        """One container per app on Compose, so the app's own name proves nothing per instance."""
+        state, detail = self.verdict(self.IdleStore(), self.SERVICE)
+
+        assert state == "unproven"
+        assert "every instance of the app shares" in detail
+
+    def test_a_reporting_claim_with_no_series_behind_it_is_unproven(self):
+        """The engine reads max(TimeUnix), which ClickHouse answers with the epoch
+        rather than NULL when nothing matched, so it says reporting for an instance
+        that has never emitted a byte."""
+        state, detail = self.verdict(self.IdleStore(info=0), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "not backed by telemetry" in detail
+
+    def test_otel_tables_out_of_reach_are_unproven_not_empty(self):
+        """A query for a table that is not there reads as an empty result, and an
+        empty result is not evidence of anything."""
+        state, detail = self.verdict(self.IdleStore(table=False), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "otel_metrics_gauge is not in this run's reach" in detail
+
+    def test_a_run_that_cannot_read_the_datastore_is_unproven(self):
+        class NoStore(FakeStore):
+            host = ""
+
+        state, detail = self.verdict(NoStore(), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "no datastore access" in detail
+
+    def test_an_otel_table_that_does_not_answer_is_unproven(self):
+        state, detail = self.verdict(self.IdleStore(raises=True), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "did not answer" in detail
+
+    def test_an_instance_that_never_reported_still_fails(self):
+        """The old row read its own message back: "not reporting after 900s" contains
+        "reporting after", so a timed-out wait recorded done."""
+        state, detail = steps.reporting_verdict(
+            FakeStore(), self.SERVICE, f"{self.SERVICE}/el1 not reporting after 900s; last 200", {}
+        )
+
+        assert state == "failed"
+        assert "not reporting" in detail
+
+    def test_an_instance_the_engine_never_listed_fails_its_own_row(self):
+        driver, engine = FakeDriver(FakePage()), FakeEngine()
+        engine.instance = "someone-else"
+
+        steps.record_instance_up(
+            driver, engine, self.IdleStore(), self.SERVICE, "el1",
+            "transform-instance", 0.0, "transform-reporting", 0.0,
+        )
+
+        assert driver.status("transform-instance") == "failed"
+
+    def test_the_row_the_run_lands_goes_through_the_verdict(self):
+        """The wait and the verdict are one step, so no caller can record the raw wait."""
+        driver, engine = FakeDriver(FakePage()), FakeEngine(transform="elastic")
+        engine.instance = "el1"
+
+        steps.record_instance_up(
+            driver, engine, self.IdleStore(samples=3), self.SERVICE, "el1",
+            "transform-instance", 0.0, "transform-reporting", 0.0,
+        )
+
+        assert driver.status("transform-reporting") == "unproven"
+
+    def test_an_unproven_row_is_not_a_failure_either(self):
+        from acceptance.onboarding import wizard
+
+        assert wizard.exit_code([wizard.StepResult("transform-reporting", "unproven", "")]) == 0
+
+
+class TestTheLogstashVariation:
+    """The same corpus lines, reaching the receiver the way a deployment sends them."""
+
+    def test_a_run_pushes_the_wrapped_body_by_default(self, monkeypatch, transform_repo):
+        posted: list[int] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "post_corpus", lambda *a, **k: posted.append(1) or 7)
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse())
+
+        case.feed(a_run(driver, FakeEngine(), parse(), case.name, transform_repo, "https://rx.example"))
+
+        assert posted == [1]
+        assert "posted 7 corpus records" in driver.detail("feed")
+
+    def test_the_switch_needs_the_network_the_stack_runs_on(self, monkeypatch, transform_repo):
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        args = parse("--via", "logstash")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert driver.status("feed") == "skipped"
+        assert "--beats-network" in driver.detail("feed")
+
+    def test_it_stands_the_pair_up_and_reports_what_it_shipped(self, monkeypatch, transform_repo):
+        started: list[str] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one", "two"])
+        monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
+        monkeypatch.setattr(cases.beats, "start_logstash",
+                            lambda pair: (started.append("logstash"), (True, "logstash up"))[1])
+        monkeypatch.setattr(cases.beats, "start_filebeat",
+                            lambda pair: (started.append("filebeat"), (True, "filebeat up"))[1])
+        monkeypatch.setattr(cases.beats, "published", lambda pair, wanted: (wanted, f"filebeat published {wanted}"))
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert started == ["logstash", "filebeat"]
+        assert driver.status("feed") == "done"
+        assert "lumberjack to logstash" in driver.detail("feed")
+
+    def test_a_logstash_that_never_listened_stops_the_feed(self, monkeypatch, transform_repo):
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one"])
+        monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
+        monkeypatch.setattr(cases.beats, "start_logstash", lambda pair: (False, "never ran its pipeline"))
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert driver.status("logstash") == "failed"
+        assert driver.status("feed") == "failed"
+
+    def test_the_pair_comes_down_with_the_run(self, monkeypatch, transform_repo):
+        """Every container the suite starts is removed in the same run."""
+        stopped: list[object] = []
+        monkeypatch.setattr(cases.beats, "stop", lambda pair: stopped.append(pair) or "both removed")
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        case = cases.build(args)
+        case._pair = cases.beats.Pair(network="n", receiver_url="u", workdir=transform_repo, run_id="r")
+
+        rows = case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo))
+
+        assert len(stopped) == 1
+        assert [row.slug for row in rows] == ["beats-removed"]
+
+    def test_a_run_that_started_no_pair_has_nothing_to_remove(self, transform_repo):
+        args = parse()
+        case = cases.build(args)
+
+        assert case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo)) == []
 
 
 class TestWhatTheRunTidiesUp:

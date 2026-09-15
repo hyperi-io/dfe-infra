@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from acceptance.clients import Datastore, Engine
+from acceptance.clients import Engine
 
 HEADER = "common-header/timeseries"
 HEADER_VERSION = "1.0.1"
@@ -262,26 +262,6 @@ def create_source(engine: Engine, body: dict) -> str:
     if reply.status not in (200, 201):
         raise RuntimeError(f"the source was refused: {reply.status} {reply.body}")
     return f"created {body['source']} with an aws/{body['fetcher']['config']['services'][0]['name']} fetcher stanza"
-
-
-def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tuple[int, int | None]:
-    """How many idle samples the instance published, and how many seconds since the last.
-
-    scalo registers ``pipeline_idle`` only while the app has NO work, so the series
-    starting and then stopping is the instance going from idle to working. Read out
-    of the otel tables, which is where every other telemetry reading in this suite
-    comes from.
-    """
-    rows = store.query(
-        "SELECT count(), toUInt32(dateDiff('second', max(TimeUnix), now())) "
-        "FROM otel.otel_metrics_gauge "
-        f"WHERE ServiceName = '{service_name}' AND MetricName = 'pipeline_idle' "
-        f"AND TimeUnix >= now() - INTERVAL {window_seconds} SECOND"
-    )
-    if not rows or not rows[0]:
-        return 0, None
-    samples = int(rows[0][0])
-    return samples, (int(rows[0][1]) if samples else None)
 
 
 def telemetry_name(engine: Engine, name: str) -> str:

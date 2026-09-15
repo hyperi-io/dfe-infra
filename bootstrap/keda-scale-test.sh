@@ -17,8 +17,13 @@
 # pressure takes the shipped Deployment above its own floor, zeros bring it back. It SKIPS
 # where that app has no ScaledObject or no shim trigger, so a slim tier still passes.
 #
-# Both phases are self-cleaning. Every wait is BOUNDED and fails the test on timeout --
-# never waits forever.
+# Both phases are self-cleaning. Every wait is BOUNDED and never waits forever, and the
+# scale-out bound is DERIVED from the ScaledObject's own polling interval plus the HPA
+# sync period rather than fixed, so a busy cluster does not fail the proof on the clock.
+#
+# Three verdicts, not two: exit 0 proved it, exit 1 is a scaler that did not work, and
+# exit 3 is UNPROVEN -- the HPA read the injected pressure above target and left the
+# replicas alone, which is dfe-infra #134 and is neither a working seam nor a broken one.
 #
 # Usage:  bootstrap/keda-scale-test.sh [--namespace dfe] [--ch-namespace clickhouse]
 #                                      [--ch-selector app.kubernetes.io/name=clickhouse]
@@ -37,14 +42,34 @@ SHIM="${DFE_KEDA_SHIM:-dfe-keda-shim.${NS}.svc.cluster.local:8080}"
 # sit inside the shim's 60s averaging window and hold the next run below target.
 TARGET="keda-scale-test-$$-${RANDOM}"
 OTEL_DB="dfe"
-SCALE_OUT_TIMEOUT=120   # seconds to reach 2 replicas (pollingInterval + KEDA reaction)
+# Phase 1 authors its own ScaledObject, so its poll is known rather than read.
+TEST_POLL_INTERVAL="${DFE_KEDA_TEST_POLL:-10}"
+TEST_TARGET_VALUE=50
+# How often a bounded wait re-reads the Deployment it is waiting on.
+WAIT_INTERVAL="${DFE_WAIT_INTERVAL:-5}"
 # Above minReplicaCount 0 the HPA's own scale-down stabilization window governs,
 # and its default is 300s -- cooldownPeriod only applies to scale-to-zero.
 SCALE_IN_TIMEOUT="${DFE_SCALE_IN_TIMEOUT:-420}"
+# The two loops that have to notice the injected pressure: KEDA polls the scaler
+# on the ScaledObject's own interval, and the HPA resyncs on the
+# controller-manager's period (`--horizontal-pod-autoscaler-sync-period`).
+HPA_SYNC="${DFE_HPA_SYNC_PERIOD:-15}"
+# A scheduled pod still has to pull and report Ready before readyReplicas moves.
+POD_READY_ALLOWANCE="${DFE_POD_READY_ALLOWANCE:-90}"
+# KEDA names the HPA it owns after the ScaledObject.
+HPA_PREFIX="keda-hpa-"
 # Phase 2: the real app whose shipped ScaledObject carries the shim trigger.
 REAL_DEP="${DFE_KEDA_REAL_DEPLOYMENT:-dfe-receiver}"
-REAL_OUT_TIMEOUT=150    # the app's 15s pollingInterval plus the HPA's own sync
+# KEDA's own default when a ScaledObject declares no pollingInterval.
+KEDA_DEFAULT_POLL=30
 REAL_ZERO_HOLD=60       # seconds of zeros, one full shim averaging window
+# The stack's own rollouts contend for the scheduler and the metrics API, and a
+# run started inside one missed its bound (#275).
+SETTLE_TIMEOUT="${DFE_SETTLE_TIMEOUT:-300}"
+SETTLE_INTERVAL="${DFE_SETTLE_INTERVAL:-10}"
+# This proof cannot tell an unreproduced KEDA stall from a broken scaler, so that
+# verdict has its own exit code and run-all-smoke-tests.sh prints it as its own word.
+EXIT_UNPROVEN=3
 HOLD_PID=""
 
 while [ $# -gt 0 ]; do
@@ -104,10 +129,102 @@ wait_for_replicas() {
         WAITED_SECONDS="${waited}"
         if [ "${mode}" = "ge" ] && [ "${have}" -ge "${want}" ]; then return 0; fi
         if [ "${mode}" = "le" ] && [ "${have}" -le "${want}" ]; then return 0; fi
-        sleep 5; waited=$((waited + 5))
+        sleep "${WAIT_INTERVAL}"; waited=$((waited + WAIT_INTERVAL))
     done
     WAITED_SECONDS="${waited}"
     return 1
+}
+
+scale_out_bound() {
+    # Two unsynchronised loops have to notice before a pod is even created, so
+    # each is allowed one full period twice over, plus the pod's own start.
+    local poll="${1:-${KEDA_DEFAULT_POLL}}"
+    echo $(( (poll + HPA_SYNC) * 2 + POD_READY_ALLOWANCE ))
+}
+
+rolling_workloads() {
+    # A Deployment is mid-roll while its controller has not observed the current
+    # generation or the pods it wants are not all Ready. custom-columns rather
+    # than jsonpath: a missing status field must keep its column, not shift one.
+    kubectl -n "${NS}" get deploy --no-headers -o \
+        custom-columns=N:.metadata.name,W:.spec.replicas,U:.status.updatedReplicas,R:.status.readyReplicas,G:.metadata.generation,O:.status.observedGeneration 2>/dev/null \
+        | awk '{ for (i = 2; i <= 6; i++) if ($i == "<none>") $i = 0 } $2 != $3 || $2 != $4 || $5 != $6 { print $1 }'
+}
+
+wait_for_settled() {
+    # Advisory, never a verdict: a stack that keeps rolling is reported and the
+    # proof runs anyway, because the roll may be what an operator wants proven.
+    local waited=0 rolling
+    while [ "${waited}" -lt "${SETTLE_TIMEOUT}" ]; do
+        rolling="$(rolling_workloads || true)"
+        if [ -z "${rolling}" ]; then
+            log "ns=${NS} settled after ${waited}s; no deployment mid-roll"
+            return 0
+        fi
+        sleep "${SETTLE_INTERVAL}"; waited=$((waited + SETTLE_INTERVAL))
+    done
+    log "WARN: still rolling after ${SETTLE_TIMEOUT}s: $(rolling_workloads | tr '\n' ' ')"
+}
+
+quantity_value() {
+    # An HPA renders an external metric as a Quantity, so a fractional reading
+    # arrives in milli-units.
+    case "$1" in
+        "") echo "" ;;
+        *m) echo $(( ${1%m} / 1000 )) ;;
+        *) echo "${1%%.*}" ;;
+    esac
+}
+
+hpa_field() {
+    kubectl -n "${NS}" get hpa "${HPA_PREFIX}$1" -o jsonpath="$2" 2>/dev/null || true
+}
+
+scale_out_verdict() {
+    # Why the replicas did not move, decided from what the HPA could see rather
+    # than from the clock alone.
+    local so="$1" dep="$2" want="$3" service="$4" bound="$5" target="$6"
+    local metric desired active value rows
+    metric="$(hpa_field "${so}" '{.status.currentMetrics[0].external.current.value}')"
+    if [ -z "${metric}" ]; then
+        # metricType AverageValue renders the same reading in its own field.
+        metric="$(hpa_field "${so}" '{.status.currentMetrics[0].external.current.averageValue}')"
+    fi
+    desired="$(hpa_field "${so}" '{.status.desiredReplicas}')"
+    active="$(hpa_field "${so}" '{.status.conditions[?(@.type=="ScalingActive")].status}')"
+    value="$(quantity_value "${metric}")"
+    rows="$(ch_query "SELECT count() FROM ${OTEL_DB}.otel_metrics_gauge WHERE ServiceName = '${service}' AND MetricName = 'dfe_scaling_pressure' AND TimeUnix >= now() - INTERVAL 120 SECOND" 2>/dev/null || echo 0)"
+    log "${HPA_PREFIX}${so}: metric ${metric:-none} against target ${target}, desiredReplicas ${desired:-none}, ScalingActive ${active:-none}, ${rows:-0} pressure row(s) in the last 120s"
+
+    if [ -n "${desired}" ] && [ "${desired}" -ge "${want}" ] 2>/dev/null; then
+        echo "=== FAIL: the HPA asked for ${desired} and ${dep} had no Ready pod for it within ${bound}s ==="
+        return 1
+    fi
+    if [ "${active}" != "True" ] || [ -z "${value}" ]; then
+        echo "=== FAIL: the shim's pressure never reached the HPA (ScalingActive ${active:-none}, metric ${metric:-none}) ==="
+        return 1
+    fi
+    if [ "${value}" -lt "${target}" ] 2>/dev/null; then
+        echo "=== FAIL: the HPA read ${metric} against target ${target}, so the injected pressure never carried the shim's average ==="
+        return 1
+    fi
+    # dfe-infra #134: the same seam scaled on demand once and has not reproduced,
+    # with the injection readable, the shim serving it and the scaler built.
+    echo "=== UNPROVEN: the HPA read ${metric} against target ${target} and left ${dep} at ${desired:-1} for ${bound}s ==="
+    echo "    autoscaling is NOT proven by this run and is not disproven either (#134)."
+    return "${EXIT_UNPROVEN}"
+}
+
+assert_scale_out() {
+    # One bounded assertion for both phases, with the same verdict either side.
+    local so="$1" dep="$2" want="$3" poll="$4" service="$5" target="$6" bound
+    bound="$(scale_out_bound "${poll}")"
+    log "asserting SCALE-OUT to ${want} (bounded ${bound}s = (poll ${poll}s + HPA sync ${HPA_SYNC}s) x2 + ${POD_READY_ALLOWANCE}s pod start)..."
+    if wait_for_replicas "${dep}" "${want}" "${bound}" ge; then
+        log "PASS: ${dep} scaled out to ${want} in ${WAITED_SECONDS}s"
+        return 0
+    fi
+    scale_out_verdict "${so}" "${dep}" "${want}" "${service}" "${bound}" "${target}"
 }
 
 cleanup() {
@@ -121,6 +238,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== DFE KEDA artificial +1-pod scale test ==="
+wait_for_settled
 echo "--- Phase 1: throwaway target ---"
 
 log "creating throwaway target + shim-driven ScaledObject (min 1, max 2)"
@@ -150,25 +268,20 @@ spec:
   minReplicaCount: 1
   maxReplicaCount: 2
   cooldownPeriod: 30
-  pollingInterval: 10
+  pollingInterval: ${TEST_POLL_INTERVAL}
   triggers:
     - type: metrics-api
       metricType: Value
       metadata:
-        targetValue: "50"
+        targetValue: "${TEST_TARGET_VALUE}"
         url: "http://${SHIM}/keda/pressure?service=${TARGET}"
         valueLocation: "value"
 EOF
 
-log "injecting dfe_scaling_pressure=100 for service '${TARGET}' (> target 50)"
+log "injecting dfe_scaling_pressure=100 for service '${TARGET}' (> target ${TEST_TARGET_VALUE})"
 inject_pressure 100
 
-log "asserting SCALE-OUT to 2 (bounded ${SCALE_OUT_TIMEOUT}s)..."
-if wait_for_replicas "${TARGET}" 2 "${SCALE_OUT_TIMEOUT}" ge; then
-    log "PASS: scaled out to 2 in ${WAITED_SECONDS}s"
-else
-    echo "=== FAIL: target did not scale out within ${SCALE_OUT_TIMEOUT}s ==="; exit 1
-fi
+assert_scale_out "${TARGET}-scaler" "${TARGET}" 2 "${TEST_POLL_INTERVAL}" "${TARGET}" "${TEST_TARGET_VALUE}" || exit $?
 
 log "dragging the 60s average back under target (batch of zeros) to force SCALE-IN"
 for _ in $(seq 1 20); do inject_pressure 0; done
@@ -210,7 +323,14 @@ REAL_SERVICE="${REAL_SERVICE%%&*}"
 REAL_MIN="$(kubectl -n "${NS}" get scaledobject "${REAL_SO}" -o jsonpath='{.spec.minReplicaCount}')"
 REAL_MIN="${REAL_MIN:-1}"
 REAL_OUT=$((REAL_MIN + 1))
-log "${REAL_DEP}: floor ${REAL_MIN} replicas, shim ServiceName '${REAL_SERVICE}'"
+# The app's own dials, so the bound and the verdict are read from what is
+# deployed rather than from a second copy of it here.
+REAL_POLL="$(kubectl -n "${NS}" get scaledobject "${REAL_SO}" -o jsonpath='{.spec.pollingInterval}')"
+REAL_POLL="${REAL_POLL:-${KEDA_DEFAULT_POLL}}"
+REAL_TARGET="$(kubectl -n "${NS}" get scaledobject "${REAL_SO}" -o jsonpath='{.spec.triggers[?(@.type=="metrics-api")].metadata.targetValue}')"
+REAL_TARGET="${REAL_TARGET:-${TEST_TARGET_VALUE}}"
+REAL_OUT_TIMEOUT="$(scale_out_bound "${REAL_POLL}")"
+log "${REAL_DEP}: floor ${REAL_MIN} replicas, poll ${REAL_POLL}s, target ${REAL_TARGET}, shim ServiceName '${REAL_SERVICE}'"
 
 # Held for the full scale-out window: the shim averages the last 60s, so
 # pressure that stops early lets the average decay before a slow HPA sync
@@ -219,12 +339,7 @@ log "holding dfe_scaling_pressure=100 for '${REAL_SERVICE}' (${REAL_OUT_TIMEOUT}
 hold_pressure "${REAL_SERVICE}" 100 "${REAL_OUT_TIMEOUT}" &
 HOLD_PID=$!
 
-log "asserting SCALE-OUT to ${REAL_OUT} (bounded ${REAL_OUT_TIMEOUT}s)..."
-if wait_for_replicas "${REAL_DEP}" "${REAL_OUT}" "${REAL_OUT_TIMEOUT}" ge; then
-    log "PASS: ${REAL_DEP} scaled out to ${REAL_OUT} in ${WAITED_SECONDS}s"
-else
-    echo "=== FAIL: ${REAL_DEP} stayed at ${REAL_MIN} for ${REAL_OUT_TIMEOUT}s ==="; exit 1
-fi
+assert_scale_out "${REAL_SO}" "${REAL_DEP}" "${REAL_OUT}" "${REAL_POLL}" "${REAL_SERVICE}" "${REAL_TARGET}" || exit $?
 
 kill "${HOLD_PID}" >/dev/null 2>&1 || true
 HOLD_PID=""

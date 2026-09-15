@@ -37,6 +37,14 @@ Proof: the transform instance reports, the receiver routes, new rows in
 under `<name>_land` in the archiver, and the engine lists a HyperDX source for
 it.
 
+`reporting` is not taken at face value. The engine answers it off the otel
+tables, and on Compose one container serves the app and every instance of it, so
+the step looks for the instance's own series and for scalo's `pipeline_idle` --
+which an app publishes only while it holds no work -- and records `unproven`
+where an idle app's telemetry cannot be told from a working instance's
+(dfe-infra #327). An `unproven` row is neither a pass nor a failure and is
+repeated under the table, so a long report cannot be read as green.
+
 Last, for every case, the `observe` step opens the console's Observe search,
 picks the source in the embedded HyperDX and reads a non-zero results line. The
 console iframes HyperDX from a second origin, so this is the step that meets
@@ -69,6 +77,34 @@ intake; cisco_meraki's pipeline reads a body rather than a syslog line.
 Proof: new rows in `<name>` carry `source_ip`. `meta/beats/filebeat` declares
 it, the cisco_ios transform reads it out of the syslog body, and the posted
 `{message, tags, _source}` record carries nothing of the sort.
+
+## Pushing through a real filebeat and logstash (`--via logstash`)
+
+The wrapper's `{message, tags, _source}` proves the transform and is not how a
+deployment is fed. The common path is a Beats agent shipping lumberjack to
+Logstash and Logstash's http output posting its whole event at the receiver, and
+the Elastic ingest pipelines dfe-transform-elastic compiles in were written
+against that envelope. `--via logstash` is that variation of the two pushed
+cases rather than a case of its own, so the same source, the same waits and the
+same proof all still apply.
+
+It stands a filebeat and a logstash container beside a compose deployment --
+`--beats-network` names the docker network the stack runs on and
+`--beats-receiver-url` the ingest URL as seen from inside it -- writes this run's
+corpus slice to a file the agent tails, and lets the pair carry it. A logstash
+filter adds the `_source` field the source is matched on; everything else in the
+event is the envelope filebeat and logstash built. The run still waits for
+routing over HTTP first, so the receiver has rolled onto the new rule before the
+agent ships, and its teardown removes both containers.
+
+Three rows of its own: `logstash` and `filebeat` say the pair came up, `feed`
+carries filebeat's own acked count (its count, not the receiver's, so an agent
+that shipped nothing is a different finding from a stack that took nothing), and
+`envelope` names the fields the record that landed arrived with, plus its
+`log.file.path` -- the field only a Beats agent sets and the one the wrapper
+cannot produce.
+
+Compose only. The Kubernetes tier wants a Job instead, which is not built.
 
 ## `cloudwatch`, run as `--aws-service cloudtrail`
 
