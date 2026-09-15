@@ -83,6 +83,27 @@ resource "aws_vpc_security_group_egress_rule" "targets" {
   description = "Forward target on ${each.value}, scoped to the VPC -- every named target lives inside it"
 }
 
+// The one rule this module puts on a security group it does not own. Egress on
+// 443 is not enough to reach the Kubernetes API: the control plane's own group
+// admits nodes and pods and nothing else, so the eks-api forward target times
+// out against an open client side until the toolbox group is named here.
+// Referenced by group id rather than by CIDR, so the grant names this instance
+// rather than the whole VPC, and `bastion down` takes it away with the group.
+resource "aws_vpc_security_group_ingress_rule" "eks_api" {
+  count = var.enabled && var.eks_cluster_security_group_id != "" ? 1 : 0
+
+  security_group_id = var.eks_cluster_security_group_id
+
+  referenced_security_group_id = aws_security_group.this[0].id
+  ip_protocol                  = "tcp"
+  from_port                    = local.control_egress_port
+  to_port                      = local.control_egress_port
+
+  description = "Kubernetes API from the ${var.name} toolbox instance"
+
+  tags = merge(var.tags, { Name = "${var.name}-toolbox-eks-api" })
+}
+
 // ---------------------------------------------------------------------------
 // Identity -- AmazonSSMManagedInstanceCore, ECR pull, and an inline policy
 // scoped to exactly the session-log bucket prefix and the deployment key.

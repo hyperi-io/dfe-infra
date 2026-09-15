@@ -264,7 +264,7 @@ variable "seeds" {
 // ---------------------------------------------------------------------------
 
 variable "endpoints" {
-  description = "In-cluster service addresses the DFE stack resolves each other by. kafka_bootstrap is the in-cluster broker on a strimzi or redpanda deployment and empty on a brokerless profile; on kafka.provider msk the module's own bootstrap replaces it."
+  description = "In-cluster service addresses the DFE stack resolves each other by. kafka_bootstrap is the in-cluster broker on a strimzi or redpanda deployment and empty on a brokerless profile; on kafka.provider msk the module's own bootstrap replaces it. clickhouse_host becomes a toolbox forward target only when it names an address outside the cluster -- a Kubernetes Service name resolves through CoreDNS, which the toolbox instance cannot reach, so an in-cluster ClickHouse is port-forwarded over the eks-api target instead."
   type = object({
     clickhouse_host = string
     kafka_bootstrap = string

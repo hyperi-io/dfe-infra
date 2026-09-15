@@ -24,6 +24,11 @@ output "oidc_issuer" {
   value       = aws_eks_cluster.this.identity[0].oidc[0].issuer
 }
 
+output "cluster_security_group_id" {
+  description = "The security group EKS created for the control plane, which is what admits a caller to the Kubernetes API. Nodes and pods reach the API because they are already trusted by it; anything else in the VPC -- the toolbox instance, a bastion a caller brings -- has to be admitted by name, and this is the group that admits it."
+  value       = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
+}
+
 output "network" {
   description = "What a sibling module attaches to -- managed Kafka on private connectivity needs the same subnets and the same CIDR."
   value = {

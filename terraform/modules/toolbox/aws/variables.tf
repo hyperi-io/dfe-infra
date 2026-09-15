@@ -118,6 +118,12 @@ variable "targets" {
   default = {}
 }
 
+variable "eks_cluster_security_group_id" {
+  description = "The EKS control plane's own security group (kubernetes-cluster/aws's cluster_security_group_id). This module adds ONE ingress rule to it, 443 from the toolbox's own group, because nothing else admits the instance to the Kubernetes API: nodes and pods are trusted by that group already, and a brand-new group is not. The rule is gated on `enabled` like everything else here, so `bastion down` takes the grant away with the instance. Empty adds no rule at all, for a caller with no cluster to reach."
+  type        = string
+  default     = ""
+}
+
 variable "force_destroy_session_logs" {
   description = "Whether the session-log bucket may be destroyed while it still holds objects. Follows the ROOT's tags.lifecycle the same way cloudtrail.tf's bucket does (main.tf's local.ephemeral) -- an ephemeral tyre-kick deployment is rebuilt under the same name and needs the fast teardown; a persistent one keeps the vendor default so destroying real session evidence needs a deliberate confirmation."
   type        = bool

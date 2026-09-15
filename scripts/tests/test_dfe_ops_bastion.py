@@ -41,6 +41,11 @@ import dfe_ops_bastion as bastion  # noqa: E402
 DIAL_WITH_TOOLBOX = """substrate: k8s
 
 toolbox:
+  ## The in-cluster troubleshooting pod, which has an `enabled` of its own.
+  pod:
+    enabled: false
+    kubeApiAccess: false
+    ttlSeconds: ""
   enabled: "false"
   aws:
     instance_type: t4g.small
@@ -74,11 +79,41 @@ def test_set_toolbox_field_does_not_touch_a_same_named_field_outside_the_block()
     dial = DIAL_WITH_TOOLBOX + '\nother:\n  enabled: "false"\n'
     updated = bastion._set_toolbox_field(dial, "enabled", "true")
     lines = updated.splitlines()
-    toolbox_at = lines.index("toolbox:")
     other_at = lines.index("other:")
     # toolbox.enabled flips; other.enabled (outside the toolbox: block) does not.
-    assert lines[toolbox_at + 1] == '  enabled: "true"'
+    assert '  enabled: "true"' in lines
     assert lines[other_at + 1] == '  enabled: "false"'
+
+
+def test_set_toolbox_field_addresses_the_top_level_toggle_not_the_nested_one() -> None:
+    """toolbox.pod.enabled comes FIRST in the dial and is not the bastion's own
+    toggle -- matching on the bare key edited it and left the real one alone."""
+    updated = bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "enabled", "true")
+    assert '  enabled: "true"' in updated.splitlines()
+    assert "    enabled: false" in updated.splitlines(), "toolbox.pod.enabled must survive verbatim"
+
+
+def test_set_toolbox_field_reaches_the_nested_key_by_its_dotted_path() -> None:
+    updated = bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "pod.enabled", "true")
+    assert '    enabled: "true"' in updated.splitlines()
+    assert '  enabled: "false"' in updated.splitlines(), "the bastion toggle must survive verbatim"
+
+
+def test_set_toolbox_field_refuses_a_path_the_block_does_not_carry() -> None:
+    with pytest.raises(bastion.BastionError, match=r"toolbox\.aws\.enabled"):
+        bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "aws.enabled", "true")
+
+
+def test_up_and_down_both_address_the_top_level_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The live cycle hit this in BOTH directions, so both are pinned here."""
+    dial = tmp_path / "deployment.yaml"
+    for enabled in (True, False):
+        dial.write_text(DIAL_WITH_TOOLBOX, encoding="utf-8")
+        monkeypatch.setattr(bastion, "DIAL", dial)
+        bastion._set_toolbox_enabled(enabled)
+        lines = dial.read_text(encoding="utf-8").splitlines()
+        assert f'  enabled: "{str(enabled).lower()}"' in lines
+        assert "    enabled: false" in lines
 
 
 def test_set_toolbox_field_refuses_a_dial_with_no_toolbox_block() -> None:

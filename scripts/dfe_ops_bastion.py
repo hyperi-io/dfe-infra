@@ -75,27 +75,39 @@ class BastionError(RuntimeError):
 # --- the dial editor ----------------------------------------------------------
 
 
+_KEY_LINE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z_][A-Za-z0-9_-]*):(?P<rest>\s*(#.*)?$|\s+\S.*$)")
+
+
 def _set_toolbox_field(text: str, field: str, value: str) -> str:
     """Set a scalar field inside the dial's top-level `toolbox:` block.
 
     A focused editor, not a general YAML writer: it walks from the `toolbox:`
-    line (column 0) to the next column-0, non-blank line, and replaces the
-    first line inside that span whose key is `field`. Every OTHER line --
-    comments, sibling fields, the `aws:`/`session:` sub-blocks -- survives
-    verbatim, the same guarantee render_dial.py's own `_merge_env` makes for
-    the env file. Raises BastionError by name when the block or field is
-    missing, so `up`/`down` fail loudly on a dial copied before this field
-    existed rather than silently doing nothing.
+    line (column 0) to the next column-0, non-blank line, tracking the key path
+    by indentation, and replaces the line whose path relative to `toolbox:`
+    equals `field`. `field` is a dotted path -- `enabled` is the top-level
+    toggle, `pod.enabled` is the in-cluster pod's own, and the dial holds both.
+    Matching on the bare key instead hit whichever came first in the file, which
+    is `pod.enabled`, so `bastion up` wrote a quoted "true" into a field the
+    chart's validate.yaml refuses and left the real toggle alone.
+
+    Every OTHER line -- comments, sibling fields, the `aws:`/`session:`
+    sub-blocks -- survives verbatim, the same guarantee render_dial.py's own
+    `_merge_env` makes for the env file. Raises BastionError by name when the
+    block or field is missing, so `up`/`down` fail loudly on a dial copied
+    before this field existed rather than silently doing nothing.
     """
-    field_re = re.compile(rf"^(\s*){re.escape(field)}:\s*(#.*)?$|^(\s*){re.escape(field)}:\s+\S.*$")
+    wanted = field.split(".")
     lines = text.splitlines()
     out: list[str] = []
     in_block = False
     found = False
+    # (indent, key) for each open map level inside the toolbox: block.
+    path: list[tuple[int, str]] = []
     for line in lines:
         if not in_block:
             if re.match(r"^toolbox:\s*(#.*)?$", line):
                 in_block = True
+                path = []
             out.append(line)
             continue
         stripped = line.strip()
@@ -104,9 +116,15 @@ def _set_toolbox_field(text: str, field: str, value: str) -> str:
             in_block = False
             out.append(line)
             continue
-        if not found and field_re.match(line):
-            leading = line[: len(line) - len(line.lstrip(" "))]
-            out.append(f'{leading}{field}: "{value}"')
+        match = _KEY_LINE.match(line) if stripped and not stripped.startswith("#") else None
+        if match is None:
+            out.append(line)
+            continue
+        while path and path[-1][0] >= indent:
+            path.pop()
+        path.append((indent, match.group("key")))
+        if not found and [key for _, key in path] == wanted:
+            out.append(f'{match.group("indent")}{match.group("key")}: "{value}"')
             found = True
             continue
         out.append(line)

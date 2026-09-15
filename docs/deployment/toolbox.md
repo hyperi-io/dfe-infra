@@ -75,10 +75,14 @@ dfe-ops bastion down                # terminate, then PROVE nothing remains
 ```
 
 `forward` reaches a named target `bastion status` lists: the EKS API, one
-`kafka` target reaching a single bootstrap broker, and ClickHouse when the
-dial names a host. `kafka`'s key and port are known at plan time, so the
-target can be enabled in the dial before the first apply, and reaching it
-proves reachability, TLS and SASL. A client that
+`kafka` target reaching a single bootstrap broker, `kafka-iam` on MSK's own
+SASL/IAM listener, and ClickHouse when the dial names a host OUTSIDE the
+cluster. A Kubernetes Service name is never a target -- it resolves through
+CoreDNS and the instance sits outside the cluster -- so an in-cluster
+ClickHouse is reached with `kubectl port-forward` from `bastion shell`,
+over the EKS API grant below. Each target's key and port are known at plan
+time, so the toolbox can be enabled in the dial before the first apply, and
+reaching a broker proves reachability, TLS and SASL. A client that
 must follow metadata to the other brokers -- most real Kafka clients do --
 runs on the instance instead, via `bastion shell`, because the advertised
 hostnames resolve only inside the VPC. `kcat` is there where AL2023's repos

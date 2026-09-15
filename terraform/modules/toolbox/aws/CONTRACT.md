@@ -26,6 +26,7 @@ this module's to close; see "Out of scope" at the end.
 | `session_log_retention_days` | `number` | Default 90. Deliberately independent of `telemetry.retention_days` -- `#18`. |
 | `kms_key_arn` | `string` | The deployment CMK. Used via an IAM role policy, never a key policy of this module's own -- `#6` (see "What this module deliberately does NOT write"). |
 | `targets` | `map(object({ host, port }))` | Named forward targets, computed by the aws root from ITS OTHER modules' outputs. Host and port are fixed at plan time -- `#1`, `#7`. |
+| `eks_cluster_security_group_id` | `string` | The EKS control plane's own group. This module adds ONE ingress rule to it, 443 from the toolbox's own group, gated on `enabled`. Empty adds no rule. |
 | `force_destroy_session_logs` | `bool` | Follows the root's `tags.lifecycle` the way `cloudtrail.tf`'s bucket does. |
 | `tags` | `map(string)` | The governance tag set. Merged with `dfe.hyperi.io/component = toolbox` on every resource -- the tag every IAM condition example below scopes against. |
 
@@ -274,9 +275,14 @@ naming it
 
 ## Rules this module follows
 
-- **Zero ingress rules, unconditionally.** Not "0.0.0.0/0 on some port
-  removed" -- no `aws_vpc_security_group_ingress_rule` resource exists in
-  this module at all.
+- **Zero ingress rules on the toolbox's OWN group, unconditionally.** Not
+  "0.0.0.0/0 on some port removed" -- nothing ever reaches the instance, and
+  SSM's control channel and every forward are initiated from it. The one
+  ingress rule this module declares goes on the EKS control plane's group
+  instead: 443, referencing the toolbox's group rather than a CIDR, gated on
+  `enabled` so `bastion down` takes it away. Without it the `eks-api` forward
+  times out against an open client side, because that group trusts nodes and
+  pods and a new group is neither.
 - **`down` is a terminate, never a stop.** `instance_initiated_shutdown_behavior
   = "terminate"` plus `count = var.enabled ? 1 : 0` on the instance resource
   itself: the instance does not exist when `enabled` is false, and a stopped

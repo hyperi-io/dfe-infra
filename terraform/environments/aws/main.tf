@@ -351,20 +351,38 @@ locals {
   // AL2023 publishing the package -- see toolbox/aws/CONTRACT.md and
   // docs/deployment/toolbox.md.
   managed_kafka_selected = contains(["msk", "confluent-cloud", "redpanda-cloud"], var.kafka.provider)
-  toolbox_kafka_targets = local.managed_kafka_selected ? {
-    kafka = {
-      host = split(":", split(",", local.managed_kafka.bootstrap)[0])[0]
-      port = local.managed_kafka.bootstrap_port
-    }
-  } : {}
+  toolbox_kafka_targets = local.managed_kafka_selected ? merge(
+    {
+      kafka = {
+        host = split(":", split(",", local.managed_kafka.bootstrap)[0])[0]
+        port = local.managed_kafka.bootstrap_port
+      }
+    },
+    // MSK's SASL/IAM listener, a SECOND target rather than a variant of the
+    // one above: it is a different port with different authentication, and
+    // without its own entry nothing opens 9098 in the toolbox's egress. Gated
+    // on the provider token, not on bootstrap_iam being non-empty, for the
+    // plan-time reason stated above -- the endpoint is unknown until the
+    // cluster exists, and a for_each key may not be. Confluent Cloud and
+    // Redpanda Cloud publish no IAM listener at all.
+    var.kafka.provider == "msk" ? {
+      kafka-iam = {
+        host = split(":", split(",", local.managed_kafka.bootstrap_iam)[0])[0]
+        port = 9098
+      }
+    } : {},
+  ) : {}
 
-  // endpoints.clickhouse_host is estate-specific and blank in the committed
-  // dial template (deployment.example.yaml) -- when the deployer has not
-  // filled it in there is no address to forward to, so no target is added
-  // rather than guessing at the in-cluster Service DNS name. 9440 is
-  // ClickHouse's native protocol over TLS (helm/charts/network-policies'
-  // own values.yaml documents this port for the same reason).
-  toolbox_clickhouse_target = var.endpoints.clickhouse_host != "" ? {
+  // A Kubernetes Service name resolves through CoreDNS, inside the cluster,
+  // and the instance sits outside it -- so advertising one as a forward target
+  // names an address that can never resolve from the box advertising it. An
+  // in-cluster ClickHouse is reached over the eks-api target instead, with
+  // `kubectl port-forward` from the toolbox shell. A ClickHouse the deployer
+  // brought (ClickHouse Cloud, a VM in the VPC) has a real address and keeps
+  // its target. 9440 is the native protocol over TLS (helm/charts/
+  // network-policies' own values.yaml documents this port for the same reason).
+  clickhouse_host_is_in_cluster = endswith(var.endpoints.clickhouse_host, ".cluster.local") || endswith(var.endpoints.clickhouse_host, ".svc")
+  toolbox_clickhouse_target = var.endpoints.clickhouse_host != "" && !local.clickhouse_host_is_in_cluster ? {
     clickhouse = {
       host = var.endpoints.clickhouse_host
       port = 9440
@@ -404,6 +422,11 @@ module "toolbox" {
 
   kms_key_arn = module.cluster.kms_key_arn
   targets     = local.toolbox_targets
+
+  // The one group the toolbox needs admitting to that it does not own -- the
+  // module adds a single 443 ingress rule naming its own group, and takes it
+  // away again on `bastion down`.
+  eks_cluster_security_group_id = module.cluster.cluster_security_group_id
 
   // Follows tags.lifecycle the same way cloudtrail.tf's bucket does: an
   // ephemeral tyre-kick deployment is rebuilt under the same name and needs

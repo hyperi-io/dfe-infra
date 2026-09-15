@@ -76,10 +76,15 @@ variables {
   session_log_retention_days = 90
   kms_key_arn                = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
 
+  // The shape the aws root computes: the API, MSK's SCRAM and IAM listeners,
+  // and a ClickHouse the deployer brought. An in-cluster Service name is never
+  // a target -- it resolves through CoreDNS and the instance is outside the
+  // cluster -- so the root drops it and this fixture never carries one either.
   targets = {
     eks-api    = { host = "ABCDEF1234.gr7.us-west-2.eks.amazonaws.com", port = 443 }
     kafka      = { host = "b-1.mock.kafka.us-west-2.amazonaws.com", port = 9096 }
-    clickhouse = { host = "dfe-clickhouse.dfe.svc.cluster.local", port = 9440 }
+    kafka-iam  = { host = "b-1.mock.kafka.us-west-2.amazonaws.com", port = 9098 }
+    clickhouse = { host = "clickhouse.mock.internal", port = 9440 }
   }
 
   force_destroy_session_logs = true
@@ -112,10 +117,14 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
     error_message = "the instance must never take a public IP"
   }
 
-  // No aws_vpc_security_group_ingress_rule resource exists in this module at
-  // all -- there is nothing to assert an empty count of, so the absence of
-  // the resource type itself IS the contract. This checks the egress side
-  // only carries the rules this module actually declares.
+  // The only ingress rule this module declares goes on the EKS control plane's
+  // group, never on its own, and only when a caller names that group. Nothing
+  // ever reaches the instance itself.
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.eks_api) == 0
+    error_message = "no cluster security group named means no ingress rule anywhere"
+  }
+
   assert {
     condition     = length(aws_vpc_security_group_egress_rule.control) == 1
     error_message = "exactly one control-plane (443) egress rule must exist"
@@ -140,6 +149,24 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
     error_message = "the kafka target's port (9096) must have its own egress rule"
   }
 
+  // MSK's IAM listener is a target of its own, so it gets a rule of its own --
+  // nothing opened 9098 while the SCRAM port was the only named target.
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_egress_rule.targets : r if r.from_port == 9098
+    ]) == 1
+    error_message = "the kafka-iam target's port (9098) must have its own egress rule"
+  }
+
+  // 443 is already open to 0.0.0.0/0 for the SSM control channel, so a target
+  // on it adds nothing and must not render a second, narrower rule.
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_egress_rule.targets : r if r.from_port == 443
+    ]) == 0
+    error_message = "the eks-api target must not duplicate the control-plane egress rule"
+  }
+
   assert {
     condition     = aws_instance.this[0].metadata_options[0].http_tokens == "required" && aws_instance.this[0].metadata_options[0].http_put_response_hop_limit == 1
     error_message = "IMDSv2 must be required at hop limit 1"
@@ -153,6 +180,55 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
   assert {
     condition     = aws_instance.this[0].instance_initiated_shutdown_behavior == "terminate"
     error_message = "an OS shutdown must terminate the instance -- that is the whole self-terminate mechanism, and it needs no IAM grant"
+  }
+}
+
+// --- the Kubernetes API is reachable only once the control plane's own group
+// admits this instance. Egress on 443 is the client half and was never the
+// problem: the cluster group trusts nodes and pods, and a brand-new group is
+// neither, so the eks-api forward timed out against an open client side.
+
+run "the_cluster_group_admits_the_toolbox_on_the_api_port" {
+  command = plan
+
+  variables {
+    eks_cluster_security_group_id = "sg-00000000000000000"
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.eks_api) == 1
+    error_message = "a named cluster security group must get exactly one ingress rule"
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.eks_api[0].security_group_id == var.eks_cluster_security_group_id
+    error_message = "the rule goes on the CLUSTER's group, never on the toolbox's own"
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.eks_api[0].referenced_security_group_id == aws_security_group.this[0].id
+    error_message = "the grant must name the toolbox's group, never a CIDR -- a CIDR would admit the whole VPC"
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.eks_api[0].from_port == 443 && aws_vpc_security_group_ingress_rule.eks_api[0].to_port == 443
+    error_message = "the grant must be the API port alone"
+  }
+}
+
+// The grant is gated on `enabled` like everything else here, so `bastion down`
+// takes it away with the instance rather than leaving a standing hole.
+run "the_cluster_group_grant_goes_away_with_the_instance" {
+  command = plan
+
+  variables {
+    enabled                       = false
+    eks_cluster_security_group_id = "sg-00000000000000000"
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.eks_api) == 0
+    error_message = "a disabled toolbox must leave no ingress rule on the cluster's group"
   }
 }
 
@@ -232,7 +308,7 @@ run "forward_documents_fix_host_and_port_with_no_override_parameter" {
   command = plan
 
   assert {
-    condition     = length(aws_ssm_document.forward) == 3
+    condition     = length(aws_ssm_document.forward) == length(var.targets)
     error_message = "one forward document must exist per entry in var.targets"
   }
 

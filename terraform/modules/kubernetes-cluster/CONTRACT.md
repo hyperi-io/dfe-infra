@@ -59,6 +59,7 @@ map(object({
 | `cluster_ca` | `string`, sensitive | Base64 cluster CA for a kubeconfig. |
 | `cluster_version` | `string` | The version the cloud actually runs, which can lead the requested one. |
 | `oidc_issuer` | `string` | The cluster's OIDC issuer URL. |
+| `cluster_security_group_id` | `string` | The group that admits a caller to the Kubernetes API. Nodes and pods are trusted already; anything else in the VPC has to be admitted by name. |
 | `network` | `object({ vpc_id, cidr, azs, private_subnet_ids, public_subnet_ids })` | What the managed-kafka module attaches to. |
 | `private_zone_id` | `string` | |
 | `public_zone_id` | `string` | `""` when there is no public zone. |
