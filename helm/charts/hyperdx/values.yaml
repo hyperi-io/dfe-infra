@@ -119,10 +119,10 @@ dashboards:
   requireRefs: true
   image:
     repository: ""     # empty -> {{ global.registry }}/dfe-engine
-    tag: "v1.20.10"     # == versions.yaml apps.dfe-engine (drift-checked)
+    tag: "v1.20.11"     # == versions.yaml apps.dfe-engine (drift-checked)
     # The immutable half of the pin; GHCR tags are mutable. This init container
     # runs the ENGINE image, so it is versions.yaml digests.dfe-engine (drift-checked).
-    digest: "sha256:121da27b51c1d6d2a5f018d0b00a94e538e20ff42fd9e7b9f9fc47e330c32044"
+    digest: "sha256:c9febd25f0c5bc1e5d1adba0c7528d06079ea486e6dac8c5f4ebac985c834c5e"
     pullPolicy: IfNotPresent
   resources:
     requests:
