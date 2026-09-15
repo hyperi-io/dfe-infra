@@ -618,6 +618,67 @@ run "aws_karpenter_nodes_can_join" {
   }
 }
 
+// EC2 checks the launching principal's own KMS permissions before honouring an
+// EC2NodeClass's encrypted blockDeviceMappings -- the controller role that
+// calls RunInstances/CreateFleet, never the node role the instance assumes.
+run "aws_karpenter_controller_can_use_the_deployment_key_for_ebs_encryption" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = aws_iam_role_policy.karpenter_kms.role == aws_iam_role.karpenter.name
+    error_message = "the KMS grant must be on the controller role, not the node role"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement : s.Action if s.Sid == "AllowEBSEncryptionActions"
+    ][0] == ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"]
+    error_message = "the direct-use statement must name exactly the actions AWS documents for a service that launches EC2 instances with a customer managed key"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement : s.Action if s.Sid == "AllowEBSEncryptionGrants"
+    ][0] == "kms:CreateGrant"
+    error_message = "the grant statement must name exactly kms:CreateGrant, never a wider action"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement : s.Resource == aws_kms_key.this.arn
+    ])
+    error_message = "both statements must be scoped to this deployment's own key, never a wildcard resource"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement :
+      s.Condition.StringEquals["kms:ViaService"] if s.Sid == "AllowEBSEncryptionActions"
+    ][0] == "ec2.${var.provision.region}.amazonaws.com"
+    error_message = "the direct-use statement must be usable only when EC2 is the caller, never the controller calling KMS directly"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement :
+      s.Condition.StringEquals["kms:ViaService"] if s.Sid == "AllowEBSEncryptionGrants"
+    ][0] == "ec2.${var.provision.region}.amazonaws.com"
+    error_message = "the grant statement must also be usable only when EC2 is the caller"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement :
+      s.Condition.Bool["kms:GrantIsForAWSResource"] if s.Sid == "AllowEBSEncryptionGrants"
+    ][0] == "true"
+    error_message = "the grant statement must be restricted to a grant EC2 creates for itself, matching AWS's own required key-policy condition on CreateGrant"
+  }
+}
+
 // Both selector terms in the EC2NodeClass match on this one tag, so a subnet or
 // security group missing it is capacity Karpenter cannot see.
 run "aws_karpenter_network_is_discoverable" {

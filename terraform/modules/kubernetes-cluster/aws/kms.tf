@@ -1,7 +1,8 @@
 // ONE customer-managed key per deployment, not one per service. EKS envelope-
-// encrypts Kubernetes Secrets with it today; MSK's data at rest and the EBS
-// volumes behind the stateful pods take the same key, so a customer has one key
-// to audit, one to rotate and one to revoke.
+// encrypts Kubernetes Secrets with it today; MSK's data at rest, the EBS
+// volumes behind the stateful pods and every node Karpenter boots (its
+// EC2NodeClass encrypts the root volume with the same key) take it too, so a
+// customer has one key to audit, one to rotate and one to revoke.
 
 resource "aws_kms_key" "this" {
   description         = "${var.name} (${var.env}) -- Kubernetes secrets, Kafka and block storage"

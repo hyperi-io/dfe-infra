@@ -16,6 +16,10 @@
 // website/content/en/docs/getting-started/getting-started-with-karpenter/cloudformation.yaml
 // at v1.14.1, with the instance-profile lifecycle statements dropped: the
 // profile is created here, so the controller never creates, tags or deletes one.
+//
+// That published policy carries no KMS statement, because it has no idea which
+// key a caller's EC2NodeClass might encrypt volumes with. karpenter_kms below
+// supplies that separately, against this deployment's own key.
 
 locals {
   // The one tag both selector terms match on. The value is the cluster name so
@@ -370,6 +374,73 @@ resource "aws_iam_role_policy" "karpenter_lifecycle" {
   name   = "${var.name}-karpenter-lifecycle"
   role   = aws_iam_role.karpenter.name
   policy = data.aws_iam_policy_document.karpenter_lifecycle.json
+}
+
+// RunInstances and CreateFleet are called under this role's credentials, so it
+// is this role -- never the node role the instance itself assumes -- that EC2
+// checks for KMS permission before it will attach an encrypted root volume.
+// Without this grant every launch fails Client.InvalidKMSKey.InvalidState and
+// the instance is terminated within seconds of joining.
+//
+// Built with jsonencode() directly rather than a data "aws_iam_policy_document"
+// -- the same choice kms.tf and object-store.tf explain: a mocked
+// aws_iam_policy_document's .json always returns the mock's fixed default
+// regardless of the statement blocks, so a module test could not assert this
+// policy carries the right actions and conditions.
+locals {
+  karpenter_kms_policy_statements = [
+    {
+      // The action list AWS documents for a service that launches EC2
+      // instances with a customer managed key
+      // (autoscaling/ec2/userguide/key-policy-requirements-EBS-encryption.html).
+      Sid    = "AllowEBSEncryptionActions"
+      Effect = "Allow"
+      Action = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey",
+      ]
+      Resource = aws_kms_key.this.arn
+      // The controller has no reason to touch this key outside a node launch,
+      // so the grant is usable only when EC2 is the caller on its behalf.
+      Condition = {
+        StringEquals = {
+          "kms:ViaService" = "ec2.${var.provision.region}.amazonaws.com"
+        }
+      }
+    },
+    {
+      // CreateGrant is what lets the controller delegate a subset of its own
+      // key permissions to EC2 for the life of the instance being launched.
+      Sid      = "AllowEBSEncryptionGrants"
+      Effect   = "Allow"
+      Action   = "kms:CreateGrant"
+      Resource = aws_kms_key.this.arn
+      Condition = {
+        StringEquals = {
+          "kms:ViaService" = "ec2.${var.provision.region}.amazonaws.com"
+        }
+        // Restricts the grant to one an AWS service creates for itself,
+        // matching the condition AWS's own key-policy documentation requires
+        // on CreateGrant.
+        Bool = {
+          "kms:GrantIsForAWSResource" = "true"
+        }
+      }
+    },
+  ]
+}
+
+resource "aws_iam_role_policy" "karpenter_kms" {
+  name = "${var.name}-karpenter-kms"
+  role = aws_iam_role.karpenter.name
+
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.karpenter_kms_policy_statements
+  })
 }
 
 data "aws_iam_policy_document" "karpenter_iam" {
