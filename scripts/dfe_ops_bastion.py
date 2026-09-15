@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         scripts/dfe_ops_bastion.py
-#  Purpose:      `dfe-ops bastion` -- up/shell/forward/down/status for the
-#                on-demand SSM-managed toolbox instance
+#  Purpose:      `dfe-ops bastion` -- up/join/peers/hub/shell/forward/down/
+#                status for the on-demand SSM-managed toolbox instance
 #                (terraform/modules/toolbox/aws). Split into its own module
 #                the way tester_idp.py and resolve_pins.py already are, and
 #                imported into dfe-ops's build_parser() the same way.
@@ -15,12 +15,19 @@
     dfe-ops bastion up [--ttl MIN]     flip toolbox.enabled on in the dial,
                                        apply just the toolbox target, wait for
                                        SSM to report PingStatus Online.
+    dfe-ops bastion join [--ttl MIN]  mint an admin peer on the fleet tunnel,
+                                       install it on the instance over SSM Run
+                                       Command, and prove a handshake.
+    dfe-ops bastion peers             the hub's peers: name, tunnel address and
+                                       last handshake.
+    dfe-ops bastion hub <peer>        reach one appliance through the tunnel.
     dfe-ops bastion shell             open the logged shell Session.
     dfe-ops bastion forward <t> <p>   port-forward to a named target on local
                                        port <p> -- NOT recorded by Session
                                        Manager (toolbox/aws/CONTRACT.md #6).
-    dfe-ops bastion down              flip toolbox.enabled off, apply, then
-                                       PROVE nothing remains.
+    dfe-ops bastion down              revoke the admin peer, flip
+                                       toolbox.enabled off, apply, then PROVE
+                                       nothing remains.
     dfe-ops bastion status            report the toolbox's current state.
 
 `up`/`down` edit deployment.yaml (the dial) in place, then shell out to
@@ -28,6 +35,12 @@ render_dial.py --tofu and tofu apply -- the same two steps an operator would
 run by hand, just for the toolbox target alone. `shell`/`forward` shell out to
 the real `aws ssm start-session`, inheriting this process's stdio, because a
 Session Manager session needs a real terminal.
+
+`join`, `peers`, `hub` and `down`'s revocation drive culvert's own CLI inside
+its pod, so they share one kubectl boundary the way `_run` is the tofu one. The
+admin peer's PRIVATE key is minted on the instance and never leaves it: culvert
+takes the public half (`generate-client --pubkey`) and writes a placeholder the
+instance substitutes locally, so no private key ever rides an SSM parameter.
 """
 
 from __future__ import annotations
@@ -70,6 +83,39 @@ TOOLBOX_TARGETS = (
 
 DEFAULT_WAIT_TIMEOUT = 300.0
 DEFAULT_POLL_INTERVAL = 5.0
+
+# --- the fleet tunnel ---------------------------------------------------------
+# The hub is culvert (helm/edge/culvert), and everything below reaches it
+# through its own CLI in its own pod. Nothing here talks to the tunnel directly.
+
+# The Argo cluster secret bootstrap.sh writes, and the annotation on it carrying
+# the tunnel's Elastic IP (terraform/modules/edge/aws).
+CLUSTER_SECRET_NAMESPACE = "argocd"
+CLUSTER_SECRET = "secret/dfe-cluster"
+TUNNEL_ADDRESS_JSONPATH = r"jsonpath={.metadata.annotations.dfe\.hyperi\.io/tunnel_address}"
+
+# dfe-common.selectorLabels on the culvert chart -- {project}-{component}.
+CULVERT_SELECTOR = "app.kubernetes.io/name=dfe-culvert"
+# culvert's own paths: the PKI directory its scripts default to, the peer
+# allocation map its WireGuard half writes there, and where it drops a config.
+CULVERT_ALLOCATIONS = "/etc/vpn/pki/wireguard/allocations.json"
+CULVERT_CLIENTS = "/etc/vpn/clients"
+# The interface culvert brings up, and the separate one the toolbox brings up.
+HUB_INTERFACE = "wg0"
+ADMIN_INTERFACE = "dfe-admin"
+ADMIN_PEER_NAME = "bastion-admin"
+ADMIN_KEY_PATH = f"/etc/wireguard/{ADMIN_INTERFACE}.key"
+ADMIN_CONF_PATH = f"/etc/wireguard/{ADMIN_INTERFACE}.conf"
+# culvert writes this wherever the client generated its own keypair, so the
+# private half never leaves the machine that minted it (lib/wireguard.py).
+PRIVATE_KEY_PLACEHOLDER = "YOUR_PRIVATE_KEY_HERE"
+# The admin peer this machine minted, its deadline and the namespace that
+# issued it, so `down` revokes THAT peer rather than guessing at a name.
+ADMIN_STATE = REPO_ROOT / ".tmp" / "bastion-admin-peer.json"
+DEFAULT_ADMIN_TTL_MINUTES = 60
+# Mirrors peers.classes.admin.reach in helm/edge/culvert/values.yaml -- the
+# ports an appliance accepts from the admin peer on its tunnel interface.
+ADMIN_REACH = (22, 443)
 
 
 class BastionError(RuntimeError):
@@ -207,6 +253,389 @@ def _output(outputs: dict[str, object], name: str, default: object = "") -> obje
     if not isinstance(entry, dict):
         return default
     return entry.get("value", default)
+
+
+def _instance_id() -> str:
+    instance_id = str(_output(_tofu_outputs(), "toolbox_instance_id"))
+    if not instance_id:
+        raise BastionError("no toolbox instance -- run `dfe-ops bastion up` first")
+    return instance_id
+
+
+# --- the kubectl boundary -----------------------------------------------------
+# One function every culvert call goes through, so a test mocks exactly this for
+# the hub verbs the way it mocks _run for tofu.
+
+
+def _kubectl(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["kubectl", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+def _namespace(args: argparse.Namespace) -> str:
+    return getattr(args, "namespace", None) or os.environ.get("DFE_NAMESPACE") or "dfe"
+
+
+def _culvert_pod(namespace: str) -> str:
+    """The running culvert pod, by the chart's own selector labels."""
+    result = _kubectl([
+        "-n", namespace, "get", "pods",
+        "-l", CULVERT_SELECTOR,
+        "--field-selector=status.phase=Running",
+        "-o", "jsonpath={.items[0].metadata.name}",
+    ])
+    pod = result.stdout.strip()
+    if result.returncode != 0 or not pod:
+        raise BastionError(
+            f"no running culvert pod in namespace {namespace} -- the fleet tunnel is"
+            " an opt-in app (docs/deployment/edge-vpn.md), so deploy it before joining"
+        )
+    return pod
+
+
+def _culvert(namespace: str, pod: str, argv: list[str]) -> str:
+    """Run one of culvert's own commands in its pod and return its stdout."""
+    result = _kubectl(["-n", namespace, "exec", pod, "--", *argv])
+    if result.returncode != 0:
+        raise BastionError(f"culvert `{' '.join(argv)}` failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def _tunnel_address() -> str:
+    """The Elastic IP the tunnel answers on, off the cluster secret.
+
+    Empty on `edge.ingest.tunnel.address.mode: byo`, where the deployer holds an
+    address this deployment never sees and opens the toolbox's UDP egress
+    themselves (terraform/modules/toolbox/aws variables.tf `tunnel`).
+    """
+    result = _kubectl([
+        "-n", CLUSTER_SECRET_NAMESPACE, "get", CLUSTER_SECRET,
+        "-o", TUNNEL_ADDRESS_JSONPATH,
+    ])
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+# --- the hub's peers ----------------------------------------------------------
+
+
+def _wg_table(text: str) -> dict[str, str]:
+    """`wg show <if> <field>` output -- one tab-separated pair per line."""
+    table: dict[str, str] = {}
+    for line in text.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0].strip():
+            table[parts[0].strip()] = parts[1].strip()
+    return table
+
+
+def _handshake(epoch: str) -> str:
+    try:
+        seconds = int(epoch)
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds <= 0:
+        return "never"
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
+
+
+def _peers(namespace: str, pod: str) -> list[dict[str, str]]:
+    """Every peer on the hub: name, tunnel address and last handshake.
+
+    Joined on the tunnel address rather than read out of wg0.conf, because that
+    file carries the server's own private key and none of this needs it.
+    """
+    allowed = _wg_table(_culvert(namespace, pod, ["wg", "show", HUB_INTERFACE, "allowed-ips"]))
+    handshakes = _wg_table(
+        _culvert(namespace, pod, ["wg", "show", HUB_INTERFACE, "latest-handshakes"])
+    )
+    try:
+        allocations = json.loads(_culvert(namespace, pod, ["cat", CULVERT_ALLOCATIONS]) or "{}")
+    except json.JSONDecodeError:
+        allocations = {}
+    by_address = {str(address): str(name) for name, address in allocations.items()}
+
+    peers: list[dict[str, str]] = []
+    for pubkey, allowed_ips in allowed.items():
+        address = allowed_ips.split(",")[0].strip().split("/")[0]
+        peers.append({
+            "name": by_address.get(address, "(unallocated)"),
+            "address": address,
+            "handshake": _handshake(handshakes.get(pubkey, "0")),
+        })
+    return sorted(peers, key=lambda peer: peer["name"])
+
+
+# --- SSM Run Command ----------------------------------------------------------
+
+
+def _ssm_run(instance_id: str, commands: list[str], *, comment: str,
+             timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
+    """One AWS-RunShellScript invocation, waited out, returning its stdout.
+
+    Run Command rather than a Session, because `join` installs a file and brings
+    an interface up unattended and a Session needs a terminal. Nothing secret
+    goes in `commands`: the parameters are retrievable from SSM afterwards.
+    """
+    sent = aws_cli.run_aws([
+        "ssm", "send-command",
+        "--instance-ids", instance_id,
+        "--document-name", "AWS-RunShellScript",
+        "--comment", comment,
+        "--parameters", json.dumps({"commands": commands}),
+        "--output", "json",
+    ], timeout=60)
+    if sent.returncode != 0:
+        raise BastionError(f"{comment}: ssm send-command failed -- {sent.stderr.strip()}")
+    try:
+        command_id = json.loads(sent.stdout or "{}")["Command"]["CommandId"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise BastionError(f"{comment}: ssm send-command returned no command id") from error
+
+    deadline = time.monotonic() + timeout
+    while True:
+        got = aws_cli.run_aws([
+            "ssm", "get-command-invocation",
+            "--command-id", command_id,
+            "--instance-id", instance_id,
+            "--output", "json",
+        ], timeout=30)
+        if got.returncode == 0:
+            try:
+                body = json.loads(got.stdout or "{}")
+            except json.JSONDecodeError:
+                body = {}
+            status = str(body.get("Status", ""))
+            if status and status not in ("Pending", "InProgress", "Delayed"):
+                if status != "Success":
+                    raise BastionError(
+                        f"{comment}: the instance reported {status} -- "
+                        f"{str(body.get('StandardErrorContent', '')).strip()}"
+                    )
+                return str(body.get("StandardOutputContent", ""))
+        if time.monotonic() >= deadline:
+            raise BastionError(f"{comment}: the Run Command invocation never finished")
+        time.sleep(DEFAULT_POLL_INTERVAL)
+
+
+# --- join ---------------------------------------------------------------------
+
+
+def _mint_instance_key(instance_id: str) -> str:
+    """The admin peer's keypair, minted ON the instance so the private half
+    never crosses a wire or lands in the SSM command history."""
+    out = _ssm_run(instance_id, [
+        "set -eu",
+        "command -v wg >/dev/null 2>&1 || dnf install -y wireguard-tools",
+        "install -d -m 0700 /etc/wireguard",
+        f"test -s {ADMIN_KEY_PATH} || (umask 077; wg genkey > {ADMIN_KEY_PATH})",
+        f"wg pubkey < {ADMIN_KEY_PATH}",
+    ], comment="mint the admin peer keypair")
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    if not lines:
+        raise BastionError(
+            "the instance returned no public key -- check that wireguard-tools"
+            " installed (AL2023 pulls it from the default repos)"
+        )
+    return lines[-1]
+
+
+def _peer_address(config: str) -> str:
+    """The tunnel address the issued config carries."""
+    for line in config.splitlines():
+        if line.startswith("Address = "):
+            return line.split("=", 1)[1].strip().split("/")[0]
+    raise BastionError("the issued config carries no Address line")
+
+
+def _admin_config(config: str, address: str) -> str:
+    """The issued config, made fit for the instance.
+
+    The Endpoint host becomes the tunnel's own address, so the dial does not
+    wait on a published DNS name. The DNS line goes, because wg-quick needs
+    resolvconf to honour it and the admin peer has no use for the fleet's
+    resolvers. AllowedIPs narrows to the peer's own /24, so only hub traffic
+    goes down the tunnel and the instance keeps its own route out.
+    """
+    peer_address = _peer_address(config)
+    octets = peer_address.split(".")
+    if len(octets) != 4:
+        raise BastionError(f"the issued config's Address {peer_address!r} is not IPv4")
+    hub_range = f"{octets[0]}.{octets[1]}.{octets[2]}.0/24"
+
+    out: list[str] = []
+    for line in config.splitlines():
+        if line.startswith("DNS = "):
+            continue
+        if line.startswith("AllowedIPs = "):
+            out.append(f"AllowedIPs = {hub_range}")
+            continue
+        if line.startswith("Endpoint = "):
+            port = line.rsplit(":", 1)[-1].strip()
+            out.append(f"Endpoint = {address}:{port}")
+            continue
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
+def _issue_admin_config(namespace: str, pod: str, public_key: str) -> str:
+    """Mint the admin peer on the hub and read back the config it wrote."""
+    _culvert(namespace, pod, [
+        "generate-client",
+        "--name", ADMIN_PEER_NAME,
+        "--protocol", "wireguard",
+        "--pubkey", public_key,
+    ])
+    return _culvert(namespace, pod, ["cat", f"{CULVERT_CLIENTS}/{ADMIN_PEER_NAME}-wg-split.conf"])
+
+
+def _install_admin_config(instance_id: str, config: str) -> None:
+    """Write the config, fill the private key in locally, bring the tunnel up."""
+    _ssm_run(instance_id, [
+        "set -eu",
+        "umask 077",
+        f"cat > {ADMIN_CONF_PATH} <<'DFE_ADMIN_CONF'\n{config}DFE_ADMIN_CONF",
+        f'sed -i "s|{PRIVATE_KEY_PLACEHOLDER}|$(cat {ADMIN_KEY_PATH})|" {ADMIN_CONF_PATH}',
+        f"wg-quick down {ADMIN_INTERFACE} >/dev/null 2>&1 || true",
+        f"wg-quick up {ADMIN_CONF_PATH}",
+    ], comment="install the admin peer config and bring its tunnel up")
+
+
+def _prove_handshake(instance_id: str, hub_address: str) -> None:
+    """A handshake, not a bring-up: wg-quick reports success on a config that
+    reaches nothing, so the peer is only joined once the hub has answered."""
+    out = _ssm_run(instance_id, [
+        "set -eu",
+        f"ping -c 2 -W 2 {hub_address} >/dev/null 2>&1 || true",
+        f"wg show {ADMIN_INTERFACE} latest-handshakes",
+    ], comment="prove the admin peer completed a handshake")
+    if not any(_handshake(value) != "never" for value in _wg_table(out).values()):
+        raise BastionError(
+            "the admin peer is installed but has completed no handshake -- check the"
+            " toolbox security group's UDP egress rule and the tunnel's own"
+            " loadBalancerSourceRanges"
+        )
+
+
+def _record_admin_peer(namespace: str, ttl_minutes: int) -> None:
+    """The peer's name, namespace and deadline, so `down` revokes what this
+    machine minted and the deadline is a fact on disk rather than an intention."""
+    ADMIN_STATE.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(ADMIN_STATE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({
+            "name": ADMIN_PEER_NAME,
+            "namespace": namespace,
+            "ttl_minutes": ttl_minutes,
+            "expires_at": int(time.time()) + ttl_minutes * 60,
+        }, handle)
+
+
+def cmd_bastion_join(args: argparse.Namespace) -> int:
+    namespace = _namespace(args)
+    ttl_minutes = args.ttl or DEFAULT_ADMIN_TTL_MINUTES
+    try:
+        instance_id = _instance_id()
+        pod = _culvert_pod(namespace)
+        address = _tunnel_address()
+        if not address:
+            raise BastionError(
+                "the cluster secret carries no dfe.hyperi.io/tunnel_address, so there"
+                " is no address to dial and the toolbox security group has no UDP"
+                " egress rule -- set edge.ingest.tunnel.address.mode to forwarder, or"
+                " open that egress yourself against the address you brought"
+            )
+        public_key = _mint_instance_key(instance_id)
+        config = _admin_config(_issue_admin_config(namespace, pod, public_key), address)
+        _install_admin_config(instance_id, config)
+        peer_address = _peer_address(config)
+        hub_address = ".".join([*peer_address.split(".")[:3], "1"])
+        _prove_handshake(instance_id, hub_address)
+    except BastionError as error:
+        print(f"dfe-ops bastion: {error}", file=sys.stderr)
+        return 1
+
+    _record_admin_peer(namespace, ttl_minutes)
+    print(
+        f"dfe-ops bastion: joined the hub as {ADMIN_PEER_NAME} on {peer_address}, "
+        f"revoke by {_handshake(str(int(time.time()) + ttl_minutes * 60))}",
+        file=sys.stderr,
+    )
+    print(
+        "A config that reaches EVERY appliance is the one credential client"
+        " isolation does not stop, so it is minted per session and never stored --"
+        " `dfe-ops bastion down` revokes it before the instance is terminated.",
+        file=sys.stderr,
+    )
+    print("  dfe-ops bastion peers", file=sys.stderr)
+    print("  dfe-ops bastion hub <peer>", file=sys.stderr)
+    return 0
+
+
+# --- peers --------------------------------------------------------------------
+
+
+def cmd_bastion_peers(args: argparse.Namespace) -> int:
+    namespace = _namespace(args)
+    try:
+        peers = _peers(namespace, _culvert_pod(namespace))
+    except BastionError as error:
+        print(f"dfe-ops bastion: {error}", file=sys.stderr)
+        return 1
+    if not peers:
+        print("dfe-ops bastion: the hub has no peers", file=sys.stderr)
+        return 0
+    print(f"{'name':<28} {'tunnel address':<16} last handshake", file=sys.stderr)
+    for peer in peers:
+        print(f"{peer['name']:<28} {peer['address']:<16} {peer['handshake']}", file=sys.stderr)
+    return 0
+
+
+# --- hub ----------------------------------------------------------------------
+
+
+def cmd_bastion_hub(args: argparse.Namespace) -> int:
+    namespace = _namespace(args)
+    try:
+        instance_id = _instance_id()
+        document = str(_output(_tofu_outputs(), "toolbox_ssm_session_document"))
+        if args.port not in ADMIN_REACH:
+            raise BastionError(
+                f"port {args.port} is outside the admin class's reach {list(ADMIN_REACH)}"
+                " (peers.classes.admin.reach in helm/edge/culvert/values.yaml)"
+            )
+        peers = _peers(namespace, _culvert_pod(namespace))
+        peer = next((p for p in peers if p["name"] == args.peer), None)
+        if peer is None:
+            names = ", ".join(p["name"] for p in peers) or "(none)"
+            raise BastionError(f"unknown peer {args.peer!r} -- the hub carries: {names}")
+    except BastionError as error:
+        print(f"dfe-ops bastion: {error}", file=sys.stderr)
+        return 1
+
+    # A Port session cannot reach a peer: every forward document fixes its host
+    # and port at PLAN time (toolbox/aws/CONTRACT.md), and a peer's tunnel
+    # address is not known then. The logged shell is the session that can.
+    print(
+        f"dfe-ops bastion: {peer['name']} is at {peer['address']}:{args.port} through the"
+        f" tunnel, last handshake {peer['handshake']}",
+        file=sys.stderr,
+    )
+    reach = f"ssh {peer['address']}" if args.port == 22 else f"curl https://{peer['address']}/"
+    print(f"  {reach}", file=sys.stderr)
+    print(
+        "This is the LOGGED shell session; a forward cannot reach a peer, because"
+        " every forward document fixes its host and port at plan time.",
+        file=sys.stderr,
+    )
+    return _run_interactive(
+        ["aws", "ssm", "start-session", "--target", instance_id, "--document-name", document]
+    )
 
 
 # --- up ------------------------------------------------------------------
@@ -388,10 +817,53 @@ def cmd_bastion_forward(args: argparse.Namespace) -> int:
 # --- down ------------------------------------------------------------------
 
 
-def _prove_teardown(instance_id: str) -> int:
+def _revoke_admin_peer() -> int:
+    """Revoke the admin peer this machine minted, and prove it off the hub.
+
+    Runs BEFORE the apply, because the instance is terminated rather than
+    stopped and a peer left behind is a credential nobody tracks. A WireGuard
+    peer carries no CRL entry -- culvert revokes it by removing it from the
+    live interface and refuses to report success when it cannot -- so the proof
+    is the hub's own peer list, which is stronger than a certificate serial.
+    """
+    if not ADMIN_STATE.is_file():
+        print("  [ok] admin peer: none joined from this machine", file=sys.stderr)
+        return 0
+    try:
+        state = json.loads(ADMIN_STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    name = str(state.get("name") or ADMIN_PEER_NAME)
+    namespace = str(state.get("namespace") or "dfe")
+
+    try:
+        pod = _culvert_pod(namespace)
+        _culvert(namespace, pod, ["revoke-client", "--protocol", "wireguard", name])
+        remaining = [peer["name"] for peer in _peers(namespace, pod)]
+    except BastionError as error:
+        print(
+            f"  [FAIL] admin peer {name}: {error} -- revoke it by hand with"
+            f" `kubectl -n {namespace} exec <culvert pod> --"
+            f" revoke-client --protocol wireguard {name}`",
+            file=sys.stderr,
+        )
+        return 1
+
+    if name in remaining:
+        print(f"  [FAIL] admin peer {name}: still on the hub after revocation", file=sys.stderr)
+        return 1
+    ADMIN_STATE.unlink(missing_ok=True)
+    print(f"  [ok] admin peer {name}: revoked and off the hub", file=sys.stderr)
+    return 0
+
+
+def _prove_teardown(instance_id: str, problems: int = 0) -> int:
     """Query and print each of the four things a leak would look like --
-    never trust a single check, and never claim done without evidence."""
-    problems = 0
+    never trust a single check, and never claim done without evidence.
+
+    `problems` carries the admin peer's own verdict in, so one summary line
+    covers both halves of a `down`.
+    """
 
     if instance_id:
         result = aws_cli.run_aws(
@@ -476,6 +948,11 @@ def cmd_bastion_down(args: argparse.Namespace) -> int:
     outputs_before = _tofu_outputs()
     instance_id = str(_output(outputs_before, "toolbox_instance_id"))
 
+    # Revoke FIRST: the config dies with the instance, but the peer entry on the
+    # hub does not, and a failure here still terminates -- the instance is what
+    # bills and what holds the private key -- with the summary reporting it.
+    admin_problems = _revoke_admin_peer()
+
     try:
         _set_toolbox_enabled(False)
     except BastionError as error:
@@ -494,7 +971,7 @@ def cmd_bastion_down(args: argparse.Namespace) -> int:
         SCRATCH_KUBECONFIG.unlink()
         print(f"dfe-ops bastion: removed {SCRATCH_KUBECONFIG}", file=sys.stderr)
 
-    return _prove_teardown(instance_id)
+    return _prove_teardown(instance_id, admin_problems)
 
 
 # --- status ------------------------------------------------------------------
@@ -539,6 +1016,23 @@ def cmd_bastion_status(args: argparse.Namespace) -> int:
     targets = _output(outputs, "toolbox_targets", {})
     names = ", ".join(sorted(targets)) if isinstance(targets, dict) and targets else "(none)"
     print(f"forward targets: {names}", file=sys.stderr)
+
+    # The admin peer's deadline is a fact on disk rather than an intention, so
+    # an operator can see a peer that has outlived the session that minted it.
+    if ADMIN_STATE.is_file():
+        try:
+            state = json.loads(ADMIN_STATE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            state = {}
+        expires = int(state.get("expires_at") or 0)
+        overdue = " (OVERDUE -- run `dfe-ops bastion down`)" if expires and expires < time.time() else ""
+        print(
+            f"admin peer:      {state.get('name', ADMIN_PEER_NAME)}, "
+            f"revoke by {_handshake(str(expires))}{overdue}",
+            file=sys.stderr,
+        )
+    else:
+        print("admin peer:      none joined from this machine", file=sys.stderr)
     return 0
 
 
@@ -549,10 +1043,18 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
     """Register `dfe-ops bastion` and its actions."""
     bastion = sub.add_parser(
         "bastion",
-        help="up/shell/forward/down/status for the on-demand SSM-managed toolbox instance",
+        help="up/join/peers/hub/shell/forward/down/status for the on-demand SSM-managed toolbox instance",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     actions = bastion.add_subparsers(dest="bastion_action", required=True, metavar="<action>")
+
+    def with_namespace(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        """The namespace culvert runs in, for every verb that reaches its pod."""
+        parser.add_argument(
+            "--namespace", default=None,
+            help="namespace the fleet tunnel runs in (default: DFE_NAMESPACE, else dfe)",
+        )
+        return parser
 
     up = actions.add_parser(
         "up",
@@ -565,6 +1067,36 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
         help="seconds to wait for the instance to report PingStatus Online",
     )
     up.set_defaults(func=cmd_bastion_up)
+
+    join = with_namespace(actions.add_parser(
+        "join",
+        help="mint an admin peer on the fleet tunnel, install it over SSM, prove a handshake",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    ))
+    join.add_argument(
+        "--ttl", type=int, default=None, metavar="MIN",
+        help="minutes before the admin peer is due for revocation, recorded for `down` and `status`",
+    )
+    join.set_defaults(func=cmd_bastion_join)
+
+    peers = with_namespace(actions.add_parser(
+        "peers",
+        help="the hub's peers: name, tunnel address and last handshake",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    ))
+    peers.set_defaults(func=cmd_bastion_peers)
+
+    hub = with_namespace(actions.add_parser(
+        "hub",
+        help="reach one appliance through the tunnel, in the LOGGED shell Session",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    ))
+    hub.add_argument("peer", help="a name from `dfe-ops bastion peers`")
+    hub.add_argument(
+        "--port", type=int, default=ADMIN_REACH[0],
+        help=f"the appliance port to reach, within the admin class's reach {list(ADMIN_REACH)}",
+    )
+    hub.set_defaults(func=cmd_bastion_hub)
 
     shell = actions.add_parser(
         "shell",
@@ -584,7 +1116,7 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
 
     down = actions.add_parser(
         "down",
-        help="flip toolbox.enabled off, apply, and prove nothing remains",
+        help="revoke the admin peer, flip toolbox.enabled off, apply, and prove nothing remains",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     down.set_defaults(func=cmd_bastion_down)

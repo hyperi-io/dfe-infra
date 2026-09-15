@@ -242,6 +242,82 @@ run "one_port_on_both_sides_of_the_boundary_gets_a_rule_each" {
   }
 }
 
+// Joining the hub as an admin peer is a UDP handshake, and every other egress
+// rule here is TCP -- without this one the handshake leaves and nothing answers.
+run "the_tunnel_address_opens_udp_egress_on_each_listener_and_nowhere_else" {
+  command = plan
+
+  variables {
+    tunnel = {
+      address = "198.51.100.7"
+      ports   = [51820, 1194]
+    }
+  }
+
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_egress_rule.tunnel : r.from_port
+    ]) == toset([51820, 1194])
+    error_message = "each tunnel listener must get its own egress rule"
+  }
+
+  assert {
+    condition = alltrue([
+      for r in aws_vpc_security_group_egress_rule.tunnel :
+      r.ip_protocol == "udp" && r.cidr_ipv4 == "198.51.100.7/32" && r.from_port == r.to_port
+    ])
+    error_message = "the tunnel rules must be UDP to the tunnel address alone, one port each"
+  }
+
+  assert {
+    condition = alltrue([
+      for r in aws_vpc_security_group_egress_rule.targets : r.ip_protocol == "tcp"
+    ])
+    error_message = "the forward targets must stay TCP -- the tunnel is the only UDP egress here"
+  }
+}
+
+// byo carries no address this deployment ever sees, so there is nothing to aim
+// a rule at and the instance keeps its TCP-only egress.
+run "no_tunnel_address_opens_no_udp_egress_at_all" {
+  command = plan
+
+  assert {
+    condition     = length(aws_vpc_security_group_egress_rule.tunnel) == 0
+    error_message = "an empty tunnel.address must render no egress rule"
+  }
+}
+
+run "the_tunnel_egress_goes_away_with_the_instance" {
+  command = plan
+
+  variables {
+    enabled = false
+    tunnel = {
+      address = "198.51.100.7"
+      ports   = [51820]
+    }
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_egress_rule.tunnel) == 0
+    error_message = "`bastion down` must take the tunnel egress away with the security group"
+  }
+}
+
+run "rejects_a_tunnel_address_that_is_not_an_ip" {
+  command = plan
+
+  variables {
+    tunnel = {
+      address = "vpn.example.com"
+      ports   = [51820]
+    }
+  }
+
+  expect_failures = [var.tunnel]
+}
+
 run "rejects_a_target_scope_outside_the_two" {
   command = plan
 

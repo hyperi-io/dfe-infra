@@ -131,6 +131,13 @@ def test_set_toolbox_field_refuses_an_unknown_field() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _isolated_admin_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reads or writes the repo's own recorded admin peer, so a
+    developer who has actually joined a hub does not change what these assert."""
+    monkeypatch.setattr(bastion, "ADMIN_STATE", tmp_path / "isolated-admin-peer.json")
+
+
 def _ok(stdout_obj: object = None) -> subprocess.CompletedProcess:
     stdout = json.dumps(stdout_obj) if stdout_obj is not None else ""
     return subprocess.CompletedProcess(args=["aws"], returncode=0, stdout=stdout, stderr="")
@@ -208,9 +215,352 @@ def _dial_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str = DIAL
 def _args(**overrides: object) -> bastion.argparse.Namespace:
     import argparse
 
-    base: dict[str, object] = {"ttl": None, "wait_timeout": 1.0, "target": None, "local_port": None}
+    base: dict[str, object] = {
+        "ttl": None, "wait_timeout": 1.0, "target": None, "local_port": None,
+        "namespace": "dfe", "peer": None, "port": 22,
+    }
     base.update(overrides)
     return argparse.Namespace(**base)
+
+
+# ---------------------------------------------------------------------------
+# The hub -- a fake culvert behind the one kubectl boundary
+# ---------------------------------------------------------------------------
+
+ISSUED_CONFIG = """[Interface]
+PrivateKey = YOUR_PRIVATE_KEY_HERE
+Address = 100.64.2.5/32
+DNS = 1.1.1.1, 1.0.0.1
+MTU = 1420
+
+[Peer]
+PublicKey = c2VydmVycHVibGlja2V5MDAwMDAwMDAwMDAwMDAwMDAw
+Endpoint = vpn.example.com:51820
+AllowedIPs = 198.19.0.0/16, 100.64.2.0/24
+PersistentKeepalive = 25
+"""
+
+APPLIANCE_KEY = "YXBwbGlhbmNlMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw"
+ADMIN_KEY = "YWRtaW4wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMA"
+
+
+class FakeCulvert:
+    """culvert's pod, answering the calls the hub verbs actually make.
+
+    Mutable, so a revocation really removes the peer and the proof that follows
+    it reads the changed state rather than a fixture that never moves.
+    """
+
+    def __init__(self, *, tunnel_address: str = "198.51.100.7", handshake: str = "1789000000") -> None:
+        self.tunnel_address = tunnel_address
+        self.allocations = {"hub-appliance-1": "100.64.2.2", bastion.ADMIN_PEER_NAME: "100.64.2.5"}
+        self.allowed = {APPLIANCE_KEY: "100.64.2.2/32", ADMIN_KEY: "100.64.2.5/32"}
+        self.handshakes = {APPLIANCE_KEY: handshake, ADMIN_KEY: handshake}
+        self.revoke_sticks = True
+        self.calls: list[list[str]] = []
+
+    def _table(self, rows: dict[str, str]) -> str:
+        return "".join(f"{key}\t{value}\n" for key, value in rows.items())
+
+    def __call__(self, args: list[str]) -> subprocess.CompletedProcess:
+        self.calls.append(args)
+        if "pods" in args:
+            return _text("dfe-culvert-7d9f")
+        if bastion.CLUSTER_SECRET in args:
+            return _text(self.tunnel_address)
+        if "allowed-ips" in args:
+            return _text(self._table(self.allowed))
+        if "latest-handshakes" in args:
+            return _text(self._table(self.handshakes))
+        if bastion.CULVERT_ALLOCATIONS in args:
+            return _text(json.dumps(self.allocations))
+        if "generate-client" in args:
+            return _text("")
+        if f"{bastion.CULVERT_CLIENTS}/{bastion.ADMIN_PEER_NAME}-wg-split.conf" in args:
+            return _text(ISSUED_CONFIG)
+        if "revoke-client" in args:
+            if self.revoke_sticks:
+                self.allocations.pop(bastion.ADMIN_PEER_NAME, None)
+                self.allowed.pop(ADMIN_KEY, None)
+            return _text("")
+        return _text("")
+
+
+def _text(stdout: str) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout=stdout, stderr="")
+
+
+def _mock_kubectl(monkeypatch: pytest.MonkeyPatch, hub: FakeCulvert | None = None) -> FakeCulvert:
+    hub = hub or FakeCulvert()
+    monkeypatch.setattr(bastion, "_kubectl", hub)
+    return hub
+
+
+def _ssm(*outputs: str) -> list[subprocess.CompletedProcess]:
+    """One send-command plus one get-command-invocation per Run Command."""
+    responses: list[subprocess.CompletedProcess] = []
+    for out in outputs:
+        responses.append(_ok({"Command": {"CommandId": "c-0123456789abcdef0"}}))
+        responses.append(_ok({"Status": "Success", "StandardOutputContent": out}))
+    return responses
+
+
+def _mock_admin_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    state = tmp_path / "bastion-admin-peer.json"
+    monkeypatch.setattr(bastion, "ADMIN_STATE", state)
+    return state
+
+
+# ---------------------------------------------------------------------------
+# peers
+# ---------------------------------------------------------------------------
+
+
+def test_peers_joins_the_allocations_to_the_live_handshakes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _mock_kubectl(monkeypatch)
+    rc = bastion.cmd_bastion_peers(_args())
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    assert "hub-appliance-1" in err
+    assert "100.64.2.2" in err
+    assert "2026-" in err
+
+
+def test_peers_never_reads_the_file_carrying_the_servers_private_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """wg0.conf would name every peer in one read and carries the server key."""
+    hub = _mock_kubectl(monkeypatch)
+    bastion.cmd_bastion_peers(_args())
+    assert not any("wg0.conf" in " ".join(call) for call in hub.calls)
+
+
+def test_peers_reports_a_peer_that_has_never_handshaken(monkeypatch: pytest.MonkeyPatch,
+                                                        capsys: pytest.CaptureFixture) -> None:
+    hub = FakeCulvert()
+    hub.handshakes[APPLIANCE_KEY] = "0"
+    _mock_kubectl(monkeypatch, hub)
+    bastion.cmd_bastion_peers(_args())
+    assert "never" in capsys.readouterr().err
+
+
+def test_peers_refuses_when_the_tunnel_is_not_deployed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(bastion, "_kubectl", lambda args: _text(""))
+    assert bastion.cmd_bastion_peers(_args()) == 1
+    assert "no running culvert pod" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# join
+# ---------------------------------------------------------------------------
+
+
+def test_admin_config_pins_the_endpoint_drops_dns_and_narrows_allowed_ips() -> None:
+    out = bastion._admin_config(ISSUED_CONFIG, "198.51.100.7")
+    assert "Endpoint = 198.51.100.7:51820" in out
+    assert "DNS = " not in out
+    assert "AllowedIPs = 100.64.2.0/24" in out
+    # The service range must not follow the tunnel, or the instance loses its
+    # own route to anything the deployment runs in the VPC.
+    assert "198.19.0.0/16" not in out
+    assert bastion.PRIVATE_KEY_PLACEHOLDER in out
+
+
+def test_join_mints_the_private_key_on_the_instance_and_ships_only_the_public_half(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = _mock_kubectl(monkeypatch)
+    _mock_admin_state(tmp_path, monkeypatch)
+    _mock_outputs(monkeypatch)
+    aws_calls = _mock_aws(monkeypatch, *_ssm(ADMIN_KEY, "", f"{ADMIN_KEY}\t1789000000\n"))
+
+    assert bastion.cmd_bastion_join(_args()) == 0
+
+    # culvert is handed the PUBLIC key and nothing else of the pair.
+    issue = next(call for call in hub.calls if "generate-client" in call)
+    assert "--pubkey" in issue
+    assert issue[issue.index("--pubkey") + 1] == ADMIN_KEY
+    # Nothing sent to SSM carries a private key -- only the placeholder culvert
+    # wrote, which the instance substitutes from its own file.
+    sent = " ".join(" ".join(call) for call in aws_calls)
+    assert bastion.PRIVATE_KEY_PLACEHOLDER in sent
+    assert "wg genkey" in sent
+
+
+def test_join_refuses_with_no_tunnel_address_on_the_cluster_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """byo brings an address this deployment never sees, so there is nothing to
+    dial and no UDP egress rule aimed at it."""
+    _mock_kubectl(monkeypatch, FakeCulvert(tunnel_address=""))
+    _mock_admin_state(tmp_path, monkeypatch)
+    _mock_outputs(monkeypatch)
+    assert bastion.cmd_bastion_join(_args()) == 1
+    assert "no dfe.hyperi.io/tunnel_address" in capsys.readouterr().err
+
+
+def test_join_refuses_when_no_handshake_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """wg-quick reports success on a config that reaches nothing."""
+    _mock_kubectl(monkeypatch)
+    state = _mock_admin_state(tmp_path, monkeypatch)
+    _mock_outputs(monkeypatch)
+    _mock_aws(monkeypatch, *_ssm(ADMIN_KEY, "", f"{ADMIN_KEY}\t0\n"))
+
+    assert bastion.cmd_bastion_join(_args()) == 1
+    assert "completed no handshake" in capsys.readouterr().err
+    assert not state.exists()
+
+
+def test_join_records_the_peer_and_its_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_kubectl(monkeypatch)
+    state = _mock_admin_state(tmp_path, monkeypatch)
+    _mock_outputs(monkeypatch)
+    _mock_aws(monkeypatch, *_ssm(ADMIN_KEY, "", f"{ADMIN_KEY}\t1789000000\n"))
+
+    assert bastion.cmd_bastion_join(_args(ttl=30)) == 0
+    recorded = json.loads(state.read_text(encoding="utf-8"))
+    assert recorded["name"] == bastion.ADMIN_PEER_NAME
+    assert recorded["ttl_minutes"] == 30
+    assert recorded["expires_at"] > 0
+    assert state.stat().st_mode & 0o777 == 0o600
+
+
+def test_join_refuses_without_an_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _mock_kubectl(monkeypatch)
+    _mock_admin_state(tmp_path, monkeypatch)
+    _mock_outputs(monkeypatch, {})
+    assert bastion.cmd_bastion_join(_args()) == 1
+    assert "bastion up" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# hub
+# ---------------------------------------------------------------------------
+
+
+def test_hub_opens_the_logged_shell_session_for_a_known_peer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _mock_kubectl(monkeypatch)
+    _mock_outputs(monkeypatch)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(bastion, "_run_interactive", lambda cmd: calls.append(cmd) or 0)
+
+    assert bastion.cmd_bastion_hub(_args(peer="hub-appliance-1", port=22)) == 0
+    err = capsys.readouterr().err
+
+    assert "100.64.2.2:22" in err
+    assert calls[0][:3] == ["aws", "ssm", "start-session"]
+    assert "--document-name" in calls[0]
+    assert calls[0][calls[0].index("--document-name") + 1] == "dfe-test-toolbox-shell"
+
+
+def test_hub_refuses_a_port_outside_the_admin_classs_reach(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _mock_kubectl(monkeypatch)
+    _mock_outputs(monkeypatch)
+    assert bastion.cmd_bastion_hub(_args(peer="hub-appliance-1", port=9000)) == 1
+    assert "outside the admin class's reach" in capsys.readouterr().err
+
+
+def test_hub_refuses_an_unknown_peer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _mock_kubectl(monkeypatch)
+    _mock_outputs(monkeypatch)
+    assert bastion.cmd_bastion_hub(_args(peer="not-a-peer", port=443)) == 1
+    assert "unknown peer" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# down -- revoke before terminate
+# ---------------------------------------------------------------------------
+
+
+def _joined_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    state = _mock_admin_state(tmp_path, monkeypatch)
+    state.write_text(
+        json.dumps({"name": bastion.ADMIN_PEER_NAME, "namespace": "dfe",
+                    "ttl_minutes": 60, "expires_at": 1789003600}),
+        encoding="utf-8",
+    )
+    return state
+
+
+def test_down_revokes_the_admin_peer_before_the_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    state = _joined_state(tmp_path, monkeypatch)
+    hub = _mock_kubectl(monkeypatch)
+    monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
+    _mock_run(monkeypatch, subprocess.CompletedProcess(args=["render"], returncode=0),
+              subprocess.CompletedProcess(args=["tofu"], returncode=0))
+    _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
+
+    rc = bastion.cmd_bastion_down(_args())
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    assert "revoked and off the hub" in err
+    assert "CLEAN" in err
+    assert not state.exists()
+    revoke_at = next(i for i, call in enumerate(hub.calls) if "revoke-client" in call)
+    proof_at = next(i for i, call in enumerate(hub.calls) if "allowed-ips" in call)
+    assert revoke_at < proof_at
+
+
+def test_down_reports_non_zero_when_the_peer_survives_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A peer left on the hub is a credential nobody tracks, and the instance is
+    still terminated -- it is what bills, and it holds the private key."""
+    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    state = _joined_state(tmp_path, monkeypatch)
+    hub = FakeCulvert()
+    hub.revoke_sticks = False
+    _mock_kubectl(monkeypatch, hub)
+    monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
+    _mock_run(monkeypatch, subprocess.CompletedProcess(args=["render"], returncode=0),
+              subprocess.CompletedProcess(args=["tofu"], returncode=0))
+    _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
+
+    rc = bastion.cmd_bastion_down(_args())
+    err = capsys.readouterr().err
+
+    assert rc == 1
+    assert "still on the hub" in err
+    assert "INCOMPLETE" in err
+    assert state.exists()
+
+
+def test_down_with_no_admin_peer_touches_the_cluster_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Nothing joined means nothing to revoke, and no kubectl call at all."""
+    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _mock_admin_state(tmp_path, monkeypatch)
+    hub = _mock_kubectl(monkeypatch)
+    monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
+    _mock_run(monkeypatch, subprocess.CompletedProcess(args=["render"], returncode=0),
+              subprocess.CompletedProcess(args=["tofu"], returncode=0))
+    _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
+
+    assert bastion.cmd_bastion_down(_args()) == 0
+    assert hub.calls == []
+    assert "none joined from this machine" in capsys.readouterr().err
 
 
 def test_up_sets_enabled_applies_and_waits_for_online(
@@ -553,3 +903,26 @@ def test_status_reports_ping_and_active_sessions(
     assert "active sessions: 1" in err
     assert "eks-api" in err
     assert "kafka" in err
+    assert "none joined from this machine" in err
+
+
+def test_status_reports_an_admin_peer_past_its_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A recorded deadline is the only bound there is: culvert issues a
+    WireGuard peer with no expiry of its own."""
+    _mock_outputs(monkeypatch)
+    state = _mock_admin_state(tmp_path, monkeypatch)
+    state.write_text(
+        json.dumps({"name": bastion.ADMIN_PEER_NAME, "namespace": "dfe",
+                    "ttl_minutes": 60, "expires_at": 1}),
+        encoding="utf-8",
+    )
+    _mock_aws(
+        monkeypatch,
+        _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}),
+        _ok({"Sessions": []}),
+    )
+
+    assert bastion.cmd_bastion_status(_args()) == 0
+    assert "OVERDUE" in capsys.readouterr().err

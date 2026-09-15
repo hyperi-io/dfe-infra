@@ -124,6 +124,25 @@ variable "targets" {
   }
 }
 
+variable "tunnel" {
+  description = "The fleet tunnel this instance dials when it joins the hub as an admin peer (`dfe-ops bastion join`, docs/deployment/edge-vpn.md). address is the edge module's own tunnel_address output and ports are its tunnel_listener_ports, so neither is restated here. Both are empty on edge.tunnel.address.mode byo, where the deployer holds an address this deployment never sees, and on a deployment with no tunnel at all -- an empty address renders NO egress rule, so a deployer bringing their own address opens that egress themselves. This is the only UDP egress the toolbox has: every other rule here is TCP, and without it a WireGuard handshake leaves and nothing answers, which reads as a broken peer config and is not."
+  type = object({
+    address = string
+    ports   = list(number)
+  })
+  default = { address = "", ports = [] }
+
+  validation {
+    condition     = var.tunnel.address == "" || can(cidrnetmask("${var.tunnel.address}/32"))
+    error_message = "tunnel.address must be an IPv4 address (the edge module's tunnel_address output) or empty. Got ${var.tunnel.address}."
+  }
+
+  validation {
+    condition     = alltrue([for p in var.tunnel.ports : p > 0 && p < 65536])
+    error_message = "every tunnel.ports entry must be a UDP port between 1 and 65535."
+  }
+}
+
 variable "eks_cluster_security_group_id" {
   description = "The EKS control plane's own security group (kubernetes-cluster/aws's cluster_security_group_id). This module adds ONE ingress rule to it, 443 from the toolbox's own group, because nothing else admits the instance to the Kubernetes API: nodes and pods are trusted by that group already, and a brand-new group is not. That group is SHARED with the nodes -- karpenter.tf tags it for node discovery -- so the grant reaches TCP/443 on every Karpenter node too, which is a residual only while nothing hostNetwork binds 443 there. The rule is gated on `enabled` like everything else here, so `bastion down` takes the grant away with the instance. Empty adds no rule at all, for a caller with no cluster to reach."
   type        = string

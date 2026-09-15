@@ -93,6 +93,23 @@ resource "aws_vpc_security_group_egress_rule" "targets" {
   description = "Forward target on ${each.value.port}, scope ${each.value.scope}"
 }
 
+// The tunnel's own UDP listeners -- the only non-TCP egress this module has.
+// Scoped to the one address the edge module built, so it reaches the tunnel and
+// nothing else on the internet, and absent entirely when there is no such
+// address (variables.tf `tunnel`).
+resource "aws_vpc_security_group_egress_rule" "tunnel" {
+  for_each = var.enabled && var.tunnel.address != "" ? toset([for p in var.tunnel.ports : tostring(p)]) : toset([])
+
+  security_group_id = aws_security_group.this[0].id
+
+  cidr_ipv4   = "${var.tunnel.address}/32"
+  ip_protocol = "udp"
+  from_port   = tonumber(each.value)
+  to_port     = tonumber(each.value)
+
+  description = "Fleet tunnel listener ${each.value}/udp at ${var.tunnel.address}"
+}
+
 // The one rule this module puts on a security group it does not own. Egress on
 // 443 is not enough to reach the Kubernetes API: the control plane's own group
 // admits nodes and pods and nothing else, so the eks-api forward target times

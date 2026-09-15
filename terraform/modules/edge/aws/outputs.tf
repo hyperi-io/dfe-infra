@@ -23,6 +23,11 @@ output "tunnel_address" {
   value       = try(aws_eip.forwarder[0].public_ip, "")
 }
 
+output "tunnel_listener_ports" {
+  description = "The UDP ports clients dial, following the culvert chart's own listeners list. What the toolbox opens egress to when it joins the hub as an admin peer, so the ports are named once here rather than restated by every caller."
+  value       = [for p in local.tunnel_ports : p.port]
+}
+
 output "tunnel_zone" {
   description = "The availability zone the forwarder is pinned to, so the deployment can give culvert a matching nodeSelector -- a hop to a node in another zone crosses a boundary billed per GB. Empty on address.mode byo."
   value       = local.forwarder_enabled ? local.forwarder_zone : ""

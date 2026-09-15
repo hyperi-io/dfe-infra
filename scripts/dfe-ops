@@ -77,12 +77,15 @@ Subcommands:
                pins fresh" gate. Kills the hand look-up-a-sha-and-paste loop. The
                tag->digest core (scripts/registry_pins.py) is what dfe-deploy
                reuses to resolve an overlay's image.tag.
-  bastion      up/shell/forward/down/status for the on-demand SSM-managed
-               toolbox instance on a cloud-provisioned deployment
+  bastion      up/join/peers/hub/shell/forward/down/status for the on-demand
+               SSM-managed toolbox instance on a cloud-provisioned deployment
                (terraform/modules/toolbox/aws). up flips toolbox.enabled in
                the dial and applies just that target; forward is NOT recorded
                by Session Manager (toolbox/aws/CONTRACT.md); down proves
-               nothing remains rather than trusting the apply alone.
+               nothing remains rather than trusting the apply alone. join
+               makes the instance an admin peer on the fleet tunnel so hub
+               reaches one appliance through it, and down revokes that peer
+               before the instance is terminated.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,

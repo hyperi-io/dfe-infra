@@ -480,6 +480,14 @@ module "toolbox" {
   kms_key_arn = module.cluster.kms_key_arn
   targets     = local.toolbox_targets
 
+  // The fleet tunnel's address and listeners, so `dfe-ops bastion join` can
+  // dial the hub as an admin peer. Both empty unless the edge module built a
+  // forwarder, and an empty address renders no egress rule at all.
+  tunnel = {
+    address = try(one(module.edge[*].tunnel_address), "")
+    ports   = try(one(module.edge[*].tunnel_listener_ports), [])
+  }
+
   // The one group the toolbox needs admitting to that it does not own -- the
   // module adds a single 443 ingress rule naming its own group, and takes it
   // away again on `bastion down`.
