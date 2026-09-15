@@ -271,12 +271,12 @@ spec:
               {{- end }}
               {{- $adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr" }}
               {{- if $adminCIDR }}
-              # The subnet the toolbox instance lands in
-              # (terraform/modules/toolbox/aws pins the first private subnet).
-              # It is the one shape culvert's admin hole matches today -- a
-              # source off the pod's ethernet side, never a peer -- so an
-              # operator reaches one appliance by routing the client range at
-              # this pod rather than by dialling in.
+              # The toolbox instance's own /32, written on the cluster secret by
+              # `dfe-ops bastion up` and taken off by `down`. It is the one shape
+              # culvert's admin hole matches today -- a source off the pod's
+              # ethernet side, never a peer -- so an operator reaches one
+              # appliance by routing the client range at this pod rather than by
+              # dialling in.
               peers:
                 classes:
                   admin:

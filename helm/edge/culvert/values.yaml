@@ -158,10 +158,10 @@ peers:
       # is already on the LAN.
       enabled: false
       # The ranges an admin reaches appliances FROM, on the pod's ethernet
-      # side -- the toolbox subnet on a cloud flavour, written here by
-      # argocd/appsets/layer2-edge.yaml off the cluster secret. Every workload
-      # holding an address in these ranges is inside the hole, so the
-      # appliance's own ssh and TLS authentication is what bounds it.
+      # side -- the toolbox instance's own /32 on a cloud flavour, written here
+      # by argocd/appsets/layer2-edge.yaml off the cluster secret. Empty until
+      # `dfe-ops bastion up` puts an instance behind it, so there is no hole
+      # while no bastion is running.
       adminCIDRs: []
       # The range the admin peer's tunnel address is issued into, which has to
       # sit inside vpn.clientCIDR. Empty until the deployment names one.

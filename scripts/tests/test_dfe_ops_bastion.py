@@ -252,7 +252,8 @@ class FakeCulvert:
     """
 
     def __init__(self, *, tunnel_address: str = "198.51.100.7", handshake: str = "1789000000",
-                 pod_ip: str = "10.20.30.40", wg_network: str = "100.64.2.0/24") -> None:
+                 pod_ip: str = "10.20.30.40", wg_network: str = "100.64.2.0/24",
+                 admin_cidr: str = "") -> None:
         self.tunnel_address = tunnel_address
         self.allocations = {"hub-appliance-1": "100.64.2.2", bastion.ADMIN_PEER_NAME: "100.64.2.5"}
         self.allowed = {APPLIANCE_KEY: "100.64.2.2/32", ADMIN_KEY: "100.64.2.5/32"}
@@ -260,6 +261,10 @@ class FakeCulvert:
         self.pod_ip = pod_ip
         self.wg_network = wg_network
         self.revoke_sticks = True
+        # The range culvert is RUNNING with, and whether an annotation reaches
+        # it -- a chart that never re-renders is the failure `up` has to report.
+        self.admin_cidr = admin_cidr
+        self.annotation_sticks = True
         self.calls: list[list[str]] = []
 
     def _table(self, rows: dict[str, str]) -> str:
@@ -267,6 +272,8 @@ class FakeCulvert:
 
     def _pod(self) -> dict[str, object]:
         env = [{"name": bastion.WG_NETWORK_ENV, "value": self.wg_network}] if self.wg_network else []
+        if self.admin_cidr:
+            env.append({"name": bastion.ADMIN_CIDR_ENV, "value": self.admin_cidr})
         return {
             "status": {"podIP": self.pod_ip},
             "spec": {"containers": [{"name": "culvert", "env": env}]},
@@ -278,6 +285,11 @@ class FakeCulvert:
             return _text(json.dumps(self._pod()))
         if "pods" in args:
             return _text("dfe-culvert-7d9f")
+        if "annotate" in args:
+            written = next(arg for arg in args if arg.startswith(bastion.ADMIN_CIDR_ANNOTATION))
+            if self.annotation_sticks:
+                self.admin_cidr = "" if written.endswith("-") else written.split("=", 1)[1]
+            return _text("")
         if bastion.CLUSTER_SECRET in args:
             return _text(self.tunnel_address)
         if "allowed-ips" in args:
@@ -689,6 +701,164 @@ def test_up_targets_the_toolbox_module_and_nothing_else(
     assert [part for part in tofu_calls[1] if str(part).startswith("-target=")] == [
         "-target=module.toolbox"
     ]
+
+
+# ---------------------------------------------------------------------------
+# The admin hole -- one instance, opened by `up` and closed by `down`
+# ---------------------------------------------------------------------------
+
+ADMIN_CIDR = "10.42.1.37/32"
+REACH_BACK_OUTPUTS = {**TOOLBOX_OUTPUTS, bastion.ADMIN_CIDR_OUTPUT: {"value": ADMIN_CIDR}}
+
+
+def _annotations_written(hub: FakeCulvert) -> list[str]:
+    """Every annotation argument `up`/`down` put on the cluster secret."""
+    return [
+        arg
+        for call in hub.calls if "annotate" in call
+        for arg in call if arg.startswith(bastion.ADMIN_CIDR_ANNOTATION)
+    ]
+
+
+def test_up_admits_the_instances_own_slash_32_and_nothing_wider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The subnet a bastion sits in is shared with the node groups, Karpenter
+    and every pod under the VPC CNI, so the range written is one address."""
+    _dial_file(tmp_path, monkeypatch)
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_outputs(monkeypatch, REACH_BACK_OUTPUTS)
+    _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+    hub = _mock_kubectl(monkeypatch)
+
+    assert bastion.cmd_bastion_up(_args()) == 0
+    assert _annotations_written(hub) == [f"{bastion.ADMIN_CIDR_ANNOTATION}={ADMIN_CIDR}"]
+    assert ADMIN_CIDR.endswith("/32")
+    # The cluster secret, not the Application: an ApplicationSet controller
+    # reconciles a generated Application back to its own template.
+    assert any(bastion.CLUSTER_SECRET in call for call in hub.calls if "annotate" in call)
+
+
+def test_up_waits_until_culvert_itself_carries_the_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Argo reporting Synced is not the same fact as the pod running with the
+    range, so the wait reads culvert's own environment."""
+    _dial_file(tmp_path, monkeypatch)
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_outputs(monkeypatch, REACH_BACK_OUTPUTS)
+    _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+    hub = _mock_kubectl(monkeypatch)
+
+    assert bastion.cmd_bastion_up(_args()) == 0
+    assert hub.admin_cidr == ADMIN_CIDR
+    assert "culvert admits this instance alone" in capsys.readouterr().err
+
+
+def test_up_reports_non_zero_when_the_range_never_reaches_culvert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _dial_file(tmp_path, monkeypatch)
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_outputs(monkeypatch, REACH_BACK_OUTPUTS)
+    _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+    hub = FakeCulvert()
+    hub.annotation_sticks = False
+    _mock_kubectl(monkeypatch, hub)
+    monkeypatch.setattr(bastion.time, "sleep", lambda _seconds: None)
+
+    assert bastion.cmd_bastion_up(_args(wait_timeout=0.0)) == 1
+    assert bastion.ADMIN_CIDR_ENV in capsys.readouterr().err
+
+
+def test_up_opens_no_hole_when_the_dial_declines_the_reach_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _dial_file(tmp_path, monkeypatch)
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_outputs(monkeypatch)
+    _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+    hub = _mock_kubectl(monkeypatch)
+
+    assert bastion.cmd_bastion_up(_args()) == 0
+    assert _annotations_written(hub) == []
+    assert "admin range: none" in capsys.readouterr().err
+
+
+def test_down_removes_the_range_before_the_destroy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The address goes back to the subnet the moment the instance terminates,
+    so the range naming it comes off first."""
+    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    monkeypatch.setattr(bastion, "_tofu_outputs", lambda: REACH_BACK_OUTPUTS)
+    hub = _mock_kubectl(monkeypatch, FakeCulvert(admin_cidr=ADMIN_CIDR))
+    tofu_calls = _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
+
+    assert bastion.cmd_bastion_down(_args()) == 0
+    assert _annotations_written(hub) == [f"{bastion.ADMIN_CIDR_ANNOTATION}-"]
+    assert hub.admin_cidr == ""
+    # The annotation is off the secret before tofu is asked to destroy anything.
+    assert "destroy" in tofu_calls[1]
+
+
+def test_down_reports_non_zero_when_the_range_survives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    monkeypatch.setattr(bastion, "_tofu_outputs", lambda: REACH_BACK_OUTPUTS)
+    hub = FakeCulvert(admin_cidr=ADMIN_CIDR)
+    hub.annotation_sticks = False
+    _mock_kubectl(monkeypatch, hub)
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
+    monkeypatch.setattr(bastion.time, "sleep", lambda _seconds: None)
+
+    assert bastion.cmd_bastion_down(_args(wait_timeout=0.0)) == 1
+    assert "INCOMPLETE" in capsys.readouterr().err
+
+
+def test_the_hole_is_skipped_rather_than_failed_where_no_tunnel_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The fleet tunnel is an opt-in app, and no tunnel is no hole."""
+    _dial_file(tmp_path, monkeypatch)
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_outputs(monkeypatch, REACH_BACK_OUTPUTS)
+    _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+    monkeypatch.setattr(bastion, "_kubectl", lambda args: _text(""))
+
+    assert bastion.cmd_bastion_up(_args()) == 0
+    assert "no tunnel is deployed" in capsys.readouterr().err
 
 
 def test_up_with_ttl_overrides_ttl_minutes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

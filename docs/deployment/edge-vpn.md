@@ -171,21 +171,26 @@ on disk that `bastion status` reports.
 
 ### How wide the hole is
 
-`peers.classes.admin.adminCIDRs` is the toolbox instance's whole SUBNET, and
-under the VPC CNI a pod takes its address from the same subnet as its node. So
-the exception admits the toolbox, every cluster node in that zone and every pod
-on them -- not one host. A `/32` would be exact and would go stale, because the
-bastion is terminated and rebuilt on every `dfe-ops bastion up` while the range
-is written once at bootstrap.
+`peers.classes.admin.adminCIDRs` is the toolbox instance's own `/32` -- one
+host, not its subnet. That distinction is the whole point here: the subnet is a
+`/20` shared with every EKS managed node group, with Karpenter, and under the
+stock VPC CNI with every pod holding a secondary address on a node in that zone.
 
-Delivery is the bound that survives. A packet only reaches an appliance if
-something ROUTES the client range at the culvert pod, which takes the host
-network namespace: an ordinary pod cannot do it from inside its own, and node
-root can. Behind that stands the appliance's own ssh and TLS authentication.
-The range is written only when the deployment asked for the reach-back --
-`toolbox.enabled` and `edge.ingest.tunnel.admin_peer.enabled` together -- and no
-annotation is written otherwise, so culvert renders neither the env key nor the
-NetworkPolicy rule.
+A `/32` goes stale on its own, because the instance is terminated and rebuilt on
+every `dfe-ops bastion up`. So it is not written once at bootstrap: `up` learns
+the new address from the toolbox module's own output after its targeted apply,
+writes it on the Argo cluster secret, and waits until culvert's own
+`CULVERT_DOWNSTREAM_ADMIN_CIDRS` carries it. `down` takes it off and waits for
+that before the instance is destroyed. The cluster secret rather than the
+Application, because the ApplicationSet controller reconciles a generated
+Application back to its template and a patch there would not survive.
+
+So there is no hole at all while no bastion is up, and the one that exists names
+a single address. Delivery is the bound behind it: a packet only reaches an
+appliance if something ROUTES the client range at the culvert pod, which takes
+the host network namespace -- an ordinary pod cannot do it from inside its own,
+and node root can. Behind that stands the appliance's own ssh and TLS
+authentication.
 
 ### What a live run still has to prove
 

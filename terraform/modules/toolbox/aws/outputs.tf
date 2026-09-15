@@ -24,6 +24,11 @@ output "session_log_bucket" {
   value       = aws_s3_bucket.session_logs.bucket
 }
 
+output "admin_cidr" {
+  description = "The instance's own private address as a /32, which is the range culvert's admin exception is asked to admit. A /32 rather than the subnet because the subnet is a /20 the EKS node groups, Karpenter and every pod under the VPC CNI also hold addresses in. Empty when the toolbox is not enabled, so the hole closes with the instance."
+  value       = try("${aws_instance.this[0].private_ip}/32", "")
+}
+
 output "security_group_id" {
   description = "Empty when the toolbox is not enabled."
   value       = try(aws_security_group.this[0].id, "")

@@ -117,16 +117,17 @@ first, so an admin that DIALS IN is dropped before any rule naming it is
 reached. `dfe-ops bastion hub <peer>` therefore routes rather than dials: it
 programs the tunnel's client range at the culvert pod's own address, refreshes
 that route on every call because a roll moves the pod, and opens the LOGGED
-Session Manager shell. The subnet the toolbox lands in is what
+Session Manager shell. The toolbox instance's own `/32` is what
 `peers.classes.admin.adminCIDRs` names, and the chart refuses a range inside the
 client range or the whole internet. A VPC also has to route the client range at
 the culvert node's interface, with that interface's source/destination check
 off, or the packet never leaves the subnet.
 
-**That subnet is wider than the bastion**, and none of the reach-back has been
-exercised against a cluster.
-[edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) carries how
-wide, what bounds it, and the two claims a live run still has to prove.
+**The range is written by `bastion up` and removed by `down`**, so no hole
+exists while no bastion is running. None of the reach-back has been exercised
+against a cluster.
+[edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) carries what
+bounds it and the two claims a live run still has to prove.
 
 **Once `hyperi-io/culvert#40` lands**, the admin becomes a peer with a one-way
 isolation exception, minted per session and never stored, and `dfe-ops bastion

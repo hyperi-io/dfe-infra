@@ -107,10 +107,8 @@ output "DFE_TUNNEL_ZONE" {
 }
 
 output "DFE_TOOLBOX_ADMIN_CIDR" {
-  description = "The subnet the toolbox instance lands in -- modules/toolbox/aws pins private_subnet_ids[0], so this is that subnet and not the whole VPC. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/toolbox_admin_cidr annotation, which layer2-edge.yaml turns into culvert's peers.classes.admin.adminCIDRs: the one shape culvert's admin exception matches is a source arriving off the pod's ethernet side, never a peer. Every workload holding an address in this subnet is inside that hole -- which is why it is EMPTY unless the deployment actually asked for the reach-back: an empty value drops the annotation, and culvert then renders neither the env key nor the NetworkPolicy ingress rule."
-  value = var.toolbox.enabled && var.edge.enabled && var.edge.tunnel.admin_peer.enabled ? (
-    try(module.cluster.private_subnet_cidrs[0], "")
-  ) : ""
+  description = "The toolbox instance's OWN address as a /32, which is the range culvert's admin exception is asked to admit -- the one shape it matches is a source arriving off the pod's ethernet side, never a peer. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/toolbox_admin_cidr annotation and layer2-edge.yaml turns that into peers.classes.admin.adminCIDRs, while `dfe-ops bastion up` rewrites the same annotation each cycle because the instance is rebuilt and its address moves. Empty whenever no instance exists or the dial did not ask for the reach-back: an empty value drops the annotation, and culvert then renders neither the env key nor the NetworkPolicy ingress rule. It reads the toolbox module rather than the cluster's subnet list, which is also what puts it inside a `-target=module.toolbox` apply's own dependency set."
+  value       = var.edge.enabled && var.edge.tunnel.admin_peer.enabled ? module.toolbox.admin_cidr : ""
 }
 
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {

@@ -27,6 +27,9 @@ mock_provider "aws" {
   mock_resource "aws_instance" {
     defaults = {
       id = "i-0000000000000toolbox"
+      // The address culvert's admin exception is asked to admit, so a generated
+      // default would leave admin_cidr with nothing to assert on.
+      private_ip = "10.42.1.37"
     }
   }
 
@@ -116,6 +119,13 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
   assert {
     condition     = aws_instance.this[0].associate_public_ip_address == false
     error_message = "the instance must never take a public IP"
+  }
+
+  // culvert's admin exception admits this ONE host. The subnet it sits in is a
+  // /20 the EKS node groups, Karpenter and every pod under the VPC CNI share.
+  assert {
+    condition     = output.admin_cidr == "${aws_instance.this[0].private_ip}/32"
+    error_message = "admin_cidr must be the instance's own address as a /32, never its subnet"
   }
 
   // The only ingress rule this module declares goes on the EKS control plane's
@@ -624,6 +634,11 @@ run "disabled_renders_no_instance_but_keeps_the_log_bucket" {
   assert {
     condition     = length(aws_iam_role.this) == 0
     error_message = "enabled = false must render no IAM role"
+  }
+
+  assert {
+    condition     = output.admin_cidr == ""
+    error_message = "no instance must leave culvert's admin exception nothing to admit"
   }
 
   assert {

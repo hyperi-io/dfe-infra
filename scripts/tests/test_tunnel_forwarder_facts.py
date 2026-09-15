@@ -114,7 +114,12 @@ def test_the_appset_turns_the_zone_into_culverts_own_node_selector() -> None:
 def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class() -> None:
     """The range an operator reaches an appliance FROM is a cloud fact, and a
     chart that never receives it renders an admin class with no hole at all."""
-    assert 'output "DFE_TOOLBOX_ADMIN_CIDR"' in AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
+    outputs = AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
+    assert 'output "DFE_TOOLBOX_ADMIN_CIDR"' in outputs
+    # The instance's own /32, never the subnet it lands in -- that subnet is a
+    # /20 the node groups, Karpenter and every pod under the VPC CNI share.
+    assert "module.toolbox.admin_cidr" in outputs
+    assert "private_subnet_cidrs" not in outputs
     bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
     assert 'export DFE_TOOLBOX_ADMIN_CIDR="${DFE_TOOLBOX_ADMIN_CIDR:-}"' in bootstrap
     assert "${DFE_TOOLBOX_ADMIN_CIDR:+dfe.hyperi.io/toolbox_admin_cidr:" in bootstrap

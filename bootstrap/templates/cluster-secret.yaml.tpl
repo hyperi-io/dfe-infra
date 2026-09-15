@@ -126,10 +126,10 @@ metadata:
     # karpenter facts above.
     ${DFE_TUNNEL_ADDRESS_ANNOTATION}
     ${DFE_TUNNEL_ZONE_ANNOTATION}
-    # The subnet the toolbox instance lands in, which layer2-edge.yaml turns
-    # into culvert's peers.classes.admin.adminCIDRs -- the range an operator
-    # reaches one appliance from, on the pod's ethernet side. Blank on a
-    # flavour with no toolbox module.
+    # The toolbox instance's own /32, which layer2-edge.yaml turns into
+    # culvert's peers.classes.admin.adminCIDRs -- the range an operator reaches
+    # one appliance from, on the pod's ethernet side. Blank while no instance
+    # is running, and rewritten by `dfe-ops bastion up`.
     ${DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION}
 type: Opaque
 stringData:

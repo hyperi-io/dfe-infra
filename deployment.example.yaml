@@ -338,10 +338,10 @@ edge:
       ## WHAT `enabled: true` ACTUALLY OPENS TODAY: culvert accepts a source
       ## arriving off the pod's ethernet side, so `dfe-ops bastion hub <peer>`
       ## routes the tunnel's client range at the culvert pod rather than dialling
-      ## in. The range it accepts from is the toolbox instance's whole SUBNET,
-      ## which under the VPC CNI also holds cluster nodes and their pods -- see
-      ## docs/deployment/edge-vpn.md#how-wide-the-hole-is. Nothing is written at
-      ## all unless toolbox.enabled is true as well.
+      ## in. The range it accepts from is the toolbox instance's own /32, written
+      ## by `dfe-ops bastion up` and removed by `down` -- see
+      ## docs/deployment/edge-vpn.md#how-wide-the-hole-is. Nothing is admitted at
+      ## all while no bastion is running.
       ##
       ## `reach` is the ports an appliance accepts on its tunnel interface.
       ## `ttl_minutes` and `peer_cidr` belong to the PEER shape -- an admin peer

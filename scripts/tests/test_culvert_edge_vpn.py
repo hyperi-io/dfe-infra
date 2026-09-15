@@ -277,6 +277,28 @@ def test_an_admin_range_inside_the_client_range_is_refused() -> None:
            "reaches every appliance from anywhere" in err, err.strip()[-300:])
 
 
+def test_a_single_host_is_what_the_hole_is_meant_to_carry() -> None:
+    """`dfe-ops bastion up` writes the toolbox instance's own /32, so a /32 has
+    to render the same env key and the same NetworkPolicy rule a wider range
+    does -- the chart must not quietly require a range wider than one host."""
+    out = render("culvert",
+                 "--set", "peers.classes.admin.enabled=true",
+                 "--set", "peers.classes.admin.adminCIDRs={10.42.1.37/32}")
+    env = env_of(one(out, "Deployment", "dfe-culvert"))
+    expect("a /32 reaches culvert's own key",
+           env.get("CULVERT_DOWNSTREAM_ADMIN_CIDRS") == "10.42.1.37/32",
+           f"got {env.get('CULVERT_DOWNSTREAM_ADMIN_CIDRS')!r}")
+    policy = one(out, "NetworkPolicy", "dfe-culvert")
+    admitted = [rule for rule in policy["spec"]["ingress"]
+                if any("ipBlock" in source for source in rule.get("from", []))]
+    expect("and the NetworkPolicy admits that one host",
+           len(admitted) == 1 and admitted[0]["from"] == [{"ipBlock": {"cidr": "10.42.1.37/32"}}],
+           f"got {policy['spec']['ingress']!r}")
+    expect("on the appliance's own ports",
+           {port["port"] for port in admitted[0]["ports"]} == {22, 443},
+           f"got {admitted[0]['ports']!r}")
+
+
 def test_the_hole_stays_shut_until_a_range_names_it() -> None:
     out = render("culvert", "--set", "peers.classes.admin.enabled=true")
     env = env_of(one(out, "Deployment", "dfe-culvert"))
@@ -475,6 +497,7 @@ def main() -> int:
         test_the_admin_class_needs_a_range_inside_the_client_range()
         test_the_admin_hole_takes_a_source_off_the_pods_ethernet_side()
         test_an_admin_range_inside_the_client_range_is_refused()
+        test_a_single_host_is_what_the_hole_is_meant_to_carry()
         test_the_hole_stays_shut_until_a_range_names_it()
         test_a_cloud_flavour_keeps_its_pki_directory_across_a_restart()
         test_the_admin_class_is_on_only_where_a_root_can_supply_its_ranges()

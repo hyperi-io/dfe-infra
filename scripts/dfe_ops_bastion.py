@@ -14,7 +14,9 @@
 
     dfe-ops bastion up [--ttl MIN]     flip toolbox.enabled on in the dial,
                                        apply just the toolbox target, wait for
-                                       SSM to report PingStatus Online.
+                                       SSM to report PingStatus Online, and
+                                       admit this instance's own /32 on the
+                                       tunnel.
     dfe-ops bastion join [--ttl MIN]  mint an admin peer on the fleet tunnel --
                                        REFUSED until hyperi-io/culvert#40 lands.
     dfe-ops bastion peers             the hub's peers: name, tunnel address and
@@ -25,9 +27,10 @@
     dfe-ops bastion forward <t> <p>   port-forward to a named target on local
                                        port <p> -- NOT recorded by Session
                                        Manager (toolbox/aws/CONTRACT.md #6).
-    dfe-ops bastion down              revoke the admin peer, flip
-                                       toolbox.enabled off, destroy the toolbox
-                                       target, then PROVE nothing remains.
+    dfe-ops bastion down              revoke the admin peer, close the tunnel's
+                                       admin range, flip toolbox.enabled off,
+                                       destroy the toolbox target, then PROVE
+                                       nothing remains.
     dfe-ops bastion status            report the toolbox's current state.
 
 `up`/`down` edit deployment.yaml (the dial) in place, then shell out to
@@ -51,6 +54,12 @@ that exception is reached, so the reach-back that works today is a ROUTE: the
 toolbox sends the tunnel's client range at the culvert pod, which the VPC CNI
 gives a VPC address, and culvert forwards it to the appliance. The route is
 re-programmed on every `hub` call, because a roll gives the pod a new address.
+
+The range culvert admits is this instance's own /32, written on the Argo cluster
+secret by `up` and taken off by `down`. The instance is terminated and rebuilt
+each cycle, so the address moves and a range written once at bootstrap would go
+stale -- and the subnet it sits in is a /20 the node groups, Karpenter and every
+pod under the VPC CNI hold addresses in.
 """
 
 from __future__ import annotations
@@ -100,6 +109,13 @@ DEFAULT_POLL_INTERVAL = 5.0
 CLUSTER_SECRET_NAMESPACE = "argocd"
 CLUSTER_SECRET = "secret/dfe-cluster"
 TUNNEL_ADDRESS_JSONPATH = r"jsonpath={.metadata.annotations.dfe\.hyperi\.io/tunnel_address}"
+
+# The annotation on that same secret carrying the range culvert's admin
+# exception admits, the root output it is written from, and the env key the
+# chart renders it into.
+ADMIN_CIDR_ANNOTATION = "dfe.hyperi.io/toolbox_admin_cidr"
+ADMIN_CIDR_OUTPUT = "DFE_TOOLBOX_ADMIN_CIDR"
+ADMIN_CIDR_ENV = "CULVERT_DOWNSTREAM_ADMIN_CIDRS"
 
 # dfe-common.selectorLabels on the culvert chart -- {project}-{component}.
 CULVERT_SELECTOR = "app.kubernetes.io/name=dfe-culvert"
@@ -342,12 +358,10 @@ def _culvert(namespace: str, pod: str, argv: list[str]) -> str:
     return result.stdout
 
 
-def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
-    """The culvert pod's own address and the client range it forwards into.
-
-    One `kubectl get pod -o json` for both, because they are read together and
-    a second call could answer about a different pod after a roll.
-    """
+def _pod_body(namespace: str, pod: str) -> dict:
+    """One `kubectl get pod -o json`, parsed -- the single read every fact
+    below comes off, because a second call could answer about a different pod
+    after a roll."""
     result = _kubectl(["-n", namespace, "get", "pod", pod, "-o", "json"])
     if result.returncode != 0:
         raise BastionError(f"cannot read the culvert pod {pod}: {result.stderr.strip()}")
@@ -355,13 +369,24 @@ def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
         body = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as error:
         raise BastionError(f"the culvert pod {pod} returned no readable JSON") from error
+    return body if isinstance(body, dict) else {}
+
+
+def _pod_env(body: dict) -> dict[str, str]:
+    """The first container's environment, as a flat map."""
+    containers = (body.get("spec") or {}).get("containers") or [{}]
+    return {str(item.get("name")): str(item.get("value", "")) for item in containers[0].get("env") or []}
+
+
+def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
+    """The culvert pod's own address and the client range it forwards into."""
+    body = _pod_body(namespace, pod)
 
     pod_ip = str((body.get("status") or {}).get("podIP") or "")
     if not pod_ip:
         raise BastionError(f"the culvert pod {pod} carries no podIP yet -- wait for it to be Running")
 
-    containers = (body.get("spec") or {}).get("containers") or [{}]
-    env = {str(item.get("name")): str(item.get("value", "")) for item in containers[0].get("env") or []}
+    env = _pod_env(body)
     client_range = env.get(WG_NETWORK_ENV, "")
     if not client_range:
         raise BastionError(
@@ -404,6 +429,105 @@ def _program_hub_route(instance_id: str, client_range: str, pod_ip: str) -> None
         f"ip route replace {client_range} via {pod_ip}",
         f"ip route get {client_range.split('/')[0]}",
     ], comment="route the tunnel client range at the culvert pod")
+
+
+# --- the admin hole ----------------------------------------------------------
+# culvert admits ONE range on the pod's ethernet side, and that range is the
+# toolbox instance's own /32. The instance is terminated and rebuilt on every
+# `up`, so its address moves and the range is rewritten each cycle rather than
+# written once at bootstrap.
+
+
+def _write_admin_cidr(value: str) -> None:
+    """Put the admin range on the Argo cluster secret, or take it off.
+
+    The cluster secret rather than the Application, because culvert's
+    Application is generated by an ApplicationSet whose controller reconciles it
+    back to the template -- a patch on the Application is reverted, while the
+    secret is the generator's own input.
+    """
+    argument = f"{ADMIN_CIDR_ANNOTATION}={value}" if value else f"{ADMIN_CIDR_ANNOTATION}-"
+    result = _kubectl([
+        "-n", CLUSTER_SECRET_NAMESPACE, "annotate", "--overwrite", CLUSTER_SECRET, argument,
+    ])
+    if result.returncode != 0:
+        raise BastionError(
+            f"cannot write {ADMIN_CIDR_ANNOTATION} on {CLUSTER_SECRET}: {result.stderr.strip()}"
+        )
+
+
+def _live_admin_cidr(namespace: str) -> str | None:
+    """What culvert is RUNNING with, or None when the tunnel is not deployed."""
+    try:
+        pod = _culvert_pod(namespace)
+    except BastionError:
+        return None
+    return _pod_env(_pod_body(namespace, pod)).get(ADMIN_CIDR_ENV, "")
+
+
+def _wait_for_admin_cidr(namespace: str, expected: str, *, timeout: float,
+                         poll: float = DEFAULT_POLL_INTERVAL) -> bool | None:
+    """Wait until culvert itself carries the range, rather than until Argo says
+    Synced -- the env key is the evidence the hole is open or shut.
+
+    None when the tunnel is not deployed, which is not a failure: no tunnel is
+    no hole.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        live = _live_admin_cidr(namespace)
+        if live is None:
+            return None
+        if live == expected:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+
+
+def _open_admin_hole(namespace: str, cidr: str, *, timeout: float) -> int:
+    """Admit this instance's own /32 and prove culvert took it."""
+    try:
+        _write_admin_cidr(cidr)
+    except BastionError as error:
+        print(f"  [FAIL] admin range {cidr}: {error}", file=sys.stderr)
+        return 1
+    landed = _wait_for_admin_cidr(namespace, cidr, timeout=timeout)
+    if landed is None:
+        print(f"  [ok] admin range {cidr}: written, and no tunnel is deployed to admit it", file=sys.stderr)
+        return 0
+    if not landed:
+        print(
+            f"  [FAIL] admin range {cidr}: culvert still carries a different {ADMIN_CIDR_ENV} --"
+            f" check the {CLUSTER_SECRET} annotation and whether the culvert Application has synced",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"  [ok] admin range {cidr}: culvert admits this instance alone", file=sys.stderr)
+    return 0
+
+
+def _close_admin_hole(namespace: str, *, timeout: float) -> int:
+    """Take the range off BEFORE the instance is destroyed, so the address the
+    hole names cannot be handed to something else while it is still admitted."""
+    try:
+        _write_admin_cidr("")
+    except BastionError as error:
+        print(f"  [FAIL] admin range: {error}", file=sys.stderr)
+        return 1
+    landed = _wait_for_admin_cidr(namespace, "", timeout=timeout)
+    if landed is None:
+        print("  [ok] admin range: removed, and no tunnel is deployed to carry it", file=sys.stderr)
+        return 0
+    if not landed:
+        print(
+            f"  [FAIL] admin range: culvert still carries {ADMIN_CIDR_ENV} -- remove the"
+            f" {ADMIN_CIDR_ANNOTATION} annotation on {CLUSTER_SECRET} by hand",
+            file=sys.stderr,
+        )
+        return 1
+    print("  [ok] admin range: removed and off the tunnel", file=sys.stderr)
+    return 0
 
 
 def _tunnel_address() -> str:
@@ -832,11 +956,26 @@ def cmd_bastion_up(args: argparse.Namespace) -> int:
         return 1
 
     print(f"dfe-ops bastion: {instance_id} is Online", file=sys.stderr)
+
+    # The instance is rebuilt on every `up`, so its address is new and the range
+    # culvert admits is rewritten now rather than left at whatever bootstrap
+    # wrote. An empty output is the dial declining the reach-back.
+    admin_cidr = str(_output(outputs, ADMIN_CIDR_OUTPUT))
+    problems = 0
+    if admin_cidr:
+        problems = _open_admin_hole(_namespace(args), admin_cidr, timeout=args.wait_timeout)
+    else:
+        print(
+            "  [ok] admin range: none -- the dial leaves edge.ingest.tunnel.admin_peer off,"
+            " so culvert admits no reach-back",
+            file=sys.stderr,
+        )
+
     print("  dfe-ops bastion shell", file=sys.stderr)
     targets = _output(outputs, "toolbox_targets", {})
     for name in sorted(targets) if isinstance(targets, dict) else []:
         print(f"  dfe-ops bastion forward {name} <local-port>", file=sys.stderr)
-    return 0
+    return 1 if problems else 0
 
 
 # --- shell -----------------------------------------------------------------
@@ -1090,6 +1229,15 @@ def cmd_bastion_down(args: argparse.Namespace) -> int:
     # bills and what holds the private key -- with the summary reporting it.
     admin_problems = _revoke_admin_peer()
 
+    # Close the hole BEFORE the destroy: the address it names goes back to the
+    # subnet the moment the instance is terminated. The outputs are read while
+    # the instance still exists, so an empty value here is a dial that never
+    # asked for the reach-back rather than one already torn down.
+    if str(_output(outputs_before, ADMIN_CIDR_OUTPUT)):
+        admin_problems += _close_admin_hole(_namespace(args), timeout=args.wait_timeout)
+    else:
+        print("  [ok] admin range: none -- the dial asked for no reach-back", file=sys.stderr)
+
     try:
         _set_toolbox_enabled(False)
     except BastionError as error:
@@ -1193,15 +1341,15 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
         )
         return parser
 
-    up = actions.add_parser(
+    up = with_namespace(actions.add_parser(
         "up",
-        help="flip toolbox.enabled on, apply the toolbox target, wait for PingStatus Online",
+        help="flip toolbox.enabled on, apply the toolbox target, wait for PingStatus Online, admit this instance on the tunnel",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+    ))
     up.add_argument("--ttl", type=int, default=None, metavar="MIN", help="override toolbox.ttl_minutes for this call")
     up.add_argument(
         "--wait-timeout", type=float, default=DEFAULT_WAIT_TIMEOUT,
-        help="seconds to wait for the instance to report PingStatus Online",
+        help="seconds to wait for the instance to report PingStatus Online, and for culvert to carry its range",
     )
     up.set_defaults(func=cmd_bastion_up)
 
@@ -1251,10 +1399,14 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
     forward.add_argument("local_port", type=int, help="local port to bind on this machine")
     forward.set_defaults(func=cmd_bastion_forward)
 
-    down = actions.add_parser(
+    down = with_namespace(actions.add_parser(
         "down",
-        help="revoke the admin peer, flip toolbox.enabled off, destroy the toolbox target, and prove nothing remains",
+        help="revoke the admin peer, close the tunnel's admin range, flip toolbox.enabled off, destroy the toolbox target, and prove nothing remains",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    ))
+    down.add_argument(
+        "--wait-timeout", type=float, default=DEFAULT_WAIT_TIMEOUT,
+        help="seconds to wait for culvert to drop its admin range before the destroy",
     )
     down.set_defaults(func=cmd_bastion_down)
 
