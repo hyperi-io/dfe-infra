@@ -14,6 +14,11 @@ output "cluster_ca" {
   sensitive   = true
 }
 
+output "cluster_created_at" {
+  description = "When EKS created the control plane, as the API reports it. The one creation stamp this deployment does not have to keep itself, and what dates an ephemeral deployment -- a local state file's mtime dates the last apply and a remote backend leaves none at all."
+  value       = aws_eks_cluster.this.created_at
+}
+
 output "cluster_version" {
   description = "The version EKS is actually running, which can lead the requested minor after an AWS-side patch."
   value       = aws_eks_cluster.this.version

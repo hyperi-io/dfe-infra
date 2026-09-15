@@ -170,6 +170,8 @@ from __future__ import annotations
 import argparse
 import atexit
 import base64
+import contextlib
+import io
 import json
 import os
 import platform
@@ -188,6 +190,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -3434,8 +3437,9 @@ def build_parser() -> argparse.ArgumentParser:
 # --- the ephemeral-deployment banner -----------------------------------------
 # An ephemeral deployment is a create-prove-destroy cycle, and what decides
 # whether to keep proving is how long it has been up against what it costs an
-# hour. Both readings come off disk, so the banner costs no API call and
-# neither one failing fails a command.
+# hour. The age comes from the cluster's own creation stamp through the root's
+# outputs, so only a dial that marks itself ephemeral AND names a cloud to
+# provision pays for the reading, and neither reading failing fails a command.
 
 DIAL = REPO_ROOT / "deployment.yaml"
 SIZING_RESOLVED = REPO_ROOT / "sizing" / "resolved.yaml"
@@ -3450,18 +3454,67 @@ def _dial_tree() -> dict[str, object]:
         return {}
 
 
-def _last_apply_at(cloud: str) -> float | None:
-    """When this deployment's local tofu state was last written, as an epoch time.
+def _tf_output(cloud: str, name: str) -> str | None:
+    """One root output, read through bridge.py's own reader, or None.
 
-    A LOCAL backend only. `.terraform/terraform.tfstate` is the backend record
-    `tofu init` writes, so its mtime dates the last init and not the deployment;
-    a remote backend leaves no apply-time file here at all, and the age is then
-    unavailable rather than guessed.
+    bridge exits the process on a tofu failure -- an uninitialised root, a
+    deployment that has never been applied -- and prints why, so both the exit
+    and the print are contained here: a banner may cost a command its output,
+    never its run.
     """
-    try:
-        return (TF_ENVIRONMENTS / cloud / "terraform.tfstate").stat().st_mtime
-    except OSError:
+    tf_dir = TF_ENVIRONMENTS / cloud
+    if not tf_dir.is_dir():
         return None
+    sys.path.insert(0, str(BOOTSTRAP))
+    try:
+        from bridge import get_tf_outputs
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            value, _sensitive = get_tf_outputs(str(tf_dir)).get(name, (None, False))
+    except (Exception, SystemExit):
+        return None
+    return value or None
+
+
+# The AWS provider renders a creation stamp two ways across its resources --
+# RFC 3339, and Go's own `2026-09-15 05:12:33.1 +0000 UTC` -- so both spellings
+# are read rather than one being assumed.
+_CREATED_AT = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[ T](?P<time>\d{2}:\d{2}:\d{2})"
+    r"(?:\.(?P<fraction>\d+))?\s*(?P<zone>Z|[+-]\d{2}:?\d{2})?"
+)
+
+
+def _parse_created_at(raw: str) -> float | None:
+    """A creation stamp as epoch seconds, or None for anything unrecognised."""
+    match = _CREATED_AT.match(raw.strip())
+    if match is None:
+        return None
+    text = f"{match['date']}T{match['time']}"
+    if match["fraction"]:
+        # datetime reads six digits; Go prints up to nine.
+        text += f".{match['fraction'][:6]}"
+    zone = match["zone"] or "Z"
+    if zone == "Z":
+        text += "+00:00"
+    else:
+        text += zone if ":" in zone else f"{zone[:3]}:{zone[3:]}"
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+def _cluster_created_at(cloud: str) -> float | None:
+    """When the cluster this deployment provisions was created, as epoch seconds.
+
+    No file in the tree dates a deployment: a local state file's mtime dates the
+    last apply, and an S3 backend leaves none here at all. The control plane's
+    own creation stamp is the reading that survives both, and the root publishes
+    it as `cluster_created_at`.
+    """
+    raw = _tf_output(cloud, "cluster_created_at")
+    return _parse_created_at(raw) if raw else None
 
 
 def _elapsed(seconds: float) -> str:
@@ -3482,11 +3535,11 @@ def _ephemeral_notice() -> str | None:
     if not cloud:
         return None
     parts = [f"ephemeral deployment ({cloud})"]
-    applied = _last_apply_at(str(cloud))
+    created = _cluster_created_at(str(cloud))
     parts.append(
-        f"last apply {_elapsed(time.time() - applied)} ago"
-        if applied
-        else "age unavailable (remote state)"
+        f"up {_elapsed(time.time() - created)}"
+        if created
+        else "age unavailable (no cluster_created_at output)"
     )
     rate = None
     try:

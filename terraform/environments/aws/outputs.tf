@@ -179,6 +179,11 @@ output "cluster_endpoint" {
   value = module.cluster.cluster_endpoint
 }
 
+output "cluster_created_at" {
+  description = "When EKS created the control plane. `dfe-ops` dates an ephemeral deployment from this, because no file in the tree does: a local state file's mtime dates the last apply, and an S3 backend leaves none here at all."
+  value       = module.cluster.cluster_created_at
+}
+
 output "kubeconfig_command" {
   description = "What to run before anything else."
   value       = "aws eks update-kubeconfig --name ${module.cluster.cluster_name} --region ${var.provision.region}"

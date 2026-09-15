@@ -182,6 +182,14 @@ run "aws_cluster_handles" {
     error_message = "cluster_version must report the version the cluster runs"
   }
 
+  // What dates a deployment: the control plane's own creation stamp, read
+  // from the resource rather than kept anywhere this repo would have to
+  // maintain.
+  assert {
+    condition     = output.cluster_created_at == aws_eks_cluster.this.created_at
+    error_message = "cluster_created_at must be the control plane's own creation stamp"
+  }
+
   assert {
     condition     = can(tostring(output.oidc_issuer))
     error_message = "oidc_issuer must be a string"
