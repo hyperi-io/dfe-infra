@@ -118,8 +118,11 @@ spec:
         name: {{ .Values.clickhouse.users.admin.secretName }}
         key: password
   {{- $cacheOnInstanceStore := eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
-  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled $cacheOnInstanceStore }}
+  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled $cacheOnInstanceStore .Values.clickhouse.serviceAccount.name }}
   podTemplate:
+    {{- with .Values.clickhouse.serviceAccount.name }}
+    serviceAccountName: {{ . }}
+    {{- end }}
     {{- /* instance-store needs a hard requirement, not a preference: the cache
     is only real NVMe on the karpenter-pools chart's own `clickhouse` pool
     (build_karpenter_pools names every pool's nodeSelector after its use case),

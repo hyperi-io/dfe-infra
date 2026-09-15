@@ -154,6 +154,13 @@ def _external_secret(docs: list[dict], name: str) -> dict:
     raise SystemExit(f"no ExternalSecret {name} in the render")
 
 
+def _service_account(docs: list[dict], name: str) -> dict:
+    matches = [d for d in docs if d.get("kind") == "ServiceAccount" and d["metadata"]["name"] == name]
+    if len(matches) != 1:
+        raise SystemExit(f"expected exactly one ServiceAccount {name}, got {len(matches)}")
+    return matches[0]
+
+
 def test_the_credential_binding_defaults_to_the_dfe_seeded_path() -> None:
     """Unset values must keep the path every seeded deployment already uses."""
     for chart, sets, secret, seeded in (
@@ -267,6 +274,55 @@ def test_clickhouse_cached_object_pod_identity_reaches_single_mode() -> None:
     ]
     expect("and no object-store ExternalSecret is minted", object_store_secrets == [],
            f"got {object_store_secrets}")
+
+
+def test_clickhouse_renders_its_own_service_account() -> None:
+    """Fix: the AWS Pod Identity association used to bind the release
+    namespace's default account, so the dfe-schema Job -- which also runs as
+    default in that namespace -- inherited the object-store role's S3 write
+    and delete rights. The chart now renders a dedicated ServiceAccount and
+    points both the CR and the StatefulSet at it, cluster mode and single
+    alike (terraform/modules/kubernetes-cluster/aws/object-store.tf's
+    clickhouse_object_store_service_account default must keep matching this
+    name -- proven independently by the OpenTofu contract test of the same
+    shape)."""
+    for label, sets in (("cluster", ()), ("single", ("clickhouse.mode=single",))):
+        docs = render("clickhouse-cluster", *sets)
+        sa = _service_account(docs, "dfe-clickhouse")
+        expect(f"{label}: dfe-clickhouse automounts no token",
+               sa.get("automountServiceAccountToken") is False, f"got {sa}")
+        pod_spec = (
+            one(docs, "ClickHouseCluster")["spec"]["podTemplate"]
+            if label == "cluster"
+            else one(docs, "StatefulSet")["spec"]["template"]["spec"]
+        )
+        expect(f"{label}: the workload names that account",
+               pod_spec.get("serviceAccountName") == "dfe-clickhouse", f"got {pod_spec}")
+
+
+def test_clickhouse_external_mode_renders_no_service_account() -> None:
+    """mode=external supplies its own ClickHouse -- nothing here runs as a DFE
+    account, so no ServiceAccount should render for a Pod Identity association
+    to reach even by accident."""
+    docs = render("clickhouse-cluster", "clickhouse.mode=external")
+    expect("no ServiceAccount for a BYO ClickHouse", "ServiceAccount" not in kinds(docs), f"got {kinds(docs)}")
+
+
+def test_clickhouse_keeper_gets_its_own_service_account_too() -> None:
+    """Keeper never touches S3 -- no Pod Identity association targets it --
+    but it must not share the namespace's default account either, or a future
+    association or grant aimed at "default" would reach it too. It also must
+    not share ClickHouse's own account: two workloads on one identity is the
+    same over-sharing fault this whole change fixes, one level down."""
+    docs = render("clickhouse-cluster")
+    sa = _service_account(docs, "dfe-keeper")
+    expect("dfe-keeper automounts no token", sa.get("automountServiceAccountToken") is False, f"got {sa}")
+    keeper = one(docs, "KeeperCluster")
+    expect("the KeeperCluster CR names its own account",
+           keeper["spec"]["podTemplate"].get("serviceAccountName") == "dfe-keeper",
+           f"got {keeper['spec'].get('podTemplate')}")
+    expect("clickhouse and keeper hold DIFFERENT accounts",
+           _service_account(docs, "dfe-clickhouse")["metadata"]["name"] != sa["metadata"]["name"])
 
 
 def test_the_aws_cascade_is_what_turns_pod_identity_on() -> None:
@@ -627,6 +683,9 @@ def main() -> int:
         test_clickhouse_cached_object_keeps_credentials_out_of_git()
         test_clickhouse_cached_object_pod_identity_skips_the_static_key()
         test_clickhouse_cached_object_pod_identity_reaches_single_mode()
+        test_clickhouse_renders_its_own_service_account()
+        test_clickhouse_external_mode_renders_no_service_account()
+        test_clickhouse_keeper_gets_its_own_service_account_too()
         test_the_aws_cascade_is_what_turns_pod_identity_on()
         test_the_endpoint_alone_derives_cached_object()
         test_the_object_store_timeouts_are_unset_by_default_and_settable()

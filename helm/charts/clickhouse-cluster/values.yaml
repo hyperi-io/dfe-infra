@@ -40,6 +40,18 @@ clickhouse:
     maxSkew: 1
     topologyKey: kubernetes.io/hostname
   database: dfe
+  # The identity the server pods (cluster CR + single-mode StatefulSet) run as.
+  # Dedicated rather than the release namespace's default account, so the S3
+  # object-store Pod Identity role (terraform/modules/kubernetes-cluster/aws/
+  # object-store.tf) binds only ClickHouse -- name MUST match that module's
+  # clickhouse_object_store_service_account default (dfe-clickhouse); a
+  # mismatch leaves the association pointed at an account nothing runs as.
+  # automountServiceAccountToken is off: the server calls S3 and Keeper, never
+  # the Kubernetes API.
+  serviceAccount:
+    create: true
+    name: dfe-clickhouse
+    automountServiceAccountToken: false
   # Keeper reference for cluster mode -- DFE deploys its OWN keeper (below),
   # self-contained. Do NOT point at another product's keeper.
   keeperClusterRef:
@@ -64,6 +76,14 @@ clickhouse:
         # before a single request is served, so the old 1Gi limit was an OOMKill
         # waiting on load rather than a bound on it.
         memory: 3Gi
+    # Parallel to clickhouse.serviceAccount above. No Pod Identity association
+    # ever targets Keeper -- it never touches S3 -- but it must not stay on the
+    # namespace's default account either, or a future association or grant
+    # aimed at "default" reaches Keeper too.
+    serviceAccount:
+      create: true
+      name: dfe-keeper
+      automountServiceAccountToken: false
   # External CH (mode=external): connect to a supplied endpoint; deploy nothing.
   # Password materialised by ESO from Vault <project>/<env>/clickhouse/external.
   external:

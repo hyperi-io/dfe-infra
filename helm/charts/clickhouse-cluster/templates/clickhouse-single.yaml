@@ -37,6 +37,9 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
     spec:
+      {{- with .Values.clickhouse.serviceAccount.name }}
+      serviceAccountName: {{ . }}
+      {{- end }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       securityContext:
         fsGroup: 101            # clickhouse uid/gid in the official image

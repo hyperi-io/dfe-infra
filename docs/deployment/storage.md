@@ -96,7 +96,10 @@ when it is live-proven, and the table changes then, not before.
 bucket `cached-object` needs on AWS -- SSE-KMS on the deployment's own key,
 ACLs disabled, all public access blocked, plaintext HTTP denied, no versioning,
 a lifecycle rule aborting an incomplete multipart upload after 7 days -- and
-mints a Pod Identity role scoped to that bucket alone. `bootstrap.sh` carries
+mints a Pod Identity role scoped to that bucket alone, bound to the chart's own
+`dfe-clickhouse` ServiceAccount (`clickhouse.serviceAccount.name`) rather than
+the release namespace's default account, so nothing else running there
+inherits the role. `bootstrap.sh` carries
 the bucket's URL onto the cluster secret as the
 `dfe.hyperi.io/clickhouse_object_store_endpoint` annotation, and
 `argocd/appsets/layer2-data.yaml` passes it through as

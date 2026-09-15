@@ -227,9 +227,9 @@ variable "clickhouse_object_store_namespace" {
 }
 
 variable "clickhouse_object_store_service_account" {
-  description = "Service account the ClickHouse server pods run as. The chart renders no ServiceAccount of its own for clickhouse.yaml/clickhouse-single.yaml, so they run under the release namespace's default account -- the Pod Identity association targets that account by name."
+  description = "Service account the ClickHouse server pods run as. Must match the chart's clickhouse.serviceAccount.name (default dfe-clickhouse, helm/charts/clickhouse-cluster/values.yaml) -- clickhouse.yaml and clickhouse-single.yaml both render that account onto their pods so the Pod Identity association binds only them, not the release namespace's default account every other workload there (dfe-schema included) would otherwise share."
   type        = string
-  default     = "default"
+  default     = "dfe-clickhouse"
 }
 
 variable "tags" {
