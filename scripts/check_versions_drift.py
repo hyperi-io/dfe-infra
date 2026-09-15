@@ -495,13 +495,14 @@ _CONTRACT_ENTRIES = [
     "dfe-fetcher",
     "dfe-transform-vrl",
     "dfe-transform-vector",
+    "dfe-transform-elastic",
 ]
 
 
 def contract_ref_pattern(app: str, half: str) -> str:
     """One half of a content entry's `ref`, anchored on the entry's own app.
 
-    All six refs sit in one file, so a bare `ref:` anchor would hand the first
+    Every ref sits in one file, so a bare `ref:` anchor would hand the first
     entry's value to every check.
     """
     head = r"app: " + re.escape(app) + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"

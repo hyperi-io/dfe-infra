@@ -205,7 +205,7 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
     }
     expect(
         "the chart mounts a contract for every app that carries a settings surface",
-        len(entries) == 6,
+        len(entries) == 7,
         f"{sorted(entries)}",
     )
     for name, image in sorted(entries.items()):

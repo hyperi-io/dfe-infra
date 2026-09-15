@@ -86,7 +86,6 @@ service:
 # The contract entries carry a second copy of the versions.yaml apps + digests
 # pins, so check_versions_drift.py reads both halves of each ref and --fix moves
 # them with the SSoT. A deployment mirroring images elsewhere overrides the ref.
-# dfe-transform-elastic gets an entry when it publishes an image.
 #
 # The two LIBRARY pins are still empty, and the pins in versions.yaml say why:
 # neither transform release carries its files as an asset, and neither Dockerfile
@@ -142,6 +141,11 @@ content:
       role: contract
       app: dfe-transform-vector
       ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.39@sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
+    - name: dfe-transform-elastic-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.2@sha256:a2f5073d0a78c1143ab8cedf738c159fff01dd14292c50fd88aecbf31c09517c"
 
 config:
   mountPath: /config

@@ -365,12 +365,12 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: alpha
+    maturity: ga
     support: standard
     licence: BUSL-1.1
     classification: product
     classification_source: in-repo
-    default_in_pass: false
+    default_in_pass: true
     artefacts:
       - kind: container
         registry: ghcr
