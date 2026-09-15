@@ -19,7 +19,7 @@
     dfe-ops init --answers wizard-answers.env [--dry-run]
     dfe-ops init --answers wizard-answers.env --fixtures shapes/fixtures/aws
 
-Walks nine questions -- target, tier/ingest/focus, Kafka provider, the
+Walks nine questions -- target, tier/ingest/focus, Kafka provider and quorum, the
 ClickHouse storage model, public UIs + OIDC + CIDR allow-list, telemetry sink,
 lifecycle + AZ count, the toolbox, and a deployer sizing override -- in the
 order docs/deployment/wizard.md documents, over deployment.example.yaml's own
@@ -252,6 +252,7 @@ class Answers:
     ingest_gb_per_day: str = ""
     focus: str = "economy"
     kafka_provider: str = "strimzi"
+    controller_pool: str = "combined"
     msk_broker_count: str = "3"
     kafka_extra_topic: str = ""
     clickhouse_storage_model: str = "auto"
@@ -360,6 +361,17 @@ def step_kafka(io: WizardIO, a: Answers) -> None:
         f"Kafka provider ({', '.join(KAFKA_TOKENS)})",
         default_provider, validate=validate_provider,
     )
+
+    if a.kafka_provider not in render_dial.MANAGED_KAFKA_PROVIDERS:
+        io.write(
+            "KRaft metadata quorum: combined runs it on the brokers and is the chart's own "
+            "default; separate gives it a controller pool of its own, which the resolver "
+            "then sizes. Moving it later on a live cluster re-forms the quorum."
+        )
+        a.controller_pool = ask_choice(
+            io, "controller_pool", "KRaft metadata quorum",
+            a.controller_pool, render_dial.CONTROLLER_POOLS,
+        )
 
     if a.kafka_provider == "msk":
         def validate_count(raw: str) -> str:
@@ -582,7 +594,7 @@ def _bool(value: bool) -> str:
 
 def _kafka_block(a: Answers) -> str:
     if a.kafka_provider not in render_dial.MANAGED_KAFKA_PROVIDERS:
-        return f"kafka:\n  provider: {a.kafka_provider}\n"
+        return f"kafka:\n  provider: {a.kafka_provider}\n  controller_pool: {a.controller_pool}\n"
 
     if a.kafka_provider == "msk":
         return (
@@ -980,8 +992,9 @@ def add_init_subparser(sub: argparse._SubParsersAction) -> None:
         "init",
         help="prompt-driven wizard that writes a deployment.yaml dial",
         description="Walks the nine deployment.example.yaml decisions (target, tier/ingest/focus, "
-                    "Kafka provider, ClickHouse storage, public UIs + OIDC, telemetry, lifecycle + "
-                    "AZ count, toolbox, sizing overrides) and writes a dial render_dial.py accepts. "
+                    "Kafka provider and quorum, ClickHouse storage, public UIs + OIDC, telemetry, "
+                    "lifecycle + AZ count, toolbox, sizing overrides) and writes a dial "
+                    "render_dial.py accepts. "
                     "docs/deployment/wizard.md is the field-by-field reference.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

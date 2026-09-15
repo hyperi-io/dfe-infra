@@ -369,6 +369,13 @@ kafka:
   # Large -- that file is in flight elsewhere, so this stays a comment until it
   # lands there.
   provider: strimzi
+  ## combined | separate -- where the KRaft metadata quorum runs. combined keeps
+  ## it on the brokers and is the kafka chart's own default; separate is for a
+  ## sized deployment that wants its own controller pool, and the resolver emits
+  ## the pool only for it. Moving this on a live cluster re-forms the quorum, so
+  ## sizing/sizing.yaml locks the answer as controller_mode and a re-resolve
+  ## refuses the move without --migrate.
+  controller_pool: combined
   msk:
     shape_ref: msk-broker     # indexes shapes/resolved/<cloud>-<region>.json
     broker_count: 3           # >= 3, and a multiple of the zone count

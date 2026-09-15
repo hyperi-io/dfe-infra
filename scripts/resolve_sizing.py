@@ -57,10 +57,8 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    carries a value for the locked fields this
                                    script itself derives (partition_count,
                                    cloud_token, msk_broker_type, storage_model,
-                                   and az_count on a populated cloud) --
-                                   controller_mode is a deployer-set chart
-                                   value this script never touches, so it
-                                   carries no entry and is never compared here.
+                                   controller_mode, and az_count on a populated
+                                   cloud).
     sizing/<tier>.nodes.json       on-prem only: the same node demand as the
                                    report's own table, machine-readable for
                                    scripts/check_node_capacity.py to check
@@ -114,6 +112,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from aws_cli import run_aws
+from render_dial import CONTROLLER_POOLS
 from yaml_subset import YamlSubsetError, at
 from yaml_subset import parse as parse_yaml_subset
 
@@ -403,6 +402,11 @@ class Dial:
     # explicit overrides -- see build_values below and
     # docs/deployment/storage.md.
     storage_model: str
+    # Where the KRaft metadata quorum runs. combined (the default) leaves the
+    # kafka chart's controllerPool key out of the values fragment entirely, so
+    # the chart's own combined default holds; separate writes the sized
+    # controller pool and enables it -- see build_values below.
+    controller_pool: str
     name: str
     # How many AZs the VPC spans (network.az_count, 2-6). Feeds the catalogue's
     # own zone slice (fetch_live/fetch_fixtures) and the broker-count multiple,
@@ -448,6 +452,12 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         raise ResolveError(
             f"sizing.storage_model must be auto, cached-object or local, got {storage_model!r}"
         )
+    controller_pool = (_scalar(tree, "kafka", "controller_pool") or "combined").lower()
+    if controller_pool not in CONTROLLER_POOLS:
+        raise ResolveError(
+            f"kafka.controller_pool must be one of {', '.join(CONTROLLER_POOLS)}, "
+            f"got {controller_pool!r}"
+        )
     # k8s.cloud's own token for an unprovisioned/existing cluster is `local`
     # (deployment.example.yaml's default); compute-shapes.yaml has no `local`
     # key, only `onprem`, so the resolve fails outright unless the operator
@@ -488,6 +498,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         spend_warn_usd_month=_dial_number(tree, "sizing", "spend_warn_usd_month"),
         allow_undersized=allow == "true",
         storage_model=storage_model,
+        controller_pool=controller_pool,
         name=_scalar(tree, "metadata", "name") or "dfe",
         az_count=az_count,
         overrides=_read_overrides(tree),
@@ -2609,6 +2620,7 @@ def build_values(
     choices: dict[str, Choice] | None = None,
     cloud_entry: dict[str, object] | None = None,
     storage_model: str = "auto",
+    controller_pool: str = "combined",
 ) -> dict[str, object]:
     """The chart values overlay -- only keys the charts declare today.
 
@@ -2620,6 +2632,11 @@ def build_values(
     writes no clickhouse.storageModel key at all, so the chart derives it from
     whatever objectStore.endpoint the deployment actually carries; an explicit
     cached-object or local is written straight through.
+
+    `controller_pool` is the dial's own kafka.controller_pool. combined writes
+    no kafka.controllerPool key at all, so the chart's own combined default
+    holds and syncing this fragment onto a live cluster cannot move its
+    metadata quorum; separate writes the sized pool with enabled true.
     """
     broker = core.nodes.get("kafka-broker")
     controller = core.nodes.get("kraft-controller")
@@ -2655,12 +2672,11 @@ def build_values(
         # broker added at the ceiling still gets a share (partitions is always
         # a multiple of brokers, so it is never below broker.count either).
         kafka["autoscaling"] = {"maxBrokers": min(core.partitions, broker.count * 2)}
-    if controller:
+    if controller and controller_pool == "separate":
         kafka["controllerPool"] = {
-            # The chart default is false (combined mode), so an existing
-            # cluster's quorum never moves from a values change alone; a
-            # resolve always sizes a new deployment, so it sets the
-            # separate pool explicitly rather than relying on that default.
+            # Written only for the dial that asked for a separate pool: the
+            # chart's own default is combined, and a fragment that carries no
+            # controllerPool key cannot move a live cluster's quorum.
             "enabled": True,
             "replicas": controller.count,
             "resources": {
@@ -2755,11 +2771,10 @@ def build_resolved(
     Carries just enough identity to say what this run resolved -- tier, focus,
     cloud, region -- plus a ``locked`` section: a current value for every
     ``sizing.yaml`` ``locked:`` field this script itself derives.
-    ``controller_mode`` is a deployer-set chart-values override this script
-    never computes, so it carries no entry -- a re-size can only be compared on
-    what a resolve actually produces, never on what a deployer later hand-sets.
-    ``storage_model`` IS derived here now, so it is recorded and a change to it
-    is refused without ``--migrate`` like any other locked field.
+    ``controller_mode`` is the dial's own ``kafka.controller_pool``, under the
+    lock's own name, so a combined-to-separate move is refused without
+    ``--migrate``. ``storage_model`` is derived here too, so it is recorded and
+    a change to it is refused the same way.
 
     ``compute_usd_per_hour`` is the report's own shape-table total, over every
     shape this resolve picked at the count it picked. It is here as well as
@@ -2773,6 +2788,7 @@ def build_resolved(
         "cloud_token": dial.cloud,
         "msk_broker_type": dial.kafka_provider,
         "storage_model": dial.storage_model,
+        "controller_mode": dial.controller_pool,
     }
     if catalogue is not None:
         locked["az_count"] = len(catalogue.azs)
@@ -3255,6 +3271,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         choices if populated else None,
         cloud_entry if populated else None,
         dial.storage_model,
+        dial.controller_pool,
     )
     header = [
         "## Written by scripts/resolve_sizing.py -- do not edit by hand.",

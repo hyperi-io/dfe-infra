@@ -85,9 +85,15 @@ def _dial(
     focus: str = "economy",
     estimate: int | None = 10000,
     provider: str = "strimzi",
+    controller_pool: str | None = None,
     extra: str = "",
 ) -> Path:
-    """Write one deployment dial and answer its path."""
+    """Write one deployment dial and answer its path.
+
+    ``controller_pool`` is left OUT of the kafka block unless a caller names
+    one, so the matrix keeps proving what a dial that omits the field resolves
+    to -- which is the case every committed deployment is in.
+    """
     lines = [
         "apiVersion: dfe.hyperi.io/v1",
         "kind: DeployContext",
@@ -101,6 +107,10 @@ def _dial(
         f"profile: {tier}",
         "kafka:",
         f"  provider: {provider}",
+    ]
+    if controller_pool is not None:
+        lines.append(f"  controller_pool: {controller_pool}")
+    lines += [
         "sizing:",
         f"  focus: {focus}",
     ]
@@ -852,6 +862,103 @@ def test_dial_storage_model_refuses_an_unknown_value(tmp_path: Path, capsys) -> 
     assert "'glacier'" in err
 
 
+# ---------------------------------------------------------------------------
+# The controller_pool dial. combined is the default and writes no chart key at
+# all, so the kafka chart's own default decides and syncing a fragment onto a
+# live cluster cannot move its metadata quorum; separate is the explicit opt-in
+# that sizes a controller pool and turns it on.
+# ---------------------------------------------------------------------------
+
+
+def _controller_core() -> resolve_sizing.Core:
+    """The minimal Core build_values needs to reach its controller branch.
+
+    The broker node is here because a controller is only ever sized beside
+    one -- without it the whole kafka fragment is absent and the controller
+    branch proves nothing.
+    """
+    core = resolve_sizing.Core(
+        tier="scale",
+        focus="economy",
+        headroom=1.0,
+        estimated=True,
+        ingest_gb_per_day=0.0,
+        avg_mb_s=0.0,
+        peak_mb_s=0.0,
+        peak_factor=1.0,
+        required_mb_s=0.0,
+        carried_mb_s=0.0,
+        partitions=12,
+    )
+    core.nodes["kafka-broker"] = resolve_sizing.Node("kafka-broker", 3, 2, 8, 100, 0, 0, "test")
+    core.nodes["kraft-controller"] = resolve_sizing.Node("kraft-controller", 3, 1, 4, 64, 0, 0, "test")
+    return core
+
+
+def test_controller_pool_combined_writes_no_chart_key_at_all() -> None:
+    core = _controller_core()
+    values = resolve_sizing.build_values(core, "strimzi", None, None, "auto", "combined")
+    assert "controllerPool" not in values["kafka"]
+
+
+def test_controller_pool_separate_enables_the_pool_and_sizes_it() -> None:
+    core = _controller_core()
+    values = resolve_sizing.build_values(core, "strimzi", None, None, "auto", "separate")
+    pool = values["kafka"]["controllerPool"]
+    assert pool["enabled"] is True
+    assert pool["replicas"] == 3
+    assert pool["storage"] == {"size": "64Gi"}
+    assert pool["resources"]["requests"] == {"cpu": "1", "memory": "4Gi"}
+
+
+def test_the_charts_own_default_is_what_combined_falls_back_to() -> None:
+    """Omitting the key only means combined while the chart's default says so,
+    and the chart is a different file in a different language."""
+    chart = REPO_ROOT / "helm" / "charts" / "kafka" / "values.yaml"
+    body = chart.read_text(encoding="utf-8")
+    block = body[body.index("  controllerPool:") :]
+    enabled = re.search(r"^\s+enabled:\s*(\S+)", block, re.MULTILINE)
+    assert enabled is not None, "the kafka chart declares no controllerPool.enabled"
+    assert enabled.group(1) == "false"
+
+
+def test_dial_controller_pool_defaults_to_combined(tmp_path: Path) -> None:
+    dial = resolve_sizing.read_dial(_dial(tmp_path))
+    assert dial.controller_pool == "combined"
+
+
+@pytest.mark.parametrize("value", ["combined", "separate", "SEPARATE"])
+def test_dial_controller_pool_reads_an_explicit_value(tmp_path: Path, value: str) -> None:
+    dial = resolve_sizing.read_dial(_dial(tmp_path, controller_pool=value))
+    assert dial.controller_pool == value.lower()
+
+
+def test_dial_controller_pool_refuses_an_unknown_value(tmp_path: Path, capsys) -> None:
+    dial = _dial(tmp_path, controller_pool="dedicated")
+    assert _run(dial, tmp_path) == 1
+    err = capsys.readouterr().err
+    assert "kafka.controller_pool must be one of combined, separate" in err
+    assert "'dedicated'" in err
+
+
+def test_a_controller_pool_change_is_refused_without_migrate(tmp_path: Path, capsys) -> None:
+    """find_locked_changes compares resolved.yaml entries, so the lock fires
+    only on a field the resolve itself records."""
+    first = tmp_path / "first"
+    first.mkdir()
+    _run(_dial(first, estimate=1000), first)
+    previous = first / "sizing" / "resolved.yaml"
+
+    second = tmp_path / "second"
+    second.mkdir()
+    status = _run(_dial(second, estimate=1000, controller_pool="separate"), second, previous=previous)
+
+    assert status == resolve_sizing.EXIT_LOCKED_CHANGE
+    err = capsys.readouterr().err
+    assert "LOCKED controller_mode: combined -> separate" in err
+    assert "re-forms the metadata quorum" in err
+
+
 def test_a_resolve_preserves_an_entry_it_did_not_size(tmp_path: Path) -> None:
     """The file is committed and diffed, so one resolve must not delete another's work."""
     resolved = tmp_path / "shapes" / "resolved"
@@ -1312,10 +1419,12 @@ def test_the_fixture_parsed_every_type_name_it_was_given() -> None:
 
 
 def test_locked_change_detection_skips_a_field_missing_from_either_document() -> None:
-    """controller_mode is deployer-set, never derived here, so it is never compared."""
+    """A resolved.yaml written before a field was recorded carries no entry for
+    it, so there is nothing to diff it against and it is skipped rather than
+    reported as a change."""
     sizing = {"locked": {"controller_mode": "the quorum re-forms", "cloud_token": "a new deployment"}}
     previous = {"locked": {"cloud_token": "aws"}}
-    resolved = {"locked": {"cloud_token": "gcp"}}
+    resolved = {"locked": {"controller_mode": "combined", "cloud_token": "gcp"}}
     changes = resolve_sizing.find_locked_changes(sizing, previous, resolved)
     assert [c.field for c in changes] == ["cloud_token"]
     assert changes[0].old == "aws"

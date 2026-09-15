@@ -30,19 +30,22 @@ renderer, not the wizard.
    reports rather than targets). Focus is `economy` (default, 40%
    headroom), `balanced` (60%) or `performance` (100%, high-IOPS storage)
    -- straight from `sizing/sizing.yaml`'s own `focus:` table.
-3. **Kafka provider.** One of `strimzi`, `redpanda`, `msk`,
+3. **Kafka provider and quorum.** One of `strimzi`, `redpanda`, `msk`,
    `confluent-cloud`, `redpanda-cloud`, pre-selected by tier: `msk` on AWS
    Small/Medium, `confluent-cloud` at Large, `strimzi` on-prem. `msk` asks
    the broker count; the two SaaS providers ask for an extra landing topic
-   beyond `main_land`, if you need one.
+   beyond `main_land`. An in-cluster broker also asks
+   `kafka.controller_pool`: `combined` (the default, and the chart's own)
+   keeps the KRaft metadata quorum on the brokers, `separate` gives it a
+   sized pool. Moving it on a live cluster re-forms the quorum, so
+   `sizing.yaml` locks it as `controller_mode`.
 4. **ClickHouse storage model.** `sizing.storage_model`, default `auto`: the
-   chart derives it, `cached-object` when an object-store endpoint exists
-   (always on a populated cloud, on-prem once MinIO or similar is supplied)
-   and `local` otherwise. `cached-object` forces the object store and refuses
-   to render with no endpoint; `local` forces local storage even with an
-   endpoint configured (switching later is a data migration, not a values
-   edit -- see [storage.md](storage.md)). The wizard also offers the one
-   other lever that touches ClickHouse sizing: an instance-type override.
+   chart derives it from whether an object-store endpoint exists.
+   `cached-object` forces the object store and refuses to render without
+   one; `local` forces local storage even with one configured, and switching
+   later is a data migration rather than a values edit
+   ([storage.md](storage.md)). The wizard also offers the one other lever on
+   ClickHouse sizing: an instance-type override.
 5. **Public UIs, OIDC, CIDR, DNS.** `dfe-ui` is public by default; every
    admin UI is opt-in, one at a time. The moment any UI is public, the
    wizard demands confirmation that OIDC will be wired up for it
@@ -59,11 +62,9 @@ renderer, not the wizard.
    SSM-managed instance -- opt-in, asking for the operator IAM role ARN
    once enabled. See [toolbox.md](toolbox.md).
 9. **Sizing overrides.** "Override any sizing?" -- only then does it walk
-   the documented workload names (`eks-system`, `general`, `kafka-broker`,
-   `kraft-controller`, `clickhouse`, `keeper`, `ci-burst`, `msk-broker`,
-   `toolbox`) and their fields (cpu, memory, disk_gb, replicas,
-   instance_type, iops, throughput_mibs), validated through the exact
-   function a hand-edited dial is checked against.
+   the documented workload names and their fields (cpu, memory, disk_gb,
+   replicas, instance_type, iops, throughput_mibs), validated through the
+   exact function a hand-edited dial is checked against.
 
 ## What it writes, and what it deliberately does not
 

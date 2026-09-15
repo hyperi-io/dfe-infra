@@ -404,6 +404,25 @@ def _kubernetes_version(dial: dict[str, object], cloud: str) -> str:
 
 MANAGED_KAFKA_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
 
+# Where the KRaft metadata quorum runs (helm/charts/kafka's controllerPool).
+CONTROLLER_POOLS = ("combined", "separate")
+
+
+def _controller_pool(dial: dict[str, object]) -> str:
+    """Validate kafka.controller_pool the same way _ingest_mode() guards its own.
+
+    Anything outside the chart's own vocabulary is refused by name before a
+    resolve carries it into a values fragment. combined is the default because
+    it is the chart's, and sizing/sizing.yaml locks the answer as
+    ``controller_mode`` so moving it on a live cluster needs ``--migrate``.
+    """
+    value = _text(dial, ("kafka", "controller_pool"), "combined")
+    if value not in CONTROLLER_POOLS:
+        raise DialError(
+            f"kafka.controller_pool must be one of {', '.join(CONTROLLER_POOLS)}, got {value!r}"
+        )
+    return value
+
 
 def _landing_topics(dial: dict[str, object]) -> dict[str, dict[str, int]]:
     """Topics tofu must pre-create for a managed body with no bootstrap Job.
@@ -872,6 +891,17 @@ def main() -> int:
     print(
         "  this renderer applies nothing here -- the door is exposure.mode in the"
         " deploy repo's values overlay",
+        file=sys.stderr,
+    )
+
+    try:
+        controller_pool = _controller_pool(dial)
+    except DialError as error:
+        print(f"render_dial: {error}", file=sys.stderr)
+        return 1
+
+    print(
+        f"KRaft metadata quorum (kafka.controller_pool): {controller_pool}",
         file=sys.stderr,
     )
 

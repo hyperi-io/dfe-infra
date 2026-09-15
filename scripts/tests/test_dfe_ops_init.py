@@ -228,9 +228,10 @@ def test_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -
 
 def test_invalid_kafka_provider_is_reasked_interactively() -> None:
     answers = wiz.Answers(target="on-prem")
-    # "strimzi" (not "msk"/"confluent-cloud"/"redpanda-cloud") so the wizard
-    # asks nothing further -- the re-ask itself is what this test proves.
-    responses = iter(["bogus-provider", "strimzi"])
+    # strimzi asks for the metadata quorum and nothing else, and the blank
+    # third answer takes that question's default -- the re-ask itself is what
+    # this test proves.
+    responses = iter(["bogus-provider", "strimzi", ""])
     messages: list[str] = []
     io = wiz.WizardIO(read_line=lambda _prompt: next(responses), write_out=messages.append)
 
@@ -245,6 +246,41 @@ def test_invalid_kafka_provider_refuses_immediately_through_answers() -> None:
     answers = wiz.Answers(target="on-prem")
 
     with pytest.raises(wiz.InitError, match="not-a-real-provider"):
+        wiz.step_kafka(io, answers)
+
+
+# ---------------------------------------------------------------------------
+# kafka.controller_pool -- asked for an in-cluster broker only, and written
+# into the dial the resolver reads it from.
+# ---------------------------------------------------------------------------
+
+
+def test_an_in_cluster_broker_defaults_the_quorum_to_combined() -> None:
+    io = wiz.WizardIO(answers=dict(ONPREM_ANSWERS))
+    answers = wiz.run_wizard(io)
+    assert answers.controller_pool == "combined"
+    assert "controller_pool: combined" in wiz.build_dial_text(answers)
+
+
+def test_the_quorum_answer_reaches_the_dial() -> None:
+    io = wiz.WizardIO(answers={**ONPREM_ANSWERS, "controller_pool": "separate"})
+    answers = wiz.run_wizard(io)
+    assert "controller_pool: separate" in wiz.build_dial_text(answers)
+
+
+def test_a_managed_broker_is_never_asked_where_its_quorum_runs() -> None:
+    """MSK, Confluent Cloud and Redpanda Cloud each run a quorum of their own,
+    so the dial carries no answer for one DFE does not place."""
+    io = wiz.WizardIO(answers=dict(AWS_MSK_ANSWERS))
+    answers = wiz.run_wizard(io)
+    assert "controller_pool" not in wiz.build_dial_text(answers)
+
+
+def test_an_invalid_quorum_refuses_immediately_through_answers() -> None:
+    io = wiz.WizardIO(answers={"kafka_provider": "strimzi", "controller_pool": "dedicated"})
+    answers = wiz.Answers(target="on-prem")
+
+    with pytest.raises(wiz.InitError, match="dedicated"):
         wiz.step_kafka(io, answers)
 
 

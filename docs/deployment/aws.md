@@ -108,21 +108,19 @@ A few things hold for every deployment:
 ### Sizing knobs and locks
 
 - `sizing.focus` buys headroom over the sized peak: `economy` (40%),
-  `balanced` (60%) or `performance` (100%). None of the three trade away RF3,
-  `min.insync.replicas=2` or the separate KRaft controllers.
+  `balanced` (60%) or `performance` (100%). None of the three trade away RF3
+  or `min.insync.replicas=2`, and none of them decides where the KRaft
+  metadata quorum runs -- that is `kafka.controller_pool` below.
 - `sizing.overrides` is a deployer's per-workload override block, applied
   last, over whatever the ratios derived -- and still checked against every
   storage-cap assertion, so an override is a different answer, not an
   exemption.
 - `sizing.yaml` names six fields locked once resolved -- partition count, the
   storage model, MSK Standard against Express, combined against separate
-  KRaft controllers, the cloud itself and the availability-zone count -- but
-  the resolver only DERIVES four of them (partition count, MSK Standard
-  against Express, the cloud, the AZ count); the storage model and the
-  combined/separate controller choice are deployer-set chart-values
-  overrides it never computes, so a re-resolve cannot compare them and they
-  are not what `--migrate` protects. A re-resolve that moves one of the four
-  derived fields refuses and exits 3 unless you also pass
+  KRaft controllers (`kafka.controller_pool`), the cloud itself and the
+  availability-zone count. Every one of them is written into
+  `sizing/resolved.yaml`, so a re-resolve that moves any of them refuses and
+  exits 3 unless you also pass
   `--previous sizing/resolved.yaml --migrate`.
 - Above 100,000 GB/day the resolver refuses outright and points at a
   professional-services engagement rather than a generated profile.
