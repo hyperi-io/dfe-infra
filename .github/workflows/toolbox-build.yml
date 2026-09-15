@@ -37,6 +37,13 @@ jobs:
     name: Resolve pins from versions.yaml
     runs-on: ubuntu-latest
     outputs:
+      # Whether this stack block names the toolbox at all. The pins arrive with
+      # the rc.14 block (dfe-infra#315) while the images themselves landed with
+      # the AWS path, so main carries the workflow before it carries the
+      # versions -- and a build with no version to build is a skip, not a
+      # failure. The alternative was a KeyError that turned main red for an
+      # ordering the split deliberately chose.
+      pinned: ${{ steps.pins.outputs.pinned }}
       dfe_toolbox: ${{ steps.pins.outputs.DFE_TOOLBOX }}
       kubectl: ${{ steps.pins.outputs.KUBECTL }}
       helm: ${{ steps.pins.outputs.HELM }}
@@ -76,14 +83,27 @@ jobs:
               "toolbox.az-cli",
               "services.clickhouse-version",
           ]
+          missing = [key for key in keys if key not in v]
+          if missing:
+              print("pinned=false")
+              sys.exit(0)
+          print("pinned=true")
           for key in keys:
               name = key.split(".", 1)[1].replace("-", "_").upper()
               print(f"{name}={v[key]}")
           PY
 
+      # A skip that says nothing reads exactly like a build that worked.
+      - name: Say why nothing was built
+        if: steps.pins.outputs.pinned != 'true'
+        run: |
+          echo "::notice::dfe-toolbox images not built -- versions.yaml's current stack block names no toolbox.* pins yet. They arrive with the rc.14 block (dfe-infra#315); this workflow builds on the next push once they land."
+
   base:
     name: Build + push dfe-toolbox-base
     needs: resolve
+    # aws/gcp/azure need base, so gating here skips the whole family.
+    if: needs.resolve.outputs.pinned == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
