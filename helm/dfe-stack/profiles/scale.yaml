@@ -64,8 +64,10 @@ kafbat:
   enabled: true
   kafka:
     clusters:
+      # 9092 is the Strimzi CR's plain listener (tls: false); nothing in this
+      # render dials 9093, so the identity carries -no-tls (dfe-infra#191).
       - name: dfe
-        provider: strimzi
+        provider: strimzi-no-tls
         bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
         credentialsSecretName: dfe-kafka-user
 

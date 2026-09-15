@@ -18,6 +18,12 @@ layers an opinion on top: SASL over TLS, SCRAM-SHA-512 on brokers DFE owns,
 PLAIN only where the platform forbids SCRAM (Confluent Cloud), IAM only where
 the platform mandates it (MSK Serverless).
 
+The charts derive `security.protocol` and `sasl.mechanism` from one table,
+`helm/library/dfe-common/templates/_kafka.tpl`, and never take a hand-set
+mechanism. Its two extra keys, `strimzi-no-tls` and `redpanda-no-tls`, name a
+DFE-owned broker on the TLS-off listener the charts stand up in-cluster; every
+other key matches scalo's canonical table.
+
 DFE auto-deploys two of these providers as in-cluster brokers -- Strimzi
 (default, Apache-2.0) and Redpanda (opt-in, BSL). For the managed clouds DFE
 does NOT auto-deploy, this directory carries one guide each:

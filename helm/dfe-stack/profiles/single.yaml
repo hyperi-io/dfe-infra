@@ -30,8 +30,11 @@ kafbat:
   enabled: true
   kafka:
     clusters:
+      # The broker's only listener is SASL_PLAINTEXT (kafka-single.yaml), so the
+      # identity carries -no-tls; a bare `strimzi` names a TLS endpoint that does
+      # not exist here and kafbat cannot connect (dfe-infra#191).
       - name: dfe
-        provider: strimzi
+        provider: strimzi-no-tls
         bootstrapServers: "dfe-kafka:9092"
         credentialsSecretName: dfe-kafka-user
 

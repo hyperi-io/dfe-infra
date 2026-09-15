@@ -1,10 +1,10 @@
 apiVersion: v2
 name: kafbat
-description: Kafbat UI (Kafka web UI) -- bundled by default. Follows the DFE integrated-app auth pattern - OIDC at the IdP, 3 RBAC roles (ro/rw/admin), local break-glass admin in the secret store. Optionally exposed via the Envoy Gateway. Per-cluster auth (security.protocol/sasl.mechanism/JAAS) is DERIVED from the DFE kafka provider identity (strimzi/redpanda/msk/redpanda-cloud/confluent-cloud/plaintext), mirroring the scalo credential contract (dfe-engine#98) -- never hand-set by an operator.
+description: Kafbat UI (Kafka web UI) -- bundled by default. Follows the DFE integrated-app auth pattern - OIDC at the IdP, 3 RBAC roles (ro/rw/admin), local break-glass admin in the secret store. Optionally exposed via the Envoy Gateway. Per-cluster auth (security.protocol/sasl.mechanism/JAAS) is DERIVED from the DFE kafka provider identity via the shared table in dfe-common, mirroring the scalo credential contract (dfe-engine#98) -- never hand-set by an operator.
 type: application
 version: 0.1.2
 appVersion: "v1.5.0"
 dependencies:
   - name: dfe-common
-    version: "0.11.0"
+    version: "0.12.0"
     repository: "file://../../library/dfe-common"

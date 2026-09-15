@@ -155,8 +155,12 @@ that pair is what DFE's `confluent-cloud` provider sends as PLAIN over TLS.
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap_endpoint>` (strip
   the `SASL_SSL://` scheme if your endpoint output includes it).
+- `kafka.external.provider=confluent-cloud` -> the chart derives `SASL_SSL` +
+  `PLAIN` and puts the mechanism in the credential Secret beside the API key, so
+  that Secret carries the same `username` / `password` / `sasl.mechanism` shape
+  a DFE-owned broker's does.
 - `KAFKA_PROVIDER=confluent-cloud` / `DFE_KAFKA_PROVIDER=confluent-cloud`
-  -> scalo derives `SASL_SSL` + `PLAIN` (never hand-set). The floor check refuses
+  -> scalo derives the same pair (never hand-set). The floor check refuses
   PLAIN on any non-TLS transport.
 - Credentials: put the Kafka API key (username) + secret (password) in the
   Vault-backed external secret; `kafka.external.auth.type=scram` still works as

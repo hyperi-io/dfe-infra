@@ -61,11 +61,12 @@ spec:
               set -e
               BOOTSTRAP="{{ $name }}.{{ .Release.Namespace }}.svc.cluster.local:9092"
               CFG=/tmp/client.properties
-              # The broker's only listener is SASL_PLAINTEXT, so admin calls
-              # authenticate as the same service user the apps use.
+              # Admin calls authenticate as the same service user the apps use,
+              # over the same derived protocol and mechanism -- one table, so this
+              # Job cannot disagree with the broker beside it (dfe-infra#191).
               cat > "$CFG" <<EOF
-              security.protocol=SASL_PLAINTEXT
-              sasl.mechanism=SCRAM-SHA-512
+              security.protocol={{ include "dfe-common.kafkaSecurityProtocol" (include "dfe-kafka.providerIdentity" .) }}
+              sasl.mechanism={{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) }}
               sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_USER}" password="${KAFKA_PASSWORD}";
               EOF
               echo "Waiting for broker ${BOOTSTRAP}..."
