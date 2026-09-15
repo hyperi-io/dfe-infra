@@ -70,6 +70,10 @@
 #                            and an AppRole SecretID) or aws-sm (needs none of
 #                            them -- external-secrets authenticates as the pod
 #                            it runs in, through EKS Pod Identity).
+#   DFE_SIZING_DIR           where resolve_sizing.py's --out pointed, which is
+#                            the directory `sizing/` hangs off. Defaults to
+#                            terraform/environments/<cloud> where that exists,
+#                            matching the resolve the deployment docs give.
 #   DFE_SECRETS_REGION       aws-sm only: the region the store reads from.
 #   DFE_SECRETS_PREFIX       aws-sm only: the path every remoteRef hangs off.
 #   DFE_BASE_DOMAIN          estate domain the profile tag is prefixed to when
@@ -474,16 +478,40 @@ if [[ ! -f "${DFE_CLOUD_VALUES}" ]]; then
 fi
 echo "Cloud overlay: ${DFE_CLOUD_VALUES}"
 
+# Where resolve_sizing.py wrote its artefacts -- `sizing/` hangs off the
+# resolver's own --out, not off the repo root. docs/deployment/<cloud>.md tells
+# an operator to resolve with --out terraform/environments/<cloud>, so that is
+# the default wherever such a root exists; a resolve run anywhere else sets
+# DFE_SIZING_DIR to whatever --out pointed at.
+DFE_SIZING_DIR_DEFAULT="${REPO_ROOT}"
+if [[ -d "${REPO_ROOT}/terraform/environments/${DFE_CLOUD}" ]]; then
+  DFE_SIZING_DIR_DEFAULT="${REPO_ROOT}/terraform/environments/${DFE_CLOUD}"
+fi
+export DFE_SIZING_DIR="${DFE_SIZING_DIR:-${DFE_SIZING_DIR_DEFAULT}}"
+echo "Sizing artefacts: ${DFE_SIZING_DIR}"
+
 # The Karpenter NodePools, from the resolver's own one-line JSON artefact.
 # The karpenter-pools chart renders nothing without them, so a cluster with no
 # pools answers a pending workload by leaving it pending. An explicit
 # DFE_KARPENTER_POOLS wins, for a deployment whose resolve ran elsewhere.
-DFE_KARPENTER_POOLS_FILE="${REPO_ROOT}/sizing/${DFE_PROFILE}.karpenter.json"
+DFE_KARPENTER_POOLS_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.karpenter.json"
 if [[ -z "${DFE_KARPENTER_POOLS:-}" && -f "${DFE_KARPENTER_POOLS_FILE}" ]]; then
   DFE_KARPENTER_POOLS="$(tr -d '\n' < "${DFE_KARPENTER_POOLS_FILE}")"
   echo "Karpenter pools: ${DFE_KARPENTER_POOLS_FILE}"
 fi
 export DFE_KARPENTER_POOLS="${DFE_KARPENTER_POOLS:-}"
+# A cluster with a Karpenter discovery tag is a cluster running the controller,
+# and the pools are the only thing that tells it what it may launch. Refuse
+# rather than omit the annotation: the chart reports Synced and Healthy with an
+# empty resource list, so an absent pool set otherwise shows up only as a
+# workload that stays Pending for ever.
+if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}" && -z "${DFE_KARPENTER_POOLS}" ]]; then
+  echo "ERROR: this cluster runs Karpenter and no NodePools were found." >&2
+  echo "       Looked for: ${DFE_KARPENTER_POOLS_FILE}" >&2
+  echo "       Resolve them with scripts/resolve_sizing.py --out ${DFE_SIZING_DIR}," >&2
+  echo "       or set DFE_SIZING_DIR to wherever that resolve's --out pointed." >&2
+  exit 1
+fi
 # A single quote inside the JSON would close the YAML scalar early, so double it
 # -- YAML's own escape for a quote inside a single-quoted scalar.
 DFE_KARPENTER_POOLS_YAML="${DFE_KARPENTER_POOLS//\'/\'\'}"
@@ -496,7 +524,7 @@ echo "==> [0a/7] On-prem node-capacity preflight"
 # `cloud: onprem`. resolve_sizing.py writes the demand only for that cloud, so
 # a nodes.json existing at all already means this deployment is on-prem; a
 # cloud that creates its own nodes never gets one and this step is a no-op.
-DFE_SIZING_NODES_FILE="${REPO_ROOT}/sizing/${DFE_PROFILE}.nodes.json"
+DFE_SIZING_NODES_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.nodes.json"
 if [[ "${DFE_CLOUD}" == "local" && -f "${DFE_SIZING_NODES_FILE}" ]]; then
   echo "  Checking ${DFE_SIZING_NODES_FILE} against the cluster's real nodes..."
   if ! python3 "${SCRIPT_DIR}/../scripts/check_node_capacity.py" \

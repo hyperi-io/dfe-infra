@@ -119,6 +119,13 @@ priced on this scale in [edge.md](edge.md).
   `sizing/resolved.yaml` so a re-size has something to check itself against.
   The values fragment slots into a deploy repo's own overlay for the
   data-layer charts.
+- `bootstrap.sh` reads `<out>/sizing/` from the same place, so resolving with
+  the `--out` above needs nothing else said. A resolve run anywhere else has to
+  set `DFE_SIZING_DIR` to that directory. On a cluster running Karpenter,
+  bootstrap REFUSES when `<tier>.karpenter.json` is not there: the chart's own
+  empty default renders no NodePool, the Application still reports Synced and
+  Healthy, and every workload the fixed managed node groups cannot fit stays
+  Pending with nothing reporting why.
 
 ### Sizing knobs and locks
 
