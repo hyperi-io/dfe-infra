@@ -2096,7 +2096,7 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.20.9"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #382 to #390: the settings API over each app's container contract (read, write, provenance, custom env, chart-set paths refused), the role claim for HyperDX, and the app catalogue following dfe-infra (both transforms seeded idle, elastic consumes its config).
+      dfe-engine: "v1.20.10"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #382 to #391: the settings API over each app's container contract (read, write, provenance, custom env, chart-set paths refused), the role claim for HyperDX, the app catalogue following dfe-infra (both transforms seeded idle, elastic consumes its config), and a deploy reporting the restart a no-hot-reload app needs.
       dfe-ui: "v1.6.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). #293/#295: console fixes -- brand caption, Access icon and suite version position corrected, wordmark caption now fits under the wordmark.
       dfe-receiver: "v1.15.36"      # independent release line; rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup plus the bytes admitted since that sample.
       dfe-loader: "v1.18.36"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept. Rebuilt on scalo-rs 2.12.2 (the same memory guard).
@@ -2121,7 +2121,7 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:3fd58a76f1868ee1d8ffc5a4b335c35d789e216515f6d776550f80cc4fc47c9e"
+      dfe-engine: "sha256:121da27b51c1d6d2a5f018d0b00a94e538e20ff42fd9e7b9f9fc47e330c32044"
       dfe-ui: "sha256:c2288ab13066755f6f289318c30874dcb58804c6194f5f0a86de9177a811477e"
       dfe-receiver: "sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
       dfe-loader: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
