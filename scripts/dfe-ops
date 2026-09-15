@@ -242,10 +242,28 @@ BOOTSTRAP_REQUIRED = (
     "DFE_NAMESPACE",
     "DFE_CLICKHOUSE_HOST",
     "DFE_OTEL_ENDPOINT",
-    "DFE_VAULT_ADDR",
-    "DFE_VAULT_ROLE_ID",
     "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
 )
+
+# The two that depend on which secrets backend the deployment declared, the same
+# split bootstrap.sh and bridge.py already make. DFE_VAULT_ADDR and
+# DFE_VAULT_ROLE_ID are openbao-only: the aws root emits neither and sets
+# DFE_SECRETS_BACKEND=aws-sm, where ESO authenticates through EKS Pod Identity
+# and takes DFE_SECRETS_REGION in their place.
+BOOTSTRAP_REQUIRED_OPENBAO = ("DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID")
+BOOTSTRAP_REQUIRED_AWS_SM = ("DFE_SECRETS_REGION",)
+
+
+def _bootstrap_required(env: dict[str, str]) -> tuple[str, ...]:
+    """Everything bootstrap.sh cannot run without, for this deployment's backend.
+
+    An empty value reads as openbao, matching bootstrap.sh's own
+    ``${DFE_SECRETS_BACKEND:-openbao}`` -- a plain ``get(..., "openbao")`` would
+    read a present-but-empty value as aws-sm and drop both checks.
+    """
+    backend = env.get("DFE_SECRETS_BACKEND") or "openbao"
+    extra = BOOTSTRAP_REQUIRED_OPENBAO if backend == "openbao" else BOOTSTRAP_REQUIRED_AWS_SM
+    return BOOTSTRAP_REQUIRED + extra
 
 # A representative set of app charts is rendered alongside the mode's substrate
 # charts, so an app-side profile break is caught before deploy.
@@ -2307,7 +2325,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         sys.path.insert(0, str(BOOTSTRAP))
         from bridge import get_tf_outputs
 
-        file_env.update({k: v for k, v in get_tf_outputs(args.from_terraform).items() if k.startswith("DFE_")})
+        # name -> (value, sensitive), the same unwrap _assemble_env does.
+        file_env.update({
+            k: value
+            for k, (value, _sensitive) in get_tf_outputs(args.from_terraform).items()
+            if k.startswith("DFE_")
+        })
     envfile.load_env_files(args.env_file, file_env)
     namespace = args.namespace or file_env.get("DFE_NAMESPACE") or "dfe-local"
     storage_class = args.storage_class or file_env.get("DFE_STORAGE_CLASS") or ""
@@ -2688,7 +2711,10 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         from bridge import get_tf_outputs
 
         tf = get_tf_outputs(args.from_terraform)
-        dfe = {k: v for k, v in tf.items() if k.startswith("DFE_")}
+        # get_tf_outputs answers name -> (value, sensitive) by design, so the
+        # value has to be unwrapped -- a raw tuple in the env dict makes
+        # subprocess.run refuse the whole call with a TypeError.
+        dfe = {k: value for k, (value, _sensitive) in tf.items() if k.startswith("DFE_")}
         env.update(dfe)
         print(f"  loaded {len(dfe)} DFE_* var(s) from terraform {args.from_terraform}", file=sys.stderr)
 
@@ -2738,7 +2764,7 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     env["DFE_STACK_VERSION"] = args.stack
 
     # Fail early on incomplete env -- clearer than a mid-bootstrap abort.
-    missing = [v for v in BOOTSTRAP_REQUIRED if not env.get(v)]
+    missing = [v for v in _bootstrap_required(env) if not env.get(v)]
     if missing:
         print(f"ERROR: missing required deploy env: {', '.join(missing)}", file=sys.stderr)
         print(
