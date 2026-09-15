@@ -478,7 +478,14 @@ def record_hyperdx_source(driver, engine: Engine, name: str, deployed: dict) -> 
 # The rows were fed minutes ago and HyperDX searches the last fifteen by default,
 # so the wait is for the query to run, not for data to arrive.
 OBSERVE_DEADLINE = 90.0
-RESULTS_LINE = re.compile(r"^(\d+) Results?$")
+# The frame groups thousands with a comma, so "1,050 Results" is a count too.
+RESULTS_LINE = re.compile(r"^([\d,]+) Results?$")
+
+
+def results_count(results: str) -> int | None:
+    """The number on the frame's results line, or None when it is not one."""
+    found = RESULTS_LINE.match(results or "")
+    return int(found.group(1).replace(",", "")) if found else None
 
 
 def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, results: str) -> tuple[str, str]:
@@ -497,9 +504,11 @@ def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, resul
     if not frame_url or frame_url.startswith("chrome-error://"):
         return "failed", f"the HyperDX frame did not load ({blocked or 'no frame on the page'})"
     if not picked:
-        return "failed", f"the frame's source picker does not offer {name}"
-    found = RESULTS_LINE.match(results or "")
-    if found and int(found.group(1)) > 0:
+        # A refusal in *results* is the exception that stopped the pick, and it
+        # names the cause where "does not offer" alone would hide it.
+        why = f" ({results})" if results else ""
+        return "failed", f"the frame's source picker does not offer {name}{why}"
+    if (results_count(results) or 0) > 0:
         return "done", f"Observe search over {name}: {results}"
     return "failed", f"Observe search over {name} returned {results or 'no results line'}"
 
@@ -525,6 +534,12 @@ def search_results(frame, name: str) -> tuple[bool, str]:
         time.sleep(1)
     if picker.input_value().strip() != name:
         picker.click(timeout=STEP_TIMEOUT_MS)
+        # The dropdown lists nothing until the frame's source list arrives, and a
+        # name typed before then filters an empty list.
+        try:
+            frame.get_by_role("option").first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        except Exception:  # an empty list is decided by count() below, not this wait
+            pass
         picker.fill(name)
         option = frame.get_by_role("option").filter(has_text=name)
         # count() takes no auto-wait, so right after fill() it can read the dropdown
@@ -543,9 +558,11 @@ def search_results(frame, name: str) -> tuple[bool, str]:
     results = ""
     while True:
         if line.count():
-            results = line.first.inner_text().strip()
-            found = RESULTS_LINE.match(results)
-            if found and int(found.group(1)) > 0:
+            try:
+                results = line.first.inner_text(timeout=2000).strip()
+            except Exception:  # the line re-renders between count() and the read
+                pass
+            if (results_count(results) or 0) > 0:
                 return True, results
         if time.monotonic() >= until:
             return True, results
