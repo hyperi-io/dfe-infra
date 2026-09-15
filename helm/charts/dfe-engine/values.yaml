@@ -116,7 +116,7 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.35@sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.36@sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
     - name: dfe-loader-contract
       kind: emit
       role: contract
