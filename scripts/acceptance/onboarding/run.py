@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import socket
 import sys
 import uuid
@@ -59,6 +60,16 @@ LOCAL_LOGIN_TAB = "Login with Local"
 STEP_TIMEOUT_MS = 30_000
 # How long the run keeps checking that the source it made has gone.
 TEARDOWN_DEADLINE = 120.0
+
+
+def _label(name: str) -> re.Pattern[str]:
+    """Match a field by its label, with or without the console's required marker.
+
+    A required field's accessible name carries the asterisk the console renders
+    beside it ("Username *"), and an optional one a trailing space ("Name "), so
+    an exact match finds neither. Anchoring keeps "Name" off "Username".
+    """
+    return re.compile(rf"^\s*{re.escape(name)}\s*\*?\s*$")
 
 
 class Driver:
@@ -91,7 +102,7 @@ class Driver:
         return self.page.get_by_role("button", name=name, exact=True)
 
     def textbox(self, name: str):
-        return self.page.get_by_role("textbox", name=name, exact=True)
+        return self.page.get_by_role("textbox", name=_label(name))
 
 
 def sign_in(driver: Driver, user: str, password: str) -> None:
@@ -131,10 +142,19 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
 
     driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.ORGANISATION)
-    driver.textbox("Name").fill(org)
-    driver.textbox("Display Name").fill(org.replace("-", " ").title())
-    driver.button("Save").click(timeout=STEP_TIMEOUT_MS)
-    driver.record(wizard.ORGANISATION, "done", f"created the organisation {org}")
+    name = driver.textbox("Name")
+    if name.count():
+        name.fill(org)
+        driver.textbox("Display Name").fill(org.replace("-", " ").title())
+        driver.button("Save").click(timeout=STEP_TIMEOUT_MS)
+        driver.record(wizard.ORGANISATION, "done", f"created the organisation {org}")
+    else:
+        # A deployment that already has one shows the screen with no form on it,
+        # and the walk moves on rather than asserting a second organisation.
+        driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
+        driver.record(
+            wizard.ORGANISATION, "done", "an organisation already existed, so the screen was satisfied"
+        )
 
     if wizard.FIRST_USER not in expected:
         # The first user already exists, so the organisation was the last required
@@ -157,8 +177,16 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     driver.page.wait_for_url(f"**/setup/{wizard.FIRST_USER}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.FIRST_USER)
     driver.textbox("Username").fill(user)
+    # The console requires an address here. `.invalid` is reserved, so the account
+    # this run makes can never be mailed by a deployment that wires up email.
+    driver.textbox("Email").fill(f"{user}@acceptance.invalid")
     driver.textbox("Password").fill(password)
     driver.button("Create Account").click(timeout=STEP_TIMEOUT_MS)
+    # The console keeps a rejected form on the screen with its field errors, so
+    # leaving it is what says the account was made rather than the click landing.
+    driver.page.wait_for_url(
+        lambda url: f"/setup/{wizard.FIRST_USER}" not in url, timeout=STEP_TIMEOUT_MS
+    )
     driver.record(wizard.FIRST_USER, "done", f"created the first user {user}")
 
     if wizard.RESET_BREAK_GLASS in expected:

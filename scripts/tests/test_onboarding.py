@@ -26,6 +26,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
 import access_summary  # noqa: E402
+from acceptance.onboarding import run as onboarding_run  # noqa: E402
 from acceptance.onboarding import wizard  # noqa: E402
 
 
@@ -107,6 +108,22 @@ class TestReadingTheEngineContract:
 
     def test_a_finished_deployment_says_so(self):
         assert wizard.setup_complete({"initial_setup": {"steps": [], "complete": True}})
+
+
+class TestHowAFieldIsFound:
+    # The console renders a required field's label with an asterisk beside it and
+    # an optional one with a trailing space, so both forms have to match.
+    def test_a_required_field_is_found_through_its_marker(self):
+        assert onboarding_run._label("Username").match("Username *")
+
+    def test_an_optional_fields_trailing_space_is_tolerated(self):
+        assert onboarding_run._label("Name").match("Name ")
+
+    def test_a_label_with_no_marker_still_matches(self):
+        assert onboarding_run._label("Display Name").match("Display Name")
+
+    def test_a_shorter_label_does_not_match_a_longer_one(self):
+        assert not onboarding_run._label("Name").match("Username *")
 
 
 class TestTheRunsVerdict:
