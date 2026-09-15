@@ -132,6 +132,40 @@ Beyond that, culvert authenticates each client:
   at all if a values file still carries the old `oidc.issuer` or
   `oidc.clientId`.
 
+## Reaching an appliance from the bastion
+
+Cloud flavours only -- on-prem the operator is already on the LAN and the module
+supplies nothing.
+
+An appliance holds its own tunnel open, so an operator reaches it by joining the
+same hub as an ADMIN peer rather than by opening anything on the appliance's
+network. The bastion is what joins: `terraform/modules/toolbox/aws` gains a UDP
+egress rule aimed at the tunnel's address, and the verbs are
+
+```
+dfe-ops bastion join            # mint an admin peer, install it over SSM, dial in
+dfe-ops bastion peers           # name, tunnel address and last handshake
+dfe-ops bastion hub <peer>      # reach one appliance through the tunnel
+dfe-ops bastion down            # revoke the peer, THEN terminate
+```
+
+The private key is minted on the instance and never leaves it; culvert is handed
+the public half. A config that reaches every appliance is the one credential
+client isolation does not stop, so it is minted per session, never stored, and
+`down` revokes it and proves it off the hub before the instance is terminated.
+`edge.ingest.tunnel.admin_peer.ttl_minutes` is recorded rather than enforced,
+because a WireGuard peer carries no expiry of its own -- the deadline is a fact
+on disk that `bastion status` reports.
+
+**The appliance side.** An appliance has to accept ssh on 22 and https on 443 on
+its tunnel interface from the admin peer's address, for remote administration.
+
+**Run the isolation regression on every change to the class policy:** one
+appliance peer still cannot reach another. `peers.classes` in
+`helm/edge/culvert/values.yaml` carries that policy, and the exception letting
+the admin class initiate waits on `hyperi-io/culvert#40` -- until it lands the
+class declares the intent and isolation holds for every peer.
+
 ## One replica, and why
 
 The chart holds at one pod and refuses more. WireGuard mints its server key

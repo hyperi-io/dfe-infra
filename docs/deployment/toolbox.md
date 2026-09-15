@@ -69,10 +69,18 @@ toolbox:
 
 ```
 dfe-ops bastion up [--ttl MIN]      # apply, wait for Online
+dfe-ops bastion join [--ttl MIN]    # join the fleet tunnel as an admin peer
+dfe-ops bastion peers               # the hub's peers and their last handshake
+dfe-ops bastion hub <peer>          # reach one appliance through the tunnel
 dfe-ops bastion shell               # a logged interactive shell
 dfe-ops bastion forward <t> <port>  # a tunnel to a named target
-dfe-ops bastion down                # terminate, then PROVE nothing remains
+dfe-ops bastion down                # revoke the admin peer, then terminate
 ```
+
+The four tunnel verbs exist only where a deployment runs the edge-fleet VPN, and
+`down` revokes the peer it minted before the instance is terminated --
+[edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) holds the
+mechanism and what the appliance has to accept.
 
 `forward` reaches a named target `bastion status` lists: the EKS API, one
 `kafka` target reaching a single bootstrap broker, `kafka-iam` on MSK's own
