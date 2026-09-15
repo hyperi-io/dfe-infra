@@ -43,7 +43,10 @@ INGEST_RETRY_WINDOW = 180.0
 ARCHIVE_DEADLINE = 300.0
 # Source names this suite mints, so a sweep can tell its own strays from a
 # deployment's real sources.
-RUN_PREFIXES = ("fb", "cw", "onboard")
+RUN_PREFIXES = ("fb", "cw", "el", "onboard")
+# The whole minted shape rather than the prefix alone, because a sweep removes
+# sources and a deployment may own one called `elastic` or `fbprod`.
+RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 
 
 # --- console helpers ---------------------------------------------------------
@@ -126,10 +129,14 @@ def open_console(driver, engine: Engine, admin_user: str, password: str, org: st
 
 
 def sweep_strays(engine: Engine, verify: bool) -> str:
-    """Remove sources an earlier run left behind, so this run starts clean."""
+    """Remove sources an earlier run left behind, so this run starts clean.
+
+    A name is this suite's only when it carries a run prefix and the hex a mint
+    appends, so a source the deployment authored is never removed.
+    """
     listing = engine.call("GET", "/sources")
     names = [str(item["name"]) for item in (listing.body or {}).get("items", [])]
-    strays = [n for n in names if n.startswith(RUN_PREFIXES) and n != "filebeat"]
+    strays = [n for n in names if RUN_NAME.fullmatch(n)]
     removed = [remove_source(engine.base, verify, engine.token, n, 60.0) for n in strays]
     return "; ".join(removed) if removed else "no strays"
 
@@ -216,12 +223,16 @@ def record_table(driver, store: Datastore, name: str) -> None:
 
 
 def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                name: str, run: str, per_module: int) -> int:
-    """POST the wrapped corpus, one request per record."""
+                name: str, run: str, per_module: int, modules: tuple[str, ...] = ()) -> int:
+    """POST the wrapped corpus, one request per record.
+
+    ``modules`` narrows the archive to the corpus modules a case's transform
+    handles; empty is every module the wrapper names.
+    """
     sys.path.insert(0, str(engine_repo))
     from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
 
-    items = corpus.samples(corpus_file, limit=per_module)
+    items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
     bodies = corpus.wrap_all(items, source=name, run=run)
 
     for body in bodies:
@@ -251,7 +262,8 @@ def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
 
 
 def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                store: Datastore, name: str, deadline: float) -> str:
+                store: Datastore, name: str, deadline: float,
+                modules: tuple[str, ...] = ()) -> str:
     """Probe until a record actually reaches the source's table.
 
     Before the receiver has rolled onto the new rule the probes land in the
@@ -266,7 +278,7 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
     before = store.scalar(f"SELECT count() FROM {name}")
     passes = 0
     while True:
-        post_corpus(receiver_url, verify, engine_repo, corpus_file, name, probe, 1)
+        post_corpus(receiver_url, verify, engine_repo, corpus_file, name, probe, 1, modules)
         passes += 1
         if store.scalar(f"SELECT count() FROM {name}") > before:
             return f"routed into dfe.{name} after {passes} probe pass(es)"
