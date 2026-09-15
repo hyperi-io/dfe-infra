@@ -277,6 +277,7 @@ resource "aws_instance" "this" {
     yq_version                = var.tool_versions["yq"]
     awscli_version            = var.tool_versions["aws-cli"]
     ssm_plugin_version        = var.tool_versions["aws-session-manager-plugin"]
+    kafka_cli_version         = var.tool_versions["kafka-cli"]
     ttl_minutes               = var.ttl_minutes
   })
 

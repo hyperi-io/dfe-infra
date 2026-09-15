@@ -882,6 +882,14 @@ def _toolbox_tool_versions() -> dict[str, str]:
     postgres = _scalar(tree, ("stacks", current, "services", "postgresql"))
     if postgres is not None:
         versions["psql"] = postgres
+    # The Apache Kafka CLI tarball the toolbox installs in place of kcat, which
+    # has no package on the instance's distribution. It follows the same broker
+    # version the deployment runs, for the same reason clickhouse-client and
+    # psql follow their servers: a client that skews off its server is a
+    # debugging tool that lies.
+    kafka = _scalar(tree, ("stacks", current, "services", "kafka-version"))
+    if kafka is not None:
+        versions["kafka-cli"] = kafka
     return versions
 
 

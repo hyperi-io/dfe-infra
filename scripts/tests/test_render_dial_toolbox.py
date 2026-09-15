@@ -127,6 +127,7 @@ stacks:
     services:
       clickhouse-version: "26.3.17.56"
       postgresql: "17"
+      kafka-version: "4.2.0"
 """
 
 
@@ -169,22 +170,30 @@ def test_tool_versions_is_never_read_from_the_dial() -> None:
 
 
 def test_tool_versions_assembles_against_the_real_versions_yaml() -> None:
-    """`current` (2.2.0-rc.13) predates the toolbox: stage -- the docker/dfe-toolbox
-    pins land starting 2.2.0-rc.14 -- so this must degrade the same way
-    test_tool_versions_is_empty_with_no_toolbox_stage_at_all does for a
-    fixture, proven here against the real file instead. clickhouse-client and
-    psql are unaffected: they read services.clickhouse-version /
-    services.postgresql, not the toolbox: stage."""
+    """The tool set is present exactly when the selected stack carries a
+    `toolbox:` stage, and absent exactly when it does not.
+
+    Asserting WHICH stack `current` points at instead would expire the moment
+    the pointer moved -- and it would expire on a merge neither contributing
+    branch's CI could see, because one branch carries the pointer and the other
+    carries this test. clickhouse-client and psql are unaffected either way:
+    they read services.clickhouse-version / services.postgresql, not the
+    toolbox: stage."""
     tool_versions = render()["toolbox"]["tool_versions"]
     versions_yaml = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
-    current = render_dial._scalar(
-        render_dial._parse_yaml_subset(versions_yaml, source="versions.yaml"), ("current",)
-    )
-    for tool in (
+    parsed = render_dial._parse_yaml_subset(versions_yaml, source="versions.yaml")
+    current = render_dial._scalar(parsed, ("current",))
+    stage = parsed["stacks"][current].get("toolbox") or {}
+
+    staged = (
         "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
         "aws-session-manager-plugin",
-    ):
-        assert tool not in tool_versions, f"{tool} present despite no toolbox: stage in {current!r}"
+    )
+    for tool in staged:
+        if tool in stage:
+            assert tool_versions.get(tool), f"{tool} is in {current!r}'s toolbox: stage but was not assembled"
+        else:
+            assert tool not in tool_versions, f"{tool} present despite no toolbox: stage entry in {current!r}"
     assert tool_versions.get("clickhouse-client"), "clickhouse-client missing from tool_versions"
     assert tool_versions.get("psql"), "psql missing from tool_versions"
 
@@ -202,6 +211,9 @@ def test_clickhouse_client_and_psql_track_the_services_pins_not_their_own() -> N
     services = render_dial._parse_yaml_subset(versions_yaml, source="versions.yaml")["stacks"][current]["services"]
     assert real["clickhouse-client"] == render_dial._scalar(services, ("clickhouse-version",))
     assert real["psql"] == render_dial._scalar(services, ("postgresql",))
+    # The Kafka CLI tarball the toolbox installs where no kcat package exists,
+    # held to the same broker version for the same reason.
+    assert real["kafka-cli"] == render_dial._scalar(services, ("kafka-version",))
 
 
 def test_tool_versions_assembles_fully_from_a_fixture_stage(
@@ -222,6 +234,7 @@ def test_tool_versions_assembles_fully_from_a_fixture_stage(
         "aws-session-manager-plugin": "1.2.707.0",
         "clickhouse-client": "26.3.17.56",
         "psql": "17",
+        "kafka-cli": "4.2.0",
     }
 
 

@@ -21,7 +21,7 @@ this module's to close; see "Out of scope" at the end.
 | `network` | `object({ vpc_id, cidr, private_subnet_ids })` | Where the instance lands. `cidr` scopes the egress rule of every target whose `scope` is `vpc`; a target outside the VPC says so and is opened to `0.0.0.0/0` on its own port instead. |
 | `instance_type` | `string` | `toolbox.aws.instance_type` in the dial. Validated as a Graviton (arm64) family. |
 | `ttl_minutes` | `number` | Idle-session bound, 15-480, enforced here AND by `dfe-ops`. |
-| `tool_versions` | `map(string)` | `kubectl`, `helm`, `argocd-cli`, `tofu`, `yq`, `aws-cli`, `aws-session-manager-plugin`, `clickhouse-client`, `psql` -- every key required and non-empty. Assembled by `render_dial.py` from `versions.yaml`; see "Where the tool versions come from" below. |
+| `tool_versions` | `map(string)` | `kubectl`, `helm`, `argocd-cli`, `tofu`, `yq`, `aws-cli`, `aws-session-manager-plugin`, `clickhouse-client`, `psql`, `kafka-cli` -- every key required and non-empty. Assembled by `render_dial.py` from `versions.yaml`; see "Where the tool versions come from" below. |
 | `session` | `object({ idle_timeout_minutes, max_duration_minutes })` | The SHELL document's preferences only. |
 | `session_log_retention_days` | `number` | Default 90. Deliberately independent of `telemetry.retention_days` -- `#18`. |
 | `kms_key_arn` | `string` | The deployment CMK. Used via an IAM role policy, never a key policy of this module's own -- `#6` (see "What this module deliberately does NOT write"). |
@@ -36,7 +36,7 @@ this module's to close; see "Out of scope" at the end.
 |--------|---------|
 | `instance_id` | Empty when not enabled. |
 | `ssm_session_document` | The SHELL document's name. |
-| `targets` | Each named target plus its forward document's name. |
+| `targets` | Every target that ACTUALLY has a forward document and an open port -- derived from the resources this module created, never from `var.targets`, so a target a partial apply left without one or the other is absent here rather than advertised with a broken `document_name`. |
 | `session_log_bucket` | Persists across every up/down cycle. |
 | `security_group_id`, `iam_role_name` | For a `down` proof and for policy examples; empty when not enabled. |
 
@@ -179,18 +179,20 @@ never from a literal in this module or its `templates/user_data.sh.tftpl`:
   and this module's `tool_versions` validation refuses a plan with
   `toolbox.enabled: true` by naming exactly which keys are missing, rather
   than shipping a box with no pinned tools.
-- `clickhouse-client` reads `services.clickhouse-version` and `psql` reads
-  `services.postgresql` -- the SAME keys the deployed ClickHouse server and
-  CNPG cluster already pin, so the debugging tool's protocol version can never
-  skew from the server it is debugging. The `toolbox:` stage deliberately
-  carries no pin of its own for either, for exactly this reason (its own
+- `clickhouse-client` reads `services.clickhouse-version`, `psql` reads
+  `services.postgresql`, and `kafka-cli` reads `services.kafka-version` --
+  the SAME keys the deployed ClickHouse server, CNPG cluster and Kafka broker
+  already pin, so the debugging tool's protocol version can never skew from
+  the server it is debugging. The `toolbox:` stage deliberately carries no
+  pin of its own for any of the three, for exactly this reason (its own
   comment says so).
-- `jq`, `kcat` and `openssl` are a deliberate exception: none carries an
+- `jq` and `openssl` are a deliberate exception: neither carries an
   upstream release cadence worth tracking as a versions.yaml pin (the
-  `toolbox:` stage's own comment says so for `kcat` specifically -- no
-  release since 1.7.1 in 2021), so all three install unpinned via `dnf`,
-  matching `docker/dfe-toolbox/base/Dockerfile`'s identical choice to install
-  them unpinned via `apt`.
+  `toolbox:` stage's own comment says so), so both install unpinned via
+  `dnf`, matching `docker/dfe-toolbox/base/Dockerfile`'s identical choice to
+  install them unpinned via `apt`. `kcat` is the container image's own
+  Debian package (that repo does carry one) and is NOT installed on this EC2
+  instance at all -- see "Kafka CLI on the EC2 instance" below for why.
 
 ## AMI resolution (`#8`)
 
@@ -290,17 +292,42 @@ naming it
   can be in.
 - **Every tool version is a lookup, never a literal**, in this module and in
   `templates/user_data.sh.tftpl` alike.
+- **The `targets` output only ever names a target that will actually work.**
+  It is built FROM `aws_ssm_document.forward` and
+  `aws_vpc_security_group_egress_rule.targets`, never from `var.targets`
+  directly -- a target whose document or egress rule a partial apply left
+  uncreated is absent from the output rather than advertised with a
+  `document_name` pointing at nothing. A live apply once left the output
+  naming three targets while none of their documents or egress rules existed
+  (a targeted apply that aborted inside `module.cluster`, before
+  `module.toolbox` ran at all), and `dfe-ops bastion forward` failed with
+  `InvalidDocument` after already writing a scratch kubeconfig. The output's
+  `if` clause checks BOTH resources for a target whose port is not already
+  covered by the control-plane egress rule (443): a document with no open
+  port is the same defect one layer down, so checking the document alone is
+  not enough.
 
-## Known gap, stated rather than hidden
+## Kafka CLI on the EC2 instance
 
-`kcat` is deliberately unpinned (see "Where the tool versions come from"),
-but AL2023's own `dnf` repos may not publish a `kcat` package at all, unlike
-Debian, which does -- this was not verified against a live AL2023 instance
-at the time this module was written. The user data template's
-`dnf install -y kcat || true` may install nothing. This is the one install
-step that needs proving against a real instance before it is relied on. The
-container image's own `kcat` install (Debian's `kcat` apt package) does not
-have this gap.
+`kcat` is not installed here. AL2023's `dnf` repos publish no `kcat` package
+at all, unlike the Debian the container image installs it from (its own
+`kcat` apt install has no equivalent gap) -- proven live: `dfe-ops bastion
+forward kafka` opened a tunnel and the session's `kcat` came back `command
+not found`. `templates/user_data.sh.tftpl` installs the Apache Kafka
+project's own console scripts (`kafka-topics.sh`,
+`kafka-console-producer.sh`, `kafka-console-consumer.sh`,
+`kafka-consumer-groups.sh`, `kafka-broker-api-versions.sh`) instead, fetched
+from `archive.apache.org` (which keeps every past release indefinitely,
+unlike the rotating current-release mirror network) at the version
+`tool_versions["kafka-cli"]` names -- `services.kafka-version`, the SAME
+broker version this deployment runs, never a pin of its own (see "Where the
+tool versions come from"). Java 17 (`java-17-amazon-corretto-headless`, an
+AL2023 base-repo package) is installed first: Kafka 4.0 raised the console
+tools' own minimum to Java 17 (KIP-1013), even though the client library
+itself still runs on 11. Each script lands in `$BIN` as a wrapper that
+`exec`s the real one by its absolute path under `/opt/kafka-cli` -- a plain
+symlink would break them, because each script finds its own JARs via
+`dirname $0`, and a symlink's `$0` is the link's own path, never its target.
 
 ## Out of scope for this module
 

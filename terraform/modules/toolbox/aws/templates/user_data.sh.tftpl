@@ -159,12 +159,38 @@ dnf install -y \
 # --- psql, pinned to the deployment's PostgreSQL MAJOR (services.postgresql)
 dnf install -y "postgresql${postgresql_major_version}"
 
-# --- kcat -- no upstream release cadence worth tracking either (the project
-# has shipped no release since 1.7.1 in 2021, per versions.yaml's own
-# toolbox: stage comment), so it is unpinned here too, matching
-# docker/dfe-toolbox/base/Dockerfile's Debian `kcat` package. UNVERIFIED on
-# AL2023 specifically: AWS publishes no `kcat` package in the base repos at
-# the time this module was written, unlike Debian, which does -- this line
-# needs proving against a real instance before it is relied on (CONTRACT.md,
-# "Known gap").
-dnf install -y kcat || true
+# --- Java 17 -- the Apache Kafka CLI scripts below need it (KIP-1013: Kafka
+# 4.0 raised brokers, Connect and the console tools to Java 17; only clients
+# and Streams stayed on 11). AL2023's own base repos carry Corretto 17, so
+# nothing beyond this package needs enabling.
+dnf install -y java-17-amazon-corretto-headless
+
+# --- Kafka CLI -- kcat is not an AL2023 package (AWS publishes none in the
+# base repos, unlike the Debian the container image installs it from), so
+# this instance carries the Apache project's own console scripts instead,
+# pinned to the SAME version this deployment's broker runs
+# (versions.yaml services.kafka-version, never a pin of its own) so the CLI
+# can never skew from the server it debugs -- the identical pattern
+# clickhouse-client and psql already follow above. Pulled from
+# archive.apache.org rather than the current-release mirror network, which
+# drops a version the moment it is no longer the latest. Scala 2.13 is the
+# only build the 4.x line publishes, so it is a constant here rather than a
+# second thing to pin.
+curl -fsSL -o /tmp/kafka-cli.tgz \
+  "https://archive.apache.org/dist/kafka/${kafka_cli_version}/kafka_2.13-${kafka_cli_version}.tgz"
+tar -xzf /tmp/kafka-cli.tgz -C /opt
+ln -s "/opt/kafka_2.13-${kafka_cli_version}" /opt/kafka-cli
+rm -f /tmp/kafka-cli.tgz
+# A plain symlink into $BIN would break these scripts: each one finds its own
+# JARs via `dirname $0`, and a symlink's $0 is the LINK's path, never its
+# target -- so a thin wrapper that execs the real script by absolute path is
+# what keeps that lookup resolving inside /opt/kafka-cli, where the JARs
+# actually live.
+for tool in kafka-topics.sh kafka-console-producer.sh kafka-console-consumer.sh \
+  kafka-consumer-groups.sh kafka-broker-api-versions.sh; do
+  cat > "$BIN/$tool" <<WRAPPER
+#!/bin/bash
+exec /opt/kafka-cli/bin/$tool "\$@"
+WRAPPER
+  chmod +x "$BIN/$tool"
+done

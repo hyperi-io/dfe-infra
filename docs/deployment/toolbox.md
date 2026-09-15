@@ -97,10 +97,15 @@ time, so the toolbox can be enabled in the dial before the first apply, and
 reaching a broker proves reachability, TLS and SASL. A client that
 must follow metadata to the other brokers -- most real Kafka clients do --
 runs on the instance instead, via `bastion shell`, because the advertised
-hostnames resolve only inside the VPC. `kcat` is there where AL2023's repos
-publish one: that install is unpinned and deliberately non-fatal, the only one
-on the instance that can no-op silently
-(`terraform/modules/toolbox/aws/CONTRACT.md`).
+hostnames resolve only inside the VPC. AL2023 publishes no `kcat` package, so
+the instance carries the Apache Kafka project's own console scripts instead
+(`kafka-console-producer.sh`, `kafka-console-consumer.sh`, `kafka-topics.sh`,
+`kafka-consumer-groups.sh`, `kafka-broker-api-versions.sh`), pinned to the
+SAME broker version this deployment runs, plus the Java 17 runtime those
+scripts need
+(`terraform/modules/toolbox/aws/CONTRACT.md`, "Kafka CLI on the EC2
+instance"). The container image's own `kcat` remains what the in-cluster pod
+(below) uses -- Debian's repos do carry it.
 
 Each target has its OWN Session document with the host and port fixed in the
 document body -- `--parameters host=...` against one fails as an unknown
@@ -183,6 +188,6 @@ live account). The EKS control-plane audit log narrows the gap further for
 Kubernetes traffic specifically: both an EKS-API forward and an in-cluster
 pod's `kubectl exec` show up there, attributed to the operator's own
 identity, even though the tunnel or the exec session itself carries no
-transcript. Nothing does this for Kafka or ClickHouse -- a `kcat` consume or
+transcript. Nothing does this for Kafka or ClickHouse -- a Kafka consume or
 a `clickhouse-client` query through either surface leaves no record anywhere
 in this deployment.

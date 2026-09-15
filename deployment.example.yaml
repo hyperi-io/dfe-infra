@@ -419,7 +419,7 @@ toolbox:
   ## Minutes with no active SSM session before the on-instance timer shuts
   ## the box down (a systemd timer counting local ssm-session-worker
   ## processes, not a CPU alarm -- an idle-looking tunnel can still be
-  ## carrying a live kcat consumer). Bounded 15-480 by the module itself, not
+  ## carrying a live console consumer). Bounded 15-480 by the module itself, not
   ## only here. `dfe-ops bastion up --ttl` overrides this for one call.
   ttl_minutes: 60
   ## Session Manager preferences for the SHELL session only -- a port-forward

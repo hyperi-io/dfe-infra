@@ -53,11 +53,11 @@ variable "ttl_minutes" {
 // name, never a literal in this module or the template. render_dial.py
 // assembles this map from versions.yaml's toolbox: stage (the SAME stage
 // docker/dfe-toolbox's Dockerfiles pin from, so the EC2 instance and the
-// container image never drift apart) plus the services: stage for the two
+// container image never drift apart) plus the services: stage for the three
 // keys that track a server version instead of having one of their own --
 // see CONTRACT.md for the exact keys and where each one comes from.
 variable "tool_versions" {
-  description = "kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client, psql -- every key required and non-empty. jq, kcat and openssl are NOT here: they carry no upstream release cadence worth tracking (versions.yaml's own toolbox: stage comment) and are installed unpinned, matching docker/dfe-toolbox/base/Dockerfile's identical choice."
+  description = "kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client, psql, kafka-cli -- every key required and non-empty. jq and openssl are NOT here: they carry no upstream release cadence worth tracking (versions.yaml's own toolbox: stage comment) and are installed unpinned, matching docker/dfe-toolbox/base/Dockerfile's identical choice. kafka-cli pins the Apache Kafka CLI tarball this instance installs in place of kcat -- AL2023 carries no kcat package -- and reads services.kafka-version, the same broker version clickhouse-client and psql already follow, never a pin of its own."
   type        = map(string)
 
   // Only enforced when enabled is true: this module is ALWAYS instantiated
@@ -68,10 +68,10 @@ variable "tool_versions" {
     condition = !var.enabled || alltrue([
       for k in [
         "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
-        "aws-session-manager-plugin", "clickhouse-client", "psql",
+        "aws-session-manager-plugin", "clickhouse-client", "psql", "kafka-cli",
       ] : can(var.tool_versions[k]) && length(var.tool_versions[k]) > 0
     ])
-    error_message = "tool_versions must carry a non-empty entry for kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client and psql whenever enabled is true -- render_dial.py assembles this from versions.yaml, so a missing key names a stanza that has not landed there yet."
+    error_message = "tool_versions must carry a non-empty entry for kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client, psql and kafka-cli whenever enabled is true -- render_dial.py assembles this from versions.yaml, so a missing key names a stanza that has not landed there yet."
   }
 }
 

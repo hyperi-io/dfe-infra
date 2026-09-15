@@ -386,10 +386,10 @@ locals {
   // reaches ONE bootstrap broker, which proves reachability, TLS and SASL;
   // a client that must follow Kafka's own metadata response to the other
   // brokers runs ON the instance itself (`dfe-ops bastion shell`), because the
-  // brokers' advertised hostnames only resolve inside the VPC. The instance's
-  // own kcat install is unpinned and non-fatal, so that path depends on
-  // AL2023 publishing the package -- see toolbox/aws/CONTRACT.md and
-  // docs/deployment/toolbox.md.
+  // brokers' advertised hostnames only resolve inside the VPC. That client is
+  // the Apache Kafka console scripts, pinned to the deployment's own broker
+  // version -- the instance's distribution publishes no kcat package, which
+  // toolbox/aws/CONTRACT.md and docs/deployment/toolbox.md both record.
   managed_kafka_selected = contains(["msk", "confluent-cloud", "redpanda-cloud"], var.kafka.provider)
   // MSK's brokers are ENIs in this VPC; Confluent Cloud and Redpanda Cloud
   // publish a vendor-hosted bootstrap the instance reaches over NAT, so their
