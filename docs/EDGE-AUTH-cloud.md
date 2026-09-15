@@ -23,9 +23,15 @@ that quietly ships with no edge auth.
 ## Public hostnames on a cloud deploy
 
 Everything DFE uses internally is private. The UIs are the exception,
-because their users sit outside the VPC, and the `ui:` block exposes them.
-Nothing in it acts until `ui.public_domain` (the dial's `dns.public_zone`)
-names a delegated public zone.
+because their users sit outside the VPC, and the gateway chart's `ui:` values
+expose them. Nothing in it acts until `ui.public_domain` (the dial's
+`edge.product.domain`, itself the deployment's `dns.public_zone`) names a
+delegated public zone.
+
+The keys below are the CHART's. The dial states the same decisions under
+`edge.product` and `edge.admin_uis` (`deployment.example.yaml`), where
+`rate_limit`, `waf` and `tls` are these values verbatim and the rest is the
+dial's own spelling.
 
 | Key | Default | What it decides |
 |---|---|---|

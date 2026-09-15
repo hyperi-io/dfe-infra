@@ -101,113 +101,241 @@ dns:
   private_zone: dfe.internal
   public_zone: ""
 
-## THE EXPOSED UIs. Everything DFE uses internally is private; the UIs are the
-## exception, because their users sit outside the VPC. Nothing here does
-## anything while dns.public_zone is empty. These keys are the gateway chart's
-## `ui:` values verbatim, so an overlay is a copy rather than a translation --
-## which is exactly why every boolean below is unquoted, unlike the rest of
-## this dial (render_dial.py's own convention writes true/false as quoted
-## strings, see _flag()). This block is meant to be pasted straight into a
-## real Helm values file, where Go templates read an unquoted true/false as a
-## bool and a quoted "false" as a non-empty string that is always truthy. The
-## chart refuses a quoted one at render rather than guessing what you meant.
-ui:
-  ## dfe-ui is the product surface and is public by default on a cloud deploy.
-  ## Every admin UI is opt-in, one at a time. cruise_control has no route yet --
-  ## it arrives with the rebalancer UI, and turning it on before then fails the
-  ## render rather than silently doing nothing.
-  public:
-    dfe_ui: true
-    kafbat: false
-    cruise_control: false
-    hyperdx: false
-    argocd: false
-    links: false
-  ## Who may reach a public UI; empty = any address. Enforced at Envoy AND at
-  ## the cloud load balancer, so one misconfiguration is not the whole wall.
-  ## The load-balancer half fences the entire front door, ingest included.
-  allowed_cidrs: ""
-  ## The proxy ranges Envoy may believe about the client address -- the load
-  ## balancer's subnets, plus any CDN in front. Required when allowed_cidrs is
-  ## set: without it the address comes from a header the caller writes.
-  trusted_proxy_cidrs: ""
-  ## Sized for a handful of analysts and admins, so a credential-stuffing run
-  ## hits a wall before it hits the login. local counts per route per proxy
-  ## replica, not per attacker; per-attacker counting needs Redis and is refused.
-  rate_limit:
-    enabled: true
-    requests: "300"
-    unit: Minute             # Second | Minute | Hour | Day | Month | Year
-    scope: local             # local only
-  ## Every public route already sits behind a login with deny-by-default
-  ## authorisation, so managed rules would guard code no unauthenticated caller
-  ## reaches. Any other mode terminates TLS above Envoy and moves the public
-  ## certificate to the cloud's own store, which is not rendered here.
-  waf:
-    mode: none               # none only
-    plan: ""                 # reserved
-    managed_rules: ""        # reserved
-  ## Public edge TLS. min_version is a STRING -- unquoted 1.2 parses as a float
-  ## and is rejected. hsts stops a browser retrying the name over plaintext.
-  tls:
-    min_version: "1.2"
-    hsts: true
-
-## THE RECEIVER'S INGRESS DOOR. DFE pushes terabytes a day through the
-## receiver, and every cloud front door bills by volume -- an NLB by the
-## LCU-hour, a Classic ELB, CloudFront and Global Accelerator by the GB.
-## docs/deployment/aws.md#receiver-ingress sizes that door in cost buckets,
-## against the scale defined there. So the receiver carries NO
-## public front door by default: it stays private in the VPC, and there are
-## three ways to reach it --
-##   1. culvert (helm/edge/culvert), dialled through an address the
-##      deployer brings -- e.g. an Elastic IP on a small forwarder instance
-##      in front of culvert's NodePort. Free ingress, no per-byte line.
-##   2. the deployer's own peering, VPN or Direct Connect, straight to the
-##      receiver's node port or ClusterIP.
-##   3. a public or internal load balancer, the explicit costed opt-in below
-##      -- `mode: public` plus `loadBalancerSourceRanges` set, never empty.
-## These keys are the dfe-receiver chart's `exposure:` values verbatim, the
-## same paste-into-a-values-file convention as `ui:` above: unquoted
-## true/false and mode as a plain string, because this is meant to land in a
-## real Helm values file rather than go through render_dial.py's own DFE_*
-## translation. The block's NAME differs from the chart's, though -- paste the
-## body under `exposure:`, never `ingest:`, which no chart reads. Nothing
-## applies this block for you: render_dial.py validates it and reports it, and
-## the value that decides the door is `exposure.mode` in the deploy repo's own
-## overlay.
-ingest:
-  mode: vpn                  # public | internal | vpn -- vpn is the safe cloud default
-  public:
-    serviceType: LoadBalancer
-    loadBalancerIP: ""
-    loadBalancerClass: ""
-    annotations: {}
-    ## Empty is not "unset" -- it is 0.0.0.0/0, the whole internet. A
-    ## deployer opting into `mode: public` sets this, always.
-    loadBalancerSourceRanges: []
-  vpn:
-    ## Selector label of the tunnel pods -- dfe-common.selectorLabels on the
-    ## culvert chart. Matches that chart's default project/component name;
-    ## change only alongside a renamed culvert release.
-    ## The rule this feeds carries a podSelector and no namespaceSelector, so
-    ## culvert has to run in the receiver's OWN namespace -- a tunnel installed
-    ## beside it in another namespace is dropped with everything Ready.
-    podLabel: dfe-culvert
-  networkPolicy:
-    enabled: true
-
-## THE EDGE MODULE, as one switch. `enabled: false` leaves
-## argocd/appsets/layer2-edge.yaml generating nothing, so the deployment gets
-## no public gateway and no tunnel and every app stays on a ClusterIP. ON is
-## the default, because a deployment with no door is reachable from nowhere
-## outside the cluster. render_dial.py carries this to DFE_EDGE_ENABLED and
-## bootstrap.sh writes it onto the cluster secret as both a label and an
-## annotation -- an ApplicationSet cluster selector matches labels only.
-## DESTROY BEFORE DISABLING: a cloud load balancer outlives the Application
-## that asked for it, so turning the module off first orphans it.
+## THE EDGE MODULE -- every door this deployment opens, in one block. The module
+## is the two charts under helm/edge: the public gateway and the fleet tunnel.
+## It REPLACES the old top-level `ui:` and `ingest:` blocks, which render_dial.py
+## still reads for one release and names on the way through.
+##
+## TIERS, per flavour (argocd/values/edge-<flavour>.yaml carries the table):
+## tier 1 is on by default and adds nothing beyond the cluster's own compute,
+## tier 2 is a costed opt-in, tier 3 is absent by design and has no key at all.
+## Cost is a T-shirt bucket against the cluster's compute plus a named pricing
+## model, never a rate (docs/deployment/aws.md#how-costs-are-described).
+##
+## PASTE-INTO-A-VALUES-FILE, sub-block by sub-block. `product.rate_limit`,
+## `product.waf` and `product.tls` are the gateway chart's `ui.*` values
+## verbatim; the body of `ingest.receiver` is the dfe-receiver chart's
+## `exposure:` values verbatim. Everything else is the DIAL's own spelling and
+## needs translating -- `product.public` is the chart's `ui.public.dfe_ui`,
+## `admin_uis.public.*` is the rest of its `ui.public`, `admin_uis.external` is
+## `exposure.infraUisExternal`, and `admin_uis.oidc.admin_groups` is
+## `oidc.adminGroups`.
+##
+## Every boolean below is unquoted, unlike the rest of this dial
+## (render_dial.py's own convention writes true/false as quoted strings, see
+## _flag()), because a value pasted verbatim into a real Helm values file has to
+## already be the type that file expects: an unquoted true/false is a bool and a
+## quoted "false" is a non-empty string that is always truthy, and the chart
+## refuses a quoted one at render rather than guessing what you meant.
+##
+## NOTHING HERE IS APPLIED FOR YOU except `enabled`. render_dial.py validates
+## the block, reports it, and carries `enabled` to DFE_EDGE_ENABLED.
 edge:
+  ## `false` leaves argocd/appsets/layer2-edge.yaml generating nothing, so the
+  ## deployment gets no public gateway and no tunnel and every app stays on a
+  ## ClusterIP. ON is the default, because a deployment with no door is
+  ## reachable from nowhere outside the cluster. bootstrap.sh writes this onto
+  ## the cluster secret as both a label and an annotation -- an ApplicationSet
+  ## cluster selector matches labels only.
+  ## DESTROY BEFORE DISABLING: a cloud load balancer outlives the Application
+  ## that asked for it, so turning the module off first orphans it.
   enabled: true
+  ## Which tier table the values below are written for. The appset derives the
+  ## real one from the cluster secret's own cloud fact, so this records intent
+  ## and selects nothing; `local` and `rancher` are both the `onprem` flavour.
+  flavour: aws             # aws | gcp | azure | onprem
+
+  ## GROUP (a) -- dfe-ui, the product surface. Its users sit outside the VPC,
+  ## which is why it is the one surface public by default on a cloud deploy.
+  ## Nothing here does anything while `domain` is empty.
+  product:
+    public: true           # tier 1
+    ## The delegated public zone the product answers on (the chart's
+    ## ui.public_domain, this deployment's dns.public_zone). Empty publishes
+    ## nothing at all.
+    domain: ""
+    ## Public edge TLS. min_version is a STRING -- unquoted 1.2 parses as a
+    ## float and is rejected. hsts stops a browser retrying the name over
+    ## plaintext. Tier 1, and the gateway chart's `ui.tls` verbatim.
+    tls:
+      min_version: "1.2"     # 1.2 | 1.3
+      hsts: true
+    ## Sized for a handful of analysts and admins, so a credential-stuffing run
+    ## hits a wall before it hits the login. local counts per route per proxy
+    ## replica, not per attacker; per-attacker counting needs Redis and an Envoy
+    ## Gateway install change, so it is refused. Tier 1, and the chart's
+    ## `ui.rate_limit` verbatim.
+    rate_limit:
+      enabled: true
+      requests: "300"
+      unit: Minute           # Second | Minute | Hour | Day | Month | Year
+      scope: local           # local only
+    ## Who may reach a public surface; empty = any address. Enforced at Envoy
+    ## AND at the cloud load balancer, so one misconfiguration is not the whole
+    ## wall. The load-balancer half fences the entire front door, ingest
+    ## included. Tier 1 once set.
+    allowed_cidrs: ""
+    ## The proxy ranges Envoy may believe about the client address -- the load
+    ## balancer's subnets, plus any CDN in front. Required whenever
+    ## allowed_cidrs is set: without it the address comes from a header the
+    ## caller writes.
+    trusted_proxy_cidrs: ""
+    ## Every public route already sits behind a login with deny-by-default
+    ## authorisation, so managed rules would guard code no unauthenticated
+    ## caller reaches. Any other mode terminates TLS above Envoy and moves the
+    ## public certificate to the cloud's own store, which no chart here renders,
+    ## so `none` is the only value today. Tier 2 once one exists: managed rules
+    ## bill per request, bucket S. The chart's `ui.waf` verbatim.
+    waf:
+      mode: none             # none only
+      plan: ""               # reserved
+      managed_rules: ""      # reserved
+
+  ## GROUP (b) -- the engine's API, which dfe-ui consumes from the same origin.
+  engine_api:
+    ## It rides the product's own hostname and certificate. Tier 1, and the only
+    ## value today: no route splits it onto a hostname of its own.
+    with_product: true
+    ## /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
+    ## origin (the chart's routes.dfeEngine.pathPrefix).
+    path_prefix: /api/v1
+    ## Tier 2, refused while it names anything: the engine team has not named
+    ## which path families would go private, and no route splits one off the
+    ## product route, so a value here would look applied and do nothing.
+    private_path_families: []
+
+  ## GROUP (c) -- the ops surfaces. Every one of them is opt-in, one at a time.
+  admin_uis:
+    ## THE CLASS KILL SWITCH (the chart's exposure.infraUisExternal). `false`
+    ## takes every infra-class route off the edge in one flip and BEATS a
+    ## per-UI flag below, so a lock-down cannot be undone one route at a time.
+    ## Tier 1, and OFF on a cloud flavour because the gateway Service there is
+    ## internet-facing.
+    external: false
+    ## Which admin UIs answer on a public hostname, once the kill switch is on.
+    ## cruise_control has no route yet -- it arrives with the rebalancer UI, and
+    ## turning it on before then fails the render rather than silently doing
+    ## nothing.
+    public:
+      kafbat: false
+      cruise_control: false
+      hyperdx: false
+      argocd: false
+      links: false
+      forgejo: false
+    ## Edge OIDC, tier 1. `enabled` is the switch alone; `providers` stays empty
+    ## here because a provider is a list of maps this dial cannot express -- put
+    ## the real entries in the deploy repo's own overlay under `oidc.providers`,
+    ## and with none the chart renders NO SecurityPolicy at all. admin_groups is
+    ## the chart's `oidc.adminGroups`.
+    oidc:
+      enabled: true
+      providers: []
+      admin_groups: [dfe-admins, dfe-infra]
+
+  ## GROUP (d) -- the data-plane doors. DFE pushes terabytes a day through the
+  ## receiver, and every cloud front door bills by volume -- an NLB by the
+  ## LCU-hour, a Classic ELB, CloudFront and Global Accelerator by the GB.
+  ## docs/deployment/aws.md#receiver-ingress sizes that door in cost buckets,
+  ## against the scale defined there.
+  ingest:
+    ## The receiver carries NO public front door by default: it stays private in
+    ## the VPC, and there are three ways to reach it --
+    ##   1. the tunnel below, dialled through an address the deployer brings.
+    ##   2. the deployer's own peering, VPN or Direct Connect, straight to the
+    ##      receiver's node port or ClusterIP.
+    ##   3. a public or internal load balancer, the explicit costed opt-in
+    ##      -- `mode: public` plus `loadBalancerSourceRanges` set, never empty.
+    ## The body of this sub-block is the dfe-receiver chart's `exposure:` values
+    ## verbatim -- paste it under `exposure:`, never under `receiver:`, which no
+    ## chart reads. The value that decides the door is `exposure.mode` in the
+    ## deploy repo's own overlay.
+    receiver:
+      mode: vpn              # public | internal | vpn -- vpn is the safe cloud default
+      ## Tier 2: a load balancer billed per GB processed, bucket L against
+      ## terabytes a day.
+      public:
+        serviceType: LoadBalancer
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        annotations: {}
+        ## Empty is not "unset" -- it is 0.0.0.0/0, the whole internet. A
+        ## deployer opting into `mode: public` sets this, always.
+        loadBalancerSourceRanges: []
+      vpn:
+        ## Selector label of the tunnel pods -- dfe-common.selectorLabels on the
+        ## culvert chart. Matches that chart's default project/component name;
+        ## change only alongside a renamed culvert release.
+        ## The rule this feeds carries a podSelector and no namespaceSelector, so
+        ## culvert has to run in the receiver's OWN namespace -- a tunnel installed
+        ## beside it in another namespace is dropped with everything Ready.
+        podLabel: dfe-culvert
+      networkPolicy:
+        enabled: true
+    ## THE FLEET TUNNEL (helm/edge/culvert). The module OFFERS it; a deployment
+    ## turns it on, which is why this is off by default. Turning it on is the
+    ## engine writing values/culvert-<instance>-values.yaml into the deploy repo
+    ## (docs/deployment/edge-vpn.md), not a flag this renderer applies.
+    tunnel:
+      enabled: false
+      ## NodePort on a cloud flavour, because a cloud load balancer bills the
+      ## tunnel's own bytes by the GB and a NodePort carries no per-byte line.
+      ## On-prem it is a real LoadBalancer, addressed by MetalLB.
+      serviceType: NodePort    # LoadBalancer | NodePort | ClusterIP
+      ## Cluster, not the chart's Local default: with Local a NodePort answers
+      ## only on the node hosting the one tunnel pod. The cost is the client's
+      ## real source IP, which Cluster SNATs to a node.
+      externalTrafficPolicy: Cluster   # Cluster | Local
+      ## external on a cloud flavour: local mints the CA inside the pod, so a
+      ## restart without a durable volume invalidates every client config
+      ## already issued, and only external carries a tls-crypt-v2 key and a CRL
+      ## that survives a rebuild. The Secret itself is named in the instance
+      ## values file, and the chart refuses to render without one.
+      pki_mode: external       # local | external
+      ## How the tunnel gets an address clients can dial. `byo` is an address
+      ## the deployer already has in front of it. `forwarder` is tier 2 -- one
+      ## small instance holding one static address, both billed hourly, bucket
+      ## XS -- and arrives with terraform/modules/edge.
+      address:
+        mode: byo              # byo | forwarder
+      ## The reach-back an operator uses to reach one appliance through the
+      ## tunnel: a peer minted per session, never stored, with a one-way
+      ## isolation exception so the admin may initiate and appliance peers may
+      ## not. Tier 1 on a cloud flavour and opt-out; absent on-prem, where the
+      ## operator is already on the LAN. `reach` is the ports an appliance
+      ## accepts from the admin peer on its tunnel interface.
+      admin_peer:
+        enabled: true
+        ttl_minutes: 60
+        peer_cidr: ""
+        reach: [22, 443]
+    ## The OTLP door. Private on a cloud flavour, and authentication is the gate
+    ## on making it public -- a public OTLP endpoint with no auth accepts
+    ## telemetry from anyone, so the pair is refused.
+    otel:
+      public: false
+      auth: required           # required | none
+
+  ## GROUP (e) -- Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao and the
+  ## Kubernetes API. TIER 3: no door is offered, and there is no key here that
+  ## opens one.
+
+  ## The AWS flavour's own cloud resources. Ignored on every other flavour.
+  aws:
+    ## No cloud door exists without it: it is what turns the gateway's
+    ## LoadBalancer Service into a real NLB. Tier 1.
+    load_balancer_controller: true
+    ## The delegated public zone this deployment publishes into, which is what
+    ## creates the external-dns and cert-manager DNS-01 roles. Tier 1 once a
+    ## public name is published.
+    public_zone: ""
+    ## Tier 2: a distribution billed per GB served, bucket S. `none` is the only
+    ## value today -- the shapes arrive with terraform/modules/edge.
+    cloudfront:
+      mode: none             # none only
+    ## Shield Advanced (a flat subscription an order above this cluster's own
+    ## compute) and Global Accelerator (billed per GB on traffic the load
+    ## balancer already carries) are TIER 3: no key, on purpose.
 
 ## TOOLBOX -- two independent troubleshooting surfaces sharing one top-level
 ## key, because this restricted YAML subset allows no duplicate key. `pod:`

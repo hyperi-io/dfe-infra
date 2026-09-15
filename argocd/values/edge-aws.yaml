@@ -93,8 +93,10 @@ pki:
 # cloud's own store, which this module does not render -- the gateway chart
 # fails on any ui.waf.mode but none rather than pretend otherwise. A CDN bills
 # per GB and a WAF per request, so both are the deployer's explicit opt-in.
-# The tier-2 Elastic IP forwarder in front of culvert's NodePort is an S bucket
-# of hourly instance and address charges and arrives with terraform/modules/edge.
+# The tier-2 Elastic IP forwarder in front of culvert's NodePort is one small
+# instance and one static address, both billed hourly -- bucket XS, the same
+# bucket render_dial.py's own tier-2 table prints -- and it arrives with
+# terraform/modules/edge.
 #
 # TIER 3, absent by design. Shield Advanced is a flat subscription an order
 # above this cluster's own compute, and Global Accelerator bills per GB on

@@ -240,9 +240,10 @@ exposure:
 # a public zone. Everything DFE uses internally stays private; the UIs are the
 # exception, because their users sit outside the VPC.
 #
-# The key names are the DIAL's (snake_case, the `ui:` block of deployment.yaml)
-# rather than this chart's camelCase, so the dial block and this block are the
-# same YAML and a deployer's overlay is a copy rather than a translation.
+# The key names are the DIAL's (snake_case, `edge.product` and
+# `edge.admin_uis` in deployment.yaml) rather than this chart's camelCase, so
+# the dial's rate_limit, waf and tls sub-blocks are the same YAML as these and
+# a deployer's overlay is a copy rather than a translation.
 #
 # What renders, per UI marked public: its own Gateway listener on the public
 # hostname, its own publicly trusted Certificate, its own HTTPRoute, a

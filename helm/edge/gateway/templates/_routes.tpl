@@ -151,7 +151,7 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
        about to publish anyway. */ -}}
 {{- range $name, $val := $ui.public -}}
 {{- if not (kindIs "bool" $val) -}}
-{{- fail (printf "ui.public.%s is %v (a %s), not a bool -- copy deployment.example.yaml's ui: block in unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
+{{- fail (printf "ui.public.%s is %v (a %s), not a bool -- copy deployment.example.yaml's edge: block in unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
 {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $ui.rate_limit.enabled) -}}

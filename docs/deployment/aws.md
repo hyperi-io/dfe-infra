@@ -269,10 +269,13 @@ processed), a Classic ELB per GB, CloudFront and Global Accelerator per GB,
 WAF per request. A volume-priced front door on that kind of traffic is not
 an option, so the receiver ships with none.
 
-The default is `ingest.mode: vpn` (`deployment.example.yaml`'s `ingest:`
-block, `argocd/values/aws.yaml`'s `exposure:`): the receiver stays on a
+The default is `edge.ingest.receiver.mode: vpn` (`deployment.example.yaml`'s
+`edge:` block, `argocd/values/aws.yaml`'s `exposure:`): the receiver stays on a
 ClusterIP with no public address, and there is no external path until the
-deployer brings one. Three ways to reach it:
+deployer brings one. The dial's old top-level `ui:` and `ingest:` blocks are
+read for one release and reported by name on the way through -- everything they
+carried now lives under `edge.product`, `edge.admin_uis` and
+`edge.ingest.receiver`. Three ways to reach it:
 
 - **culvert**, dialled through an address the deployer brings -- e.g. an
   Elastic IP on a small forwarder instance in front of culvert's NodePort
@@ -282,7 +285,7 @@ deployer brings one. Three ways to reach it:
   availability zone, because cross-AZ transfer is billed per GB.
 - The deployer's own peering, VPN or Direct Connect straight to the node
   port.
-- The NLB opt-in: `ingest.mode: public` plus
+- The NLB opt-in: `edge.ingest.receiver.mode: public` plus
   `service.beta.kubernetes.io/aws-load-balancer-type: external`,
   `aws-load-balancer-nlb-target-type: ip`,
   `aws-load-balancer-scheme: internet-facing` (or `internal`), and

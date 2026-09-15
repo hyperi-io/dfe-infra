@@ -65,12 +65,16 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   a time (`ui.public.*`). A public UI with no authentication fails the
   render -- dfe-ui's own login counts, as does edge OIDC or an admin app's
   own scheme (Kafbat's OIDC, HyperDX's session cookie); nothing else does.
-  The dial's own `ui:` block (`deployment.yaml`) carries these same names
-  verbatim (deliberately, unquoted booleans included) so it is a COPY target,
-  not something the renderer reads: `render_dial.py` validates every `ui.*`
-  boolean by name and reports which UIs the dial marks public, but the
-  values that actually reach the chart are whatever a deploy-repo overlay
-  (or `argocd/values/<cloud>.yaml` directly, as below) pastes in from it.
+  The dial says the same thing in its `edge:` block (`deployment.yaml`):
+  `edge.product.public` for dfe-ui and `edge.admin_uis.public.*` for the rest,
+  with the unquoted booleans kept deliberately so the sub-blocks that ARE chart
+  values (`rate_limit`, `waf`, `tls`) are a COPY target rather than a
+  translation. `render_dial.py` validates every boolean and enum in that block
+  by name and reports which surfaces the dial marks public, but the values that
+  actually reach the chart are whatever a deploy-repo overlay (or
+  `argocd/values/edge-<flavour>.yaml` directly, as below) pastes in from it.
+  The old top-level `ui:` and `ingest:` blocks still feed it for one release,
+  and the renderer names the new path on the way through.
 - Separately from that per-UI flag, `argocd/values/edge-aws.yaml` sets the
   envoy-gateway-config chart's `exposure.infraUisExternal: false` and
   `argocd/values/aws.yaml` sets `oidc.enabled: true` (it stays with the cloud

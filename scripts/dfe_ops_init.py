@@ -649,7 +649,7 @@ def _overrides_block(overrides: dict[str, dict[str, str]]) -> str:
 def build_dial_text(a: Answers) -> str:
     """The deployment.yaml text this wizard writes -- one field per line this
     module's steps or template defaults set, in deployment.example.yaml's own
-    order and quoting convention (`_flag()` reads quoted true/false; the ui:
+    order and quoting convention (`_flag()` reads quoted true/false; the edge:
     and toolbox.pod: blocks are unquoted, matching the chart values they are
     pasted into verbatim)."""
     is_aws = a.target == "aws"
@@ -670,29 +670,79 @@ def build_dial_text(a: Answers) -> str:
         )
 
     ui_public = a.ui_public
-    ui_block = (
-        "ui:\n"
-        "  public:\n"
-        f"    dfe_ui: {_bool(ui_public['dfe_ui'])}\n"
-        f"    kafbat: {_bool(ui_public['kafbat'])}\n"
-        f"    cruise_control: {_bool(ui_public['cruise_control'])}\n"
-        f"    hyperdx: {_bool(ui_public['hyperdx'])}\n"
-        f"    argocd: {_bool(ui_public['argocd'])}\n"
-        f"    links: {_bool(ui_public['links'])}\n"
-        f'  allowed_cidrs: "{a.ui_allowed_cidrs}"\n'
-        f'  trusted_proxy_cidrs: "{a.ui_trusted_proxy_cidrs}"\n'
-        "  rate_limit:\n"
-        "    enabled: true\n"
-        '    requests: "300"\n'
-        "    unit: Minute\n"
-        "    scope: local\n"
-        "  waf:\n"
-        "    mode: none\n"
-        '    plan: ""\n'
-        '    managed_rules: ""\n'
-        "  tls:\n"
-        '    min_version: "1.2"\n'
-        "    hsts: true\n"
+    # The wizard asks nothing about forgejo or the tunnel, so both take the
+    # template's own defaults rather than a question nobody can answer yet.
+    edge_block = (
+        "edge:\n"
+        "  enabled: true\n"
+        f"  flavour: {'aws' if is_aws else 'onprem'}\n"
+        "  product:\n"
+        f"    public: {_bool(ui_public['dfe_ui'])}\n"
+        f'    domain: "{a.public_zone}"\n'
+        "    tls:\n"
+        '      min_version: "1.2"\n'
+        "      hsts: true\n"
+        "    rate_limit:\n"
+        "      enabled: true\n"
+        '      requests: "300"\n'
+        "      unit: Minute\n"
+        "      scope: local\n"
+        f'    allowed_cidrs: "{a.ui_allowed_cidrs}"\n'
+        f'    trusted_proxy_cidrs: "{a.ui_trusted_proxy_cidrs}"\n'
+        "    waf:\n"
+        "      mode: none\n"
+        '      plan: ""\n'
+        '      managed_rules: ""\n'
+        "  engine_api:\n"
+        "    with_product: true\n"
+        "    path_prefix: /api/v1\n"
+        "    private_path_families: []\n"
+        "  admin_uis:\n"
+        "    external: false\n"
+        "    public:\n"
+        f"      kafbat: {_bool(ui_public['kafbat'])}\n"
+        f"      cruise_control: {_bool(ui_public['cruise_control'])}\n"
+        f"      hyperdx: {_bool(ui_public['hyperdx'])}\n"
+        f"      argocd: {_bool(ui_public['argocd'])}\n"
+        f"      links: {_bool(ui_public['links'])}\n"
+        "      forgejo: false\n"
+        "    oidc:\n"
+        "      enabled: true\n"
+        "      providers: []\n"
+        "      admin_groups: [dfe-admins, dfe-infra]\n"
+        "  ingest:\n"
+        "    receiver:\n"
+        f"      mode: {'vpn' if is_aws else 'internal'}\n"
+        "      public:\n"
+        "        serviceType: LoadBalancer\n"
+        '        loadBalancerIP: ""\n'
+        '        loadBalancerClass: ""\n'
+        "        annotations: {}\n"
+        "        loadBalancerSourceRanges: []\n"
+        "      vpn:\n"
+        "        podLabel: dfe-culvert\n"
+        "      networkPolicy:\n"
+        "        enabled: true\n"
+        "    tunnel:\n"
+        "      enabled: false\n"
+        f"      serviceType: {'NodePort' if is_aws else 'LoadBalancer'}\n"
+        f"      externalTrafficPolicy: {'Cluster' if is_aws else 'Local'}\n"
+        f"      pki_mode: {'external' if is_aws else 'local'}\n"
+        "      address:\n"
+        "        mode: byo\n"
+        "      admin_peer:\n"
+        f"        enabled: {_bool(is_aws)}\n"
+        "        ttl_minutes: 60\n"
+        '        peer_cidr: ""\n'
+        "        reach: [22, 443]\n"
+        "    otel:\n"
+        "      public: false\n"
+        "      auth: required\n"
+        "  aws:\n"
+        "    load_balancer_controller: true\n"
+        f'    public_zone: "{a.public_zone if is_aws else ""}"\n'
+        "    cloudfront:\n"
+        "      mode: none\n"
     )
 
     telemetry_line = f"    sink: {a.telemetry_sink}"
@@ -774,7 +824,7 @@ def build_dial_text(a: Answers) -> str:
             "dns:\n",
             "  private_zone: dfe.internal\n",
             f'  public_zone: "{a.public_zone}"\n\n',
-            ui_block, "\n",
+            edge_block, "\n",
             toolbox_block, "\n",
             "node_pools:\n",
             "  system:\n",

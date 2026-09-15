@@ -225,47 +225,18 @@ def _required(dial: dict[str, object], path: tuple[str, ...]) -> str:
     return value
 
 
-def _flag(dial: dict[str, object], path: tuple[str, ...], default: bool = False) -> bool:
-    """Read a true/false dial field. The dial writes them as strings, like `steps`."""
-    value = _scalar(dial, path)
+def _coerce_flag(value: str | None, label: str, default: bool) -> bool:
+    """Turn one dial scalar into a bool, refusing anything else by the name given."""
     if value is None:
         return default
     if value.lower() in ("true", "false"):
         return value.lower() == "true"
-    raise DialError(f"{'.'.join(path)} must be true or false, got {value!r}")
+    raise DialError(f"{label} must be true or false, got {value!r}")
 
 
-# Every ui.* boolean, and the chart default it takes when the dial omits it
-# (envoy-gateway-config/values.yaml). This renderer writes no DFE_UI_* env key
-# today -- the dial's ui: block is copied by hand into a real Helm values
-# overlay (docs/deployment/aws.md) -- but a bad value should still be refused
-# here, by name, before an operator carries it forward. deployment.example.yaml
-# writes this block's booleans unquoted, unlike the rest of the dial, for the
-# same reason: a value copied verbatim into a real Helm values file needs to
-# already be the type that file expects.
-_UI_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
-    ("ui", "public", "dfe_ui"): True,
-    ("ui", "public", "kafbat"): False,
-    ("ui", "public", "cruise_control"): False,
-    ("ui", "public", "hyperdx"): False,
-    ("ui", "public", "argocd"): False,
-    ("ui", "public", "links"): False,
-    ("ui", "rate_limit", "enabled"): True,
-    ("ui", "tls", "hsts"): True,
-}
-
-
-def _ui_flags(dial: dict[str, object]) -> dict[str, bool]:
-    """Validate every `ui:` boolean the same way `_flag()` guards `endpoint.public`.
-
-    Returns each field keyed by its dotted path (e.g. "ui.public.kafbat"), so a
-    caller can report which UIs the dial marks public without re-deriving the
-    path list.
-    """
-    return {
-        ".".join(path): _flag(dial, path, default)
-        for path, default in _UI_BOOL_DEFAULTS.items()
-    }
+def _flag(dial: dict[str, object], path: tuple[str, ...], default: bool = False) -> bool:
+    """Read a true/false dial field. The dial writes them as strings, like `steps`."""
+    return _coerce_flag(_scalar(dial, path), ".".join(path), default)
 
 
 # The receiver's own exposure.mode vocabulary (dfe-receiver/values.yaml).
@@ -309,21 +280,282 @@ def _overlay_ingest_mode(cloud: str) -> str | None:
 
 
 def _ingest_mode(dial: dict[str, object]) -> str:
-    """Validate ingest.mode the same way _flag() guards a boolean field.
+    """Validate the receiver's door the same way _flag() guards a boolean field.
 
     Anything outside the receiver's own vocabulary is refused by name before an
     operator carries it into a real Helm values overlay. This renderer writes no
-    DFE_INGEST_* key and applies nothing: the dial's `ingest:` block is copied by
-    hand into a values overlay under `exposure:`, the same convention `ui:`
-    follows above. A dial with no ingest: block therefore reports whatever the
-    cloud overlay sets, and the chart's own default (public) when it sets none.
+    DFE_INGEST_* key and applies nothing: the dial's `edge.ingest.receiver:`
+    block is copied by hand into a values overlay under `exposure:`, the same
+    convention the rest of the edge block follows. A dial that sets neither that
+    nor the deprecated `ingest.mode` therefore reports whatever the cloud
+    overlay sets, and the chart's own default (public) when it sets none.
     """
     cloud = _text(dial, ("k8s", "cloud"))
     fallback = _overlay_ingest_mode(cloud) or "public"
-    value = _text(dial, ("ingest", "mode"), fallback)
+    value, label = _edge_scalar(dial, ("edge", "ingest", "receiver", "mode"))
+    value = value or fallback
     if value not in INGEST_MODES:
-        raise DialError(f"ingest.mode must be one of {', '.join(INGEST_MODES)}, got {value!r}")
+        raise DialError(f"{label} must be one of {', '.join(INGEST_MODES)}, got {value!r}")
     return value
+
+
+# ---------------------------------------------------------------------------
+# The edge module's dial block
+# ---------------------------------------------------------------------------
+#
+# ONE `edge:` block replaces the top-level `ui:` and `ingest:` blocks. The
+# module is the two charts under helm/edge -- the public gateway and the fleet
+# tunnel -- so the doors a deployment opens read in one place instead of two
+# blocks named after the things behind them.
+#
+# NOTHING HERE IS APPLIED BY THIS RENDERER except edge.enabled, which reaches
+# DFE_EDGE_ENABLED and the cluster-secret label. The rest is validated, reported
+# and copied by hand into the deploy repo's own values overlay, the same
+# convention the block it replaces followed. A bad value is still refused here,
+# by name, before an operator carries it forward. deployment.example.yaml writes
+# this block's booleans unquoted, unlike the rest of the dial: a value copied
+# verbatim into a real Helm values file has to already be the type that file
+# expects, where an unquoted true is a bool and a quoted "false" is a non-empty
+# string that is always truthy.
+
+# New path -> the deprecated top-level path that still feeds it. Read for ONE
+# release: a dial setting only the old one renders with a deprecation line, a
+# dial setting both is refused because the two are one key.
+_EDGE_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("edge", "product", "public"): ("ui", "public", "dfe_ui"),
+    ("edge", "product", "domain"): ("ui", "public_domain"),
+    ("edge", "product", "allowed_cidrs"): ("ui", "allowed_cidrs"),
+    ("edge", "product", "trusted_proxy_cidrs"): ("ui", "trusted_proxy_cidrs"),
+    ("edge", "product", "rate_limit", "enabled"): ("ui", "rate_limit", "enabled"),
+    ("edge", "product", "rate_limit", "requests"): ("ui", "rate_limit", "requests"),
+    ("edge", "product", "rate_limit", "unit"): ("ui", "rate_limit", "unit"),
+    ("edge", "product", "rate_limit", "scope"): ("ui", "rate_limit", "scope"),
+    ("edge", "product", "waf", "mode"): ("ui", "waf", "mode"),
+    ("edge", "product", "waf", "plan"): ("ui", "waf", "plan"),
+    ("edge", "product", "waf", "managed_rules"): ("ui", "waf", "managed_rules"),
+    ("edge", "product", "tls", "min_version"): ("ui", "tls", "min_version"),
+    ("edge", "product", "tls", "hsts"): ("ui", "tls", "hsts"),
+    ("edge", "admin_uis", "public", "kafbat"): ("ui", "public", "kafbat"),
+    ("edge", "admin_uis", "public", "cruise_control"): ("ui", "public", "cruise_control"),
+    ("edge", "admin_uis", "public", "hyperdx"): ("ui", "public", "hyperdx"),
+    ("edge", "admin_uis", "public", "argocd"): ("ui", "public", "argocd"),
+    ("edge", "admin_uis", "public", "links"): ("ui", "public", "links"),
+    ("edge", "ingest", "receiver", "mode"): ("ingest", "mode"),
+    ("edge", "ingest", "receiver", "public", "serviceType"): ("ingest", "public", "serviceType"),
+    ("edge", "ingest", "receiver", "public", "loadBalancerIP"):
+        ("ingest", "public", "loadBalancerIP"),
+    ("edge", "ingest", "receiver", "public", "loadBalancerClass"):
+        ("ingest", "public", "loadBalancerClass"),
+    ("edge", "ingest", "receiver", "public", "annotations"): ("ingest", "public", "annotations"),
+    ("edge", "ingest", "receiver", "public", "loadBalancerSourceRanges"):
+        ("ingest", "public", "loadBalancerSourceRanges"),
+    ("edge", "ingest", "receiver", "vpn", "podLabel"): ("ingest", "vpn", "podLabel"),
+    ("edge", "ingest", "receiver", "networkPolicy", "enabled"):
+        ("ingest", "networkPolicy", "enabled"),
+}
+
+# Every edge.* boolean, and the value the deployment takes when the dial omits
+# it -- the chart default, except where an aliased key carries `ui:`'s.
+_EDGE_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
+    ("edge", "enabled"): True,
+    ("edge", "product", "public"): True,
+    ("edge", "product", "rate_limit", "enabled"): True,
+    ("edge", "product", "tls", "hsts"): True,
+    ("edge", "engine_api", "with_product"): True,
+    ("edge", "admin_uis", "external"): False,
+    ("edge", "admin_uis", "public", "kafbat"): False,
+    ("edge", "admin_uis", "public", "cruise_control"): False,
+    ("edge", "admin_uis", "public", "hyperdx"): False,
+    ("edge", "admin_uis", "public", "argocd"): False,
+    ("edge", "admin_uis", "public", "links"): False,
+    ("edge", "admin_uis", "public", "forgejo"): False,
+    # The gateway chart's own default is false; every cloud overlay sets it true
+    # (argocd/values/aws.yaml), which is what a cloud deploy actually gets.
+    ("edge", "admin_uis", "oidc", "enabled"): False,
+    ("edge", "ingest", "tunnel", "enabled"): False,
+    ("edge", "ingest", "tunnel", "admin_peer", "enabled"): True,
+    ("edge", "ingest", "otel", "public"): False,
+    ("edge", "aws", "load_balancer_controller"): True,
+}
+
+# The flavour each k8s.cloud fact selects, matching the expression
+# argocd/appsets/layer2-edge.yaml uses to pick argocd/values/edge-<flavour>.yaml.
+_CLOUD_FLAVOUR: dict[str, str] = {"local": "onprem", "rancher": "onprem"}
+
+EDGE_FLAVOURS = ("aws", "gcp", "azure", "onprem")
+# The gateway's own public-TLS floor; unquoted 1.2 parses as a float and is
+# rejected at render, so the dial writes it quoted.
+TLS_MIN_VERSIONS = ("1.2", "1.3")
+RATE_LIMIT_UNITS = ("Second", "Minute", "Hour", "Day", "Month", "Year")
+# local counts per route per proxy replica; global needs Redis and an Envoy
+# Gateway install change, so the chart refuses it.
+RATE_LIMIT_SCOPES = ("local",)
+# Any other mode terminates TLS above Envoy and moves the public certificate to
+# the cloud's own store, which no chart here renders.
+WAF_MODES = ("none",)
+CLOUDFRONT_MODES = ("none",)
+TUNNEL_SERVICE_TYPES = ("LoadBalancer", "NodePort", "ClusterIP")
+TRAFFIC_POLICIES = ("Cluster", "Local")
+# local mints the CA in the pod, so a restart without a durable volume
+# invalidates every issued client config; external takes it from a Secret.
+PKI_MODES = ("local", "external")
+# byo is an address the deployer already has in front of the tunnel; forwarder
+# is the tier-2 instance that holds one, and arrives with terraform/modules/edge.
+ADDRESS_MODES = ("byo", "forwarder")
+OTEL_AUTH = ("required", "none")
+
+_EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("edge", "flavour"): EDGE_FLAVOURS,
+    ("edge", "product", "tls", "min_version"): TLS_MIN_VERSIONS,
+    ("edge", "product", "rate_limit", "unit"): RATE_LIMIT_UNITS,
+    ("edge", "product", "rate_limit", "scope"): RATE_LIMIT_SCOPES,
+    ("edge", "product", "waf", "mode"): WAF_MODES,
+    ("edge", "ingest", "receiver", "mode"): INGEST_MODES,
+    ("edge", "ingest", "tunnel", "serviceType"): TUNNEL_SERVICE_TYPES,
+    ("edge", "ingest", "tunnel", "externalTrafficPolicy"): TRAFFIC_POLICIES,
+    ("edge", "ingest", "tunnel", "pki_mode"): PKI_MODES,
+    ("edge", "ingest", "tunnel", "address", "mode"): ADDRESS_MODES,
+    ("edge", "ingest", "otel", "auth"): OTEL_AUTH,
+    ("edge", "aws", "cloudfront", "mode"): CLOUDFRONT_MODES,
+}
+
+# What each enum takes when the dial omits it. edge.flavour comes from k8s.cloud
+# and edge.ingest.receiver.mode from the cloud overlay, so neither is here.
+_EDGE_ENUM_DEFAULTS: dict[tuple[str, ...], str] = {
+    ("edge", "product", "tls", "min_version"): "1.2",
+    ("edge", "product", "rate_limit", "unit"): "Minute",
+    ("edge", "product", "rate_limit", "scope"): "local",
+    ("edge", "product", "waf", "mode"): "none",
+    ("edge", "ingest", "tunnel", "serviceType"): "LoadBalancer",
+    ("edge", "ingest", "tunnel", "externalTrafficPolicy"): "Local",
+    ("edge", "ingest", "tunnel", "pki_mode"): "local",
+    ("edge", "ingest", "tunnel", "address", "mode"): "byo",
+    ("edge", "ingest", "otel", "auth"): "required",
+    ("edge", "aws", "cloudfront", "mode"): "none",
+}
+
+# The admin UIs the module offers a public hostname, in the order the summary
+# reports them.
+ADMIN_UIS = ("kafbat", "cruise_control", "hyperdx", "argocd", "links", "forgejo")
+
+# Every tier-2 key, the values that turn it on, the cost bucket it carries when
+# it is, and the pricing model behind that bucket. Buckets are relative to the
+# deployment's own compute and never a rate
+# (docs/deployment/aws.md#how-costs-are-described).
+_EDGE_TIER2: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+    ("edge.ingest.receiver.mode", ("public",), "L",
+     "a load balancer billed per GB processed, against terabytes a day of ingest"),
+    ("edge.ingest.tunnel.address.mode", ("forwarder",), "XS",
+     "one small instance and one static address, both billed hourly"),
+    ("edge.product.waf.mode", ("cloudfront",), "S",
+     "managed rules billed per request, on a CDN in front of the gateway"),
+    ("edge.aws.cloudfront.mode", ("cloudfront",), "S",
+     "a distribution billed per GB served"),
+)
+
+
+def _edge_scalar(dial: dict[str, object], path: tuple[str, ...]) -> tuple[str | None, str]:
+    """The scalar at an edge path, or its deprecated alias's, with the name used.
+
+    The name comes back so a refusal quotes the path the dial actually wrote
+    rather than the one it should have.
+    """
+    value = _scalar(dial, path)
+    if value is not None:
+        return value, ".".join(path)
+    old = _EDGE_ALIASES.get(path)
+    if old is not None:
+        legacy = _scalar(dial, old)
+        if legacy is not None:
+            return legacy, ".".join(old)
+    return None, ".".join(path)
+
+
+def _edge_alias_conflicts(dial: dict[str, object]) -> list[str]:
+    """Paths the dial sets on BOTH the new block and its deprecated spelling."""
+    return [
+        f"{'.'.join(new)} and {'.'.join(old)} are the same key and the dial sets both"
+        for new, old in _EDGE_ALIASES.items()
+        if _scalar(dial, new) is not None and _scalar(dial, old) is not None
+    ]
+
+
+def _edge_deprecations(dial: dict[str, object]) -> list[str]:
+    """One line per deprecated path still carrying the value, naming the new one."""
+    return [
+        f"{'.'.join(old)} moved to {'.'.join(new)}; the old path is read for one release"
+        for new, old in _EDGE_ALIASES.items()
+        if _scalar(dial, new) is None and _scalar(dial, old) is not None
+    ]
+
+
+def _edge_flags(dial: dict[str, object]) -> dict[str, bool]:
+    """Validate every `edge:` boolean, reading the deprecated block where it must.
+
+    Returns each field keyed by its dotted path, so a caller reports which doors
+    a dial opens without re-deriving the path list.
+    """
+    flags: dict[str, bool] = {}
+    for path, default in _EDGE_BOOL_DEFAULTS.items():
+        value, label = _edge_scalar(dial, path)
+        flags[".".join(path)] = _coerce_flag(value, label, default)
+    return flags
+
+
+def _edge_flavour(dial: dict[str, object]) -> str:
+    """The flavour the dial names, or the one k8s.cloud selects when it names none."""
+    cloud = _text(dial, ("k8s", "cloud"))
+    derived = _CLOUD_FLAVOUR.get(cloud, cloud)
+    return _text(dial, ("edge", "flavour"), derived)
+
+
+def _edge_enums(dial: dict[str, object]) -> dict[str, str]:
+    """Validate every `edge:` enum against the vocabulary its chart accepts."""
+    out: dict[str, str] = {}
+    for path, choices in _EDGE_ENUMS.items():
+        if path == ("edge", "ingest", "receiver", "mode"):
+            out[".".join(path)] = _ingest_mode(dial)
+            continue
+        if path == ("edge", "flavour"):
+            value, label = _edge_flavour(dial), "edge.flavour"
+        else:
+            value, label = _edge_scalar(dial, path)
+            value = value or _EDGE_ENUM_DEFAULTS[path]
+        if value and value not in choices:
+            raise DialError(f"{label} must be one of {', '.join(choices)}, got {value!r}")
+        out[".".join(path)] = value
+    return out
+
+
+def _edge_refusals(
+    dial: dict[str, object], flags: dict[str, bool], enums: dict[str, str]
+) -> None:
+    """The combinations the module does not offer, refused by name.
+
+    A dial that asks for one of these is asking for something no chart renders,
+    which is worse than an error because it looks applied.
+    """
+    families, label = _edge_scalar(dial, ("edge", "engine_api", "private_path_families"))
+    if families is not None and families not in ("[]", "{}"):
+        raise DialError(
+            f"{label} names {families!r}, and no route splits a path family off the "
+            "product route -- the engine team has not named the families, so leave it []"
+        )
+    if flags["edge.ingest.otel.public"] and enums["edge.ingest.otel.auth"] != "required":
+        raise DialError(
+            "edge.ingest.otel.public is true with edge.ingest.otel.auth "
+            f"{enums['edge.ingest.otel.auth']!r} -- a public OTLP door with no auth "
+            "accepts telemetry from anyone, so authentication is the gate on making it public"
+        )
+
+
+def _edge_tier2_on(enums: dict[str, str]) -> list[str]:
+    """Each tier-2 key the dial turns on, with its bucket and pricing model."""
+    return [
+        f"{path}: {enums[path]} -- bucket {bucket}, {model}"
+        for path, on_values, bucket, model in _EDGE_TIER2
+        if enums.get(path) in on_values
+    ]
 
 
 def _number(dial: dict[str, object], path: tuple[str, ...]) -> int:
@@ -866,35 +1098,59 @@ def main() -> int:
         print("render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr)
 
     try:
-        ui_flags = _ui_flags(dial)
+        conflicts = _edge_alias_conflicts(dial)
+        if conflicts:
+            raise DialError("; ".join(conflicts))
+        deprecated = _edge_deprecations(dial)
+        edge_flags = _edge_flags(dial)
+        edge_enums = _edge_enums(dial)
+        _edge_refusals(dial, edge_flags, edge_enums)
     except DialError as error:
         print(f"render_dial: {error}", file=sys.stderr)
         return 1
 
-    public_uis = [
-        name
-        for name in ("dfe_ui", "kafbat", "cruise_control", "hyperdx", "argocd", "links")
-        if ui_flags[f"ui.public.{name}"]
-    ]
+    for line in deprecated:
+        print(f"render_dial: deprecated -- {line}", file=sys.stderr)
+
+    public = ["dfe-ui"] if edge_flags["edge.product.public"] else []
+    public += [name for name in ADMIN_UIS if edge_flags[f"edge.admin_uis.public.{name}"]]
+    ingest_mode = edge_enums["edge.ingest.receiver.mode"]
+    tier2 = _edge_tier2_on(edge_enums)
+
     print(file=sys.stderr)
     print(
-        "Public UI exposure (ui.public.*): " + (", ".join(public_uis) if public_uis else "none"),
-        file=sys.stderr,
-    )
-
-    try:
-        ingest_mode = _ingest_mode(dial)
-    except DialError as error:
-        print(f"render_dial: {error}", file=sys.stderr)
-        return 1
-
-    print(
-        f"Receiver ingest door (ingest.mode): {ingest_mode} -- {_INGEST_MODE_NOTE[ingest_mode]}",
+        f"EDGE MODULE ({edge_enums['edge.flavour'] or 'no flavour'}) -- "
+        + ("on" if edge_flags["edge.enabled"] else "off, no door renders at all"),
         file=sys.stderr,
     )
     print(
-        "  this renderer applies nothing here -- the door is exposure.mode in the"
-        " deploy repo's values overlay",
+        "  public hostnames (edge.product.public, edge.admin_uis.public.*): "
+        + (", ".join(public) if public else "none"),
+        file=sys.stderr,
+    )
+    print(
+        "  admin UI kill switch (edge.admin_uis.external): "
+        + ("on" if edge_flags["edge.admin_uis.external"] else "off, every infra route is withdrawn"),
+        file=sys.stderr,
+    )
+    print(
+        f"  receiver ingest door (edge.ingest.receiver.mode): {ingest_mode}"
+        f" -- {_INGEST_MODE_NOTE[ingest_mode]}",
+        file=sys.stderr,
+    )
+    print(
+        "  fleet tunnel (edge.ingest.tunnel.enabled): "
+        + ("on" if edge_flags["edge.ingest.tunnel.enabled"]
+           else "off -- the module offers the tunnel, the deployment turns it on"),
+        file=sys.stderr,
+    )
+    print(
+        "  tier 2 opt-ins that are ON: " + (", ".join(tier2) if tier2 else "none"),
+        file=sys.stderr,
+    )
+    print(
+        "  this renderer applies none of it -- paste the block into the deploy"
+        " repo's values overlay",
         file=sys.stderr,
     )
 
