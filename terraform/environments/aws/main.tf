@@ -112,7 +112,7 @@ module "cluster" {
   resolved_shapes    = var.resolved_shapes
   network            = var.network
   endpoint           = var.endpoint
-  dns                = var.dns
+  dns                = { private_zone = var.dns.private_zone }
   telemetry          = var.telemetry
   tags               = var.tags
 
@@ -122,6 +122,34 @@ module "cluster" {
   // is required-when-enabled (deployment.example.yaml), and the module
   // itself treats an empty string as "create no access entry".
   toolbox_operator_role_arn = var.toolbox.enabled ? var.toolbox.aws.operator_role_arn : ""
+}
+
+// ---------------------------------------------------------------------------
+// Edge -- every resource that exists because traffic crosses the VPC boundary:
+// the load balancer controller's identity, the public zone, and the two
+// controller identities that write it. `count` on the module block is the
+// whole-module switch, so a disabled edge is an absent module rather than one
+// full of zero-count resources, and every moved {} block in moved.tf therefore
+// maps one instance to one instance.
+// ---------------------------------------------------------------------------
+
+module "edge" {
+  count = var.edge.enabled ? 1 : 0
+
+  source = "../../modules/edge/aws"
+
+  name = var.name
+  env  = var.env
+
+  cluster_name = module.cluster.cluster_name
+  vpc_id       = module.cluster.network.vpc_id
+
+  pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
+  private_zone_arn               = module.cluster.private_zone_arn
+
+  dns = { public_zone = var.dns.public_zone }
+
+  tags = var.tags
 }
 
 // The one Kafka password of the deployment, generated HERE rather than in the

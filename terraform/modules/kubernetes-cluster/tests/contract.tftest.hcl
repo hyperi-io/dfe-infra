@@ -135,7 +135,7 @@ variables {
 
   network  = { nat = "single" }
   endpoint = { public = true, allowed_cidrs = ["198.51.100.10/32"] }
-  dns      = { private_zone = "contract.internal", public_zone = "contract.example.com" }
+  dns      = { private_zone = "contract.internal" }
 
   tags = {
     "service-name"      = "dfe"
@@ -389,22 +389,20 @@ run "aws_dns_zones" {
   }
 
   assert {
-    condition     = can(tostring(output.public_zone_id))
-    error_message = "public_zone_id must be a string"
+    condition     = can(tostring(output.private_zone_arn))
+    error_message = "private_zone_arn must be a string -- it is how the edge module's external-dns role is granted the internal half"
   }
 
   assert {
-    condition     = can(tolist(output.public_zone_name_servers))
-    error_message = "public_zone_name_servers must be a list -- it is what the parent zone delegates to"
+    condition     = output.private_zone_arn == aws_route53_zone.private.arn
+    error_message = "private_zone_arn must name the zone this module creates, not a reconstructed ARN"
   }
 }
 
-// Pod Identity resolves a credential by namespace AND service account, so an
-// association naming an account the chart does not create hands the controller
-// nothing -- and external-dns keeps reporting Ready while every record it owes
-// silently never happens. argocd/appsets/layer1-addons.yaml names the account
-// so the chart's release-derived default cannot drift away from this.
-run "aws_external_dns_association_targets_the_account_the_appset_names" {
+// A private hosted zone not associated with a VPC resolves for nothing, and the
+// failure is silent: the zone exists, the records exist, and every lookup falls
+// through to public DNS instead.
+run "aws_private_zone_is_bound_to_the_vpc_it_resolves_in" {
   command = plan
 
   module {
@@ -412,29 +410,25 @@ run "aws_external_dns_association_targets_the_account_the_appset_names" {
   }
 
   assert {
-    condition     = aws_eks_pod_identity_association.external_dns.cluster_name == aws_eks_cluster.this.name
-    error_message = "the association must target this cluster"
+    condition     = aws_route53_zone.private.name == var.dns.private_zone
+    error_message = "the private zone must carry the name the dial asked for"
   }
 
   assert {
-    condition     = aws_eks_pod_identity_association.external_dns.namespace == "external-dns"
-    error_message = "the namespace must match argocd/appsets/layer1-addons.yaml's external-dns destination"
+    condition     = length(aws_route53_zone.private.vpc) == 1
+    error_message = "the private zone must be associated with exactly one VPC"
   }
 
   assert {
-    condition     = aws_eks_pod_identity_association.external_dns.service_account == "external-dns"
-    error_message = "the service account must match the serviceAccount.name argocd/appsets/layer1-addons.yaml sets, never the chart's release-derived default"
-  }
-
-  assert {
-    condition     = aws_eks_pod_identity_association.external_dns.role_arn == aws_iam_role.external_dns.arn
-    error_message = "the association must name the role this file mints, not any other"
+    condition     = tolist(aws_route53_zone.private.vpc)[0].vpc_id == aws_vpc.this.id
+    error_message = "the private zone must be associated with THIS deployment's VPC -- an unassociated private zone resolves for nothing and fails silently"
   }
 }
 
-// No public zone means no public zone id, no name servers, and no DNS-01
-// identity for cert-manager to assume.
-run "aws_no_public_zone" {
+// The private half is unconditional. Whether a deployment publishes public
+// names is the edge module's question, and nothing here changes with the
+// answer.
+run "aws_private_zone_stands_alone_whatever_the_deployment_publishes" {
   command = plan
 
   module {
@@ -442,27 +436,22 @@ run "aws_no_public_zone" {
   }
 
   variables {
-    dns = { private_zone = "contract.internal", public_zone = "" }
+    dns = { private_zone = "other.internal" }
   }
 
   assert {
-    condition     = output.public_zone_id == ""
-    error_message = "public_zone_id must be empty when no public zone was asked for"
+    condition     = aws_route53_zone.private.name == "other.internal"
+    error_message = "the private zone follows the dial, with no public zone anywhere in this module to depend on"
   }
 
   assert {
-    condition     = length(output.public_zone_name_servers) == 0
-    error_message = "public_zone_name_servers must be empty when no public zone was asked for"
+    condition     = can(tostring(output.private_zone_id))
+    error_message = "private_zone_id must still be a string with no public zone in the picture"
   }
 
   assert {
-    condition     = length(aws_route53_zone.public) == 0
-    error_message = "no public hosted zone may be created when dns.public_zone is empty"
-  }
-
-  assert {
-    condition     = length(aws_iam_role.cert_manager) == 0
-    error_message = "no cert-manager DNS-01 role may be created when there is no public zone"
+    condition     = output.private_zone_arn == aws_route53_zone.private.arn
+    error_message = "private_zone_arn must still name this module's own zone"
   }
 }
 

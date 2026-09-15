@@ -6,6 +6,9 @@
 // keep its hands off. Observed on the spike cluster before the controller
 // existed.
 //
+// It is edge because no cloud door exists without it: every public listener
+// this module renders is a Service this controller reconciles.
+//
 // The policy document is AWS's published one, vendored rather than fetched at
 // plan time so a plan is not hostage to a raw.githubusercontent fetch.
 
@@ -16,7 +19,7 @@ resource "aws_iam_policy" "lbc" {
 
 resource "aws_iam_role" "lbc" {
   name               = "${var.name}-lbc"
-  assume_role_policy = data.aws_iam_policy_document.pod_identity_trust.json
+  assume_role_policy = var.pod_identity_trust_policy_json
 }
 
 resource "aws_iam_role_policy_attachment" "lbc" {
@@ -25,7 +28,7 @@ resource "aws_iam_role_policy_attachment" "lbc" {
 }
 
 resource "aws_eks_pod_identity_association" "lbc" {
-  cluster_name = aws_eks_cluster.this.name
+  cluster_name = var.cluster_name
 
   // Namespace and service account the controller's own chart defaults to.
   namespace       = "kube-system"

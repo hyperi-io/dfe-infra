@@ -50,14 +50,9 @@ output "private_zone_id" {
   value       = aws_route53_zone.private.zone_id
 }
 
-output "public_zone_id" {
-  description = "Route 53 zone the public UI names resolve in. Empty when no public zone was asked for."
-  value       = try(aws_route53_zone.public[0].zone_id, "")
-}
-
-output "public_zone_name_servers" {
-  description = "The NS set the PARENT zone has to delegate to before any public name resolves. Empty when there is no public zone."
-  value       = try(aws_route53_zone.public[0].name_servers, [])
+output "private_zone_arn" {
+  description = "The private zone as an IAM resource. external-dns's identity lives in the edge module with the public zone -- it is one controller writing both -- and this is how it is granted the write on the internal half without that module creating the zone."
+  value       = aws_route53_zone.private.arn
 }
 
 output "kms_key_arn" {

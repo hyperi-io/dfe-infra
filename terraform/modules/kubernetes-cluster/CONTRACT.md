@@ -30,7 +30,7 @@ owns the provider, the backend and the tags; the body owns the resources.
 | `resolved_shapes` | `map(object({ instance_types, arch }))` | Keyed by `shape_ref`. The resolver's answer, never an instance type written by hand. `instance_types` is ordered best-first so the cloud can fall back when the first is unavailable. |
 | `network` | `object({ nat, az_count })` | `nat` is `per-az` (one NAT per availability zone, no cross-zone charge and no single point of failure) or `single` (one NAT for the whole network, cheaper). `az_count` is how many availability zones the VPC spans -- 3 by default, 2-6, from the dial's `network.az_count`. |
 | `endpoint` | `object({ public, allowed_cidrs })` | The private API endpoint is always on. `public` adds the public one, restricted to `allowed_cidrs`. |
-| `dns` | `object({ private_zone, public_zone })` | The private zone always exists. `public_zone` of `""` means no public zone and no public-DNS identity. |
+| `dns` | `object({ private_zone })` | The private zone always exists. No public zone here -- it and the identities that write it are the edge module's. |
 | `telemetry` | `object({ sink, retention_days })` | Where a CloudWatch-only touchpoint lands. Every cloud's control plane delivers SOME logs to a CloudWatch-shaped sink with no other export path -- on `aws/` that is the EKS audit log, always on, always in CloudWatch. `sink = otel` (the default) pins its retention to a 1-day floor since it is an unavoidable exception, not a chosen destination; `sink = cloudwatch` keeps it at `retention_days` like every other touchpoint under that sink. |
 | `tags` | `map(string)` | The six required governance tags plus `iac-source`. The body VALIDATES them; the root APPLIES them through the provider's default-tag mechanism, so a body never tags a resource with this map itself. |
 | `key_policy_grants` | `list(object({ sid, principals, actions, conditions }))`, default `[]` | AWS-only today. Extra KMS key policy statements for a service principal (`cloudtrail.amazonaws.com`, `delivery.logs.amazonaws.com`), which cannot be granted through an IAM role policy. This body is the key's ONE policy owner (`aws_kms_key_policy` replaces the whole policy), so a sibling module hands its statement in here rather than writing a second `aws_kms_key_policy` against the same key, which would silently replace this one's. The root computes the list. |
@@ -62,8 +62,7 @@ map(object({
 | `cluster_security_group_id` | `string` | The group that admits a caller to the Kubernetes API. Nodes and pods are trusted already; anything else in the VPC has to be admitted by name. |
 | `network` | `object({ vpc_id, cidr, azs, private_subnet_ids, public_subnet_ids })` | What the managed-kafka module attaches to. |
 | `private_zone_id` | `string` | |
-| `public_zone_id` | `string` | `""` when there is no public zone. |
-| `public_zone_name_servers` | `list(string)` | The delegation the parent zone needs. Empty when there is no public zone. |
+| `private_zone_arn` | `string` | The private zone as an IAM resource, so the edge module's external-dns role is granted the internal half without creating the zone. |
 | `kms_key_arn` | `string` | The deployment's own key. Encrypts cluster secrets today; Kafka and block storage take the same key. |
 | `pod_identity_trust_policy_json` | `string` | The trust policy any further workload-identity role in this cluster assumes. Lets a sibling module mint a role without knowing how this cloud expresses cluster trust. |
 | `node_role_arn` | `string` | The node instance role, for a caller that has to grant nodes something extra. |

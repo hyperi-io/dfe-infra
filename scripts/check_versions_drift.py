@@ -509,6 +509,7 @@ _PROVIDER_MIRRORS = [
             "terraform/modules/managed-kafka/redpanda-cloud/versions.tf",
             "terraform/modules/secrets/aws-sm/versions.tf",
             "terraform/modules/toolbox/aws/versions.tf",
+            "terraform/modules/edge/aws/versions.tf",
             "terraform/environments/aws/versions.tf",
             "terraform/environments/aws-state/versions.tf",
         ],

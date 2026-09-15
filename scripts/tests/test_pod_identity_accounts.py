@@ -30,6 +30,7 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CLUSTER_AWS = REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws"
+EDGE_AWS = REPO_ROOT / "terraform" / "modules" / "edge" / "aws"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
 CHARTS = REPO_ROOT / "helm" / "charts"
 
@@ -70,7 +71,7 @@ def test_external_dns_binds_the_account_the_appset_names() -> None:
     """The chart derives its account name from the release, which is
     external-dns-<cluster>; the appset names it instead, and that name is what
     the association has to match."""
-    pinned = association(CLUSTER_AWS / "dns.tf", "external_dns")
+    pinned = association(EDGE_AWS / "dns.tf", "external_dns")
     expect("the association names both halves",
            set(pinned) == {"namespace", "service_account"}, pinned)
 
@@ -125,7 +126,8 @@ def test_keeper_gets_its_own_account_and_no_association() -> None:
     expect("keeper creates its own account", keeper["create"] is True, keeper)
     expect("and it is not the namespace default", keeper["name"] != "default", keeper)
 
-    for tf_file in sorted(CLUSTER_AWS.glob("*.tf")):
+    # Both modules mint associations against this cluster, so both are swept.
+    for tf_file in sorted(CLUSTER_AWS.glob("*.tf")) + sorted(EDGE_AWS.glob("*.tf")):
         body = tf_file.read_text(encoding="utf-8")
         expect(f"{tf_file.name} names no association on the keeper account",
                f'service_account = "{keeper["name"]}"' not in body, tf_file.name)

@@ -190,8 +190,13 @@ output "kubeconfig_command" {
 }
 
 output "public_zone_name_servers" {
-  description = "The NS set the parent zone must delegate to before any public name resolves. Empty when there is no public zone."
-  value       = module.cluster.public_zone_name_servers
+  description = "The NS set the parent zone must delegate to before any public name resolves. Empty when there is no public zone, and empty when the edge module is off -- nothing then creates one."
+  value       = try(one(module.edge[*].public_zone_name_servers), [])
+}
+
+output "public_zone_id" {
+  description = "Route 53 zone the public names resolve in. Empty when there is no public zone or the edge module is off."
+  value       = try(one(module.edge[*].public_zone_id), "")
 }
 
 output "kms_key_arn" {

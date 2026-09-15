@@ -143,10 +143,9 @@ variable "endpoint" {
 }
 
 variable "dns" {
-  description = "private_zone is created and resolves inside the VPC only. public_zone is created when non-empty and its name servers are output for the parent zone's delegation."
+  description = "private_zone is created and resolves inside the VPC only. There is no public_zone here -- the public zone and the two controller identities that write it belong to the edge module, which is what a caller turns off to render no public door at all."
   type = object({
     private_zone = string
-    public_zone  = string
   })
 
   validation {

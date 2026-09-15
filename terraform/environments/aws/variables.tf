@@ -93,11 +93,24 @@ variable "endpoint" {
 }
 
 variable "dns" {
-  description = "private_zone resolves inside the VPC and carries everything internal. public_zone is the delegated zone the exposed UIs answer on; empty means no public names."
+  description = "private_zone resolves inside the VPC and carries everything internal. public_zone is the delegated zone the exposed UIs answer on; empty means no public names. The private half goes to the cluster module and the public half to the edge module, which is what owns every resource that exists because something crosses the VPC boundary."
   type = object({
     private_zone = string
     public_zone  = string
   })
+}
+
+// ---------------------------------------------------------------------------
+// Edge
+// ---------------------------------------------------------------------------
+
+variable "edge" {
+  description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, and the external-dns and cert-manager identities that write it. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable."
+  type = object({
+    enabled = optional(bool, true)
+  })
+
+  default = {}
 }
 
 variable "telemetry" {

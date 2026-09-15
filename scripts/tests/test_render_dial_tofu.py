@@ -446,3 +446,17 @@ def test_a_dial_the_render_refuses_writes_nothing(tmp_path: Path) -> None:
     out = tmp_path / render_dial.TFVARS_NAME
     assert render_dial._render_tofu(dial(drop="cloud: aws"), out) == 1
     assert not out.exists()
+
+
+def test_the_edge_module_is_on_unless_the_dial_turns_it_off() -> None:
+    """A deployment with no door reaches nothing from outside the cluster, so
+    the switch defaults on -- and it is the ONE edge key that reaches tofu."""
+    assert render()["edge"] == {"enabled": True}
+    off = render(replace=("profile: scale", "profile: scale\nedge:\n  enabled: false"))
+    assert off["edge"] == {"enabled": False}
+
+
+def test_a_nonsense_edge_switch_is_refused_by_name() -> None:
+    bad = ("profile: scale", "profile: scale\nedge:\n  enabled: maybe")
+    with pytest.raises(render_dial.DialError, match=r"edge\.enabled"):
+        render(replace=bad)

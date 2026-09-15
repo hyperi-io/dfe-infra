@@ -549,6 +549,18 @@ def _edge_refusals(
         )
 
 
+def _edge(dial: dict[str, object]) -> dict[str, object]:
+    """The edge module's tofu slice -- the whole-module switch, and no more.
+
+    Everything else in the `edge:` block is validated and reported here but
+    copied by hand into a values overlay, so tofu is told only what decides
+    whether a cloud resource is created at all
+    (terraform/modules/edge/aws).
+    """
+    value, label = _edge_scalar(dial, ("edge", "enabled"))
+    return {"enabled": _coerce_flag(value, label, _EDGE_BOOL_DEFAULTS[("edge", "enabled")])}
+
+
 def _edge_tier2_on(enums: dict[str, str]) -> list[str]:
     """Each tier-2 key the dial turns on, with its bucket and pricing model."""
     return [
@@ -1004,6 +1016,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         },
         "tags": _tags(dial, cloud),
         "toolbox": _toolbox(dial),
+        "edge": _edge(dial),
     }
 
 
