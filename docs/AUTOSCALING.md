@@ -27,7 +27,11 @@ flowchart LR
   cpu, with the HPA taking the higher of the two. Turning it on outside namespace
   `dfe` also needs `keda.pressure.shimAddress`, because the chart default names
   `dfe` (dfe-infra #301). `bootstrap/keda-scale-test.sh` proves the path on each
-  deploy and skips its real-app phase where pressure is off.
+  deploy and skips its real-app phase where pressure is off. Its scale-out bound is
+  derived from the ScaledObject's own polling interval plus the HPA sync period
+  rather than fixed (dfe-infra #275), and it exits 3 for UNPROVEN where the HPA read
+  the injected pressure above target and still left the replicas alone, which is the
+  unreproduced stall in dfe-infra #134 and is neither a working scaler nor a broken one.
 - **Node scaling forks by target.** KEDA makes pods Pending; what turns Pending
   pods into new nodes depends entirely on where the cluster runs. That fork is a
   DECLARED decision, recorded here -- never an assumption baked into a chart.

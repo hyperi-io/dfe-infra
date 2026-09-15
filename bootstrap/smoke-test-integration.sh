@@ -213,8 +213,25 @@ echo "=== CORE 1: self-telemetry pipeline (infra OTel -> HyperDX -> ClickHouse) 
 # HyperDX -> ClickHouse otel tables. A row NEWER than the freshness window proves
 # the pipeline is STREAMING right now (instrumentation live + ingest live), not
 # that some old row exists. This is the single strongest self-monitoring assert.
-check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FRESH_WINDOW}s)" \
-  "test \"\$(chq \"SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND\")\" -gt 0 2>/dev/null"
+#
+# POLL, do not sample once: a stack whose collectors became Ready seconds ago has
+# exported nothing yet, so one SELECT reports a streaming pipeline as a dead one
+# (live-proven on rc.13: FAIL here, PASS on an unchanged re-run four minutes
+# later). DFE_OTEL_WAIT=0 samples once, for a test.
+OTEL_WAIT="${DFE_OTEL_WAIT:-180}"
+OTEL_WAIT_INTERVAL="${DFE_OTEL_WAIT_INTERVAL:-5}"
+otel_logs_fresh() {
+  test "$(chq "SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND")" -gt 0 2>/dev/null
+}
+otel_waited=0
+while ! otel_logs_fresh; do
+  [ "$otel_waited" -ge "$OTEL_WAIT" ] && break
+  sleep "$OTEL_WAIT_INTERVAL"
+  otel_waited=$((otel_waited + OTEL_WAIT_INTERVAL))
+done
+echo "  waited ${otel_waited}s of ${OTEL_WAIT}s for a row newer than ${FRESH_WINDOW}s"
+check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FRESH_WINDOW}s, polled up to ${OTEL_WAIT}s)" \
+  otel_logs_fresh
 
 # ---------------------------------------------------------------------------
 echo ""
