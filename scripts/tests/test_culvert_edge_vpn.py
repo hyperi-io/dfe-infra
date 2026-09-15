@@ -181,6 +181,51 @@ def test_the_pods_opt_out_of_the_namespace_baseline() -> None:
            f"got {baseline['spec']['podSelector']!r}")
 
 
+def test_the_tunnels_own_oidc_lives_under_vpn() -> None:
+    """Q51: a top-level oidc.enabled is the cascade's edge-OIDC switch for the
+    UIs (envoy-gateway-config); the tunnel's own login reads vpn.oidc.*
+    instead, so the cascade turning edge OIDC on cannot also turn this on."""
+    err = fails("culvert", "--set", "vpn.oidc.enabled=true")
+    expect("vpn.oidc.enabled with no oauth2-udp listener is refused",
+           "vpn.oidc.enabled with no listener named oauth2-udp" in err, err.strip()[-200:])
+    with_listener = (
+        '[{"name":"wireguard","port":51820,"protocol":"UDP","exposed":true},'
+        '{"name":"openvpn-udp","port":1194,"protocol":"UDP","exposed":true},'
+        '{"name":"oauth2-udp","port":9000,"protocol":"TCP","exposed":true}]'
+    )
+    env = env_of(one(render(
+        "culvert",
+        "--set", "vpn.oidc.enabled=true",
+        "--set", "vpn.oidc.issuer=https://idp.example.com",
+        "--set", "vpn.oidc.clientId=dfe-culvert",
+        "--set-json", f"listeners={with_listener}",
+    ), "Deployment", "dfe-culvert"))
+    expect("the issuer reaches CULVERT_OAUTH2_ISSUER",
+           env.get("CULVERT_OAUTH2_ISSUER") == "https://idp.example.com", f"got {env}")
+    expect("the client id reaches CULVERT_OAUTH2_CLIENT_ID",
+           env.get("CULVERT_OAUTH2_CLIENT_ID") == "dfe-culvert", f"got {env}")
+
+
+def test_the_cascades_edge_oidc_switch_is_harmless_to_the_tunnel() -> None:
+    """The whole point of the move: a top-level oidc.enabled true -- what
+    argocd/values/aws.yaml sets for the gateway's edge OIDC -- must render
+    culvert with no tunnel login switched on at all."""
+    env = env_of(one(render("culvert", "--set", "oidc.enabled=true"), "Deployment", "dfe-culvert"))
+    expect("no CULVERT_OAUTH2_* var is rendered",
+           not any(k.startswith("CULVERT_OAUTH2_") for k in env), f"got {env}")
+
+
+def test_the_old_oidc_path_is_refused_by_name() -> None:
+    """A values file still carrying the pre-Q51 fields is refused rather than
+    silently ignored, naming the new path."""
+    err = fails("culvert", "--set", "oidc.issuer=https://idp.example.com")
+    expect("the old oidc.issuer path is refused",
+           "move the tunnel's own OIDC client-auth fields to vpn.oidc" in err, err.strip()[-300:])
+    err = fails("culvert", "--set", "oidc.clientId=dfe-culvert")
+    expect("the old oidc.clientId path is refused the same way",
+           "move the tunnel's own OIDC client-auth fields to vpn.oidc" in err, err.strip()[-300:])
+
+
 def test_it_holds_at_one_replica() -> None:
     err = fails("culvert", "--set", "replicas=2")
     expect("a second replica is refused", "WireGuard mints its server key" in err,
@@ -262,6 +307,9 @@ def main() -> int:
         test_the_source_range_dial_reaches_the_load_balancer()
         test_the_pods_reach_the_receiver_and_nothing_else()
         test_the_pods_opt_out_of_the_namespace_baseline()
+        test_the_tunnels_own_oidc_lives_under_vpn()
+        test_the_cascades_edge_oidc_switch_is_harmless_to_the_tunnel()
+        test_the_old_oidc_path_is_refused_by_name()
         test_it_holds_at_one_replica()
         test_it_rolls_surge_first_on_a_config_change()
         test_it_renders_on_every_profile_it_is_offered_in()

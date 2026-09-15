@@ -3,7 +3,8 @@
 #  File:         test_receiver_ingress.py
 #  Purpose:      Prove the AWS cascade never renders a per-GB load balancer for
 #                the receiver's ingest ports by default, that culvert stays off
-#                one too, and that the explicit public opt-in still works.
+#                one too under the SAME unmodified cascade, and that the
+#                explicit public opt-in still works.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -16,6 +17,13 @@ LoadBalancer; this proves both hold under the REAL cascade an AWS deploy
 gets (common.yaml + aws.yaml + profile-scale.yaml), not just the chart's own
 defaults, and that the costed public opt-in still renders correctly for a
 deployer who wants it.
+
+The cascade also sets oidc.enabled: true for the gateway's edge OIDC in the
+SAME pass, which used to break culvert's render outright (it read the same
+top-level oidc.enabled as its own tunnel-login switch). That collision is
+fixed by moving culvert's OIDC fields to vpn.oidc.* -- this module renders
+culvert under the unmodified cascade with no isolating override, matching
+what a real AWS deploy actually gets.
 
     python3 scripts/tests/test_receiver_ingress.py
 
@@ -62,11 +70,26 @@ def render(chart: str, *args: str, values: list[Path] | None = None) -> list[dic
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
+def render_error(chart: str, *args: str, values: list[Path] | None = None) -> str:
+    """The stderr of a render that MUST fail. Empty string means it did not."""
+    cmd = ["helm", "template", chart, str(CHARTS / chart)]
+    for v in values or AWS_CASCADE:
+        cmd += ["-f", str(v)]
+    cmd += list(args)
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return "" if out.returncode == 0 else out.stderr
+
+
 def one(docs: list[dict], kind: str, name: str) -> dict:
     for doc in docs:
         if doc.get("kind") == kind and doc["metadata"]["name"] == name:
             return doc
     raise SystemExit(f"no {kind}/{name} in the render")
+
+
+def env_of(deployment: dict) -> dict[str, str]:
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    return {e["name"]: e.get("value", "") for e in container.get("env", [])}
 
 
 def test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service() -> None:
@@ -84,14 +107,33 @@ def test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service() -> None
 
 
 def test_the_aws_cascade_renders_culvert_with_no_load_balancer() -> None:
-    """aws.yaml's edge oidc.enabled: true collides with culvert's OWN
-    oidc.enabled key -- both charts read a top-level oidc.enabled, and this
-    render is what surfaced it (Q51 write-up flags it as a follow-up). The
-    override isolates the exposure/serviceType behaviour this test is for."""
-    docs = render("culvert", "--set", "oidc.enabled=false")
+    """The real AWS cascade, unmodified: aws.yaml sets oidc.enabled: true for
+    the gateway's edge OIDC AND exposure.serviceType: NodePort for culvert in
+    the same pass -- the two used to collide (culvert read the same
+    oidc.enabled as its own tunnel-login switch), which is fixed by moving
+    culvert's OIDC fields to vpn.oidc.*."""
+    docs = render("culvert")
     types = {d["spec"]["type"] for d in docs if d.get("kind") == "Service"}
     expect("no Service is a LoadBalancer", "LoadBalancer" not in types, f"got {types}")
     expect("the public door is a NodePort instead", "NodePort" in types, f"got {types}")
+
+
+def test_the_aws_cascades_edge_oidc_switch_renders_culvert_with_no_tunnel_login() -> None:
+    """aws.yaml's oidc.enabled: true is the UIs' edge OIDC, not the tunnel's --
+    proves the cascade renders no CULVERT_OAUTH2_* var, the positive half of
+    the fix (the render succeeding is only half the proof)."""
+    env = env_of(one(render("culvert"), "Deployment", "dfe-culvert"))
+    expect("no CULVERT_OAUTH2_* var is rendered under the real AWS cascade",
+           not any(k.startswith("CULVERT_OAUTH2_") for k in env), f"got {env}")
+
+
+def test_the_old_oidc_path_still_fails_under_the_aws_cascade() -> None:
+    """A deploy-repo overlay layered after aws.yaml that still carries the
+    pre-Q51 oidc.issuer/oidc.clientId is refused, not silently ignored, even
+    though aws.yaml's own oidc.enabled: true is already in the cascade."""
+    err = render_error("culvert", "--set", "oidc.issuer=https://idp.example.com")
+    expect("the old path is refused under the real cascade too",
+           "move the tunnel's own OIDC client-auth fields to vpn.oidc" in err, err.strip()[-300:])
 
 
 def test_an_explicit_public_opt_in_renders_the_annotated_load_balancer() -> None:
@@ -128,6 +170,8 @@ def main() -> int:
     with standalone():
         test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service()
         test_the_aws_cascade_renders_culvert_with_no_load_balancer()
+        test_the_aws_cascades_edge_oidc_switch_renders_culvert_with_no_tunnel_login()
+        test_the_old_oidc_path_still_fails_under_the_aws_cascade()
         test_an_explicit_public_opt_in_renders_the_annotated_load_balancer()
         test_the_ingest_networkpolicy_admits_culvert_not_the_internet()
         return summary()

@@ -92,11 +92,17 @@ Beyond that, culvert authenticates each client:
   new CA and every issued client config stops working. A deployment that has to
   be rebuildable uses `pki.mode: external` with a Secret carrying `ca.crt`,
   `server.crt`, `server.key` and optionally `crl.pem` and `tc.key`.
-- **OIDC** -- `oidc.enabled` with the issuer and client id, the client secret
-  riding a pre-created Secret. The client completes its login against the
+- **OIDC** -- `vpn.oidc.enabled` with the issuer and client id, the client
+  secret riding a pre-created Secret. It sits under `vpn` because the cloud
+  overlays set a top-level `oidc.enabled` for the gateway's edge OIDC on the
+  UIs (`envoy-gateway-config`, see
+  [aws-operations.md](aws-operations.md#admin-ui-exposure)), and that switch
+  must not reach the tunnel. The client completes its login against the
   server's callback port, so add
   `{ name: oauth2-udp, port: 9000, protocol: TCP, exposed: true }` to
-  `listeners`; the chart refuses to render without it.
+  `listeners`; the chart refuses to render without it, and refuses to render
+  at all if a values file still carries the old `oidc.issuer` or
+  `oidc.clientId`.
 
 ## One replica, and why
 

@@ -47,7 +47,7 @@ listeners:
   # Add for a client on a network that blocks UDP; left out by default because
   # it is slower (TCP inside TCP) and it is a second door to defend:
   # - { name: openvpn-tcp, port: 1194, protocol: TCP, exposed: true }
-  # Add with oidc.enabled -- the client completes its login against this port:
+  # Add with vpn.oidc.enabled -- the client completes its login against this port:
   # - { name: oauth2-udp, port: 9000, protocol: TCP, exposed: true }
 
 # The deployment's own domain and the canonical hostname map, both from the
@@ -81,6 +81,23 @@ vpn:
   # censorship-evasion path and is off: it needs a public certificate for
   # serverCN and it opens a third door for no ingest benefit.
   httpsTunnel: false
+  # OIDC client authentication for the TUNNEL's own login, passed through to
+  # culvert. It sits under vpn because a top-level oidc.enabled is the cloud
+  # overlays' switch for the gateway's EDGE OIDC on the UIs
+  # (envoy-gateway-config), which must never reach this chart. The render
+  # guard in templates/deployment.yaml refuses a values file still carrying
+  # the old oidc.issuer or oidc.clientId. The client secret is never a value:
+  # it rides the Secret named below, which the deployment's own secret
+  # tooling materialises.
+  oidc:
+    enabled: false
+    issuer: ""
+    clientId: ""
+    # Pre-created Secret loaded as environment (envFrom), carrying
+    # CULVERT_OAUTH2_CLIENT_SECRET and CULVERT_OAUTH2_HTTP_SECRET.
+    existingSecret: ""
+    # Group claim values allowed to connect; empty accepts any authenticated user.
+    validateGroups: ""
 
 # Link tuning, mounted as culvert's own profile YAML. Snake_case, because these
 # are the app's key names. Empty takes its shipped defaults (mssfix 1420,
@@ -164,19 +181,6 @@ networkPolicy:
   # or an OIDC issuer outside the cluster goes here -- there is no baseline
   # left to carry it.
   extraEgress: []
-
-# OIDC client authentication, passed through to culvert. The client secret is
-# never a value: it rides the Secret named below, which the deployment's own
-# secret tooling materialises.
-oidc:
-  enabled: false
-  issuer: ""
-  clientId: ""
-  # Pre-created Secret loaded as environment (envFrom), carrying
-  # CULVERT_OAUTH2_CLIENT_SECRET and CULVERT_OAUTH2_HTTP_SECRET.
-  existingSecret: ""
-  # Group claim values allowed to connect; empty accepts any authenticated user.
-  validateGroups: ""
 
 # PKI. `local` mints a CA in the pod on first start, which is why persistence
 # below matters: without a volume every restart mints a new CA and every issued

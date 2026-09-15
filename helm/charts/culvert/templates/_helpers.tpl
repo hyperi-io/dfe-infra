@@ -116,11 +116,11 @@ a CULVERT_ key twice and the deployment carries no hand-written env block.
 {{- $_ := set $env "CULVERT_SECRETS_CRL_PATH" (printf "%s/crl.pem" $mount) -}}
 {{- $_ := set $env "CULVERT_SECRETS_TC_KEY_PATH" (printf "%s/tc.key" $mount) -}}
 {{- end -}}
-{{- if .Values.oidc.enabled -}}
+{{- if .Values.vpn.oidc.enabled -}}
 {{- $_ := set $env "CULVERT_OAUTH2_ENABLED" "true" -}}
-{{- $_ := set $env "CULVERT_OAUTH2_ISSUER" .Values.oidc.issuer -}}
-{{- $_ := set $env "CULVERT_OAUTH2_CLIENT_ID" .Values.oidc.clientId -}}
-{{- $_ := set $env "CULVERT_OAUTH2_VALIDATE_GROUPS" .Values.oidc.validateGroups -}}
+{{- $_ := set $env "CULVERT_OAUTH2_ISSUER" .Values.vpn.oidc.issuer -}}
+{{- $_ := set $env "CULVERT_OAUTH2_CLIENT_ID" .Values.vpn.oidc.clientId -}}
+{{- $_ := set $env "CULVERT_OAUTH2_VALIDATE_GROUPS" .Values.vpn.oidc.validateGroups -}}
 {{- end -}}
 {{- $otel := include "dfe-common.otelEndpoint" . -}}
 {{- if $otel -}}
