@@ -51,7 +51,8 @@ spec:
             # Read at request time by the (auth) layout: lights the /observe/*
             # sidebar entries that iframe the chromeless dfe-hyperdx fork.
             - name: HYPERDX_URL
-              value: {{ .Values.config.hyperdxUrl | default (printf "https://%s.%s" (coalesce .Values.config.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain) | quote }}
+              {{- /* No domain means no derived URL: printf would emit "https://hyperdx.", which is truthy and beats the port fallback the app uses when this is empty. */}}
+              value: {{ .Values.config.hyperdxUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.config.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain)) | quote }}
             # Scopes the dfe_token cookie to {domain} so the HyperDX iframe
             # (hyperdx.{domain}) is sent the same engine token the UI (dfe.{domain})
             # holds. Empty leaves the cookie host-only (single-origin/docker).
@@ -74,8 +75,10 @@ spec:
             # proxy and the login round-trip bounces to the wrong origin. The UI
             # serves on {hostname}.{domain} (the gateway routes.dfeUi default),
             # never the apex.
+            {{- with .Values.config.nextauthUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.config.hostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain)) }}
             - name: NEXTAUTH_URL
-              value: {{ .Values.config.nextauthUrl | default (printf "https://%s.%s" (coalesce .Values.config.hostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain) | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
