@@ -50,7 +50,10 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                artefacts move the same way a re-size would; commit the stage
                in the deploy repo (`chore(upgrade): <stack> stage <n> -- <keys>`);
                push only with --push; wait for Argo to report every
-               Application Synced and Healthy, bounded by --timeout. Confirms
+               Application Synced and Healthy, bounded by --timeout, and after
+               a stage that bumps the Strimzi operator wait again on every
+               Kafka CR's `status.operatorLastSuccessfulVersion` reaching the
+               new operator version, under the same bound. Confirms
                before each stage unless --yes. Stops at the first failure and
                prints that step's rollback note. --stop-before <stage-key>
                stops the walk before that upgrade-order.yaml stage, touching
@@ -77,7 +80,8 @@ Nothing here executes a `before` or `finalise` note as a shell command -- they
 are runbook prose, not argv. `apply` checks the one `before` note this repo
 already has a program for (the Strimzi stored-version conversion) and
 otherwise prints the note and asks for confirmation that an operator ran it by
-hand. A `finalise` note works the same way: printed and left pending unless
+hand. That one check also names the conversion tarball to fetch, at the version
+the cluster is RUNNING rather than the one it is moving to. A `finalise` note works the same way: printed and left pending unless
 --finalise is passed, in which case apply asks for confirmation instead of
 running anything itself, and only writes the marker once the operator (or a
 future automated hook) confirms it ran.
@@ -138,6 +142,9 @@ STRIMZI_CRDS = (
     "kafkatopics.kafka.strimzi.io",
     "kafkausers.kafka.strimzi.io",
 )
+
+# The upgrade-order.yaml step whose pin move IS the Strimzi operator upgrade.
+STRIMZI_OPERATOR_KEY = "operators.strimzi-kafka-operator"
 
 
 class UpgradeError(RuntimeError):
@@ -556,6 +563,67 @@ def check_strimzi_conversion(kubeconfig: str | None, crds: tuple[str, ...] = STR
     return True, f"{checked} Strimzi CRD(s) store v1 only"
 
 
+def strimzi_conversion_tool(operator_version: str) -> str:
+    """The conversion tool's release artefact for one operator version."""
+    return f"strimzi-v1-api-conversion-{operator_version}.tar.gz"
+
+
+def conversion_tool_line(move: Move) -> str:
+    """Which release's conversion tarball to fetch for this operator move.
+
+    The tool rewrites the CRs the RUNNING operator wrote, so it comes from that
+    release rather than the one the pin is moving to.
+    """
+    return (
+        f"fetch {strimzi_conversion_tool(move.old)} from the RUNNING operator release "
+        f"{move.old}, never the target {move.new}"
+    )
+
+
+def check_strimzi_conversion_before(kubeconfig: str | None, move: Move) -> tuple[bool, str]:
+    """The strimzi-kafka-operator step's before-hook, naming its own tool.
+
+    A stale detail line would leave an operator reaching for the target
+    version's tarball, which is the wrong artefact for the CRs on disk.
+    """
+    ok, detail = check_strimzi_conversion(kubeconfig)
+    return ok, f"{detail}; {conversion_tool_line(move)}"
+
+
+def check_kafka_operator_version(
+    kubeconfig: str | None, version: str, *, namespace: str | None = None
+) -> tuple[bool, str]:
+    """Every Kafka CR reports `status.operatorLastSuccessfulVersion` at `version`.
+
+    The CR's own `Ready` condition stays True and stale across an operator
+    upgrade, so a wait on it returns at once and proves nothing; this field is
+    the one the new operator writes only after it has reconciled the cluster.
+    Reads every namespace unless the caller names one, because "every Kafka CR"
+    is the claim being made.
+    """
+    args = ["get", "kafkas.kafka.strimzi.io"]
+    args += ["-n", namespace] if namespace else ["-A"]
+    rc, doc, err = _kubectl_json(kubeconfig, *args)
+    if rc != 0:
+        if "NotFound" in err or "the server doesn't have a resource type" in err:
+            return True, "no Kafka CRD on this cluster -- no operator version to reconcile"
+        return False, f"cannot list Kafka CRs: {err}"
+    items = doc.get("items") or []
+    if not items:
+        return True, "no Kafka CR on this cluster -- no operator version to reconcile"
+    behind = []
+    for item in items:
+        meta = item.get("metadata") or {}
+        name = f"{meta.get('namespace', '')}/{meta.get('name', '<unnamed>')}"
+        seen = str((item.get("status") or {}).get("operatorLastSuccessfulVersion") or "")
+        if seen != version:
+            behind.append(f"{name} (operatorLastSuccessfulVersion {seen or 'unset'})")
+    if behind:
+        extra = f", +{len(behind) - 6} more" if len(behind) > 6 else ""
+        return False, f"{len(behind)} Kafka CR(s) not yet reconciled by {version}: {', '.join(behind[:6])}{extra}"
+    return True, f"{len(items)} Kafka CR(s) report operatorLastSuccessfulVersion {version}"
+
+
 def check_cluster_metadata_version(
     kubeconfig: str | None,
     moves: list[Move],
@@ -792,6 +860,32 @@ def wait_for_argo(
         sleep(min(_SYNC_POLL_INTERVAL, remaining))
 
 
+def wait_for_kafka_operator_version(
+    kubeconfig: str | None,
+    version: str,
+    *,
+    namespace: str | None = None,
+    timeout: float,
+    sleep=time.sleep,
+    now=time.monotonic,
+) -> tuple[bool, str]:
+    """Block until every Kafka CR reports the new operator version, or time out.
+
+    Argo reporting the operator Application Healthy only says the new
+    Deployment is up, which is minutes before it has reconciled the clusters it
+    watches. `sleep`/`now` are injected the same way wait_for_argo's are.
+    """
+    deadline = now() + timeout
+    while True:
+        ok, detail = check_kafka_operator_version(kubeconfig, version, namespace=namespace)
+        if ok:
+            return True, detail
+        remaining = deadline - now()
+        if remaining <= 0:
+            return False, f"still not reconciled after {timeout:.0f}s -- {detail}"
+        sleep(min(_SYNC_POLL_INTERVAL, remaining))
+
+
 # --- plan ----------------------------------------------------------------------
 
 
@@ -886,8 +980,14 @@ def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
 # A step whose `before` note this repo already has a program to verify,
 # keyed by the step's versions.yaml `key`. A note with no entry here is a
 # manual gate: apply prints it and asks for confirmation instead.
-BEFORE_CHECKS = {
-    "operators.strimzi-kafka-operator": check_strimzi_conversion,
+BEFORE_CHECKS: dict[str, Callable[[str | None, Move], tuple[bool, str]]] = {
+    STRIMZI_OPERATOR_KEY: check_strimzi_conversion_before,
+}
+
+# The extra line a step's before-hook prints in a --dry-run, where no check
+# runs and the detail line that would have carried it never appears.
+BEFORE_NOTES: dict[str, Callable[[Move], str]] = {
+    STRIMZI_OPERATOR_KEY: conversion_tool_line,
 }
 
 # A finalise note this repo already has a program for, same shape as
@@ -1001,8 +1101,11 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             check = BEFORE_CHECKS.get(move.step.key)
             if check is not None:
                 emit(f"# verify before-hook: {move.step.before}")
+                note = BEFORE_NOTES.get(move.step.key)
+                if note is not None:
+                    emit(f"# {note(move)}")
                 if not args.dry_run:
-                    ok, detail = check(args.kubeconfig)
+                    ok, detail = check(args.kubeconfig, move)
                     print(f"  [{'PASS' if ok else 'FAIL'}] before-hook {move.step.key}: {detail}", file=sys.stderr)
                     if not ok:
                         print(
@@ -1101,6 +1204,28 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: Argo did not converge", file=sys.stderr)
                 _print_rollback(stage_moves)
                 return EXIT_BLOCKED
+
+        # Argo calls the operator Application Healthy as soon as its Deployment
+        # is up, which is well before the new operator has reconciled anything.
+        operator_move = next((m for m in stage_moves if m.step.key == STRIMZI_OPERATOR_KEY), None)
+        if operator_move is not None:
+            emit(
+                f"wait for every Kafka CR to report operatorLastSuccessfulVersion "
+                f"{operator_move.new} (timeout {args.timeout}s)"
+            )
+            if not args.dry_run:
+                ok, detail = wait_for_kafka_operator_version(
+                    args.kubeconfig, operator_move.new, timeout=args.timeout
+                )
+                print(f"  strimzi: {detail}", file=sys.stderr)
+                if not ok:
+                    print(
+                        f"dfe-ops upgrade apply FAILED at stage {stage_index}: the Strimzi operator "
+                        "did not reconcile every Kafka CR",
+                        file=sys.stderr,
+                    )
+                    _print_rollback(stage_moves)
+                    return EXIT_BLOCKED
 
     if args.dry_run:
         print(f"\n[dry-run] {len(commands)} command(s) would run; nothing was executed", file=sys.stderr)

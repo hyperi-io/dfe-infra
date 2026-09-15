@@ -1069,3 +1069,163 @@ def test_wait_for_argo_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     ok, detail = u.wait_for_argo("kc", argocd_namespace="argocd", timeout=15, sleep=fake_sleep, now=lambda: clock["t"])
     assert ok is False
     assert "still not converged" in detail
+
+
+# ---------------------------------------------------------------------------
+# The Strimzi operator upgrade's two traps: a Kafka CR whose Ready condition is
+# stale across the lift, and a conversion tool fetched at the wrong version.
+# ---------------------------------------------------------------------------
+
+
+def _kafka_cr(operator_version: str | None, *, name: str = "dfe-kafka", ready: bool = True) -> dict:
+    """One Kafka CR as kubectl prints it -- Ready by default, because Ready is
+    exactly what stays True and stale while the operator version lags."""
+    status: dict[str, object] = {
+        "conditions": [{"type": "Ready", "status": "True" if ready else "False"}]
+    }
+    if operator_version is not None:
+        status["operatorLastSuccessfulVersion"] = operator_version
+    return {"metadata": {"name": name, "namespace": "kafka"}, "status": status}
+
+
+def test_check_kafka_operator_version_refuses_a_ready_cr_still_on_the_old_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": [_kafka_cr("0.51.0")]})))
+    ok, detail = u.check_kafka_operator_version("kc", "1.2.0")
+    assert ok is False
+    assert "operatorLastSuccessfulVersion 0.51.0" in detail
+    assert "kafka/dfe-kafka" in detail
+
+
+def test_check_kafka_operator_version_refuses_a_cr_carrying_no_version_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": [_kafka_cr(None)]})))
+    ok, detail = u.check_kafka_operator_version("kc", "1.2.0")
+    assert ok is False
+    assert "unset" in detail
+
+
+def test_check_kafka_operator_version_passes_once_every_cr_reports_the_new_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    items = [_kafka_cr("1.2.0"), _kafka_cr("1.2.0", name="other")]
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": items})))
+    ok, detail = u.check_kafka_operator_version("kc", "1.2.0")
+    assert ok is True
+    assert "2 Kafka CR(s) report operatorLastSuccessfulVersion 1.2.0" in detail
+
+
+def test_check_kafka_operator_version_reads_every_namespace_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": []})))
+    u.check_kafka_operator_version("kc", "1.2.0")
+    assert "-A" in calls[0]
+    assert "-n" not in calls[0]
+
+
+def test_check_kafka_operator_version_no_crd_is_a_clean_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _proc(1, stderr='the server doesn\'t have a resource type "kafkas"'))
+    ok, detail = u.check_kafka_operator_version("kc", "1.2.0")
+    assert ok is True
+    assert "no Kafka CRD" in detail
+
+
+def test_wait_for_kafka_operator_version_times_out_on_a_stale_ready_cr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    stale = _proc(0, stdout=json.dumps({"items": [_kafka_cr("0.51.0")]}))
+    _mock_run(monkeypatch, *[stale for _ in range(10)])
+
+    clock = {"t": 0.0}
+
+    def fake_sleep(seconds: float) -> None:
+        clock["t"] += seconds
+
+    ok, detail = u.wait_for_kafka_operator_version(
+        "kc", "1.2.0", timeout=15, sleep=fake_sleep, now=lambda: clock["t"]
+    )
+    assert ok is False
+    assert "still not reconciled" in detail
+
+
+def test_wait_for_kafka_operator_version_returns_once_the_field_moves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    stale = _proc(0, stdout=json.dumps({"items": [_kafka_cr("0.51.0")]}))
+    moved = _proc(0, stdout=json.dumps({"items": [_kafka_cr("1.2.0")]}))
+    _mock_run(monkeypatch, stale, moved)
+
+    clock = {"t": 0.0}
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["t"] += seconds
+
+    ok, detail = u.wait_for_kafka_operator_version(
+        "kc", "1.2.0", timeout=600, sleep=fake_sleep, now=lambda: clock["t"]
+    )
+    assert ok is True
+    assert "operatorLastSuccessfulVersion 1.2.0" in detail
+    assert sleeps
+
+
+def test_strimzi_conversion_tool_names_the_version_it_is_given() -> None:
+    assert u.strimzi_conversion_tool("0.51.0") == "strimzi-v1-api-conversion-0.51.0.tar.gz"
+
+
+def test_conversion_tool_line_names_the_from_version_and_refuses_the_target() -> None:
+    step = u.Step(stage="20-operators", order="10", key=u.STRIMZI_OPERATOR_KEY, before="convert")
+    line = u.conversion_tool_line(u.Move(step=step, old="0.51.0", new="1.2.0"))
+    assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in line
+    assert "strimzi-v1-api-conversion-1.2.0.tar.gz" not in line
+    assert "never the target 1.2.0" in line
+
+
+def test_check_strimzi_conversion_before_carries_both_the_verdict_and_the_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    doc = json.dumps({"status": {"storedVersions": ["v1"]}})
+    _mock_run(monkeypatch, *[_proc(0, stdout=doc) for _ in u.STRIMZI_CRDS])
+    step = u.Step(stage="20-operators", order="10", key=u.STRIMZI_OPERATOR_KEY, before="convert")
+    ok, detail = u.check_strimzi_conversion_before("kc", u.Move(step=step, old="0.51.0", new="1.2.0"))
+    assert ok is True
+    assert "store v1 only" in detail
+    assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in detail
+
+
+def test_cmd_upgrade_apply_dry_run_names_the_from_version_tool_and_the_operator_wait(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+
+    args = _apply_args(deploy=str(deploy), to="2.0.0", dry_run=True)
+    assert u.cmd_upgrade_apply(args) == u.EXIT_OK
+
+    err = capsys.readouterr().err
+    # The fixture moves the operator 0.51.0 -> 1.2.0, so the tool is the FROM one.
+    assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in err
+    assert "strimzi-v1-api-conversion-1.2.0.tar.gz" not in err
+    assert "wait for every Kafka CR to report operatorLastSuccessfulVersion 1.2.0" in err
+    # Stage 2 is the operators stage; stages 1 and 3 move no operator pin, so
+    # the extra wait must not be emitted for them.
+    assert err.count("operatorLastSuccessfulVersion") == 1

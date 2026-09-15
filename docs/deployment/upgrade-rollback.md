@@ -20,7 +20,15 @@ hands.
 roll back the same way. strimzi-kafka-operator carries a `before` note --
 the CRD stored-version conversion (`bin/v1-api-conversion.sh
 convert-resource`, then `crd-upgrade`) that has to run on the live cluster
-before the 1.x operator starts. `upgrade-order.yaml` does not mark this
+before the 1.x operator starts. That tool comes from the tarball the RUNNING
+operator's release publishes (`strimzi-v1-api-conversion-<from>.tar.gz`), never
+the target's, because it rewrites the CRs the running operator wrote -- which is
+why `dfe-ops upgrade apply` prints the FROM version beside the check. Once the
+operator itself has moved, the Kafka CR's `Ready` condition stays True and
+stale, so a `kubectl wait --for=condition=Ready` returns at once and proves
+nothing: the signal that the new operator has actually reconciled the cluster is
+`status.operatorLastSuccessfulVersion` reaching the new version, which is what
+apply waits on. `upgrade-order.yaml` does not mark this
 step `rollback: none`, so `dfe-ops upgrade rollback` will not refuse a
 plan that moves this pin backward -- but the conversion is one-way once it
 has run: Strimzi's CRDs (`kafkas.kafka.strimzi.io`,

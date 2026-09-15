@@ -68,7 +68,14 @@ stack upgrade from a deployment repo's own `pins.yaml`, walking
   `upgrade-order.yaml` stage, touching nothing in it or after. A `before`
   note this repo already has a program for (today, only the Strimzi
   conversion) runs automatically; any other needs a confirmed "I ran this by
-  hand". A reached `finalise` note prints and stays pending unless
+  hand". That check also names the conversion tarball to fetch at the version
+  the cluster is RUNNING (`strimzi-v1-api-conversion-<from>.tar.gz`), not the
+  target's, because the tool rewrites the CRs the running operator wrote. After
+  a stage that bumps the Strimzi operator, apply waits a second time on every
+  Kafka CR's `status.operatorLastSuccessfulVersion` reaching the new operator
+  version under the same `--timeout`, because the CR's own `Ready` condition
+  stays True and stale across the lift and a wait on it returns at once and
+  proves nothing. A reached `finalise` note prints and stays pending unless
   `--finalise` is given, which asks whether the soak is over and, on yes,
   writes `upgrades/<from>-to-<to>.finalised` -- the marker `rollback` reads.
   `--dry-run` prints every command, finalise and stop-before included, and
