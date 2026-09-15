@@ -41,10 +41,14 @@ locals {
 
   autoscaling_enabled = var.autoscaling.enabled
 
-  // The alarm's granularity, written once: it appears both inside the SEARCH
-  // expression and as the metric_query's own period, and a threshold sized for
-  // one of them against a reading taken at the other fires at the wrong load.
+  // The alarm's granularity, written once: every per-broker metric_query has to
+  // carry the same period, and a threshold sized for one window compared
+  // against a reading taken over another fires at the wrong load.
   autoscaling_period_seconds = 300
+
+  // MSK numbers brokers from 1 up to the node count, the same ids that appear
+  // in the b-1..b-N bootstrap broker hostnames.
+  autoscaling_broker_ids = range(1, var.broker_count + 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -72,35 +76,51 @@ resource "aws_cloudwatch_metric_alarm" "broker_scale_out" {
 
   alarm_actions = [aws_sns_topic.broker_scaler[0].arn]
 
-  // AWS/Kafka publishes BytesInPerSec per broker (dimensions "Cluster Name",
-  // "Broker ID"), never as a cluster total, and the broker count itself is
-  // what this alarm exists to change -- so the set of dimension values it
-  // sums over cannot be named in advance. SEARCH is what re-discovers every
-  // current broker's metric stream each evaluation, which a fixed list of
-  // dimensions could not survive a scale-out of its own making.
+  // PutMetricAlarm rejects a SEARCH expression outright, so every broker the
+  // alarm sums over has to be named as its own metric_query.
+  // https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Create-alarm-on-metric-math-expression.html
   //
-  // The statistic SEARCH asks for is 'Average', not 'Sum': BytesInPerSec is
-  // already a per-second RATE, published once a minute, so a 300s period
-  // holds 5 of those one-minute rate samples. Sum is defined as "the sum of
-  // the values of all data points collected during the period" (CloudWatch
-  // statistics docs), so summing 5 already-averaged rate samples yields a
-  // number on the order of 5x the true sustained rate -- comparing THAT
-  // against a bytes-per-second threshold fired the alarm at roughly a fifth
-  // of the traffic it was sized for. Average is Sum/SampleCount, which
-  // collapses the 5 samples back to the mean rate over the period regardless
-  // of how many landed in it. The outer SUM() is unchanged and is not the
-  // same kind of sum: it is metric-math's SPATIAL aggregation across the
-  // broker dimension SEARCH returns, adding per-broker rates together at each
-  // timestamp to get a cluster-wide rate -- which is dimensionally correct
-  // the way summing 5 temporal samples of one rate is not.
+  // AWS/Kafka publishes BytesInPerSec per broker under "Cluster Name" and
+  // "Broker ID" and never as a cluster total, so the sum below is the only
+  // cluster-wide figure available.
+  //
+  // The statistic is Average, not Sum: BytesInPerSec is already a per-second
+  // rate published once a minute, so Sum would add the five one-minute samples
+  // in a 300s period and read about 5x the sustained rate.
   // https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Statistics-definitions.html
+  //
+  // The queries cover the dialled broker count, so a cluster the Lambda has
+  // already scaled out reads only its original brokers until the dial and a
+  // re-apply catch up -- which under-reports, and can never scale out twice on
+  // one stale reading.
+  dynamic "metric_query" {
+    for_each = local.autoscaling_broker_ids
+
+    content {
+      id          = "broker_${metric_query.value}"
+      label       = "${var.name} broker ${metric_query.value} BytesInPerSec"
+      return_data = false
+
+      metric {
+        namespace   = "AWS/Kafka"
+        metric_name = "BytesInPerSec"
+        stat        = "Average"
+        period      = local.autoscaling_period_seconds
+
+        dimensions = {
+          "Cluster Name" = aws_msk_cluster.this.cluster_name
+          "Broker ID"    = tostring(metric_query.value)
+        }
+      }
+    }
+  }
+
+  // Metric math's SUM over the per-broker series is a spatial aggregation --
+  // it adds rates across brokers at each timestamp and leaves the unit a rate.
   metric_query {
-    id         = "cluster_bytes_in"
-    expression = "SUM(SEARCH('{AWS/Kafka,\"Broker ID\",\"Cluster Name\"} MetricName=\"BytesInPerSec\" \"Cluster Name\"=\"${aws_msk_cluster.this.cluster_name}\"', 'Average', ${local.autoscaling_period_seconds}))"
-    label      = "${var.name} cluster BytesInPerSec"
-    // CloudWatch's PutMetricAlarm rejects a math-only metric_query with no
-    // period, even though the SEARCH expression above already embeds it.
-    period      = local.autoscaling_period_seconds
+    id          = "cluster_bytes_in"
+    expression  = "SUM([${join(",", [for broker_id in local.autoscaling_broker_ids : "broker_${broker_id}"])}])"
+    label       = "${var.name} cluster BytesInPerSec"
     return_data = true
   }
 }

@@ -407,18 +407,18 @@ run "msk_autoscaler_threshold_arithmetic" {
 
   // The threshold above is bytes PER SECOND, so the metric compared against
   // it has to be a rate too. BytesInPerSec is published once a minute, so a
-  // 300s period holds 5 samples -- SEARCH's statistic has to be Average
+  // 300s period holds 5 samples -- the statistic has to be Average
   // (Sum/SampleCount), not Sum (the raw total of those 5 already-averaged
   // rate samples), or the compared value runs ~5x hot and the alarm fires at
   // a fraction of the traffic it was sized for.
   assert {
-    // metric_query is a SET of objects (no addressable index), so the one
-    // query this alarm defines is picked out by its id instead.
-    condition = strcontains(
-      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].expression,
-      "'Average', 300"
-    )
-    error_message = "the per-broker SEARCH statistic must be Average, not Sum, or the cluster-wide figure is not actually bytes per second"
+    // metric_query is a SET of objects (no addressable index), so the
+    // per-broker queries are picked out by the id prefix instead.
+    condition = alltrue([
+      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
+      mq.metric[0].stat == "Average" if startswith(mq.id, "broker_")
+    ])
+    error_message = "the per-broker statistic must be Average, not Sum, or the cluster-wide figure is not actually bytes per second"
   }
 
   assert {
@@ -426,27 +426,72 @@ run "msk_autoscaler_threshold_arithmetic" {
     error_message = "the alarm must require 3 of 3 datapoints -- that is the whole of its stabilisation, since nothing here re-arms"
   }
 
-  // CloudWatch's PutMetricAlarm rejects a metric_query carrying an
-  // expression but no period, regardless of any period embedded in the
-  // expression string itself -- a mocked provider never runs this
-  // validation, so the assertion is what pins the field.
+  // CloudWatch rejects SEARCH on a metric alarm with ValidationError: SEARCH
+  // is not supported on Metric Alarms, and a mocked provider never runs that
+  // validation, so the assertion is what keeps the expression out.
   assert {
-    condition = (
-      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].period
-      == 300
-    )
-    error_message = "the metric_query must carry period = 300, or CloudWatch's PutMetricAlarm rejects the alarm with ValidationError: Period must not be null"
+    condition = alltrue([
+      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
+      mq.expression == null ? true : !strcontains(mq.expression, "SEARCH")
+    ])
+    error_message = "no metric_query may use SEARCH -- CloudWatch refuses PutMetricAlarm outright, whatever else the alarm carries"
   }
 
-  // The SEARCH expression embeds the SAME granularity. Asserting only the
-  // field leaves the expression free to move to a shorter window, which would
-  // compare a one-minute average against a threshold sized for five.
+  // One query per broker, so the sum below covers the whole dialled cluster.
   assert {
-    condition = strcontains(
-      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].expression,
-      "'Average', 300)"
+    condition = length([
+      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if startswith(mq.id, "broker_")
+    ]) == 3
+    error_message = "the alarm must carry one metric_query per broker id, and this contract dials broker_count = 3"
+  }
+
+  // Every per-broker query names one broker of one cluster, so a second MSK
+  // cluster's traffic can never land in this alarm's sum.
+  assert {
+    condition = alltrue([
+      for broker_id in [1, 2, 3] :
+      length([
+        for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
+        mq
+        if mq.id == "broker_${broker_id}"
+        && mq.metric[0].metric_name == "BytesInPerSec"
+        && mq.metric[0].namespace == "AWS/Kafka"
+        && mq.metric[0].dimensions["Broker ID"] == tostring(broker_id)
+        && mq.metric[0].dimensions["Cluster Name"] == aws_msk_cluster.this.cluster_name
+      ]) == 1
+    ])
+    error_message = "each broker id 1..broker_count needs its own AWS/Kafka BytesInPerSec query dimensioned by Cluster Name and Broker ID"
+  }
+
+  // Each per-broker query carries the granularity, which is where the alarm's
+  // period lives once the expression no longer embeds one.
+  assert {
+    condition = alltrue([
+      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
+      mq.metric[0].period == 300 if startswith(mq.id, "broker_")
+    ])
+    error_message = "every per-broker metric_query must carry period = 300, the window the threshold is sized against"
+  }
+
+  // Exactly one query returns data, and it is the sum the threshold compares.
+  assert {
+    condition = length([
+      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.return_data
+    ]) == 1
+    error_message = "exactly one metric_query may set return_data -- CloudWatch evaluates the alarm against that one series"
+  }
+
+  assert {
+    condition = (
+      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].expression
+      == "SUM([broker_1,broker_2,broker_3])"
     )
-    error_message = "the SEARCH expression's own granularity must match the metric_query period"
+    error_message = "the returned query must sum every per-broker series, or the threshold is compared against part of the cluster"
+  }
+
+  assert {
+    condition     = [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].return_data
+    error_message = "the summing expression is the series the alarm watches, so it is the one that returns data"
   }
 
   assert {
