@@ -59,6 +59,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         readiness_timeout=900,
         access_out=str(tmp_path / "access.txt"),
         stack="current",
+        registry="registry.example.com/dfe",
         base_domain=None,
         domain=None,
         skip_e2e=False,
@@ -78,6 +79,16 @@ def test_terraform_outputs_land_as_strings(tmp_path: Path, monkeypatch) -> None:
     assert all(isinstance(value, str) for value in env.values())
     # A non-DFE_ output is still filtered out.
     assert "cluster_name" not in env
+
+
+def test_the_registry_flag_reaches_bootstrap(tmp_path: Path, monkeypatch) -> None:
+    """--registry otherwise stops at the version-set render, and every dfe-*
+    image is left resolving against Docker Hub."""
+    bridge = type(sys)("bridge")
+    bridge.get_tf_outputs = lambda _dir: dict(TF_OUTPUTS)
+    monkeypatch.setitem(sys.modules, "bridge", bridge)
+    env = dfeops._assemble_env(_args(tmp_path))
+    assert env["DFE_REGISTRY"] == "registry.example.com/dfe"
 
 
 def test_openbao_is_required_only_when_the_backend_is_openbao() -> None:

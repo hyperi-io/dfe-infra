@@ -22,6 +22,9 @@
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
 #   DFE_PROFILE              slim | single | scale | mesh (default: scale)
+#   DFE_REGISTRY             registry + path every dfe-* image is published
+#                            under, e.g. ghcr.io/hyperi-io. Reaches every chart
+#                            as global.registry through the cluster secret.
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
 #   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
@@ -291,8 +294,13 @@ DFE_SECRETS_PREFIX_PATH="${DFE_SECRETS_PREFIX:+${DFE_SECRETS_PREFIX%/}/}"
 export DFE_SECRETS_PREFIX_PATH
 
 # Validate required variables
+# DFE_REGISTRY is required because an empty one is not a smaller deployment: a
+# dfe-* image with no registry prefix resolves to Docker Hub, which publishes
+# none of them, and the kubelet reports a pull denial that names Docker Hub
+# rather than the missing setting.
 required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
+  DFE_REGISTRY
   DFE_REPO_URL DFE_TARGET_REVISION
   DFE_STORAGE_CLASS DFE_NAMESPACE
   DFE_CLICKHOUSE_HOST DFE_OTEL_ENDPOINT

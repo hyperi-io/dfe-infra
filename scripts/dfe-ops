@@ -2743,6 +2743,10 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
     env["DFE_PROFILE"] = args.mode
+    # The dial's registry reaches the charts ONLY through this variable: the
+    # --registry flag otherwise stops at `dfe-stack render`, which expands the
+    # version set and never touches what a pod pulls from.
+    env["DFE_REGISTRY"] = args.registry
     _apply_domain(env, args.mode)
     if args.target_revision:
         env["DFE_TARGET_REVISION"] = args.target_revision

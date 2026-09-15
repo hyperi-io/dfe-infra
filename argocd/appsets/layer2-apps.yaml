@@ -74,6 +74,12 @@ spec:
             # what Argo reads. Only the dfe-engine chart has a gitops block; other
             # charts ignore these params.
             parameters:
+              # The registry every dfe-* image is pulled from. A chart left on
+              # common.yaml's empty default renders the image with no host and
+              # containerd resolves it to Docker Hub, which publishes no DFE
+              # image, so the pull is denied against the wrong registry.
+              - name: global.registry
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/registry" }}'
               - name: gitops.repoUrl
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
               - name: gitops.branch

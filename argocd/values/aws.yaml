@@ -2,13 +2,21 @@
 # Stub required so Layer 2 ApplicationSet valueFiles resolution succeeds on EKS targets.
 global:
   cloud: aws
-  # registry is deliberately UNSET here, matching gcp.yaml and azure.yaml: the
-  # dial's own `registry:` field (deployment.example.yaml) is the one source,
-  # reaching a deploy as the `dfe-ops cycle --registry` flag render_dial.py
-  # derives from it. A literal here would drift from that whenever a customer
-  # dial names a different registry, the way ghcr.io/hyperi-io once did.
+  # registry is UNSET here, matching gcp.yaml and azure.yaml, because the dial's
+  # own `registry:` field is the one source. It reaches the charts as the
+  # dfe.hyperi.io/registry cluster-secret annotation, which every layer 2
+  # appset passes back as the global.registry parameter -- NOT as the
+  # `dfe-ops --registry` flag, which stops at the version-set render. A literal
+  # here would drift whenever a customer dial names a different registry.
 
 storageClass: gp3
+
+# The private-registry pull secret bootstrap.sh creates in every DFE namespace
+# from DFE_PULL_SECRET_SERVER/_USER/_TOKEN. Named here so the common library's
+# imagePullSecrets helper renders it onto every pod that is not marked
+# image.public; a chart whose image is public suppresses it by itself.
+imagePullSecrets:
+  - ghcr-pull-secret
 
 # THE EDGE MODULE'S OWN AWS KEYS LIVE IN argocd/values/edge-aws.yaml, layered
 # after this file by argocd/appsets/layer2-edge.yaml: the gateway Service and

@@ -34,6 +34,11 @@ metadata:
     dfe.hyperi.io/region: "${DFE_REGION}"
     dfe.hyperi.io/domain: "${DFE_DOMAIN}"
     dfe.hyperi.io/profile: "${DFE_PROFILE}"
+    # The registry every dfe-* image is published under, read back into
+    # global.registry by each layer 2 appset. Without it a chart renders
+    # `dfe-<component>:<tag>` with no host, which containerd resolves to
+    # Docker Hub, so bootstrap.sh refuses to run with this unset.
+    dfe.hyperi.io/registry: "${DFE_REGISTRY}"
     # The EKS cluster's own name, for the LBC chart's subnet/tag discovery;
     # empty on non-EKS clouds, where DFE_KUBE_CLUSTER_NAME_ANNOTATION is unset
     # and this line renders blank rather than an empty-valued annotation.
