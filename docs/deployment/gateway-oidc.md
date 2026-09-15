@@ -5,13 +5,14 @@ nothing: dfe-engine holds the accounts and signs its own tokens. The other is
 edge OIDC, where Envoy Gateway takes the login, verifies the token, and hands
 dfe-engine an already-authenticated identity in `X-Oidc-*` headers.
 
-This page is about the second one, and about the parts of it that Envoy Gateway
-cannot do today. Read it before turning `jwtAuthn.enabled` on.
+This page is the second one, and what Envoy Gateway cannot do today; read it
+before turning `jwtAuthn.enabled` on. [edge.md](edge.md) says which routes take
+an edge policy at all.
 
 ## The values that turn OIDC on
 
-There is no single on/off switch, and deliberately no `auth.oidcEnabled`: the
-engine has no OIDC boolean at all, it reads whatever provider YAML is under
+There is no single on/off switch and deliberately no `auth.oidcEnabled`: the
+engine reads whatever provider YAML is under
 `<config.mountPath>/auth/oidc-providers`. Four values say four separate things.
 
 | chart | value | what it decides |

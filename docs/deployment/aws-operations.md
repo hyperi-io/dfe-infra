@@ -60,48 +60,22 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 
 ## Admin UI exposure
 
-- dfe-ui is public by default on a cloud deploy; every admin UI (Argo CD,
-  Kafbat, HyperDX, Forgejo, the links page, Cruise Control) is opt-in, one at
-  a time (`ui.public.*`). A public UI with no authentication fails the
-  render -- dfe-ui's own login counts, as does edge OIDC or an admin app's
-  own scheme (Kafbat's OIDC, HyperDX's session cookie); nothing else does.
-  The dial says the same thing in its `edge:` block (`deployment.yaml`):
-  `edge.product.public` for dfe-ui and `edge.admin_uis.public.*` for the rest,
-  with the unquoted booleans kept deliberately so the sub-blocks that ARE chart
-  values (`rate_limit`, `waf`, `tls`) are a COPY target rather than a
-  translation. `render_dial.py` validates every boolean and enum in that block
-  by name and reports which surfaces the dial marks public, but the values that
-  actually reach the chart are whatever a deploy-repo overlay (or
-  `argocd/values/edge-<flavour>.yaml` directly, as below) pastes in from it.
-  The old top-level `ui:` and `ingest:` blocks still feed it for one release,
-  and the renderer names the new path on the way through.
-- Separately from that per-UI flag, `argocd/values/edge-aws.yaml` sets the
-  envoy-gateway-config chart's `exposure.infraUisExternal: false` and
-  `argocd/values/aws.yaml` sets `oidc.enabled: true` (it stays with the cloud
-  overlay because kafbat and dfe-engine read the same switch), because this
-  cloud's Envoy Gateway Service
-  is `internet-facing` (an NLB with a public address). `infraUisExternal` is
-  the class-wide kill switch: false takes every infra-class route (Argo CD,
-  Kafbat, HyperDX, Forgejo, the links page, Cruise Control) off the edge
-  outright, and beats a route's own `enabled: true`. The chart's own render
-  guard refuses to bring that switch back on for an internet-facing Service
-  unless `oidc.enabled` is true or `ui.allowed_cidrs` is set -- so re-exposing
-  an admin UI on this cloud is a deliberate overlay change, not a one-line
-  flip that quietly ships with no edge auth.
-- `ui.allowed_cidrs` is opt-in and enforced twice, at Envoy and at the load
-  balancer's `loadBalancerSourceRanges`. Set it alongside
-  `ui.trusted_proxy_cidrs`, or the client address comes from a header the
-  caller writes. **It fences the WHOLE front door, not just the admin UIs.**
-  One Envoy Gateway Service carries every listener -- product, admin and
-  ingest alike -- so an allow-list narrow enough to keep an admin UI locked
-  down also blocks agent ingest (`otel`, `receiver`) from anything outside
-  it. There is no separate Service for ingest today; widening the allow-list
-  until ingest works widens the UI filter with it. The default rate limit is
-  300 requests a minute, counted locally per proxy replica. `ui.waf.mode`
-  only ever renders `none` -- anything else would move the public
-  certificate to the cloud's own store. A public hostname needs
-  `dns.public_zone` and gets a Let's Encrypt certificate by DNS-01, through
-  cert-manager's own Pod Identity role.
+[edge.md](edge.md) owns which surface is exposed on which flavour, at which
+tier, by which dial key. What is AWS's own:
+
+- `argocd/values/aws.yaml` sets `oidc.enabled: true`, and it stays with the
+  cloud overlay rather than the edge one because kafbat and dfe-engine read the
+  same switch.
+- The class-wide kill switch (`edge.admin_uis.external`) is off here because
+  this cloud's Envoy Gateway Service is internet-facing. The chart's render
+  guard refuses to bring it back on for an internet-facing Service unless edge
+  OIDC is on or an allow-list is set, so re-exposing an admin UI is a deliberate
+  overlay change rather than a one-line flip that ships with no edge auth.
+- A public hostname needs `dns.public_zone` and gets a Let's Encrypt certificate
+  by DNS-01, through cert-manager's own Pod Identity role.
+- `render_dial.py` validates every boolean and enum in the dial's `edge:` block
+  and reports which surfaces it marks public, but the values that reach the
+  chart are whatever a deploy-repo overlay pastes in from it.
 
 ## Teardown and lifecycle tags
 

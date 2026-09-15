@@ -54,7 +54,8 @@ larger than the cluster's compute. A pricing model is named wherever it decides
 whether an option is safe -- hourly, per GB processed, per request, per
 LCU-hour, per broker-hour -- but never a rate. The scale is deliberate: rates
 move by region, by account and by discount, so a deployer prices their own
-account rather than trusting a number written down here.
+account rather than trusting a number written down here. Every edge door is
+priced on this scale in [edge.md](edge.md).
 
 ## From the dial to a running cluster
 
@@ -269,35 +270,17 @@ processed), a Classic ELB per GB, CloudFront and Global Accelerator per GB,
 WAF per request. A volume-priced front door on that kind of traffic is not
 an option, so the receiver ships with none.
 
-The default is `edge.ingest.receiver.mode: vpn` (`deployment.example.yaml`'s
-`edge:` block, `argocd/values/aws.yaml`'s `exposure:`): the receiver stays on a
+The default is `edge.ingest.receiver.mode: vpn`: the receiver stays on a
 ClusterIP with no public address, and there is no external path until the
-deployer brings one. The dial's old top-level `ui:` and `ingest:` blocks are
-read for one release and reported by name on the way through -- everything they
-carried now lives under `edge.product`, `edge.admin_uis` and
-`edge.ingest.receiver`. Three ways to reach it:
-
-- **culvert**, dialled through an address the deployer brings -- e.g. an
-  Elastic IP on a small forwarder instance in front of culvert's NodePort
-  (`exposure.serviceType: NodePort` in `argocd/values/edge-aws.yaml`, the edge
-  module's AWS tier table). Free ingress; size the
-  instance by bandwidth, not bytes, and keep it in the receiver's
-  availability zone, because cross-AZ transfer is billed per GB.
-- The deployer's own peering, VPN or Direct Connect straight to the node
-  port.
-- The NLB opt-in: `edge.ingest.receiver.mode: public` plus
-  `service.beta.kubernetes.io/aws-load-balancer-type: external`,
-  `aws-load-balancer-nlb-target-type: ip`,
-  `aws-load-balancer-scheme: internet-facing` (or `internal`), and
-  `loadBalancerSourceRanges` set -- never left empty.
+deployer brings one. [edge.md](edge.md) carries the AWS tier table -- every door,
+its group, its tier, the dial key that turns it and its cost bucket -- and the
+three ways to reach the receiver.
 
 An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being
 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's Elastic Load
-Balancing pricing page). The hourly half is XS. The processing half is why
-there is no load balancer by default: the NLB bills per GB processed, and at
-terabytes a day that line is L against the cluster's compute, XL at ten times
-that. AWS data transfer out still applies to the replies on every path,
-culvert included.
+Balancing pricing page). The hourly half is XS. The processing half is why there
+is no load balancer by default. AWS data transfer out still applies to the
+replies on every path, culvert included.
 
 See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
 for node pools and images, admin UI exposure, teardown, lifecycle tags and

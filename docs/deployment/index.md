@@ -166,6 +166,9 @@ versionCheck:
   nothing to do does instead of crash-looping
 - [storage.md](storage.md) - the storage-deploy matrix: service x mode x
   storage model, with the status and evidence behind every cell
+- [edge.md](edge.md) - the edge module: every door into a deployment, grouped
+  and tiered, with one table per flavour of what is on, what it costs and which
+  dial key turns it
 - [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on,
   the private-CA IdP shape, and what Envoy Gateway cannot do with a groups claim
 - [edge-vpn.md](edge-vpn.md) - the opt-in tunnel a field appliance dials in on:

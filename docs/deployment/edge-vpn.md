@@ -115,11 +115,14 @@ appliances sit in known ranges lists them.
 Beyond that, culvert authenticates each client:
 
 - **PKI** -- every client holds its own certificate. `pki.mode: local` mints a
-  CA in the pod on first start, which is fine for a trial and needs
-  `persistence.enabled` to survive a restart; otherwise every restart mints a
-  new CA and every issued client config stops working. A deployment that has to
-  be rebuildable uses `pki.mode: external` with a Secret carrying `ca.crt`,
-  `server.crt`, `server.key` and optionally `crl.pem` and `tc.key`.
+  CA in the pod on first start, which is fine for a trial; without
+  `persistence.enabled` every restart mints a new CA and every issued client
+  config stops working. A deployment that has to be rebuildable uses
+  `pki.mode: external` with a Secret carrying `ca.crt`, `server.crt`,
+  `server.key` and optionally `crl.pem` and `tc.key`. **Both modes want the
+  volume**: culvert writes its revocations and its WireGuard peer allocations
+  into the same directory, so a restart without it re-issues a revoked peer's
+  address, and the cloud flavours turn it on for that reason.
 - **OIDC** -- `vpn.oidc.enabled` with the issuer and client id, the client
   secret riding a pre-created Secret. It sits under `vpn` because the cloud
   overlays set a top-level `oidc.enabled` for the gateway's edge OIDC on the
@@ -137,34 +140,22 @@ Beyond that, culvert authenticates each client:
 Cloud flavours only -- on-prem the operator is already on the LAN and the module
 supplies nothing.
 
-An appliance holds its own tunnel open, so an operator reaches it by joining the
-same hub as an ADMIN peer rather than by opening anything on the appliance's
-network. The bastion is what joins: `terraform/modules/toolbox/aws` gains a UDP
-egress rule aimed at the tunnel's address, and the verbs are
+An appliance holds its own tunnel open, so an operator reaches it through the hub
+rather than by opening anything on the appliance's network.
+[edge.md](edge.md#the-tunnels-inbound-and-reaching-one-appliance) carries the
+mechanism, the four `dfe-ops bastion` verbs, what the appliance has to accept,
+and the isolation regression to run on every change to `peers.classes`.
 
 ```
-dfe-ops bastion join            # mint an admin peer, install it over SSM, dial in
+dfe-ops bastion hub <peer>      # route the client range at the pod, then shell
 dfe-ops bastion peers           # name, tunnel address and last handshake
-dfe-ops bastion hub <peer>      # reach one appliance through the tunnel
-dfe-ops bastion down            # revoke the peer, THEN terminate
+dfe-ops bastion join            # refused until hyperi-io/culvert#40 lands
+dfe-ops bastion down            # revoke anything joined, THEN terminate
 ```
 
-The private key is minted on the instance and never leaves it; culvert is handed
-the public half. A config that reaches every appliance is the one credential
-client isolation does not stop, so it is minted per session, never stored, and
-`down` revokes it and proves it off the hub before the instance is terminated.
 `edge.ingest.tunnel.admin_peer.ttl_minutes` is recorded rather than enforced,
 because a WireGuard peer carries no expiry of its own -- the deadline is a fact
 on disk that `bastion status` reports.
-
-**The appliance side.** An appliance has to accept ssh on 22 and https on 443 on
-its tunnel interface from the admin peer's address, for remote administration.
-
-**Run the isolation regression on every change to the class policy:** one
-appliance peer still cannot reach another. `peers.classes` in
-`helm/edge/culvert/values.yaml` carries that policy, and the exception letting
-the admin class initiate waits on `hyperi-io/culvert#40` -- until it lands the
-class declares the intent and isolation holds for every peer.
 
 ## One replica, and why
 
