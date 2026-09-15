@@ -28,6 +28,16 @@ pki:
   # instance values file, and the chart refuses to render without it.
   mode: external
 
+peers:
+  classes:
+    admin:
+      # TIER 1 -- the reach-back an operator administers one appliance through
+      # (`dfe-ops bastion join`), opt-out on every cloud flavour and absent
+      # on-prem, where the operator is already on the LAN. The class declares
+      # the intent and the ports; its server-side isolation exception waits on
+      # hyperi-io/culvert#40, and appliance isolation stays on either way.
+      enabled: true
+
 # TIER 2, no key here. The tunnel keeps the culvert chart's own LoadBalancer on
 # this flavour, so a deployment that brings the tunnel pays GCP's per-GB rate on
 # the tunnel's bytes until this file carries edge-aws.yaml's NodePort override

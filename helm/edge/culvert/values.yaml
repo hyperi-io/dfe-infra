@@ -129,6 +129,39 @@ routes:
   # Service address where the deployment pins one.
   destinations: ~
 
+# WHAT ONE CLIENT MAY DO TO ANOTHER, which `routes:` above says nothing about.
+#
+# `appliance` is every field appliance, and its isolation is what stops one
+# compromised appliance reaching the rest of the fleet through the hub.
+# `admin` is the single peer an operator dials in from to administer one
+# appliance -- `dfe-ops bastion join`, docs/deployment/edge-vpn.md.
+#
+# THE ADMIN CLASS RENDERS NO SERVER-SIDE EXCEPTION YET, and waits on
+# hyperi-io/culvert#40. culvert carries one global client_isolation boolean, its
+# one admin exception admits only a source arriving OFF a tunnel interface, and
+# it allocates every peer an address out of one /24 with no way to pin one -- so
+# there is no admin range for a rule to name. The class declares the intent and
+# the ports meanwhile, and nothing here weakens the isolation default.
+peers:
+  classes:
+    appliance:
+      # Peer-to-peer traffic is dropped in culvert's own FORWARD chain.
+      # Setting false to make the admin peer work opens every appliance to
+      # every other one, so the render guard refuses that pair.
+      isolation: true
+    admin:
+      # On in the cloud flavour overlays; absent on-prem, where the operator
+      # is already on the LAN.
+      enabled: false
+      # The range the admin peer's tunnel address is issued into, which has to
+      # sit inside vpn.clientCIDR. Empty until the deployment names one.
+      peerCIDR: ""
+      # The ports an appliance has to accept from the admin peer on its tunnel
+      # interface for remote administration.
+      reach:
+        - 22
+        - 443
+
 # SSoT is argocd/values/common.yaml `networkModel`; this is a chart default for
 # a standalone render only.
 networkModel:

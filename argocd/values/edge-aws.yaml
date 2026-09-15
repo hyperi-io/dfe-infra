@@ -88,6 +88,18 @@ pki:
   # without it rather than start with no PKI.
   mode: external
 
+peers:
+  classes:
+    admin:
+      # TIER 1 -- the reach-back an operator administers one appliance through
+      # (`dfe-ops bastion join`), opt-out here and absent on-prem, where the
+      # operator is already on the LAN. It costs nothing beyond the toolbox
+      # instance's own hours, since the tunnel bytes ride the address already
+      # in front of the cluster. The class declares the intent and the ports;
+      # its server-side isolation exception waits on hyperi-io/culvert#40, and
+      # appliance isolation stays on either way.
+      enabled: true
+
 # TIER 2, no key here. A CloudFront distribution or a managed WAF in front of
 # the gateway terminates TLS above Envoy and moves the public certificate to the
 # cloud's own store, which this module does not render -- the gateway chart

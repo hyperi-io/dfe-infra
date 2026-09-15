@@ -190,6 +190,64 @@ def test_the_pods_opt_out_of_the_namespace_baseline() -> None:
            f"got {baseline['spec']['podSelector']!r}")
 
 
+def test_peer_isolation_is_the_appliance_classs_own_switch() -> None:
+    """One global boolean is all culvert has, so the class is what the chart
+    reads and a silent flip would open every appliance to every other."""
+    env = env_of(one(render("culvert"), "Deployment", "dfe-culvert"))
+    expect("appliances are isolated by default",
+           env["CULVERT_CLIENT_ISOLATION"] == "true", f"got {env.get('CULVERT_CLIENT_ISOLATION')!r}")
+    flat = env_of(one(render("culvert", "--set", "peers.classes.appliance.isolation=false"),
+                      "Deployment", "dfe-culvert"))
+    expect("and the class is what renders it",
+           flat["CULVERT_CLIENT_ISOLATION"] == "false", f"got {flat.get('CULVERT_CLIENT_ISOLATION')!r}")
+
+
+def test_the_admin_class_renders_without_weakening_the_appliance_class() -> None:
+    """The reach-back must never be bought by dropping isolation, and the
+    server-side exception itself waits on hyperi-io/culvert#40."""
+    env = env_of(one(render("culvert", "--set", "peers.classes.admin.enabled=true"),
+                     "Deployment", "dfe-culvert"))
+    expect("the admin class leaves appliance isolation on",
+           env["CULVERT_CLIENT_ISOLATION"] == "true", f"got {env.get('CULVERT_CLIENT_ISOLATION')!r}")
+    expect("and renders no admin exception culvert cannot carry",
+           "CULVERT_DOWNSTREAM_ADMIN_CIDRS" not in env, f"got {sorted(env)}")
+    err = fails("culvert",
+                "--set", "peers.classes.admin.enabled=true",
+                "--set", "peers.classes.appliance.isolation=false")
+    expect("the admin class with isolation off is refused",
+           "opening every appliance to every other one" in err, err.strip()[-300:])
+
+
+def test_the_admin_class_needs_a_range_inside_the_client_range() -> None:
+    """A peerCIDR elsewhere names addresses no peer is ever issued."""
+    env = env_of(one(render(
+        "culvert",
+        "--set", "peers.classes.admin.enabled=true",
+        "--set", "peers.classes.admin.peerCIDR=100.64.2.0/24",
+    ), "Deployment", "dfe-culvert"))
+    expect("a range inside the reserved range renders",
+           env["CULVERT_CLIENT_ISOLATION"] == "true", f"got {env.get('CULVERT_CLIENT_ISOLATION')!r}")
+    err = fails("culvert",
+                "--set", "peers.classes.admin.enabled=true",
+                "--set", "peers.classes.admin.peerCIDR=10.0.0.0/24")
+    expect("a range outside it is refused", "sits outside vpn.clientCIDR" in err, err.strip()[-300:])
+    err = fails("culvert",
+                "--set", "peers.classes.admin.enabled=true",
+                "--set-json", "peers.classes.admin.reach=[]")
+    expect("an admin class with no port to reach is refused",
+           "empty peers.classes.admin.reach" in err, err.strip()[-300:])
+
+
+def test_the_admin_class_is_a_cloud_flavour_mechanism() -> None:
+    """On-prem the operator is on the LAN, so the module supplies nothing."""
+    for flavour in ("aws", "gcp", "azure"):
+        tree = yaml.safe_load((VALUES / f"edge-{flavour}.yaml").read_text(encoding="utf-8"))
+        expect(f"{flavour} turns the admin class on",
+               tree["peers"]["classes"]["admin"]["enabled"] is True, f"got {tree.get('peers')!r}")
+    onprem = yaml.safe_load((VALUES / "edge-onprem.yaml").read_text(encoding="utf-8"))
+    expect("on-prem carries no admin class at all", "peers" not in onprem, f"got {sorted(onprem)}")
+
+
 def test_the_tunnels_own_oidc_lives_under_vpn() -> None:
     """A top-level oidc.enabled is the cascade's edge-OIDC switch for the UIs
     (envoy-gateway-config); the tunnel's own login reads vpn.oidc.* instead, so
@@ -337,6 +395,10 @@ def main() -> int:
         test_the_source_range_dial_reaches_the_load_balancer()
         test_the_pods_reach_the_receiver_and_nothing_else()
         test_the_pods_opt_out_of_the_namespace_baseline()
+        test_peer_isolation_is_the_appliance_classs_own_switch()
+        test_the_admin_class_renders_without_weakening_the_appliance_class()
+        test_the_admin_class_needs_a_range_inside_the_client_range()
+        test_the_admin_class_is_a_cloud_flavour_mechanism()
         test_the_tunnels_own_oidc_lives_under_vpn()
         test_the_cascades_edge_oidc_switch_is_harmless_to_the_tunnel()
         test_the_old_oidc_path_is_refused_by_name()

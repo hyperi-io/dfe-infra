@@ -38,6 +38,34 @@
 {{- if and (eq .Values.pki.mode "external") (not .Values.pki.existingSecret) }}
 {{- fail "culvert: pki.mode is external with no pki.existingSecret. Name the Secret carrying ca.crt, server.crt and server.key, or set pki.mode: local." }}
 {{- end }}
+{{- $admin := .Values.peers.classes.admin }}
+{{- /*
+  The admin peer exists to reach an appliance WHILE the appliances stay isolated
+  from each other. Switching isolation off is the shortcut that reaches the same
+  appliance and opens every other one at the same time, and it reports nothing
+  when it does, so the pair is refused by name.
+*/}}
+{{- if and $admin.enabled (not .Values.peers.classes.appliance.isolation) }}
+{{- fail "culvert: peers.classes.admin.enabled is true with peers.classes.appliance.isolation false. That reaches an appliance by opening every appliance to every other one -- keep isolation true, or turn the admin class off." }}
+{{- end }}
+{{- /* A class with no port to reach is a dial that does nothing. */}}
+{{- if and $admin.enabled (not $admin.reach) }}
+{{- fail "culvert: peers.classes.admin.enabled is true with an empty peers.classes.admin.reach. Name the appliance ports the admin peer may initiate to (22 and 443 by default), or turn the admin class off." }}
+{{- end }}
+{{- /*
+  A peerCIDR outside the reserved client range names addresses no peer is ever
+  issued, so the reach-back would match nothing and say nothing.
+*/}}
+{{- if $admin.peerCIDR }}
+{{- $adminParts := splitList "/" $admin.peerCIDR }}
+{{- $adminOctets := splitList "." (index $adminParts 0) }}
+{{- if or (ne (len $adminParts) 2) (ne (len $adminOctets) 4) }}
+{{- fail (printf "culvert: peers.classes.admin.peerCIDR %q is not an IPv4 CIDR." $admin.peerCIDR) }}
+{{- end }}
+{{- if ne (printf "%s.%s" (index $adminOctets 0) (index $adminOctets 1)) (include "culvert.clientPrefix" .) }}
+{{- fail (printf "culvert: peers.classes.admin.peerCIDR %q sits outside vpn.clientCIDR %q, so no peer is ever issued an address in it." $admin.peerCIDR .Values.vpn.clientCIDR) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

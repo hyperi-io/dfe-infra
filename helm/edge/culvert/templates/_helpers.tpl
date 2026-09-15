@@ -72,6 +72,9 @@ a CULVERT_ key twice and the deployment carries no hand-written env block.
 {{- end -}}
 {{- /* CULVERT_PROFILE names the mounted tuning ConfigMap: without it the file
      is mounted and never read. */ -}}
+{{- /* Peer-to-peer policy is the appliance class's own switch, so it is read
+     from values rather than spelled as a literal below. */ -}}
+{{- $isolation := .Values.peers.classes.appliance.isolation -}}
 {{- $env := dict
   "CULVERT_PROTOCOL" $protocol
   "CULVERT_SERVER_CN" $cn
@@ -84,7 +87,7 @@ a CULVERT_ key twice and the deployment carries no hand-written env block.
   "CULVERT_FULL_TUNNEL" (ternary "true" "false" .Values.vpn.fullTunnel)
   "CULVERT_PUSH_ROUTES" $routes
   "CULVERT_ROUTING_CONTROL_ENABLED" "true"
-  "CULVERT_CLIENT_ISOLATION" "true"
+  "CULVERT_CLIENT_ISOLATION" (ternary "true" "false" $isolation)
   "CULVERT_ALLOWED_DESTINATIONS" $routes
   "CULVERT_BLOCK_LINK_LOCAL" "true"
   "CULVERT_PKI_MODE" .Values.pki.mode
