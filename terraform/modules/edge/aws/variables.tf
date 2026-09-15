@@ -31,6 +31,11 @@ variable "network" {
   })
 }
 
+variable "node_security_group_id" {
+  description = "The group every cluster node carries (kubernetes-cluster/aws's cluster_security_group_id). EKS attaches that one group to a managed node group's instances, because no launch template gives them one of their own, and its ingress admits its own members alone -- so a packet the forwarder DNATs at a nodePort is dropped at the node until this module names the forwarder's group on it. Read only on address.mode forwarder; byo adds no rule to it at all."
+  type        = string
+}
+
 variable "kms_key_arn" {
   description = "The deployment's customer-managed key (kubernetes-cluster/aws's kms_key_arn output), encrypting the forwarder's root volume. This module NEVER writes to the key's own resource policy -- aws_kms_key_policy replaces the whole policy and the cluster module is its one owner."
   type        = string

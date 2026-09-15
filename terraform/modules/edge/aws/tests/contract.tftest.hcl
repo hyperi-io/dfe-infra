@@ -88,6 +88,8 @@ variables {
     public_subnet_ids = ["subnet-0000000000000pub1", "subnet-0000000000000pub2", "subnet-0000000000000pub3"]
   }
 
+  node_security_group_id = "sg-000000000000nodes0"
+
   pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
   private_zone_arn               = "arn:aws:route53:::hostedzone/MOCKPRIVATE"
   kms_key_arn                    = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
@@ -313,6 +315,13 @@ run "byo_is_the_default_and_builds_no_forwarder" {
     condition     = output.tunnel_address == "" && output.tunnel_zone == ""
     error_message = "both tunnel outputs must be empty on byo -- an address this module never created is not one it can report"
   }
+
+  // The node group's own security group belongs to the cluster module, so a
+  // deployment that asked for no forwarder must leave it exactly as it found it.
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.node_port) == 0
+    error_message = "address.mode byo must open no nodePort on the cluster's security group"
+  }
 }
 
 // --- the forwarder: one instance, one address, the toolbox's own shape
@@ -451,6 +460,82 @@ run "the_security_group_admits_both_tunnels_from_everywhere_by_default" {
   }
 }
 
+// --- the nodePort hop: an open client side still reaches a node that drops the
+// packet, because the group EKS attaches to a managed node group admits its own
+// members alone.
+
+run "the_node_group_admits_each_node_port_from_the_forwarders_own_group" {
+  command = plan
+
+  variables {
+    tunnel = { address = { mode = "forwarder" } }
+  }
+
+  assert {
+    condition = alltrue([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.security_group_id == var.node_security_group_id
+    ])
+    error_message = "the rule must land on the group the nodes carry -- anywhere else and the packet is still dropped at the node"
+  }
+
+  assert {
+    condition = alltrue([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.referenced_security_group_id == aws_security_group.forwarder[0].id
+    ])
+    error_message = "the source must be the forwarder's own group, so the hole is one instance wide rather than a whole subnet"
+  }
+
+  assert {
+    condition = alltrue([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.cidr_ipv4 == null
+    ])
+    error_message = "a CIDR source would admit everything else sharing the forwarder's public subnet"
+  }
+
+  assert {
+    condition = alltrue([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.ip_protocol == "udp"
+    ])
+    error_message = "the DNAT chain rewrites UDP alone, so a TCP rule here would admit a port nothing forwards to"
+  }
+
+  // The rule and the DNAT it admits are written from one list, so a changed
+  // nodePort cannot open one without the other.
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.from_port
+      ]) == toset([
+      for r in aws_vpc_security_group_egress_rule.forwarder_nodes : r.from_port
+    ])
+    error_message = "the ports admitted at the node must be exactly the ports the forwarder DNATs to"
+  }
+
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.from_port
+    ]) == toset([31820, 31194])
+    error_message = "both listeners' nodePorts must be admitted -- the chart pins 31820 and 31194"
+  }
+}
+
+run "the_node_port_rule_follows_the_number_the_dial_pins" {
+  command = plan
+
+  variables {
+    tunnel = {
+      address    = { mode = "forwarder" }
+      node_ports = { wireguard = 30010, openvpn = 30011 }
+    }
+  }
+
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.from_port
+    ]) == toset([30010, 30011])
+    error_message = "a nodePort moved in the dial must move the rule with it, or the tunnel connects to a port nothing admits"
+  }
+}
+
 run "a_named_allow_list_replaces_the_open_default_on_every_listener" {
   command = plan
 
@@ -496,6 +581,13 @@ run "turning_the_openvpn_listener_off_closes_its_door_end_to_end" {
       for r in aws_vpc_security_group_egress_rule.forwarder_nodes : r.from_port
     ]) == toset([31820])
     error_message = "with the OpenVPN listener off, its nodePort must not be opened either"
+  }
+
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_ingress_rule.node_port : r.from_port
+    ]) == toset([31820])
+    error_message = "with the OpenVPN listener off, its nodePort must not be admitted at the node either"
   }
 
   assert {

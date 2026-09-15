@@ -327,10 +327,11 @@ edge:
         ## nodeSelector. Empty takes the network's first zone, and the public
         ## subnet in that zone is where the instance lands.
         zone: ""
-        ## KEEP mode ON `byo` FOR NOW. The instance receives on its Elastic IP,
-        ## but the nodePort it DNATs to is not yet admitted on the cluster's own
-        ## security group, so the hop to a node is dropped --
-        ## docs/deployment/edge-vpn.md#the-tunnels-address-on-aws.
+        ## `forwarder` is built end to end -- the instance receives on its
+        ## Elastic IP and the nodePort it DNATs to is admitted at the node from
+        ## its own security group -- and no live cluster has proven the DNAT
+        ## path or the zone placement yet, which is why `byo` is the default
+        ## here: docs/deployment/edge-vpn.md#the-tunnels-address-on-aws.
       ## The reach-back an operator uses to reach one appliance through the
       ## tunnel. Tier 1 on a cloud flavour and opt-out; absent on-prem, where the
       ## operator is already on the LAN.

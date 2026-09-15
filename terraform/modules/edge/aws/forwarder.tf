@@ -16,13 +16,15 @@
 // private subnet's NAT gateway route would leave the address answering nothing
 // with every resource reporting healthy.
 //
-// KNOWN GAP, NOT YET PROVEN AGAINST A CLUSTER. The nodePort half is still
-// unadmitted: EKS gives a managed node group the cluster security group, whose
-// ingress is its own members alone, so a packet the forwarder DNATs at a node
-// is dropped there. Closing it means an ingress rule on that group sourced from
-// this instance's OWN security group rather than a CIDR, which needs the
-// cluster security group as a module input. Until that lands
-// `address.mode: forwarder` is not usable end to end. `byo` is.
+// The nodePort hop is admitted on the group EKS attaches to a managed node
+// group's instances (`node_security_group_id`), whose ingress is otherwise its
+// own members alone -- the rule names this instance's own group rather than a
+// CIDR, so the hole is one instance wide and closes when the forwarder does.
+//
+// NOT YET PROVEN AGAINST A CLUSTER. Every hop is now built, and what a live run
+// has to show is the DNAT path end to end -- a client dialling the Elastic IP
+// reaching culvert's pod -- and the zone placement holding, so the forwarder
+// and that pod stay in the one availability zone.
 
 data "aws_region" "current" {}
 
@@ -130,6 +132,36 @@ resource "aws_vpc_security_group_egress_rule" "forwarder_nodes" {
   to_port     = each.value.node_port
 
   description = "DNAT to the ${each.key} nodePort on this deployment's nodes"
+}
+
+// The one rule this module puts on a group it does not own, and the hop the
+// forwarder is useless without: an open client side reaches a node that drops
+// the packet, because the group EKS attaches to a managed node group admits its
+// own members alone.
+//
+// Referenced by group id rather than by CIDR, so the hole names this one
+// instance rather than the public subnet it shares with anything else the
+// deployer launches, and it goes away with the forwarder on a return to `byo`.
+// One rule covers a Karpenter node too: kubernetes-cluster/aws/karpenter.tf
+// tags this same group for node discovery, and the refresh script targets any
+// instance carrying the cluster tag.
+// UDP alone: every listener in tunnel_ports is UDP and the refresh script's DNAT
+// chain is `-p udp` throughout, so a TCP rule here would admit a port nothing
+// forwards to. The chart's OpenVPN TCP fallback is a commented-out listener
+// (helm/edge/culvert/values.yaml) and travels through neither.
+resource "aws_vpc_security_group_ingress_rule" "node_port" {
+  for_each = local.forwarder_enabled ? { for p in local.tunnel_ports : p.name => p } : {}
+
+  security_group_id = var.node_security_group_id
+
+  referenced_security_group_id = aws_security_group.forwarder[0].id
+  ip_protocol                  = "udp"
+  from_port                    = each.value.node_port
+  to_port                      = each.value.node_port
+
+  description = "${each.key} nodePort from the ${var.name} tunnel forwarder"
+
+  tags = merge(var.tags, { Name = "${var.name}-tunnel-forwarder-${each.key}" })
 }
 
 // ---------------------------------------------------------------------------

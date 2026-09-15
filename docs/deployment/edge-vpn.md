@@ -46,27 +46,30 @@ comes from: `edge.ingest.tunnel.address.mode` is `byo` -- an address the
 deployer already holds in front of the cluster -- or `forwarder`, the tier-2
 opt-in where `terraform/modules/edge/aws` builds one.
 
-**`forwarder` is not usable end to end yet. Take `byo`.** The instance now lands
-in a public subnet, so the Elastic IP receives, but the nodePort it rewrites each
-packet to is not admitted on the cluster's own security group -- EKS gives a
-managed node group that group, whose ingress is its own members alone. So the
-dial reaches a live address and the hop to a node is dropped. Closing it takes an
-ingress rule on that group sourced from the forwarder's own security group,
-recorded in `forwarder.tf`'s header.
+**Every hop is built now, and none of it has been proven against a live
+cluster. `byo` is still the default.** The instance lands in a public subnet, so
+the Elastic IP receives, and the nodePort it rewrites each packet to is admitted
+on the group the nodes carry. What a live run has to show is the DNAT path end to
+end -- a client dialling the address reaching culvert's pod -- and the zone
+placement holding, with that pod scheduled onto a node in the forwarder's own
+availability zone.
 
-The forwarder is a small
-SSM-managed instance holding an Elastic IP, with no inbound ssh rule of any
-kind, admitting the tunnel's own UDP listeners from
-`edge.ingest.tunnel.loadBalancerSourceRanges` (empty is 0.0.0.0/0, as
-everywhere else here) and DNATing each to the nodePort
-`helm/edge/culvert/values.yaml` pins, across whichever nodes are running. It
-reads that node list from `ec2:DescribeInstances` -- its only grant -- once a
-minute, which is why the flavour overlay sets `externalTrafficPolicy: Cluster`:
-any node has to forward, whichever one holds the pod. The instance is pinned to
-one availability zone (`edge.ingest.tunnel.address.zone`, defaulting to the
-network's first), and both that zone and the Elastic IP are carried onto
-the cluster secret -- the zone becomes culvert's own `nodeSelector` so the hop
-from the forwarder to the pod stays inside one zone, and the address is what
+The forwarder is a small SSM-managed instance holding an Elastic IP, with no
+inbound ssh rule of any kind, admitting the tunnel's own UDP listeners from
+`edge.ingest.tunnel.loadBalancerSourceRanges` (empty is 0.0.0.0/0, as everywhere
+else here) and DNATing each to the nodePort `helm/edge/culvert/values.yaml`
+pins, across whichever nodes are running. It reads that node list from
+`ec2:DescribeInstances` -- its only grant -- once a minute, which is why the
+flavour overlay sets `externalTrafficPolicy: Cluster`: any node has to forward,
+whichever one holds the pod. EKS gives a managed node group the cluster's own
+security group, whose ingress admits its own members alone, so the module adds
+one rule to it per listener, sourced from the forwarder's security group rather
+than a CIDR -- the hole is this one instance rather than everything sharing its
+subnet, and it closes on a return to `byo`. The instance is pinned to one
+availability zone (`edge.ingest.tunnel.address.zone`, defaulting to the
+network's first), and both that zone and the Elastic IP are carried onto the
+cluster secret -- the zone becomes culvert's own `nodeSelector` so the hop from
+the forwarder to the pod stays inside one zone, and the address is what
 external-dns publishes `vpn.serverCN` at.
 `edge.ingest.tunnel.address.instance_type` sizes the instance by baseline
 network bandwidth, since it moves every tunnel byte and does nothing else; the

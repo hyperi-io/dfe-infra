@@ -152,6 +152,10 @@ module "edge" {
     public_subnet_ids = module.cluster.network.public_subnet_ids
   }
 
+  // The group the nodes carry, so the forwarder's DNAT target is admitted at the
+  // node rather than dropped there.
+  node_security_group_id = module.cluster.cluster_security_group_id
+
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
   private_zone_arn               = module.cluster.private_zone_arn
   kms_key_arn                    = module.cluster.kms_key_arn
