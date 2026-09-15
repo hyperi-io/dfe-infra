@@ -87,6 +87,15 @@ Subcommands:
                opens the logged shell onto one appliance; join, which makes
                the instance a PEER instead, is refused until
                hyperi-io/culvert#40 lands.
+  edge-probe   What an unauthenticated caller OUTSIDE the cluster actually
+               reaches: the TLS floor and HSTS on the public listener, the rate
+               limit answering 429, the CIDR filter refusing an off-list
+               address, the receiver reachable only through the tunnel, the
+               otel route private on cloud, every admin UI route absent unless
+               opted in, and dfe-ui's login page answering. Each check prints
+               PASS, FAIL or SKIP with one line of evidence and the verb exits
+               non-zero on any FAIL. Sends no credential, because a credential
+               would prove something an outside caller does not have.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,
@@ -228,6 +237,7 @@ import envfile  # noqa: E402
 import profiles  # noqa: E402
 import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
+from dfe_ops_edge_probe import add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
@@ -3426,6 +3436,10 @@ def build_parser() -> argparse.ArgumentParser:
     # toolbox instance (terraform/modules/toolbox/aws). Registered from
     # dfe_ops_bastion.
     add_bastion_subparser(sub)
+
+    # edge-probe -- what an unauthenticated caller outside the cluster reaches,
+    # which no render assertion can answer. Registered from dfe_ops_edge_probe.
+    add_edge_probe_subparser(sub)
 
     # init -- the prompt-driven deployment-dial wizard. Registered from
     # dfe_ops_init.

@@ -1,0 +1,733 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         scripts/dfe_ops_edge_probe.py
+#  Purpose:      `dfe-ops edge-probe` -- prove from the operator's own machine,
+#                from OUTSIDE the cluster, which doors the edge module actually
+#                opens: the TLS floor, HSTS, the rate limit, the CIDR filter,
+#                the receiver, the otel route, every admin UI route, and the
+#                product login. Split into its own module the way
+#                dfe_ops_bastion.py is, and imported into dfe-ops's
+#                build_parser() the same way.
+#  Language:     Python
+#
+#  License:      BUSL-1.1
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""dfe-ops edge-probe -- what an outside caller can reach, proven from outside.
+
+    dfe-ops edge-probe [--dial deployment.yaml] [--target <host or address>]
+
+Every check reads its expectation from the dial's `edge:` block and dials the
+published name to see whether the deployment agrees. A render assertion cannot
+do this: scripts/test-route-exposure.sh proves which objects a chart emits, and
+this proves what answers once they are programmed onto a real load balancer.
+
+The probe sends NO credential. Each check is what an unauthenticated caller on
+the public internet sees, which is the only thing that can be claimed from here.
+
+`--target` maps the published name onto the address the gateway is programmed
+on, for a deployment whose DNS does not resolve here yet -- the same idea
+`dfe-ops acceptance` spells as `--resolve HOST:IP`. The name still rides the
+Host header and the SNI, so the deployment answers as it would for a browser.
+
+Each check reports PASS, FAIL or SKIP with one evidence line, and the verb exits
+non-zero when any check FAILs. A SKIP is not a failure: it is a check whose
+precondition this deployment does not meet, and it names which one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import http.client
+import ipaddress
+import socket
+import ssl
+import sys
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from yaml_subset import YamlSubsetError, at, split_list
+from yaml_subset import parse as parse_yaml_subset
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DIAL = REPO_ROOT / "deployment.yaml"
+DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
+
+PASS = "PASS"
+FAIL = "FAIL"
+SKIP = "SKIP"
+
+# Nothing here may outlive a person watching it, so every dial carries the same
+# bound and a door that black-holes packets reports as unreachable rather than
+# hanging the run.
+DEFAULT_TIMEOUT = 8.0
+
+HTTPS_PORT = 443
+
+# The receiver's own exposed listeners (helm/charts/dfe-receiver/values.yaml):
+# http carries JSON ingest and OTLP/HTTP, grpc carries OTLP/gRPC. The pushgrpc
+# listener is never exposed, so a probe of it would prove nothing about the door.
+RECEIVER_INGEST_PORTS = (8080, 8443)
+
+# The admin UIs the edge module offers a public hostname, in the order
+# render_dial.py's ADMIN_UIS reports them, against the subdomain label each one
+# answers on (argocd/values/common.yaml `hostnames:`, except cruise-control,
+# which the gateway chart names on the route itself until that map carries it).
+ADMIN_UI_HOSTNAMES = {
+    "kafbat": "kafbat",
+    "cruise_control": "cruise-control",
+    "hyperdx": "hyperdx",
+    "argocd": "argocd",
+    "links": "links",
+    "forgejo": "git",
+}
+ADMIN_UIS = tuple(ADMIN_UI_HOSTNAMES)
+
+# The product surface and the platform OTLP door, off the same canonical map.
+PRODUCT_LABEL = "dfe"
+OTEL_LABEL = "otel"
+
+# dfe-ui serves its sign-in page here (scripts/acceptance/onboarding/run.py
+# drives the same path), so this is the one route that must answer.
+LOGIN_PATH = "/login"
+
+# A local rate limit counts per route per proxy replica, so proving it costs one
+# request per unit of burst. Past this many the probe says so rather than
+# spending an operator's morning on a limit sized for a day.
+RATE_LIMIT_PROBE_CEILING = 1000
+
+# The protocol names ssl reports, weakest first, so a floor is an index compare.
+TLS_ORDER = ("SSLv3", "TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3")
+# What a handshake must be capped at to sit one step BELOW each floor.
+BELOW_FLOOR = {"1.2": "TLSv1.1", "1.3": "TLSv1.2"}
+TLS_VERSIONS = {
+    "TLSv1.1": ssl.TLSVersion.TLSv1_1,
+    "TLSv1.2": ssl.TLSVersion.TLSv1_2,
+}
+
+
+class EdgeProbeError(RuntimeError):
+    """The probe cannot proceed -- the message is what dfe-ops prints."""
+
+
+# --- the dial ----------------------------------------------------------------
+# The `edge:` block is the expectation every check is measured against. Defaults
+# match render_dial.py's _EDGE_BOOL_DEFAULTS and _EDGE_ENUM_DEFAULTS, so a dial
+# that omits a key is probed for what that deployment actually gets.
+
+
+@dataclass(frozen=True)
+class EdgeSettings:
+    """The `edge:` block, as the checks need it."""
+
+    enabled: bool = True
+    flavour: str = ""
+    product_public: bool = True
+    domain: str = ""
+    tls_min_version: str = "1.2"
+    hsts: bool = True
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = 300
+    rate_limit_unit: str = "Minute"
+    allowed_cidrs: tuple[str, ...] = ()
+    admin_uis_external: bool = False
+    admin_uis_public: dict[str, bool] = field(default_factory=dict)
+    receiver_mode: str = ""
+    otel_public: bool = False
+
+
+def _scalar(tree: dict[str, object], path: tuple[str, ...]) -> str | None:
+    """The non-empty scalar at `path`, else None -- render_dial.py's own walk."""
+    node = at(tree, path)
+    return node.strip() if isinstance(node, str) and node.strip() else None
+
+
+def _flag(tree: dict[str, object], path: tuple[str, ...], default: bool) -> bool:
+    """One true/false dial field, refusing anything else by name.
+
+    The edge block writes its booleans unquoted so a deployer can paste them into
+    a real values file, and the restricted reader hands both spellings back as
+    the same string.
+    """
+    value = _scalar(tree, path)
+    if value is None:
+        return default
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    raise EdgeProbeError(f"{'.'.join(path)} must be true or false, got {value!r}")
+
+
+def _number(tree: dict[str, object], path: tuple[str, ...], default: int) -> int:
+    value = _scalar(tree, path)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as error:
+        raise EdgeProbeError(f"{'.'.join(path)} must be a whole number, got {value!r}") from error
+
+
+def parse_edge(tree: dict[str, object]) -> EdgeSettings:
+    """Turn a parsed dial into the expectation the checks measure against."""
+    return EdgeSettings(
+        enabled=_flag(tree, ("edge", "enabled"), True),
+        flavour=_scalar(tree, ("edge", "flavour")) or "",
+        product_public=_flag(tree, ("edge", "product", "public"), True),
+        domain=_scalar(tree, ("edge", "product", "domain")) or "",
+        tls_min_version=_scalar(tree, ("edge", "product", "tls", "min_version")) or "1.2",
+        hsts=_flag(tree, ("edge", "product", "tls", "hsts"), True),
+        rate_limit_enabled=_flag(tree, ("edge", "product", "rate_limit", "enabled"), True),
+        rate_limit_requests=_number(tree, ("edge", "product", "rate_limit", "requests"), 300),
+        rate_limit_unit=_scalar(tree, ("edge", "product", "rate_limit", "unit")) or "Minute",
+        allowed_cidrs=split_list(at(tree, ("edge", "product", "allowed_cidrs"))),
+        admin_uis_external=_flag(tree, ("edge", "admin_uis", "external"), False),
+        admin_uis_public={
+            ui: _flag(tree, ("edge", "admin_uis", "public", ui), False) for ui in ADMIN_UIS
+        },
+        receiver_mode=_scalar(tree, ("edge", "ingest", "receiver", "mode")) or "",
+        otel_public=_flag(tree, ("edge", "ingest", "otel", "public"), False),
+    )
+
+
+def read_dial(path: Path) -> EdgeSettings:
+    """Read one deployment dial, refusing an absent or unparsable one by name."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise EdgeProbeError(
+            f"no deployment dial at {path} -- copy {DIAL_TEMPLATE.name} to "
+            f"{DIAL.name} and populate its edge: block, or pass --dial"
+        ) from error
+    try:
+        tree = parse_yaml_subset(text, source=str(path))
+    except YamlSubsetError as error:
+        raise EdgeProbeError(f"{path} cannot be read: {error}") from error
+    return parse_edge(tree)
+
+
+# --- names and addresses -----------------------------------------------------
+
+
+def product_host(domain: str) -> str:
+    """The name dfe-ui and the engine API share, or empty with no public zone."""
+    return f"{PRODUCT_LABEL}.{domain}" if domain else ""
+
+
+def published_host(label: str, domain: str) -> str:
+    return f"{label}.{domain}" if domain else ""
+
+
+def _resolves(host: str) -> bool:
+    """Whether this machine can resolve the host at all."""
+    try:
+        socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    return True
+
+
+def dial_address(host: str, target: str) -> str:
+    """What to dial for `host`: the operator's override, else the name itself.
+
+    A deployment publishes its names through external-dns, and a probe run
+    minutes after the apply is the case this exists for -- the gateway is
+    programmed and the record has not propagated. `--target` is that address.
+    """
+    if target:
+        return target
+    if not host:
+        raise EdgeProbeError(
+            "the dial sets no edge.product.domain, so there is no published name to "
+            "dial -- pass --target <gateway address>"
+        )
+    if _resolves(host):
+        return host
+    raise EdgeProbeError(
+        f"{host} does not resolve here -- pass --target <gateway address> to dial the "
+        f"gateway directly, the way `dfe-ops acceptance --resolve` does"
+    )
+
+
+# --- the network boundary ----------------------------------------------------
+# ONE function every check dials through, so a test stubs exactly this and no
+# check reaches a real deployment -- the same shape aws_cli.run_aws is for the
+# AWS CLI half of dfe_ops_bastion.py.
+
+
+@dataclass(frozen=True)
+class Request:
+    """One connection a check makes.
+
+    `host` is the published name, carried in the Host header and the SNI;
+    `address` is what is actually dialled, which differs whenever --target maps
+    the name onto the gateway. An empty `path` connects and closes without
+    sending a request, which is how a port is probed for reachability alone.
+    `tls_cap` pins the handshake to one version, to prove a floor refuses below it.
+    """
+
+    host: str
+    address: str
+    port: int = HTTPS_PORT
+    path: str = "/"
+    tls: bool = True
+    tls_cap: str = ""
+    timeout: float = DEFAULT_TIMEOUT
+
+
+@dataclass(frozen=True)
+class Answer:
+    """What one connection produced.
+
+    `client_capped` separates "this machine cannot even offer that protocol
+    version" from "the deployment refused it" -- without it, a client too modern
+    to speak the old version would read as proof the floor holds.
+    """
+
+    reached: bool
+    status: int | None = None
+    protocol: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    source: str = ""
+    error: str = ""
+    client_capped: bool = False
+
+
+def _tls_context(cap: str = "") -> ssl.SSLContext:
+    """The client context one dial uses, optionally pinned below the floor.
+
+    Verification is off by design: the probe dials an address the published name
+    may not resolve to yet, and a public chain can be issued by a CA this machine
+    does not carry -- neither says anything about which doors answer, which is
+    the only question here. `cap` pins both ends of the version range, so the
+    handshake offers ONLY the version the floor exists to refuse, and OpenSSL
+    will not offer a withdrawn protocol until its security level is lowered.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    if cap:
+        version = TLS_VERSIONS[cap]
+        context.minimum_version = version
+        context.maximum_version = version
+        context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    return context
+
+
+def _reach(request: Request) -> Answer:
+    """Dial once and report what came back. The ONE network boundary."""
+    context = None
+    if request.tls:
+        try:
+            context = _tls_context(request.tls_cap)
+        except (ssl.SSLError, ValueError, KeyError) as error:
+            return Answer(
+                reached=False,
+                client_capped=bool(request.tls_cap),
+                error=f"this machine cannot offer {request.tls_cap or 'TLS'}: {error}",
+            )
+
+    connection: http.client.HTTPConnection | None = None
+    try:
+        sock = socket.create_connection((request.address, request.port), timeout=request.timeout)
+        source = sock.getsockname()[0]
+        if context is not None:
+            sock = context.wrap_socket(sock, server_hostname=request.host or request.address)
+        protocol = (sock.version() or "") if context is not None else ""
+        if not request.path:
+            sock.close()
+            return Answer(reached=True, protocol=protocol, source=source)
+        connection = http.client.HTTPConnection(
+            request.host or request.address, request.port, timeout=request.timeout
+        )
+        connection.sock = sock
+        connection.request("GET", request.path, headers={"Host": request.host or request.address})
+        response = connection.getresponse()
+        response.read()
+        return Answer(
+            reached=True,
+            status=response.status,
+            protocol=protocol,
+            headers={name.lower(): value for name, value in response.getheaders()},
+            source=source,
+        )
+    except (OSError, http.client.HTTPException) as error:
+        return Answer(reached=False, error=str(error) or type(error).__name__)
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+# --- the verdicts ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Check:
+    """One check's verdict and the single line of evidence behind it."""
+
+    name: str
+    verdict: str
+    evidence: str
+
+
+def check_names() -> tuple[str, ...]:
+    """Every check this verb reports, in the order it reports them."""
+    return (
+        "tls floor",
+        "hsts",
+        "rate limit",
+        "cidr filter",
+        "receiver private",
+        "otel private",
+        *(f"admin ui {ui}" for ui in ADMIN_UIS),
+        "ui login",
+    )
+
+
+def exit_code(checks: Iterable[Check]) -> int:
+    """Non-zero when any check FAILs. A SKIP is a precondition, not a fault."""
+    return 1 if any(check.verdict == FAIL for check in checks) else 0
+
+
+def tally(checks: Iterable[Check]) -> dict[str, int]:
+    counts = {PASS: 0, FAIL: 0, SKIP: 0}
+    for check in checks:
+        counts[check.verdict] += 1
+    return counts
+
+
+def tls_at_or_above(negotiated: str, floor: str) -> bool:
+    """Whether the negotiated protocol meets the dial's own floor."""
+    wanted = f"TLSv{floor}"
+    if negotiated not in TLS_ORDER or wanted not in TLS_ORDER:
+        return False
+    return TLS_ORDER.index(negotiated) >= TLS_ORDER.index(wanted)
+
+
+def address_in_cidrs(address: str, cidrs: Iterable[str]) -> bool:
+    """Whether one address falls inside any of the dial's allowed ranges."""
+    try:
+        candidate = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    for cidr in cidrs:
+        try:
+            network = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            continue
+        if candidate.version == network.version and candidate in network:
+            return True
+    return False
+
+
+def admin_ui_expectation(ui: str, external: bool, opted_in: bool) -> tuple[bool, str]:
+    """(must this route be absent, why), for one admin UI.
+
+    The class kill switch BEATS a per-UI flag, so a UI marked public while
+    edge.admin_uis.external is false must still answer nothing -- the one case
+    where reading the per-UI flag alone gives the wrong expectation.
+    """
+    if not external:
+        return True, (
+            "edge.admin_uis.external is false, which takes the whole infra class off the edge"
+        )
+    if not opted_in:
+        return True, f"edge.admin_uis.public.{ui} is false"
+    return False, f"edge.admin_uis.public.{ui} is true"
+
+
+def public_listener_reason(settings: EdgeSettings) -> str:
+    """Why there is no public product listener to probe, or empty when there is."""
+    if not settings.product_public:
+        return "edge.product.public is false -- dfe-ui has no public listener"
+    if not settings.domain:
+        return "edge.product.domain is empty -- this deployment publishes no public name"
+    return ""
+
+
+# --- the checks --------------------------------------------------------------
+
+
+def check_tls_floor(settings: EdgeSettings, host: str, address: str) -> Check:
+    """The negotiated protocol meets the floor, and below it is refused."""
+    name = "tls floor"
+    reason = public_listener_reason(settings)
+    if reason:
+        return Check(name, SKIP, reason)
+    floor = settings.tls_min_version
+    answer = _reach(Request(host=host, address=address))
+    if not answer.reached:
+        return Check(name, FAIL, f"{host} on {address} answered nothing: {answer.error}")
+    negotiated = answer.protocol or "no TLS at all"
+    if not tls_at_or_above(negotiated, floor):
+        return Check(name, FAIL, f"{host} negotiated {negotiated}, under the {floor} floor")
+    cap = BELOW_FLOOR.get(floor, "")
+    if not cap:
+        return Check(name, PASS, f"{host} negotiated {negotiated}, at or above the {floor} floor")
+    capped = _reach(Request(host=host, address=address, tls_cap=cap))
+    if capped.client_capped:
+        return Check(
+            name, PASS,
+            f"{host} negotiated {negotiated}; a {cap} handshake cannot be offered from "
+            f"this machine, so the floor is proven from the negotiated protocol alone",
+        )
+    if capped.reached:
+        return Check(
+            name, FAIL, f"{host} accepted a handshake capped at {cap}, under the {floor} floor"
+        )
+    return Check(
+        name, PASS,
+        f"{host} negotiated {negotiated} and refused a {cap} handshake ({capped.error})",
+    )
+
+
+def check_hsts(settings: EdgeSettings, host: str, address: str) -> Check:
+    """Strict-Transport-Security on the public listener's own response."""
+    name = "hsts"
+    reason = public_listener_reason(settings)
+    if reason:
+        return Check(name, SKIP, reason)
+    if not settings.hsts:
+        return Check(name, SKIP, "edge.product.tls.hsts is false -- no header is asked for")
+    answer = _reach(Request(host=host, address=address))
+    if not answer.reached:
+        return Check(name, FAIL, f"{host} on {address} answered nothing: {answer.error}")
+    header = answer.headers.get("strict-transport-security", "")
+    if not header:
+        return Check(
+            name, FAIL,
+            f"{host} answered {answer.status} with no Strict-Transport-Security header",
+        )
+    return Check(name, PASS, f"{host} answered Strict-Transport-Security: {header}")
+
+
+def check_rate_limit(settings: EdgeSettings, host: str, address: str) -> Check:
+    """A 429 lands once the configured burst is spent."""
+    name = "rate limit"
+    reason = public_listener_reason(settings)
+    if reason:
+        return Check(name, SKIP, reason)
+    if not settings.rate_limit_enabled:
+        return Check(name, SKIP, "edge.product.rate_limit.enabled is false -- no limit to reach")
+    burst = settings.rate_limit_requests
+    unit = settings.rate_limit_unit
+    if burst <= 0:
+        return Check(
+            name, SKIP, f"edge.product.rate_limit.requests is {burst} -- no burst to spend"
+        )
+    if burst >= RATE_LIMIT_PROBE_CEILING:
+        return Check(
+            name, SKIP,
+            f"a burst of {burst} in a {unit} is beyond what this probe sends "
+            f"({RATE_LIMIT_PROBE_CEILING}), so the limit is left to a load generator",
+        )
+    for attempt in range(1, burst + 2):
+        answer = _reach(Request(host=host, address=address))
+        if not answer.reached:
+            return Check(
+                name, FAIL,
+                f"{host} stopped answering after {attempt - 1} requests: {answer.error}",
+            )
+        if answer.status == 429:
+            return Check(
+                name, PASS,
+                f"{host} answered 429 on request {attempt}, against a burst of {burst} in a {unit}",
+            )
+    return Check(
+        name, FAIL,
+        f"{host} answered {burst + 1} requests with no 429, past a burst of {burst} in a {unit}",
+    )
+
+
+def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
+    """An address off edge.product.allowed_cidrs gets nothing.
+
+    Two things can make this untestable from here, and the evidence names which:
+    an empty allow-list, or this machine sitting inside it. A deployment that
+    answers nothing AT ALL is not mistaken for a working filter -- the login
+    check fails in that case, and it is the counterweight this one leans on.
+    """
+    name = "cidr filter"
+    reason = public_listener_reason(settings)
+    if reason:
+        return Check(name, SKIP, reason)
+    if not settings.allowed_cidrs:
+        return Check(
+            name, SKIP,
+            "edge.product.allowed_cidrs is empty -- every address may reach the listener",
+        )
+    listed = ", ".join(settings.allowed_cidrs)
+    answer = _reach(Request(host=host, address=address))
+    if not answer.reached:
+        return Check(
+            name, PASS,
+            f"{host} on {address} refused this machine, which is off the allow-list "
+            f"{listed} ({answer.error})",
+        )
+    if address_in_cidrs(answer.source, settings.allowed_cidrs):
+        return Check(
+            name, SKIP,
+            f"this machine dialled from {answer.source}, inside the allow-list {listed} -- "
+            f"an on-list address proves nothing about an off-list one",
+        )
+    return Check(
+        name, FAIL,
+        f"{host} answered {answer.status} to a connection from {answer.source}, "
+        f"which is outside the allow-list {listed}",
+    )
+
+
+def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
+    """The receiver's ingest ports answer nothing on the gateway address."""
+    name = "receiver private"
+    if settings.receiver_mode != "vpn":
+        stated = settings.receiver_mode or "unset, so the cloud overlay decides"
+        return Check(
+            name, SKIP,
+            f"edge.ingest.receiver.mode is {stated} -- a door other than the tunnel is intended",
+        )
+    ports = ", ".join(str(port) for port in RECEIVER_INGEST_PORTS)
+    answered = []
+    errors = []
+    for port in RECEIVER_INGEST_PORTS:
+        answer = _reach(Request(host="", address=address, port=port, path="", tls=False))
+        if answer.reached:
+            answered.append(str(port))
+        else:
+            errors.append(f"{port}: {answer.error}")
+    if answered:
+        return Check(
+            name, FAIL,
+            f"{address} accepted a connection on {', '.join(answered)} -- the receiver is "
+            f"reachable without the tunnel",
+        )
+    return Check(name, PASS, f"{address} refused {ports} -- {'; '.join(errors)}")
+
+
+def check_otel_private(settings: EdgeSettings, address: str) -> Check:
+    """The platform OTLP route is not a public door on a cloud flavour."""
+    name = "otel private"
+    if settings.flavour == "onprem":
+        return Check(name, SKIP, "edge.flavour is onprem -- the otel door sits on the LAN")
+    if settings.otel_public:
+        return Check(
+            name, SKIP,
+            "edge.ingest.otel.public is true -- a route that answers is the deployment's choice",
+        )
+    if not settings.domain:
+        return Check(name, SKIP, "edge.product.domain is empty -- no otel name is published")
+    host = published_host(OTEL_LABEL, settings.domain)
+    answer = _reach(Request(host=host, address=address))
+    if not answer.reached:
+        return Check(name, PASS, f"{host} on {address} answered nothing: {answer.error}")
+    if answer.status == 404:
+        return Check(name, PASS, f"{host} answered 404 -- no route is programmed for it")
+    return Check(name, FAIL, f"{host} answered {answer.status} -- the otel route is public")
+
+
+def check_admin_ui(settings: EdgeSettings, ui: str, address: str) -> Check:
+    """One admin UI route is absent, unless this deployment opted it in."""
+    name = f"admin ui {ui}"
+    if not settings.domain:
+        return Check(name, SKIP, "edge.product.domain is empty -- no admin name is published")
+    absent, why = admin_ui_expectation(
+        ui, settings.admin_uis_external, settings.admin_uis_public.get(ui, False)
+    )
+    host = published_host(ADMIN_UI_HOSTNAMES[ui], settings.domain)
+    if not absent:
+        return Check(
+            name, SKIP, f"{host} is opted in -- {why}, so a route that answers is intended"
+        )
+    answer = _reach(Request(host=host, address=address))
+    if not answer.reached:
+        return Check(name, PASS, f"{host} answered nothing ({why}): {answer.error}")
+    if answer.status == 404:
+        return Check(name, PASS, f"{host} answered 404 ({why}) -- no route is programmed for it")
+    return Check(name, FAIL, f"{host} answered {answer.status} while {why}")
+
+
+def check_login(settings: EdgeSettings, host: str, address: str) -> Check:
+    """dfe-ui's sign-in page answers -- the one route that must."""
+    name = "ui login"
+    reason = public_listener_reason(settings)
+    if reason:
+        return Check(name, SKIP, reason)
+    answer = _reach(Request(host=host, address=address, path=LOGIN_PATH))
+    if not answer.reached:
+        return Check(name, FAIL, f"{host}{LOGIN_PATH} answered nothing: {answer.error}")
+    if answer.status is None or answer.status >= 400:
+        return Check(name, FAIL, f"{host}{LOGIN_PATH} answered {answer.status}")
+    return Check(name, PASS, f"{host}{LOGIN_PATH} answered {answer.status}")
+
+
+def run_checks(settings: EdgeSettings, *, target: str = "") -> list[Check]:
+    """Every check, in report order, against one deployment."""
+    if not settings.enabled:
+        return [
+            Check(name, SKIP, "edge.enabled is false -- this deployment opens no door at all")
+            for name in check_names()
+        ]
+    host = product_host(settings.domain)
+    try:
+        address = dial_address(host, target)
+    except EdgeProbeError as error:
+        return [Check(name, SKIP, str(error)) for name in check_names()]
+    return [
+        check_tls_floor(settings, host, address),
+        check_hsts(settings, host, address),
+        check_rate_limit(settings, host, address),
+        check_cidr_filter(settings, host, address),
+        check_receiver_private(settings, address),
+        check_otel_private(settings, address),
+        *(check_admin_ui(settings, ui, address) for ui in ADMIN_UIS),
+        check_login(settings, host, address),
+    ]
+
+
+# --- the verb ----------------------------------------------------------------
+
+
+def cmd_edge_probe(args: argparse.Namespace) -> int:
+    try:
+        settings = read_dial(Path(args.dial))
+    except EdgeProbeError as error:
+        print(f"dfe-ops edge-probe: {error}", file=sys.stderr)
+        return 1
+
+    checks = run_checks(settings, target=args.target)
+    for check in checks:
+        print(f"  [{check.verdict}] {check.name}: {check.evidence}", file=sys.stderr)
+    counts = tally(checks)
+    print(
+        f"=== edge-probe: {counts[PASS]} passed, {counts[FAIL]} failed, "
+        f"{counts[SKIP]} skipped ===",
+        file=sys.stderr,
+    )
+    return exit_code(checks)
+
+
+# --- parser ------------------------------------------------------------------
+
+
+def add_edge_probe_subparser(sub: argparse._SubParsersAction) -> None:
+    """Register `dfe-ops edge-probe`."""
+    probe = sub.add_parser(
+        "edge-probe",
+        help="prove from outside the cluster which doors the edge module actually opens",
+        description="Reads the deployment dial's edge: block and dials the published names "
+                    "from this machine, with no credential, so every verdict is what an "
+                    "unauthenticated caller sees. Exits non-zero if any check fails.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    probe.add_argument(
+        "--dial", default=str(DIAL),
+        help="the deployment dial carrying the edge: block",
+    )
+    probe.add_argument(
+        "--target", default="", metavar="HOST_OR_ADDRESS",
+        help="dial this host or gateway address instead of the published name, for a "
+             "deployment whose DNS does not resolve here yet",
+    )
+    probe.set_defaults(func=cmd_edge_probe)
+
+
+__all__ = ["EdgeProbeError", "add_edge_probe_subparser", "cmd_edge_probe"]

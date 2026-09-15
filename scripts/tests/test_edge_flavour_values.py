@@ -150,6 +150,45 @@ def test_every_key_in_a_flavour_overlay_is_read_by_an_edge_chart(flavour: str) -
     assert not unread, f"edge-{flavour}.yaml carries keys no chart reads: {unread}"
 
 
+# Tier 3 is absent by design: the two AWS mechanisms an order above this
+# cluster's own compute, and the group (e) surfaces offered no door on any
+# flavour. Each name is matched against a key path, never against the prose,
+# because naming one in a comment is how the tier table documents the refusal.
+TIER_3_NAMES = frozenset({
+    "shield", "shield_advanced", "global_accelerator", "globalaccelerator",
+    "kafka", "clickhouse", "keeper", "postgres", "postgresql", "openbao", "kubernetes",
+})
+
+
+def _own_keys(path: tuple[str, ...]) -> list[str]:
+    """The path's own key names, dropping any annotation key a vendor owns."""
+    return [part.lower() for part in path if "/" not in part and "." not in part]
+
+
+@pytest.mark.parametrize("flavour", sorted(FLAVOURS))
+def test_no_tier_3_mechanism_has_a_key_in_a_flavour_overlay(flavour: str) -> None:
+    """A tier-3 door is one nobody may turn on, so the absence has to be of the
+    KEY -- a default of false is a switch, and a switch gets flipped."""
+    tree = yaml.safe_load(flavour_file(flavour).read_text(encoding="utf-8")) or {}
+    named = [
+        ".".join(path) for path in leaf_paths(tree)
+        if TIER_3_NAMES & set(_own_keys(path))
+    ]
+    assert not named, f"edge-{flavour}.yaml carries a tier-3 key: {named}"
+
+
+def test_no_tier_3_mechanism_has_a_key_in_the_dial() -> None:
+    """The same rule on the deployer's own surface, where a key would be read
+    as an offer rather than as the refusal the tier table states."""
+    body = (REPO_ROOT / "deployment.example.yaml").read_text(encoding="utf-8")
+    offered = [
+        line for line in body.splitlines()
+        if not line.lstrip().startswith("#")
+        and any(f"{name}:" in line.lower() for name in ("shield_advanced", "global_accelerator"))
+    ]
+    assert not offered, f"deployment.example.yaml offers a tier-3 key: {offered}"
+
+
 def test_the_receivers_own_exposure_mode_stayed_in_the_cloud_overlay() -> None:
     """dfe-receiver is not an edge chart, so its door is not the module's key."""
     assert readers(("exposure", "mode")) & {"charts/dfe-receiver"}
