@@ -28,7 +28,7 @@ x-scale-shared:
   keda: &scaleKeda
     enabled: true
     minReplicaCount: 2
-    maxReplicaCount: 10
+    maxReplicaCount: 12
 
 clickhouse-cluster:
   clickhouse:
@@ -50,7 +50,7 @@ kafka:
     replicas: 3
     defaultTopic:
       # Source: argocd/values/profile-scale.yaml -- partitions cap consumer
-      # parallelism; sized from the KEDA ceiling of 10.
+      # parallelism, and the KEDA ceiling is a divisor of this count.
       partitions: 12
   user:
     password:
@@ -64,8 +64,10 @@ kafbat:
   enabled: true
   kafka:
     clusters:
+      # 9092 is the Strimzi CR's plain listener (tls: false); nothing in this
+      # render dials 9093, so the identity carries -no-tls (dfe-infra#191).
       - name: dfe
-        provider: strimzi
+        provider: strimzi-no-tls
         bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
         credentialsSecretName: dfe-kafka-user
 

@@ -43,7 +43,10 @@ INGEST_RETRY_WINDOW = 180.0
 ARCHIVE_DEADLINE = 300.0
 # Source names this suite mints, so a sweep can tell its own strays from a
 # deployment's real sources.
-RUN_PREFIXES = ("fb", "cw", "onboard")
+RUN_PREFIXES = ("fb", "cw", "el", "onboard")
+# The whole minted shape rather than the prefix alone, because a sweep removes
+# sources and a deployment may own one called `elastic` or `fbprod`.
+RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 
 
 # --- console helpers ---------------------------------------------------------
@@ -126,10 +129,14 @@ def open_console(driver, engine: Engine, admin_user: str, password: str, org: st
 
 
 def sweep_strays(engine: Engine, verify: bool) -> str:
-    """Remove sources an earlier run left behind, so this run starts clean."""
+    """Remove sources an earlier run left behind, so this run starts clean.
+
+    A name is this suite's only when it carries a run prefix and the hex a mint
+    appends, so a source the deployment authored is never removed.
+    """
     listing = engine.call("GET", "/sources")
     names = [str(item["name"]) for item in (listing.body or {}).get("items", [])]
-    strays = [n for n in names if n.startswith(RUN_PREFIXES) and n != "filebeat"]
+    strays = [n for n in names if RUN_NAME.fullmatch(n)]
     removed = [remove_source(engine.base, verify, engine.token, n, 60.0) for n in strays]
     return "; ".join(removed) if removed else "no strays"
 
@@ -216,12 +223,16 @@ def record_table(driver, store: Datastore, name: str) -> None:
 
 
 def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                name: str, run: str, per_module: int) -> int:
-    """POST the wrapped corpus, one request per record."""
+                name: str, run: str, per_module: int, modules: tuple[str, ...] = ()) -> int:
+    """POST the wrapped corpus, one request per record.
+
+    ``modules`` narrows the archive to the corpus modules a case's transform
+    handles; empty is every module the wrapper names.
+    """
     sys.path.insert(0, str(engine_repo))
     from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
 
-    items = corpus.samples(corpus_file, limit=per_module)
+    items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
     bodies = corpus.wrap_all(items, source=name, run=run)
 
     for body in bodies:
@@ -251,7 +262,8 @@ def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
 
 
 def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                store: Datastore, name: str, deadline: float) -> str:
+                store: Datastore, name: str, deadline: float,
+                modules: tuple[str, ...] = ()) -> str:
     """Probe until a record actually reaches the source's table.
 
     Before the receiver has rolled onto the new rule the probes land in the
@@ -266,7 +278,7 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
     before = store.scalar(f"SELECT count() FROM {name}")
     passes = 0
     while True:
-        post_corpus(receiver_url, verify, engine_repo, corpus_file, name, probe, 1)
+        post_corpus(receiver_url, verify, engine_repo, corpus_file, name, probe, 1, modules)
         passes += 1
         if store.scalar(f"SELECT count() FROM {name}") > before:
             return f"routed into dfe.{name} after {passes} probe pass(es)"
@@ -478,7 +490,14 @@ def record_hyperdx_source(driver, engine: Engine, name: str, deployed: dict) -> 
 # The rows were fed minutes ago and HyperDX searches the last fifteen by default,
 # so the wait is for the query to run, not for data to arrive.
 OBSERVE_DEADLINE = 90.0
-RESULTS_LINE = re.compile(r"^(\d+) Results?$")
+# The frame groups thousands with a comma, so "1,050 Results" is a count too.
+RESULTS_LINE = re.compile(r"^([\d,]+) Results?$")
+
+
+def results_count(results: str) -> int | None:
+    """The number on the frame's results line, or None when it is not one."""
+    found = RESULTS_LINE.match(results or "")
+    return int(found.group(1).replace(",", "")) if found else None
 
 
 def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, results: str) -> tuple[str, str]:
@@ -497,9 +516,11 @@ def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, resul
     if not frame_url or frame_url.startswith("chrome-error://"):
         return "failed", f"the HyperDX frame did not load ({blocked or 'no frame on the page'})"
     if not picked:
-        return "failed", f"the frame's source picker does not offer {name}"
-    found = RESULTS_LINE.match(results or "")
-    if found and int(found.group(1)) > 0:
+        # A refusal in *results* is the exception that stopped the pick, and it
+        # names the cause where "does not offer" alone would hide it.
+        why = f" ({results})" if results else ""
+        return "failed", f"the frame's source picker does not offer {name}{why}"
+    if (results_count(results) or 0) > 0:
         return "done", f"Observe search over {name}: {results}"
     return "failed", f"Observe search over {name} returned {results or 'no results line'}"
 
@@ -518,28 +539,42 @@ def search_results(frame, name: str) -> tuple[bool, str]:
     """Pick *name* in the frame's source picker and read the results line."""
     picker = frame.get_by_placeholder("Data Source")
     picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    picker.click(timeout=STEP_TIMEOUT_MS)
-    picker.fill(name)
-    option = frame.get_by_role("option").filter(has_text=name)
-    # count() takes no auto-wait, so right after fill() it can read the dropdown
-    # before a slow render populates it. A genuinely absent option still falls
-    # through to the count() check below.
-    try:
-        option.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    except Exception:  # absence is decided by count() below, not this wait
-        pass
-    if not option.count():
-        return False, ""
-    option.first.click(timeout=STEP_TIMEOUT_MS)
+    # The frame fills its source list after the page paints, so an empty picker
+    # is one still loading, and a picker already on this source has nothing to pick.
+    until = time.monotonic() + STEP_TIMEOUT_MS / 1000
+    while not picker.input_value().strip() and time.monotonic() < until:
+        time.sleep(1)
+    if picker.input_value().strip() != name:
+        picker.click(timeout=STEP_TIMEOUT_MS)
+        # The dropdown lists nothing until the frame's source list arrives, and a
+        # name typed before then filters an empty list.
+        try:
+            frame.get_by_role("option").first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        except Exception:  # an empty list is decided by count() below, not this wait
+            pass
+        picker.fill(name)
+        option = frame.get_by_role("option").filter(has_text=name)
+        # count() takes no auto-wait, so right after fill() it can read the dropdown
+        # before a slow render populates it. A genuinely absent option still falls
+        # through to the count() check below.
+        try:
+            option.first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        except Exception:  # absence is decided by count() below, not this wait
+            pass
+        if not option.count():
+            return False, ""
+        option.first.click(timeout=STEP_TIMEOUT_MS)
     frame.get_by_role("button", name="Run", exact=True).click(timeout=STEP_TIMEOUT_MS)
     line = frame.get_by_text(RESULTS_LINE)
     until = time.monotonic() + OBSERVE_DEADLINE
     results = ""
     while True:
         if line.count():
-            results = line.first.inner_text().strip()
-            found = RESULTS_LINE.match(results)
-            if found and int(found.group(1)) > 0:
+            try:
+                results = line.first.inner_text(timeout=2000).strip()
+            except Exception:  # the line re-renders between count() and the read
+                pass
+            if (results_count(results) or 0) > 0:
                 return True, results
         if time.monotonic() >= until:
             return True, results

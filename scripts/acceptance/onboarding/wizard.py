@@ -133,7 +133,10 @@ def expected_slugs(steps: Iterable[str], pending: Iterable[str] | None = None) -
     declared = set(steps)
     still = declared if pending is None else set(pending)
     slugs = [WELCOME]
-    if "organisations" in still:
+    # Declared rather than pending: the console renders an already-satisfied
+    # organisation step as a done-state screen with Next, so the run meets the
+    # screen either way and only what it does there changes.
+    if "organisations" in declared:
         slugs.append(ORGANISATION)
     if "first_user" in still:
         slugs += [LOGIN, FIRST_USER]

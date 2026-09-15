@@ -27,6 +27,10 @@ spec:
         checksum/enrichment: {{ include (print $.Template.BasePath "/enrichment-configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      # k8s injects a Docker-link env var per Service in the namespace, and a
+      # DFE_* name that collides with an app setting shadows it. Same class the
+      # engine, loader and receiver charts already guard.
+      enableServiceLinks: false
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
@@ -49,6 +53,8 @@ spec:
               protocol: TCP
             {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_") | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # dfe-transform-vrl reads the DFE_TRANSFORM_* flat env contract
@@ -101,7 +107,6 @@ spec:
             # binary name, so two instances are indistinguishable in the otel tables.
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
-            {{- include "dfe-common.extraEnv" . | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/dfe-transform-vrl

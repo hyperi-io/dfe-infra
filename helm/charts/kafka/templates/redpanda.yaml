@@ -1,8 +1,12 @@
 {{- if eq .Values.kafka.provider "redpanda" }}
+{{- if eq .Values.kafka.mode "cluster" }}
+{{- /* Inside the mode gate: a leftover provider: redpanda on mode: external
+       deploys no Redpanda from anywhere, so demanding the licence there refuses
+       a render that ships nothing. Single mode carries its own check, beside the
+       StatefulSet it deploys (kafka-single.yaml). */}}
 {{- if not .Values.kafka.redpanda.acceptLicense }}
 {{- fail "Redpanda is BSL-licensed (source-available, not OSS): set kafka.redpanda.acceptLicense=true to proceed. Running DFE+redpanda as a service needs a commercial licence from BOTH HyperI (DFE) and Redpanda Data (redpanda) -- see docs/REDPANDA-LIMITATIONS.md." }}
 {{- end }}
-{{- if eq .Values.kafka.mode "cluster" }}
 {{- $replicas := int .Values.kafka.replicas }}
 {{- $rf := min (int .Values.kafka.config.defaultReplicationFactor) $replicas }}
 # Redpanda cluster, managed by the Redpanda operator (cluster.redpanda.com/v1alpha2).

@@ -110,6 +110,23 @@ kafka:
   # uses AWS IAM (IRSA/workload-identity, SASL OAUTHBEARER) -- no static secret.
   external:
     bootstrap: ""
+    # Which managed/BYO Kafka this is, as a key in the shared provider table
+    # (helm/library/dfe-common/templates/_kafka.tpl): strimzi | redpanda | msk |
+    # redpanda-cloud | confluent-cloud | msk_iam, or the -no-tls pair for a
+    # supplied broker on a cleartext listener. The chart DERIVES
+    # security.protocol and sasl.mechanism from it; never hand-set a mechanism.
+    #
+    # confluent-cloud is the one sanctioned PLAIN target: Confluent Cloud offers
+    # no SCRAM (self-managed Confluent Platform only) and its API key/secret pair
+    # IS the username/password, so the contract's SCRAM-SHA-512 floor takes a
+    # documented exception there -- always over SASL_SSL, never cleartext
+    # (dfe-infra#9, dfe-engine#98). Confluent's own tier limits bite too: broker
+    # topic auto-create is Dedicated-only, so topic provisioning goes through the
+    # engine's topic-admin path rather than the broker.
+    #
+    # Empty keeps the pre-contract shape: the credential secret carries a
+    # password only and nothing is derived.
+    provider: ""
     auth:
       type: scram
       secretName: dfe-kafka-external

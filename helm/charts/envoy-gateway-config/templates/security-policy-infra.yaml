@@ -1,20 +1,28 @@
-{{- if .Values.oidc.enabled }}
+{{- if and .Values.oidc.enabled .Values.oidc.providers }}
 {{- $policyRoutes := include "envoy-gateway-config.infraPolicyRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- $loginName := include "envoy-gateway-config.loginProviderName" (dict "ctx" .) }}
+{{- range $login := $.Values.oidc.providers }}
+{{- if eq $login.name $loginName }}
 {{- range $key := $policyRoutes }}
 {{- $r := index $.Values.routes $key }}
 {{- $ns := include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
 {{- $host := include "envoy-gateway-config.routeHost" (dict "ctx" $ "key" $key) }}
-{{- range $provider := $.Values.oidc.providers }}
 ---
 # Edge RBAC for an infra-class route: OIDC login, then the groups claim -- read
 # from the access token this policy issued and re-validated against the
 # provider's JWKS -- must carry one of oidc.adminGroups. Authentication alone is
 # not enough, and defaultAction Deny means a token with no groups claim is
 # refused rather than admitted.
+#
+# ONE policy per route, never one per provider: two SecurityPolicies naming the
+# same HTTPRoute with no sectionName conflict, and only the oldest applies.
+# oidc.loginProvider owns the interactive redirect; every configured provider is
+# still a JWT issuer below with an Allow rule of its own, so a session minted by
+# any of them is accepted here rather than dropped without a word.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
-  name: dfe-oidc-{{ $provider.name }}-{{ $r.routeName }}-admin
+  name: dfe-oidc-{{ $r.routeName }}-admin
   namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
@@ -25,13 +33,13 @@ spec:
       name: {{ $r.routeName }}
   oidc:
     provider:
-      issuer: {{ $provider.issuerUrl }}
-    clientID: {{ $provider.clientId }}
+      issuer: {{ $login.issuerUrl }}
+    clientID: {{ $login.clientId }}
     clientSecret:
-      name: {{ $provider.clientSecretName | default (printf "dfe-oidc-%s" $provider.name) }}
+      name: {{ $login.clientSecretName | default (printf "dfe-oidc-%s" $login.name) }}
       namespace: {{ $ns }}
     scopes:
-      {{- toYaml ($provider.scopes | default (list "openid" "email" "profile" "groups")) | nindent 6 }}
+      {{- toYaml ($login.scopes | default (list "openid" "email" "profile" "groups")) | nindent 6 }}
     redirectURL: "https://{{ $host }}.{{ $.Values.domain }}/oauth2/callback"
     logoutPath: "/oauth2/logout"
     {{- /* One cookie per route: a shared name would let a session minted on one
@@ -40,6 +48,7 @@ spec:
       accessToken: dfe-{{ $r.routeName }}-access-token
   jwt:
     providers:
+      {{- range $provider := $.Values.oidc.providers }}
       - name: {{ $provider.name }}
         issuer: {{ $provider.issuerUrl }}
         remoteJWKS:
@@ -47,10 +56,12 @@ spec:
         extractFrom:
           cookies:
             - dfe-{{ $r.routeName }}-access-token
+      {{- end }}
   authorization:
     defaultAction: Deny
     rules:
-      - name: allow-admin-groups
+      {{- range $provider := $.Values.oidc.providers }}
+      - name: allow-admin-groups-{{ $provider.name }}
         action: Allow
         principal:
           jwt:
@@ -60,6 +71,8 @@ spec:
                 valueType: StringArray
                 values:
                   {{- toYaml $.Values.oidc.adminGroups | nindent 18 }}
+      {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

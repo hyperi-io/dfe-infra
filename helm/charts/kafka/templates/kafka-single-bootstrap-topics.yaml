@@ -41,7 +41,11 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "dfe-common.selectorLabels" . | nindent 8 }}
+        # NOT dfe-common.selectorLabels: that is exactly what the headless broker
+        # Service selects on, so this pod would join the endpoints clients resolve
+        # for the bootstrap address -- with no readiness probe, for the whole
+        # broker wait plus every topic create, and listening on nothing.
+        app.kubernetes.io/name: {{ printf "%s-%s-bootstrap-topics" .Values.project .Values.component | quote }}
     spec:
       restartPolicy: Never
       {{- include "dfe-common.scheduling" . | nindent 6 }}
@@ -57,11 +61,12 @@ spec:
               set -e
               BOOTSTRAP="{{ $name }}.{{ .Release.Namespace }}.svc.cluster.local:9092"
               CFG=/tmp/client.properties
-              # The broker's only listener is SASL_PLAINTEXT, so admin calls
-              # authenticate as the same service user the apps use.
+              # Admin calls authenticate as the same service user the apps use,
+              # over the same derived protocol and mechanism -- one table, so this
+              # Job cannot disagree with the broker beside it (dfe-infra#191).
               cat > "$CFG" <<EOF
-              security.protocol=SASL_PLAINTEXT
-              sasl.mechanism=SCRAM-SHA-512
+              security.protocol={{ include "dfe-common.kafkaSecurityProtocol" (include "dfe-kafka.providerIdentity" .) }}
+              sasl.mechanism={{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) }}
               sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="${KAFKA_USER}" password="${KAFKA_PASSWORD}";
               EOF
               echo "Waiting for broker ${BOOTSTRAP}..."

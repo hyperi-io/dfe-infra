@@ -17,6 +17,10 @@ resources:
     cpu: "2"
     memory: 4Gi
 
+# Pressure stays on (the chart default) even with no broker: on this transport every
+# stage holds what the next has not taken, so the composite's buffer-depth and memory
+# terms carry the backlog the kafka_lag term carries elsewhere. No partition count
+# bounds the ceiling here -- replicas share load through the Service.
 keda:
   minReplicaCount: 2
   maxReplicaCount: 10
