@@ -26,13 +26,16 @@
                                        port <p> -- NOT recorded by Session
                                        Manager (toolbox/aws/CONTRACT.md #6).
     dfe-ops bastion down              revoke the admin peer, flip
-                                       toolbox.enabled off, apply, then PROVE
-                                       nothing remains.
+                                       toolbox.enabled off, destroy the toolbox
+                                       target, then PROVE nothing remains.
     dfe-ops bastion status            report the toolbox's current state.
 
 `up`/`down` edit deployment.yaml (the dial) in place, then shell out to
-render_dial.py --tofu and tofu apply -- the same two steps an operator would
-run by hand, just for the toolbox target alone. `shell`/`forward` shell out to
+render_dial.py --tofu and tofu -- the same steps an operator would run by hand,
+just for the toolbox target alone. `up` applies; `down` DESTROYS that target,
+because an apply has to reconcile every other resource in the target set first
+and a failure there would leave the instance running and billing.
+`shell`/`forward` shell out to
 the real `aws ssm start-session`, inheriting this process's stdio, because a
 Session Manager session needs a real terminal.
 
@@ -71,23 +74,19 @@ RENDER_DIAL = REPO_ROOT / "scripts" / "render_dial.py"
 AWS_ROOT = REPO_ROOT / "terraform" / "environments" / "aws"
 SCRATCH_KUBECONFIG = REPO_ROOT / ".tmp" / "toolbox-eks-api.kubeconfig"
 
-# What `up`/`down` apply -- the toggleable half of the toolbox (the module's
-# instance/security-group/IAM-role/documents) plus the two EKS access-entry
-# resources the aws root grants alongside it. A targeted apply still pulls in
-# whatever the target DEPENDS on, so the cluster and Kafka are refreshed and
-# their outputs evaluated; what it skips is everything else in the root, which
-# is what keeps "bring the toolbox up" from reconciling the whole deployment.
-# Both access-entry resources live INSIDE module.cluster
-# (kubernetes-cluster/aws/eks.tf, "Toolbox operator"), not at the aws root, so
-# the target address must be module-qualified or tofu reports "Resource not
-# found in module". A root OUTPUT whose dependencies fall entirely outside the
-# target set is not written at all, so a deployment whose first-ever apply was
-# `bastion up` carries no value for one until a full apply runs.
-TOOLBOX_TARGETS = (
-    "-target=module.toolbox",
-    "-target=module.cluster.aws_eks_access_entry.toolbox_operator",
-    "-target=module.cluster.aws_eks_access_policy_association.toolbox_operator_view",
-)
+# What `up`/`down` apply -- the toolbox module and nothing else at the aws root.
+# A targeted apply still refreshes whatever the target DEPENDS on and evaluates
+# their outputs; what it skips is every other resource in the root.
+# The two EKS access-entry resources (kubernetes-cluster/aws/eks.tf, "Toolbox
+# operator") are deliberately NOT targeted: either one failing aborts the apply
+# with the instance already created and billing, and before the toolbox's own
+# forward documents and target egress rules exist. They belong to the full
+# apply that builds the cluster, which is also the apply that knows whether the
+# principal already holds the creator entry.
+# A root OUTPUT whose dependencies fall entirely outside the target set is not
+# written at all, so a deployment whose first-ever apply was `bastion up`
+# carries no value for one until a full apply runs.
+TOOLBOX_TARGETS = ("-target=module.toolbox",)
 
 DEFAULT_WAIT_TIMEOUT = 300.0
 DEFAULT_POLL_INTERVAL = 5.0
@@ -245,6 +244,18 @@ def _render_dial_tofu() -> bool:
 
 def _apply_toolbox() -> bool:
     result = _run(["tofu", f"-chdir={AWS_ROOT}", "apply", "-auto-approve", *TOOLBOX_TARGETS])
+    return result.returncode == 0
+
+
+def _destroy_toolbox() -> bool:
+    """Take the toolbox down with `tofu destroy -target=module.toolbox`.
+
+    An apply would have to CREATE or UPDATE every other resource in the target
+    set before it got to the instance, so a resource broken anywhere in that
+    set leaves the instance running and billing. A targeted destroy creates
+    nothing, so the only thing that can stop it is the toolbox itself.
+    """
+    result = _run(["tofu", f"-chdir={AWS_ROOT}", "destroy", "-auto-approve", *TOOLBOX_TARGETS])
     return result.returncode == 0
 
 
@@ -916,7 +927,7 @@ def cmd_bastion_forward(args: argparse.Namespace) -> int:
 def _revoke_admin_peer() -> int:
     """Revoke the admin peer this machine minted, and prove it off the hub.
 
-    Runs BEFORE the apply, because the instance is terminated rather than
+    Runs BEFORE the destroy, because the instance is terminated rather than
     stopped and a peer left behind is a credential nobody tracks. A WireGuard
     peer carries no CRL entry -- culvert revokes it by removing it from the
     live interface and refuses to report success when it cannot -- so the proof
@@ -1059,8 +1070,8 @@ def cmd_bastion_down(args: argparse.Namespace) -> int:
         print("dfe-ops bastion: render_dial.py --tofu failed", file=sys.stderr)
         return 1
 
-    if not _apply_toolbox():
-        print("dfe-ops bastion: tofu apply failed", file=sys.stderr)
+    if not _destroy_toolbox():
+        print("dfe-ops bastion: tofu destroy failed", file=sys.stderr)
         return 1
 
     if SCRATCH_KUBECONFIG.exists():
@@ -1212,7 +1223,7 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
 
     down = actions.add_parser(
         "down",
-        help="revoke the admin peer, flip toolbox.enabled off, apply, and prove nothing remains",
+        help="revoke the admin peer, flip toolbox.enabled off, destroy the toolbox target, and prove nothing remains",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     down.set_defaults(func=cmd_bastion_down)

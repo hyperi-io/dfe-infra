@@ -581,7 +581,7 @@ def _joined_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return state
 
 
-def test_down_revokes_the_admin_peer_before_the_apply(
+def test_down_revokes_the_admin_peer_before_the_destroy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
@@ -667,9 +667,28 @@ def test_up_sets_enabled_applies_and_waits_for_online(
     assert any("render_dial.py" in str(part) for part in tofu_calls[0])
     assert "apply" in tofu_calls[1]
     assert "-target=module.toolbox" in tofu_calls[1]
-    assert "-target=module.cluster.aws_eks_access_entry.toolbox_operator" in tofu_calls[1]
-    assert "-target=module.cluster.aws_eks_access_policy_association.toolbox_operator_view" in tofu_calls[1]
     assert any("describe-instance-information" in call for call in aws_calls)
+
+
+def test_up_targets_the_toolbox_module_and_nothing_else(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every extra target is one more resource whose failure aborts the apply
+    with the instance already created and billing, and before the toolbox's own
+    forward documents exist."""
+    _dial_file(tmp_path, monkeypatch)
+    tofu_calls = _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_outputs(monkeypatch)
+    _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+
+    assert bastion.cmd_bastion_up(_args()) == 0
+    assert [part for part in tofu_calls[1] if str(part).startswith("-target=")] == [
+        "-target=module.toolbox"
+    ]
 
 
 def test_up_with_ttl_overrides_ttl_minutes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -825,7 +844,7 @@ def test_forward_to_kafka_writes_no_kubeconfig(tmp_path: Path, monkeypatch: pyte
 # ---------------------------------------------------------------------------
 
 
-def test_down_flips_enabled_applies_and_proves_clean_teardown(
+def test_down_flips_enabled_destroys_and_proves_clean_teardown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dial = _dial_file(
@@ -833,10 +852,10 @@ def test_down_flips_enabled_applies_and_proves_clean_teardown(
         monkeypatch,
         text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
     )
-    # Outputs BEFORE the apply (still carries the instance id) are read once,
-    # then render_dial.py + tofu apply run.
+    # Outputs BEFORE the destroy (still carries the instance id) are read once,
+    # then render_dial.py + tofu destroy run.
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
-    _mock_run(
+    tofu_calls = _mock_run(
         monkeypatch,
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
@@ -854,6 +873,27 @@ def test_down_flips_enabled_applies_and_proves_clean_teardown(
     assert rc == 0
     assert '  enabled: "false"' in dial.read_text(encoding="utf-8")
     assert len(aws_calls) == 4
+    # A targeted DESTROY creates nothing, so a resource broken anywhere else in
+    # the root cannot leave the instance running and billing.
+    assert "destroy" in tofu_calls[1]
+    assert "apply" not in tofu_calls[1]
+    assert [part for part in tofu_calls[1] if str(part).startswith("-target=")] == [
+        "-target=module.toolbox"
+    ]
+
+
+def test_down_fails_when_the_targeted_destroy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=1),
+    )
+
+    assert bastion.cmd_bastion_down(_args()) == 1
 
 
 def test_down_reports_non_zero_when_a_volume_survives(
