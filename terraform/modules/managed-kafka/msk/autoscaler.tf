@@ -90,9 +90,12 @@ resource "aws_cloudwatch_metric_alarm" "broker_scale_out" {
   // the way summing 5 temporal samples of one rate is not.
   // https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Statistics-definitions.html
   metric_query {
-    id          = "cluster_bytes_in"
-    expression  = "SUM(SEARCH('{AWS/Kafka,\"Broker ID\",\"Cluster Name\"} MetricName=\"BytesInPerSec\" \"Cluster Name\"=\"${aws_msk_cluster.this.cluster_name}\"', 'Average', 300))"
-    label       = "${var.name} cluster BytesInPerSec"
+    id         = "cluster_bytes_in"
+    expression = "SUM(SEARCH('{AWS/Kafka,\"Broker ID\",\"Cluster Name\"} MetricName=\"BytesInPerSec\" \"Cluster Name\"=\"${aws_msk_cluster.this.cluster_name}\"', 'Average', 300))"
+    label      = "${var.name} cluster BytesInPerSec"
+    // CloudWatch's PutMetricAlarm rejects a math-only metric_query with no
+    // period, even though the SEARCH expression above already embeds 300.
+    period      = 300
     return_data = true
   }
 }

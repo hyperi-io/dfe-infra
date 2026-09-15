@@ -426,6 +426,18 @@ run "msk_autoscaler_threshold_arithmetic" {
     error_message = "the alarm must require 3 of 3 datapoints -- that is the whole of its stabilisation, since nothing here re-arms"
   }
 
+  // CloudWatch's PutMetricAlarm rejects a metric_query carrying an
+  // expression but no period, regardless of any period embedded in the
+  // expression string itself -- a mocked provider never runs this
+  // validation, so the assertion is what pins the field.
+  assert {
+    condition = (
+      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].period
+      == 300
+    )
+    error_message = "the metric_query must carry period = 300, or CloudWatch's PutMetricAlarm rejects the alarm with ValidationError: Period must not be null"
+  }
+
   assert {
     // alarm_actions is a set, so its members have no index to select by.
     condition     = contains(aws_cloudwatch_metric_alarm.broker_scale_out[0].alarm_actions, aws_sns_topic.broker_scaler[0].arn)
