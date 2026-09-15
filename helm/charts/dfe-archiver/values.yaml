@@ -35,12 +35,13 @@ kafka:
   # SASL_SSL). Empty leaves the app's own PLAINTEXT default; the deployment's
   # kafka layer names it beside bootstrapServers.
   securityProtocol: ""
-  # Regex a discovered topic must match to be archived (KAFKA_TOPIC_INCLUDE).
-  # The platform convention is {source}_land, so this archives every source's
-  # landing topic and a source added later needs no restart. An empty list
-  # subscribes to nothing and the archiver reports itself idle.
-  topicInclude:
-    - "_land$"
+  # No topicInclude dial, and no KAFKA_TOPIC_INCLUDE env: the landing topics are
+  # COMPILED from the sources that asked to be archived (apps.yaml, dfe-archiver
+  # routing.compiler: archiver) and reach the app as config.kafka.topics in the
+  # engine's overlay. A discovery pattern here outranks that answer in the only
+  # case where the two differ -- an empty compiled list means archive nothing,
+  # and a pattern turns it into archive everything the broker holds, which also
+  # keeps the app out of the idle state its manifest declares.
 
 # Local disk INSIDE the pod: an emptyDir mounted at this path, with the
 # destination pointed at it (ARCHIVER_DESTINATION). Empty by default -- a

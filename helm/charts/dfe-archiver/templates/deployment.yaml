@@ -92,13 +92,6 @@ spec:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: sasl.mechanism
             {{- end }}
-            {{- with .Values.kafka.topicInclude }}
-            # Broker-side topic discovery, so a source created after this pod
-            # started is archived without a roll. Comma-separated: scalo's
-            # flat_env_list splits on it.
-            - name: KAFKA_TOPIC_INCLUDE
-              value: {{ join "," . | quote }}
-            {{- end }}
             {{- else }}
             # Receive on the scalo Push listener the Service fronts instead of a
             # landing topic. Single underscore: this app reads its own flat-env
