@@ -37,7 +37,12 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   backoffLimit: 5
-  ttlSecondsAfterFinished: 600
+  # NO ttlSecondsAfterFinished. This is a TRACKED resource under an Application
+  # with selfHeal, so the TTL controller deleting the finished Job made Argo
+  # recreate it, forever: one full round of kafka-topics.sh JVM starts every ten
+  # minutes for the life of the cluster (dfe-infra#79). The Job is named after a
+  # hash of the topic list, so a changed list is a new name and prune removes the
+  # superseded one -- the completed Job is the record of what was created.
   template:
     metadata:
       labels:
