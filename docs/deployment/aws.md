@@ -59,19 +59,20 @@ A few things hold for every deployment:
   `m9g.large` for eks-system, `m9g.xlarge` for general, `r9gd.large` for
   clickhouse, `m9g.large` for keeper, three `express.m7g.large` for
   msk-broker, and `c8gd.4xlarge` for ci-burst. With Kafka running in-cluster
-  (`kafka.provider: strimzi`) the same floor drops to USD 1,673/month:
-  kafka-broker and eks-system both sit on `m9g.large`, kraft-controller
-  drops to `m9g.medium`, and there is no MSK line -- clickhouse, keeper,
-  general and ci-burst are unchanged. Both figures are on-demand Linux
-  pricing from the AWS Pricing API, taken 2026-09-13 -- they drift, and the
-  resolver's own `sizing/<profile>.report.md` (written under `--out`) is
-  the current answer, not this paragraph. At the floor the resolver's A4
-  check WARNS rather than fails: `r9gd.large` and `m9g.large` sustain only
-  3,600 IOPS / 95 MiB/s on their EBS baseline and can burst above it for 30
-  minutes a day, while ClickHouse and Keeper write continuously. The floor
-  is the smallest shape that runs, not a throughput target -- set
-  `sizing.ingest_gb_per_day` once you know it, so the resolver sizes for
-  the workload instead of the minimum.
+  (`kafka.provider: strimzi`) the same floor drops to USD 1,566/month:
+  kafka-broker and eks-system both sit on `m9g.large`, and there is no MSK
+  line -- clickhouse, keeper, general and ci-burst are unchanged. That is
+  the default combined quorum, which sizes no controller node at all;
+  `kafka.controller_pool: separate` adds three `m9g.medium` controllers on
+  top of it. Both figures are on-demand Linux pricing from the AWS Pricing
+  API, taken 2026-09-13 -- they drift, and the resolver's own
+  `sizing/<profile>.report.md` (written under `--out`) is the current answer,
+  not this paragraph. At the floor the resolver's A4 check WARNS rather than
+  fails: `r9gd.large` and `m9g.large` sustain only 3,600 IOPS / 95 MiB/s on
+  their EBS baseline and can burst above it for 30 minutes a day, while
+  ClickHouse and Keeper write continuously. The floor is the smallest shape
+  that runs, not a throughput target -- set `sizing.ingest_gb_per_day` once
+  you know it, so the resolver sizes for the workload instead of the minimum.
 
 ### Resolving sizing artefacts
 

@@ -211,7 +211,8 @@ CHART_DEFAULTS = {
 SUSTAINED_USE_CASES = ("kafka-broker", "clickhouse", "keeper")
 
 # Which use cases a scale deployment sizes. msk-broker joins them only when the
-# dial names a managed provider.
+# dial names a managed provider, and kraft-controller drops out unless
+# kafka.controller_pool asks for a separate quorum.
 CORE_USE_CASES = ("eks-system", "general", "kafka-broker", "kraft-controller", "clickhouse", "keeper")
 
 # Every workload class compute-shapes.yaml declares, which is what a deployer may
@@ -881,6 +882,13 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         notes.append("MSK Express runs its own metadata quorum; no controller pool is ours to size.")
     elif provider in SAAS_KAFKA_PROVIDERS:
         notes.append(f"{provider} runs its own metadata quorum; no controller pool is ours to size.")
+    elif dial.controller_pool != "separate":
+        # Combined mode runs the quorum on the brokers, so there are no
+        # controller pods for a controller node to carry.
+        notes.append(
+            "kafka.controller_pool is combined, so the quorum runs on the brokers themselves; no "
+            "controller node or pool is sized."
+        )
     else:
         nodes["kraft-controller"] = Node(
             use_case="kraft-controller",
@@ -1077,6 +1085,8 @@ def _apply_node_overrides(core: Core, overrides: dict[str, dict[str, str]]) -> N
     it is refused BY NAME rather than accepted and silently dropped -- the
     shape-level fields (instance_type, iops, throughput_mibs) still apply to
     all nine through _apply_shape_overrides, which needs no Node.
+    kraft-controller is the one whose Node depends on the dial: a combined
+    quorum sizes no controller node, so an override on it is refused there too.
     """
     for use_case, fields in overrides.items():
         node = core.nodes.get(use_case)
@@ -1085,8 +1095,9 @@ def _apply_node_overrides(core: Core, overrides: dict[str, dict[str, str]]) -> N
             if node_fields:
                 raise ResolveError(
                     f"sizing.overrides.{use_case}: {', '.join(node_fields)} -- this use case has no "
-                    "derived node to override (only kafka-broker, kraft-controller, clickhouse and "
-                    "keeper do); instance_type, iops and throughput_mibs still apply here"
+                    "derived node to override (only kafka-broker, clickhouse, keeper and, on a "
+                    "separate kafka.controller_pool, kraft-controller do); instance_type, iops and "
+                    "throughput_mibs still apply here"
                 )
             continue
         for what, raw in fields.items():
@@ -3155,6 +3166,10 @@ def run_resolve(args: argparse.Namespace) -> int:
             # kafka-broker nor msk-broker (that name is MSK's own namespace)
             # -- so no broker node pool is emitted at all.
             wanted = [u for u in wanted if u not in ("kafka-broker", "kraft-controller")]
+        if dial.controller_pool != "separate":
+            # A combined quorum runs on the brokers, so a controller pool would
+            # be a node group and a Karpenter pool no pod can land on.
+            wanted = [u for u in wanted if u != "kraft-controller"]
         # ci-burst is not a core requirement -- size_core derives no node for it,
         # so it always resolves off the shape's own floor size -- but every
         # populated cloud carries retryable build/test work, so it always joins

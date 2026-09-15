@@ -322,7 +322,8 @@ kafka:
 ## ---------------------------------------------------------------------------
 ## KRaft controllers -- sized by PARTITION COUNT, never by throughput. They
 ## carry the metadata log, not the data, so a bigger ingest estimate does not
-## make them bigger.
+## make them bigger. Nothing here is read unless kafka.controller_pool is
+## separate, because a combined quorum runs on the brokers themselves.
 ## ---------------------------------------------------------------------------
 kraft_controller:
   vcpu_floor:
@@ -871,14 +872,6 @@ focus:
       read: 2026-09-13
       confidence: vendor-documented
       spot_test: None -- durability floor, not a sizing choice.
-    separate_controllers:
-      value: 1
-      unit: boolean
-      applies_to: kraft-controller
-      source: https://docs.confluent.io/platform/current/kafka-metadata/config-kraft.html
-      read: 2026-09-13
-      confidence: vendor-documented
-      spot_test: None -- combined mode is unsupported in production, not a sizing choice.
     broker_loss_cpu_slack:
       value: 0.40
       unit: fraction

@@ -307,8 +307,11 @@ def test_partitions_divide_evenly_by_the_broker_count(tmp_path: Path) -> None:
 
 
 def test_economy_never_trades_the_durability_floor(tmp_path: Path) -> None:
-    """The cheapest deployment still runs three brokers, three replicas, three controllers."""
-    _run(_dial(tmp_path, focus="economy", estimate=None), tmp_path)
+    """The cheapest deployment still runs three brokers, three replicas, three
+    controllers. The dial asks for a separate controller pool because that is
+    the only mode with a controller pool to count -- a combined quorum runs on
+    those same three brokers."""
+    _run(_dial(tmp_path, focus="economy", estimate=None, controller_pool="separate"), tmp_path)
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     for pool in ("kafka-broker", "kraft-controller", "clickhouse", "keeper"):
         assert doc["node_pools"][pool]["desired_size"] >= 3
@@ -941,6 +944,44 @@ def test_dial_controller_pool_refuses_an_unknown_value(tmp_path: Path, capsys) -
     assert "'dedicated'" in err
 
 
+def test_combined_sizes_no_controller_node_pool_or_shape(tmp_path: Path) -> None:
+    """A combined quorum runs on the brokers, so a controller node group, a
+    Karpenter pool and a resolved shape would all be capacity no pod can land
+    on -- and a report row for a node this deployment does not have."""
+    assert _run(_dial(tmp_path, estimate=1000), tmp_path) == 0
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert "kraft-controller" not in doc["node_pools"]
+    assert "kraft-controller" not in doc["resolved_shapes"]
+    pools = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
+    assert "kraft-controller" not in pools
+    report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
+    assert "| kraft-controller |" not in report
+    assert "the quorum runs on the brokers themselves" in report
+
+
+def test_separate_sizes_the_controller_node_pool_and_shape(tmp_path: Path) -> None:
+    """The opt-in is what makes the controller a real node class, so every
+    artefact the combined dial leaves out is back."""
+    assert _run(_dial(tmp_path, estimate=1000, controller_pool="separate"), tmp_path) == 0
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert doc["node_pools"]["kraft-controller"]["desired_size"] == 3
+    assert doc["resolved_shapes"]["kraft-controller"]["instance_types"]
+    pools = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
+    assert "kraft-controller" in pools
+    report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
+    assert "| kraft-controller |" in report
+
+
+def test_combined_refuses_a_node_override_on_the_controller(tmp_path: Path, capsys) -> None:
+    """The override has nothing to replace once the node is gone, so it is
+    refused by name rather than accepted and silently dropped."""
+    extra = "  overrides:\n    kraft-controller:\n      cpu: 8"
+    assert _run(_dial(tmp_path, extra=extra), tmp_path) == 1
+    err = capsys.readouterr().err
+    assert "sizing.overrides.kraft-controller" in err
+    assert "no derived node to override" in err
+
+
 def test_a_controller_pool_change_is_refused_without_migrate(tmp_path: Path, capsys) -> None:
     """find_locked_changes compares resolved.yaml entries, so the lock fires
     only on a field the resolve itself records."""
@@ -1095,8 +1136,9 @@ def test_every_karpenter_pool_carries_every_field_the_chart_guard_requires(tmp_p
 
 def test_the_dedicated_node_groups_are_tainted_and_the_shared_ones_are_not(tmp_path: Path) -> None:
     """An untainted dedicated group is what let cnpg, dfe-ui and forgejo take the
-    CPU ClickHouse and Kafka were sized for."""
-    _run(_dial(tmp_path), tmp_path)
+    CPU ClickHouse and Kafka were sized for. The dial asks for a separate
+    controller pool so every dedicated use case has a group to check."""
+    _run(_dial(tmp_path, controller_pool="separate"), tmp_path)
     pools = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))["node_pools"]
     for use_case in resolve_sizing.DEDICATED_USE_CASES:
         assert pools[use_case]["taints"] == [
@@ -1110,8 +1152,10 @@ def test_the_dedicated_node_groups_are_tainted_and_the_shared_ones_are_not(tmp_p
 
 def test_every_dedicated_karpenter_pool_carries_the_same_taint(tmp_path: Path) -> None:
     """Karpenter takes NoSchedule where the managed group takes NO_SCHEDULE, so
-    a node the pool adds refuses what the managed group refuses."""
-    _run(_dial(tmp_path), tmp_path)
+    a node the pool adds refuses what the managed group refuses. The dial asks
+    for a separate controller pool so every dedicated use case has one to
+    check."""
+    _run(_dial(tmp_path, controller_pool="separate"), tmp_path)
     pools = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
     for use_case in resolve_sizing.DEDICATED_USE_CASES:
         assert pools[use_case]["taints"] == [
@@ -2059,9 +2103,11 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     eks-system $71, general $143 unchanged, ci-burst $572 unchanged) -- a
     further 28% cut on top of the prior fix's 2,316, from the same counting
     error one level up: a figure standing in for a demand that was never
-    actually tied to what the deployment carries.
+    actually tied to what the deployment carries. The dial asks for a separate
+    controller pool because the controller line is one of the seven above, and
+    a combined quorum sizes no controller shape at all.
     """
-    _run(_dial(tmp_path, estimate=None), tmp_path, cloud="aws")
+    _run(_dial(tmp_path, estimate=None, controller_pool="separate"), tmp_path, cloud="aws")
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     rows = re.findall(r"\| \*\*total compute\*\* \| .*?\*\*([\d,]+)\*\* \|", report)
     assert rows, report

@@ -35,14 +35,15 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 - The small always-on managed group (`node_pools.system` in the dial) carries
   only Karpenter itself and the AWS Load Balancer Controller, both installed
   at the same early sync wave -- neither can allocate anything until it runs.
-  Every OTHER workload the resolver sizes (kafka-broker, kraft-controller,
-  clickhouse, keeper) gets BOTH a fixed EKS managed node group, sized to the
-  resolved floor, AND a Karpenter pool over the same instance families for
-  elastic capacity above it -- the two are not an either/or split; the fixed
-  group is what a stateful workload keeps even if Karpenter cannot place a
-  replacement. Every Karpenter pool is arm64, and its generation floor sits
-  one generation below the oldest generation in its resolved instance family
-  list, so a new Graviton generation arrives as drift, with no plan change.
+  Every OTHER workload the resolver sizes (kafka-broker, clickhouse, keeper,
+  and kraft-controller only where `kafka.controller_pool` is `separate`) gets
+  BOTH a fixed EKS managed node group, sized to the resolved floor, AND a
+  Karpenter pool over the same instance families for elastic capacity above
+  it -- the two are not an either/or split; the fixed group is what a stateful
+  workload keeps even if Karpenter cannot place a replacement. Every Karpenter
+  pool is arm64, and its generation floor sits one generation below the oldest
+  generation in its resolved instance family list, so a new Graviton
+  generation arrives as drift, with no plan change.
 - Karpenter's node image is `amiAlias: al2023@v20260827`
   (`helm/charts/karpenter-pools/values.yaml`, `operators.karpenter-al2023-ami`
   in `versions.yaml`, drift-checked) -- a dated AL2023 release, not `latest`,

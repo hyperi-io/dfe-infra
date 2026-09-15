@@ -110,11 +110,12 @@ KAFKA_PROVIDERS = ("strimzi", "redpanda", "msk-express")
 KAFKA_PER_PROVIDER = ("ram_formula", "disk_formula")
 FOCUS_LEVELS = ("economy", "balanced", "performance")
 FOCUS_FIELDS = ("headroom", "generation_policy", "storage_profile")
-# What economy never trades away, whatever the headroom multiplier says.
+# What economy never trades away, whatever the headroom multiplier says. The
+# controller topology is not among them -- kafka.controller_pool is the
+# deployer's dial, and controller_mode below is where the lock on it lives.
 FOCUS_INVARIANTS = (
     "replication_factor",
     "min_insync_replicas",
-    "separate_controllers",
     "broker_loss_cpu_slack",
 )
 LOCKED_FIELDS = (
