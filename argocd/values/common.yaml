@@ -93,10 +93,13 @@ kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
   # The shipped broker authenticates with SCRAM over its plain listener. A
   # deployment on a TLS listener moves this to SASL_SSL with bootstrapServers.
+  #
+  # No `sasl:` block here: it fanned `enabled` and `mechanism` out to every app
+  # chart and no chart read either (dfe-infra#79), and the mechanism is derived
+  # from kafka.provider now rather than hand-set (dfe-common.kafkaSaslMechanism,
+  # dfe-infra#191). The otel collector's own clusterTelemetry.kafka.sasl block is
+  # a different key and is read.
   securityProtocol: SASL_PLAINTEXT
-  sasl:
-    enabled: true
-    mechanism: SCRAM-SHA-512
 
 # The pool balancer for the direct transport. A Kubernetes Service balances per
 # CONNECTION and gRPC holds one connection open, so a sender pins itself to one
