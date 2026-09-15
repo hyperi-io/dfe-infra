@@ -219,11 +219,12 @@ module "kafka" {
   autoscaling = var.kafka.msk.autoscaling
   telemetry   = var.telemetry
 
-  // module.cluster.kms_key_arn alone only orders against aws_kms_key.this --
-  // the sibling aws_kms_key_policy.this resource produces no output this
-  // module reads, so nothing would otherwise force it to apply before MSK's
-  // first otel-sink log delivery, which needs the grant already in place.
-  depends_on = [module.cluster]
+  // NO module-wide depends_on. The grant ordering this module needs now rides
+  // on kms_key_arn itself, which the cluster module declares against its own
+  // key POLICY; every other input above is an explicit reference that orders
+  // against exactly the resource it names. A depends_on here would instead
+  // hold the longest resource in the deployment behind the control plane, the
+  // node groups and every addon, none of which a broker reads.
 }
 
 // Confluent Cloud sizes, tunes and versions the cluster itself (CONTRACT.md),

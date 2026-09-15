@@ -164,6 +164,20 @@ priced on this scale in [edge.md](edge.md).
   assumed role, an instance profile or a Lambda role all work; the entry
   names the IAM role -- with its `aws-reserved/sso.amazonaws.com/<region>/`
   path for SSO -- not the STS session ARN.
+- A managed broker builds BESIDE the cluster, not after it. The Kafka module
+  takes the network, the cluster name, the KMS key and the Pod Identity trust
+  policy as explicit inputs, and the key's ARN carries the ordering against the
+  key policy that a broker's first log delivery needs, so nothing holds the
+  broker behind the control plane, the node groups or the addons. The broker is
+  still the longest resource in the deployment, so it sets when the apply ends.
+- `tofu` writes NO outputs to the state until the whole apply finishes, so
+  `--from-terraform` cannot read them while the broker is still creating and
+  the deploy below waits for the apply to end even though Layer 0 and Layer 1
+  touch no broker at all. Two applies are the way round it -- one
+  `-target=module.cluster` to land the cluster outputs, then the full apply --
+  but the broker's own annotations are only written by a bootstrap run that
+  happens after it exists, so that route costs a second bootstrap pass. Take
+  the single apply unless the second pass is worth it to you.
 - `eval "$(tofu output -raw kubeconfig_command)"` gets you `kubectl`. The
   driver is `python3 scripts/dfe-ops stack-deploy --stack <version> --mode
   scale --from-terraform terraform/environments/aws --kubeconfig <path>` --
