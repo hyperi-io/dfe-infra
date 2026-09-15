@@ -213,6 +213,27 @@ def wait_reporting(engine: Engine, service: str, name: str, deadline: float) -> 
         time.sleep(10)
 
 
+# The otel tables live beside the data tables in the database this run was given,
+# which is where the collector writes them. A hardcoded `otel` database reads as
+# an empty result on every deployment that does not have one.
+GAUGE_TABLE = "otel_metrics_gauge"
+
+
+def gauge_samples(store: Datastore, service_name: str, metric: str,
+                  window_seconds: int) -> tuple[int, int | None]:
+    """Samples of one gauge for one telemetry name, and seconds since the last."""
+    rows = store.query(
+        "SELECT count(), toUInt32(dateDiff('second', max(TimeUnix), now())) "
+        f"FROM {GAUGE_TABLE} "
+        f"WHERE ServiceName = '{service_name}' AND MetricName = '{metric}' "
+        f"AND TimeUnix >= now() - INTERVAL {window_seconds} SECOND"
+    )
+    if not rows or not rows[0]:
+        return 0, None
+    samples = int(rows[0][0])
+    return samples, (int(rows[0][1]) if samples else None)
+
+
 def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tuple[int, int | None]:
     """How many idle samples the instance published, and how many seconds since the last.
 
@@ -221,16 +242,7 @@ def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tu
     of the otel tables, which is where every other telemetry reading in this suite
     comes from.
     """
-    rows = store.query(
-        "SELECT count(), toUInt32(dateDiff('second', max(TimeUnix), now())) "
-        "FROM otel.otel_metrics_gauge "
-        f"WHERE ServiceName = '{service_name}' AND MetricName = 'pipeline_idle' "
-        f"AND TimeUnix >= now() - INTERVAL {window_seconds} SECOND"
-    )
-    if not rows or not rows[0]:
-        return 0, None
-    samples = int(rows[0][0])
-    return samples, (int(rows[0][1]) if samples else None)
+    return gauge_samples(store, service_name, "pipeline_idle", window_seconds)
 
 
 def reporting_verdict(store: Datastore, service: str, detail: str, status: dict) -> tuple[str, str]:
@@ -262,9 +274,24 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict)
     if not store.host:
         return "unproven", f"{detail}; no datastore access in this run, so an idle app reads the same"
     try:
+        if not store.table_exists(GAUGE_TABLE):
+            return "unproven", (
+                f"{detail}; {store.database}.{GAUGE_TABLE} is not in this run's reach, "
+                "so the telemetry behind that answer cannot be read"
+            )
+        seen, _ = gauge_samples(store, telemetry or service, "info", IDLE_WINDOW)
         samples, since = idle_history(store, telemetry or service, IDLE_WINDOW)
     except Exception as exc:  # an unreadable otel table is the finding, not a traceback
         return "unproven", f"{detail}; the otel tables did not answer: {type(exc).__name__}"
+    if not seen:
+        # The engine answers `reporting` off max(TimeUnix), which ClickHouse
+        # returns as the epoch rather than NULL when nothing matched, so the
+        # series has to be looked for rather than taken on the engine's word.
+        return "unproven", (
+            f"{detail}; no {telemetry or service} series in {store.database}.{GAUGE_TABLE} "
+            f"in the last {IDLE_WINDOW}s, so the engine's answer is not backed by telemetry "
+            "this run can see"
+        )
     if samples:
         return "unproven", (
             f"{detail}; {telemetry or service} published {samples} pipeline_idle sample(s) "
@@ -295,6 +322,16 @@ def record_table(driver, store: Datastore, name: str) -> None:
 
 
 # --- feeding and proving -----------------------------------------------------
+
+
+def corpus_lines(engine_repo: Path, corpus_file: Path, per_module: int,
+                 modules: tuple[str, ...] = ()) -> list[str]:
+    """The raw log lines, unwrapped, for an agent that reads them off disk."""
+    sys.path.insert(0, str(engine_repo))
+    from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
+
+    items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
+    return [item.line for item in items]
 
 
 def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,

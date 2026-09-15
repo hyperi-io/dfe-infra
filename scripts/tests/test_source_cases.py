@@ -259,6 +259,7 @@ class FakeStore:
     """A datastore that has the table and nothing in it."""
 
     host = "clickhouse.example"
+    database = "dfe"
 
     def table_exists(self, _name):
         return True
@@ -835,15 +836,28 @@ class TestTheReportingVerdict:
     UP = "dfe-transform-elastic/el1 reporting after 0s up"
 
     class IdleStore(FakeStore):
-        """A datastore whose otel tables carry pipeline_idle samples."""
+        """A datastore whose otel gauge answers per metric.
 
-        def __init__(self, samples: int = 0, since: int = 4, raises: bool = False) -> None:
-            self.samples, self.since, self.raises = samples, since, raises
+        `info` is the series every scalo app publishes while it runs;
+        `pipeline_idle` is the one it publishes only while it holds no work.
+        """
 
-        def query(self, _sql):
+        database = "dfe"
+
+        def __init__(self, info: int = 6, samples: int = 0, since: int = 4,
+                     raises: bool = False, table: bool = True) -> None:
+            self.info, self.samples, self.since = info, samples, since
+            self.raises, self.table = raises, table
+
+        def table_exists(self, _name):
+            return self.table
+
+        def query(self, sql):
             if self.raises:
                 raise OSError("connection refused")
-            return [[self.samples, self.since]]
+            if "pipeline_idle" in sql:
+                return [[self.samples, self.since]]
+            return [[self.info, 2]]
 
     def verdict(self, store, telemetry):
         """The verdict for a status body the engine answered `reporting` to."""
@@ -870,6 +884,23 @@ class TestTheReportingVerdict:
 
         assert state == "unproven"
         assert "every instance of the app shares" in detail
+
+    def test_a_reporting_claim_with_no_series_behind_it_is_unproven(self):
+        """The engine reads max(TimeUnix), which ClickHouse answers with the epoch
+        rather than NULL when nothing matched, so it says reporting for an instance
+        that has never emitted a byte."""
+        state, detail = self.verdict(self.IdleStore(info=0), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "not backed by telemetry" in detail
+
+    def test_otel_tables_out_of_reach_are_unproven_not_empty(self):
+        """A query for a table that is not there reads as an empty result, and an
+        empty result is not evidence of anything."""
+        state, detail = self.verdict(self.IdleStore(table=False), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "otel_metrics_gauge is not in this run's reach" in detail
 
     def test_a_run_that_cannot_read_the_datastore_is_unproven(self):
         class NoStore(FakeStore):
@@ -923,6 +954,86 @@ class TestTheReportingVerdict:
         from acceptance.onboarding import wizard
 
         assert wizard.exit_code([wizard.StepResult("transform-reporting", "unproven", "")]) == 0
+
+
+class TestTheLogstashVariation:
+    """The same corpus lines, reaching the receiver the way a deployment sends them."""
+
+    def test_a_run_pushes_the_wrapped_body_by_default(self, monkeypatch, transform_repo):
+        posted: list[int] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "post_corpus", lambda *a, **k: posted.append(1) or 7)
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse())
+
+        case.feed(a_run(driver, FakeEngine(), parse(), case.name, transform_repo, "https://rx.example"))
+
+        assert posted == [1]
+        assert "posted 7 corpus records" in driver.detail("feed")
+
+    def test_the_switch_needs_the_network_the_stack_runs_on(self, monkeypatch, transform_repo):
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        args = parse("--via", "logstash")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert driver.status("feed") == "skipped"
+        assert "--beats-network" in driver.detail("feed")
+
+    def test_it_stands_the_pair_up_and_reports_what_it_shipped(self, monkeypatch, transform_repo):
+        started: list[str] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one", "two"])
+        monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
+        monkeypatch.setattr(cases.beats, "start_logstash",
+                            lambda pair: (started.append("logstash"), (True, "logstash up"))[1])
+        monkeypatch.setattr(cases.beats, "start_filebeat",
+                            lambda pair: (started.append("filebeat"), (True, "filebeat up"))[1])
+        monkeypatch.setattr(cases.beats, "published", lambda pair, wanted: (wanted, f"filebeat published {wanted}"))
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert started == ["logstash", "filebeat"]
+        assert driver.status("feed") == "done"
+        assert "lumberjack to logstash" in driver.detail("feed")
+
+    def test_a_logstash_that_never_listened_stops_the_feed(self, monkeypatch, transform_repo):
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one"])
+        monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
+        monkeypatch.setattr(cases.beats, "start_logstash", lambda pair: (False, "never ran its pipeline"))
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert driver.status("logstash") == "failed"
+        assert driver.status("feed") == "failed"
+
+    def test_the_pair_comes_down_with_the_run(self, monkeypatch, transform_repo):
+        """Every container the suite starts is removed in the same run."""
+        stopped: list[object] = []
+        monkeypatch.setattr(cases.beats, "stop", lambda pair: stopped.append(pair) or "both removed")
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        case = cases.build(args)
+        case._pair = cases.beats.Pair(network="n", receiver_url="u", workdir=transform_repo, run_id="r")
+
+        rows = case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo))
+
+        assert len(stopped) == 1
+        assert [row.slug for row in rows] == ["beats-removed"]
+
+    def test_a_run_that_started_no_pair_has_nothing_to_remove(self, transform_repo):
+        args = parse()
+        case = cases.build(args)
+
+        assert case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo)) == []
 
 
 class TestWhatTheRunTidiesUp:

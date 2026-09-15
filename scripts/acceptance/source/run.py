@@ -207,6 +207,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-interval-secs", type=int, default=60,
                         help="how often the fetcher polls its upstream")
     parser.add_argument("--per-module", type=int, default=20, help="corpus lines per filebeat module to feed")
+    parser.add_argument("--via", default="post", choices=("post", "logstash"),
+                        help="how the pushed cases reach the receiver: post wraps each corpus line "
+                             "and POSTs it; logstash stands a real filebeat and logstash pair beside "
+                             "a compose deployment and pushes the envelope a deployment sends")
+    parser.add_argument("--beats-network", default="", metavar="NETWORK",
+                        help="docker network the stack runs on, which the --via logstash pair joins")
+    parser.add_argument("--beats-receiver-url", default="http://dfe-receiver:8080/ingest",
+                        metavar="URL", help="the receiver's ingest URL as seen from that network")
     parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")
     parser.add_argument("--headed", action="store_true", help="show the browser")
