@@ -58,8 +58,8 @@ valid pull spec, so the digest flows through values. docker: `.env`
 Notes:
 - dfe-transform-splack and dfe-transform-wasm are COMING, not members. Alpha and
   unpublished, so their `apps:` pins are commented out and their charts stay in
-  the tree as placeholders. Grep the marker `are coming: alpha, unpublished` for
-  every line to uncomment when they ship.
+  the tree as placeholders. Every line to uncomment when they ship carries the
+  word `coming` beside one of the two names, so grep that.
 - dfe-transform-elastic is PRE-GA/alpha and NOT published to GHCR (no digest).
   `dfe-stack` already excludes any app without a digest from rendered manifests -
   loudly. It stays excluded from a stack cut until it publishes. Do not render it.
