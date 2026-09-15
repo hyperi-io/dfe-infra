@@ -149,6 +149,7 @@ spec:
                 mode: {{ $kafkaMode | quote }}
               {{- end }}
               {{- if eq .app "karpenter-pools" }}
+              {{- $pools := index .metadata.annotations "dfe.hyperi.io/karpenter_pools" }}
               # The three facts karpenter.cluster.* names, carried onto the
               # cluster secret by bootstrap.sh from the kubernetes-cluster
               # module's `karpenter` output. Without them the chart's own
@@ -158,6 +159,13 @@ spec:
                   discoveryTag: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_discovery_tag" | quote }}
                   instanceProfile: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_instance_profile" | quote }}
                   kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_kms_key_id" | quote }}
+                {{- if $pools }}
+                # The pools the resolver sized, one line of JSON on the cluster
+                # secret and valid YAML flow style here. Absent, the chart's
+                # own `pools: {}` default renders no NodePool, so every
+                # workload the managed groups cannot fit stays Pending.
+                pools: {{ $pools }}
+                {{- end }}
               {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'

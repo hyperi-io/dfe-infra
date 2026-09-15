@@ -598,3 +598,20 @@ user:
     secretStoreName: dfe-secret-store
     # Extra namespaces to project the credential into, beyond appNamespace.
     extraAppNamespaces: []
+
+# Scheduling. These tolerations are the chart's half of the dedicated node pools
+# scripts/resolve_sizing.py taints: a pool labelled for kafka-broker or
+# kraft-controller refuses every pod that does not tolerate it. Inert on a
+# cluster with no such taint. A deployment overlay setting
+# nodeScheduling.tolerations REPLACES this list, because Helm replaces a list
+# rather than merging it.
+nodeScheduling:
+  tolerations:
+    - key: dfe.hyperi.io/workload
+      operator: Equal
+      value: kafka-broker
+      effect: NoSchedule
+    - key: dfe.hyperi.io/workload
+      operator: Equal
+      value: kraft-controller
+      effect: NoSchedule

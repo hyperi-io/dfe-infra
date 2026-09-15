@@ -66,7 +66,17 @@ CONDITIONAL_FACTS = (
         "layer2-platform.yaml",
         "kmsKeyId",
     ),
+    (
+        "DFE_KARPENTER_POOLS",
+        "dfe.hyperi.io/karpenter_pools",
+        "layer2-platform.yaml",
+        "pools",
+    ),
 )
+
+# The JSON pool map carries double quotes of its own, so its annotation is
+# single-quoted where every other one here is double-quoted.
+SINGLE_QUOTED = {"DFE_KARPENTER_POOLS"}
 
 
 def test_bootstrap_composes_each_annotation_under_its_own_key() -> None:
@@ -74,7 +84,8 @@ def test_bootstrap_composes_each_annotation_under_its_own_key() -> None:
     blank rather than as an empty-valued annotation."""
     script = BOOTSTRAP.read_text()
     for env_key, annotation, _appset, _param in CONDITIONAL_FACTS:
-        composed = f'{env_key}:+{annotation}: \\"${{{env_key}}}\\"'
+        quote = "'" if env_key in SINGLE_QUOTED else '\\"'
+        composed = f"{env_key}:+{annotation}: {quote}${{{env_key}}}{quote}"
         expect(f"bootstrap.sh composes {annotation} from {env_key}",
                composed in script, f"looked for: {composed}")
 

@@ -47,6 +47,10 @@ metadata:
     ${DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION}
     ${DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION}
     ${DFE_KARPENTER_KMS_KEY_ID_ANNOTATION}
+    # The pools themselves, as one line of JSON -- layer2-platform.yaml inlines
+    # it into karpenter.pools, which JSON is valid YAML flow style for. Blank
+    # renders no NodePool at all, so a pending workload stays pending.
+    ${DFE_KARPENTER_POOLS_ANNOTATION}
     # Front-door addresses this deployment's DNS already names. Empty leaves the
     # choice to the LB pool, which is what re-rolls them on a rebuild.
     dfe.hyperi.io/gateway_address: "${DFE_GATEWAY_IP}"

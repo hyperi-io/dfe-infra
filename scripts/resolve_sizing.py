@@ -24,8 +24,9 @@ Two stages, because the ratios are target-agnostic and the shapes are not:
               instance type, its price, its generation and the silent caps it
               imposes, asserted against the volume profile.
 
-Five artefacts come out, all under ``--out`` (the repo root by default) -- six
-on a ``cloud: onprem`` dial, which also gets ``sizing/<tier>.nodes.json``:
+Five artefacts come out, all under ``--out`` (the repo root by default), plus
+``sizing/<tier>.karpenter.json`` wherever Karpenter runs and
+``sizing/<tier>.nodes.json`` on a ``cloud: onprem`` dial:
 
     shapes/resolved/<cloud>-<region>.json   the committed shape answer, merged
                                    over what is already there so another
@@ -44,6 +45,10 @@ on a ``cloud: onprem`` dial, which also gets ``sizing/<tier>.nodes.json``:
                                    node_pools.system with what it derives, so
                                    the two producers never collide on it.
     sizing/<tier>.values.yaml      the chart values overlay
+    sizing/<tier>.karpenter.json   the karpenter.pools half of that overlay, on
+                                   one line, for bootstrap.sh to carry onto the
+                                   cluster secret. Written only where there are
+                                   pools to place.
     sizing/<tier>.report.md        what was sized, from which ratio, at which
                                    confidence, at what price, and where the
                                    ceiling is
@@ -234,6 +239,31 @@ BROKER_DEMAND = {"msk-broker": "kafka-broker"}
 # express "spot, with a 100% disruption budget" the way a Karpenter NodePool
 # can (see compute-shapes.yaml's ci-burst entry).
 NOT_A_NODE_POOL = ("eks-system", "general", "msk-broker", "ci-burst")
+
+# The label every derived pool carries and the key its taint uses -- the same
+# key argocd/values/local.yaml's toleration already names.
+WORKLOAD_LABEL = "dfe.hyperi.io/workload"
+
+# The pools a generic workload must stay off, each matched by a toleration in
+# the chart that owns it. Every other pool stays untainted, because the
+# cluster's own controllers tolerate nothing.
+DEDICATED_USE_CASES = ("kafka-broker", "kraft-controller", "clickhouse", "keeper")
+
+
+def _workload_taints(use_case: str, effect: str) -> list[dict[str, str]]:
+    """This pool's NoSchedule taint, or none when it is a shared pool.
+
+    Args:
+        use_case: The workload class the pool exists for.
+        effect: The spelling the consumer takes -- an EKS managed node group
+            wants NO_SCHEDULE, a Karpenter NodePool wants NoSchedule.
+
+    Returns:
+        A one-entry taint list, or an empty list for a shared pool.
+    """
+    if use_case not in DEDICATED_USE_CASES:
+        return []
+    return [{"key": WORKLOAD_LABEL, "value": use_case, "effect": effect}]
 
 # An instance type name: family letters, generation digits, the processor and
 # modifier letters, then the size -- m9g.large, r8gd.2xlarge, c8g.metal-24xl.
@@ -2325,8 +2355,10 @@ def build_tfvars(core: Core, choices: dict[str, Choice], dial: Dial) -> dict[str
             "desired_size": choice.count,
             "capacity_type": "ON_DEMAND",
             "disk_gb": int(root.get("size_gib", 40) or 40),
-            "labels": {"dfe.hyperi.io/workload": use_case},
-            "taints": [],
+            "labels": {WORKLOAD_LABEL: use_case},
+            # NO_SCHEDULE is the EKS managed node group spelling; the Karpenter
+            # pool below states the same taint as NoSchedule.
+            "taints": _workload_taints(use_case, "NO_SCHEDULE"),
         }
     return {
         "node_pools": pools,
@@ -2545,7 +2577,7 @@ def build_karpenter_pools(
             "consolidation": consolidation,
             "budgetNodes": budget_nodes,
             "expireAfter": expire_after,
-            "labels": {"dfe.hyperi.io/workload": use_case},
+            "labels": {WORKLOAD_LABEL: use_case},
             # Twice the sized fleet: headroom for Karpenter to grow the pool
             # under load without an unbounded spend risk on a runaway workload
             # -- the NodePool CRD demands a limit, and this is ours to set.
@@ -2554,6 +2586,12 @@ def build_karpenter_pools(
                 "memory": f"{round(choice.memory_gib * max(choice.count, 1) * 2)}Gi",
             },
         }
+        # Karpenter takes the core Kubernetes effect spelling, not the EKS
+        # managed node group's NO_SCHEDULE. Omitted on a shared pool, so the
+        # chart's own `with $pool.taints` guard has nothing to skip over.
+        taints = _workload_taints(use_case, "NoSchedule")
+        if taints:
+            pool["taints"] = taints
         if policy == "pinned" and pin:
             pool["generationIn"] = [pin]
         else:
@@ -3208,6 +3246,20 @@ def run_resolve(args: argparse.Namespace) -> int:
     ]
     values_path.write_text("\n".join([*header, *_yaml_block(values)]) + "\n", encoding="utf-8")
     written.append(values_path)
+
+    karpenter = values.get("karpenter")
+    if isinstance(karpenter, dict) and karpenter.get("pools"):
+        # The SAME pools the values overlay carries, written again where
+        # bootstrap.sh can read them without a YAML parser -- it ships none,
+        # and the overlay above only reaches a cluster through a deploy repo.
+        # One line, because it lands verbatim in a cluster-secret annotation
+        # the appset inlines as YAML flow (JSON is a subset of it).
+        karpenter_path = out / "sizing" / f"{core.tier}.karpenter.json"
+        karpenter_path.write_text(
+            json.dumps(karpenter["pools"], sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        written.append(karpenter_path)
 
     report_path = out / "sizing" / f"{core.tier}.report.md"
     report_path.write_text(build_report(core, dial, choices, findings, sizing, catalogue), encoding="utf-8")

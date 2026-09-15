@@ -118,12 +118,41 @@ def test_both_floors_render_together_without_disturbing_family_or_generation() -
     )
 
 
+def test_a_dedicated_pool_renders_its_taint_and_a_shared_one_renders_none() -> None:
+    """The resolver taints the dedicated pools; the chart is what puts the taint
+    on the node Karpenter launches."""
+    taint = {"key": "dfe.hyperi.io/workload", "value": "clickhouse", "effect": "NoSchedule"}
+    tainted = render({**BASE_POOL, "taints": [taint]})["spec"]["template"]["spec"]
+    expect("a pool's taint reaches the NodePool", tainted.get("taints") == [taint], tainted)
+    shared = render(BASE_POOL)["spec"]["template"]["spec"]
+    expect("a pool with no taint renders none", "taints" not in shared, shared)
+
+
+def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
+    """A chart whose `pools` stays at its own empty default renders no NodePool,
+    so every workload the managed groups cannot fit stays Pending."""
+    appset = REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml"
+    doc = yaml.safe_load(appset.read_text(encoding="utf-8"))
+    block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+    expect("the appset reads the karpenter_pools annotation",
+           'dfe.hyperi.io/karpenter_pools' in block, block)
+    expect("and lands it on karpenter.pools", "pools: {{ $pools }}" in block, block)
+    expect("only for the karpenter-pools app", 'eq .app "karpenter-pools"' in block, block)
+    # The annotation holds one line of JSON, inlined as YAML flow style.
+    inline = json.dumps({"clickhouse": BASE_POOL}, sort_keys=True, separators=(",", ":"))
+    parsed = yaml.safe_load(f"karpenter:\n  cluster:\n    discoveryTag: t\n  pools: {inline}\n")
+    expect("JSON inlines as a YAML map", parsed["karpenter"]["pools"] == {"clickhouse": BASE_POOL},
+           parsed)
+
+
 def main() -> int:
     with standalone():
         test_no_floor_set_adds_no_requirement()
         test_min_vcpu_renders_a_gt_floor_one_below_the_stated_value()
         test_min_memory_gib_converts_to_mib_and_renders_a_gt_floor()
         test_both_floors_render_together_without_disturbing_family_or_generation()
+        test_a_dedicated_pool_renders_its_taint_and_a_shared_one_renders_none()
+        test_the_appset_carries_the_pools_through_from_the_cluster_secret()
         return summary()
 
 

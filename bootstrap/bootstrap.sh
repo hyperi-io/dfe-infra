@@ -442,6 +442,18 @@ if [[ ! -f "${DFE_CLOUD_VALUES}" ]]; then
 fi
 echo "Cloud overlay: ${DFE_CLOUD_VALUES}"
 
+# The Karpenter NodePools, from the resolver's own one-line JSON artefact.
+# The karpenter-pools chart renders nothing without them, so a cluster with no
+# pools answers a pending workload by leaving it pending. An explicit
+# DFE_KARPENTER_POOLS wins, for a deployment whose resolve ran elsewhere.
+DFE_KARPENTER_POOLS_FILE="${REPO_ROOT}/sizing/${DFE_PROFILE}.karpenter.json"
+if [[ -z "${DFE_KARPENTER_POOLS:-}" && -f "${DFE_KARPENTER_POOLS_FILE}" ]]; then
+  DFE_KARPENTER_POOLS="$(tr -d '\n' < "${DFE_KARPENTER_POOLS_FILE}")"
+  echo "Karpenter pools: ${DFE_KARPENTER_POOLS_FILE}"
+fi
+export DFE_KARPENTER_POOLS="${DFE_KARPENTER_POOLS:-}"
+export DFE_KARPENTER_POOLS_ANNOTATION="${DFE_KARPENTER_POOLS:+dfe.hyperi.io/karpenter_pools: '${DFE_KARPENTER_POOLS}'}"
+
 echo "==> [0a/7] On-prem node-capacity preflight"
 # DFE_CLOUD=local is this script's own token for "we do not create these
 # nodes" (see the header's DFE_CLOUD comment) -- the same substrate

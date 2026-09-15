@@ -928,6 +928,12 @@ KARPENTER_VALUES_FIELDS = {
     "instanceStorePolicy",
     "generationGt",
     "generationIn",
+    # The NoSchedule taint a dedicated pool carries, and the three fields one
+    # taint entry is made of.
+    "taints",
+    "key",
+    "value",
+    "effect",
     # The pool label every workload carries, matching build_tfvars' own
     # node_pools labels convention.
     "dfe.hyperi.io/workload",
@@ -947,7 +953,9 @@ def test_the_values_overlay_names_only_keys_the_charts_declare(tmp_path: Path) -
         stripped = line.strip()
         # A list ITEM (Karpenter's families, capacityTypes, generationIn) has
         # no key of its own -- it belongs to the key the line above it named.
-        if not stripped or stripped.startswith(("##", "- ")):
+        # A list ITEM opener carries no key of its own -- a scalar item is
+        # `- <value>`, and a map item is a bare `-` with its keys below.
+        if not stripped or stripped == "-" or stripped.startswith(("##", "- ")):
             continue
         key = line.split(":", 1)[0].strip()
         # Under karpenter.pools, the key IS the use case (eks-system,
@@ -976,6 +984,49 @@ def test_every_karpenter_pool_carries_every_field_the_chart_guard_requires(tmp_p
     # both -- exactly as templates/_pools.tpl's guard demands.
     for pool_body in re.split(r"^    \S+:$", karpenter_block.split("pools:", 1)[1], flags=re.M)[1:]:
         assert ("generationGt:" in pool_body) != ("generationIn:" in pool_body)
+
+
+def test_the_dedicated_node_groups_are_tainted_and_the_shared_ones_are_not(tmp_path: Path) -> None:
+    """An untainted dedicated group is what let cnpg, dfe-ui and forgejo take the
+    CPU ClickHouse and Kafka were sized for."""
+    _run(_dial(tmp_path), tmp_path)
+    pools = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))["node_pools"]
+    for use_case in resolve_sizing.DEDICATED_USE_CASES:
+        assert pools[use_case]["taints"] == [
+            {"key": resolve_sizing.WORKLOAD_LABEL, "value": use_case, "effect": "NO_SCHEDULE"}
+        ], use_case
+        assert pools[use_case]["labels"] == {resolve_sizing.WORKLOAD_LABEL: use_case}, use_case
+    for use_case, body in pools.items():
+        if use_case not in resolve_sizing.DEDICATED_USE_CASES:
+            assert body["taints"] == [], use_case
+
+
+def test_every_dedicated_karpenter_pool_carries_the_same_taint(tmp_path: Path) -> None:
+    """Karpenter takes NoSchedule where the managed group takes NO_SCHEDULE, so
+    a node the pool adds refuses what the managed group refuses."""
+    _run(_dial(tmp_path), tmp_path)
+    pools = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
+    for use_case in resolve_sizing.DEDICATED_USE_CASES:
+        assert pools[use_case]["taints"] == [
+            {"key": resolve_sizing.WORKLOAD_LABEL, "value": use_case, "effect": "NoSchedule"}
+        ], use_case
+    for use_case, body in pools.items():
+        if use_case not in resolve_sizing.DEDICATED_USE_CASES:
+            assert "taints" not in body, use_case
+
+
+def test_the_karpenter_pools_are_written_where_bootstrap_can_read_them(tmp_path: Path) -> None:
+    """bootstrap.sh ships no YAML parser, and the values overlay only reaches a
+    cluster through a deploy repo -- so the pools are written again as one line
+    of JSON for the cluster-secret annotation."""
+    _run(_dial(tmp_path), tmp_path)
+    body = (tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8")
+    assert body.count("\n") == 1, "the annotation takes one line"
+    pools = json.loads(body)
+    values = (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
+    for name in pools:
+        assert f"    {name}:" in values, name
+    assert "'" not in body, "a single quote would break the annotation's own quoting"
 
 
 def test_the_report_cites_a_source_and_a_confidence_for_every_ratio(tmp_path: Path) -> None:
