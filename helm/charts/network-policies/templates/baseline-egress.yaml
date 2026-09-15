@@ -11,6 +11,10 @@
 #   3. Kubernetes API (TCP 443, 6443) — required by operators (CNPG, Strimzi,
 #      ClickHouse operator) and by service-account auth from application pods.
 #   4. OTel Collector (TCP 4317) in the OTel namespace, for telemetry.
+#   5. EKS Pod Identity agent (TCP 80 on a fixed link-local address) — every
+#      pod resolving an AWS credential calls it directly; see values.yaml
+#      podIdentityAgent for the citation. A namespaceSelector cannot reach it,
+#      because the agent is a host-network DaemonSet, not a namespaced Service.
 #
 # Everything else is denied by default (Kubernetes NetworkPolicy semantics).
 # Add per-service egress policies layered on top for specific cross-namespace
@@ -71,4 +75,14 @@ spec:
       ports:
         - port: {{ $.Values.otelPort }}
           protocol: TCP
+    # 5. EKS Pod Identity agent (host-network DaemonSet, not a namespaced
+    #    Service, so this is an ipBlock rather than a namespaceSelector)
+    {{- if $.Values.podIdentityAgent.enabled }}
+    - to:
+        - ipBlock:
+            cidr: {{ $.Values.podIdentityAgent.address }}/32
+      ports:
+        - port: {{ $.Values.podIdentityAgent.port }}
+          protocol: TCP
+    {{- end }}
 {{- end }}
