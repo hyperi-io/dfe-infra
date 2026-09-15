@@ -171,18 +171,20 @@ assert_has "product" "argocd" "${R}"
 echo ""
 echo "case 6 -- edge RBAC covers the infra routes that take a policy"
 R="$(render_names SecurityPolicy "${OIDC[@]}")"
-for p in dfe-oidc-acme-argocd-admin dfe-oidc-acme-forgejo-admin dfe-oidc-acme-links-admin; do
+# The name carries no provider: there is ONE policy per route, because two
+# SecurityPolicies naming the same HTTPRoute silently leave only the oldest live.
+for p in dfe-oidc-argocd-admin dfe-oidc-forgejo-admin dfe-oidc-links-admin; do
   assert_has "edge-rbac" "${p}" "${R}"
 done
 # Exempt by design: kafbat runs its own OIDC, hyperdx is framed inside dfe-ui.
-for p in dfe-oidc-acme-kafbat-admin dfe-oidc-acme-hyperdx-admin; do
+for p in dfe-oidc-kafbat-admin dfe-oidc-hyperdx-admin; do
   assert_absent "edge-rbac" "${p}" "${R}"
 done
 
 echo ""
 echo "case 7 -- kill switch also withdraws the infra edge policies"
 R="$(render_names SecurityPolicy "${OIDC[@]}" --set exposure.infraUisExternal=false)"
-for p in dfe-oidc-acme-argocd-admin dfe-oidc-acme-forgejo-admin dfe-oidc-acme-links-admin; do
+for p in dfe-oidc-argocd-admin dfe-oidc-forgejo-admin dfe-oidc-links-admin; do
   assert_absent "killswitch-policy" "${p}" "${R}"
 done
 
@@ -341,7 +343,8 @@ echo "case 20 -- the never-public paths stay off the route under every combinati
 for flags in "" "--set ui.engine_api.cli_families_public=true" \
              "--set ui.engine_api.scim_public=true" \
              "--set ui.engine_api.cli_families_public=true --set ui.engine_api.scim_public=true"; do
-  # shellcheck disable=SC2086 -- the flags are this script's own, deliberately split
+  # The flags are this script's own and are deliberately word-split.
+  # shellcheck disable=SC2086
   P="$(route_paths dfe-engine-public ${flags})"
   for p in "${NEVER_PUBLIC[@]}"; do
     assert_absent "engine-never${flags:+ (${flags})}" "${p}" "${P}"

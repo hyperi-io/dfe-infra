@@ -29,6 +29,10 @@ spec:
       automountServiceAccountToken: false
       {{- end }}
       {{- include "dfe-common.imagePullSecrets" . | nindent 6 }}
+      # Off for the same reason as every other DFE pod: a Service whose name
+      # uppercases onto a DFE_* setting would shadow it through the injected link
+      # vars, and DFE resolves by DNS and reads none of them.
+      enableServiceLinks: false
       {{- include "dfe-common.nodeSelector" . | nindent 6 }}
       {{- include "dfe-common.tolerations" . | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.toolbox.pod.terminationGracePeriodSeconds }}

@@ -53,7 +53,10 @@ import yaml
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHARTS = REPO_ROOT / "helm" / "charts"
+# Both chart roots: the app charts, and the edge module's two. A chart that moves
+# between them must stay under these invariants rather than dropping out of the
+# sweep, which is the hole the coverage check below exists to catch.
+CHART_ROOTS = (REPO_ROOT / "helm" / "charts", REPO_ROOT / "helm" / "edge")
 VALUES = REPO_ROOT / "argocd" / "values"
 
 BASE_CASCADE = [VALUES / "common.yaml", VALUES / "local.yaml"]
@@ -90,7 +93,8 @@ def rendered() -> tuple[tuple[tuple[str, tuple[dict, ...]], ...], tuple[str, ...
     """Every chart rendered once: (chart, docs) pairs, plus the names that would not."""
     covered: list[tuple[str, tuple[dict, ...]]] = []
     skipped: list[str] = []
-    for chart in sorted(p for p in CHARTS.iterdir() if (p / "Chart.yaml").exists()):
+    charts = [p for root in CHART_ROOTS for p in root.iterdir() if (p / "Chart.yaml").exists()]
+    for chart in sorted(charts, key=lambda p: p.name):
         docs = render(chart)
         if docs is None:
             skipped.append(chart.name)
