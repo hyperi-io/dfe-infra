@@ -451,9 +451,11 @@ _APP_CHARTS = [
     "dfe-fetcher",
     "dfe-transform-vrl",
     "dfe-transform-vector",
-    "dfe-transform-wasm",
     "dfe-transform-elastic",
-    "dfe-transform-splack",
+    # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
+    # uncomment when they ship and their versions.yaml pins come back.
+    # "dfe-transform-wasm",
+    # "dfe-transform-splack",
     # The one app whose image is not published under the dfe- prefix; the chart
     # spells its repository out, so only the tag and digest halves are checked.
     "culvert",
@@ -701,6 +703,16 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "helm/charts/network-policies/Chart.yaml",
         "appVersion",
         "policy-only chart with no upstream to track",
+    ),
+    (
+        "helm/charts/dfe-transform-wasm/Chart.yaml",
+        "appVersion",
+        "placeholder chart for an app that is coming; its versions.yaml pin is commented out, so there is no SSoT key to check it against",
+    ),
+    (
+        "helm/charts/dfe-transform-splack/Chart.yaml",
+        "appVersion",
+        "placeholder chart for an app that is coming; its versions.yaml pin is commented out, so there is no SSoT key to check it against",
     ),
 )
 

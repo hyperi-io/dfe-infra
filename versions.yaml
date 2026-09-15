@@ -1910,9 +1910,11 @@ stacks:
       dfe-fetcher: "v1.4.22"        # rebuilt on scalo-rs 2.12.2 (the same memory guard).
       dfe-transform-vrl: "v1.1.23"   # rebuilt on scalo-rs 2.12.2 (the memory guard above).
       dfe-transform-vector: "v1.0.39"  # direct transport through the supervisor bridge, copy-paste templates; rebuilt on scalo-rs 2.12.2 (the memory guard above).
-      dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (dfe-transform-elastic#17); no digest below, so the renderer excludes it
-      dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
+      # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
+      # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
+      # dfe-transform-wasm: "2.2.0"
+      # dfe-transform-splack: "2.2.0"
       # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
       # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
       # repo, so it takes the 7-day supply-chain cooldown like a third party

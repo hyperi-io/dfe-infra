@@ -379,7 +379,8 @@ nodes:
     # Its versions.yaml pin is a placeholder, not a release tag, and it
     # carries no digest, so the renderer excludes it from every manifest.
 
-  # dfe-transform-wasm and dfe-transform-splack are NOT members -- see
+  # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
+  # uncomment their versions.yaml pins and add them here when they ship. See
   # non_members below, which is where the reason is recorded machine-readably.
 
   # --- ui ------------------------------------------------------------------
@@ -581,9 +582,9 @@ nodes:
 # ---------------------------------------------------------------------------
 non_members:
 
-  dfe-transform-wasm: "No release tag, so it fails the release-authority test above. Its chart and placeholder app pin predate that test; it becomes a node when it first tags."
+  dfe-transform-wasm: "Coming: alpha, unpublished, and no release tag, so it fails the release-authority test above. Its versions.yaml pin is commented out and its chart stays as a placeholder; it becomes a node when it first tags."
 
-  dfe-transform-splack: "No release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
+  dfe-transform-splack: "Coming: alpha, unpublished, and no release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
 
 # ---------------------------------------------------------------------------
 # EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the

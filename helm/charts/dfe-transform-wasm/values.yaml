@@ -1,3 +1,4 @@
+# dfe-transform-wasm is coming: alpha, unpublished, so nothing generates this chart until the app ships.
 project: dfe
 component: transform-wasm
 env: local
