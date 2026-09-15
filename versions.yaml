@@ -2106,9 +2106,11 @@ stacks:
       dfe-fetcher: "v1.4.24"        # #104: every source runs on one generic framework (the rest, db and file shapes in apps.yaml); #108: the PGO profile names the gcp service it declares; #109: the generated chart restored (its KEDA TriggerAuthentication) behind a drift guard. Rebuilt on scalo-rs 2.12.2.
       dfe-transform-vrl: "v1.1.23"   # rebuilt on scalo-rs 2.12.2 (the memory guard above).
       dfe-transform-vector: "v1.0.39"  # direct transport through the supervisor bridge, copy-paste templates; rebuilt on scalo-rs 2.12.2 (the memory guard above).
-      dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "v1.1.2" # first GHCR image (multi-arch, dfe-transform-elastic#17): Elastic ingest pipelines compiled in, parity 99.86 % over the tested sources, idles until a source names it (#52), seeded idle on every tier (#320). Bus transport only until #19; the sources.yaml catalogue asset follows #18.
-      dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
+      # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
+      # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
+      # dfe-transform-wasm: "2.2.0"
+      # dfe-transform-splack: "2.2.0"
       # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
       # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
       # repo, so it takes the 7-day supply-chain cooldown like a third party
