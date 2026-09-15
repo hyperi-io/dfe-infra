@@ -518,8 +518,11 @@ def search_results(frame, name: str) -> tuple[bool, str]:
     """Pick *name* in the frame's source picker and read the results line."""
     picker = frame.get_by_placeholder("Data Source")
     picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    # The frame opens on a source of its own choosing; when that is already this
-    # one the picker holds its name and the dropdown does not list it again.
+    # The frame fills its source list after the page paints, so an empty picker
+    # is one still loading, and a picker already on this source has nothing to pick.
+    until = time.monotonic() + STEP_TIMEOUT_MS / 1000
+    while not picker.input_value().strip() and time.monotonic() < until:
+        time.sleep(1)
     if picker.input_value().strip() != name:
         picker.click(timeout=STEP_TIMEOUT_MS)
         picker.fill(name)
