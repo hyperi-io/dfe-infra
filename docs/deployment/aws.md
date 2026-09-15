@@ -41,6 +41,15 @@ A few things hold for every deployment:
   Karpenter, the AWS Load Balancer Controller, external-dns, cert-manager --
   gets it through EKS Pod Identity, associated to its own service account by
   the cluster module. Nothing here carries a static key.
+- external-dns publishes only what the gateway chart marks. Its sources include
+  Gateway API routes, and the Gateway admits routes from every namespace, so
+  without a filter any namespace-scoped actor could attach an HTTPRoute to the
+  wildcard listener and have a name published under your domain with a public
+  certificate behind it. The addon carries
+  `annotationFilter: dfe.hyperi.io/publish-dns=true`, and `helm/edge/gateway`
+  writes that annotation on every route it renders and on the managed proxy's
+  own Service. A route from a deploy-repo overlay is published only if it
+  carries the same annotation.
 - external-dns runs `policy: sync` with a per-deployment `txtOwnerId`
   (`argocd/appsets/layer1-addons.yaml`), so a deleted Service or Ingress has
   its record actively removed -- the chart's own default, `upsert-only`,

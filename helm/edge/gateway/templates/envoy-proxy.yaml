@@ -51,9 +51,13 @@ spec:
           {{- toYaml . | nindent 10 }}
           {{- end }}
           {{- /* Written only once a public zone is named, so a deployment that
-                 manages its own DNS by hand is untouched. */}}
+                 manages its own DNS by hand is untouched. The marker beside it
+                 is what external-dns's annotation filter matches -- that filter
+                 covers Services as well as routes, so the hostname alone would
+                 no longer be read. */}}
           {{- with $hostnames }}
           external-dns.alpha.kubernetes.io/hostname: {{ join "," . | quote }}
+          {{- include "envoy-gateway-config.dnsMarker" $ | nindent 10 }}
           {{- end }}
         {{- end }}
         {{- $isLB := eq ($svc.type | default "LoadBalancer") "LoadBalancer" }}

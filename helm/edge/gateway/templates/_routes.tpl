@@ -19,7 +19,20 @@ routeNs      -- namespace of the route and of any SecurityPolicy targeting it.
 infraPolicyRoutes -- JSON array of the keys that render AND take the infra edge
   policy, so the SecurityPolicy and the ExternalSecret feeding it cannot
   disagree about which routes are covered. Read it with fromJsonArray.
+dnsMarker    -- the annotation external-dns is told to filter on. Takes no
+  argument, because it is a constant this chart and layer1-addons.yaml share.
 */}}
+
+{{/*
+The Gateway admits routes from EVERY namespace, so without this marker any
+namespace-scoped actor could attach an HTTPRoute to the wildcard listener and
+have a name published under the deployment's own domain. external-dns is given
+`annotationFilter: dfe.hyperi.io/publish-dns=true`, which it applies to the
+routes and Services it reads, so only what this chart renders is published.
+*/}}
+{{- define "envoy-gateway-config.dnsMarker" -}}
+dfe.hyperi.io/publish-dns: "true"
+{{- end -}}
 
 {{- define "envoy-gateway-config.cruiseControlUi" -}}
 {{- $k := .ctx.Values.kafka -}}

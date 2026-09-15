@@ -13,6 +13,8 @@ metadata:
   namespace: {{ .Values.gateway.namespace }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    {{- include "envoy-gateway-config.dnsMarker" . | nindent 4 }}
 spec:
   parentRefs:
     - group: gateway.networking.k8s.io

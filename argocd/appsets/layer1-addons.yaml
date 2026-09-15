@@ -222,6 +222,15 @@ spec:
               - service
               - ingress
               - gateway-httproute
+            # The Gateway admits routes from EVERY namespace, so with the route
+            # source on, any namespace-scoped actor could otherwise attach an
+            # HTTPRoute to the wildcard listener and have a resolvable, publicly
+            # certificated name published under the deployment's own domain.
+            # helm/edge/gateway marks every route it renders with this
+            # annotation, and its own front-door Service alongside them --
+            # external-dns applies the filter to Services as well as routes, so
+            # an unmarked object of either kind is read by nothing.
+            annotationFilter: dfe.hyperi.io/publish-dns=true
             {{- end }}
             {{- if eq .chart "aws-load-balancer-controller" }}
             # The EKS cluster's own name, not the name Argo registered the

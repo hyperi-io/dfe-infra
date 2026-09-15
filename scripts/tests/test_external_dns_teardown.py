@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_external_dns_teardown.py
-#  Purpose:      Prove external-dns is told to delete what it published, and
-#                that the private zone is emptied before `tofu destroy`
-#                reaches it even when the cluster running external-dns is
-#                already gone.
+#  Purpose:      Prove external-dns publishes only what this repo's own charts
+#                mark, is told to delete what it published, and that the private
+#                zone is emptied before `tofu destroy` reaches it even when the
+#                cluster running external-dns is already gone.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -28,14 +28,40 @@ or the command it runs. These checks read the two files as text instead.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 APPSETS = REPO_ROOT / "argocd" / "appsets"
 DNS_TF = REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "dns.tf"
+GATEWAY = chart_dir("envoy-gateway-config")
+VALUES = REPO_ROOT / "argocd" / "values"
+
+# The one marker, stated here so a drift between the chart and the appset is a
+# failure rather than a deployment that publishes nothing.
+MARKER_KEY = "dfe.hyperi.io/publish-dns"
+MARKER_VALUE = "true"
+
+
+def render_gateway(*args: str) -> list[dict]:
+    cmd = [
+        "helm", "template", "envoy-gateway-config", str(GATEWAY),
+        "--namespace", "envoy-gateway-system",
+        "-f", str(VALUES / "common.yaml"),
+        "--set", "domain=dfe.example.com",
+        "--set", "appNamespace=dfe-local",
+        *args,
+    ]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if out.returncode != 0:
+        raise SystemExit(f"helm template failed for the gateway {args}:\n{out.stderr}")
+    return [doc for doc in yaml.safe_load_all(out.stdout) if doc]
 
 
 def external_dns_block(addons_text: str) -> str:
@@ -69,6 +95,65 @@ def test_external_dns_runs_sync_with_a_deployment_unique_owner_id() -> None:
         # missingkey=error the day a second cloud declares a provider.
         expect("and it is not the AWS-only cluster_name annotation",
                "cluster_name" not in owner.group(1), owner.group(1))
+
+
+def test_external_dns_publishes_only_what_our_charts_mark() -> None:
+    """The Gateway admits routes from every namespace, so with the route source
+    on and no filter, a namespace-scoped actor could publish a resolvable,
+    publicly certificated name under the deployment's own domain."""
+    block = external_dns_block((APPSETS / "layer1-addons.yaml").read_text(encoding="utf-8"))
+
+    expect("the route source is on, which is what makes the filter necessary",
+           re.search(r"^\s*-\s*gateway-httproute\s*$", block, re.MULTILINE) is not None, block)
+
+    selector = re.search(r"^\s*annotationFilter:\s*(\S+)\s*$", block, re.MULTILINE)
+    expect("external-dns carries an annotation filter", selector is not None, block)
+    if selector is not None:
+        expect("and it names the marker this repo's own charts write",
+               selector.group(1) == f"{MARKER_KEY}={MARKER_VALUE}", selector.group(1))
+
+
+def test_every_rendered_httproute_carries_the_marker() -> None:
+    """A route the chart renders without the marker is a hostname external-dns
+    never publishes, which reports healthy and resolves nowhere."""
+    docs = render_gateway()
+    routes = [doc for doc in docs if doc.get("kind") == "HTTPRoute"]
+    expect("the chart renders routes to check at all", len(routes) > 0, f"got {len(routes)}")
+    unmarked = [
+        doc["metadata"]["name"]
+        for doc in routes
+        if (doc["metadata"].get("annotations") or {}).get(MARKER_KEY) != MARKER_VALUE
+    ]
+    expect("every rendered HTTPRoute carries the marker", not unmarked, f"unmarked: {unmarked}")
+
+
+def test_the_front_door_service_is_marked_alongside_its_hostnames() -> None:
+    """The filter covers Services as well as routes, so the hostname annotation
+    on the managed proxy's Service stops being read without the marker beside
+    it -- and that annotation is what publishes every public name."""
+    docs = render_gateway(
+        "-f", str(VALUES / "aws.yaml"),
+        "-f", str(VALUES / "edge-aws.yaml"),
+        "--set", "ui.public_domain=example.com",
+        "--set", "ui.public.dfe_ui=true",
+    )
+    proxies = [doc for doc in docs if doc.get("kind") == "EnvoyProxy"]
+    expect("the chart renders one EnvoyProxy", len(proxies) == 1, f"got {len(proxies)}")
+    service = proxies[0]["spec"]["provider"]["kubernetes"]["envoyService"]
+    annotations = service.get("annotations") or {}
+    expect("the Service carries the hostnames external-dns publishes",
+           "external-dns.alpha.kubernetes.io/hostname" in annotations, f"got {sorted(annotations)}")
+    expect("and the marker beside them",
+           annotations.get(MARKER_KEY) == MARKER_VALUE, f"got {sorted(annotations)}")
+
+    routes = [doc for doc in docs if doc.get("kind") == "HTTPRoute"]
+    unmarked = [
+        doc["metadata"]["name"]
+        for doc in routes
+        if (doc["metadata"].get("annotations") or {}).get(MARKER_KEY) != MARKER_VALUE
+    ]
+    expect("and the public route rendered on this cascade is marked too",
+           not unmarked, f"unmarked: {unmarked}")
 
 
 def test_private_zone_teardown_runs_before_the_zone_is_destroyed() -> None:
@@ -115,6 +200,9 @@ def test_the_cluster_is_destroyed_before_the_zone_it_publishes_into_is_emptied()
 def main() -> int:
     with standalone():
         test_external_dns_runs_sync_with_a_deployment_unique_owner_id()
+        test_external_dns_publishes_only_what_our_charts_mark()
+        test_every_rendered_httproute_carries_the_marker()
+        test_the_front_door_service_is_marked_alongside_its_hostnames()
         test_private_zone_teardown_runs_before_the_zone_is_destroyed()
         test_the_cluster_is_destroyed_before_the_zone_it_publishes_into_is_emptied()
         return summary()
