@@ -2,17 +2,67 @@
 # Stub required so Layer 2 ApplicationSet valueFiles resolution succeeds on EKS targets.
 global:
   cloud: aws
-  # registry: "123456789.dkr.ecr.us-east-1.amazonaws.com/dfe"  # Set per AWS account
-  registry: "ghcr.io/hyperi-io"  # HyperI-hosted images (shared until per-customer ECR)
+  # registry is UNSET here, matching gcp.yaml and azure.yaml, because the dial's
+  # own `registry:` field is the one source. It reaches the charts as the
+  # dfe.hyperi.io/registry cluster-secret annotation, which every layer 2
+  # appset passes back as the global.registry parameter -- NOT as the
+  # `dfe-ops --registry` flag, which stops at the version-set render. A literal
+  # here would drift whenever a customer dial names a different registry.
 
 storageClass: gp3
 
-envoyGateway:
-  service:
-    type: LoadBalancer
-    annotations:
-      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+# The private-registry pull secret bootstrap.sh creates in every DFE namespace
+# from DFE_PULL_SECRET_SERVER/_USER/_TOKEN. Named here so the common library's
+# imagePullSecrets helper renders it onto every pod that is not marked
+# image.public; a chart whose image is public suppresses it by itself.
+imagePullSecrets:
+  - ghcr-pull-secret
+
+# THE EDGE MODULE'S OWN AWS KEYS LIVE IN argocd/values/edge-aws.yaml, layered
+# after this file by argocd/appsets/layer2-edge.yaml: the gateway Service and
+# its controller annotations, the infra-class kill switch, the tunnel's Service
+# type and traffic policy, and culvert's PKI mode. That file carries the AWS
+# tier table in one place; what stays here is what a chart OUTSIDE the edge
+# module reads as well.
 
 # The engine's runtime store is a PVC against the cluster's default
 # StorageClass (dfe-engine chart config.persistence) -- no per-cloud
 # storage seam needed.
+
+# ClickHouse's object store is the bucket the cluster module creates
+# (kubernetes-cluster/aws/object-store.tf), reached through EKS Pod Identity:
+# no static key, so the chart's ExternalSecret and credential env vars stay
+# off. The endpoint itself arrives per deployment from the cluster secret.
+clickhouse:
+  objectStore:
+    usePodIdentity: true
+
+# THE RECEIVER'S FRONT DOOR. dfe-receiver is not an edge chart, so its own
+# exposure.mode stays here rather than moving to edge-aws.yaml; the two edge
+# readers of this same top-level key (culvert's serviceType and
+# externalTrafficPolicy, the gateway's infraUisExternal) live there instead.
+#
+# DFE pushes terabytes a day through the receiver, and every AWS front door
+# bills by volume -- an NLB by the LCU-hour, a Classic ELB, CloudFront and
+# Global Accelerator by the GB. docs/deployment/aws.md#receiver-ingress sizes
+# that door in cost buckets, against the scale defined there.
+# So the default is `vpn`: ClusterIP only, no LoadBalancer, reached over
+# culvert. A public or internal NLB is the deployer's explicit, costed opt-in,
+# set as exposure.mode in the deploy repo's own values overlay -- the dial's
+# `edge.ingest.receiver:` block documents the shape but no renderer applies it.
+exposure:
+  mode: vpn                       # dfe-receiver: ClusterIP only, tunnel-reached
+
+# Edge OIDC on by default: a deployer who flips edge-aws.yaml's
+# exposure.infraUisExternal back on for one admin route still needs a real
+# oidc.providers entry (this only sets the switch, not a provider) before that
+# route's edgePolicy has anything to authenticate against -- and the gateway's
+# render guard refuses the internet-facing + kill-switch-on combination unless
+# either this is true or ui.allowed_cidrs is set.
+#
+# IT STAYS HERE rather than moving to edge-aws.yaml because two charts outside
+# the edge module read the same switch: kafbat degrades OAUTH2 to its
+# break-glass LOGIN_FORM without it, and dfe-engine stops rendering each
+# provider's secret env vars. Moving it would change what both of them deploy.
+oidc:
+  enabled: true

@@ -65,10 +65,580 @@ target:
     namespace: dfe
   # provision:               # cloud-provisioned (tofu runs). Set steps.provision: true.
   #   cloud: aws             # aws | gcp | azure | rancher
+  #   account: "000000000000"  # the root asserts the caller's identity against it before creating anything
   #   region: ap-southeast-2
-  #   cidr: 10.42.0.0/16
-  #   # nodePools are declared in terraform/environments/<cloud>/*.tfvars, not
-  #   # here -- a list does not belong in the wizard-populatable dial.
+  #   cidr: 10.42.0.0/16       # must not overlap what you peer with, nor 172.31.0.0/16
+
+## ---------------------------------------------------------------------------
+## CLOUD PROVISIONING -- read only when target.provision names a cloud.
+## `python3 scripts/render_dial.py --tofu` turns this section plus
+## target.provision into terraform/environments/<cloud>/dial.auto.tfvars.json,
+## which is the whole of what the tofu root knows: the roots receive values and
+## compute none. Ignored entirely on the target.existing path.
+## ---------------------------------------------------------------------------
+
+## Control-plane minor version. dfe-infra#285 adds a `platform:` stage to
+## versions.yaml and the renderer prefers it once present; this is the value
+## until it lands.
+kubernetes_version: "1.36"
+
+## Egress. per-az puts a NAT gateway in every zone, so a zone failure and the
+## cross-zone data charge both stay contained; single puts one in the first
+## zone and is the cheaper tyre-kick default.
+network:
+  nat: single                # per-az | single
+  az_count: 3                # 2-6; empty takes 3, enough for a quorum without a fourth zone's cross-zone charge
+
+## The Kubernetes API endpoint. The private one is always on; public adds the
+## public one for operators outside the VPC, and the root refuses 0.0.0.0/0.
+endpoint:
+  public: "false"            # true | false
+  allowed_cidrs: ""          # comma-separated; must be set when public is true
+
+## DNS. private_zone resolves inside the VPC and carries everything internal;
+## public_zone is the delegated zone the exposed UIs answer on, empty for none.
+dns:
+  private_zone: dfe.internal
+  public_zone: ""
+
+## THE EDGE MODULE -- every door this deployment opens, in one block. The module
+## is the two charts under helm/edge: the public gateway and the fleet tunnel.
+## It REPLACES the old top-level `ui:` and `ingest:` blocks, which render_dial.py
+## still reads for one release and names on the way through.
+##
+## TIERS, per flavour (argocd/values/edge-<flavour>.yaml carries the table):
+## tier 1 is on by default and adds nothing beyond the cluster's own compute,
+## tier 2 is a costed opt-in, tier 3 is absent by design and has no key at all.
+## Cost is a T-shirt bucket against the cluster's compute plus a named pricing
+## model, never a rate (docs/deployment/aws.md#how-costs-are-described).
+##
+## PASTE-INTO-A-VALUES-FILE, sub-block by sub-block. `product.rate_limit`,
+## `product.waf` and `product.tls` are the gateway chart's `ui.*` values
+## verbatim; the body of `ingest.receiver` is the dfe-receiver chart's
+## `exposure:` values verbatim. Everything else is the DIAL's own spelling and
+## needs translating -- `product.public` is the chart's `ui.public.dfe_ui`,
+## `admin_uis.public.*` is the rest of its `ui.public`, `admin_uis.external` is
+## `exposure.infraUisExternal`, and `admin_uis.oidc.admin_groups` is
+## `oidc.adminGroups`.
+##
+## Every boolean below is unquoted, unlike the rest of this dial
+## (render_dial.py's own convention writes true/false as quoted strings, see
+## _flag()), because a value pasted verbatim into a real Helm values file has to
+## already be the type that file expects: an unquoted true/false is a bool and a
+## quoted "false" is a non-empty string that is always truthy, and the chart
+## refuses a quoted one at render rather than guessing what you meant.
+##
+## NOTHING HERE IS APPLIED FOR YOU except `enabled`. render_dial.py validates
+## the block, reports it, and carries `enabled` to DFE_EDGE_ENABLED.
+edge:
+  ## `false` leaves argocd/appsets/layer2-edge.yaml generating nothing, so the
+  ## deployment gets no public gateway and no tunnel and every app stays on a
+  ## ClusterIP. ON is the default, because a deployment with no door is
+  ## reachable from nowhere outside the cluster. bootstrap.sh writes this onto
+  ## the cluster secret as both a label and an annotation -- an ApplicationSet
+  ## cluster selector matches labels only.
+  ## DESTROY BEFORE DISABLING: a cloud load balancer outlives the Application
+  ## that asked for it, so turning the module off first orphans it.
+  enabled: true
+  ## Which tier table the values below are written for. The appset derives the
+  ## real one from the cluster secret's own cloud fact, so this records intent
+  ## and selects nothing; `local` and `rancher` are both the `onprem` flavour.
+  flavour: aws             # aws | gcp | azure | onprem
+
+  ## GROUP (a) -- dfe-ui, the product surface. Its users sit outside the VPC,
+  ## which is why it is the one surface public by default on a cloud deploy.
+  ## Nothing here does anything while `domain` is empty.
+  product:
+    public: true           # tier 1
+    ## The delegated public zone the product answers on (the chart's
+    ## ui.public_domain, this deployment's dns.public_zone). Empty publishes
+    ## nothing at all.
+    domain: ""
+    ## Public edge TLS. min_version is a STRING -- unquoted 1.2 parses as a
+    ## float and is rejected. hsts stops a browser retrying the name over
+    ## plaintext. Tier 1, and the gateway chart's `ui.tls` verbatim.
+    tls:
+      min_version: "1.2"     # 1.2 | 1.3
+      hsts: true
+    ## Sized for a handful of analysts and admins, so a credential-stuffing run
+    ## hits a wall before it hits the login. local counts per route per proxy
+    ## replica, not per attacker; per-attacker counting needs Redis and an Envoy
+    ## Gateway install change, so it is refused. Tier 1, and the chart's
+    ## `ui.rate_limit` verbatim.
+    rate_limit:
+      enabled: true
+      requests: "300"
+      unit: Minute           # Second | Minute | Hour | Day | Month | Year
+      scope: local           # local only
+    ## Who may reach a public surface; empty = any address. Enforced at Envoy
+    ## AND at the cloud load balancer, so one misconfiguration is not the whole
+    ## wall. The load-balancer half fences the entire front door, ingest
+    ## included. Tier 1 once set.
+    allowed_cidrs: ""
+    ## The proxy ranges Envoy may believe about the client address -- the load
+    ## balancer's subnets, plus any CDN in front. Required whenever
+    ## allowed_cidrs is set: without it the address comes from a header the
+    ## caller writes.
+    trusted_proxy_cidrs: ""
+    ## Every public route already sits behind a login with deny-by-default
+    ## authorisation, so managed rules would guard code no unauthenticated
+    ## caller reaches. Any other mode terminates TLS above Envoy and moves the
+    ## public certificate to the cloud's own store, which no chart here renders,
+    ## so `none` is the only value today. Tier 2 once one exists: managed rules
+    ## bill per request, bucket S. The chart's `ui.waf` verbatim.
+    waf:
+      mode: none             # none only
+      plan: ""               # reserved
+      managed_rules: ""      # reserved
+
+  ## GROUP (b) -- the engine's API, which dfe-ui consumes from the same origin.
+  ## The browser calls it at window.location.origin, so it answers on the
+  ## product's own hostname, listener and certificate -- and only on the path
+  ## families the browser uses. Those families are CHART data
+  ## (routes.dfeEngine in helm/edge/gateway/values.yaml), because they move every
+  ## time the engine adds a router; the two switches below are all the dial owns.
+  engine_api:
+    ## Tier 1. false renders no public engine route, and so does
+    ## `product.public: false`, because the hostname belongs to dfe-ui.
+    with_product: true
+    ## /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
+    ## origin (the chart's routes.dfeEngine.pathPrefix).
+    path_prefix: /api/v1
+    ## Adds the path families the `dfe` CLI uses, and /openapi.json with them --
+    ## the CLI is generated from the live spec. Tier 2 by EXPOSURE, no spend:
+    ## nothing new is created, a hostname you already publish answers more paths.
+    cli_families_public: false
+    ## Adds /api/v1/scim/v2, for an IdP that provisions from outside the cluster.
+    ## An in-cluster IdP reaches the engine on its Service and needs none of it.
+    ## Tier 2 by exposure, no spend.
+    scim_public: false
+
+  ## GROUP (c) -- the ops surfaces. Every one of them is opt-in, one at a time.
+  admin_uis:
+    ## THE CLASS KILL SWITCH (the chart's exposure.infraUisExternal). `false`
+    ## takes every infra-class route off the edge in one flip and BEATS a
+    ## per-UI flag below, so a lock-down cannot be undone one route at a time.
+    ## Tier 1, and OFF on a cloud flavour because the gateway Service there is
+    ## internet-facing.
+    external: false
+    ## Which admin UIs answer on a public hostname, once the kill switch is on.
+    ## cruise_control has no route yet -- it arrives with the rebalancer UI, and
+    ## turning it on before then fails the render rather than silently doing
+    ## nothing.
+    public:
+      kafbat: false
+      cruise_control: false
+      hyperdx: false
+      argocd: false
+      links: false
+      forgejo: false
+    ## Edge OIDC, tier 1. `enabled` is the switch alone; `providers` stays empty
+    ## here because a provider is a list of maps this dial cannot express -- put
+    ## the real entries in the deploy repo's own overlay under `oidc.providers`,
+    ## and with none the chart renders NO SecurityPolicy at all. admin_groups is
+    ## the chart's `oidc.adminGroups`.
+    oidc:
+      enabled: true
+      providers: []
+      admin_groups: [dfe-admins, dfe-infra]
+
+  ## GROUP (d) -- the data-plane doors. DFE pushes terabytes a day through the
+  ## receiver, and every cloud front door bills by volume -- an NLB by the
+  ## LCU-hour, a Classic ELB, CloudFront and Global Accelerator by the GB.
+  ## docs/deployment/aws.md#receiver-ingress sizes that door in cost buckets,
+  ## against the scale defined there.
+  ingest:
+    ## The receiver carries NO public front door by default: it stays private in
+    ## the VPC, and there are three ways to reach it --
+    ##   1. the tunnel below, dialled through an address the deployer brings.
+    ##   2. the deployer's own peering, VPN or Direct Connect, straight to the
+    ##      receiver's node port or ClusterIP.
+    ##   3. a public or internal load balancer, the explicit costed opt-in
+    ##      -- `mode: public` plus `loadBalancerSourceRanges` set, never empty.
+    ## The body of this sub-block is the dfe-receiver chart's `exposure:` values
+    ## verbatim -- paste it under `exposure:`, never under `receiver:`, which no
+    ## chart reads. The value that decides the door is `exposure.mode` in the
+    ## deploy repo's own overlay.
+    receiver:
+      mode: vpn              # public | internal | vpn -- vpn is the safe cloud default
+      ## Tier 2: a load balancer billed per GB processed, bucket L against
+      ## terabytes a day.
+      public:
+        serviceType: LoadBalancer
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        annotations: {}
+        ## Empty is not "unset" -- it is 0.0.0.0/0, the whole internet. A
+        ## deployer opting into `mode: public` sets this, always.
+        loadBalancerSourceRanges: []
+      vpn:
+        ## Selector label of the tunnel pods -- dfe-common.selectorLabels on the
+        ## culvert chart. Matches that chart's default project/component name;
+        ## change only alongside a renamed culvert release.
+        ## The rule this feeds carries a podSelector and no namespaceSelector, so
+        ## culvert has to run in the receiver's OWN namespace -- a tunnel installed
+        ## beside it in another namespace is dropped with everything Ready.
+        podLabel: dfe-culvert
+      networkPolicy:
+        enabled: true
+    ## THE FLEET TUNNEL (helm/edge/culvert). The module OFFERS it; a deployment
+    ## turns it on, which is why this is off by default. Turning it on is the
+    ## engine writing values/culvert-<instance>-values.yaml into the deploy repo
+    ## (docs/deployment/edge-vpn.md), not a flag this renderer applies.
+    tunnel:
+      enabled: false
+      ## NodePort on a cloud flavour, because a cloud load balancer bills the
+      ## tunnel's own bytes by the GB and a NodePort carries no per-byte line.
+      ## On-prem it is a real LoadBalancer, addressed by MetalLB.
+      serviceType: NodePort    # LoadBalancer | NodePort | ClusterIP
+      ## Cluster, not the chart's Local default: with Local a NodePort answers
+      ## only on the node hosting the one tunnel pod. The cost is the client's
+      ## real source IP, which Cluster SNATs to a node.
+      externalTrafficPolicy: Cluster   # Cluster | Local
+      ## external on a cloud flavour: local mints the CA inside the pod, so a
+      ## restart without a durable volume invalidates every client config
+      ## already issued, and only external carries a tls-crypt-v2 key and a CRL
+      ## that survives a rebuild. The Secret itself is named in the instance
+      ## values file, and the chart refuses to render without one.
+      pki_mode: external       # local | external
+      ## Does the chart expose the OpenVPN listener beside WireGuard? Follows
+      ## the culvert chart's own listeners list, which exposes both; false
+      ## closes 1194 at the security group and in the forwarder's DNAT alike.
+      openvpn: true
+      ## The tunnel's allow-list. Empty is not "unset" -- it is 0.0.0.0/0, and
+      ## an edge fleet dialling in from anywhere is the normal case. On a
+      ## NodePort flavour it lands on the forwarder's security group, because
+      ## Kubernetes filters on this field for a LoadBalancer only.
+      loadBalancerSourceRanges: ""
+      ## The nodePort helm/edge/culvert/values.yaml pins for each exposed
+      ## listener. Pinned rather than allocated, because whatever stands in
+      ## front of a NodePort has to be told the number before the Service
+      ## exists -- change these only alongside that file.
+      node_ports:
+        wireguard: 31820
+        openvpn: 31194
+      ## How the tunnel gets an address clients can dial. `byo` is an address
+      ## the deployer already has in front of it. `forwarder` is tier 2 -- one
+      ## small instance holding one static address, both billed hourly, bucket
+      ## XS -- built by terraform/modules/edge/aws.
+      address:
+        mode: byo              # byo | forwarder
+        ## Sized by BANDWIDTH: the forwarder moves every tunnel byte and does
+        ## nothing else, and within a burstable family the baseline network
+        ## bandwidth rises with the size. This is the shape
+        ## shapes/compute-shapes.yaml already names for a small always-on AWS
+        ## box (use case `toolbox`), and the family must be Graviton to match
+        ## the arm64 AMI the module resolves.
+        instance_type: t4g.small
+        ## The availability zone the forwarder pins to -- a hop from it to a
+        ## node in another zone crosses a boundary billed per GB, so the zone
+        ## is carried onto the cluster secret and becomes culvert's own
+        ## nodeSelector. Empty takes the network's first zone, and the public
+        ## subnet in that zone is where the instance lands.
+        zone: ""
+        ## `forwarder` is built end to end -- the instance receives on its
+        ## Elastic IP and the nodePort it DNATs to is admitted at the node from
+        ## its own security group -- and no live cluster has proven the DNAT
+        ## path or the zone placement yet, which is why `byo` is the default
+        ## here: docs/deployment/edge-vpn.md#the-tunnels-address-on-aws.
+      ## The reach-back an operator uses to reach one appliance through the
+      ## tunnel. Tier 1 on a cloud flavour and opt-out; absent on-prem, where the
+      ## operator is already on the LAN.
+      ##
+      ## WHAT `enabled: true` ACTUALLY OPENS TODAY: culvert accepts a source
+      ## arriving off the pod's ethernet side, so `dfe-ops bastion hub <peer>`
+      ## routes the tunnel's client range at the culvert pod rather than dialling
+      ## in. The range it accepts from is the toolbox instance's own /32, written
+      ## by `dfe-ops bastion up` and removed by `down` -- see
+      ## docs/deployment/edge-vpn.md#how-wide-the-hole-is. Nothing is admitted at
+      ## all while no bastion is running.
+      ##
+      ## `reach` is the ports an appliance accepts on its tunnel interface.
+      ## `ttl_minutes` and `peer_cidr` belong to the PEER shape -- an admin peer
+      ## minted per session with a one-way isolation exception -- which waits on
+      ## hyperi-io/culvert#40 and which `dfe-ops bastion join` refuses until then.
+      ## Neither reaches a rendered resource yet, so render_dial.py REFUSES a
+      ## value other than the two below rather than accepting one and dropping
+      ## it. End a session with `dfe-ops bastion down`, which is what closes the
+      ## reach-back today.
+      admin_peer:
+        enabled: true
+        ttl_minutes: 60
+        peer_cidr: ""
+        reach: [22, 443]
+    ## The OTLP door. Private on a cloud flavour, and authentication is the gate
+    ## on making it public -- a public OTLP endpoint with no auth accepts
+    ## telemetry from anyone, so the pair is refused.
+    otel:
+      public: false
+      auth: required           # required | none
+
+  ## GROUP (e) -- Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao and the
+  ## Kubernetes API. TIER 3: no door is offered, and there is no key here that
+  ## opens one.
+
+  ## The AWS flavour's own cloud resources. Ignored on every other flavour.
+  aws:
+    ## No cloud door exists without it: it is what turns the gateway's
+    ## LoadBalancer Service into a real NLB. Tier 1.
+    load_balancer_controller: true
+    ## The delegated public zone this deployment publishes into, which is what
+    ## creates the external-dns and cert-manager DNS-01 roles. Tier 1 once a
+    ## public name is published.
+    public_zone: ""
+    ## Tier 2: a distribution billed per GB served, bucket S. `none` is the only
+    ## value today -- the shapes arrive with terraform/modules/edge.
+    cloudfront:
+      mode: none             # none only
+    ## Shield Advanced (a flat subscription an order above this cluster's own
+    ## compute) and Global Accelerator (billed per GB on traffic the load
+    ## balancer already carries) are TIER 3: no key, on purpose.
+
+## TOOLBOX -- two independent troubleshooting surfaces sharing one top-level
+## key, because this restricted YAML subset allows no duplicate key. `pod:`
+## is the IN-CLUSTER one (any cloud, or on-prem); `enabled`/`aws:`/
+## `ttl_minutes`/`session:`/`session_log_retention_days` below it are the
+## on-demand SSM-managed EC2 instance for a CLOUD-PROVISIONED deployment only
+## (terraform/modules/toolbox/aws; docs/deployment/toolbox.md) -- ignored on
+## target.existing the same as the rest of the CLOUD PROVISIONING section,
+## even though it is written here rather than beside kafka: below, for the
+## one-`toolbox:`-key reason just given.
+toolbox:
+  ## An opt-in troubleshooting pod (helm/charts/dfe-toolbox), off by default
+  ## and idle at replicas: 0 even when the chart is deployed. render_dial.py
+  ## carries this sub-block through to the DFE_TOOLBOX_POD_* env keys,
+  ## bootstrap.sh onto the cluster-secret annotations, and
+  ## argocd/appsets/layer2-platform.yaml reads them back as this app's own
+  ## `toolbox.pod.*` parameters -- the same shape retention.defaultTtlDays
+  ## already uses (layer2-apps.yaml). This dial value is therefore
+  ## authoritative over argocd/values/common.yaml's fleet-wide `false`
+  ## default and over anything a deploy repo's own infra/dfe-toolbox.yaml
+  ## overlay sets. camelCase and unquoted booleans, like `ui:` above, because
+  ## these ARE the chart's own toolbox.pod.* values, not a render_dial.py
+  ## translation. A quoted "true"/"false" is refused by the chart's own
+  ## validate.yaml.
+  pod:
+    enabled: false
+    ## Read-only Kubernetes API access (pods/services/endpoints/configmaps, pods/log,
+    ## pods/portforward -- never secrets, never pods/exec). Refused unless enabled is
+    ## also true.
+    kubeApiAccess: false
+    ## Seconds before the companion CronJob scales the pod back to zero. Empty runs it
+    ## until an operator disables it by hand.
+    ttlSeconds: ""
+  ## The on-demand SSM-managed EC2 instance, READ by render_dial.py --tofu
+  ## (unlike pod: above). `enabled` is the `dfe-ops bastion up`/`down` toggle
+  ## -- down means the instance, its security group, its IAM role and both
+  ## kinds of Session document do not exist (terminate, never stop). Tool
+  ## versions are NEVER set here: render_dial.py assembles them from
+  ## versions.yaml's own toolbox: stage, so a deployer cannot pin a stale
+  ## tool by hand independent of everything else this repo pins through the
+  ## same file.
+  enabled: "false"
+  aws:
+    ## Smallest Graviton burstable size -- shapes/compute-shapes.yaml's own
+    ## `toolbox` use case resolves to the same family for the node-pool path.
+    instance_type: t4g.small
+    ## The IAM role EKS grants a read-only (AmazonEKSViewPolicy) access entry
+    ## to when enabled is true -- required then. The toolbox INSTANCE itself
+    ## gets no EKS access entry at all: a forward's kubectl identity is the
+    ## OPERATOR's own role, authenticated at the laptop end of the tunnel,
+    ## never the instance's (toolbox/aws/CONTRACT.md, "EKS access").
+    operator_role_arn: ""
+  ## Minutes with no active SSM session before the on-instance timer shuts
+  ## the box down (a systemd timer counting local ssm-session-worker
+  ## processes, not a CPU alarm -- an idle-looking tunnel can still be
+  ## carrying a live console consumer). Bounded 15-480 by the module itself, not
+  ## only here. `dfe-ops bastion up --ttl` overrides this for one call.
+  ttl_minutes: 60
+  ## Session Manager preferences for the SHELL session only -- a port-forward
+  ## session carries no such preferences, because Session Manager records no
+  ## transcript for one at all (toolbox/aws/CONTRACT.md #6). Both bounded by
+  ## Session Manager's own ceilings (60 minutes, 1440 minutes).
+  session:
+    idle_timeout_minutes: 15
+    max_duration_minutes: 240
+  ## S3 lifecycle expiry on the session-log bucket. Deliberately independent
+  ## of telemetry.aws.retention_days above (2-7 days) -- a session log is
+  ## evidence of human access to a customer's private data plane, not
+  ## service telemetry.
+  session_log_retention_days: 90
+
+## The system node pool -- what the cluster runs before any DFE workload lands.
+## shape_ref indexes shapes/resolved/<cloud>-<region>.json; an instance type is never
+## named here, because the shape resolver owns that answer.
+node_pools:
+  system:
+    shape_ref: eks-system
+    min_size: 2
+    max_size: 3
+    desired_size: 2
+    capacity_type: ON_DEMAND # ON_DEMAND | SPOT
+    disk_gb: 40
+
+## TELEMETRY -- recorded policy: DFE's monitoring goes to its own OTel feed and
+## HyperDX, never CloudWatch. Where a managed cloud service forces a
+## CloudWatch-shaped touchpoint anyway (MSK's broker logs, EKS's control-plane
+## audit log -- neither has any other export path), it is kept minimal and
+## short-retention rather than removed. sink: cloudwatch is the OPT-IN
+## AWS-native path for a compliance need CloudWatch itself satisfies.
+telemetry:
+  aws:
+    sink: otel               # otel | cloudwatch. otel is the default -- never CloudWatch by choice.
+    ## LEAVE EMPTY so render_dial.py's own sink-conditional default applies: 2
+    ## (S3 lifecycle expiry) under otel, 7 under cloudwatch. CloudWatch Logs
+    ## only accepts a fixed retention list, which does not include 2 -- a
+    ## literal 2 here fails the plan the moment sink flips to cloudwatch and
+    ## nothing else changes.
+    retention_days: ""
+
+## SIZING -- `python3 scripts/resolve_sizing.py` turns these into node counts,
+## CPU, memory, disk, IOPS, partitions and retention. Scale tier only.
+sizing:
+  ## Estimated ingest in GB/day. LEAVE IT EMPTY for the tyre-kick floor, whose
+  ## carried throughput the sizing report states rather than targets. Above
+  ## 100,000 the resolver refuses and points at professional services.
+  ingest_gb_per_day: ""
+  ## economy (the minimum that could do it) | balanced | performance. It buys
+  ## headroom over the sized peak, and never trades RF3 or the controllers away.
+  focus: economy
+  ## Peak over the daily average -- log volume is diurnal, and a broker built for
+  ## the average falls over in the evening. Empty takes the researched 2.0.
+  peak_factor: ""
+  ## Average event size in bytes, which is what decides ClickHouse rows a second.
+  avg_event_bytes: ""
+  ## Uncompressed bytes in to compressed bytes on disk. Empty takes the
+  ## conservative 5, which is the largest unmeasured line in the disk estimate.
+  compression_ratio: ""
+  ## Days of recent data the hunts read, which is what the ClickHouse RAM band
+  ## applies to. Empty takes one day.
+  hunt_window_days: ""
+  ## Extra hours of dfe-archiver lag carried on top of the consumer-downtime
+  ## assumption, which together set Kafka retention.
+  archiver_lag_hours: ""
+  ## Monthly on-demand spend above which the report warns. Empty never warns.
+  spend_warn_usd_month: ""
+  ## On-prem only: converge anyway when the real nodes are smaller than the
+  ## requirements table demands, with the warning stated in the report.
+  allow_undersized: "false"
+  ## ClickHouse storage model override. auto (the default) leaves the choice
+  ## to the chart: cached-object when an objectStore.endpoint is configured
+  ## (always on a populated cloud, on-prem too once a MinIO or S3-compatible
+  ## endpoint is supplied), local otherwise. cached-object forces the object
+  ## store and refuses to render with no endpoint set. local forces local
+  ## storage even with an endpoint configured -- the deploy pipeline still
+  ## carries the endpoint through, so a later switch stays possible, but that
+  ## switch is a data migration, not a values edit. See
+  ## docs/deployment/storage.md.
+  storage_model: auto   # auto | cached-object | local
+  ## Values set BY HAND, per workload, over whatever the ratios derived. Every
+  ## field is optional and every one still goes through the storage-cap
+  ## assertions -- an override is a different answer, not an exemption. Workloads:
+  ## eks-system, general, kafka-broker, kraft-controller, clickhouse, keeper,
+  ## ci-burst, msk-broker, toolbox.
+  overrides: {}
+  # overrides:
+  #   kafka-broker:
+  #     cpu: 16              # vCPU a broker, replacing the derived requirement
+  #     memory: 64           # GiB a broker
+  #     disk_gb: 2000        # the broker log volume, in GiB
+  #     replicas: 6          # how many brokers, replacing the derived count
+  #     instance_type: m9g.4xlarge  # refused unless every target zone offers it
+  #     iops: 6000           # provisioned IOPS on the data volume
+  #     throughput_mibs: 750 # provisioned MiB/s on the data volume
+
+## KAFKA -- who runs the brokers. strimzi and redpanda run inside the cluster and
+## tofu creates nothing for them; msk, confluent-cloud and redpanda-cloud are the
+## managed bodies the aws root creates. num_partitions, log_retention_ms and
+## message_max_bytes below are read for WHICHEVER of the three is selected --
+## every managed body applies the same canonical profile
+## (terraform/modules/managed-kafka/CONTRACT.md) -- but the rest of the msk:
+## block (shape_ref, broker_count, broker_version, scram_username,
+## bootstrap_job) is msk-only: the two SaaS bodies size, version and tune the
+## cluster themselves and take no block of their own. The same token is the
+## last segment of the credential's store key (<project>/<env>/kafka/<provider>),
+## which is how the kafka chart reads the password back.
+kafka:
+  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud. DOCUMENTATION
+  # ONLY below, not yet resolved by the sizing overlay: the provider-by-tier
+  # default the resolver's aws overlay (sizing/targets/aws.yaml) is expected to
+  # apply once it picks this up is msk at Small and Medium, confluent-cloud at
+  # Large -- that file is in flight elsewhere, so this stays a comment until it
+  # lands there.
+  provider: strimzi
+  ## combined | separate -- where the KRaft metadata quorum runs. combined keeps
+  ## it on the brokers and is the kafka chart's own default; separate is for a
+  ## sized deployment that wants its own controller pool, and the resolver emits
+  ## the pool only for it. Moving this on a live cluster re-forms the quorum, so
+  ## sizing/sizing.yaml locks the answer as controller_mode and a re-resolve
+  ## refuses the move without --migrate.
+  controller_pool: combined
+  msk:
+    shape_ref: msk-broker     # indexes shapes/resolved/<cloud>-<region>.json
+    broker_count: 3           # >= 3, and a multiple of the zone count
+    ## The BROKER version, in MSK's own spelling, and defaulted nowhere: the
+    ## newest ACTIVE one is read from the vendor at build time, because a default
+    ## rots into a deprecated line silently. (`version:` above is the DFE stack
+    ## pin -- a different thing entirely.)
+    broker_version: 4.2.x.kraft
+    num_partitions: 12            # NOT yet wired to the chart's own partition count at these defaults (kafka.external.numPartitions) -- see helm/charts/kafka/values.yaml
+    log_retention_ms: 259200000   # three days in front of the archiver
+    message_max_bytes: 16777216   # 16 MiB, the one size the whole chain carries
+    scram_username: dfe-kafka-user  # matches the kafka chart's user.name
+    ## The in-cluster Job that pre-creates the landing topics and writes the
+    ## first ACLs -- the one thing tofu cannot do, because Kafka ACLs live in the
+    ## data plane. namespace is where the kafka app is deployed
+    ## (argocd/appsets/layer2-data.yaml); bootstrap.sh and that appset wire
+    ## mode=external and this broker's bootstrapIam onto the chart automatically
+    ## for kafka.provider: msk, so service_account only needs to match what the
+    ## tofu root's Pod Identity association names -- an identity bound to a name
+    ## nothing renders grants nothing, silently.
+    bootstrap_job:
+      namespace: strimzi
+      service_account: dfe-kafka-bootstrap
+    ## The broker-count scaler: a CloudWatch alarm on cluster-wide BytesInPerSec
+    ## driving a Lambda that raises the broker count (MSK Express has no native
+    ## equivalent -- UpdateBrokerCount is a manual API with no scaling policy of
+    ## its own). Every field is optional; a value left blank takes the module's
+    ## own default (terraform/modules/managed-kafka/msk/variables.tf), so an
+    ## operator only ever states what they want to CHANGE.
+    autoscaling:
+      enabled: "true"          # the off switch, never an on switch
+      max_brokers: 6           # the ceiling; must be >= broker_count and a multiple of the zone count
+      step: ""                 # brokers added per scale-out; empty takes the zone count
+      per_broker_capacity_mb_s: 50  # the resolved broker shape's published network throughput
+      headroom: 1.3            # multiplies broker_count x per_broker_capacity_mb_s for the alarm threshold; must be > 1
+  ## Topics tofu pre-creates for a managed body with NO bootstrap Job
+  ## (confluent-cloud, redpanda-cloud) -- msk needs none here, since its Job
+  ## above creates the same topics the chart's Strimzi path does. dfe-loader
+  ## treats a missing *_land topic as fatal, so main_land is the floor every
+  ## provider needs; an empty map ({}) takes num_partitions/log_retention_ms
+  ## above, and a topic may override either:
+  ##   landing_topics:
+  ##     main_land: {}
+  ##     okta_land:
+  ##       partitions: 24
+  landing_topics:
+    main_land: {}
+
+## Where the tofu state lives. The store is created once per account by
+## terraform/environments/<cloud>-state, before the first plan here.
+state:
+  bucket: ""                 # from the <cloud>-state root's output
+  key: dfe/test/aws.tfstate  # unique per deployment -- two sharing one key destroy each other
+  region: ""                 # the state store's own region
+
+## GOVERNANCE TAGS, applied to every taggable cloud resource. The seventh key
+## the roots demand, iac-source, names the root that created the resource and
+## the renderer writes it. owner and cost-center have no safe default, and the
+## plan refuses any of the seven left empty.
+tags:
+  service-name: dfe
+  service-namespace: dfe
+  environment: test          # dev | test | staging | prod | customer-<id>
+  owner: ""                  # the team or address answerable for the spend
+  cost-center: ""            # whatever your finance side reconciles against
+  lifecycle: ephemeral       # ephemeral | persistent
 
 ## Image registry hosting the published dfe-* images.
 registry: ghcr.io/hyperi-io
@@ -102,6 +672,11 @@ steps:
 ## caller resolves the real values from here and injects the registry pull creds
 ## and the OpenBao AppRole id into the rendered env. `render_dial.py` never reads
 ## or writes a secret.
+## backend also reaches bootstrap.sh as DFE_SECRETS_BACKEND: on openbao it
+## requires DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID and seeds an AppRole SecretID, on
+## aws-sm it requires neither and the store authenticates by the pod's own
+## identity. ref is the path prefix every reference hangs off -- optional, and
+## empty means the deployment's own <project>/<env> path with nothing above it.
 secrets:
   backend: openbao           # file | openbao | eso | aws-sm | gcp-sm | azure-kv
   ref: kv/services           # base path; the value (which path) is estate context
@@ -143,9 +718,9 @@ k8s:
   cloud: local               # DFE_CLOUD -- local | aws | gcp | azure | rancher
   region: local              # DFE_REGION
   domain: ""                 # DFE_DOMAIN -- estate, blank in template
-  storage_class: local-path  # DFE_STORAGE_CLASS -- local-path | gp3 | pd-ssd | managed-csi
-  repo_url: ""               # DFE_REPO_URL -- the dfe-infra chart source (Argo repo), estate
-  target_revision: main      # DFE_TARGET_REVISION -- Argo targetRevision (versionSet ref)
+  storage_class: local-path  # DFE_STORAGE_CLASS -- local-path | gp3 | standard-rwo | managed-csi
+  repo_url: ""               # DFE_REPO_URL -- this repo's URL (dfe-infra); private until GA, so DFE_REPO_TOKEN is required, estate
+  target_revision: main      # DFE_TARGET_REVISION -- the ref under deployment (versionSet ref)
   workload_identity_annotations: "{}"  # DFE_WORKLOAD_IDENTITY_ANNOTATIONS -- IRSA / WI, cloud
   ## Cloud-swap knobs. Blank = the cluster/chart default (local-path, ClusterIP).
   ## Set per cloud (see the AWS worked example below). These layer onto the

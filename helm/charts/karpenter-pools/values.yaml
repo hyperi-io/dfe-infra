@@ -1,0 +1,102 @@
+project: dfe
+component: karpenter
+env: local
+cloud: local
+
+# Karpenter's node shaping. EVERY field below is empty by default and filled by
+# the resolver's values overlay (sizing/<tier>.values.yaml) plus the cluster
+# facts the tofu emits, so nothing here names an instance type, a generation or
+# a size. A cloud with no Karpenter leaves `pools` empty and this chart renders
+# nothing.
+karpenter:
+
+  # The three handles the kubernetes-cluster module's `karpenter` output carries,
+  # plus the deployment key from its `kms_key_arn`. A pool cannot render without
+  # them, and the guards below say so by name rather than producing an
+  # EC2NodeClass that never reaches Ready.
+  cluster:
+    # The value of the karpenter.sh/discovery tag on the private subnets and the
+    # cluster security group. It is the cluster's own name.
+    discoveryTag: ""
+    # Pre-provisioned, so Karpenter never creates or deletes one.
+    instanceProfile: ""
+    # The deployment's customer-managed key, which every node root volume is
+    # encrypted with.
+    kmsKeyId: ""
+
+  # What every EC2NodeClass inherits. A pool overrides only what its workload
+  # forces -- ClickHouse and CI take the instance store, everything else does not.
+  nodeClass:
+    # An alias resolves the EKS-optimised image through SSM and carries its own
+    # family, so amiFamily is not set beside it. Pinned to a dated AL2023
+    # release (operators.karpenter-al2023-ami in versions.yaml, drift-checked)
+    # rather than `latest`: `latest` moved the node image on every reconcile
+    # with no cooldown and no version an operator could point at, which is
+    # exactly the unwatched-drift failure mode every other pin in this repo
+    # exists to avoid. A new release arrives as a versions.yaml bump through
+    # the same 7-day cooldown gate, not silently.
+    amiAlias: al2023@v20260827
+    metadata:
+      # IMDSv2 only, hop limit 1 -- a pod on the node cannot reach
+      # 169.254.169.254 at all. Every AWS credential on this cluster is a Pod
+      # Identity association (Karpenter, the Load Balancer Controller, the EBS
+      # CSI driver, external-dns, cert-manager, the MSK bootstrap Job), so no
+      # pod's own AWS SDK call needs the node's IMDS; hop limit 2 would be the
+      # thing that let a pod reach it, and from there the node role's own
+      # credentials -- which for Karpenter's node role carry AmazonEKS_CNI_Policy
+      # network-interface actions on "*". A container that needs the
+      # node's own IMDS (not the workload's identity) is the one case to raise
+      # this back to 2 for, and it should be that pool's own override, not the
+      # shared default.
+      httpTokens: required
+      httpPutResponseHopLimit: 1
+    # Sized by the resolver from the instance's sustained baseline, not from a
+    # fixed number -- a 125 MiB/s root on a size whose baseline is 95 is a volume
+    # the instance cannot carry.
+    rootVolume:
+      sizeGi: ""
+      type: gp3
+      iops: ""
+      throughputMibS: ""
+    # RAID0 is the only value Karpenter accepts. Without it a `d` instance pays
+    # for its NVMe and uses none; with it containerd and kubelet move onto that
+    # NVMe and the root volume shrinks.
+    instanceStorePolicy: ""
+
+  # One entry per workload class, keyed by pool name. Each pool renders one
+  # NodePool and one EC2NodeClass of the same name.
+  #
+  #   families             instance families, best first. A LIST so an
+  #                        InsufficientCapacityError on one has somewhere to fall
+  #                        back to; a single-element list has none.
+  #   generationGt         the floor, as Karpenter's Gt operand -- one BELOW the
+  #                        oldest generation the family list names. Karpenter ANDs
+  #                        the requirements, so a floor above a listed family
+  #                        deletes that family, and the guard below refuses it.
+  #   generationIn         the pinned override. When set it REPLACES generationGt.
+  #   minVcpu              optional floor on karpenter.k8s.aws/instance-cpu.
+  #                        families + generation bound WHICH instance line, never
+  #                        which SIZE on it -- a workload sized up for its
+  #                        volume's EBS baseline still fits a smaller instance's
+  #                        cpu/memory request, which is all Karpenter's own
+  #                        bin-packing looks at. Empty renders no floor.
+  #   minMemoryGib         optional floor on karpenter.k8s.aws/instance-memory,
+  #                        in GiB. Same reasoning as minVcpu.
+  #   arch                 arm64 on every cloud pool.
+  #   capacityTypes        ["on-demand"], or ["spot", "on-demand"] for work that
+  #                        can be retried.
+  #   consolidation        policy is WhenEmpty | WhenEmptyOrUnderutilized |
+  #                        Balanced; after is how long the controller waits first.
+  #   budgetNodes          how many nodes may be terminating at once -- "10%",
+  #                        "1", "100%".
+  #   expireAfter          a duration, or the literal Never. NEVER omitted: the
+  #                        CRD defaults it to 720h, so an omission is a forced
+  #                        30-day replacement rather than no expiry.
+  #   taints               list of {key, value, effect}.
+  #   labels               map applied to every node the pool makes.
+  #   limits               map of resource -> quantity. Required: a pool with no
+  #                        limit answers a runaway workload by buying nodes.
+  #   weight               optional tie-break; higher wins for a pod that matches
+  #                        more than one pool.
+  #   nodeClass            optional per-pool override of the nodeClass block above.
+  pools: {}

@@ -1,0 +1,31 @@
+{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- if or .Values.tls.wildcardCertificate.enabled $public }}
+# The edge wildcard cert the https listener terminates with, requested explicitly
+# because the Gateway-annotation route needs a cert-manager feature gate that is
+# off by default and cannot be assumed on a cluster we do not own.
+#
+# A public UI forces this half on whatever the switch says, because the Gateway
+# annotations it would otherwise rely on are Gateway-wide and would hand the
+# public listeners an internal-CA certificate (see gateway.yaml). Same issuer,
+# same secret, same names -- only the requester changes.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dfe-wildcard-tls
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  secretName: dfe-wildcard-tls
+  dnsNames:
+    - "*.{{ .Values.domain }}"
+    - {{ .Values.domain | quote }}
+  issuerRef:
+    kind: ClusterIssuer
+    name: {{ .Values.tls.issuerName }}
+  # CNSA 2.0: ECDSA P-384 / SHA-384, not cert-manager's RSA-2048 default.
+  privateKey:
+    algorithm: {{ .Values.tls.privateKey.algorithm }}
+    size: {{ .Values.tls.privateKey.size }}
+    rotationPolicy: {{ .Values.tls.privateKey.rotationPolicy }}
+{{- end }}

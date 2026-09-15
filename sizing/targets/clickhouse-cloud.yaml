@@ -1,0 +1,31 @@
+## Project:   dfe-infra
+## File:      sizing/targets/clickhouse-cloud.yaml
+## Purpose:   The per-target knob matrix for `--target clickhouse-cloud` -- a
+##            validated stub, not a built target. Every sizing knob it would
+##            change, marked blocked until the target itself exists.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Read by scripts/resolve_sizing.py's build_report -- see the module
+## docstring's TARGETS_DIR paragraph. `status` names the stub so the report
+## does not read as a finished target; every knob below carries a `state` of
+## `blocked`, `renamed` or `managed`, plus the one-sentence `reason`. NO LISTS:
+## nested maps and scalars only, parsed by scripts/yaml_subset.py.
+##
+## Unlike msk / confluent-cloud / redpanda-cloud, there is no
+## terraform/modules/managed-<clickhouse> body for this target at all -- the
+## managed-kafka module family only covers the Kafka side of the estate. This
+## overlay exists so a dial naming it fails with a clear "not built" answer
+## rather than falling through to whatever the cloud's own compute shapes say.
+
+status: validated-stub
+
+clickhouse_shape:
+  state: blocked
+  reason: "target not built yet -- there is no managed-clickhouse terraform module on this branch, so nothing sizes or provisions a ClickHouse Cloud service."
+
+storage:
+  state: blocked
+  reason: "target not built yet -- ClickHouse Cloud bills storage and compute separately from any node shape this resolver could select, and sizing.clickhouse's ratios (RAM-to-compressed bands, disk_headroom) assume a self-hosted server this target does not run."

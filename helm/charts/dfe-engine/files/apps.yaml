@@ -486,7 +486,7 @@ apps:
   # appliance dials before it posts to the receiver -- so it has no transport,
   # no source binding and no routing to compile. It holds at one deployment
   # because WireGuard mints its server key in the pod, and at one replica for
-  # the same reason (helm/charts/culvert refuses more).
+  # the same reason (helm/edge/culvert refuses more).
   culvert:
     multiplicity: single
     scale_deployed: false

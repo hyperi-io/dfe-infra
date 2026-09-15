@@ -1,0 +1,10 @@
+{{- $a := .Values.kafka.autoscaling }}
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") $a.enabled }}
+{{- if not (or .Values.kafka.landingTopics.sources (and $a.metrics.usePrometheus $a.metrics.prometheusUrl)) }}
+kafka.autoscaling.enabled is true, but no KEDA ScaledObject was rendered: there
+is no landing source under kafka.landingTopics.sources and no Prometheus
+trigger configured (kafka.autoscaling.metrics.usePrometheus + prometheusUrl).
+Autoscaling is armed but idle until the engine publishes a landing source, or a
+PromQL endpoint is wired up -- see docs/deployment/kafka/autoscaling.md.
+{{- end }}
+{{- end }}

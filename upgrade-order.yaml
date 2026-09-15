@@ -1,0 +1,87 @@
+## Project:   dfe-infra
+## File:      upgrade-order.yaml
+## Purpose:   The order a stack upgrade applies in, as data
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## A stack bump is a diff of versions.yaml applied in THIS order, never in the
+## order the file happens to list things. The bootstrap stage moves first
+## because ESO and cert-manager gate every secret and certificate below them;
+## operators next, because their CRDs gate everything they own, and a
+## stored-version conversion has to run BEFORE the operator that drops the old
+## version starts; data services next, coordinators before the stores that
+## depend on them; apps last.
+##
+## `key` is the versions.yaml path inside the current stack block. Maps keyed
+## by a two-digit order, never lists: the repo's stdlib YAML reader handles
+## nested maps and scalars only. `before` names a step that must complete on
+## the RUNNING cluster before the version moves; `finalise` names the one-way
+## step held back for a soak after the roll; `pair` names the key that moves
+## with this one as a single change; `rollback` names the reverse path when
+## one exists, or the literal `none` when the step cannot be undone (a
+## one-way step also carrying `finalise` is `none` by definition and does not
+## need to repeat it -- `dfe-ops upgrade rollback` refuses by name either way).
+
+stages:
+  "10-bootstrap":
+    "10-external-secrets":
+      key: bootstrap.external-secrets
+    "20-cert-manager":
+      key: bootstrap.cert-manager
+    "30-argocd":
+      key: bootstrap.argocd
+  "20-operators":
+    "10-envoy-gateway":
+      key: operators.envoy-gateway
+    "20-external-dns":
+      key: operators.external-dns
+    "30-keda":
+      key: operators.keda
+    "40-cloudnative-pg":
+      key: operators.cloudnative-pg
+    "50-strimzi-kafka-operator":
+      key: operators.strimzi-kafka-operator
+      before: "kafka.strimzi.io stored-version conversion on the running cluster: bin/v1-api-conversion.sh convert-resource, then crd-upgrade"
+    "60-redpanda-operator":
+      key: operators.redpanda-operator
+      pair: services.redpanda-version
+    "70-clickhouse-operator":
+      key: operators.clickhouse-operator
+  "30-services":
+    "10-postgresql":
+      key: services.postgresql
+    "20-clickhouse-keeper":
+      key: services.clickhouse-version
+      scope: keeper
+    "30-clickhouse-server":
+      key: services.clickhouse-version
+      scope: server
+      rollback: "within the same LTS line only"
+    "40-kafka-brokers":
+      key: services.kafka-version
+      finalise: "metadata.version bump after a soak; one way"
+      rollback: "none"
+    "50-redpanda-brokers":
+      key: services.redpanda-version
+      pair: operators.redpanda-operator
+    "60-otel-collector":
+      key: services.otel-collector
+  "40-apps":
+    "10-dfe-engine":
+      key: apps.dfe-engine
+    "20-dfe-receiver":
+      key: apps.dfe-receiver
+    "30-dfe-transform-vrl":
+      key: apps.dfe-transform-vrl
+    "40-dfe-transform-vector":
+      key: apps.dfe-transform-vector
+    "50-dfe-loader":
+      key: apps.dfe-loader
+    "60-dfe-archiver":
+      key: apps.dfe-archiver
+    "70-dfe-fetcher":
+      key: apps.dfe-fetcher
+    "80-dfe-ui":
+      key: apps.dfe-ui

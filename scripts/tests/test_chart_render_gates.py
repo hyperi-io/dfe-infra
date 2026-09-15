@@ -45,7 +45,8 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
-GATEWAY = CHARTS / "envoy-gateway-config"
+# The gateway is an edge-module chart, not an app chart -- helm/edge/, not helm/charts/.
+GATEWAY = REPO_ROOT / "helm" / "edge" / "gateway"
 KAFKA = CHARTS / "kafka"
 COMMON = REPO_ROOT / "argocd" / "values" / "common.yaml"
 

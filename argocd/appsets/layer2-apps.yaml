@@ -34,6 +34,34 @@ spec:
               revision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
               files:
                 - path: "values/*-values.yaml"
+                # culvert is the edge module's and is generated below instead,
+                # for the clusters layer2-edge.yaml does not reach. Excluded from
+                # THIS generator so exactly one generates it: two would have the
+                # controllers fight over one Application.
+                - path: "values/culvert-*-values.yaml"
+                  exclude: true
+    # culvert, for THIS RELEASE ONLY -- it moves to appsets/layer2-edge.yaml at
+    # rc.15 (dfe-infra#342). Same reasoning as
+    # envoy-gateway-config in layer2-platform.yaml: a cluster secret written
+    # before the edge module carries no dfe.hyperi.io/edge key, so layer2-edge
+    # generates nothing for it and the tunnel would go away underneath a running
+    # deployment. DoesNotExist, not NotIn: a deployer who set the key to false
+    # turned the edge off on purpose and gets no tunnel from here either.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/edge
+                    operator: DoesNotExist
+          - git:
+              repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+              revision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+              files:
+                - path: "values/culvert-*-values.yaml"
   template:
     metadata:
       name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
@@ -47,7 +75,10 @@ spec:
       sources:
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-          path: 'helm/charts/{{ .deploy.service }}'
+          # culvert is the one service whose chart lives outside helm/charts --
+          # it moved under helm/edge with the gateway. Explicit rather than a
+          # general mechanism, because it goes away with the rc.15 migration.
+          path: 'helm/{{ if eq .deploy.service "culvert" }}edge/culvert{{ else }}charts/{{ .deploy.service }}{{ end }}'
           helm:
             ignoreMissingValueFiles: true
             valueFiles:
@@ -66,6 +97,12 @@ spec:
             # what Argo reads. Only the dfe-engine chart has a gitops block; other
             # charts ignore these params.
             parameters:
+              # The registry every dfe-* image is pulled from. A chart left on
+              # common.yaml's empty default renders the image with no host and
+              # containerd resolves it to Docker Hub, which publishes no DFE
+              # image, so the pull is denied against the wrong registry.
+              - name: global.registry
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/registry" }}'
               - name: gitops.repoUrl
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
               - name: gitops.branch
@@ -99,6 +136,26 @@ spec:
               # rendered with are one value. Only dfe-engine reads it.
               - name: profile
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+            # `values` (a YAML string) rather than a structured block, same
+            # reason layer2-data.yaml gives: a conditional cannot live in a
+            # field this file's own tests parse as plain YAML before any Go
+            # templating runs.
+            values: |
+              {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
+              {{- if $kafkaMode }}
+              # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
+              # only case bootstrap.sh sets this annotation for, so an
+              # in-cluster deploy's kafka.mode stays whatever its profile
+              # overlay says. The profile's bootstrapServers names a Service
+              # that does not exist on a managed broker, so the endpoint the
+              # deploy was actually built with replaces it here.
+              kafka:
+                mode: {{ $kafkaMode | quote }}
+                {{- if and (eq $kafkaMode "external") $kafkaBootstrap }}
+                bootstrapServers: {{ $kafkaBootstrap | quote }}
+                {{- end }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

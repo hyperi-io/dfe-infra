@@ -1,0 +1,313 @@
+# The edge module: the two charts that decide whether traffic from outside the
+# cluster reaches a DFE workload. The public gateway (helm/edge/gateway) and the
+# fleet tunnel (helm/edge/culvert) are one module because they are the same job
+# -- a door -- and they are turned off together.
+#
+# THIS FILE SERVES NEW CLUSTERS ONLY UNTIL rc.15. A cluster secret written before
+# the edge module carries no dfe.hyperi.io/edge key, so the gate below never
+# matches it; layer2-platform.yaml and layer2-apps.yaml keep generating the same
+# two Applications for exactly those clusters, under the same names, and both
+# hand over here at rc.15 (dfe-infra#342).
+#
+# THE OFF SWITCH is the cluster secret's own dfe.hyperi.io/edge, and it gates
+# both ApplicationSets below. A cluster secret written before this module
+# carries no such key, and In alone already excludes it -- a label selector's
+# In does not match an absent key, unlike NotIn, which is the trap
+# layer1-addons.yaml records for its cloud gate. The Exists term beside it says
+# that requirement out loud rather than leaving it to be inferred.
+# The gate reads the LABEL rather than the annotation of that name, because an
+# ApplicationSet cluster selector matches labels only -- bootstrap.sh writes
+# both, the way it already does for cloud and profile.
+#
+# TURNING THE MODULE OFF AFTER A LOAD BALANCER EXISTS ORPHANS IT. The cloud
+# resource outlives the Application that asked for it, so the off path is
+# destroy, then disable -- never the other way round.
+#
+# THE MODULE'S TIER TABLE IS PER FLAVOUR, one file each --
+# argocd/values/edge-aws.yaml, edge-gcp.yaml, edge-azure.yaml, edge-onprem.yaml
+# -- layered after the cloud overlay and read by this appset alone, so a key in
+# one of them reaches the two edge charts and nothing else.
+#
+# Two ApplicationSets rather than one with per-generator template overrides:
+# the gateway is a cluster-config chart on wave 2 and the tunnel is a deploy-repo
+# app on wave 7, so they share no template worth merging, and the same file holds
+# both the way layer-scale.yaml holds four.
+#
+# NEITHER APPLICATION IS RENAMED BY THE MOVE UNDER helm/edge. The names are the
+# ones layer2-platform and layer2-apps generated before this file existed, and
+# Argo's tracking id is built from the name, so adoption is what happens rather
+# than a delete and rebuild. Nothing here sets preserveResourcesOnDeletion, so a
+# name that did change would take the live Gateway, every HTTPRoute and every
+# public Certificate with it.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-layer2-edge-gateway
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/edge
+                    operator: Exists
+                  - key: dfe.hyperi.io/edge
+                    operator: In
+                    values: ["true"]
+          - list:
+              elements:
+                # Gateway + HTTPRoutes for every deployment surface. Needs the
+                # envoy-gateway operator, installed at wave 3 by layer1-addons;
+                # the CRDs it depends on come with that install, so this Application
+                # reports SyncFailed until the operator lands and then converges.
+                # Wave 2 is the wave layer2-platform generated it on, and it has to
+                # stay there: the Gateway and its routes go in before the workloads
+                # they route to, and an HTTPRoute whose backend is absent reports
+                # NotFound until it exists.
+                - app: envoy-gateway-config
+                  chart: edge/gateway
+                  namespace: envoy-gateway-system
+                  wave: "2"
+                  appProject: infra
+  template:
+    metadata:
+      # `app` is the Application NAME and `chart` is only its directory, which is
+      # what let the chart move under helm/edge without renaming anything.
+      name: '{{ .app }}-{{ .name }}'
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .wave }}'
+    spec:
+      project: '{{ .appProject }}'
+      # Multi-source, the same shape layer2-platform uses: source 1 = the pinned
+      # dfe-infra base chart, source 2 = the deploy repo (ref: values). The
+      # deploy-repo overlay is layered LAST, so a deployer's own value beats the
+      # profile file's tier default without editing dfe-infra.
+      sources:
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+          # `index` rather than `.chart`, because goTemplateOptions is
+          # missingkey=error and a field lookup on an element that states no
+          # chart would fail the render instead of falling back to the name.
+          path: 'helm/{{ index . "chart" | default (printf "charts/%s" .app) }}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - "../../../argocd/values/common.yaml"
+              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+              # The module's own tier table for this flavour, layered AFTER the
+              # cloud overlay so an edge key beats the cloud file it moved out
+              # of. `local` and `rancher` are one flavour, not two: the on-prem
+              # tier table is the same table whichever distro carries it.
+              - '../../../argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # infra/common.yaml is the deployer's own common.yaml -- shared
+              # facts declared once and read by every appset; infra/<app>.yaml
+              # is the per-app overlay. Both optional. Keyed on the Application
+              # name rather than the chart directory, so moving the chart does
+              # not orphan the overlay a deployer already wrote.
+              - '$values/infra/common.yaml'
+              - '$values/infra/{{ .app }}.yaml'
+            parameters:
+              # The deployment's own domain, from the cluster fact rather than a
+              # values file -- the tracked overlays carry placeholders only. Every
+              # hostname this chart publishes derives from it.
+              - name: domain
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # The address the deployment's DNS already names. Empty lets the
+              # LB pool choose, which re-rolls the edge address on a rebuild.
+              - name: envoyGateway.service.loadBalancerIP
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/gateway_address" }}'
+              # Where the DFE apps run, so a route names the same namespace the
+              # apps are actually placed in.
+              - name: appNamespace
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # The deployment's own posture and cloud. Every object this chart
+              # renders is labelled from these and the chart defaults say local,
+              # so without them an AWS deployment's Gateway, routes, policies and
+              # public certificates all claim to be a local one.
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              - name: cloud
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
+            # `values` (a YAML string) rather than a structured block, same
+            # reason layer1-addons.yaml gives: a conditional cannot live in a
+            # field this file's own tests parse as plain YAML before any Go
+            # templating runs.
+            values: |
+              {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- if $kafkaMode }}
+              # Carried for the same reason layer2-platform carries it: the
+              # declared mode reaches every app that appset deploys. This chart
+              # reads no kafka key, so it is inert here and kept only so the
+              # cascade is the one the Application already had.
+              kafka:
+                mode: {{ $kafkaMode | quote }}
+              {{- end }}
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+          ref: values
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+---
+# The fleet tunnel. Deployed per instance from the deploy repo, exactly as
+# layer2-apps deploys every other app: the engine writes
+# values/culvert-<instance>-values.yaml and the generator fans out one
+# Application per file, so turning the tunnel ON is still an engine git write
+# and NOT a flag in this repo (docs/deployment/edge-vpn.md).
+#
+# layer2-apps EXCLUDES this same glob, so the Application has exactly one
+# generator. Two appsets generating one name is a fight between controllers, and
+# zero generating it is a deletion.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-layer2-edge-culvert
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/edge
+                    operator: Exists
+                  - key: dfe.hyperi.io/edge
+                    operator: In
+                    values: ["true"]
+          - git:
+              repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+              revision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+              files:
+                - path: "values/culvert-*-values.yaml"
+  template:
+    metadata:
+      # The name layer2-apps generated for this file, unchanged.
+      name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
+      namespace: argocd
+      annotations:
+        # Wave 7, the wave layer2-apps put every app on: after dfe-schema has
+        # created the tables and after the otel collector it exports to.
+        argocd.argoproj.io/sync-wave: "7"
+    spec:
+      project: dfe-apps
+      sources:
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+          path: helm/edge/culvert
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - "../../../argocd/values/common.yaml"
+              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+              # The same flavour file the gateway above reads, layered in the
+              # same place: one tier table serves both doors, and the tunnel's
+              # own keys (exposure.serviceType, externalTrafficPolicy, pki.mode)
+              # are in it.
+              - '../../../argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # The deployer's own common.yaml, below the instance file, which
+              # stays the last word.
+              - '$values/infra/common.yaml'
+              - '$values/{{ .path.path }}/{{ .path.filename }}'
+            parameters:
+              # The deployment's own domain: vpn.serverCN derives
+              # {hostnames.vpn}.{domain} from it when the instance file names
+              # no server CN of its own.
+              - name: domain
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # The deployment's posture and cloud, from the same annotations the
+              # cluster labels carry, so the chart cannot drift from what the
+              # deploy declared and its objects are not labelled as a local one.
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              - name: cloud
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
+              # The stack the base chart is pinned at, carried for the same
+              # reason layer2-apps carries it.
+              - name: stackVersion
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
+              - name: profile
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+            # `values` (a YAML string) rather than a structured block, same
+            # reason the gateway above gives: a conditional cannot live in a
+            # field this file's own tests parse as plain YAML.
+            values: |
+              {{- $tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone" }}
+              {{- if $tunnelZone }}
+              # The AWS tunnel forwarder is pinned to one availability zone
+              # (terraform/modules/edge/aws), and a hop from it to a node in
+              # another zone crosses a boundary billed per GB. Absent on every
+              # flavour that brings its own address, where nothing pins a zone.
+              nodeScheduling:
+                nodeSelector:
+                  topology.kubernetes.io/zone: {{ $tunnelZone | quote }}
+              {{- end }}
+              {{- $cloud := index .metadata.annotations "dfe.hyperi.io/cloud" }}
+              {{- if not (or (eq $cloud "local") (eq $cloud "rancher")) }}
+              # culvert writes its revocations and its WireGuard peer
+              # allocations into the pod's PKI directory, so a restart without a
+              # volume re-issues a revoked peer's address and forgets which
+              # appliance is which. Set here rather than in the flavour overlay
+              # because persistence.enabled is a key other charts read, and on-
+              # prem is left alone because not every cluster has a StorageClass.
+              persistence:
+                enabled: true
+              {{- end }}
+              {{- $adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr" }}
+              {{- if $adminCIDR }}
+              # The toolbox instance's own /32, written on the cluster secret by
+              # `dfe-ops bastion up` and taken off by `down`. It is the one shape
+              # culvert's admin hole matches today -- a source off the pod's
+              # ethernet side, never a peer -- so an operator reaches one
+              # appliance by routing the client range at this pod rather than by
+              # dialling in.
+              peers:
+                classes:
+                  admin:
+                    adminCIDRs:
+                      - {{ $adminCIDR | quote }}
+              {{- end }}
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+          ref: values
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+      # The chart holds at one replica and refuses more, so there is no KEDA
+      # scale for a sync to revert; the block matches layer2-apps so a move
+      # between the two changes no field.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true

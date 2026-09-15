@@ -7,8 +7,8 @@
 {{- if not .Values.kafka.redpanda.acceptLicense }}
 {{- fail "Redpanda is BSL-licensed (source-available, not OSS): set kafka.redpanda.acceptLicense=true to proceed. Running DFE+redpanda as a service needs a commercial licence from BOTH HyperI (DFE) and Redpanda Data (redpanda) -- see docs/REDPANDA-LIMITATIONS.md." }}
 {{- end }}
-{{- $replicas := int .Values.kafka.replicas }}
-{{- $rf := min (int .Values.kafka.config.defaultReplicationFactor) $replicas }}
+{{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
+{{- $rf := min (int .Values.kafka.profile.scale.replicationFactor) $replicas }}
 # Redpanda cluster, managed by the Redpanda operator (cluster.redpanda.com/v1alpha2).
 # First-class provider alongside Strimzi, run the SAME way: operator + thin CR.
 # SASL/SCRAM-512 on, TLS off (SCRAM over plaintext internal -- matches Strimzi's
@@ -26,7 +26,7 @@ spec:
   clusterSpec:
     # DFE broker/topic defaults mapped to Redpanda cluster properties (Kafka's
     # server.properties names differ on Redpanda). NOT yet live-validated: verify
-    # the config.cluster path against the pinned operator (26.1.6) on first deploy.
+    # the config.cluster path against the pinned operator (26.2.3) on first deploy.
     # compression is intentionally omitted -- Redpanda topics default compression to
     # `producer`, matching the Strimzi default (the client sizing profile owns the
     # codec). min.insync.replicas has no direct cluster property: Redpanda's Raft
@@ -35,10 +35,23 @@ spec:
     # unclean leader election does not apply -- Raft never elects a non-quorum leader.
     config:
       cluster:
-        default_topic_partitions: {{ int .Values.kafka.config.numPartitions }}
+        default_topic_partitions: {{ include "dfe-kafka.partitions" . }}
         default_topic_replications: {{ $rf }}
-        log_segment_size: {{ int .Values.kafka.config.logSegmentBytes }}
-        log_retention_ms: {{ mul (int .Values.kafka.config.logRetentionHours) 3600000 }}
+        log_retention_ms: {{ include "dfe-kafka.retentionMs" . }}
+        retention_bytes: {{ include "dfe-kafka.retentionBytes" . }}
+        # Redpanda's half of the size chain. kafka_batch_max_bytes is the
+        # message ceiling (default 1 MiB) and kafka_max_message_size_upper_limit_bytes
+        # is the guard it cannot be raised past, so both move together.
+        kafka_batch_max_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
+        kafka_max_message_size_upper_limit_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
+        # Pinned rather than left at the shipped default: v26.2.2 defaults this
+        # to `continuous`, which is licence-gated and sanctioned back to node_add
+        # on an unlicensed cluster -- so a licence appearing later would change
+        # balancing behaviour with no config change of ours.
+        partition_autobalancing_mode: {{ ternary .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode "off" .Values.kafka.rebalancing.enabled | quote }}
+        # Per-sender bandwidth while a new replica catches up -- Redpanda's
+        # equivalent of the Strimzi replication throttle.
+        raft_learner_recovery_rate: {{ int64 .Values.kafka.rebalancing.redpanda.raftLearnerRecoveryRate }}
     # DFE runs redpanda headless -- no Console UI (extra pod + its own config/secret).
     console:
       enabled: false

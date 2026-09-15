@@ -1,0 +1,38 @@
+{{- if .Values.persistence.enabled }}
+{{- /*
+  /etc/vpn/pki is written in BOTH pki modes, so this volume is not a local-mode
+  concern. local mints the CA there on first start, and a restart without the
+  volume mints a new one and invalidates every config already issued. external
+  delivers the CA and server certificate by Secret, and culvert still writes its
+  revocations and its WireGuard peer allocations here -- losing those re-issues
+  a revoked peer's address and forgets which appliance is which.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-pki
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    {{- /*
+      Two annotations because the two deletion paths are separate. Argo CD does
+      not take Helm's uninstall path, so the Helm policy alone leaves this claim
+      pruned on a sync and cascade-deleted with the Application -- which is what
+      turning the edge module off does. Prune=false covers the claim leaving
+      desired state; Delete=false covers the Application being deleted.
+
+      The CA, the CRL entries and every WireGuard peer allocation live here, so
+      losing the claim kills every client config already issued.
+    */}}
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

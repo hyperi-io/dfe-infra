@@ -154,7 +154,7 @@ data:
             password: ${env:KAFKA_PASSWORD}
         {{- end }}
       {{- end }}
-      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
       prometheus:
         config:
           scrape_configs:
@@ -243,6 +243,29 @@ data:
                 - source_labels: [__meta_kubernetes_namespace]
                   action: replace
                   target_label: k8s_namespace_name
+            {{- end }}
+            {{- if and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts }}
+            # MSK's own open_monitoring, in Prometheus text format on every
+            # broker -- a DIFFERENT feed from kafka_metrics above, which speaks
+            # the Kafka protocol and knows nothing about JVM or OS metrics.
+            # Static targets, not kubernetes_sd_configs: the brokers are AWS
+            # hosts, not pods in this cluster. job_name becomes each target's
+            # `job` label, which the receiver maps onto service.name -- so
+            # neither job needs a resource processor of its own.
+            - job_name: msk-jmx-exporter
+              scrape_interval: {{ .Values.clusterTelemetry.mskOpenMonitoring.collectionInterval }}
+              static_configs:
+                - targets:
+                    {{- range splitList "," .Values.kafka.brokerHosts }}
+                    - {{ printf "%s:%v" . $.Values.clusterTelemetry.mskOpenMonitoring.jmxPort | quote }}
+                    {{- end }}
+            - job_name: msk-node-exporter
+              scrape_interval: {{ .Values.clusterTelemetry.mskOpenMonitoring.collectionInterval }}
+              static_configs:
+                - targets:
+                    {{- range splitList "," .Values.kafka.brokerHosts }}
+                    - {{ printf "%s:%v" . $.Values.clusterTelemetry.mskOpenMonitoring.nodeExporterPort | quote }}
+                    {{- end }}
             {{- end }}
       {{- end }}
 
@@ -364,7 +387,7 @@ data:
         metrics:
           receivers:
             - otlp
-            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
+            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
             # One receiver carries every scrape job, so this must match the
             # receiver's own gate or configured jobs are never routed anywhere.
             - prometheus

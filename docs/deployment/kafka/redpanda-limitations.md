@@ -1,7 +1,10 @@
 # Redpanda as a DFE Kafka provider -- limitations and when to use it
 
-DFE supports two Kafka providers (`kafka.provider`): **Strimzi** (default) and
-**Redpanda** (opt-in). Redpanda is a Kafka-API-compatible broker with a much
+DFE deploys two Kafka providers itself, in-cluster: **Strimzi** (default) and
+**Redpanda** (opt-in). Three more are managed clouds it does not deploy --
+`msk`, `confluent-cloud`, `redpanda-cloud` -- covered in the neighbouring
+guides in this directory. This page is Redpanda-the-in-cluster-operator only.
+Redpanda is a Kafka-API-compatible broker with a much
 smaller footprint (no JVM, no ZooKeeper/KRaft sidecar, built-in schema registry).
 It is a strong choice for `single`/small/test and a lean option at scale -- but it
 carries constraints that must be a conscious decision. Redpanda is **off unless**
@@ -53,8 +56,8 @@ Redpanda is deployed via the **Redpanda operator** (`Redpanda` + `User` CRDs,
 Strimzi. The operator is installed only on an explicit opt-in: the
 `dfe-redpanda-operator` ApplicationSet keys on the cluster label
 `dfe.hyperi.io/kafka-provider: redpanda` (BSL stays off any cluster that has not
-chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.1.6, broker
-`redpanda-version` v26.1.8).
+chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.2.3, broker
+`redpanda-version` v26.2.2).
 
 - **Auth: SASL/SCRAM-SHA-512, on from first boot** (the DFE kafka standard), TLS
   off on the internal listener -- matching Strimzi's plain SCRAM listener. The
@@ -62,8 +65,9 @@ chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.1.6, broker
   account is a `User` CR whose operator-generated Secret has the **same shape as
   the Strimzi-minted secret**, so clients authenticate identically across
   providers. Kafka API is on **9093** (TLS-off internal listener).
-- **single** (small/test): one-broker `Redpanda` CR. Live-validated end to end on
-  devex (SCRAM produce->consume via the matrix harness).
+- **single** (small/test): one-broker `Redpanda` CR. Live-validated end to end
+  on the on-prem reference cluster (SCRAM produce->consume via the matrix
+  harness).
 - **cluster**: multi-broker `Redpanda` CR (`statefulset.replicas`); the operator
   owns Raft/seed bootstrap (no hand-rolled `seed_servers`). Validate at the target
   scale before relying on it.

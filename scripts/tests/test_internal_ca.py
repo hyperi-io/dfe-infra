@@ -46,10 +46,12 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHART = REPO_ROOT / "helm" / "charts" / "envoy-gateway-config"
+CHART = chart_dir("envoy-gateway-config")
+COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 DFE_OPS = REPO_ROOT / "scripts" / "dfe-ops"
 
 
@@ -113,9 +115,15 @@ else:
 
 
 def render(*sets: str) -> list[dict]:
-    """The gateway chart's rendered documents for one set of values."""
-    cmd = ["helm", "template", "gw", str(CHART), "--set", "domain=dfe.example.com",
-           "--set", "env=local"]
+    """The gateway chart's rendered documents for one set of values.
+
+    Needs the real hostnames map (common.yaml) the same as any other cloud
+    cascade: every route this chart enables by default now refuses to render
+    with no hostname to publish it on, and this test's own concern (the
+    internal-CA persistence pair) is unrelated to which routes exist.
+    """
+    cmd = ["helm", "template", "gw", str(CHART), "-f", str(COMMON_VALUES),
+           "--set", "domain=dfe.example.com", "--set", "env=local"]
     for item in sets:
         cmd += ["--set", item]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)

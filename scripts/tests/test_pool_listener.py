@@ -34,6 +34,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -66,7 +67,7 @@ MESH_GATEWAY = "dfe-mesh"
 def render(chart: str, profile: str) -> list[dict]:
     """One chart under one profile, with the same values cascade Argo layers."""
     cmd = [
-        "helm", "template", chart, str(CHARTS / chart),
+        "helm", "template", chart, str(chart_dir(chart)),
         "--namespace", "dfe",
         "--set", "appNamespace=dfe",
         "-f", str(VALUES / "common.yaml"),

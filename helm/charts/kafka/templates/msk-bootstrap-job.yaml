@@ -1,0 +1,185 @@
+{{- if and (eq .Values.kafka.mode "external") (eq .Values.kafka.provider "msk") }}
+{{- $msk := .Values.kafka.external.msk }}
+{{- if and $msk.bootstrap.enabled $msk.bootstrapIam }}
+{{- $topics := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
+{{- $iam := $msk.bootstrap.iamAuth }}
+{{- $jarName := printf "aws-msk-iam-auth-%s-all.jar" $iam.version }}
+{{- $jarUrl := $iam.url | default (printf "https://github.com/aws/aws-msk-iam-auth/releases/download/v%s/%s" $iam.version $jarName) }}
+# The MSK bootstrap: the SCRAM principal's ACLs, and the landing and DLQ topics.
+#
+# Two things have to happen on an MSK cluster before DFE can use it, and neither
+# can happen from a tofu apply.
+#
+# ACLs live in the KAFKA data plane, so the AWS provider has no call that writes
+# one, and the brokers sit in private subnets a deploy runner cannot reach. Worse,
+# once the cluster stops granting by default, nothing can write the FIRST ACL
+# unless it is already permitted. SASL/IAM is the way out: there the IAM policy IS
+# the authorisation and no Kafka ACL has to exist, which is why this pod carries an
+# IAM identity (EKS Pod Identity) while every DFE app stays on SCRAM.
+#
+# Topics have to be pre-created because the MSK configuration sets
+# auto.create.topics.enable=false -- deliberately, so the partition count per
+# source is an explicit number rather than a broker default. Without the landing
+# topic dfe-loader exits on "Auto-discovery found no matching topics" and
+# crashloops until someone publishes, which nothing can do through a loader that is
+# down. Without the DLQ topics the first poisoned message has nowhere to go: the
+# fleet's read-only rootfs makes the file DLQ a no-op (EROFS), and a DLQ write
+# happens AT failure time, the one moment nothing can be creating topics.
+#
+# The topic list is the dfe-kafka.bootstrapTopics helper, the same list the
+# single-tier Job and the cluster tier's Strimzi CRs render, so no tier can ship
+# without a topic the apps are configured to write to. The ACL set is
+# kafka-user.yaml's, grant for grant: topic literal "*" with Read, Write, Create
+# and Describe, consumer groups by the "dfe-" prefix with Read and Describe. No
+# Delete, no Alter, no cluster operation -- on-prem withholds all three.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # The inputs are hashed into the name so a changed topic list, principal or jar
+  # version is a NEW Job rather than an edit to an immutable one. Replace=true
+  # cannot do that job: the API server only defaults spec.selector on CREATE, so
+  # replacing a Job that declares none is rejected and the Application never syncs
+  # again.
+  name: {{ .Values.kafka.name }}-msk-bootstrap-{{ printf "%s|%s|%s" ($topics | toJson) $msk.scramUsername $iam.version | sha256sum | trunc 8 }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # A TRACKED resource, not a PreSync hook, for the reason the single-tier Job
+    # records: Argo omits hooks from an Application's resource tree, so a hook that
+    # never fires is invisible and the deploy reports success over a broker nobody
+    # bootstrapped. Tracked, this Job is Progressing until it completes, which is
+    # what holds the app layer back until the ACLs and topics are really there.
+    #
+    # Wave 0 runs it after the wave -1 ServiceAccount. There is no broker to wait
+    # for in external mode -- MSK is up before the cluster syncs.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: {{ $msk.bootstrap.backoffLimit }}
+  ttlSecondsAfterFinished: {{ $msk.bootstrap.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      # Named by the Pod Identity association, not by convenience: the agent hands
+      # this pod AWS credentials only because the association carries this account
+      # name and this namespace.
+      serviceAccountName: {{ $msk.bootstrap.serviceAccount }}
+      # This pod holds a Pod Identity credential that writes Kafka ACLs
+      # (kafka-cluster:AlterCluster) and shells out to fetch a jar from the
+      # internet, so it takes the same hardening as every other DFE workload --
+      # matching cruise-control-ui.yaml in this chart -- rather than the bare pod
+      # spec a one-shot Job might otherwise skip.
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      volumes:
+        # The jar the init container fetches, handed to the CLI container.
+        - name: iam-auth
+          emptyDir: {}
+        # The client properties are written at runtime, so /tmp must be writable
+        # regardless of the pod's rootfs policy.
+        - name: tmp
+          emptyDir: {}
+      initContainers:
+        # apache/kafka carries kafka-acls.sh and kafka-topics.sh but NOT the MSK
+        # IAM auth library, and there is no image that ships both. The same image
+        # is reused here so the Job has ONE image to review; its Alpine base
+        # provides wget and sha256sum, and curl is tried first for the deploys
+        # whose mirror needs it.
+        - name: fetch-iam-auth
+          image: "apache/kafka:{{ .Values.kafka.version }}"
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          resources:
+            {{- toYaml $msk.bootstrap.resources | nindent 12 }}
+          volumeMounts:
+            - name: iam-auth
+              mountPath: /opt/msk-iam
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              URL="{{ $jarUrl }}"
+              WANT="{{ $iam.sha256 }}"
+              JAR=/opt/msk-iam/{{ $jarName }}
+              echo "Fetching ${URL}"
+              if command -v curl >/dev/null 2>&1; then
+                curl -fsSL -o "$JAR" "$URL"
+              else
+                wget -q -O "$JAR" "$URL"
+              fi
+              # Verified BEFORE the CLI container ever loads it: this jar is the
+              # code that signs the admin calls, so an unverified download is an
+              # unverified authentication path.
+              GOT=$(sha256sum "$JAR" | cut -d' ' -f1)
+              if [ "$GOT" != "$WANT" ]; then
+                echo "checksum mismatch for ${URL}: got ${GOT}, want ${WANT}" >&2
+                exit 1
+              fi
+              echo "aws-msk-iam-auth {{ $iam.version }} verified: ${GOT}"
+      containers:
+        - name: msk-bootstrap
+          image: "apache/kafka:{{ .Values.kafka.version }}"
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          resources:
+            {{- toYaml $msk.bootstrap.resources | nindent 12 }}
+          volumeMounts:
+            - name: iam-auth
+              mountPath: /opt/msk-iam
+            - name: tmp
+              mountPath: /tmp
+          env:
+            # kafka-run-class.sh appends the shipped libs to whatever CLASSPATH it
+            # is given, so this is how the IAM login module reaches the CLI tools.
+            - name: CLASSPATH
+              value: /opt/msk-iam/{{ $jarName }}
+            {{- with $msk.region }}
+            # Normally unset: the Pod Identity agent injects AWS_REGION itself, and
+            # this only pins the signing region where a deploy wants it stated.
+            - name: AWS_REGION
+              value: {{ . | quote }}
+            {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BOOTSTRAP="{{ $msk.bootstrapIam }}"
+              CFG=/tmp/msk-client.properties
+              # No credential appears here or anywhere else in this pod: the login
+              # module reads the Pod Identity credentials from the agent.
+              cat > "$CFG" <<EOF
+              security.protocol=SASL_SSL
+              sasl.mechanism=AWS_MSK_IAM
+              sasl.jaas.config=software.amazon.msk.auth.iam.IAMLoginModule required;
+              sasl.client.callback.handler.class=software.amazon.msk.auth.iam.IAMClientCallbackHandler
+              EOF
+              echo "Waiting for ${BOOTSTRAP}..."
+              for i in $(seq 1 60); do
+                if /opt/kafka/bin/kafka-broker-api-versions.sh \
+                     --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 5
+              done
+              # --if-not-exists so an operator who repartitioned a topic keeps their
+              # settings; this only guarantees the topics are there at all.
+              {{- range $t := $topics }}
+              {{- /* The toJson round-trip makes numbers float64; a bare render of a
+                     large one is scientific notation, which the broker CLI rejects.
+                     Integral floats render via int64. */}}
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --create --if-not-exists --topic "{{ $t.name }}" --partitions {{ $t.partitions }} --replication-factor {{ $t.replicationFactor }}{{ range $k, $v := $t.config }} --config {{ $k }}={{ if kindIs "float64" $v }}{{ int64 $v }}{{ else }}{{ $v }}{{ end }}{{ end }}
+              {{- end }}
+              # The on-prem grants, verbatim (kafka-user.yaml). kafka-acls.sh --add
+              # is idempotent, so a re-run re-asserts rather than duplicates.
+              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Write --operation Create --operation Describe --topic "*" --resource-pattern-type literal
+              # prefixed means the name IS the literal prefix -- never write a '*'
+              # glob here, which would match groups starting "dfe-*", not "dfe-".
+              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Describe --group "dfe-" --resource-pattern-type prefixed
+              echo "ACLs now on the cluster:"
+              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --list
+              echo "topics now on the cluster:"
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --list
+{{- end }}
+{{- end }}

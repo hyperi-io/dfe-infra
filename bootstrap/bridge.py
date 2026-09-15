@@ -34,13 +34,17 @@ def _find_tf_binary() -> str | None:
     return None
 
 
-def _outputs_from_state(tf_dir: str) -> dict[str, str]:
+def _outputs_from_state(tf_dir: str) -> dict[str, tuple[str, bool]]:
     """Read outputs straight out of terraform.tfstate.
 
     The binary is the right reader when it is present -- it honours remote state
     and workspaces. This is for the machine that has the state file but no tofu
     installed, where the alternative is being unable to deploy at all. Local
     state only, and it says so rather than silently reading a stale file.
+
+    Returns each output as (value, sensitive) -- state carries the same
+    per-output `sensitive` flag `-json` does, so main()'s summary print can
+    mask by that flag rather than guess from the key's name.
     """
     state = Path(tf_dir) / "terraform.tfstate"
     if not state.is_file():
@@ -57,7 +61,7 @@ def _outputs_from_state(tf_dir: str) -> dict[str, str]:
         sys.exit(1)
 
     outputs = {
-        k: str(v.get("value", ""))
+        k: (str(v.get("value", "")), bool(v.get("sensitive", False)))
         for k, v in (raw.get("outputs") or {}).items()
         if v.get("value") is not None
     }
@@ -70,11 +74,58 @@ def _outputs_from_state(tf_dir: str) -> dict[str, str]:
     return outputs
 
 
-def get_tf_outputs(tf_dir: str) -> dict[str, str]:
-    """Run `terraform output -json` and return a flat dict of name->value.
+def _required_vars(env_vars: dict[str, str]) -> set[str]:
+    """The DFE_* outputs bootstrap.sh cannot run without.
 
-    Handles sensitive outputs: terraform output -json redacts them.
-    For any sensitive output, falls back to `terraform output -raw <key>`.
+    This mirrors bootstrap.sh's own `required_vars` array and its two backend
+    branches, because the two disagreeing turns an early gate into a false
+    refusal or a miss that surfaces later and worse.
+
+    DFE_VAULT_ADDR and DFE_VAULT_ROLE_ID are openbao-only: the aws root never
+    emits them, and sets DFE_SECRETS_BACKEND=aws-sm instead, where ESO
+    authenticates through EKS Pod Identity and needs neither. aws-sm takes
+    DFE_SECRETS_REGION in their place -- ESO has no store address to resolve
+    without it.
+    """
+    required = {
+        "DFE_ENV",
+        "DFE_CLOUD",
+        "DFE_REGION",
+        "DFE_DOMAIN",
+        "DFE_PROFILE",
+        "DFE_REPO_URL",
+        "DFE_TARGET_REVISION",
+        "DFE_STORAGE_CLASS",
+        "DFE_NAMESPACE",
+        "DFE_CLICKHOUSE_HOST",
+        # Every root emits this one, empty on a brokerless (slim/mesh) profile,
+        # which is why its PRESENCE is required here where bootstrap.sh leaves
+        # its VALUE optional.
+        "DFE_KAFKA_BOOTSTRAP",
+        "DFE_OTEL_ENDPOINT",
+        "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
+    }
+    # An empty value defaults to openbao the same way bootstrap.sh's
+    # ${DFE_SECRETS_BACKEND:-openbao} does; `.get(..., "openbao")` alone would
+    # read a present-but-empty output as aws-sm and drop both checks.
+    if (env_vars.get("DFE_SECRETS_BACKEND") or "openbao") == "openbao":
+        required |= {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}
+    else:
+        required |= {"DFE_SECRETS_REGION"}
+    return required
+
+
+def get_tf_outputs(tf_dir: str) -> dict[str, tuple[str, bool]]:
+    """Run `terraform output -json` and return name -> (value, sensitive).
+
+    `-json` does not redact a sensitive output -- only the human-readable,
+    no-flag `terraform output` display does that (it prints `<sensitive>`).
+    The `sensitive` field survives into the JSON right alongside the real
+    value, so this reads it there rather than making a second `-raw` call per
+    sensitive key that would only ever re-fetch the value this already has.
+    Carrying the flag through, rather than discarding it once the value is in
+    hand, is what lets main()'s summary print mask by the real flag instead of
+    a guess from the key's name.
 
     With no IaC binary installed, falls back to reading terraform.tfstate.
     """
@@ -92,27 +143,7 @@ def get_tf_outputs(tf_dir: str) -> dict[str, str]:
         sys.exit(1)
 
     raw = json.loads(result.stdout)
-    outputs = {}
-    for k, v in raw.items():
-        if v.get("sensitive", False):
-            # Sensitive outputs are redacted in -json mode; fetch individually
-            raw_result = subprocess.run(
-                [tf_bin, "output", "-raw", k],
-                cwd=tf_dir,
-                capture_output=True,
-                text=True,
-            )
-            if raw_result.returncode != 0:
-                print(
-                    f"WARNING: could not read sensitive output '{k}': {raw_result.stderr}",
-                    file=sys.stderr,
-                )
-                outputs[k] = ""
-            else:
-                outputs[k] = raw_result.stdout.strip()
-        else:
-            outputs[k] = str(v["value"])
-    return outputs
+    return {k: (str(v["value"]), bool(v.get("sensitive", False))) for k, v in raw.items()}
 
 
 def main() -> None:
@@ -146,8 +177,11 @@ def main() -> None:
     print(f"Reading Terraform outputs from {tf_dir}...")
     outputs = get_tf_outputs(str(tf_dir))
 
-    # Filter to DFE_* keys only
-    env_vars = {k: v for k, v in outputs.items() if k.startswith("DFE_")}
+    # Filter to DFE_* keys only, keeping the sensitive flag terraform reported
+    # for each one -- the summary print below masks by that, not by a guess
+    # from the key's name.
+    env_vars = {k: v for k, (v, _sensitive) in outputs.items() if k.startswith("DFE_")}
+    sensitive_keys = {k for k, (_v, sensitive) in outputs.items() if sensitive}
 
     if not env_vars:
         print("ERROR: No DFE_* outputs found in Terraform state.", file=sys.stderr)
@@ -155,23 +189,7 @@ def main() -> None:
         sys.exit(1)
 
     # Validate required vars
-    required = {
-        "DFE_ENV",
-        "DFE_CLOUD",
-        "DFE_REGION",
-        "DFE_DOMAIN",
-        "DFE_PROFILE",
-        "DFE_REPO_URL",
-        "DFE_TARGET_REVISION",
-        "DFE_STORAGE_CLASS",
-        "DFE_NAMESPACE",
-        "DFE_CLICKHOUSE_HOST",
-        "DFE_KAFKA_BOOTSTRAP",
-        "DFE_OTEL_ENDPOINT",
-        "DFE_VAULT_ADDR",
-        "DFE_VAULT_ROLE_ID",
-        "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
-    }
+    required = _required_vars(env_vars)
     missing = required - set(env_vars.keys())
     if missing:
         print(f"ERROR: Missing required outputs: {', '.join(sorted(missing))}", file=sys.stderr)
@@ -181,7 +199,10 @@ def main() -> None:
     print(f"\n  {len(env_vars)} DFE_* variables loaded from Terraform")
     for k in sorted(env_vars.keys()):
         v = env_vars[k]
-        if "TOKEN" in k or "SECRET" in k or "ROLE_ID" in k:
+        # Masked by terraform's own `sensitive` flag, not by matching the key's
+        # name against TOKEN/SECRET/ROLE_ID -- a sensitive output named
+        # anything else would otherwise print in the clear here.
+        if k in sensitive_keys:
             display = v[:4] + "***" if len(v) > 4 else "***"
         else:
             display = v

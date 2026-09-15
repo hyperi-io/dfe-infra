@@ -82,13 +82,26 @@ for vf in ${VALUES_FILES}; do
   VALUES_ARGS+=(-f "${vf}")
 done
 
+# Where a chart of that name lives. The edge module's two sit under helm/edge,
+# and the gateway's directory name is not its chart name, so a path is resolved
+# here rather than built by concatenation.
+chart_dir() {
+  case "$1" in
+    envoy-gateway-config) echo "helm/edge/gateway" ;;
+    culvert)              echo "helm/edge/culvert" ;;
+    *)                    echo "helm/charts/$1" ;;
+  esac
+}
+
 if [ -n "${DFE_VALIDATE_CHARTS:-}" ]; then
   CHARTS="${DFE_VALIDATE_CHARTS}"
 else
   CHARTS=""
-  for d in helm/charts/*/; do
+  # The chart's declared NAME, not its directory, so the release name a chart
+  # renders under does not change with where the directory sits.
+  for d in helm/charts/*/ helm/edge/*/; do
     [ -f "${d}Chart.yaml" ] || continue
-    CHARTS="${CHARTS} $(basename "${d}")"
+    CHARTS="${CHARTS} $(awk '/^name:/ { print $2; exit }' "${d}Chart.yaml")"
   done
 fi
 
@@ -108,12 +121,13 @@ echo "    values:    ${VALUES_FILES}"
 echo "    namespace: ${RENDER_NS}"
 echo ""
 
-PASS=0; FAIL=0; SKIPPED=0
+PASS=0; FAIL=0; SKIPPED=0; EMPTY=0
 FAILED=""
 UNVALIDATED=""
+EMPTIED=""
 
 for chart in ${CHARTS}; do
-  dir="helm/charts/${chart}"
+  dir="$(chart_dir "${chart}")"
   if [ ! -f "${dir}/Chart.yaml" ]; then
     echo "  [SKIP] ${chart} -- no such chart"
     continue
@@ -143,6 +157,7 @@ for chart in ${CHARTS}; do
   # non-zero size, and kubectl rejects it as "no objects passed to apply".
   if ! grep -q '^kind:' "${OUT}/${chart}.yaml"; then
     echo "  [EMPTY] ${chart} -- rendered no objects with these values (not validated)"
+    EMPTY=$((EMPTY+1)); EMPTIED="${EMPTIED} ${chart}"
     continue
   fi
 
@@ -174,11 +189,16 @@ for chart in ${CHARTS}; do
 done
 
 echo ""
-echo "=== ${PASS} passed, ${FAIL} failed, ${SKIPPED} not validated ==="
+# Every chart the sweep read lands in exactly one column, so the four add up to
+# the fleet and a chart cannot go missing between them.
+echo "=== ${PASS} passed, ${FAIL} failed, ${SKIPPED} not validated, ${EMPTY} rendered empty ==="
 if [ "${SKIPPED}" -gt 0 ]; then
   echo "    NOT VALIDATED (cluster missing CRDs):${UNVALIDATED}"
   echo "    Those charts were neither proven good nor bad here. Install the"
   echo "    operators they need, or validate them against a cluster that has them."
+fi
+if [ "${EMPTY}" -gt 0 ]; then
+  echo "    RENDERED EMPTY (every template gated off):${EMPTIED}"
 fi
 if [ "${FAIL}" -gt 0 ]; then
   echo "    failed:${FAILED}"
