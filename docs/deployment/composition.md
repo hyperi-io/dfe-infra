@@ -14,15 +14,18 @@ on demand and never seeded.
 | `dfe-ui` | X | X | X | X | X | X |
 | `hyperdx` | X | X | X | X | X | X |
 | `dfe-fetcher` | | | | | n/a | X |
-| `dfe-transform-vrl` | | | | | | X |
+| `dfe-transform-vrl` | | X | X | | | X |
+| `dfe-transform-elastic` | | X | X | | | X |
 | `dfe-transform-vector` | | | | | | |
 | `culvert` | n/a | n/a | | | n/a | n/a |
 
-`python3 scripts/composition.py` prints that table from the manifest. On the
-Kubernetes tiers a fetcher or a transform instance IS a source's processing step,
-so it arrives when the engine writes the source rather than with the tier.
-culvert is offered on the two HA tiers and enabled by an operator adding its
-values file.
+`python3 scripts/composition.py` prints that table from the manifest. A fetcher
+instance IS a source's processing step, so it arrives when the engine writes the
+source rather than with the tier. Each transform instead declares `idle_when`,
+so a tier seeds ONE of each, stood up empty and Ready, and the first source
+fills it rather than creating it. `per_config` multiplies them from there --
+seeding places the first, it does not cap the count. culvert is offered on the
+two HA tiers and enabled by an operator adding its values file.
 
 Compose is the exception, and the reason is Compose's own: it holds ONE service
 per app, declared in a committed file, and nothing creates a second at run time.
