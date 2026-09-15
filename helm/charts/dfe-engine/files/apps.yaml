@@ -237,6 +237,12 @@ apps:
     hot_reload: false
     consumes:
       config: archiver.yaml
+    routing:
+      compiler: archiver
+      values_paths:
+        # The landing topics of the sources that asked to be archived. A
+        # discovery pattern in its place archives every source, asked or not.
+        topics: config.kafka.topics
     # Deployed by default and idle until an operator names a destination, rather
     # than absent until someone remembers to add it. docker-slim is the one
     # exception: the leanest Compose tier runs the core data path alone, so the
