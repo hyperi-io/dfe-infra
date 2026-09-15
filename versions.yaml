@@ -2101,7 +2101,7 @@ stacks:
       dfe-receiver: "v1.15.36"      # independent release line; rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup plus the bytes admitted since that sample.
       dfe-loader: "v1.18.36"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept. Rebuilt on scalo-rs 2.12.2 (the same memory guard).
       dfe-archiver: "v1.7.22"       # rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup, not what the allocator asked for.
-      dfe-fetcher: "v1.4.22"        # rebuilt on scalo-rs 2.12.2 (the same memory guard).
+      dfe-fetcher: "v1.4.23"        # #104: every source runs on one generic framework (the rest, db and file shapes in apps.yaml); #108: the PGO profile names the gcp service it declares. Rebuilt on scalo-rs 2.12.2.
       dfe-transform-vrl: "v1.1.23"   # rebuilt on scalo-rs 2.12.2 (the memory guard above).
       dfe-transform-vector: "v1.0.39"  # direct transport through the supervisor bridge, copy-paste templates; rebuilt on scalo-rs 2.12.2 (the memory guard above).
       dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
@@ -2126,7 +2126,7 @@ stacks:
       dfe-receiver: "sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
       dfe-loader: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
       dfe-archiver: "sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
-      dfe-fetcher: "sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
+      dfe-fetcher: "sha256:6b5f205b3af97efccde31cbe3415c658e8b001196d3f08c148ceed2e7ed2ffbc"
       dfe-transform-vrl: "sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
       dfe-transform-vector: "sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
       # Keyed here rather than under content:, which carries versions and
