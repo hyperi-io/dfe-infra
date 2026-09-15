@@ -25,7 +25,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit 1
 
-CHART="helm/charts/envoy-gateway-config"
+CHART="helm/edge/gateway"
 BASE_VALUES=(-f argocd/values/common.yaml -f argocd/values/local-dfe.yaml)
 OIDC=(--set oidc.enabled=true
       --set-json 'oidc.providers=[{"name":"acme","issuerUrl":"https://id.example.com","clientId":"dfe"}]')

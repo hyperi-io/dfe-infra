@@ -95,6 +95,10 @@ _ENV_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (("toolbox", "pod", "enabled"), "DFE_TOOLBOX_POD_ENABLED"),
     (("toolbox", "pod", "kubeApiAccess"), "DFE_TOOLBOX_POD_KUBE_API_ACCESS"),
     (("toolbox", "pod", "ttlSeconds"), "DFE_TOOLBOX_POD_TTL_SECONDS"),
+    # The edge module's whole-module switch, carried onto the cluster secret as
+    # both a label and an annotation because an ApplicationSet cluster selector
+    # matches labels only. Unset here, bootstrap.sh defaults the module on.
+    (("edge", "enabled"), "DFE_EDGE_ENABLED"),
 )
 
 # An env assignment, live (`KEY=`) or hash-commented (`# KEY=`). The env file's

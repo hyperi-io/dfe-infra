@@ -258,7 +258,7 @@ jobs:
       - name: Lint application charts
         run: |
           set -e
-          for chart_dir in helm/charts/*/; do
+          for chart_dir in helm/charts/*/ helm/edge/*/; do
             if [[ -f "$chart_dir/Chart.yaml" ]]; then
               echo "==> Linting $chart_dir"
               helm dependency update "$chart_dir" 2>/dev/null || true

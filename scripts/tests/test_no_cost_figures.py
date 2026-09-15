@@ -69,6 +69,9 @@ def _committed_files() -> list[Path]:
     paths += [REPO_ROOT / "README.md", REPO_ROOT / "deployment.example.yaml"]
     paths += sorted((REPO_ROOT / "argocd" / "values").glob("*.yaml"))
     paths += sorted(REPO_ROOT.glob("helm/charts/*/values.yaml"))
+    # The edge module's charts carry the tier-2 opt-ins that name a spend, so
+    # they are swept with the rest rather than escaping on their directory.
+    paths += sorted(REPO_ROOT.glob("helm/edge/*/values.yaml"))
     paths += sorted((REPO_ROOT / "sizing").glob("**/*.yaml"))
     paths += sorted((REPO_ROOT / "sizing").glob("**/*.md"))
     paths += sorted((REPO_ROOT / "shapes").glob("**/*.yaml"))

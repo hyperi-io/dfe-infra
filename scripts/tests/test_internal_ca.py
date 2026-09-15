@@ -46,10 +46,11 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHART = REPO_ROOT / "helm" / "charts" / "envoy-gateway-config"
+CHART = chart_dir("envoy-gateway-config")
 COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 DFE_OPS = REPO_ROOT / "scripts" / "dfe-ops"
 

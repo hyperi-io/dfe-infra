@@ -82,13 +82,26 @@ for vf in ${VALUES_FILES}; do
   VALUES_ARGS+=(-f "${vf}")
 done
 
+# Where a chart of that name lives. The edge module's two sit under helm/edge,
+# and the gateway's directory name is not its chart name, so a path is resolved
+# here rather than built by concatenation.
+chart_dir() {
+  case "$1" in
+    envoy-gateway-config) echo "helm/edge/gateway" ;;
+    culvert)              echo "helm/edge/culvert" ;;
+    *)                    echo "helm/charts/$1" ;;
+  esac
+}
+
 if [ -n "${DFE_VALIDATE_CHARTS:-}" ]; then
   CHARTS="${DFE_VALIDATE_CHARTS}"
 else
   CHARTS=""
-  for d in helm/charts/*/; do
+  # The chart's declared NAME, not its directory, so the release name a chart
+  # renders under does not change with where the directory sits.
+  for d in helm/charts/*/ helm/edge/*/; do
     [ -f "${d}Chart.yaml" ] || continue
-    CHARTS="${CHARTS} $(basename "${d}")"
+    CHARTS="${CHARTS} $(awk '/^name:/ { print $2; exit }' "${d}Chart.yaml")"
   done
 fi
 
@@ -113,7 +126,7 @@ FAILED=""
 UNVALIDATED=""
 
 for chart in ${CHARTS}; do
-  dir="helm/charts/${chart}"
+  dir="$(chart_dir "${chart}")"
   if [ ! -f "${dir}/Chart.yaml" ]; then
     echo "  [SKIP] ${chart} -- no such chart"
     continue

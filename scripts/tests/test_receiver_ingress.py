@@ -38,6 +38,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -59,7 +60,7 @@ NLB_ANNOTATIONS = {
 
 
 def render(chart: str, *args: str, values: list[Path] | None = None) -> list[dict]:
-    cmd = ["helm", "template", chart, str(CHARTS / chart)]
+    cmd = ["helm", "template", chart, str(chart_dir(chart))]
     for v in values or AWS_CASCADE:
         cmd += ["-f", str(v)]
     cmd += list(args)
@@ -71,7 +72,7 @@ def render(chart: str, *args: str, values: list[Path] | None = None) -> list[dic
 
 def render_error(chart: str, *args: str, values: list[Path] | None = None) -> str:
     """The stderr of a render that MUST fail. Empty string means it did not."""
-    cmd = ["helm", "template", chart, str(CHARTS / chart)]
+    cmd = ["helm", "template", chart, str(chart_dir(chart))]
     for v in values or AWS_CASCADE:
         cmd += ["-f", str(v)]
     cmd += list(args)

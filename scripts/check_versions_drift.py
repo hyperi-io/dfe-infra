@@ -588,11 +588,26 @@ _APP_CHARTS = [
     # spells its repository out, so only the tag and digest halves are checked.
     "culvert",
 ]
+
+# The charts that do not sit under helm/charts. The edge module keeps its two
+# in helm/edge, so every path built from a chart name is resolved through here
+# rather than by concatenation.
+_CHART_DIRS = {
+    "culvert": "helm/edge/culvert",
+    "envoy-gateway-config": "helm/edge/gateway",
+}
+
+
+def chart_dir(name: str) -> str:
+    """The directory holding the chart of that name."""
+    return _CHART_DIRS.get(name, f"helm/charts/{name}")
+
+
 CHECKS += [
     Check(
         f"{app} chart appVersion",
         f"apps.{app}",
-        Path(f"helm/charts/{app}/Chart.yaml"),
+        Path(f"{chart_dir(app)}/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     )
     for app in _APP_CHARTS
@@ -608,7 +623,7 @@ CHECKS += [
     Check(
         f"{app} image digest",
         f"digests.{app}",
-        Path(f"helm/charts/{app}/values.yaml"),
+        Path(f"{chart_dir(app)}/values.yaml"),
         r'digest:\s*"([^"]+)"',
     )
     for app in _DIGEST_MIRRORS
@@ -913,7 +928,7 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "curl for the PostSync setup Job; the tools block was deliberately dropped, and Renovate's infra-pins group watches helm-values",
     ),
     (
-        "helm/charts/envoy-gateway-config/Chart.yaml",
+        "helm/edge/gateway/Chart.yaml",
         "appVersion",
         "configures a gateway that is already present, and installs no upstream image",
     ),

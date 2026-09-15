@@ -29,6 +29,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import CHART_TREES, chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -132,7 +133,7 @@ def test_the_root_workloads_go_through_the_helper() -> None:
         ("culvert", "templates/deployment.yaml", "culvert"),
         ("otel-collector", "templates/daemonset.yaml", "otel"),
     ):
-        text = render(CHARTS / chart, name, "--show-only", template)
+        text = render(chart_dir(chart), name, "--show-only", template)
         sc = docs(text)[0]["spec"]["template"]["spec"]["securityContext"]
         expect(f"{chart} runs as root", sc.get("runAsUser") == 0, repr(sc))
         expect(f"{chart} says so", sc.get("runAsNonRoot") is False, repr(sc))
@@ -151,7 +152,8 @@ def test_no_chart_writes_its_own_pod_security_context() -> None:
     """
     offenders = [
         f"{t.relative_to(REPO_ROOT)}:{n}"
-        for t in sorted(CHARTS.glob("*/templates/**/*.yaml"))
+        for tree in CHART_TREES
+        for t in sorted(tree.glob("*/templates/**/*.yaml"))
         if str(t.relative_to(REPO_ROOT)) not in FSGROUP_ONLY
         for n, line in enumerate(t.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
         if line == "      securityContext:"

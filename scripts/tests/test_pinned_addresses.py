@@ -30,11 +30,12 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
-GATEWAY = CHARTS / "envoy-gateway-config"
+GATEWAY = chart_dir("envoy-gateway-config")
 RECEIVER = CHARTS / "dfe-receiver"
 COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"

@@ -1,13 +1,14 @@
-# Wave 2: cluster platform config -- edge routing and network policy.
+# Wave 2: cluster platform config -- network policy, the toolbox pod, and the
+# Karpenter pools.
 #
 # First-party dfe-infra charts that configure the CLUSTER rather than run a
 # workload, so they sit apart from layer2-data (substrate) and layer2-apps (DFE
-# services). Both are generated here so a rebuild recreates them; applied by hand
-# they take neither the profile overlay nor the domain, and every HTTPRoute
-# renders on local.yaml's placeholder host.
+# services). They are generated here so a rebuild recreates them; applied by hand
+# they take neither the profile overlay nor the domain.
 #
-# Wave 2 puts the Gateway and its routes in place before the workloads they route
-# to; an HTTPRoute whose backend is absent reports NotFound until it exists.
+# The public gateway is NOT here: it belongs to the edge module and is generated
+# by appsets/layer2-edge.yaml, on the same wave 2 and under the same Application
+# name it had here.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -26,17 +27,9 @@ spec:
                   dfe.hyperi.io/managed: "true"
           - list:
               elements:
-                # Gateway + HTTPRoutes for every deployment surface. Needs the
-                # envoy-gateway operator, installed at wave 3 by layer1-addons;
-                # the CRDs it depends on come with that install, so this Application
-                # reports SyncFailed until the operator lands and then converges.
-                # `chart` is stated rather than defaulted because this is the
-                # element whose directory moves.
-                - app: envoy-gateway-config
-                  chart: envoy-gateway-config
-                  namespace: envoy-gateway-system
-                  wave: "2"
-                  appProject: infra
+                # envoy-gateway-config moved to appsets/layer2-edge.yaml with its
+                # name and its wave unchanged; the edge module owns it now.
+                #
                 # Default-deny plus the explicit allows between DFE namespaces.
                 - app: network-policies
                   namespace: default

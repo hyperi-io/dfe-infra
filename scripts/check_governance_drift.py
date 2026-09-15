@@ -65,15 +65,26 @@ def _load_yaml(path: Path) -> object:
         return yaml.safe_load(fh)
 
 
-def _chart_values(charts_dir: Path) -> dict[str, dict]:
-    """Map chart-dir name -> parsed values.yaml (missing/empty -> {})."""
+def _chart_values(*roots: Path) -> dict[str, dict]:
+    """Map chart NAME -> parsed values.yaml (missing/empty -> {}).
+
+    Keyed on the name Chart.yaml declares rather than the directory, because a
+    helmvars target names the service, and the edge module's gateway sits in a
+    directory that is not its chart name.
+    """
     out: dict[str, dict] = {}
-    for chart_dir in sorted(charts_dir.iterdir()):
-        values_file = chart_dir / "values.yaml"
-        if not (chart_dir / "Chart.yaml").is_file():
+    for root in roots:
+        if not root.is_dir():
             continue
-        parsed = _load_yaml(values_file) if values_file.is_file() else {}
-        out[chart_dir.name] = parsed if isinstance(parsed, dict) else {}
+        for chart_dir in sorted(root.iterdir()):
+            chart_file = chart_dir / "Chart.yaml"
+            if not chart_file.is_file():
+                continue
+            declared = _load_yaml(chart_file)
+            name = declared.get("name") if isinstance(declared, dict) else None
+            values_file = chart_dir / "values.yaml"
+            parsed = _load_yaml(values_file) if values_file.is_file() else {}
+            out[name or chart_dir.name] = parsed if isinstance(parsed, dict) else {}
     return out
 
 
@@ -117,8 +128,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--charts-dir",
-        default=str(REPO_ROOT / "helm" / "charts"),
-        help="chart fleet to resolve against",
+        nargs="+",
+        default=[str(REPO_ROOT / "helm" / "charts"), str(REPO_ROOT / "helm" / "edge")],
+        help="chart trees to resolve against; a tree left out is a target that cannot resolve",
     )
     ap.add_argument(
         "--require",
@@ -144,9 +156,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"SKIPPED: {msg}", file=sys.stderr)
         return 0
 
-    charts = _chart_values(Path(args.charts_dir))
+    charts = _chart_values(*(Path(root) for root in args.charts_dir))
     if not charts:
-        print(f"FAIL: no charts found under {args.charts_dir}", file=sys.stderr)
+        print(f"FAIL: no charts found under {' '.join(args.charts_dir)}", file=sys.stderr)
         return 1
 
     failures = 0

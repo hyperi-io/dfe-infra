@@ -21,6 +21,12 @@ metadata:
     # selector's matchExpressions can only match labels, never annotations, and
     # layer1-addons.yaml gates the AWS Load Balancer Controller on this key.
     dfe.hyperi.io/cloud: "${DFE_CLOUD}"
+    # The edge module's off switch, gating appsets/layer2-edge.yaml. A LABEL as
+    # well as the annotation below for the same reason cloud is: a cluster
+    # selector matches labels only. "false" renders no door at all, and the
+    # appset's Exists test is what stops an older cluster secret that carries
+    # neither from matching.
+    dfe.hyperi.io/edge: "${DFE_EDGE_ENABLED}"
   annotations:
     # Identity
     dfe.hyperi.io/env: "${DFE_ENV}"
@@ -104,6 +110,9 @@ metadata:
     dfe.hyperi.io/toolbox_pod_enabled: "${DFE_TOOLBOX_POD_ENABLED}"
     dfe.hyperi.io/toolbox_pod_kube_api_access: "${DFE_TOOLBOX_POD_KUBE_API_ACCESS}"
     dfe.hyperi.io/toolbox_pod_ttl_seconds: "${DFE_TOOLBOX_POD_TTL_SECONDS}"
+    # The annotation copy of the edge label above, for anything reading the
+    # module's state from the annotations the rest of this file carries.
+    dfe.hyperi.io/edge: "${DFE_EDGE_ENABLED}"
 type: Opaque
 stringData:
   name: "dfe-${DFE_CLOUD}-${DFE_ENV}"

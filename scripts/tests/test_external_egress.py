@@ -29,6 +29,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import CHART_TREES
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -234,7 +235,7 @@ def test_default_carve_out_survives() -> None:
 def test_the_network_model_is_declared_once() -> None:
     """Every carve-out reads networkModel; a second literal is a range that drifts."""
     offenders = []
-    for values in sorted((REPO_ROOT / "helm" / "charts").glob("*/values.yaml")):
+    for values in sorted(v for tree in CHART_TREES for v in tree.glob("*/values.yaml")):
         in_model = False
         for number, line in enumerate(values.read_text(encoding="utf-8").splitlines(), 1):
             if not line.startswith(" "):

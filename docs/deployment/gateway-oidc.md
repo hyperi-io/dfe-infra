@@ -135,5 +135,5 @@ hostname and serves the wildcard certificate as normal.
 ## Related
 
 - [index.md](index.md) - the deploy layers and the values cascade
-- `helm/charts/envoy-gateway-config/values.yaml` - the `oidc` and `jwtAuthn` keys
+- `helm/edge/gateway/values.yaml` - the `oidc` and `jwtAuthn` keys
 - `helm/charts/dfe-engine/values.yaml` - the `auth`, `oidc` and `authConfig` keys

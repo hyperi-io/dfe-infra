@@ -401,6 +401,16 @@ export DFE_KARPENTER_KMS_KEY_ID_ANNOTATION="${DFE_KARPENTER_KMS_KEY_ID:+dfe.hype
 export DFE_TOOLBOX_POD_ENABLED="${DFE_TOOLBOX_POD_ENABLED:-false}"
 export DFE_TOOLBOX_POD_KUBE_API_ACCESS="${DFE_TOOLBOX_POD_KUBE_API_ACCESS:-false}"
 export DFE_TOOLBOX_POD_TTL_SECONDS="${DFE_TOOLBOX_POD_TTL_SECONDS:-}"
+# The edge module's whole-module switch (deployment.yaml's edge.enabled,
+# render_dial.py's DFE_EDGE_ENABLED). ON by default, because a deployment with
+# no door reaches nothing from outside the cluster; "false" leaves
+# appsets/layer2-edge.yaml generating nothing at all. Always rendered, so the
+# gate's Exists test is satisfied on every cluster this bootstrap writes.
+export DFE_EDGE_ENABLED="${DFE_EDGE_ENABLED:-true}"
+if [[ "${DFE_EDGE_ENABLED}" != "true" && "${DFE_EDGE_ENABLED}" != "false" ]]; then
+  echo "ERROR: DFE_EDGE_ENABLED must be true or false (got '${DFE_EDGE_ENABLED}')" >&2
+  exit 1
+fi
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
 export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"
@@ -759,7 +769,7 @@ else
     "${REPO_ROOT}/argocd/values/profile-${DFE_PROFILE}.yaml"; do
     [[ -f "${ca_values_file}" ]] && ca_value_files+=(-f "${ca_values_file}")
   done
-  helm template dfe-internal-ca "${REPO_ROOT}/helm/charts/envoy-gateway-config" \
+  helm template dfe-internal-ca "${REPO_ROOT}/helm/edge/gateway" \
     --namespace cert-manager \
     --show-only templates/internal-ca-persist.yaml \
     "${ca_value_files[@]}" \

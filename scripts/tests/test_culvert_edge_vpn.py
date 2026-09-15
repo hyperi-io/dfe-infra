@@ -34,6 +34,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -64,7 +65,7 @@ PUSH_PORT = 6000
 
 def render(chart: str, *args: str) -> str:
     cmd = [
-        "helm", "template", chart, str(CHARTS / chart),
+        "helm", "template", chart, str(chart_dir(chart)),
         "-f", str(VALUES / "common.yaml"),
         *args,
     ]
@@ -75,7 +76,7 @@ def render(chart: str, *args: str) -> str:
 
 
 def fails(chart: str, *args: str) -> str:
-    cmd = ["helm", "template", chart, str(CHARTS / chart), "-f", str(VALUES / "common.yaml"), *args]
+    cmd = ["helm", "template", chart, str(chart_dir(chart)), "-f", str(VALUES / "common.yaml"), *args]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode == 0:
         raise SystemExit(f"helm template was expected to fail for {chart} {args}")

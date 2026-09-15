@@ -542,7 +542,7 @@ nodes:
         registry: ghcr
         public: true
     # The optional edge-fleet VPN, and the only member with a PUBLIC container.
-    # It publishes no Helm chart, so helm/charts/culvert is dfe-infra's own --
+    # It publishes no Helm chart, so helm/edge/culvert is dfe-infra's own --
     # the same arrangement as every other app here -- and versions.yaml pins
     # its image like any other. Its only suite edge is the scalo-py dependency.
     # Its in-repo marker states the numeric tier 4, which is the org

@@ -160,7 +160,7 @@ ui:
 ## against the scale defined there. So the receiver carries NO
 ## public front door by default: it stays private in the VPC, and there are
 ## three ways to reach it --
-##   1. culvert (helm/charts/culvert), dialled through an address the
+##   1. culvert (helm/edge/culvert), dialled through an address the
 ##      deployer brings -- e.g. an Elastic IP on a small forwarder instance
 ##      in front of culvert's NodePort. Free ingress, no per-byte line.
 ##   2. the deployer's own peering, VPN or Direct Connect, straight to the
@@ -196,6 +196,18 @@ ingest:
     podLabel: dfe-culvert
   networkPolicy:
     enabled: true
+
+## THE EDGE MODULE, as one switch. `enabled: false` leaves
+## argocd/appsets/layer2-edge.yaml generating nothing, so the deployment gets
+## no public gateway and no tunnel and every app stays on a ClusterIP. ON is
+## the default, because a deployment with no door is reachable from nowhere
+## outside the cluster. render_dial.py carries this to DFE_EDGE_ENABLED and
+## bootstrap.sh writes it onto the cluster secret as both a label and an
+## annotation -- an ApplicationSet cluster selector matches labels only.
+## DESTROY BEFORE DISABLING: a cloud load balancer outlives the Application
+## that asked for it, so turning the module off first orphans it.
+edge:
+  enabled: true
 
 ## TOOLBOX -- two independent troubleshooting surfaces sharing one top-level
 ## key, because this restricted YAML subset allows no duplicate key. `pod:`

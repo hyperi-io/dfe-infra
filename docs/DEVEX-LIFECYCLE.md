@@ -107,7 +107,7 @@ flowchart LR
 ```
 
 Service hostnames are served by HTTPRoutes (Envoy Gateway,
-`helm/charts/envoy-gateway-config/`) under the deployment's `*.apps.<your-domain>`
+`helm/edge/gateway/`) under the deployment's `*.apps.<your-domain>`
 wildcard; cert-manager issues the TLS. A service needing a name outside the
 wildcard requires a CoreDNS record added in hyperi-infra
 (`hyperi-io/hyperi-infra:infra/coredns/zones/`).

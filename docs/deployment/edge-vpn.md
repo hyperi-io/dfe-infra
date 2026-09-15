@@ -11,7 +11,7 @@ It is OFF unless a deployment asks for it, and it is offered on the `scale` and
 
 ## What it is
 
-`helm/charts/culvert` deploys [culvert](https://github.com/hyperi-io/culvert),
+`helm/edge/culvert` deploys [culvert](https://github.com/hyperi-io/culvert),
 a VPN server that speaks OpenVPN and WireGuard at once. The chart is
 dfe-infra's, as for every other app in the suite; the image is pinned by tag
 and digest in `versions.yaml` (`apps.culvert`, `digests.culvert`).
@@ -59,7 +59,7 @@ flowchart LR
     C -.->|denied| CH[ClickHouse]
 ```
 
-- **The NetworkPolicy** (`helm/charts/culvert/templates/networkpolicy.yaml`)
+- **The NetworkPolicy** (`helm/edge/culvert/templates/networkpolicy.yaml`)
   selects the receiver pods BY LABEL, so it is exact whatever the addressing
   is. Client traffic is SNATed onto the pod address on its way out of the
   tunnel, so what the pod may reach is what a client may reach.
@@ -131,10 +131,15 @@ POST /api/v1/apps/culvert/instances
               "exposure.loadBalancerIP": "203.0.113.10" } }
 ```
 
-That commits `values/culvert-default-values.yaml`, the layer2-apps
+That commits `values/culvert-default-values.yaml`, the layer2-edge
 ApplicationSet turns the file into an Argo Application, and Argo deploys it.
 `DELETE /api/v1/apps/culvert/default` removes the file and the app with it. The
 console's Platform tab drives the same endpoints.
+
+The tunnel is part of the edge module, so the deployment's `edge.enabled` is a
+switch above this one: with it off, `argocd/appsets/layer2-edge.yaml` generates
+nothing and the values file turns nothing on. Destroy the tunnel before turning
+the module off -- the load balancer outlives the Application that asked for it.
 
 `vpn.serverCN` is the name clients dial and the name the server certificate is
 issued for, so it has to resolve to the LoadBalancer's address. Left empty it

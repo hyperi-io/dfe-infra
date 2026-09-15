@@ -18,7 +18,7 @@ setup() {
     # The SecurityPolicy must attach to the HTTPRoute via targetRefs, not
     # use a backendRef to dfe-engine's Service. This ensures Envoy applies
     # OIDC auth at the route level — dfe-engine doesn't need to be running.
-    helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+    helm template test "${REPO_ROOT}/helm/edge/gateway/" \
         -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
@@ -40,7 +40,7 @@ setup() {
 }
 
 @test "OIDC config comes entirely from Helm values, not runtime API" {
-    run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+    run helm template test "${REPO_ROOT}/helm/edge/gateway/" \
         -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
@@ -72,7 +72,7 @@ setup() {
 # --- Invariant 3: Header names are static in Envoy config ---
 
 @test "forwarded headers are hardcoded in Envoy config, not dynamic" {
-    run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+    run helm template test "${REPO_ROOT}/helm/edge/gateway/" \
         -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set jwtAuthn.enabled=true \
@@ -86,7 +86,7 @@ setup() {
 
 @test "entire stack renders with oidc.enabled=false (simple auth)" {
     local exit_code=0
-    helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+    helm template test "${REPO_ROOT}/helm/edge/gateway/" \
         -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com || exit_code=$?
     [ "$exit_code" -eq 0 ]
@@ -99,7 +99,7 @@ setup() {
 # --- Invariant 5: Adding a provider is a values change, not code ---
 
 @test "adding a new OIDC provider requires only values, no template changes" {
-    run helm template test "${REPO_ROOT}/helm/charts/envoy-gateway-config/" \
+    run helm template test "${REPO_ROOT}/helm/edge/gateway/" \
         -f "${REPO_ROOT}/argocd/values/common.yaml" \
         --set domain=example.com \
         --set oidc.enabled=true \
