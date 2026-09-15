@@ -411,6 +411,14 @@ if [[ "${DFE_EDGE_ENABLED}" != "true" && "${DFE_EDGE_ENABLED}" != "false" ]]; th
   echo "ERROR: DFE_EDGE_ENABLED must be true or false (got '${DFE_EDGE_ENABLED}')" >&2
   exit 1
 fi
+# The fleet tunnel's own address and the zone its forwarder is pinned to
+# (terraform/modules/edge/aws). Both empty on edge.tunnel.address.mode byo,
+# where the deployer already holds the address, and on every flavour with no
+# forwarder at all -- each renders blank then, same as the karpenter facts.
+export DFE_TUNNEL_ADDRESS="${DFE_TUNNEL_ADDRESS:-}"
+export DFE_TUNNEL_ADDRESS_ANNOTATION="${DFE_TUNNEL_ADDRESS:+dfe.hyperi.io/tunnel_address: \"${DFE_TUNNEL_ADDRESS}\"}"
+export DFE_TUNNEL_ZONE="${DFE_TUNNEL_ZONE:-}"
+export DFE_TUNNEL_ZONE_ANNOTATION="${DFE_TUNNEL_ZONE:+dfe.hyperi.io/tunnel_zone: \"${DFE_TUNNEL_ZONE}\"}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
 export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"

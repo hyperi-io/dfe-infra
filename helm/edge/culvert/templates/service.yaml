@@ -86,6 +86,12 @@ spec:
       targetPort: {{ .name }}
       protocol: UDP
       name: {{ .name }}
+      {{- /* Pinned only where it is read: whatever stands in front of a
+           NodePort has to be told the number, and an allocated one is not
+           knowable until the Service exists. */}}
+      {{- if and (eq ($pub.serviceType | default "LoadBalancer") "NodePort") .nodePort }}
+      nodePort: {{ .nodePort }}
+      {{- end }}
     {{- end }}
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
@@ -123,6 +129,9 @@ spec:
       targetPort: {{ .name }}
       protocol: TCP
       name: {{ .name }}
+      {{- if and (eq ($pub.serviceType | default "LoadBalancer") "NodePort") .nodePort }}
+      nodePort: {{ .nodePort }}
+      {{- end }}
     {{- end }}
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}

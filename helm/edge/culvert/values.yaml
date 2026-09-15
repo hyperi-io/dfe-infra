@@ -36,13 +36,18 @@ replicas: 1
 #   protocol -- TCP | UDP
 #   exposed  -- include on the public LoadBalancer. The metrics/health listener
 #               is false: it is unauthenticated.
+#   nodePort -- pinned port on every node, rendered under serviceType NodePort
+#               and ignored otherwise. Pinned rather than allocated because
+#               whatever stands in front of a NodePort has to be told the
+#               number, and an allocated one is not knowable until the Service
+#               exists (terraform/modules/edge/aws reads these).
 # Mixed TCP+UDP in one Service is not portable across cloud LBs, so the public
 # path renders ONE LoadBalancer per protocol family that has exposed listeners.
 # Presence in this list is what switches a tunnel on, so removing an entry
 # closes that door end to end.
 listeners:
-  - { name: wireguard, port: 51820, protocol: UDP, exposed: true }
-  - { name: openvpn-udp, port: 1194, protocol: UDP, exposed: true }
+  - { name: wireguard, port: 51820, protocol: UDP, exposed: true, nodePort: 31820 }
+  - { name: openvpn-udp, port: 1194, protocol: UDP, exposed: true, nodePort: 31194 }
   - { name: metrics, port: 9090, protocol: TCP, exposed: false }
   # Add for a client on a network that blocks UDP; left out by default because
   # it is slower (TCP inside TCP) and it is a second door to defend:

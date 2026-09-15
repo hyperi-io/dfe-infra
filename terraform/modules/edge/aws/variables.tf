@@ -21,8 +21,18 @@ variable "cluster_name" {
   type        = string
 }
 
-variable "vpc_id" {
-  description = "The VPC the cluster sits in (kubernetes-cluster/aws's network.vpc_id). Not read by the IAM half of this module -- it is what a security group in front of the tunnel attaches to."
+variable "network" {
+  description = "Where the tunnel forwarder lands (kubernetes-cluster/aws's network output). cidr scopes its egress to the cluster's own nodes; azs and private_subnet_ids are parallel lists, so the zone the forwarder pins to selects the subnet it launches in. Read only by the forwarder -- the IAM half of this module needs no network at all."
+  type = object({
+    vpc_id             = string
+    cidr               = string
+    azs                = list(string)
+    private_subnet_ids = list(string)
+  })
+}
+
+variable "kms_key_arn" {
+  description = "The deployment's customer-managed key (kubernetes-cluster/aws's kms_key_arn output), encrypting the forwarder's root volume. This module NEVER writes to the key's own resource policy -- aws_kms_key_policy replaces the whole policy and the cluster module is its one owner."
   type        = string
 }
 
@@ -41,6 +51,72 @@ variable "dns" {
   type = object({
     public_zone = string
   })
+}
+
+variable "tunnel" {
+  description = <<-DESCRIPTION
+    The fleet tunnel's cloud-side address (the dial's edge.ingest.tunnel).
+
+    address.mode is `byo` -- an address the deployer already has in front of
+    culvert's NodePort -- or `forwarder`, which is this module's own Elastic IP
+    on a small instance that DNATs to the cluster's nodes. The tier-2 opt-in is
+    one instance and one static address, both billed hourly.
+
+    address.instance_type is sized by BANDWIDTH: the forwarder moves every
+    tunnel byte and does nothing else, and within a burstable family the
+    baseline network bandwidth rises with the size. The default is the shape
+    shapes/compute-shapes.yaml already names for a small always-on AWS box (use
+    case `toolbox`: family t, arch arm64, generation newest, size small).
+
+    address.zone pins the instance to one availability zone, because a hop to a
+    node in another zone crosses a boundary billed per GB. Empty takes the zone
+    of the first private subnet.
+
+    openvpn follows the culvert chart's own listeners list, which exposes
+    WireGuard and OpenVPN over UDP by default -- false opens 51820 alone.
+
+    source_ranges is the tunnel's allow-list, the same list the chart's
+    exposure.loadBalancerSourceRanges carries. Empty is 0.0.0.0/0 by design: an
+    edge fleet dialling in from anywhere is the normal case.
+
+    node_ports must match the nodePort the culvert chart pins for each listener
+    -- a DNAT aimed at a port nothing listens on is a tunnel that never
+    connects, and Kubernetes would otherwise allocate a port tofu cannot know.
+  DESCRIPTION
+
+  type = object({
+    address = optional(object({
+      mode          = optional(string, "byo")
+      instance_type = optional(string, "t4g.small")
+      zone          = optional(string, "")
+    }), {})
+    openvpn       = optional(bool, true)
+    source_ranges = optional(list(string), [])
+    node_ports = optional(object({
+      wireguard = optional(number, 31820)
+      openvpn   = optional(number, 31194)
+    }), {})
+  })
+
+  default = {}
+
+  validation {
+    condition     = contains(["byo", "forwarder"], var.tunnel.address.mode)
+    error_message = "tunnel.address.mode must be byo (an address the deployer brings) or forwarder (this module's own Elastic IP)."
+  }
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]*g[a-z]*\\.[a-z0-9-]+$", var.tunnel.address.instance_type))
+    error_message = "tunnel.address.instance_type must name a Graviton (arm64) family -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module resolves. Got ${var.tunnel.address.instance_type}."
+  }
+
+  validation {
+    condition = alltrue([
+      for port in [var.tunnel.node_ports.wireguard, var.tunnel.node_ports.openvpn] :
+      port >= 30000 && port <= 32767
+    ])
+    error_message = "every tunnel.node_ports entry must sit in the Kubernetes node-port range 30000-32767 -- the API server refuses a Service asking for anything else."
+  }
 }
 
 variable "tags" {

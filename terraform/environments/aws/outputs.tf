@@ -96,6 +96,16 @@ output "DFE_EKS_AUDIT_LOG_GROUP" {
   value       = module.cluster.audit_log_group
 }
 
+output "DFE_TUNNEL_ADDRESS" {
+  description = "The Elastic IP the fleet tunnel answers on. Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/tunnel_address annotation, which is what external-dns publishes vpn.serverCN at. Empty unless edge.tunnel.address.mode is forwarder -- on byo the deployer already holds the address and names it themselves."
+  value       = try(one(module.edge[*].tunnel_address), "")
+}
+
+output "DFE_TUNNEL_ZONE" {
+  description = "The availability zone the tunnel forwarder is pinned to. Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/tunnel_zone annotation, which the edge flavour overlay turns into culvert's own zone nodeSelector -- a hop to a node in another zone crosses a boundary billed per GB. Empty unless the forwarder exists."
+  value       = try(one(module.edge[*].tunnel_zone), "")
+}
+
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
   description = "Empty on this cloud. EKS Pod Identity binds a role to a service account from OUTSIDE the cluster, so no service account carries an annotation -- unlike IRSA, Workload Identity Federation and Entra Workload ID, which all need one."
   value       = "{}"

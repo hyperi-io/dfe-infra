@@ -105,9 +105,22 @@ variable "dns" {
 // ---------------------------------------------------------------------------
 
 variable "edge" {
-  description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, and the external-dns and cert-manager identities that write it. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable."
+  description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, the external-dns and cert-manager identities that write it, and the fleet tunnel's own address. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable. tunnel is the dial's edge.ingest.tunnel block; its address.mode defaults to byo, so nothing here is created until a deployment asks for the forwarder. Every field is described in the module's own variables.tf."
   type = object({
     enabled = optional(bool, true)
+    tunnel = optional(object({
+      address = optional(object({
+        mode          = optional(string, "byo")
+        instance_type = optional(string, "t4g.small")
+        zone          = optional(string, "")
+      }), {})
+      openvpn       = optional(bool, true)
+      source_ranges = optional(list(string), [])
+      node_ports = optional(object({
+        wireguard = optional(number, 31820)
+        openvpn   = optional(number, 31194)
+      }), {})
+    }), {})
   })
 
   default = {}

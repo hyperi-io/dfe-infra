@@ -292,12 +292,40 @@ edge:
       ## that survives a rebuild. The Secret itself is named in the instance
       ## values file, and the chart refuses to render without one.
       pki_mode: external       # local | external
+      ## Does the chart expose the OpenVPN listener beside WireGuard? Follows
+      ## the culvert chart's own listeners list, which exposes both; false
+      ## closes 1194 at the security group and in the forwarder's DNAT alike.
+      openvpn: true
+      ## The tunnel's allow-list. Empty is not "unset" -- it is 0.0.0.0/0, and
+      ## an edge fleet dialling in from anywhere is the normal case. On a
+      ## NodePort flavour it lands on the forwarder's security group, because
+      ## Kubernetes filters on this field for a LoadBalancer only.
+      loadBalancerSourceRanges: ""
+      ## The nodePort helm/edge/culvert/values.yaml pins for each exposed
+      ## listener. Pinned rather than allocated, because whatever stands in
+      ## front of a NodePort has to be told the number before the Service
+      ## exists -- change these only alongside that file.
+      node_ports:
+        wireguard: 31820
+        openvpn: 31194
       ## How the tunnel gets an address clients can dial. `byo` is an address
       ## the deployer already has in front of it. `forwarder` is tier 2 -- one
       ## small instance holding one static address, both billed hourly, bucket
-      ## XS -- and arrives with terraform/modules/edge.
+      ## XS -- built by terraform/modules/edge/aws.
       address:
         mode: byo              # byo | forwarder
+        ## Sized by BANDWIDTH: the forwarder moves every tunnel byte and does
+        ## nothing else, and within a burstable family the baseline network
+        ## bandwidth rises with the size. This is the shape
+        ## shapes/compute-shapes.yaml already names for a small always-on AWS
+        ## box (use case `toolbox`), and the family must be Graviton to match
+        ## the arm64 AMI the module resolves.
+        instance_type: t4g.small
+        ## The availability zone the forwarder pins to -- a hop from it to a
+        ## node in another zone crosses a boundary billed per GB, so the zone
+        ## is carried onto the cluster secret and becomes culvert's own
+        ## nodeSelector. Empty takes the first private subnet's zone.
+        zone: ""
       ## The reach-back an operator uses to reach one appliance through the
       ## tunnel: a peer minted per session, never stored, with a one-way
       ## isolation exception so the admin may initiate and appliance peers may

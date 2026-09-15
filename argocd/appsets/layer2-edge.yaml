@@ -232,6 +232,20 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
               - name: profile
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+            # `values` (a YAML string) rather than a structured block, same
+            # reason the gateway above gives: a conditional cannot live in a
+            # field this file's own tests parse as plain YAML.
+            values: |
+              {{- $tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone" }}
+              {{- if $tunnelZone }}
+              # The AWS tunnel forwarder is pinned to one availability zone
+              # (terraform/modules/edge/aws), and a hop from it to a node in
+              # another zone crosses a boundary billed per GB. Absent on every
+              # flavour that brings its own address, where nothing pins a zone.
+              nodeScheduling:
+                nodeSelector:
+                  topology.kubernetes.io/zone: {{ $tunnelZone | quote }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

@@ -450,13 +450,64 @@ def test_a_dial_the_render_refuses_writes_nothing(tmp_path: Path) -> None:
 
 def test_the_edge_module_is_on_unless_the_dial_turns_it_off() -> None:
     """A deployment with no door reaches nothing from outside the cluster, so
-    the switch defaults on -- and it is the ONE edge key that reaches tofu."""
-    assert render()["edge"] == {"enabled": True}
+    the switch defaults on."""
+    assert render()["edge"]["enabled"] is True
     off = render(replace=("profile: scale", "profile: scale\nedge:\n  enabled: false"))
-    assert off["edge"] == {"enabled": False}
+    assert off["edge"]["enabled"] is False
 
 
 def test_a_nonsense_edge_switch_is_refused_by_name() -> None:
     bad = ("profile: scale", "profile: scale\nedge:\n  enabled: maybe")
     with pytest.raises(render_dial.DialError, match=r"edge\.enabled"):
+        render(replace=bad)
+
+
+def test_the_tunnel_brings_its_own_address_unless_a_forwarder_is_asked_for() -> None:
+    """byo is the default: the deployer already holds an address, and tofu
+    creates nothing for the tunnel at all."""
+    tunnel = render()["edge"]["tunnel"]
+    assert tunnel["address"]["mode"] == "byo"
+    assert tunnel["address"]["zone"] == ""
+    assert tunnel["openvpn"] is True
+    assert tunnel["source_ranges"] == []
+
+
+def test_the_forwarders_default_type_is_the_catalogues_small_arm_shape() -> None:
+    """Sized by bandwidth, never by anything else -- the forwarder moves every
+    tunnel byte and does nothing else."""
+    assert render_dial.TUNNEL_FORWARDER_TYPE == "t4g.small"
+    assert render()["edge"]["tunnel"]["address"]["instance_type"] == "t4g.small"
+
+
+def test_the_forwarder_dial_reaches_the_tofu_variables() -> None:
+    asked = (
+        "profile: scale",
+        "profile: scale\n"
+        "edge:\n"
+        "  ingest:\n"
+        "    tunnel:\n"
+        "      openvpn: false\n"
+        "      loadBalancerSourceRanges: 203.0.113.0/24, 198.51.100.0/24\n"
+        "      address:\n"
+        "        mode: forwarder\n"
+        "        instance_type: m8g.large\n"
+        "        zone: us-west-2c\n",
+    )
+    tunnel = render(replace=asked)["edge"]["tunnel"]
+    assert tunnel["address"] == {"mode": "forwarder", "instance_type": "m8g.large", "zone": "us-west-2c"}
+    assert tunnel["openvpn"] is False
+    assert tunnel["source_ranges"] == ["203.0.113.0/24", "198.51.100.0/24"]
+
+
+def test_the_node_ports_default_to_what_the_culvert_chart_pins() -> None:
+    ports = render()["edge"]["tunnel"]["node_ports"]
+    assert ports == {"wireguard": 31820, "openvpn": 31194}
+
+
+def test_a_nonsense_address_mode_is_refused_by_name() -> None:
+    bad = (
+        "profile: scale",
+        "profile: scale\nedge:\n  ingest:\n    tunnel:\n      address:\n        mode: elastic\n",
+    )
+    with pytest.raises(render_dial.DialError, match=r"address\.mode"):
         render(replace=bad)

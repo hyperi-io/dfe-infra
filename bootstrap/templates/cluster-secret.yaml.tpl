@@ -113,6 +113,14 @@ metadata:
     # The annotation copy of the edge label above, for anything reading the
     # module's state from the annotations the rest of this file carries.
     dfe.hyperi.io/edge: "${DFE_EDGE_ENABLED}"
+    # The fleet tunnel's Elastic IP, which external-dns publishes vpn.serverCN
+    # at, and the availability zone its forwarder is pinned to, which
+    # appsets/layer2-edge.yaml turns into culvert's own zone nodeSelector --
+    # a hop to a node in another zone crosses a boundary billed per GB. Both
+    # render blank unless the edge module built a forwarder, same as the
+    # karpenter facts above.
+    ${DFE_TUNNEL_ADDRESS_ANNOTATION}
+    ${DFE_TUNNEL_ZONE_ANNOTATION}
 type: Opaque
 stringData:
   name: "dfe-${DFE_CLOUD}-${DFE_ENV}"

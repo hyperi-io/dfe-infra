@@ -68,6 +68,7 @@ Fill in, at minimum:
 | `dns.private_zone` | Any name; it resolves inside the VPC only. |
 | `dns.public_zone` | The delegated public zone, or `""` for none. Created by the edge module, not the cluster module. |
 | `edge.enabled` | Optional, `true`. The edge module's whole-module switch: the load balancer controller's identity, the public zone, and the external-dns and cert-manager identities that write it. `false` renders no cloud door at all -- destroy the LoadBalancer Services BEFORE turning it off, or the load balancers are orphaned with nothing left to reconcile them. |
+| `edge.tunnel.address.mode` | Optional, `byo`. `forwarder` builds the fleet tunnel an Elastic IP on a small instance, which is a billable opt-in -- see [edge-vpn.md](../../../docs/deployment/edge-vpn.md). |
 | `state.bucket` / `state.region` | From the `aws-state` output above. |
 | `state.key` | A path unique to this deployment. Two deployments sharing one key share one state, and the second destroys the first. |
 | `tags` | All seven keys. The plan refuses on a missing one. |

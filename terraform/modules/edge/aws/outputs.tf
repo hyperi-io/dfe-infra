@@ -18,6 +18,16 @@ output "cert_manager_role_arn" {
   value       = try(aws_iam_role.cert_manager[0].arn, "")
 }
 
+output "tunnel_address" {
+  description = "The Elastic IP clients dial, and what external-dns publishes vpn.serverCN at. Empty on address.mode byo, where the deployer brings an address this module never sees."
+  value       = try(aws_eip.forwarder[0].public_ip, "")
+}
+
+output "tunnel_zone" {
+  description = "The availability zone the forwarder is pinned to, so the deployment can give culvert a matching nodeSelector -- a hop to a node in another zone crosses a boundary billed per GB. Empty on address.mode byo."
+  value       = local.forwarder_enabled ? local.forwarder_zone : ""
+}
+
 output "load_balancer_controller_role_arn" {
   description = "The role the AWS Load Balancer Controller assumes. Already associated with its service account; named here so a caller can prove which identity reconciles the deployment's load balancers."
   value       = aws_iam_role.lbc.arn

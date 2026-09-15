@@ -374,6 +374,9 @@ _EDGE_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
     ("edge", "admin_uis", "oidc", "enabled"): False,
     ("edge", "ingest", "tunnel", "enabled"): False,
     ("edge", "ingest", "tunnel", "admin_peer", "enabled"): True,
+    # Follows the culvert chart's own listeners list, which exposes WireGuard
+    # and OpenVPN over UDP; false opens 51820 alone at every layer.
+    ("edge", "ingest", "tunnel", "openvpn"): True,
     ("edge", "ingest", "otel", "public"): False,
     ("edge", "aws", "load_balancer_controller"): True,
 }
@@ -402,6 +405,16 @@ PKI_MODES = ("local", "external")
 # byo is an address the deployer already has in front of the tunnel; forwarder
 # is the tier-2 instance that holds one, and arrives with terraform/modules/edge.
 ADDRESS_MODES = ("byo", "forwarder")
+# The forwarder moves every tunnel byte and does nothing else, so it is sized by
+# baseline network bandwidth rather than by anything else: this is the shape
+# shapes/compute-shapes.yaml already names for a small always-on AWS box (use
+# case `toolbox` -- family t, arch arm64, generation newest, size small), and
+# within one burstable family the baseline rises with the size.
+TUNNEL_FORWARDER_TYPE = "t4g.small"
+# The nodePort helm/edge/culvert/values.yaml pins for each exposed listener.
+# Pinned rather than allocated, because whatever stands in front of a NodePort
+# has to be told the number before the Service exists.
+TUNNEL_NODE_PORTS = {"wireguard": 31820, "openvpn": 31194}
 OTEL_AUTH = ("required", "none")
 
 _EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
@@ -549,16 +562,62 @@ def _edge_refusals(
         )
 
 
-def _edge(dial: dict[str, object]) -> dict[str, object]:
-    """The edge module's tofu slice -- the whole-module switch, and no more.
+def _edge_bool(dial: dict[str, object], path: tuple[str, ...]) -> bool:
+    """One `edge:` boolean, validated against its own default."""
+    value, label = _edge_scalar(dial, path)
+    return _coerce_flag(value, label, _EDGE_BOOL_DEFAULTS[path])
 
-    Everything else in the `edge:` block is validated and reported here but
-    copied by hand into a values overlay, so tofu is told only what decides
-    whether a cloud resource is created at all
-    (terraform/modules/edge/aws).
+
+def _tunnel_address_mode(dial: dict[str, object]) -> str:
+    """The tunnel's address mode, refused by name outside its vocabulary.
+
+    Checked here as well as in _edge_enums, because the tofu render is reached
+    without the summary pass that runs the rest of the edge validation.
     """
-    value, label = _edge_scalar(dial, ("edge", "enabled"))
-    return {"enabled": _coerce_flag(value, label, _EDGE_BOOL_DEFAULTS[("edge", "enabled")])}
+    path = ("edge", "ingest", "tunnel", "address", "mode")
+    value, label = _edge_scalar(dial, path)
+    value = value or _EDGE_ENUM_DEFAULTS[path]
+    if value not in ADDRESS_MODES:
+        raise DialError(f"{label} must be one of {', '.join(ADDRESS_MODES)}, got {value!r}")
+    return value
+
+
+def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
+    """The tunnel's cloud-side address, the one part of the tunnel tofu builds.
+
+    Everything else under `edge.ingest.tunnel:` is a chart value. The node
+    ports are the exception that has to travel: they are pinned in the culvert
+    chart's own listeners list because a forwarder has to be told the number,
+    and Kubernetes would otherwise allocate one nothing could know in advance.
+    """
+    at = ("edge", "ingest", "tunnel")
+    return {
+        "address": {
+            "mode": _tunnel_address_mode(dial),
+            "instance_type": _text(dial, (*at, "address", "instance_type"), TUNNEL_FORWARDER_TYPE),
+            "zone": _text(dial, (*at, "address", "zone")),
+        },
+        "openvpn": _edge_bool(dial, (*at, "openvpn")),
+        "source_ranges": list(split_list(_scalar(dial, (*at, "loadBalancerSourceRanges")))),
+        "node_ports": {
+            "wireguard": _optional_number(dial, (*at, "node_ports", "wireguard"), TUNNEL_NODE_PORTS["wireguard"]),
+            "openvpn": _optional_number(dial, (*at, "node_ports", "openvpn"), TUNNEL_NODE_PORTS["openvpn"]),
+        },
+    }
+
+
+def _edge(dial: dict[str, object]) -> dict[str, object]:
+    """The edge module's tofu slice -- what decides whether a cloud resource
+    is created, and no more.
+
+    The rest of the `edge:` block is validated and reported here but copied by
+    hand into a values overlay, the same convention the block it replaced
+    followed (terraform/modules/edge/aws).
+    """
+    return {
+        "enabled": _edge_bool(dial, ("edge", "enabled")),
+        "tunnel": _edge_tunnel(dial),
+    }
 
 
 def _edge_tier2_on(enums: dict[str, str]) -> list[str]:

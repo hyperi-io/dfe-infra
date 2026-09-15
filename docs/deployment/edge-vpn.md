@@ -39,6 +39,30 @@ a second door to defend. HTTPS tunnelling -- OpenVPN inside TLS on 443, or
 WireGuard over WebSocket -- is culvert's censorship-evasion path and stays off:
 it needs a publicly trusted certificate and buys an ingest fleet nothing.
 
+## The tunnel's address on AWS
+
+A NodePort has no address of its own, and on AWS the dial decides where one
+comes from: `edge.ingest.tunnel.address.mode` is `byo` -- an address the
+deployer already holds in front of the cluster -- or `forwarder`, the tier-2
+opt-in where `terraform/modules/edge/aws` builds one. The forwarder is a small
+SSM-managed instance holding an Elastic IP, with no inbound ssh rule of any
+kind, admitting the tunnel's own UDP listeners from
+`edge.ingest.tunnel.loadBalancerSourceRanges` (empty is 0.0.0.0/0, as
+everywhere else here) and DNATing each to the nodePort
+`helm/edge/culvert/values.yaml` pins, across whichever nodes are running. It
+reads that node list from `ec2:DescribeInstances` -- its only grant -- once a
+minute, which is why the flavour overlay sets `externalTrafficPolicy: Cluster`:
+any node has to forward, whichever one holds the pod. The instance is pinned to
+one availability zone (`edge.ingest.tunnel.address.zone`, defaulting to the
+first private subnet's), and both that zone and the Elastic IP are carried onto
+the cluster secret -- the zone becomes culvert's own `nodeSelector` so the hop
+from the forwarder to the pod stays inside one zone, and the address is what
+external-dns publishes `vpn.serverCN` at.
+`edge.ingest.tunnel.address.instance_type` sizes the instance by baseline
+network bandwidth, since it moves every tunnel byte and does nothing else; the
+default is the small arm64 shape `shapes/compute-shapes.yaml` already names,
+and the family has to be Graviton to match the AMI the module resolves.
+
 ## Client addressing
 
 Tunnel clients live in `100.64.0.0/10`, the CGNAT range reserved by RFC 6598,

@@ -142,12 +142,20 @@ module "edge" {
   env  = var.env
 
   cluster_name = module.cluster.cluster_name
-  vpc_id       = module.cluster.network.vpc_id
+
+  network = {
+    vpc_id             = module.cluster.network.vpc_id
+    cidr               = module.cluster.network.cidr
+    azs                = module.cluster.network.azs
+    private_subnet_ids = module.cluster.network.private_subnet_ids
+  }
 
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
   private_zone_arn               = module.cluster.private_zone_arn
+  kms_key_arn                    = module.cluster.kms_key_arn
 
-  dns = { public_zone = var.dns.public_zone }
+  dns    = { public_zone = var.dns.public_zone }
+  tunnel = var.edge.tunnel
 
   tags = var.tags
 }
