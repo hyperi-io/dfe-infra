@@ -51,6 +51,14 @@ kafka:
 archive:
   localPath: ""
 
+# Tier-2 spool: an emptyDir, because the rootfs is read-only and the archiver
+# creates this directory at construction -- without it the pod never starts.
+# The path is sent as ARCHIVER_SPOOL_DIR too, so the mount and the app agree.
+# Matches the app's own default (dfe-archiver DEFAULT_SPOOL_DIR) and moves only
+# together with it.
+spool:
+  path: /var/spool/dfe/archiver
+
 # Archive destination. Both keys are rendered as env (S3_ENDPOINT / S3_BUCKET,
 # the archiver's flat-env contract) and env BEATS the config file, so a value set
 # here would override whatever the engine's overlay authored. Both are EMPTY for
