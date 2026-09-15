@@ -3,12 +3,12 @@ component: kafbat
 env: local
 cloud: local
 
-# Deployed with the Kafka substrate in the single + scale tiers; gated OFF in the
-# slim tier (gRPC, no Kafka). Namespaced under `kafbat:` so the shared profile
-# cascade (common + <cloud> + profile-<tier>.yaml, applied to EVERY chart) can
-# toggle it WITHOUT the switch leaking to other charts -- a bare top-level
-# `enabled` would gate any chart that reads `.Values.enabled`. profile-slim.yaml
-# sets kafbat.enabled: false.
+# Deployed with the Kafka substrate in the single + scale tiers; gated OFF on the
+# brokerless tiers (slim, mesh -- gRPC, no Kafka). Namespaced under
+# `kafbat:` so the shared profile cascade (common + <cloud> + profile-<tier>.yaml,
+# applied to EVERY chart) can toggle it WITHOUT the switch leaking to other
+# charts -- a bare top-level `enabled` would gate any chart that reads
+# `.Values.enabled`. Those profile files set kafbat.enabled: false.
 kafbat:
   enabled: true
 
@@ -129,9 +129,9 @@ breakGlass:
 persistence:
   enabled: false        # Kafbat is stateless when DYNAMIC_CONFIG is off
 
-# PodDisruptionBudget (dfe-common.pdb): renders only when replicaCount >= 2
-# (the scale profile), so single-replica deployments never get a PDB that
-# blocks node drains. The budget is maxUnavailable: 1 (autoscaler-safe: a KEDA scale-to-one pod can still evict).
+# PodDisruptionBudget (dfe-common.pdb): renders only where the workload can
+# carry two pods, so a single-replica deployment never gets a budget that blocks
+# node drains. The helper picks the form from the workload's floor.
 pdb:
   enabled: true
 

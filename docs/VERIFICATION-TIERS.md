@@ -19,7 +19,7 @@ ClickHouse and read back.
     `slim` / `single` / `scale`.
 - **Data paths** -- what flows:
   - **otel** -- the OpenTelemetry path (collector -> `dfe.otel_*`).
-  - **dfe.default** -- the receiver/loader event path (Kafka -> `dfe.default`).
+  - **dfe.main** -- the receiver/loader event path (Kafka -> `dfe.main`).
 
 BOTH paths must land rows in ClickHouse and be read back. A `200` from a Service
 is not proof; driving the product is (see [Driving the product](#driving)).

@@ -1,8 +1,8 @@
 # The attended acceptance cycle
 
 The human-in-the-loop pass that signs off a deployment. `TESTING-CYCLE.md` is the
-automated loop (`dfe-ops cycle`) and proves the machinery; this proves the
-PRODUCT, by a person using it.
+automated loop (`dfe-ops cycle`) and proves the deploy scripts and charts; this
+proves the PRODUCT, by a person using it.
 
 It is the LAST thing a workstream does, not a checkpoint along the way -- its
 entry condition is a deployment somebody already believes is working. Run it end
@@ -46,7 +46,7 @@ Agent watches: every Application reaching Synced/Healthy, every pod Ready, and
 the readiness plus integration gates passing on their own rather than being
 waived.
 
-Done when the agent would bet on it working, not merely on it having deployed.
+Done when the agent would bet on it working, rather than on it having deployed.
 
 ### 2. Admin login, both ways
 
@@ -71,7 +71,7 @@ and which connection it ends up using.
 The same as step 2, as a **data analyst**.
 
 The point is the difference from admin: screens and actions an analyst should
-not have must be absent, not merely unclickable. Run it against local engine
+not have must be absent, not just unclickable. Run it against local engine
 OIDC and then Entra ID, as before.
 
 Agent watches: the same chain, plus every authorisation decision -- a 403 that
@@ -117,7 +117,7 @@ has failed however tidy the UI looks.
 
 Each step gets: what was done, what the agent saw underneath, and pass or fail
 with the evidence. Failures get fixed at source and the step re-run -- the deploy
-layer is not the place to paper over an app's bug.
+layer is not the place to hide an app's bug behind a config change.
 
 The cycle has passed only when every step passed in the same run, on the same
 deployment, with no step waived.

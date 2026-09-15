@@ -16,7 +16,7 @@ Network-dependent by design, so it is NOT part of the offline drift check --
 run it when pins change, before the sweep lands.
 
 Usage:
-    python3 scripts/check_image_pins.py [--app NAME ...] [--org ORG]
+    python3 scripts/check_image_pins.py [--app NAME ...] [--org ORG] [--stack VER]
 Requires an authenticated `gh` (the packages API needs read:packages).
 """
 
@@ -27,51 +27,49 @@ import sys
 from pathlib import Path
 
 # The tag -> digest lookup lives in registry_pins so this checker and the
-# resolve_pins writer share ONE definition (dfe-infra#116). Imported by path so
-# it works whether check_image_pins is run as a script or imported.
+# resolve_pins writer share ONE definition (dfe-infra#116); stack selection
+# comes from resolve_pins for the same reason. Imported by path so it works
+# whether check_image_pins is run as a script or imported.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry_pins import RegistryError, package_tags, version_key
+from resolve_pins import load_stack
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-VERSIONS = REPO_ROOT / "versions.yaml"
 DEFAULT_ORG = "hyperi-io"
 # Pins carrying no digest are declared NOT YET PUBLISHED in versions.yaml, so a
 # missing image is the documented state rather than a fault.
 SKIP_WITHOUT_DIGEST = True
 
 
-def load_pins() -> tuple[dict[str, str], dict[str, str]]:
-    """Return (apps, digests) from versions.yaml."""
-    import yaml
+def load_pins(stack: str | None = None) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Return (stack name, apps, digests) for `stack`, else the `current` pointer.
 
-    data = yaml.safe_load(VERSIONS.read_text(encoding="utf-8", errors="replace"))
-    apps = _find_section(data, "apps")
-    digests = _find_section(data, "digests")
-    return apps, digests
+    versions.yaml carries every stack's complete pin set, so the section must be
+    taken from a NAMED stack -- a search of the whole file finds the oldest one.
+    """
+    _, _, name, body = load_stack(stack)
+    return name, _section(body, "apps"), _section(body, "digests")
 
 
-def _find_section(tree: object, name: str) -> dict[str, str]:
-    """Depth-first search for the first mapping called `name`."""
-    if isinstance(tree, dict):
-        if name in tree and isinstance(tree[name], dict):
-            return {k: str(v) for k, v in tree[name].items()}
-        for value in tree.values():
-            found = _find_section(value, name)
-            if found:
-                return found
-    return {}
+def _section(stack_map: object, name: str) -> dict[str, str]:
+    """One stack's `name:` mapping, or {} when the stack does not carry it."""
+    section = stack_map.get(name) if isinstance(stack_map, dict) else None
+    if not isinstance(section, dict):
+        return {}
+    return {str(k): str(v) for k, v in section.items()}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", action="append", help="check only these apps")
     parser.add_argument("--org", default=DEFAULT_ORG, help=f"GH org (default {DEFAULT_ORG})")
+    parser.add_argument("--stack", help="stack version to check (default: the `current` pointer)")
     args = parser.parse_args()
 
-    apps, digests = load_pins()
+    stack, apps, digests = load_pins(args.stack)
     if not apps:
-        print("could not find an `apps:` section in versions.yaml", file=sys.stderr)
+        print(f"stack {stack} has no `apps:` section in versions.yaml", file=sys.stderr)
         return 1
+    print(f"checking stack {stack}")
 
     wanted = args.app or sorted(apps)
     failures: list[str] = []

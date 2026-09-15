@@ -78,7 +78,7 @@ registry: ghcr.io/hyperi-io
 ## expands into the per-component version set. track-latest is the opt-in daemon
 ## roll to the newest certified stack tag.
 version:
-  pin: 2.2.0-rc.11
+  pin: 2.2.0-rc.13
   # track: latest
   # allow_prerelease: "false"
 
@@ -109,6 +109,13 @@ secrets:
 ## OVERLAY -- optional private-context ref (fleet-scale ops, per-env config repo).
 ## Blank in the committed template; its value points at a private repo.
 overlay: ""
+
+## RETENTION -- the deployment-wide TTL for every time-series table DFE deploys,
+## the OTel tables included. Whole days; 0 disables the default TTL. A source, or
+## a dfe-schemas definition, that declares its own TTL overrides it. Read by both
+## substrates: k8s -> DFE_CLICKHOUSE_DEFAULT_TTL_DAYS, docker-vm the same key.
+retention:
+  default_ttl_days: 90
 
 ## ---------------------------------------------------------------------------
 ## docker-vm SLICE -- consumed by dfe-docker's render_dial. Field names match

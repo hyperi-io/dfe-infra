@@ -1,5 +1,5 @@
-{{- if eq (.Values.exposure.mode | default "public") "public" }}
-{{- if .Values.exposure.networkPolicy.enabled }}
+{{- $mode := .Values.exposure.mode | default "public" }}
+{{- if and (has $mode (list "public" "vpn")) .Values.exposure.networkPolicy.enabled }}
 {{- $exposed := list }}
 {{- range .Values.listeners }}
   {{- if .exposed }}
@@ -14,10 +14,15 @@
   after the LoadBalancer provisions. NetworkPolicies are additive, so this one
   adds the exposed ingest ports without touching that baseline.
 
-  Client-CIDR restriction is exposure.public.loadBalancerSourceRanges, not an
-  ipBlock here: under the default externalTrafficPolicy kube-proxy SNATs
-  external traffic to a node address, so an ipBlock would match the node rather
-  than the client and drop traffic the LB had already allowed.
+  public: no source at all. Client-CIDR restriction is
+  exposure.public.loadBalancerSourceRanges, not an ipBlock here: under the
+  default externalTrafficPolicy kube-proxy SNATs external traffic to a node
+  address, so an ipBlock would match the node rather than the client and drop
+  traffic the LB had already allowed.
+
+  vpn: the tunnel pods, by label. They SNAT a client onto the pod network, so
+  selecting them is exact and needs no addressing -- and it is what keeps the
+  receiver reachable ONLY through the tunnel in this mode.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -25,7 +30,7 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}-ingest
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
-    dfe.hyperi.io/exposure: public
+    dfe.hyperi.io/exposure: {{ $mode }}
 spec:
   podSelector:
     matchLabels:
@@ -38,6 +43,11 @@ spec:
         - protocol: {{ .protocol | default "TCP" }}
           port: {{ .port }}
         {{- end }}
-{{- end }}
+      {{- if eq $mode "vpn" }}
+      from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.exposure.vpn.podLabel }}
+      {{- end }}
 {{- end }}
 {{- end }}

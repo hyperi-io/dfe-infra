@@ -109,8 +109,8 @@ from `argocd/values/common.yaml`. Image pins ride each component chart's
 `appVersion`, drift-checked against `versions.yaml`.
 
 Excluded on purpose (not in a slim deployment either): dfe-archiver,
-dfe-fetcher, the dfe-transform-* family (per-source, opt-in, deploy-repo
-driven), dfe-vpn, and every ArgoCD-only concern.
+dfe-fetcher, the dfe-transform-* family and culvert (per-source or opt-in,
+deploy-repo driven), and every ArgoCD-only concern.
 
 ## Validation
 

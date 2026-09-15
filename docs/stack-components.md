@@ -92,8 +92,9 @@ operator chart is a SEPARATE, k8s-only pin on its own release line.
   Operator: `operators.strimzi-kafka-operator` (0.51.0, k8s-only).
 - docker: `APACHE_KAFKA_VERSION` -> `apache/kafka:<ver>@digest`.
 - Cascade: TWO IMAGES for one logical number (strimzi-internal vs apache/kafka).
-  Same logical 4.x, two renderers each knowing their own image. This is the
-  load-bearing reason the model is "logical version, two renderings".
+  Same logical 4.x, two renderers each knowing their own image. Collapse the
+  two into one image name and one of the two paths stops resolving, which is
+  why the model is "logical version, two renderings".
 - OPERATOR CEILING (hard constraint): Strimzi 0.51 supports Kafka 4.1.x / 4.2.0
   ONLY. The logical `kafka-version` must never exceed what the pinned strimzi
   operator supports, or the k8s path breaks. Renovate is bounded to that ceiling
@@ -115,7 +116,7 @@ Not in compose. SSoT pins the chart version; appset/bootstrap uses it;
 drift-check enforces where a hardcoded pin exists. Already works - leave as-is.
 
 - bootstrap: `cert-manager`, `external-secrets`, `argocd`, `valkey` (plain
-  manifest image), `local-path-provisioner`.
+  manifest image), `local-path-provisioner`, `metallb` (on-prem only).
 - operators: `envoy-gateway`, `external-dns`, `keda`, `metrics-server`,
   `reloader`, `cloudnative-pg`, and the three OPERATOR chart pins
   (`strimzi-kafka-operator`, `clickhouse-operator`, `redpanda-operator` - the
@@ -158,7 +159,7 @@ image. One number, same image ref both sides.
 ### postgres-documentdb (FerretDB 2.x PG backend)
 - SSoT: `services.documentdb-pg` (17-0.107.0-ferretdb-2.7.0). docker:
   `HYPERDX_POSTGRES_VERSION` -> `ghcr.io/ferretdb/postgres-documentdb`.
-- Docker-only FOR NOW: k8s currently backs FerretDB with vanilla CNPG PG17, not
+- Docker-only FOR NOW: k8s backs FerretDB with vanilla CNPG PG17, not
   the documentdb-pg image. Becomes class D (both paths) once the k8s FerretDB 2.x
   migration lands (see gap below).
 

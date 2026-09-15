@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# preview.sh -- DRAFT 2026-07-07 (branch-preview cycle, Group 2).
+# preview.sh -- an isolated preview environment from BRANCH images.
 #
-# Spin an isolated preview env on devex k8s from BRANCH images, built to the
-# Harbor `dfe-preview` project (never ghcr, never main). Iterate build+deploy,
-# then tear down. Design + open decisions:
-#   docs/plans/2026-07-08-branch-preview-cycle.md
-#
-# STATUS: draft for review. Marked DECIDE where an open question changes behaviour,
-# and NEEDS-CRED where a Harbor robot / cluster mutation is required (morning).
+# Builds each service from its own checkout, pushes to the registry's preview
+# project (never the release registry, never main), deploys, then tears down.
 #
 # Usage:
 #   preview.sh up   <name> [--hyperdx <branch>] [--engine <branch>] \
@@ -17,16 +12,22 @@
 #   preview.sh down <name>
 #   preview.sh status <name>
 #
-# Example (HyperDX 2.29 eyeball):
+# Every location is an environment variable: REGISTRY_HOST and DEPLOY_REPO_URL
+# (both required), PREVIEW_PROJECT, KUBE_CONTEXT (default: the kubeconfig's
+# current context), and DFE_HYPERDX_REPO / DFE_ENGINE_REPO, which default to a
+# sibling checkout beside this repo.
+#
+# Example:
 #   preview.sh up hdx29 --hyperdx chore/upstream-sync-2.29 --services hyperdx
 set -euo pipefail
 
-# ---- config (DECIDE: confirm host + project in the morning) -----------------
-HARBOR_HOST="${HARBOR_HOST:-harbor.example.com}"   # set to your Harbor host (global.registry)
-PREVIEW_PROJECT="${PREVIEW_PROJECT:-dfe-preview}"  # Harbor project (create w/ admin)
-KUBE_CONTEXT="${KUBE_CONTEXT:-devex}"
-INFRA_REPO="${INFRA_REPO:-/Volumes/projects/dfe-infra}"
-DEPLOY_REPO_URL="git@github.com:hyperi-io/dfe-infra.git"   # from cluster-secret repo_url
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CHECKOUTS="$(dirname "$REPO_ROOT")"
+
+# ---- config -----------------------------------------------------------------
+REGISTRY_HOST="${REGISTRY_HOST:-}"                 # the preview registry (global.registry)
+PREVIEW_PROJECT="${PREVIEW_PROJECT:-dfe-preview}"  # the project images are pushed to
+DEPLOY_REPO_URL="${DEPLOY_REPO_URL:-}"             # the cluster secret's repo_url
 INFRA_BRANCH_DEFAULT="main"
 DEPLOY_BRANCH_DEFAULT="main"
 
@@ -34,8 +35,8 @@ DEPLOY_BRANCH_DEFAULT="main"
 #   hyperdx image is built from the dfe-hyperdx FORK; its CHART lives in
 #   dfe-infra/helm/charts/hyperdx. engine image from dfe-engine; chart dfe-engine.
 declare -A SVC_REPO=(
-  [hyperdx]="/Volumes/projects/dfe-hyperdx"
-  [engine]="/Volumes/projects/dfe-engine"
+  [hyperdx]="${DFE_HYPERDX_REPO:-$CHECKOUTS/dfe-hyperdx}"
+  [engine]="${DFE_ENGINE_REPO:-$CHECKOUTS/dfe-engine}"
 )
 declare -A SVC_DOCKERFILE=(
   [hyperdx]="docker/hyperdx/Dockerfile"
@@ -53,30 +54,42 @@ log() { echo ">> $*" >&2; }
 
 ns_of() { echo "dfe-preview-$1"; }
 
+# The context to act on: the caller's if set, else whatever kubectl is pointed at.
+kube_context() {
+  if [[ -n "${KUBE_CONTEXT:-}" ]]; then
+    echo "$KUBE_CONTEXT"
+    return
+  fi
+  kubectl config current-context 2>/dev/null \
+    || die "no KUBE_CONTEXT set and no current kubeconfig context"
+}
+
 # ---- build + push one service image from a branch ---------------------------
 build_push() {   # <service> <branch> <preview-name>  -> echoes the pushed tag
   local svc=$1 branch=$2 name=$3
   local repo="${SVC_REPO[$svc]:-}" dockerfile="${SVC_DOCKERFILE[$svc]:-}" target="${SVC_TARGET[$svc]:-}"
   [[ -n "$repo" ]] || die "unknown service '$svc'"
+  [[ -d "$repo" ]] || die "no checkout for '$svc' at $repo -- set DFE_$(echo "$svc" | tr '[:lower:]' '[:upper:]')_REPO"
+  [[ -n "$REGISTRY_HOST" ]] || die "set REGISTRY_HOST to the registry the preview images push to"
   local sha; sha=$(git -C "$repo" rev-parse --short "$branch") || die "bad branch $branch in $repo"
-  local tag="${HARBOR_HOST}/${PREVIEW_PROJECT}/${svc}:${name}-${sha}"
+  local tag="${REGISTRY_HOST}/${PREVIEW_PROJECT}/${svc}:${name}-${sha}"
   log "build $svc  ${repo}@${branch} ($sha)  ->  $tag${target:+  (target: $target)}"
-  # DECIDE: build args per service (hyperdx needs none; the engine image needs the
-  # hyperi PyPI index creds for `uv` -- pull from OpenBao kv/services).
   docker build -t "$tag" ${target:+--target "$target"} -f "${repo}/${dockerfile}" "$repo"
-  docker push "$tag"      # NEEDS-CRED: docker login ${HARBOR_HOST} as the dfe-preview robot
+  # Needs a prior `docker login "$REGISTRY_HOST"` as the preview project's robot.
+  docker push "$tag"
   echo "$tag"
 }
 
 # ---- render the image-override values for the preview -----------------------
-# Writes a values file that points the charts at the Harbor preview images.
+# Writes a values file that points the charts at the preview images.
 write_overrides() {   # <preview-name> <svc=tag> ...
   local name=$1; shift
-  local f="/tmp/preview-${name}-images.yaml"
+  local f="${REPO_ROOT}/.tmp/preview-${name}-images.yaml"
+  mkdir -p "${REPO_ROOT}/.tmp"
   {
     echo "# generated by preview.sh -- image overrides for preview '${name}'"
     echo "global:"
-    echo "  registry: ${HARBOR_HOST}/${PREVIEW_PROJECT}"
+    echo "  registry: ${REGISTRY_HOST}/${PREVIEW_PROJECT}"
     for kv in "$@"; do
       local svc="${kv%%=*}" tag="${kv#*=}"
       # hyperdx chart reads root image.* and defaults to ghcr -> override repo+tag
@@ -91,17 +104,15 @@ write_overrides() {   # <preview-name> <svc=tag> ...
 }
 
 # ---- deploy the preview -----------------------------------------------------
-# DECIDE (open Q2): preview ApplicationSet (argocd/appsets/preview-apps.yaml) vs
-# the imperative `argocd app create` below. The imperative path is simplest for an
-# ephemeral single-service preview and is what this draft uses; the appset is the
-# declarative multi-service productionised form.
+# One app per service, created imperatively: a preview is ephemeral and
+# single-service, so it never enters the declarative appset set.
 deploy() {   # <preview-name> <infra-branch> <deploy-branch> <overrides-file> <service...>
   local name=$1 infra=$2 deploy=$3 overrides=$4; shift 4
   local ns; ns=$(ns_of "$name")
+  [[ -n "$DEPLOY_REPO_URL" ]] || die "set DEPLOY_REPO_URL to the cluster secret's repo_url"
   for svc in "$@"; do
     local chart="hyperdx"; [[ "$svc" == "engine" ]] && chart="dfe-engine"
     log "argocd app create preview-${name}-${svc}  (chart @ ${infra}, ns ${ns})"
-    # NEEDS-CRED / NEEDS-OK: mutates the shared cluster. Run attended or with OK.
     argocd app create "preview-${name}-${svc}" \
       --repo "$DEPLOY_REPO_URL" --revision "$infra" \
       --path "helm/charts/${chart}" \
@@ -141,23 +152,25 @@ cmd_up() {
 
 cmd_sync() {  # rebuild changed images + resync (fast loop)
   local name=$1; shift
-  # DECIDE: with Argo Image Updater this is just a rebuild+push; without it, resync.
   cmd_up "$name" "$@"
 }
 
 cmd_down() {
   local name=$1; local ns; ns=$(ns_of "$name")
   log "delete preview '$name' (apps + namespace $ns)"
-  # NEEDS-OK: kubectl/argocd delete is on the AFK denylist -- run attended.
-  argocd app list -o name 2>/dev/null | grep "^preview-${name}-" | xargs -r -n1 argocd app delete --cascade -y || true
-  kubectl --context "$KUBE_CONTEXT" delete ns "$ns" --ignore-not-found
-  log "TODO: optionally GC Harbor tags for '$name' (or rely on the project retention policy)"
+  # BSD xargs has no -r, so the empty case is guarded here rather than by a flag.
+  local apps; apps=$(argocd app list -o name 2>/dev/null | grep "^preview-${name}-" || true)
+  if [[ -n "$apps" ]]; then
+    echo "$apps" | xargs -n1 argocd app delete --cascade -y || true
+  fi
+  kubectl --context "$(kube_context)" delete ns "$ns" --ignore-not-found
+  # The preview tags stay until the registry project's retention policy drops them.
 }
 
 cmd_status() {
   local name=$1; local ns; ns=$(ns_of "$name")
   argocd app list 2>/dev/null | grep "preview-${name}-" || true
-  kubectl --context "$KUBE_CONTEXT" -n "$ns" get pods 2>/dev/null || true
+  kubectl --context "$(kube_context)" -n "$ns" get pods 2>/dev/null || true
 }
 
 main() {

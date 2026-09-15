@@ -6,6 +6,7 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   {{- include "dfe-common.replicas" . }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
   selector:
     matchLabels:
       {{- include "dfe-common.selectorLabels" . | nindent 6 }}
@@ -14,12 +15,15 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
       annotations:
-        # Roll the pods when the config blob changes -- the app reads the file at
-        # startup only, so a ConfigMap update alone would not take effect.
+        # Roll the pods on ANY config change. One delivery mechanism for every
+        # key, so nothing depends on whether the supervisor's own reload would
+        # have accepted the difference (it rejects all but a transforms-only
+        # one, src/config/reload.rs classify_change).
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        # The supervisor's reload compares CONFIG STRUCTS, and TransformConfig holds
-        # only the dir and file PATHS, so editing a transform's CONTENT leaves the
-        # config identical and classify_change returns None. Only a roll applies it.
+        # Same for the transform files. The supervisor DOES watch them by mtime
+        # and SIGHUP Vector (src/config/reload.rs FileSnapshot), so an edit would
+        # land either way; the roll is what makes it land the same way as every
+        # other change.
         checksum/transforms: {{ include (print $.Template.BasePath "/transforms-configmap.yaml") . | sha256sum }}
         # Vector materialises an enrichment table at config load, and its reload
         # path compares config structs rather than table contents, so an edit
@@ -47,8 +51,12 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+            {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_") | nindent 12 }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
             # dfe-transform-vector reads the DFE_TRANSFORM_* flat env contract
             # (src/config/loader.rs), never bare KAFKA_* names. Credentials arrive
             # only this way -- they cannot sit in the config blob, which is committed
@@ -88,6 +96,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.kafka.saslSecretName }}
                   key: password
+            {{- end }}
             {{- end }}
             {{- include "dfe-common.transformFilesEnv" . | nindent 12 }}
             # The supervisor assembles Vector's config dir, caches the binary and

@@ -25,9 +25,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_EMAIL = "dev@dfe.local"
 DEFAULT_PASSWORD = "DfeLocalDev123!"
+# The repo's own scratch dir, so the run writes beside the checkout it came from.
+DEFAULT_SHOT = REPO_ROOT / ".tmp" / "hdx-authed.png"
 SPLASH = ("Loading DFE", "Loading HyperDX")
 
 
@@ -77,7 +81,7 @@ def _fill_auth_form(page, email: str, password: str, confirm: bool) -> bool:
     return True
 
 
-def run(base: str, email: str, password: str) -> int:
+def run(base: str, email: str, password: str, shot: Path) -> int:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -135,7 +139,8 @@ def run(base: str, email: str, password: str) -> int:
             nav: nav ? {tag: nav.tagName, top: Math.round(r.top), height: Math.round(r.height)} : null,
           };
         }""")
-        page.screenshot(path=base_shot(), full_page=True)
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(shot), full_page=True)
 
         # DFE embed route-guard: a disabled feature must not be reachable by URL.
         blocked = ["/alerts", "/sessions", "/service-map", "/team"]
@@ -171,7 +176,7 @@ def run(base: str, email: str, password: str) -> int:
     ]
     print(f"auth as {email} -> {info['url']}  title={info['title']!r}")
     print(f"  nav={info['nav']}  text={info['text']!r}")
-    print(f"  screenshot -> {base_shot()}\n")
+    print(f"  screenshot -> {shot}\n")
     failures = 0
     for name, ok, note in checks:
         print(f"  [{'ok  ' if ok else 'FAIL'}] {name}" + (f" -- {note}" if note else ""))
@@ -184,17 +189,19 @@ def run(base: str, email: str, password: str) -> int:
     return 1 if failures else 0
 
 
-def base_shot() -> str:
-    return "/Volumes/projects/dfe-infra/.tmp/hdx-authed.png"
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="HyperDX fork login-flow validator.")
     ap.add_argument("--base", default="http://localhost:8080")
     ap.add_argument("--email", default=DEFAULT_EMAIL)
     ap.add_argument("--password", default=DEFAULT_PASSWORD)
+    ap.add_argument(
+        "--screenshot",
+        type=Path,
+        default=DEFAULT_SHOT,
+        help=f"where to write the authenticated-shell screenshot (default {DEFAULT_SHOT})",
+    )
     args = ap.parse_args()
-    return run(args.base, args.email, args.password)
+    return run(args.base, args.email, args.password, args.screenshot)
 
 
 if __name__ == "__main__":

@@ -19,5 +19,8 @@ spec:
       targetPort: grpc
       protocol: TCP
       name: grpc
+      # Cleartext HTTP/2, as dfe-common.pushService declares for every other
+      # stage: a proxy fronting the loader pool dials HTTP/1.1 without it.
+      appProtocol: kubernetes.io/h2c
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
