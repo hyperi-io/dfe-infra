@@ -55,6 +55,8 @@ KAFKA_APPS = {
     "dfe-transform-elastic",
     "dfe-transform-splack",
     "dfe-transform-wasm",
+    # The MSK bootstrap Job, in the strimzi namespace rather than beside the apps.
+    "dfe-kafka",
 }
 
 
@@ -143,6 +145,11 @@ def test_kafka_external_on() -> None:
            f"got {sorted(apps_of(policies))}")
     expect("external Kafka grants only the broker ports", ports_of(policies) == KAFKA_PORTS,
            f"got {sorted(ports_of(policies))}")
+    expect(
+        "external Kafka reaches the MSK bootstrap Job's namespace",
+        namespaces_of(policies) == {"dfe-local", "strimzi"},
+        f"got {sorted(namespaces_of(policies))}",
+    )
 
 
 def test_kafka_external_does_not_open_clickhouse() -> None:

@@ -99,6 +99,26 @@ spec:
               # rendered with are one value. Only dfe-engine reads it.
               - name: profile
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+            # `values` (a YAML string) rather than a structured block, same
+            # reason layer2-data.yaml gives: a conditional cannot live in a
+            # field this file's own tests parse as plain YAML before any Go
+            # templating runs.
+            values: |
+              {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
+              {{- if $kafkaMode }}
+              # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
+              # only case bootstrap.sh sets this annotation for, so an
+              # in-cluster deploy's kafka.mode stays whatever its profile
+              # overlay says. The profile's bootstrapServers names a Service
+              # that does not exist on a managed broker, so the endpoint the
+              # deploy was actually built with replaces it here.
+              kafka:
+                mode: {{ $kafkaMode | quote }}
+                {{- if and (eq $kafkaMode "external") $kafkaBootstrap }}
+                bootstrapServers: {{ $kafkaBootstrap | quote }}
+                {{- end }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

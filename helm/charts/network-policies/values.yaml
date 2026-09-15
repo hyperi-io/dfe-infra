@@ -190,6 +190,14 @@ externalEgress:
       - dfe-transform-elastic
       - dfe-transform-splack
       - dfe-transform-wasm
+    # The MSK bootstrap Job runs in `strimzi` (appsets/layer2-data.yaml pins the
+    # kafka chart there) and is the FIRST thing that has to reach a managed
+    # broker -- it writes the SCRAM principal's ACLs and pre-creates the landing
+    # topics, and dfe-loader crashloops without them. That namespace already
+    # carries a baseline policy, so its egress is denied until this names it.
+    extraNamespaceApps:
+      strimzi:
+        - dfe-kafka        # kafka/templates/msk-bootstrap-job.yaml
     # The managed-broker listener range. 9092-9096 covers the SASL_SSL and
     # SASL_PLAINTEXT listeners Confluent Cloud, MSK and Redpanda Cloud publish
     # between them, and 9098 is MSK's IAM listener.

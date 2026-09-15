@@ -137,6 +137,17 @@ spec:
             # per-element conditional cannot live in a field this file's own
             # tests parse as plain YAML before any Go templating runs.
             values: |
+              {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- if $kafkaMode }}
+              # network-policies derives its external-service egress from the
+              # declared mode, so without this the baseline default-deny holds
+              # and no pod can reach a managed broker at all. bootstrap.sh sets
+              # the annotation only for msk, confluent-cloud and redpanda-cloud;
+              # an in-cluster broker keeps the profile overlay's own kafka.mode
+              # and renders no external egress.
+              kafka:
+                mode: {{ $kafkaMode | quote }}
+              {{- end }}
               {{- if eq .app "karpenter-pools" }}
               # The three facts karpenter.cluster.* names, carried onto the
               # cluster secret by bootstrap.sh from the kubernetes-cluster

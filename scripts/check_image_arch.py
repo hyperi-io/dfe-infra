@@ -49,7 +49,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from resolve_pins import load_stack  # noqa: E402
+from resolve_pins import load_stack
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DFE_REGISTRY = "ghcr.io/hyperi-io"

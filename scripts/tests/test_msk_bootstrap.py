@@ -383,8 +383,8 @@ def test_the_appset_turns_the_annotations_into_the_chart_values_that_render_the_
     kafka_source = doc["spec"]["template"]["spec"]["sources"][0]
     values_block = kafka_source["helm"]["values"]
     expect(
-        "the block is gated to the kafka app alone",
-        'eq .app "kafka"' in values_block,
+        "the block is gated on a managed broker's own annotations",
+        "{{- if or $kafkaMode $bootstrapIam }}" in values_block,
         values_block,
     )
     expect(

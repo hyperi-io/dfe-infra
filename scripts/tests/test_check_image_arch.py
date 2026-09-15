@@ -42,21 +42,21 @@ def _index(*platforms: tuple[str, str]) -> str:
 class PlatformsOfTests(unittest.TestCase):
     def test_multi_arch_index_lists_both(self) -> None:
         doc = _index(("linux", "amd64"), ("linux", "arm64"))
-        self.assertEqual(platforms_of(doc), {"linux/amd64", "linux/arm64"})
+        assert platforms_of(doc) == {"linux/amd64", "linux/arm64"}
 
     def test_attestation_entries_are_dropped(self) -> None:
         # buildx attestation manifests report unknown/unknown and must not
         # count as a platform, or a single-arch image would look like two.
         doc = _index(("linux", "amd64"), ("unknown", "unknown"))
-        self.assertEqual(platforms_of(doc), {"linux/amd64"})
+        assert platforms_of(doc) == {"linux/amd64"}
 
     def test_single_manifest_has_no_platforms_until_verbose(self) -> None:
         doc = json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.docker.distribution.manifest.v2+json"})
-        self.assertEqual(platforms_of(doc), set())
+        assert platforms_of(doc) == set()
 
     def test_verbose_single_manifest_reads_descriptor(self) -> None:
         doc = json.dumps([{"Ref": "x", "Descriptor": {"platform": {"os": "linux", "architecture": "arm64"}}}])
-        self.assertEqual(platforms_of(doc), {"linux/arm64"})
+        assert platforms_of(doc) == {"linux/arm64"}
 
 
 if __name__ == "__main__":

@@ -153,23 +153,38 @@ spec:
             # before any Go templating runs.
             values: |
               {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
               {{- $bootstrapIam := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap_iam" }}
-              {{- if and (eq .app "kafka") (or $kafkaMode $bootstrapIam) }}
-              # kafka.mode and the MSK bootstrap Job's own IAM endpoint --
-              # rendered ONLY when bootstrap.sh set the annotation (a managed
-              # broker), so a strimzi/redpanda deploy's kafka.mode stays
-              # exactly what its profile overlay says. Both are read by the
-              # kafka chart's msk-bootstrap-job.yaml / msk-bootstrap-rbac.yaml,
-              # which render only at mode=external + provider=msk + a non-empty
-              # bootstrapIam (gate-3-correctness.md P1-5).
+              {{- $managed := and $kafkaMode (eq $kafkaMode "external") }}
+              {{- if or $kafkaMode $bootstrapIam }}
+              # kafka.mode, the broker endpoint and the MSK bootstrap Job's own
+              # IAM endpoint -- rendered ONLY when bootstrap.sh set the
+              # annotation (a managed broker), so a strimzi/redpanda deploy's
+              # kafka.mode stays exactly what its profile overlay says. The
+              # mode reaches every chart in this appset, not the kafka chart
+              # alone: kafbat and the collector resolve the same broker. Read
+              # by the kafka chart's msk-bootstrap-job.yaml /
+              # msk-bootstrap-rbac.yaml, which render only at mode=external +
+              # provider=msk + a non-empty bootstrapIam.
               kafka:
                 {{- if $kafkaMode }}
                 mode: {{ $kafkaMode | quote }}
                 {{- end }}
-                {{- if $bootstrapIam }}
+                {{- if and $managed $kafkaBootstrap }}
+                # The profile overlay's bootstrapServers names an in-cluster
+                # Service that does not exist on a managed broker, so the
+                # managed endpoint replaces it rather than sitting beside it.
+                bootstrapServers: {{ $kafkaBootstrap | quote }}
+                {{- end }}
+                {{- if or $bootstrapIam (and $managed $kafkaBootstrap) }}
                 external:
+                  {{- if and $managed $kafkaBootstrap }}
+                  bootstrap: {{ $kafkaBootstrap | quote }}
+                  {{- end }}
+                  {{- if $bootstrapIam }}
                   msk:
                     bootstrapIam: {{ $bootstrapIam | quote }}
+                  {{- end }}
                 {{- end }}
               {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
