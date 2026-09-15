@@ -34,19 +34,23 @@ point: a check the renderer runs cannot be forgotten the way a list can.
 
     python3 scripts/tests/test_pod_spec_invariants.py
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+Needs `helm` on PATH. Runs under pytest too, which is how CI reaches it.
 
-A chart that cannot render with the standard cascade is REPORTED and counted,
-never silently passed -- the run prints what it actually covered.
+A chart this cascade cannot render is asserted against UNRENDERABLE rather than
+counted and printed: under pytest a printed skip is invisible, and a skip that
+reads like a pass is how a gate stops being one.
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 
 import yaml
+
+from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
@@ -57,17 +61,13 @@ BASE_CASCADE = [VALUES / "common.yaml", VALUES / "local.yaml"]
 # Workload kinds whose pod template we assert on.
 POD_PARENTS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "ReplicaSet"}
 
-_failures = 0
-_skipped: list[str] = []
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
+# Charts this cascade cannot reach, and why. A chart that stops rendering without
+# being named here fails the coverage check rather than dropping out quietly.
+UNRENDERABLE = {
+    # culvert fails its own listeners guard: the cascade names no tunnel
+    # protocol, and a server accepting neither is a deliberate render error.
+    "culvert",
+}
 
 
 def render(chart: Path) -> list[dict] | None:
@@ -81,12 +81,25 @@ def render(chart: Path) -> list[dict] | None:
     cmd += ["--set", "appNamespace=dfe-local", "--set", "kafka.mode=single"]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode != 0:
-        _skipped.append(chart.name)
         return None
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
-def pod_templates(docs: list[dict]) -> list[tuple[str, str, dict]]:
+@cache
+def rendered() -> tuple[tuple[tuple[str, tuple[dict, ...]], ...], tuple[str, ...]]:
+    """Every chart rendered once: (chart, docs) pairs, plus the names that would not."""
+    covered: list[tuple[str, tuple[dict, ...]]] = []
+    skipped: list[str] = []
+    for chart in sorted(p for p in CHARTS.iterdir() if (p / "Chart.yaml").exists()):
+        docs = render(chart)
+        if docs is None:
+            skipped.append(chart.name)
+        else:
+            covered.append((chart.name, tuple(docs)))
+    return tuple(covered), tuple(skipped)
+
+
+def pod_templates(docs: tuple[dict, ...]) -> list[tuple[str, str, dict]]:
     """(kind, name, podSpec) for every workload that owns a pod template."""
     found = []
     for d in docs:
@@ -99,7 +112,7 @@ def pod_templates(docs: list[dict]) -> list[tuple[str, str, dict]]:
     return found
 
 
-def pod_labels(docs: list[dict], kind: str) -> list[tuple[str, dict]]:
+def pod_labels(docs: tuple[dict, ...], kind: str) -> list[tuple[str, dict]]:
     out = []
     for d in docs:
         if d.get("kind") != kind:
@@ -116,53 +129,61 @@ def is_dfe_image(spec: dict) -> bool:
     return any("dfe-" in (c.get("image") or "") for c in containers)
 
 
-def test_dfe_pods_disable_service_links(chart: str, docs: list[dict]) -> None:
-    for kind, name, spec in pod_templates(docs):
-        if not is_dfe_image(spec):
-            continue
-        expect(
-            f"{chart}: {kind}/{name} sets enableServiceLinks: false",
-            spec.get("enableServiceLinks") is False,
-            "a Service whose name uppercases onto a DFE_* setting will shadow it",
-        )
-
-
-def test_no_job_pod_matches_a_service(chart: str, docs: list[dict]) -> None:
-    selectors = [
-        ((d.get("metadata") or {}).get("name", "?"), (d.get("spec") or {}).get("selector") or {})
-        for d in docs
-        if d.get("kind") == "Service"
-    ]
-    for job_name, labels in pod_labels(docs, "Job"):
-        for svc_name, sel in selectors:
-            if not sel:
+def test_dfe_pods_disable_service_links() -> None:
+    covered, _ = rendered()
+    for chart, docs in covered:
+        for kind, name, spec in pod_templates(docs):
+            if not is_dfe_image(spec):
                 continue
-            matched = all(labels.get(k) == v for k, v in sel.items())
             expect(
-                f"{chart}: Job/{job_name} is not selected by svc/{svc_name}",
-                not matched,
-                "the Job's pod joins that Service's endpoints while it runs",
+                f"{chart}: {kind}/{name} sets enableServiceLinks: false",
+                spec.get("enableServiceLinks") is False,
+                "a Service whose name uppercases onto a DFE_* setting will shadow it",
             )
 
 
-def main() -> int:
-    charts = sorted(p for p in CHARTS.iterdir() if (p / "Chart.yaml").exists())
-    checked = 0
-    for chart in charts:
-        docs = render(chart)
-        if docs is None:
-            continue
-        checked += 1
-        test_dfe_pods_disable_service_links(chart.name, docs)
-        test_no_job_pod_matches_a_service(chart.name, docs)
+def test_no_job_pod_matches_a_service() -> None:
+    covered, _ = rendered()
+    for chart, docs in covered:
+        selectors = [
+            (
+                (d.get("metadata") or {}).get("name", "?"),
+                (d.get("spec") or {}).get("selector") or {},
+            )
+            for d in docs
+            if d.get("kind") == "Service"
+        ]
+        for job_name, labels in pod_labels(docs, "Job"):
+            for svc_name, sel in selectors:
+                if not sel:
+                    continue
+                matched = all(labels.get(k) == v for k, v in sel.items())
+                expect(
+                    f"{chart}: Job/{job_name} is not selected by svc/{svc_name}",
+                    not matched,
+                    "the Job's pod joins that Service's endpoints while it runs",
+                )
 
-    print(f"\nchecked {checked} chart(s) of {len(charts)}")
-    if _skipped:
-        # Loud on purpose. A skip that reads like a pass is how a gate stops
-        # being one.
-        print(f"SKIPPED (would not render with the standard cascade): {', '.join(_skipped)}")
-    print("FAILURES" if _failures else "OK", _failures or "")
-    return 1 if _failures else 0
+
+def test_every_chart_is_covered_or_declared() -> None:
+    """A chart that drops out of the render is a hole in both invariants above."""
+    covered, skipped = rendered()
+    expect(
+        "only the declared charts fail to render with the standard cascade",
+        set(skipped) == UNRENDERABLE,
+        f"skipped {sorted(skipped)}, declared {sorted(UNRENDERABLE)}",
+    )
+    expect("the render reached something to check", len(covered) > 1, f"got {len(covered)}")
+
+
+def main() -> int:
+    with standalone():
+        test_dfe_pods_disable_service_links()
+        test_no_job_pod_matches_a_service()
+        test_every_chart_is_covered_or_declared()
+        covered, skipped = rendered()
+        print(f"\nchecked {len(covered)} chart(s), {len(skipped)} not rendered: {sorted(skipped)}")
+        return summary()
 
 
 if __name__ == "__main__":
