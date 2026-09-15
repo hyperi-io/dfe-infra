@@ -59,14 +59,15 @@ listeners:
   - { name: grpc, port: 8443, protocol: TCP, exposed: false }
   - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false }
 
-# devex runs DFE's OWN ClickHouse (single/keeperless interim -- stops the
-# exit-231 crashloop from the prior cluster-mode instance that shared
-# hyperi-keeper). Flip to cluster (with DFE-owned dfe-keeper) or external to
-# test those paths. devex does NOT reuse hyperi-infra's hyperi-clickhouse.
+# This deploy runs DFE's OWN ClickHouse (single/keeperless interim -- stops the
+# exit-231 crashloop the prior cluster-mode instance hit while it shared a Keeper
+# with another tenant on the cluster). Flip to cluster (with DFE-owned
+# dfe-keeper) or external to test those paths. It does NOT reuse a ClickHouse
+# the cluster already runs.
 clickhouse:
   mode: single
   # cluster mode here uses DFE's own dfe-keeper (chart default) -- self-contained,
-  # NOT hyperi-infra's hyperi-keeper.
+  # NOT a Keeper some other tenant on the cluster owns.
 
 vault:
   address: "https://bao.example.com:8200"

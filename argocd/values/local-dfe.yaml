@@ -3,7 +3,7 @@
 # This is the SAMPLE overlay for a cluster where DFE owns every node (no shared
 # pets to fence off), exactly like a customer Rancher/EKS cluster. It is selected
 # by the cluster secret's dfe.hyperi.io/cloud value (= "local-dfe"). Contrast with
-# local.yaml (devex Cluster A) which pins workloads to tainted dfe-k8s nodes; here
+# local.yaml (a shared cluster) which pins workloads to tainted dfe-k8s nodes; here
 # there is NOTHING to avoid, so nodeScheduling is EMPTY -- pods schedule anywhere.
 #
 # Nothing here is product code -- it is one deploy's values, like aws.yaml would
@@ -45,7 +45,7 @@ envoyGateway:
 # Edge wildcard-cert issuer. The chart default (dfe-letsencrypt) renders a
 # ClusterIssuer only when tls.acme.email or tls.vault.server is set; with neither,
 # the gateway-shim requests against a ClusterIssuer that never exists ->
-# IssuerNotFound, dfe-wildcard-tls stuck Ready=False. dfe.devex.hyperi.io is an
+# IssuerNotFound, dfe-wildcard-tls stuck Ready=False. This deploy's domain is an
 # internal split-horizon name, so public ACME cannot validate it. Point the edge
 # cert at the self-signed internal CA: instant issue, no DNS-01, no external
 # credential. Clients must trust dfe-internal-ca-tls (ns cert-manager) or see a

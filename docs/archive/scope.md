@@ -62,7 +62,7 @@ SCOPE
 
 DEPLOYMENT UX (the test case)
 - Point to a blank AWS account (or on-prem Rancher for initial tests)
-- Supply a subdomain for the DFE instance (e.g. dfe.devex.hyperi.io)
+- Supply a subdomain for the DFE instance (e.g. dfe.example.com)
 - Optionally supply an external OIDC provider
 - Run deploy → it "just works"
 - Minimum viable inputs: cloud target + domain + optional OIDC. Everything else has sensible defaults.
@@ -84,7 +84,7 @@ COMPONENT INDEPENDENCE (container-per-component)
 
 NODE SCALING (capacity autoscaling)
 - KEDA = pod scaling (horizontal). Node scaling = separate concern.
-- On-prem (Proxmox): Cluster API (CAPI) + ionos-cloud/cluster-api-provider-proxmox. Autoscaler watches pending pods → provisions VMs via Proxmox API → cloud-init → RKE2 join. ~2 min.
+- On-prem: Cluster API (CAPI) + the community CAPI infrastructure provider for the on-prem hypervisor. Autoscaler watches pending pods → provisions VMs via the hypervisor API → cloud-init → RKE2 join. ~2 min.
 - AWS: Karpenter (preserved from dfe-core 2.1)
 - GCP/Azure: native node autoscalers
 - DevEx (now): fixed 3 nodes, overprovisioned (72 cores, 192GB). No autoscaling until production.

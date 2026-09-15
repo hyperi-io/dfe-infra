@@ -1,7 +1,7 @@
 # Build, test and cleanup on devex
 
 How to build, test, deploy and cleanly tear down dfe-infra on the on-prem
-**devex** environment (Proxmox-hosted RKE2 + Rancher, CoreDNS, OpenBao). For the
+**devex** environment (hypervisor-hosted RKE2 + Rancher, CoreDNS, OpenBao). For the
 platform-side contract -- what devex provides and what it expects cleaned up --
 see `hyperi-io/hyperi-infra:docs/DFE-INFRA-ON-DEVEX.md`.
 
