@@ -1,7 +1,7 @@
-# The app manifest the engine's management API reflects. Rendered from
-# .Values.appCatalogue, whose source of truth is apps.yaml at the repo root, so a
-# new or changed app reaches the engine without an engine release.
-{{- if .Values.appCatalogue }}
+# The app manifest the engine's management API reflects. Helm reads only files
+# inside a chart, so `python3 scripts/composition.py --write-catalogue` keeps
+# files/apps.yaml equal to apps.yaml at the repo root, and the manifest then
+# travels with the stack revision rather than with an engine release.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,5 +10,4 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 data:
   apps.yaml: |
-    {{- toYaml .Values.appCatalogue | nindent 4 }}
-{{- end }}
+    {{- .Files.Get "files/apps.yaml" | nindent 4 }}

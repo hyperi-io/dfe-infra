@@ -67,6 +67,7 @@ _ENV_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     (("endpoints", "kafka_bootstrap"), "DFE_KAFKA_BOOTSTRAP"),
     (("endpoints", "otel_endpoint"), "DFE_OTEL_ENDPOINT"),
     (("endpoints", "vault_addr"), "DFE_VAULT_ADDR"),
+    (("retention", "default_ttl_days"), "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"),
 )
 
 # An env assignment, live (`KEY=`) or hash-commented (`# KEY=`). The env file's

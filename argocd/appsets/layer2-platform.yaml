@@ -72,6 +72,10 @@ spec:
               # hostname envoy-gateway-config publishes derives from it.
               - name: domain
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # The address the deployment's DNS already names. Empty lets the
+              # LB pool choose, which re-rolls the edge address on a rebuild.
+              - name: envoyGateway.service.loadBalancerIP
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/gateway_address" }}'
               # Where the DFE apps run, so the network policies name the same
               # namespace the apps are actually placed in.
               - name: appNamespace

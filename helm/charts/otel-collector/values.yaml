@@ -8,9 +8,9 @@ image:
   tag: "0.158.0"  # 2026-07-22 (7-day-compliant). Pinned explicitly, not via appVersion.
   pullPolicy: IfNotPresent
 
-# The contrib image ships USER 10001 (numeric, verified via crane), so
-# runAsNonRoot is satisfiable. The daemonset already runs as 10001 today and
-# reads /var/log/pods fine at that uid; this just makes it explicit + hardened.
+# The GATEWAY's pod securityContext. The contrib image ships USER 10001
+# (numeric, verified via crane), so runAsNonRoot is satisfiable. The daemonset
+# is the exception and carries its own ids under daemonset.podSecurityContext.
 podSecurityContext:
   runAsUser: 10001
   runAsGroup: 10001
@@ -33,6 +33,14 @@ gateway:
   # same drain-safety gating as dfe-common.pdb. maxUnavailable defaults to 1.
   pdb:
     enabled: true
+  export:
+    # Retry ceiling on the gateway's own exporters. A destination that has gone
+    # (a deleted ClickHouse Service, a rebuild) drops after this instead of
+    # being retried behind a full queue until the gateway itself dies.
+    maxElapsedTime: 120s
+  # limits.memory is the ONE number the gateway's memory dials come from:
+  # memory_limiter limit_mib is 80% of it, spike_limit_mib 20%, and GOMEMLIMIT
+  # matches the 80%. Resize this and the config resizes with it.
   resources:
     requests:
       cpu: 200m
@@ -46,6 +54,29 @@ gateway:
     prometheusPort: 8889
 
 daemonset:
+  # Root, unlike every other DFE pod: node pod-log files are root-owned (0640),
+  # so a non-root filelog receiver silently opens zero files. Rootfs stays
+  # read-only and all capabilities stay dropped (containerSecurityContext).
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    runAsGroup: 0
+    fsGroup: 0
+  export:
+    # Retry ceiling on the push to the gateway. A gateway refusing data because
+    # of its own memory_limiter, or gone entirely, costs the queued batches
+    # rather than a collector that retries until it is OOMKilled.
+    maxElapsedTime: 60s
+  # Where the filelog receiver keeps its read offsets. On the NODE, because they
+  # have to survive the pod: without a checkpoint every restart re-ingests every
+  # pod log on the node from the start, which floods the export queue and OOMs
+  # the collector into the next restart.
+  checkpoint:
+    hostPath: /var/lib/dfe-otel-collector
+    mountPath: /var/lib/otelcol/storage
+  # limits.memory is the ONE number the daemonset's memory dials come from:
+  # memory_limiter limit_mib is 80% of it, spike_limit_mib 20%, GOMEMLIMIT
+  # matches the 80%, and the export queue holds a batch per 4 MiB of it.
   resources:
     requests:
       cpu: 100m
@@ -97,7 +128,8 @@ clusterTelemetry:
   # bootstrapServers, so single-broker and Strimzi share one config with no JMX
   # exporter. Complements the consumers' own rdkafka_* lag, which stops reporting
   # when a consumer dies.
-  # Off by default -- slim has no Kafka. SASL/SCRAM-SHA-512 is the DFE broker
+  # Off by default -- the brokerless profiles (slim, mesh) have no Kafka to
+  # scrape. SASL/SCRAM-SHA-512 is the DFE broker
   # standard, so the credential must be projected here via the kafka chart's
   # `user.password.extraAppNamespaces`.
   kafka:
@@ -183,3 +215,11 @@ exporters:
     database: ""
     username: ""
     passwordSecretName: clickhouse-admin-password
+    # ClickHouse session settings, merged into the exporter's DSN query string.
+    #
+    # A log body repeating a JSON path fails its whole batch with code 117 and
+    # the retry never drains it, so one record stops the logs pipeline.
+    # The skip keeps the first occurrence and is silent; the raw Body column
+    # still holds the original text.
+    connectionParams:
+      type_json_skip_duplicated_paths: "1"

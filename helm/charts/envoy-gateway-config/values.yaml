@@ -14,6 +14,10 @@ gateway:
 # every chart in the appset, and otel-collector already owns `gateway`.
 # Swap cloud LB <-> k8s LB with the same values the receiver uses:
 #   type            -- LoadBalancer (cloud/MetalLB) | ClusterIP | NodePort
+#   loadBalancerIP  -- the address the edge must answer on, when a DNS record
+#                      already names it. Empty lets the pool/CCM choose, which is
+#                      what a rebuild then re-rolls -- and every published
+#                      hostname points at whatever it held before.
 #   loadBalancerClass -- "" = cluster default CCM; "service.k8s.aws/nlb" for AWS;
 #                      a MetalLB/kube-vip class on bare metal
 #   annotations     -- provider LB config (NLB scheme, etc.)
@@ -23,10 +27,28 @@ gateway:
 envoyGateway:
   service:
     type: LoadBalancer
+    loadBalancerIP: ""
     loadBalancerClass: ""
     annotations: {}
     loadBalancerSourceRanges: []
     externalIPs: []
+
+# Pool balancer for the direct transport. `enabled`, `gateway` and `port` are
+# the deploy-config SSoT's (argocd/values/common.yaml `mesh:`) because every
+# pool chart reads them too; only the two dials below are this chart's, so they
+# are the only mesh keys declared here.
+mesh:
+  proxy:
+    # Every record on a brokerless profile crosses this proxy, so it is sized
+    # like a stage rather than like an edge.
+    replicas: 2
+  loadBalancer:
+    # RoundRobin | LeastRequest | Random | RingHash | Maglev | ConsistentHash.
+    type: RoundRobin
+  # HTTP/2 PING keepalive, both sides of the proxy.
+  keepalive:
+    interval: 30s
+    timeout: 10s
 
 tls:
   issuerName: dfe-letsencrypt
@@ -98,6 +120,29 @@ tls:
     namespace: cert-manager
     duration: "87600h"     # 10y root (SHA-384 signature follows P-384)
     renewBefore: "720h"    # 30d
+
+    # Root PERSISTENCE across a rebuild (#238). Without it every rebuild mints a
+    # new root, every client re-trusts, and the HyperDX iframe fails outright
+    # because it cannot show the interstitial. The root is pushed to the
+    # deployment's secret store once (PushSecret, IfNotExists) and restored
+    # before cert-manager can mint (ExternalSecret, CreatedOnce); the leaf
+    # lifetimes are what rotate.
+    # OFF by default: an ExternalSecret pointed at a store the deployment does
+    # not have is Degraded forever, which fails the Argo sync of a deploy that is
+    # otherwise working. Turn it on where there IS a store. `dfe-ops ca --status`
+    # says which of the two a deployment is in.
+    # Vault issuer mode renders none of it -- the estate PKI owns the root.
+    persist:
+      enabled: false
+      secretStoreName: dfe-secret-store
+      secretStoreKind: ClusterSecretStore
+      # KV path, the same {project}/{env}/<area>/<name> convention every other
+      # secret uses. Empty derives it.
+      remoteKey: ""
+      # Underscored property names, NOT tls.crt/tls.key: the Vault provider reads
+      # a property as a gjson path, where a dot means nesting.
+      certProperty: tls_crt
+      keyProperty: tls_key
 
   acme:
     email: ""
@@ -342,14 +387,63 @@ oidc:
   #     clientSecretKey: client-secret
   #     scopes: [openid, email, profile, groups]
   #     jwksUrl: https://www.googleapis.com/oauth2/v3/certs
+  #
+  # A PRIVATE-CA IdP -- an IdP this deployment hosts for itself, which is the
+  # default shape because the chart issues the whole wildcard from
+  # dfe-internal-ca. Envoy Gateway's CONTROL PLANE fetches
+  # .well-known/openid-configuration using the system trust store, and its
+  # SecurityPolicy CRD has no field anywhere to hand it a CA bundle, so
+  # discovery fails with `x509: certificate signed by unknown authority` and the
+  # policy is REJECTED at admission (dfe-infra #222). Naming both endpoints
+  # skips discovery; backendRefs sends the token exchange to the IdP's Service
+  # over the pod network. Both are needed, and a backendRef outside the target
+  # route's namespace needs a ReferenceGrant in the IdP's namespace.
+  # providers:
+  #   - name: dex
+  #     issuerUrl: https://auth.example.com          # must equal the token `iss`
+  #     clientId: dfe
+  #     authorizationEndpoint: https://auth.example.com/auth
+  #     tokenEndpoint: https://auth.example.com/token
+  #     endSessionEndpoint: ""                       # optional, RP-initiated logout
+  #     backendRefs:
+  #       - name: dex                                # the IdP's in-cluster Service
+  #         namespace: dfe-local
+  #         port: 5556
+  #     # Cluster settings for that backend (timeouts, retries, health checks).
+  #     # There is NO TLS field here: an HTTPS IdP Service needs a
+  #     # BackendTLSPolicy targeting the Service, not a CA on the policy.
+  #     backendSettings: {}
 
 # jwt_authn filter — chains after OIDC to extract claims into headers.
 # These headers are the contract between Envoy and dfe-engine.
+#
+# DEFAULT OFF, and it must stay off until the two limits below are answered.
+# Neither is a bug in this chart; both are what Envoy Gateway can and cannot do.
+# docs/deployment/gateway-oidc.md carries the long version.
 jwtAuthn:
   enabled: false
   issuer: ""
   audiences: []
   forwardHeaders:
     subject: X-Oidc-Subject
+    # NOT MINTABLE BY ENVOY GATEWAY. A SecurityPolicy's
+    # spec.jwt.providers[].claimToHeaders says it outright: "The claim must be
+    # of type; string, int, double, bool. Array type claims are not supported".
+    # `groups` is an array in every OIDC provider worth testing against, so this
+    # header never arrives, and the engine's _resolve_group_grants maps nothing.
+    # An edge login is then AUTHENTICATED WITH ZERO ROLES: the engine answers
+    # roles: [], permissions: [], groups: [] and every authorization check fails.
+    # The engine reading the ID token itself is the way out of that; there is no
+    # Envoy Gateway feature to flatten an array claim (dfe-infra #222).
     groups: X-Oidc-Groups
     user: X-Forwarded-User    # backward compat (nginx convention)
+  # The EnvoyPatchPolicy's jwt_authn filter takes the token from an Authorization
+  # Bearer header, and an interactive OIDC login leaves the browser holding a
+  # COOKIE. So the SecurityPolicy half and the patch-policy half of this path do
+  # not currently meet on a browser request.
+  #
+  # And the trust side is asymmetric: dfe-engine's auth.trustProxyHeaders is a
+  # per-ENGINE flag, while the header stripping that makes X-Oidc-* trustworthy
+  # is per-gateway-LISTENER. One engine serving both a policy-fronted route and a
+  # plain one cannot trust the headers on one and not the other -- setting the
+  # flag makes them spoofable everywhere that engine is reachable.

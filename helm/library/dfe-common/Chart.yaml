@@ -2,6 +2,34 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.11.0: add _extraenv.tpl (dfe-common.extraEnv -- the overlay's `extraEnv`
+#        block as env entries, for the settings an app carries and its chart
+#        does not model). Six app charts call it as the last entry in their env
+#        block. A .helmignore now keeps tests/ out of the package: the lint
+#        harness vendors this library, so packaging it nested a copy of this
+#        archive inside every consumer's copy.
+# 0.10.0: add dfe-common.enrichmentTablesConfig -- the `enrichment_tables[]`
+#        entries for the tables the chart mounts, which the engine cannot write
+#        because the mount directory is the chart's. Without them the VRL
+#        program fails to compile at every get_enrichment_table_record call.
+# 0.9.1: dfe-common.podSecurityContext reads runAsUser/runAsGroup/fsGroup with
+#        hasKey. `default 1000` claimed an explicit 0, so a chart could not put
+#        a workload on uid 0 through the helper and had to write its own
+#        securityContext -- a second copy of the hardening.
+# 0.9.0: add _mesh.tpl (dfe-common.poolListener -- the alias Service and
+#        GRPCRoute that put a per-request balancer in front of one stage pool on
+#        the direct transport, plus meshEnabled / meshAlias / meshHost).
+#        dfe-common.pushService now declares appProtocol kubernetes.io/h2c on
+#        the push port, without which a proxy fronting the pool dials it as
+#        HTTP/1.1 and every gRPC request resets.
+# 0.8.0: add _transport.tpl (dfe-common.transport / transportIsBus -- kafka.mode
+#        derived to bus|direct once, for every chart), _rollout.tpl
+#        (dfe-common.rollout -- the surge-first rolling update every app
+#        Deployment replaces its pods with) and _push.tpl (the scalo Push
+#        listener's Service + container port for a stage that receives records
+#        on the direct transport). dfe-common.pdb now gates on KEDA's floor as
+#        well as the static replica count, and states the budget as
+#        minAvailable where nothing can shrink the workload to one pod.
 # 0.7.0: dfe-common.image takes an optional image.digest and renders
 #        tag@sha256:... , so a mutable registry tag cannot land bytes other than
 #        the ones versions.yaml pins. Charts with no digest render unchanged.
@@ -24,4 +52,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.7.0
+version: 0.11.0

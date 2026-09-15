@@ -1,0 +1,13 @@
+# The harness for dfe-common.transport: the derived values in one render, so
+# scripts/tests/test_rollout.py can assert them without every consuming chart
+# growing its own proof.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-transport
+  namespace: {{ include "dfe-common.namespace" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  transport: {{ include "dfe-common.transport" . | quote }}
+  isBus: {{ include "dfe-common.transportIsBus" . | quote }}

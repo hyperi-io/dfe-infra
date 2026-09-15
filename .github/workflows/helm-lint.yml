@@ -9,14 +9,17 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The app catalogue is data the composition and profile tests read, so an
+      # edit to it alone used to merge with nothing run (dfe-infra#255).
+      - 'apps.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
-      - 'scripts/check_versions_drift.py'
-      - 'scripts/check_governance_drift.py'
-      - 'scripts/check_namespace_drift.py'
-      - 'scripts/check_submodule_drift.py'
-      - 'scripts/tests/**'
-      - 'scripts/dfe-stack'
+      # Whole tree: the job now lints every file under scripts/, not only the
+      # handful it runs.
+      - 'scripts/**'
+      - 'ruff.toml'
+      - 'suite.yaml'
+      - 'docs/suite-graph.md'
       - '.github/workflows/helm-lint.yml'
   pull_request:
     paths:
@@ -24,14 +27,17 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The app catalogue is data the composition and profile tests read, so an
+      # edit to it alone used to merge with nothing run (dfe-infra#255).
+      - 'apps.yaml'
       - 'deployment.example.yaml'
       - 'constraints/**'
-      - 'scripts/check_versions_drift.py'
-      - 'scripts/check_governance_drift.py'
-      - 'scripts/check_namespace_drift.py'
-      - 'scripts/check_submodule_drift.py'
-      - 'scripts/tests/**'
-      - 'scripts/dfe-stack'
+      # Whole tree: the job now lints every file under scripts/, not only the
+      # handful it runs.
+      - 'scripts/**'
+      - 'ruff.toml'
+      - 'suite.yaml'
+      - 'docs/suite-graph.md'
       - '.github/workflows/helm-lint.yml'
   # A push made with GITHUB_TOKEN triggers no workflow, so the propagate job's
   # write-back leaves its own head commit unchecked. workflow_dispatch is the
@@ -45,6 +51,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Nothing ran ruff on scripts/ until now, so six findings sat in files
+      # nobody had reason to open. The version is pinned so a ruff release
+      # cannot fail a PR that changed nothing.
+      #
+      # `ruff format --check` is deliberately NOT here: the scripts are wrapped
+      # by hand at the 100 columns ruff.toml sets, and the formatter rewrites
+      # 2673 lines across 11 of them. Adopting a formatter for this tree is a
+      # decision of its own, not a side effect of clearing a lint backlog.
+      - name: Ruff (scripts/)
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          version: "0.15.22"
+          args: check
+          src: scripts
+
       # Runs first: a drift check whose patterns have stopped matching prints
       # the same OK as one that is working.
       - name: Drift-check failure paths
@@ -54,6 +75,16 @@ jobs:
       # that matches nothing proposes nothing and reports no error.
       - name: SSoT annotation + Renovate manager contract
         run: python3 scripts/tests/test_dfe_stack.py
+
+      # The suite.yaml reader is a hand-written subset parser: a shape it
+      # cannot read fails here before it fails inside a tool.
+      - name: suite.yaml reader and queries
+        run: python3 scripts/tests/test_suite_graph.py
+
+      # A drift check that has stopped matching prints the same OK as one
+      # that is working, so each of its verdicts gets a case that produces it.
+      - name: Suite drift check failure paths
+        run: python3 scripts/tests/test_check_suite_drift.py
 
       - name: Terraform-output reader
         run: python3 scripts/tests/test_bridge.py
@@ -69,6 +100,13 @@ jobs:
       - name: Namespace drift check (common.yaml is SSoT)
         run: python3 scripts/check_namespace_drift.py
 
+      # Cross-repo citations are SKIPPED on this bare checkout and said so;
+      # the in-repo half (structure, charts, pins, the docs diagrams) is
+      # binding. --strict belongs to an operator run with the member clones
+      # on disk, which a runner does not have.
+      - name: Suite graph drift check (suite.yaml is SSoT)
+        run: python3 scripts/check_suite_drift.py
+
       # Renovate raises the submodule bump; nothing stops one repo sitting on it.
       - name: Shared-submodule drift check
         env:
@@ -81,10 +119,63 @@ jobs:
       - name: Stack compatibility check (advisory)
         run: python3 scripts/dfe-stack compat-check
 
+      # dfe-ops is the CLI every deploy, verify, teardown and cycle runs
+      # through, and has no extension, so no glob elsewhere ever compiles it.
+      - name: dfe-ops compiles
+        run: python3 -m py_compile scripts/dfe-ops
+
+      # A refresh that annotated but has not synced would otherwise pass the
+      # readiness gate against the pods the previous revision left behind.
+      - name: refresh waits for its sync and refuses a namespace-less smoke run
+        run: python3 scripts/tests/test_dfe_ops_refresh.py
+
+      # The gate decides whether a deploy is declared up, and both of its ways
+      # of being wrong (a 5h-old restart count, another distribution's
+      # namespaces) fail a healthy deploy.
+      - name: Readiness gate judges the deploy's own namespaces
+        run: python3 scripts/tests/test_readiness_gate.py
+
+      # A hostname is the overlay's to choose, so the summary reads its
+      # endpoints off the live HTTPRoutes rather than composing them.
+      - name: Access summary reads the live routes and this deploy's Gateway
+        run: python3 scripts/tests/test_access_summary.py
+
+      # A wrong dex connector does not crash: it authenticates and returns an
+      # empty groups claim, so the RBAC chain the fixture exists to prove is
+      # never exercised. The render is the only place that is caught.
+      - name: Tester IdP renders a dex that emits groups, with no secret in the values
+        run: python3 scripts/tests/test_tester_idp.py
+
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: "4.2.3"
+
+      # Every file under scripts/tests runs here, including the ones no step
+      # above names; the named steps stay for the failure paths they document.
+      - name: scripts/tests under pytest
+        run: python3 -m pip install --quiet --require-hashes -r scripts/tests/requirements-ci.txt
+      - run: python3 -m pytest scripts/tests -q -p no:cacheprovider
+
+      # A step of its own, not a pytest case: it fetches the engine's bundled
+      # copy over the network (gh api), unlike --check-catalogue's pytest
+      # case above, which stays offline. This repo holds the SSoT and already
+      # owns that check, so the third copy is compared here too (dfe-infra#306).
+      #
+      # dfe-engine is currently PRIVATE, and the default GITHUB_TOKEN cannot
+      # read a sibling private repo's contents -- the same gap
+      # check_submodule_drift.py already documents for this exact repo. Exit 2
+      # (snapshot unreadable) is logged loudly but does not fail the job; exit
+      # 1 (a real declaration mismatch) does.
+      - name: Engine's bundled apps.yaml snapshot matches the SSoT
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python3 scripts/composition.py --check-engine-snapshot
+          code=$?
+          set -e
+          test "$code" -ne 1
 
       # An over-wide egress policy renders green and passes a dry-run, so the
       # derived external-service egress is checked by set equality per mode.
@@ -96,10 +187,64 @@ jobs:
       - name: Storage model renders and the cascade holds
         run: python3 scripts/tests/test_storage_model.py
 
+      # An issuer-only OIDC policy and a 443 egress rule both render green and
+      # then fail at admission or drop every packet (#222, #223).
+      - name: Gateway OIDC and gateway egress render the working shape
+        run: python3 scripts/tests/test_gateway_oidc.py
+
       # versions.yaml pinning tag@sha256 is worth nothing if the chart renders a
       # bare tag, and a bare tag is mutable.
       - name: Rendered images carry the pinned digest
         run: python3 scripts/tests/test_image_digest_pin.py
+
+      # Argo renders with `helm template`, so a template that mints a value
+      # produces a different secret on every sync (#224).
+      - name: A chart render is reproducible
+        run: python3 scripts/tests/test_render_stable.py
+
+      # A rebuild that mints a new private root costs every developer box a
+      # re-trust and breaks the HyperDX iframe outright (#238), and a chart
+      # rendering only one half of the save/restore pair loses the root silently.
+      - name: The private root persists, and dfe-ops ca exports it
+        run: python3 scripts/tests/test_internal_ca.py
+
+      # An unpinned front door takes whatever the LB pool hands out, so a
+      # rebuild leaves every published hostname on the previous address.
+      - name: Front-door addresses pin and the domain carries the profile
+        run: python3 scripts/tests/test_pinned_addresses.py
+
+      # The hunt runner read its hunts off an emptyDir nothing wrote for 42
+      # hours while the pod stayed Running (#212), so the paths and the volume
+      # are asserted rather than the sidecar's presence.
+      - name: Hunt runner reads hunts off the synced deploy repo
+        run: python3 scripts/tests/test_hunt_runner_gitsync.py
+
+      # The engine and the schema Job each render the TTL, and the value has to
+      # travel env file -> cluster secret -> appset -> chart, or a deployment's
+      # retention silently stays at the shipped default.
+      - name: Default retention reaches the engine and the schema apply
+        run: python3 scripts/tests/test_default_ttl.py
+
+      # Every config change rolls the pod, so the roll is what has to be safe:
+      # the k8s default tears a single-replica stage down before its replacement
+      # is Ready.
+      - name: App pods replace surge-first and carry a disruption budget
+        run: python3 scripts/tests/test_rollout.py
+
+      # One kafka.mode, read through one helper: the branch this replaced was
+      # repeated in three charts' templates and drifted from the profile files.
+      - name: Bus or direct is derived once, for every chart
+        run: python3 scripts/tests/test_transport.py
+
+      # A Service balances per connection and gRPC holds one open, so without a
+      # listener in front of it a stage pool's extra replicas take nothing.
+      - name: Every stage pool gets the same listener, on the one profile that asks
+        run: python3 scripts/tests/test_pool_listener.py
+
+      # The engine can only report what the deploy hands it, and a console that
+      # is not told the tier lists every optional app.
+      - name: The engine is told its profile and its ui pin
+        run: python3 scripts/tests/test_engine_deployment_facts.py
 
       - name: Lint library charts via test charts
         run: |
@@ -128,22 +273,51 @@ jobs:
             python3 -c "import yaml,sys; list(yaml.safe_load_all(open('$f')))" && echo "OK: $f"
           done
 
+  # Whether the drift guard below can reach dfe-deploy at all. It is a job of
+  # its own because a job-level `if:` cannot read the secrets context, and the
+  # guard has to be able to come out SKIPPED: a job that checked nothing while
+  # reporting `pass` is what #200 is about, and a warning on every run is how
+  # the warnings that mean something get scrolled past.
+  governance-drift-precondition:
+    name: governance drift preconditions
+    runs-on: ubuntu-latest
+    outputs:
+      can_check: ${{ steps.gate.outputs.can_check }}
+    steps:
+      - name: Can this run reach dfe-deploy
+        id: gate
+        env:
+          # A pull_request from a fork is handed no secrets at all, so a skip
+          # there is the event's doing rather than a gap in this repo.
+          EVENT_CARRIES_SECRETS: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
+        run: |
+          if [[ "$HAS_DEPLOY_TOKEN" == "true" ]]; then
+            echo "can_check=true" >> "$GITHUB_OUTPUT"
+            echo "DFE_DEPLOY_TOKEN is present -- the drift guard runs."
+            exit 0
+          fi
+          echo "can_check=false" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_CARRIES_SECRETS" == "true" ]]; then
+            echo "::notice::governance drift not checked -- this repo has no DFE_DEPLOY_TOKEN secret (read on hyperi-io/dfe-deploy). Tracked in #200. The guard is skipped rather than reported as a pass."
+          else
+            echo "::notice::governance drift not checked -- a fork pull request is handed no secrets. The push to main checks the same commit."
+          fi
+
   # Drift guard (#22): the dfe-deploy template's governance actions dial chart
   # values by dot-path; a chart renaming a dial var would orphan an action
   # silently. dfe-deploy's own CI validates action STRUCTURE and leaves the
-  # chart side to us. dfe-deploy is PRIVATE, so this needs a repo secret
-  # DFE_DEPLOY_TOKEN (read access to hyperi-io/dfe-deploy); without it the job
-  # reports a LOUD skip rather than a silent green.
+  # chart side to us. dfe-deploy is PRIVATE, so the checkout needs the
+  # DFE_DEPLOY_TOKEN secret; where the run has it, drift FAILS the job.
   governance-drift:
     name: governance actions vs chart values
+    needs: governance-drift-precondition
+    if: needs.governance-drift-precondition.outputs.can_check == 'true'
     runs-on: ubuntu-latest
-    env:
-      HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Checkout dfe-deploy template
-        if: env.HAS_DEPLOY_TOKEN == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hyperi-io/dfe-deploy
@@ -151,9 +325,4 @@ jobs:
           path: .dfe-deploy
 
       - name: Governance drift check
-        if: env.HAS_DEPLOY_TOKEN == 'true'
         run: python3 scripts/check_governance_drift.py --deploy-root .dfe-deploy --require
-
-      - name: Governance drift check SKIPPED
-        if: env.HAS_DEPLOY_TOKEN != 'true'
-        run: echo "::warning::governance drift NOT checked -- no DFE_DEPLOY_TOKEN secret (needs read on hyperi-io/dfe-deploy)"

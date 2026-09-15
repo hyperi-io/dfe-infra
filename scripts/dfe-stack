@@ -38,6 +38,10 @@ Subcommands:
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
   verify         Re-fetch GHCR digests (gh api) and compare to versions.yaml.
+  suite          Read suite.yaml (membership + build-cycle edges): the whole
+                 graph as JSON, the build-cycle table, a --producer,
+                 --consumer or --lane slice, or (re)render the Mermaid blocks
+                 in docs/suite-graph.md.
 
 Examples:
     python3 scripts/dfe-stack render
@@ -48,9 +52,20 @@ Examples:
     python3 scripts/dfe-stack check-upgrade --from 2.2.0-rc.1 --to 2.2.0
     python3 scripts/dfe-stack resolve --pins ../dfe-deploy/pins.yaml
     python3 scripts/dfe-stack verify
+    python3 scripts/dfe-stack suite --cycles
+    python3 scripts/dfe-stack suite --producer scalo-rs
+    python3 scripts/dfe-stack suite --consumer dfe-engine
+    python3 scripts/dfe-stack suite --render-docs
 
-render/images/graph/check-upgrade/resolve need only python3 + git.
-verify shells out to `gh api` (needs an authenticated gh).
+render/images/graph/check-upgrade/resolve/suite need only python3 + git.
+verify and cut read GHCR through `gh api`, which needs the `read:packages` scope
+a developer's own `gh login` usually lacks -- pass `--env-file PATH` and the
+GHCR_TOKEN (or GH_TOKEN) in that file authenticates gh for this process:
+
+    python3 scripts/dfe-stack --env-file bootstrap/.env verify
+
+refresh-digests reads the registry through `docker buildx imagetools`, which
+authenticates from the docker credential store instead.
 """
 
 from __future__ import annotations
@@ -64,10 +79,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS = Path(__file__).resolve().parent
 
-# Sibling module, imported by path so `python3 scripts/dfe-stack` works from any cwd.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Sibling modules, imported by path so `python3 scripts/dfe-stack` works from any cwd.
+sys.path.insert(0, str(SCRIPTS))
+import composition  # noqa: E402
+import envfile  # noqa: E402
+import profiles  # noqa: E402
 import registry_pins  # noqa: E402
+import suite_graph  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
@@ -296,6 +316,104 @@ def render_docker(v: dict, registry: str, label: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Docker PROFILE projection (dfe-docker's service_profiles.yaml block)
+# ---------------------------------------------------------------------------
+
+# The docker profiles that are projections of a Kubernetes tier, keyed by the
+# name dfe-docker writes them under. dfe-docker's other profiles are
+# hand-crafted data-plane shapes with no k8s counterpart, and this tool never
+# touches them.
+DOCKER_PROFILES = {
+    profiles.PROFILES[name].compose_profile: name for name in profiles.COMPOSE_MODES
+}
+
+# Apps that are a compose FOOTPRINT KEY rather than a service entry: compose
+# starts them from a named group, not from a per-app config file. Everything
+# else in the manifest that a profile deploys becomes one `services:` entry.
+DOCKER_FOOTPRINT_KEYS = {
+    "dfe-engine": "core",
+    "dfe-ui": "core",
+    "hyperdx": "hyperdx",
+}
+
+
+def _profile_values(mode: str) -> dict:
+    """The k8s profile's values: argocd/values/common.yaml under profile-<mode>."""
+    merged: dict = {}
+    for name in ("common.yaml", f"profile-{mode}.yaml"):
+        path = REPO_ROOT / "argocd" / "values" / name
+        if not path.is_file():
+            raise SystemExit(f"error: {path} not found")
+        for key, value in parse_simple_yaml(path.read_text()).items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key].update(value)
+            else:
+                merged[key] = value
+    return merged
+
+
+def _truthy(value: str) -> bool:
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def render_docker_profile(mode: str) -> str:
+    """One dfe-docker service_profiles.yaml profile block, projected from k8s.
+
+    dfe-docker's `slim` and `single` are the compose renderings of the k8s tiers
+    of the same names, so the k8s profile is the master and this is the only
+    thing that writes them. Compose has no KEDA and no operators, so what
+    survives the projection is WHICH components run, not how many of each:
+
+      transport   kafka.mode: `disabled` is grpc, any other mode is kafka
+      clickhouse  the tier deploys a warehouse (every k8s profile does)
+      kafbat      kafbat.enabled, and only on the kafka transport
+      otel        the tier deploys the collector (every k8s profile does)
+
+    WHICH apps run is apps.yaml's `default_in` for the matching compose
+    profile, never a list here. An app that compose starts from a named group
+    rather than a config file sets its footprint key (DOCKER_FOOTPRINT_KEYS);
+    every other one becomes a `services:` entry reading
+    `config/<app>/<transport>.yaml`.
+    """
+    if mode not in DOCKER_PROFILES:
+        raise SystemExit(
+            f"error: {mode!r} is not a projected profile "
+            f"(have: {', '.join(DOCKER_PROFILES)})"
+        )
+    profile = DOCKER_PROFILES[mode]
+    values = _profile_values(mode)
+    kafka_mode = str(values.get("kafka", {}).get("mode", "")).strip()
+    transport = "grpc" if kafka_mode == "disabled" else "kafka"
+    kafbat = _truthy(values.get("kafbat", {}).get("enabled", "true"))
+
+    deployed = composition.default_apps(profile)
+    footprint = {DOCKER_FOOTPRINT_KEYS[a] for a in deployed if a in DOCKER_FOOTPRINT_KEYS}
+    services = [a for a in deployed if a not in DOCKER_FOOTPRINT_KEYS]
+
+    lines = [
+        f"  # Mirrors the Kubernetes {mode} tier: {transport} transport"
+        f"{'' if transport == 'kafka' else ', no broker'}, the warehouse,",
+        "  # self-monitoring, and the apps apps.yaml makes default there.",
+        f"  {mode}:",
+        f"    transport: {transport}",
+        "    clickhouse: true",
+    ]
+    if "core" in footprint:
+        lines.append("    core: true")
+    if "hyperdx" in footprint:
+        lines.append("    hyperdx: true")
+    if transport == "kafka" and kafbat:
+        lines.append("    kafbat: true")
+    lines.append("    otel: true")
+    lines.append("    services:")
+    for app in services:
+        component = app.removeprefix("dfe-")
+        lines.append(f"      {app}:")
+        lines.append(f"        config_path: {component}/{transport}.yaml")
+    return "\n".join(lines) + "\n"
+
+
 def render_manifest(v: dict, registry: str, label: str) -> str:
     """The certified k8s manifest for a stack (the readable pin set)."""
     prev = [p.strip() for p in v.get("stack", {}).get("previous", "").split(",") if p.strip()]
@@ -329,6 +447,14 @@ def render_manifest(v: dict, registry: str, label: str) -> str:
 
 
 def cmd_render(args: argparse.Namespace) -> int:
+    if args.docker_profile:
+        text = render_docker_profile(args.docker_profile)
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8", newline="\n")
+            print(f"docker profile {args.docker_profile} written to {args.out}")
+        else:
+            sys.stdout.write(text)
+        return 0
     if args.tag and args.stack:
         raise SystemExit("error: pass either --tag or --stack, not both")
     root = load_root(args.tag)
@@ -383,6 +509,65 @@ def cmd_graph(args: argparse.Namespace) -> int:
             "stack.previous set and the graph populates"
         )
     print(json.dumps(graph, indent=2))
+    return 0
+
+
+def cmd_suite(args: argparse.Namespace) -> int:
+    """suite.yaml queries: JSON, the build-cycle table, a slice, or the docs diagrams."""
+    graph = suite_graph.load()
+    problems = suite_graph.validate(graph)
+    if problems:
+        for p in problems:
+            print(f"error: {p}", file=sys.stderr)
+        return 1
+    page = suite_graph.REPO_ROOT / "docs" / "suite-graph.md"
+    if args.check_docs:
+        # One docs check, in check_suite_drift.py: it also runs the Mermaid
+        # linter where the host has one, and it survives a missing page.
+        # Imported here, not at the top: only --check-docs needs it.
+        import check_suite_drift
+
+        fails, skipped = check_suite_drift.check_docs(graph)
+        for line in skipped:
+            print(f"skipped: {line}")
+        for line in fails:
+            print(f"error: {line}", file=sys.stderr)
+        if fails:
+            return 1
+        text = page.read_text(encoding="utf-8", errors="replace")
+        print(f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) in sync")
+        return 0
+    if args.render_docs:
+        text = page.read_text(encoding="utf-8", errors="replace")
+        try:
+            fresh = suite_graph.render_docs(graph, text)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        page.write_text(fresh, encoding="utf-8", newline="\n")
+        print(f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) rendered")
+        return 0
+    if args.cycles:
+        for row in suite_graph.cycle_table(graph):
+            print(f"{row['producer']} -> {', '.join(row['consumers'])}")
+            print(f"    {row['kind']} ({row['type']}); gates: {', '.join(row['gates'])}")
+            print(f"    check: {row['check']}")
+        return 0
+    if args.mermaid:
+        try:
+            print(suite_graph.render_block(graph, args.mermaid))
+        except KeyError as exc:
+            print(f"error: {exc.args[0]}", file=sys.stderr)
+            return 1
+        return 0
+    try:
+        view = suite_graph.slice_graph(
+            graph, producer=args.producer, consumer=args.consumer, lane=args.lane
+        )
+    except KeyError as exc:
+        print(f"error: {exc.args[0]}", file=sys.stderr)
+        return 1
+    print(json.dumps(view, indent=2))
     return 0
 
 
@@ -496,10 +681,13 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 def cmd_verify(args: argparse.Namespace) -> int:
     _, v = stack_pins(load_root(), args.stack)
     apps, digests = v.get("apps", {}), v.get("digests", {})
+    # The HyperDX fork is versioned under content:, so an apps-only lookup finds
+    # no tag and reports a correct pin as "(tag not found)".
+    content = v.get("content", {})
     org = args.registry.split("/", 1)[1] if "/" in args.registry else args.registry
     bad = 0
     for name, digest in sorted(digests.items()):
-        tag = apps.get(name)
+        tag = apps.get(name) or content.get(name)
         out = _run(
             [
                 "gh", "api", "--paginate",
@@ -1147,11 +1335,23 @@ def main() -> int:
         default=DEFAULT_REGISTRY,
         help=f"image registry prefix (default {DEFAULT_REGISTRY})",
     )
+    parser.add_argument(
+        "--env-file",
+        action="append",
+        metavar="PATH",
+        help=(
+            "KEY=VALUE file; GHCR_TOKEN or GH_TOKEN in it authenticates gh for "
+            "the registry reads; repeatable, later wins"
+        ),
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("render", help="render the k8s manifest or the docker .env pin set")
     p.add_argument("--target", choices=["k8s", "docker"], default="k8s",
                    help="k8s = certified manifest (default); docker = dfe-docker .env fragment")
+    p.add_argument("--docker-profile", choices=list(DOCKER_PROFILES),
+                   help="project a k8s profile into dfe-docker's service_profiles.yaml block "
+                        "(ignores --target/--stack: profiles are not versioned pins)")
     p.add_argument("--stack", help="stack version to render (default: `current`)")
     p.add_argument("--tag", help="git tag to render from (git show versions.yaml@tag)")
     p.add_argument("--out", help="write to a file instead of stdout")
@@ -1164,6 +1364,16 @@ def main() -> int:
 
     p = sub.add_parser("graph", help="derive the upgrade graph from the in-file stacks")
     p.set_defaults(func=cmd_graph)
+
+    p = sub.add_parser("suite", help="suite.yaml: membership and build-cycle edges")
+    p.add_argument("--cycles", action="store_true", help="print the build-cycle table (producer -> consumers, check, gates)")
+    p.add_argument("--producer", help="JSON slice: this producer and its out-edges")
+    p.add_argument("--consumer", help="JSON slice: this consumer and the in-edges that reach it")
+    p.add_argument("--lane", help="JSON slice: one lane's members and the edges among them")
+    p.add_argument("--mermaid", metavar="BLOCK", help="print one diagram: overview or producer:<node>")
+    p.add_argument("--render-docs", action="store_true", help="rewrite the marked diagram blocks in docs/suite-graph.md")
+    p.add_argument("--check-docs", action="store_true", help="exit 1 if those blocks differ from suite.yaml")
+    p.set_defaults(func=cmd_suite)
 
     p = sub.add_parser("check-upgrade", help="verdict on an upgrade path")
     p.add_argument("--from", dest="frm", required=True, help="source stack version")
@@ -1246,6 +1456,8 @@ def main() -> int:
     p.set_defaults(func=cmd_release_gate)
 
     args = parser.parse_args()
+    # Every gh call below goes through _run/registry_pins, which inherit os.environ.
+    envfile.apply_gh_token(args.env_file)
     return args.func(args)
 
 

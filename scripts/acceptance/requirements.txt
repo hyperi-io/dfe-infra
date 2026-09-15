@@ -1,0 +1,11 @@
+# Browser driver for the onboarding acceptance suite, pinned by the same
+# supply-chain rule as the rest: latest release at least seven days old.
+#
+#   python3 -m pip install -r scripts/acceptance/requirements.txt
+#   python3 -m playwright install chrome
+#
+# Not hash-pinned like scripts/tests/requirements-ci.txt: greenlet is a C
+# extension with a wheel per interpreter and platform, and this suite runs from
+# an operator's own machine as well as a runner. Pin the hashes here once the
+# onboarding lane runs in CI on a fixed interpreter.
+playwright==1.62.0

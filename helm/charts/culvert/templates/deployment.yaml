@@ -1,0 +1,149 @@
+{{- /*
+  WireGuard server keys are minted in the pod and come from no secrets backend,
+  so two replicas allocate the same tunnel addresses and each rejects the
+  other's client configs. OpenVPN alone can scale out on shared external PKI;
+  this chart runs the pair, so it holds at one.
+*/}}
+{{- if gt (int .Values.replicas) 1 }}
+{{- fail (printf "culvert: replicas is %d. WireGuard mints its server key in the pod, so a second replica issues client configs the first rejects and allocates the same tunnel addresses. Hold at one replica." (int .Values.replicas)) }}
+{{- end }}
+{{- if and .Values.oidc.enabled (not (fromYaml (include "culvert.listener" (dict "ctx" . "name" "oauth2-udp")))) }}
+{{- fail "culvert: oidc.enabled with no listener named oauth2-udp. The client completes the login against the server's callback port, so add { name: oauth2-udp, port: 9000, protocol: TCP, exposed: true } to listeners." }}
+{{- end }}
+{{- if and (eq .Values.pki.mode "external") (not .Values.pki.existingSecret) }}
+{{- fail "culvert: pki.mode is external with no pki.existingSecret. Name the Secret carrying ca.crt, server.crt and server.key, or set pki.mode: local." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  {{- if .Values.persistence.enabled }}
+  # The PKI volume is ReadWriteOnce, so the replacement cannot surge past the
+  # pod holding it.
+  strategy:
+    type: Recreate
+  {{- else }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+        # Opts these pods OUT of the namespace-wide egress baseline, so the
+        # policy beside this template is their whole egress surface. Without
+        # the label the baseline grants them the entire namespace and the
+        # receiver-only rule adds nothing.
+        dfe.hyperi.io/egress-scoped: "true"
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # The VPN never calls the Kubernetes API.
+      automountServiceAccountToken: false
+      # uid 0 through the shared helper: OpenVPN and wg-quick create the tun
+      # device and program iptables NAT before OpenVPN drops to nobody. The
+      # values carry the root ids; the seccomp profile is the shared default.
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- if .Values.ipForward.enabled }}
+      initContainers:
+        # /proc/sys is read-only inside a container whatever capabilities it
+        # holds, so the sysctl cannot be set by the server container. Only this
+        # pod's network namespace is touched, never the node's.
+        - name: enable-ip-forward
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sysctl", "-w", "net.ipv4.ip_forward=1"]
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      {{- end }}
+      containers:
+        - name: culvert
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          ports:
+            {{- range .Values.listeners }}
+            - name: {{ .name }}
+              containerPort: {{ .port }}
+              protocol: {{ .protocol | default "TCP" }}
+            {{- end }}
+          env:
+            {{- range $k, $v := fromYaml (include "culvert.env" .) }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if and .Values.oidc.enabled .Values.oidc.existingSecret }}
+          # The OIDC client secret and the callback HTTP secret, never values.
+          envFrom:
+            - secretRef:
+                name: {{ .Values.oidc.existingSecret }}
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vpn/profiles
+              readOnly: true
+            {{- if .Values.tunDevice.enabled }}
+            - name: tun
+              mountPath: /dev/net/tun
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: pki
+              mountPath: /etc/vpn/pki
+            {{- end }}
+            {{- if .Values.pki.existingSecret }}
+            - name: pki-external
+              mountPath: {{ .Values.pki.mountPath }}
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config
+        {{- if .Values.tunDevice.enabled }}
+        - name: tun
+          hostPath:
+            path: {{ .Values.tunDevice.hostPath }}
+            type: CharDevice
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: pki
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-pki
+        {{- end }}
+        {{- if .Values.pki.existingSecret }}
+        - name: pki-external
+          secret:
+            secretName: {{ .Values.pki.existingSecret }}
+            defaultMode: 0400
+        {{- end }}

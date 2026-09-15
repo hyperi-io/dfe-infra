@@ -57,9 +57,13 @@ exposure:
 # The gateway routes HTTP, so grpc drops back to exposed: false here -- left
 # true it fails the receiver render, which is the point of that guard. OTLP/gRPC
 # stays reachable in-cluster on the ClusterIP.
+# Helm REPLACES a list rather than merging it, so every listener the chart
+# defaults to has to be restated here or it disappears -- pushgrpc included, or
+# dfe-fetcher has nothing to push to in the no-kafka profile.
 listeners:
   - { name: http, port: 8080, protocol: TCP, exposed: true }
   - { name: grpc, port: 8443, protocol: TCP, exposed: false }
+  - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false }
 
 # The receiver's ingest door in internal mode (receiver.{domain}).
 routes:

@@ -123,6 +123,30 @@ spec:
                 exit 1
               fi
               echo "deploy repo seeding up to date"
+
+              # The push hook that tells Argo CD to refresh, instead of waiting
+              # out its 300 s poll. Idempotent by URL: a hook already pointing
+              # there is left alone rather than duplicated on every resync.
+              if [ -z "${WEBHOOK_URL}" ]; then
+                echo "no Argo webhook URL configured -- pushes wait for the poll"
+              elif [ -z "${WEBHOOK_SECRET}" ]; then
+                echo "no Argo webhook secret present -- hook NOT registered (pushes wait for the poll)"
+              elif curl -s -u "$AUTH" "$REPO_API/hooks" | grep -qF "${WEBHOOK_URL}"; then
+                echo "Argo webhook already registered"
+              else
+                # type gogs: Argo CD's webhook handler has no gitea or forgejo
+                # parser, and Forgejo sends the X-Gogs-* headers the gogs one
+                # reads. push only -- a branch or tag event refreshes nothing.
+                code=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+                  -X POST -H "Content-Type: application/json" \
+                  -d "{\"type\":\"gogs\",\"active\":true,\"events\":[\"push\"],\"config\":{\"url\":\"${WEBHOOK_URL}\",\"content_type\":\"json\",\"secret\":\"${WEBHOOK_SECRET}\"}}" \
+                  "$REPO_API/hooks")
+                if [ "$code" = "201" ]; then
+                  echo "Argo webhook registered -> ${WEBHOOK_URL}"
+                else
+                  echo "Argo webhook registration FAILED (HTTP $code)"; exit 1
+                fi
+              fi
           env:
             - name: REPO
               value: {{ .Values.deployRepo.name | quote }}
@@ -146,3 +170,21 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.admin.secretName }}
                   key: password
+            {{- if .Values.webhook.enabled }}
+            - name: WEBHOOK_URL
+              value: {{ printf "https://%s%s" .Values.webhook.argocdHost .Values.webhook.path | quote }}
+            # optional: an adopted Argo CD nobody minted a secret for leaves this
+            # empty, and the Job says the hook was not registered rather than
+            # failing the sync.
+            - name: WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.webhook.secretName }}
+                  key: {{ .Values.webhook.secretKey }}
+                  optional: true
+            {{- else }}
+            - name: WEBHOOK_URL
+              value: ""
+            - name: WEBHOOK_SECRET
+              value: ""
+            {{- end }}

@@ -12,7 +12,7 @@ version: 0.1.0
 # appVersion == versions.yaml `current` (the pin SSoT). Image pins are NOT
 # duplicated here: each component chart's appVersion carries its image tag and
 # is drift-checked against versions.yaml by scripts/check_versions_drift.py.
-appVersion: "2.2.0-rc.11"
+appVersion: "2.2.0-rc.13"
 
 # The dependency set mirrors the SLIM profile's chart set as composed by
 # argocd/appsets/*.yaml (layer2-platform wave 2, layer2-data waves 4-6,
@@ -21,23 +21,22 @@ appVersion: "2.2.0-rc.11"
 # backing-service connections, which is what the waves ordered.
 #
 # Deliberately NOT dependencies (they are not in a slim deployment either):
-#   - dfe-archiver / dfe-fetcher / dfe-transform-* -- per-source, opt-in apps;
-#     the deploy repo enables them (see appsets/layer-scale.yaml header).
-#   - dfe-vpn -- separate workstream, not in the release set.
+#   - dfe-archiver / dfe-fetcher / dfe-transform-* / culvert -- per-source or
+#     opt-in apps; the deploy repo enables them (appsets/layer-scale.yaml).
 #   - argocd / keda / metrics-server / reloader / external-dns / the operators
 #     -- cluster addons the bootstrap or layer1-addons installs; the trial
 #     needs only the prerequisites named in README.md.
 dependencies:
   # --- platform (layer2-platform, wave 2) -----------------------------------
   - name: network-policies
-    version: "0.2.1"
+    version: "0.4.0"
     repository: "file://../charts/network-policies"
     condition: network-policies.enabled
   # Default OFF for the trial: the gateway needs the envoy-gateway operator,
   # Gateway API CRDs, cert-manager AND a LoadBalancer -- the trial uses
   # ClusterIP + port-forward instead (NOTES.txt). Flip on for a real edge.
   - name: envoy-gateway-config
-    version: "0.1.1"
+    version: "0.2.0"
     repository: "file://../charts/envoy-gateway-config"
     condition: envoy-gateway-config.enabled
   # --- data substrate (layer2-data, waves 4-6) ------------------------------
@@ -46,7 +45,7 @@ dependencies:
     repository: "file://../charts/cnpg-cluster"
     condition: cnpg-cluster.enabled
   - name: clickhouse-cluster
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/clickhouse-cluster"
     condition: clickhouse-cluster.enabled
   - name: ferretdb
@@ -56,11 +55,11 @@ dependencies:
   # kafka renders NOTHING while kafka.mode=disabled (the slim default); the
   # dependency stays enabled so profiles/single.yaml is a values change only.
   - name: kafka
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/kafka"
     condition: kafka.enabled
   - name: kafbat
-    version: "0.1.1"
+    version: "0.1.2"
     repository: "file://../charts/kafbat"
     condition: kafbat.enabled
   - name: dfe-schema
@@ -72,31 +71,31 @@ dependencies:
     repository: "file://../charts/otel-collector"
     condition: otel-collector.enabled
   - name: links
-    version: "0.1.1"
+    version: "0.1.3"
     repository: "file://../charts/links"
     condition: links.enabled
   # Deploy-repo FALLBACK git host. OFF: the trial runs no GitOps loop (there
   # is no ArgoCD to consume the deploy repo), and dfe-engine.gitops.enabled is
   # false to match. See appsets/layer2-deploy-repo.yaml for the product gating.
   - name: forgejo
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../charts/forgejo"
     condition: forgejo.enabled
   # --- DFE applications (layer2-apps, wave 7; slim app set) -----------------
   - name: dfe-engine
-    version: "0.1.0"
+    version: "0.3.0"
     repository: "file://../charts/dfe-engine"
     condition: dfe-engine.enabled
   - name: dfe-ui
-    version: "0.1.0"
+    version: "0.1.1"
     repository: "file://../charts/dfe-ui"
     condition: dfe-ui.enabled
   - name: dfe-receiver
-    version: "0.1.0"
+    version: "0.3.0"
     repository: "file://../charts/dfe-receiver"
     condition: dfe-receiver.enabled
   - name: dfe-loader
-    version: "0.1.0"
+    version: "0.3.0"
     repository: "file://../charts/dfe-loader"
     condition: dfe-loader.enabled
   # Aliased: dfe-engine's own values carry a `hyperdx:` key, and a sibling

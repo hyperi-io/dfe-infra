@@ -17,8 +17,8 @@ any -- is a per-deployment choice behind the `clickhouse-cluster` chart's
 
 ## History and rationale
 
-Until recently there was no official ClickHouse operator -- for years the
-Kubernetes options were the Altinity operator or building your own. HyperI
+Until ClickHouse published an operator of its own, the Kubernetes options were
+the Altinity operator or building your own. HyperI
 built its own: an internal operator evolved over time alongside a custom
 ClickHouse fork whose engine adds SSD caching in front of spinning disk
 (n-tier storage). That pairing remains the ClickHouse layer of the HyperI

@@ -53,7 +53,7 @@ async function chCountAs(
   return { ok: true, value: Number(parsed.data[0]?.[0]), body };
 }
 
-const COUNT = 'SELECT count() FROM dfe.default';
+const COUNT = 'SELECT count() FROM dfe.main';
 
 test.describe('org_id isolation matrix', () => {
   test.skip(

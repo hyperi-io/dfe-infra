@@ -37,6 +37,8 @@ from pathlib import Path
 
 import yaml
 
+from _expect import expect, standalone, summary
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -44,17 +46,6 @@ VALUES = REPO_ROOT / "argocd" / "values"
 # The valueFiles order layer2-data and layer2-platform use, minus the deploy-repo
 # layers the individual tests append.
 BASE_CASCADE = [VALUES / "common.yaml", VALUES / "local.yaml", VALUES / "profile-scale.yaml"]
-
-_failures = 0
-
-
-def expect(name: str, condition: bool, detail: str = "") -> None:
-    global _failures
-    if condition:
-        print(f"PASS  {name}")
-    else:
-        _failures += 1
-        print(f"FAIL  {name}  {detail}")
 
 
 def _cmd(chart: str, values: list[Path], sets: tuple[str, ...]) -> list[str]:
@@ -318,7 +309,7 @@ def test_clickhouse_tiered_block_needs_no_object_store() -> None:
 def test_clickhouse_tiered_block_reaches_single_mode() -> None:
     docs = render("clickhouse-cluster", "clickhouse.mode=single", *TIERED_BLOCK_SETS,
                   "clickhouse.tieredBlock.coldStorageClass=nvme-bulk")
-    cm = [d for d in docs if d.get("kind") == "ConfigMap"][0]
+    cm = next(d for d in docs if d.get("kind") == "ConfigMap")
     fragment = yaml.safe_load(cm["data"]["dfe-storage.yaml"])["storage_configuration"]
     expect("single mode declares the disk the operator would have registered",
            list(fragment["disks"]) == ["slow"], f"got {fragment.get('disks')}")
@@ -365,7 +356,7 @@ def test_clickhouse_tiered_block_guards() -> None:
 
 def test_clickhouse_cached_object_reaches_single_mode() -> None:
     docs = render("clickhouse-cluster", "clickhouse.mode=single", *CACHED_OBJECT_SETS)
-    cm = [d for d in docs if d.get("kind") == "ConfigMap"][0]
+    cm = next(d for d in docs if d.get("kind") == "ConfigMap")
     expect("single mode ships the same fragment as config.d YAML",
            "dfe-storage.yaml" in cm["data"])
     fragment = yaml.safe_load(cm["data"]["dfe-storage.yaml"])
@@ -537,31 +528,31 @@ def test_the_overlay_reaches_the_tiered_block_dials() -> None:
 
 
 def main() -> int:
-    test_clickhouse_local_adds_nothing()
-    test_clickhouse_cached_object_renders_the_disks()
-    test_the_cache_disk_sorts_after_the_disk_it_wraps()
-    test_the_credential_binding_defaults_to_the_dfe_seeded_path()
-    test_the_credential_binding_follows_an_existing_store_entry()
-    test_clickhouse_cached_object_keeps_credentials_out_of_git()
-    test_the_object_store_timeouts_are_unset_by_default_and_settable()
-    test_clickhouse_tiered_block_ranks_two_local_volumes()
-    test_the_cold_volume_sorts_after_the_hot_one()
-    test_clickhouse_tiered_block_needs_no_object_store()
-    test_clickhouse_tiered_block_reaches_single_mode()
-    test_clickhouse_tiered_block_guards()
-    test_clickhouse_cached_object_reaches_single_mode()
-    test_clickhouse_storage_model_guards()
-    test_the_unclaimed_cells_are_refused_rather_than_rendered_inert()
-    test_the_object_store_batch_delete_switch_is_tri_state()
-    test_kafka_local_adds_nothing()
-    test_kafka_tiered_object_renders_the_plugin_and_the_switches()
-    test_kafka_tiered_object_keeps_credentials_out_of_git()
-    test_kafka_tiered_object_version_gate()
-    test_kafka_tiered_object_other_guards()
-    test_deploy_repo_overlay_beats_the_profile()
-    test_the_overlay_reaches_the_tiered_block_dials()
-    print(f"\n{_failures} failure(s)")
-    return 1 if _failures else 0
+    with standalone():
+        test_clickhouse_local_adds_nothing()
+        test_clickhouse_cached_object_renders_the_disks()
+        test_the_cache_disk_sorts_after_the_disk_it_wraps()
+        test_the_credential_binding_defaults_to_the_dfe_seeded_path()
+        test_the_credential_binding_follows_an_existing_store_entry()
+        test_clickhouse_cached_object_keeps_credentials_out_of_git()
+        test_the_object_store_timeouts_are_unset_by_default_and_settable()
+        test_clickhouse_tiered_block_ranks_two_local_volumes()
+        test_the_cold_volume_sorts_after_the_hot_one()
+        test_clickhouse_tiered_block_needs_no_object_store()
+        test_clickhouse_tiered_block_reaches_single_mode()
+        test_clickhouse_tiered_block_guards()
+        test_clickhouse_cached_object_reaches_single_mode()
+        test_clickhouse_storage_model_guards()
+        test_the_unclaimed_cells_are_refused_rather_than_rendered_inert()
+        test_the_object_store_batch_delete_switch_is_tri_state()
+        test_kafka_local_adds_nothing()
+        test_kafka_tiered_object_renders_the_plugin_and_the_switches()
+        test_kafka_tiered_object_keeps_credentials_out_of_git()
+        test_kafka_tiered_object_version_gate()
+        test_kafka_tiered_object_other_guards()
+        test_deploy_repo_overlay_beats_the_profile()
+        test_the_overlay_reaches_the_tiered_block_dials()
+        return summary()
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ setup() {
         "${SINGLE[@]}" --set kafka.defaultTopic.create=false
     [ "$status" -eq 0 ]
     [[ "$output" =~ "dfe-kafka-bootstrap-topics" ]]
-    [[ ! "$output" =~ "default_land" ]]
+    [[ ! "$output" =~ "main_land" ]]
     [[ "$output" =~ "dfe_loader_dlq" ]]
 }
 

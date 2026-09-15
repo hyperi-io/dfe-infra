@@ -1,8 +1,9 @@
-# The app's scalo config file, rendered VERBATIM from the .Values.config blob.
-# Layer B of the engine's values contract (dfe-engine helm/models.py): the engine
-# is the config authority and emits `config` as an OPAQUE passthrough -- this
-# chart never interprets the per-app keys, it only writes them to the path the
-# image's CMD reads (/etc/dfe/fetcher.yaml -- dfe-fetcher Dockerfile:43).
+# The app's scalo config file, rendered from the .Values.config blob (dfe-engine
+# helm/models.py Layer B) with the TRANSPORT derived here. The engine is the
+# config authority for what this instance fetches; where it sends the result is a
+# deployment fact, so a broker list or a receiver address in the engine's overlay
+# would be wrong for every other deployment of the product. Written to the path
+# the image's CMD reads (/etc/dfe/fetcher.yaml -- dfe-fetcher Dockerfile:43).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,4 +12,33 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 data:
   fetcher.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- $cfg := deepCopy (.Values.config | default dict) }}
+    {{- if eq (include "dfe-common.transport" .) "direct" }}
+    {{- /* The engine compiles the whole `output` block for this instance,
+           endpoint included, and that endpoint is per SOURCE: a source with a
+           transform is fetched into the transform, not into the loader. A
+           chart-written endpoint here would send every source to one address.
+           The kafka section goes with the broker: validate() only demands
+           brokers while output.type includes kafka (config/mod.rs:252), and
+           topic_suffix falls back to its own _land default (mod.rs:3681). */}}
+    {{- $_ := unset $cfg "kafka" }}
+    {{- else }}
+    {{- /* brokers is the deployment's fact, so the chart supplies it -- but an
+           overlay that carries its own wins, for an external broker the chart
+           cannot know. Set on the top-level kafka section, which is what
+           build_scalo_kafka_config reads when output.kafka is absent
+           (dfe-fetcher src/output.rs:243). */}}
+    {{- $kafka := default dict (get $cfg "kafka") }}
+    {{- if and (not (get $kafka "brokers")) .Values.kafka.bootstrapServers }}
+    {{- $_ := set $kafka "brokers" (list .Values.kafka.bootstrapServers) }}
+    {{- $_ := set $cfg "kafka" $kafka }}
+    {{- end }}
+    {{- end }}
+    {{- /* The cursor store lives on the mounted volume; unset, the fetcher falls
+           back to the read-only config directory and persists nothing. */}}
+    {{- $cursor := default dict (get $cfg "cursor") }}
+    {{- if not (get $cursor "directory") }}
+    {{- $_ := set $cursor "directory" "/var/lib/dfe-fetcher" }}
+    {{- $_ := set $cfg "cursor" $cursor }}
+    {{- end }}
+    {{- toYaml $cfg | nindent 4 }}

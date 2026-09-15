@@ -12,6 +12,7 @@ door in `exposure.mode`.
 |---|---|---|
 | `public` (default) | one LoadBalancer per protocol family carrying the `exposed` listeners, plus a NetworkPolicy opening those ports | `exposure.public.loadBalancerSourceRanges` |
 | `internal` | ClusterIP only; the door is the Gateway HTTPRoute `routes.receiver` in envoy-gateway-config, on `receiver.{domain}` | the Gateway's own edge |
+| `vpn` | ClusterIP only; the door is the edge-fleet tunnel, and the ingest NetworkPolicy admits the VPN pods rather than the world | the VPN's own LoadBalancer, plus per-client PKI or OIDC |
 
 ## The default is open
 
@@ -53,3 +54,8 @@ with its own TCPRoute/UDPRoute.
 Pair the two values deliberately: `routes.receiver.enabled` ships `false`
 because the receiver ships `public`, where it has its own LoadBalancer and
 the route would be a second door. A deployment on `internal` flips both.
+
+`vpn` mode is not caught by that guard, and deliberately so: a tunnel
+delivers a client onto the pod network and it dials the ClusterIP directly,
+so every exposed listener is reachable there without a Gateway route at all.
+See [deployment/edge-vpn.md](deployment/edge-vpn.md).
