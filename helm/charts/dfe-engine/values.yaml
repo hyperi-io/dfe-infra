@@ -407,7 +407,8 @@ huntRunner:
     targetBacklog: 10       # due-hunts per pod (AverageValue -> ceil(due / targetBacklog))
     cooldownPeriod: 300
     pollingInterval: 30
-    shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # Default: dfe-keda-shim in this release's namespace (dfe-common.kedaShimAddress).
+    shimAddress: ""
   # How hunt and rule YAML REACHES the runner. The runner reads them off disk
   # (dfe_engine.hunt_runner.spec_loader on every reload tick) and the engine
   # governs them in the deploy repo, so without this the runner's directories are
