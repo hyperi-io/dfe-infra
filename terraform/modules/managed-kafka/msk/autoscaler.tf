@@ -40,6 +40,11 @@ locals {
   )
 
   autoscaling_enabled = var.autoscaling.enabled
+
+  // The alarm's granularity, written once: it appears both inside the SEARCH
+  // expression and as the metric_query's own period, and a threshold sized for
+  // one of them against a reading taken at the other fires at the wrong load.
+  autoscaling_period_seconds = 300
 }
 
 // ---------------------------------------------------------------------------
@@ -91,11 +96,11 @@ resource "aws_cloudwatch_metric_alarm" "broker_scale_out" {
   // https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Statistics-definitions.html
   metric_query {
     id         = "cluster_bytes_in"
-    expression = "SUM(SEARCH('{AWS/Kafka,\"Broker ID\",\"Cluster Name\"} MetricName=\"BytesInPerSec\" \"Cluster Name\"=\"${aws_msk_cluster.this.cluster_name}\"', 'Average', 300))"
+    expression = "SUM(SEARCH('{AWS/Kafka,\"Broker ID\",\"Cluster Name\"} MetricName=\"BytesInPerSec\" \"Cluster Name\"=\"${aws_msk_cluster.this.cluster_name}\"', 'Average', ${local.autoscaling_period_seconds}))"
     label      = "${var.name} cluster BytesInPerSec"
     // CloudWatch's PutMetricAlarm rejects a math-only metric_query with no
-    // period, even though the SEARCH expression above already embeds 300.
-    period      = 300
+    // period, even though the SEARCH expression above already embeds it.
+    period      = local.autoscaling_period_seconds
     return_data = true
   }
 }

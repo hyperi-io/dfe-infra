@@ -20,8 +20,20 @@
   empty map before a field is read, or a bare render panics on a nil pointer.
 */}}
 {{- $oldOidc := .Values.oidc | default dict }}
-{{- if or $oldOidc.issuer $oldOidc.clientId }}
-{{- fail "culvert: oidc.issuer/oidc.clientId is set, and this chart no longer reads it -- move the tunnel's own OIDC client-auth fields to vpn.oidc.issuer/vpn.oidc.clientId (and vpn.oidc.enabled/vpn.oidc.existingSecret/vpn.oidc.validateGroups). oidc.enabled and oidc.providers belong to envoy-gateway-config's edge OIDC, not this chart." }}
+{{- /*
+  All four moved fields, not just the two obvious ones: a half-migrated values
+  file that leaves validateGroups behind renders clean while vpn.oidc.
+  validateGroups falls back to "", which accepts any authenticated user.
+*/}}
+{{- if or $oldOidc.issuer $oldOidc.clientId $oldOidc.existingSecret $oldOidc.validateGroups }}
+{{- fail "culvert: oidc.issuer/oidc.clientId/oidc.existingSecret/oidc.validateGroups is set, and this chart no longer reads it -- move the tunnel's own OIDC client-auth fields to vpn.oidc.issuer/vpn.oidc.clientId (and vpn.oidc.enabled/vpn.oidc.existingSecret/vpn.oidc.validateGroups). oidc.enabled and oidc.providers belong to envoy-gateway-config's edge OIDC, not this chart." }}
+{{- end }}
+{{- /*
+  The client secret and the callback HTTP secret ride the named Secret, so OIDC
+  with no Secret named starts the tunnel's login flow with neither.
+*/}}
+{{- if and .Values.vpn.oidc.enabled (not .Values.vpn.oidc.existingSecret) }}
+{{- fail "culvert: vpn.oidc.enabled with no vpn.oidc.existingSecret. Name the Secret carrying CULVERT_OAUTH2_CLIENT_SECRET and CULVERT_OAUTH2_HTTP_SECRET, or set vpn.oidc.enabled: false." }}
 {{- end }}
 {{- if and (eq .Values.pki.mode "external") (not .Values.pki.existingSecret) }}
 {{- fail "culvert: pki.mode is external with no pki.existingSecret. Name the Secret carrying ca.crt, server.crt and server.key, or set pki.mode: local." }}

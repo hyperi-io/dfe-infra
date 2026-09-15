@@ -22,8 +22,8 @@ the Altinity operator or building your own. HyperI built its own: an internal
 operator paired with a custom ClickHouse fork whose engine put an SSD cache in
 front of bulk storage, run on private-cloud deployments. That pairing beat
 upstream ClickHouse in a couple of specific use cases over the two years
-HyperI maintained it. This repo is public, so the retired operator and fork
-are described only in general terms, never by name.
+HyperI maintained it. The retired operator and fork are described only in
+general terms here, never by name.
 
 DFE 2.2 retires the pairing. A small performance loss in those use cases buys
 much less code to maintain, lower operational risk, and a storage model held

@@ -438,6 +438,17 @@ run "msk_autoscaler_threshold_arithmetic" {
     error_message = "the metric_query must carry period = 300, or CloudWatch's PutMetricAlarm rejects the alarm with ValidationError: Period must not be null"
   }
 
+  // The SEARCH expression embeds the SAME granularity. Asserting only the
+  // field leaves the expression free to move to a shorter window, which would
+  // compare a one-minute average against a threshold sized for five.
+  assert {
+    condition = strcontains(
+      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].expression,
+      "'Average', 300)"
+    )
+    error_message = "the SEARCH expression's own granularity must match the metric_query period"
+  }
+
   assert {
     // alarm_actions is a set, so its members have no index to select by.
     condition     = contains(aws_cloudwatch_metric_alarm.broker_scale_out[0].alarm_actions, aws_sns_topic.broker_scaler[0].arn)

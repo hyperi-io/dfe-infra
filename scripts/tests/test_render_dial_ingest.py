@@ -13,14 +13,13 @@
 
     python3 -m pytest scripts/tests/test_render_dial_ingest.py -q
 
-Q51: the receiver's ingress door on AWS/GCP/Azure must never be an
-unauthenticated internet-facing LoadBalancer by default -- every cloud front
-door bills by the GB and DFE pushes terabytes a day through the receiver.
-This covers the dial-side half of that: `ingest.mode` reads public/
-internal/vpn and nothing else, the fallback is the mode the cloud overlay
-applies (the chart's own default off cloud), and the render prints which mode
-a dial carries. The chart-side
-render (which Service kind each mode produces) is
+The receiver's ingress door on AWS/GCP/Azure must never be an unauthenticated
+internet-facing LoadBalancer by default -- every cloud front door bills by the
+GB and DFE pushes terabytes a day through the receiver. This covers the
+dial-side half of that: `ingest.mode` reads public/internal/vpn and nothing
+else, the fallback is the mode the cloud overlay applies (the chart's own
+default off cloud), and the render prints which mode a dial carries. The
+chart-side render (which Service kind each mode produces) is
 scripts/tests/test_receiver_ingress.py instead.
 """
 
@@ -49,9 +48,21 @@ def test_an_absent_block_takes_the_charts_own_default_off_cloud() -> None:
 def test_an_absent_block_reports_the_cloud_overlays_vpn() -> None:
     """On aws, gcp and azure the overlay sets exposure.mode: vpn, so a dial
     that omits the block deploys with no load balancer and must say so."""
-    for cloud in render_dial._VPN_DEFAULT_CLOUDS:
+    for cloud in ("aws", "gcp", "azure"):
         dial = parse_dial(f"k8s:\n  cloud: {cloud}\n", source="test-dial")
         assert render_dial._ingest_mode(dial) == "vpn"
+
+
+def test_the_reported_fallback_is_read_from_the_overlay_not_a_list() -> None:
+    """Every overlay's own exposure.mode is what the fallback reports, so a
+    cloud whose overlay differs from aws cannot be reported as if it matched --
+    `local` renders internal, and a hardcoded cloud list used to say public."""
+    for cloud in ("aws", "gcp", "azure", "local"):
+        overlay = render_dial._overlay_ingest_mode(cloud)
+        dial = parse_dial(f"k8s:\n  cloud: {cloud}\n", source="test-dial")
+        assert render_dial._ingest_mode(dial) == overlay, cloud
+    assert render_dial._overlay_ingest_mode("local") == "internal"
+    assert render_dial._overlay_ingest_mode("nosuchcloud") is None
 
 
 def test_each_named_mode_reads_through() -> None:

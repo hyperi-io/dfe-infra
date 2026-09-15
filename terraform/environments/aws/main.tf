@@ -381,7 +381,16 @@ locals {
   // brought (ClickHouse Cloud, a VM in the VPC) has a real address and keeps
   // its target. 9440 is the native protocol over TLS (helm/charts/
   // network-policies' own values.yaml documents this port for the same reason).
-  clickhouse_host_is_in_cluster = endswith(var.endpoints.clickhouse_host, ".cluster.local") || endswith(var.endpoints.clickhouse_host, ".svc")
+  // A dotless host counts too: `dfe-clickhouse` is a Service short name that
+  // only resolves through a pod's search domains, and the instance has none.
+  // KNOWN GAP: a host that IS reachable but sits outside the VPC -- ClickHouse
+  // Cloud -- still gets an egress rule scoped to var.network.cidr, because the
+  // target object carries no scope field (toolbox/aws/CONTRACT.md).
+  clickhouse_host_is_in_cluster = (
+    endswith(var.endpoints.clickhouse_host, ".cluster.local")
+    || endswith(var.endpoints.clickhouse_host, ".svc")
+    || !strcontains(var.endpoints.clickhouse_host, ".")
+  )
   toolbox_clickhouse_target = var.endpoints.clickhouse_host != "" && !local.clickhouse_host_is_in_cluster ? {
     clickhouse = {
       host = var.endpoints.clickhouse_host

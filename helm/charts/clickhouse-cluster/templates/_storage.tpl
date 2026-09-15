@@ -125,6 +125,14 @@ cache on the data PVC despite the value claiming otherwise.
 {{- end -}}
 {{- if eq $volume "instance-store" -}}
 {{- if ne (include "dfe-clickhouse.storageBulk" .) "object" -}}
+{{- /*
+  Name the value the deployer can act on. Under the `auto` default the derived
+  answer is `local` only because no endpoint reached the chart, so blaming
+  storageModel points at a key nobody set.
+*/ -}}
+{{- if and (has .Values.clickhouse.storageModel (list "auto" "")) (not .Values.clickhouse.objectStore.endpoint) -}}
+{{- fail "clickhouse.objectStore.cache.volume=instance-store needs an object-store cache to place, and no clickhouse.objectStore.endpoint is set -- so clickhouse.storageModel derived to local. The deployment's object-store bucket never reached the chart." -}}
+{{- end -}}
 {{- fail (printf "clickhouse.objectStore.cache.volume=instance-store needs an object-store cache to place -- clickhouse.storageModel=%s has none" (include "dfe-clickhouse.storageModel" .)) -}}
 {{- end -}}
 {{- if not .Values.clickhouse.objectStore.cacheSize -}}

@@ -3432,10 +3432,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 # --- the ephemeral-deployment banner -----------------------------------------
-# An ephemeral deployment is a create-prove-destroy cycle, and the one number
-# that decides whether to keep proving is how long it has been up against what
-# it costs an hour. Both are already on disk and neither was ever surfaced, so
-# a cycle ran on someone's memory of when it started.
+# An ephemeral deployment is a create-prove-destroy cycle, and what decides
+# whether to keep proving is how long it has been up against what it costs an
+# hour. Both readings come off disk, so the banner costs no API call and
+# neither one failing fails a command.
 
 DIAL = REPO_ROOT / "deployment.yaml"
 SIZING_RESOLVED = REPO_ROOT / "sizing" / "resolved.yaml"
@@ -3450,21 +3450,18 @@ def _dial_tree() -> dict[str, object]:
         return {}
 
 
-def _state_created_at(cloud: str) -> float | None:
-    """When this deployment's tofu state came into being, as an epoch time.
+def _last_apply_at(cloud: str) -> float | None:
+    """When this deployment's local tofu state was last written, as an epoch time.
 
-    The backend record `tofu init` writes is the reading: it is created with the
-    state and no later apply rewrites it, unlike terraform.tfstate, whose mtime
-    moves on every apply. A local backend has no such record, so the state file
-    itself stands in there.
+    A LOCAL backend only. `.terraform/terraform.tfstate` is the backend record
+    `tofu init` writes, so its mtime dates the last init and not the deployment;
+    a remote backend leaves no apply-time file here at all, and the age is then
+    unavailable rather than guessed.
     """
-    root = TF_ENVIRONMENTS / cloud
-    for candidate in (root / ".terraform" / "terraform.tfstate", root / "terraform.tfstate"):
-        try:
-            return candidate.stat().st_mtime
-        except OSError:
-            continue
-    return None
+    try:
+        return (TF_ENVIRONMENTS / cloud / "terraform.tfstate").stat().st_mtime
+    except OSError:
+        return None
 
 
 def _elapsed(seconds: float) -> str:
@@ -3473,14 +3470,24 @@ def _elapsed(seconds: float) -> str:
 
 
 def _ephemeral_notice() -> str | None:
-    """One line for a deployment the dial marks ephemeral, or None for any other."""
+    """One line for a deployment the dial marks ephemeral, or None for any other.
+
+    A dial naming no cloud provisions nothing (target.existing), so it gets no
+    banner rather than a reading taken from an unrelated environment's tree.
+    """
     tree = _dial_tree()
     if yaml_subset.at(tree, ("tags", "lifecycle")) != "ephemeral":
         return None
-    cloud = yaml_subset.at(tree, ("target", "provision", "cloud")) or "aws"
+    cloud = yaml_subset.at(tree, ("target", "provision", "cloud"))
+    if not cloud:
+        return None
     parts = [f"ephemeral deployment ({cloud})"]
-    created = _state_created_at(str(cloud))
-    parts.append(f"up {_elapsed(time.time() - created)}" if created else "up (no tofu state found)")
+    applied = _last_apply_at(str(cloud))
+    parts.append(
+        f"last apply {_elapsed(time.time() - applied)} ago"
+        if applied
+        else "age unavailable (remote state)"
+    )
     rate = None
     try:
         resolved = yaml_subset.parse(
@@ -3489,7 +3496,7 @@ def _ephemeral_notice() -> str | None:
         rate = yaml_subset.at(resolved, ("compute_usd_per_hour",))
     except (OSError, yaml_subset.YamlSubsetError):
         rate = None
-    parts.append(f"compute {rate} USD/hour" if rate else "compute rate not resolved")
+    parts.append(f"standing compute {rate} USD/hour" if rate else "compute rate not resolved")
     return " -- ".join(parts)
 
 

@@ -119,7 +119,7 @@ variable "targets" {
 }
 
 variable "eks_cluster_security_group_id" {
-  description = "The EKS control plane's own security group (kubernetes-cluster/aws's cluster_security_group_id). This module adds ONE ingress rule to it, 443 from the toolbox's own group, because nothing else admits the instance to the Kubernetes API: nodes and pods are trusted by that group already, and a brand-new group is not. The rule is gated on `enabled` like everything else here, so `bastion down` takes the grant away with the instance. Empty adds no rule at all, for a caller with no cluster to reach."
+  description = "The EKS control plane's own security group (kubernetes-cluster/aws's cluster_security_group_id). This module adds ONE ingress rule to it, 443 from the toolbox's own group, because nothing else admits the instance to the Kubernetes API: nodes and pods are trusted by that group already, and a brand-new group is not. That group is SHARED with the nodes -- karpenter.tf tags it for node discovery -- so the grant reaches TCP/443 on every Karpenter node too, which is a residual only while nothing hostNetwork binds 443 there. The rule is gated on `enabled` like everything else here, so `bastion down` takes the grant away with the instance. Empty adds no rule at all, for a caller with no cluster to reach."
   type        = string
   default     = ""
 }

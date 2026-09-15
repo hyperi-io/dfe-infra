@@ -154,14 +154,12 @@ ui:
     hsts: true
 
 ## THE RECEIVER'S INGRESS DOOR. DFE pushes terabytes a day through the
-## receiver, and every cloud front door bills by volume -- on AWS an NLB is
-## USD 0.006 per LCU-hour with 1 GB processed per LCU-hour, so one fronting
-## the receiver runs about USD 196/month at 1 TB/day and about USD
-## 1,800/month at 10 TB/day (us-east-1, verified 2026-09-15 against AWS's
-## own pricing page -- docs/deployment/aws.md#receiver-ingress has the
-## source and the full arithmetic). So the receiver carries NO public front
-## door by default: it stays private in the VPC, and there are three ways to
-## reach it --
+## receiver, and every cloud front door bills by volume -- an NLB by the
+## LCU-hour, a Classic ELB, CloudFront and Global Accelerator by the GB.
+## docs/deployment/aws.md#receiver-ingress holds the rates and the arithmetic,
+## and is the one place they are written down. So the receiver carries NO
+## public front door by default: it stays private in the VPC, and there are
+## three ways to reach it --
 ##   1. culvert (helm/charts/culvert), dialled through an address the
 ##      deployer brings -- e.g. an Elastic IP on a small forwarder instance
 ##      in front of culvert's NodePort. Free ingress, no per-byte line.
@@ -173,7 +171,11 @@ ui:
 ## same paste-into-a-values-file convention as `ui:` above: unquoted
 ## true/false and mode as a plain string, because this is meant to land in a
 ## real Helm values file rather than go through render_dial.py's own DFE_*
-## translation.
+## translation. The block's NAME differs from the chart's, though -- paste the
+## body under `exposure:`, never `ingest:`, which no chart reads. Nothing
+## applies this block for you: render_dial.py validates it and reports it, and
+## the value that decides the door is `exposure.mode` in the deploy repo's own
+## overlay.
 ingest:
   mode: vpn                  # public | internal | vpn -- vpn is the safe cloud default
   public:
@@ -188,6 +190,9 @@ ingest:
     ## Selector label of the tunnel pods -- dfe-common.selectorLabels on the
     ## culvert chart. Matches that chart's default project/component name;
     ## change only alongside a renamed culvert release.
+    ## The rule this feeds carries a podSelector and no namespaceSelector, so
+    ## culvert has to run in the receiver's OWN namespace -- a tunnel installed
+    ## beside it in another namespace is dropped with everything Ready.
     podLabel: dfe-culvert
   networkPolicy:
     enabled: true

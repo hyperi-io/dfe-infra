@@ -9,14 +9,13 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Q51: the receiver's ingress door must be dirt cheap on AWS, not priced by
-volume -- an NLB bills USD 0.006 per LCU-hour (1 GB processed per LCU-hour)
-and DFE pushes terabytes a day. argocd/values/aws.yaml now defaults
-exposure.mode to vpn and points culvert at a NodePort instead of a
-LoadBalancer; this proves both hold under the REAL cascade an AWS deploy
-gets (common.yaml + aws.yaml + profile-scale.yaml), not just the chart's own
-defaults, and that the costed public opt-in still renders correctly for a
-deployer who wants it.
+"""The receiver's ingress door must not be priced by volume on AWS, because DFE
+pushes terabytes a day through it -- docs/deployment/aws.md#receiver-ingress
+carries the rates. argocd/values/aws.yaml now defaults exposure.mode to vpn and
+points culvert at a NodePort instead of a LoadBalancer; this proves both hold
+under the REAL cascade an AWS deploy gets (common.yaml + aws.yaml +
+profile-scale.yaml), not just the chart's own defaults, and that the costed
+public opt-in still renders correctly for a deployer who wants it.
 
 The cascade also sets oidc.enabled: true for the gateway's edge OIDC in the
 SAME pass, which used to break culvert's render outright (it read the same
@@ -118,6 +117,23 @@ def test_the_aws_cascade_renders_culvert_with_no_load_balancer() -> None:
     expect("the public door is a NodePort instead", "NodePort" in types, f"got {types}")
 
 
+def test_the_tunnels_allow_list_is_refused_where_it_would_not_filter() -> None:
+    """Kubernetes only filters on loadBalancerSourceRanges for a LoadBalancer,
+    and the AWS cascade makes culvert a NodePort -- so an allow-list set there
+    is refused rather than rendered into a Service that ignores it."""
+    err = render_error("culvert", "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}")
+    expect("an allow-list under NodePort is refused by name",
+           "Kubernetes only filters on that field for a LoadBalancer" in err, err.strip()[-300:])
+    docs = render("culvert", "--set", "exposure.serviceType=LoadBalancer",
+                  "--set", "exposure.externalTrafficPolicy=Local",
+                  "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}")
+    ranges = {
+        tuple(d["spec"].get("loadBalancerSourceRanges", []))
+        for d in docs if d.get("kind") == "Service" and d["spec"]["type"] == "LoadBalancer"
+    }
+    expect("and it still reaches a real LoadBalancer", ranges == {("203.0.113.0/24",)}, f"got {ranges}")
+
+
 def test_the_aws_cascades_edge_oidc_switch_renders_culvert_with_no_tunnel_login() -> None:
     """aws.yaml's oidc.enabled: true is the UIs' edge OIDC, not the tunnel's --
     proves the cascade renders no CULVERT_OAUTH2_* var, the positive half of
@@ -128,8 +144,8 @@ def test_the_aws_cascades_edge_oidc_switch_renders_culvert_with_no_tunnel_login(
 
 
 def test_the_old_oidc_path_still_fails_under_the_aws_cascade() -> None:
-    """A deploy-repo overlay layered after aws.yaml that still carries the
-    pre-Q51 oidc.issuer/oidc.clientId is refused, not silently ignored, even
+    """A deploy-repo overlay layered after aws.yaml that still carries the old
+    top-level oidc.issuer/oidc.clientId is refused, not silently ignored, even
     though aws.yaml's own oidc.enabled: true is already in the cascade."""
     err = render_error("culvert", "--set", "oidc.issuer=https://idp.example.com")
     expect("the old path is refused under the real cascade too",
@@ -170,6 +186,7 @@ def main() -> int:
     with standalone():
         test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service()
         test_the_aws_cascade_renders_culvert_with_no_load_balancer()
+        test_the_tunnels_allow_list_is_refused_where_it_would_not_filter()
         test_the_aws_cascades_edge_oidc_switch_renders_culvert_with_no_tunnel_login()
         test_the_old_oidc_path_still_fails_under_the_aws_cascade()
         test_an_explicit_public_opt_in_renders_the_annotated_load_balancer()

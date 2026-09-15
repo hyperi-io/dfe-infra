@@ -452,7 +452,10 @@ if [[ -z "${DFE_KARPENTER_POOLS:-}" && -f "${DFE_KARPENTER_POOLS_FILE}" ]]; then
   echo "Karpenter pools: ${DFE_KARPENTER_POOLS_FILE}"
 fi
 export DFE_KARPENTER_POOLS="${DFE_KARPENTER_POOLS:-}"
-export DFE_KARPENTER_POOLS_ANNOTATION="${DFE_KARPENTER_POOLS:+dfe.hyperi.io/karpenter_pools: '${DFE_KARPENTER_POOLS}'}"
+# A single quote inside the JSON would close the YAML scalar early, so double it
+# -- YAML's own escape for a quote inside a single-quoted scalar.
+DFE_KARPENTER_POOLS_YAML="${DFE_KARPENTER_POOLS//\'/\'\'}"
+export DFE_KARPENTER_POOLS_ANNOTATION="${DFE_KARPENTER_POOLS:+dfe.hyperi.io/karpenter_pools: '${DFE_KARPENTER_POOLS_YAML}'}"
 
 echo "==> [0a/7] On-prem node-capacity preflight"
 # DFE_CLOUD=local is this script's own token for "we do not create these

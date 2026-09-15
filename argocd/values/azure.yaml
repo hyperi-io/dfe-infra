@@ -16,6 +16,9 @@ envoyGateway:
 # THE RECEIVER'S FRONT DOOR -- same rule as AWS (argocd/values/aws.yaml's
 # exposure: block, docs/deployment/aws.md#receiver-ingress): Azure's load
 # balancers bill by volume too, so the receiver stays off one by default.
+# The receiver only: culvert keeps its chart-default LoadBalancer here, so a
+# deployment that brings the tunnel pays Azure's per-GB rate on the tunnel's
+# bytes until this overlay carries aws.yaml's NodePort override as well.
 exposure:
   mode: vpn
 

@@ -98,11 +98,10 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 
 ## Teardown and lifecycle tags
 
-- A full cloud cycle is batched, never run per finding, and the rule itself
-  lives in [TESTING-CYCLE.md](../TESTING-CYCLE.md). Two halves of it bear on
-  teardown: the managed cluster goes down first, because it is the long pole in
-  both directions, and teardown starts the moment the last proof lands rather
-  than at the end of a session.
+- A full cloud cycle is batched, never run per finding
+  ([TESTING-CYCLE.md](../TESTING-CYCLE.md)). Two halves bear on teardown: the
+  managed cluster goes down first, being the long pole both ways, and teardown
+  starts when the last proof lands, not at the end of a session.
 - `tags.lifecycle: ephemeral` (tyre-kick, provision-test-destroy) is the one
   governance tag that changes what gets built, not only what gets labelled.
   It sets the CloudTrail bucket's `force_destroy`, the secret recovery
@@ -111,10 +110,12 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   (true instead of the vendor's own default refusal) -- so a tyre-kick
   deployment tears down cleanly and anything else keeps the vendor's normal
   deletion protection, without a per-resource flag to remember. Every `dfe-ops`
-  command against an ephemeral dial also opens with one stderr line: how long
-  the deployment has been up, from the backend record `tofu init` wrote, and
-  its resolved compute rate from `sizing/resolved.yaml`. Both are read off
-  disk, so neither costs an API call and neither failing fails the command.
+  command against an ephemeral dial also opens with one stderr line: the
+  resolved compute rate from `sizing/resolved.yaml`, plus time since the last
+  apply where a LOCAL backend leaves a state file. The AWS root's backend is
+  S3, so it reports the age unavailable rather than date the deployment from
+  `.terraform/terraform.tfstate`, whose mtime moves on every `tofu init`. Both
+  read off disk, so neither costs an API call nor fails the command.
 - Tear down with `tofu destroy` in `terraform/environments/aws`, deleting
   the Kubernetes workloads first -- anything that made a load balancer, a
   volume or a DNS record did so through a controller, and `tofu destroy`

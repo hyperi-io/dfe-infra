@@ -267,9 +267,10 @@ def _ui_flags(dial: dict[str, object]) -> dict[str, bool]:
 # The receiver's own exposure.mode vocabulary (dfe-receiver/values.yaml).
 INGEST_MODES = ("public", "internal", "vpn")
 
-# The clouds whose overlay (argocd/values/<cloud>.yaml) sets exposure.mode: vpn,
-# so a dial that omits ingest: still deploys with no load balancer there.
-_VPN_DEFAULT_CLOUDS = ("aws", "gcp", "azure")
+# Where the cloud overlays live, read rather than restated: a hardcoded list of
+# "the clouds that default to vpn" drifts the moment one overlay changes, and
+# the drift shows up as a summary line that contradicts what deployed.
+CLOUD_VALUES = REPO_ROOT / "argocd" / "values"
 
 # What each mode costs in kind, for the printed summary line.
 _INGEST_MODE_NOTE: dict[str, str] = {
@@ -279,16 +280,42 @@ _INGEST_MODE_NOTE: dict[str, str] = {
 }
 
 
+def _overlay_ingest_mode(cloud: str) -> str | None:
+    """The exposure.mode argocd/values/<cloud>.yaml sets, or None when it sets none."""
+    if not cloud:
+        return None
+    overlay = CLOUD_VALUES / f"{cloud}.yaml"
+    try:
+        text = overlay.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    in_block = False
+    for line in text.splitlines():
+        if re.match(r"^exposure:\s*(#.*)?$", line):
+            in_block = True
+            continue
+        if in_block:
+            if line.strip() and not line.startswith((" ", "\t", "#")):
+                in_block = False
+                continue
+            match = re.match(r"^\s+mode:\s*([A-Za-z-]+)", line)
+            if match:
+                return match.group(1)
+    return None
+
+
 def _ingest_mode(dial: dict[str, object]) -> str:
     """Validate ingest.mode the same way _flag() guards a boolean field.
 
-    Anything outside the receiver's own vocabulary is refused by name before
-    an operator carries it into a real Helm values overlay. A dial with no
-    ingest: block reports the mode its cloud overlay applies, and the chart's
-    own default (public) on a cloud with no overlay override.
+    Anything outside the receiver's own vocabulary is refused by name before an
+    operator carries it into a real Helm values overlay. This renderer writes no
+    DFE_INGEST_* key and applies nothing: the dial's `ingest:` block is copied by
+    hand into a values overlay under `exposure:`, the same convention `ui:`
+    follows above. A dial with no ingest: block therefore reports whatever the
+    cloud overlay sets, and the chart's own default (public) when it sets none.
     """
     cloud = _text(dial, ("k8s", "cloud"))
-    fallback = "vpn" if cloud in _VPN_DEFAULT_CLOUDS else "public"
+    fallback = _overlay_ingest_mode(cloud) or "public"
     value = _text(dial, ("ingest", "mode"), fallback)
     if value not in INGEST_MODES:
         raise DialError(f"ingest.mode must be one of {', '.join(INGEST_MODES)}, got {value!r}")
@@ -840,6 +867,11 @@ def main() -> int:
 
     print(
         f"Receiver ingest door (ingest.mode): {ingest_mode} -- {_INGEST_MODE_NOTE[ingest_mode]}",
+        file=sys.stderr,
+    )
+    print(
+        "  this renderer applies nothing here -- the door is exposure.mode in the"
+        " deploy repo's values overlay",
         file=sys.stderr,
     )
 

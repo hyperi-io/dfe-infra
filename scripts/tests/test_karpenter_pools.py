@@ -136,13 +136,19 @@ def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
     block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
     expect("the appset reads the karpenter_pools annotation",
            'dfe.hyperi.io/karpenter_pools' in block, block)
-    expect("and lands it on karpenter.pools", "pools: {{ $pools }}" in block, block)
+    expect("and lands it on karpenter.pools",
+           "$pools | fromJson | toYaml | nindent" in block, block)
+    expect("parsed rather than spliced, so a non-JSON annotation fails the render",
+           "pools: {{ $pools }}" not in block, block)
     expect("only for the karpenter-pools app", 'eq .app "karpenter-pools"' in block, block)
-    # The annotation holds one line of JSON, inlined as YAML flow style.
-    inline = json.dumps({"clickhouse": BASE_POOL}, sort_keys=True, separators=(",", ":"))
-    parsed = yaml.safe_load(f"karpenter:\n  cluster:\n    discoveryTag: t\n  pools: {inline}\n")
-    expect("JSON inlines as a YAML map", parsed["karpenter"]["pools"] == {"clickhouse": BASE_POOL},
-           parsed)
+    # The nindent is relative to this values STRING, not to the appset file, so
+    # prove the emitted block parses back as the chart's own `pools` map.
+    indent = int(block.split("$pools | fromJson | toYaml | nindent ", 1)[1].split()[0].rstrip("}- "))
+    pools = {"clickhouse": BASE_POOL}
+    body = yaml.safe_dump(pools, default_flow_style=False, sort_keys=True).rstrip("\n")
+    emitted = "\n".join(" " * indent + line for line in body.splitlines())
+    parsed = yaml.safe_load(f"karpenter:\n  cluster:\n    discoveryTag: t\n  pools:\n{emitted}\n")
+    expect("the pool map parses back at that indent", parsed["karpenter"]["pools"] == pools, parsed)
 
 
 def main() -> int:

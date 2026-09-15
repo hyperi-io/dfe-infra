@@ -72,14 +72,13 @@ clickhouse:
 # externalTrafficPolicy, envoy-gateway-config takes exposure.infraUisExternal.
 #
 # DFE pushes terabytes a day through the receiver, and every AWS front door
-# bills by volume: an NLB is USD 0.006 per LCU-hour with 1 GB processed per
-# LCU-hour, a Classic ELB is USD 0.008/GB, CloudFront and Global Accelerator
-# are per-GB too (verified 2026-09-15 against AWS's own pricing page --
-# docs/deployment/aws.md#receiver-ingress has the source and the full
-# arithmetic: about USD 196/month at 1 TB/day, about USD 1,800/month at
-# 10 TB/day). So the default is `vpn`: ClusterIP only, no LoadBalancer,
-# reached over culvert. A public or internal NLB is the deployer's explicit,
-# costed opt-in (`ingest.mode: public` in the deployment dial).
+# bills by volume -- an NLB by the LCU-hour, a Classic ELB, CloudFront and
+# Global Accelerator by the GB. docs/deployment/aws.md#receiver-ingress holds
+# the rates and the arithmetic, and is the one place they are written down.
+# So the default is `vpn`: ClusterIP only, no LoadBalancer, reached over
+# culvert. A public or internal NLB is the deployer's explicit, costed opt-in,
+# set as exposure.mode in the deploy repo's own values overlay -- the dial's
+# `ingest:` block documents the shape but no renderer applies it.
 exposure:
   infraUisExternal: false
   mode: vpn                       # dfe-receiver: ClusterIP only, tunnel-reached
@@ -87,10 +86,16 @@ exposure:
   # the same per-GB NLB this block exists to avoid. NodePort carries no
   # per-byte charge; the deployer reaches it through an address they bring,
   # e.g. an Elastic IP on a small forwarder instance in the receiver's AZ.
+  # NodePort also makes exposure.loadBalancerSourceRanges inert, so the
+  # tunnel's allow-list belongs on the node security group -- the chart's
+  # service.yaml refuses the pair rather than render a dial that does nothing.
   serviceType: NodePort
   # Cluster, not the chart's own Local default: with Local a NodePort answers
   # only on the node currently hosting culvert's one pod, and a forwarder
   # that does not track pod placement needs every node's NodePort to work.
+  # The cost is the client's real source IP, which Cluster SNATs to a node --
+  # culvert's own PKI and OIDC identity are then the only attribution a
+  # connection carries, and a source-IP rule would have nothing to match.
   externalTrafficPolicy: Cluster
 
 # Edge OIDC on by default for the same reason: a deployer who flips

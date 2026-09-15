@@ -38,6 +38,16 @@ spec:
 {{- fail "culvert: no listener is exposed, so no client could ever reach the tunnel. Mark at least one of wireguard / openvpn-udp exposed: true." }}
 {{- end }}
 {{- $pub := .Values.exposure }}
+{{- /*
+  loadBalancerSourceRanges is a LoadBalancer field: Kubernetes accepts it on a
+  NodePort Service and creates no filter for it, so an allow-list set here
+  alongside serviceType: NodePort is inert. Refuse that pair rather than render
+  a dial the deployer will believe is in force -- the node security group is
+  where a NodePort's allow-list has to go instead.
+*/}}
+{{- if and (ne ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerSourceRanges }}
+{{- fail (printf "culvert: exposure.loadBalancerSourceRanges is set with exposure.serviceType %q. Kubernetes only filters on that field for a LoadBalancer, so it would do nothing here -- put the allow-list on the node security group, or set serviceType: LoadBalancer." ($pub.serviceType | default "LoadBalancer")) }}
+{{- end }}
 {{- if gt (len $exposedUDP) 0 }}
 ---
 apiVersion: v1
@@ -61,9 +71,11 @@ spec:
   {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
   loadBalancerClass: {{ $pub.loadBalancerClass }}
   {{- end }}
+  {{- if eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer" }}
   {{- with $pub.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:
     {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- end }}
   {{- with $pub.externalTrafficPolicy }}
   externalTrafficPolicy: {{ . }}
@@ -96,9 +108,11 @@ spec:
   {{- if and (eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerClass }}
   loadBalancerClass: {{ $pub.loadBalancerClass }}
   {{- end }}
+  {{- if eq ($pub.serviceType | default "LoadBalancer") "LoadBalancer" }}
   {{- with $pub.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:
     {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- end }}
   {{- with $pub.externalTrafficPolicy }}
   externalTrafficPolicy: {{ . }}

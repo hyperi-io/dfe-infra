@@ -170,6 +170,13 @@ run "aws_cluster_handles" {
     error_message = "cluster_ca must be a string"
   }
 
+  // The group a caller has to be admitted by to reach the API -- the toolbox
+  // module puts its single 443 ingress rule on exactly this handle.
+  assert {
+    condition     = output.cluster_security_group_id == aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
+    error_message = "cluster_security_group_id must be the group EKS created for the control plane"
+  }
+
   assert {
     condition     = output.cluster_version == "1.36"
     error_message = "cluster_version must report the version the cluster runs"

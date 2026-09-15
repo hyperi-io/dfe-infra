@@ -75,8 +75,9 @@ CONDITIONAL_FACTS = (
 )
 
 # The JSON pool map carries double quotes of its own, so its annotation is
-# single-quoted where every other one here is double-quoted.
-SINGLE_QUOTED = {"DFE_KARPENTER_POOLS"}
+# single-quoted where every other one here is double-quoted, and it is the
+# escaped copy that goes in the scalar rather than the raw value.
+SINGLE_QUOTED = {"DFE_KARPENTER_POOLS": "DFE_KARPENTER_POOLS_YAML"}
 
 
 def test_bootstrap_composes_each_annotation_under_its_own_key() -> None:
@@ -85,9 +86,20 @@ def test_bootstrap_composes_each_annotation_under_its_own_key() -> None:
     script = BOOTSTRAP.read_text()
     for env_key, annotation, _appset, _param in CONDITIONAL_FACTS:
         quote = "'" if env_key in SINGLE_QUOTED else '\\"'
-        composed = f"{env_key}:+{annotation}: {quote}${{{env_key}}}{quote}"
+        value_key = SINGLE_QUOTED.get(env_key, env_key)
+        composed = f"{env_key}:+{annotation}: {quote}${{{value_key}}}{quote}"
         expect(f"bootstrap.sh composes {annotation} from {env_key}",
                composed in script, f"looked for: {composed}")
+
+
+def test_a_single_quoted_annotation_escapes_a_quote_in_its_value() -> None:
+    """A single quote inside the value would close the YAML scalar early, so the
+    escaped copy doubles it before the annotation is composed."""
+    script = BOOTSTRAP.read_text()
+    for env_key, value_key in SINGLE_QUOTED.items():
+        expect(f"{env_key} is escaped into {value_key} first",
+               f"{value_key}=\"${{{env_key}//\\'/\\'\\'}}\"" in script,
+               f"no doubling of ' for {env_key}")
 
 
 def test_the_template_substitutes_every_composed_annotation() -> None:

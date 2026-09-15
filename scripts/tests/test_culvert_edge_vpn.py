@@ -40,6 +40,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 VALUES = REPO_ROOT / "argocd" / "values"
 
+# The listener set the tunnel's own OIDC needs, since the client completes its
+# login against the server's callback port.
+OIDC_LISTENERS = (
+    '[{"name":"wireguard","port":51820,"protocol":"UDP","exposed":true},'
+    '{"name":"openvpn-udp","port":1194,"protocol":"UDP","exposed":true},'
+    '{"name":"oauth2-udp","port":9000,"protocol":"TCP","exposed":true}]'
+)
+
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import composition  # noqa: E402
 import profiles  # noqa: E402
@@ -182,28 +190,49 @@ def test_the_pods_opt_out_of_the_namespace_baseline() -> None:
 
 
 def test_the_tunnels_own_oidc_lives_under_vpn() -> None:
-    """Q51: a top-level oidc.enabled is the cascade's edge-OIDC switch for the
-    UIs (envoy-gateway-config); the tunnel's own login reads vpn.oidc.*
-    instead, so the cascade turning edge OIDC on cannot also turn this on."""
+    """A top-level oidc.enabled is the cascade's edge-OIDC switch for the UIs
+    (envoy-gateway-config); the tunnel's own login reads vpn.oidc.* instead, so
+    the cascade turning edge OIDC on cannot also turn this on."""
     err = fails("culvert", "--set", "vpn.oidc.enabled=true")
     expect("vpn.oidc.enabled with no oauth2-udp listener is refused",
            "vpn.oidc.enabled with no listener named oauth2-udp" in err, err.strip()[-200:])
-    with_listener = (
-        '[{"name":"wireguard","port":51820,"protocol":"UDP","exposed":true},'
-        '{"name":"openvpn-udp","port":1194,"protocol":"UDP","exposed":true},'
-        '{"name":"oauth2-udp","port":9000,"protocol":"TCP","exposed":true}]'
-    )
     env = env_of(one(render(
         "culvert",
         "--set", "vpn.oidc.enabled=true",
         "--set", "vpn.oidc.issuer=https://idp.example.com",
         "--set", "vpn.oidc.clientId=dfe-culvert",
-        "--set-json", f"listeners={with_listener}",
+        "--set", "vpn.oidc.existingSecret=culvert-oidc",
+        "--set-json", f"listeners={OIDC_LISTENERS}",
     ), "Deployment", "dfe-culvert"))
     expect("the issuer reaches CULVERT_OAUTH2_ISSUER",
            env.get("CULVERT_OAUTH2_ISSUER") == "https://idp.example.com", f"got {env}")
     expect("the client id reaches CULVERT_OAUTH2_CLIENT_ID",
            env.get("CULVERT_OAUTH2_CLIENT_ID") == "dfe-culvert", f"got {env}")
+
+
+def test_oidc_without_its_secret_is_refused() -> None:
+    """The client secret and the callback HTTP secret ride the named Secret, so
+    OIDC on with none named would start the login flow carrying neither."""
+    err = fails(
+        "culvert",
+        "--set", "vpn.oidc.enabled=true",
+        "--set", "vpn.oidc.issuer=https://idp.example.com",
+        "--set", "vpn.oidc.clientId=dfe-culvert",
+        "--set-json", f"listeners={OIDC_LISTENERS}",
+    )
+    expect("OIDC with no existingSecret is refused",
+           "vpn.oidc.enabled with no vpn.oidc.existingSecret" in err, err.strip()[-300:])
+
+
+def test_every_moved_oidc_field_is_refused_on_the_old_path() -> None:
+    """A half-migrated values file that leaves validateGroups or existingSecret
+    behind renders clean otherwise, and an empty vpn.oidc.validateGroups accepts
+    any authenticated user."""
+    for field, value in (("existingSecret", "culvert-oidc"), ("validateGroups", "dfe-ops")):
+        err = fails("culvert", "--set", f"oidc.{field}={value}")
+        expect(f"the old oidc.{field} path is refused",
+               "move the tunnel's own OIDC client-auth fields to vpn.oidc" in err,
+               err.strip()[-300:])
 
 
 def test_the_cascades_edge_oidc_switch_is_harmless_to_the_tunnel() -> None:
@@ -216,8 +245,8 @@ def test_the_cascades_edge_oidc_switch_is_harmless_to_the_tunnel() -> None:
 
 
 def test_the_old_oidc_path_is_refused_by_name() -> None:
-    """A values file still carrying the pre-Q51 fields is refused rather than
-    silently ignored, naming the new path."""
+    """A values file still carrying the old top-level oidc fields is refused
+    rather than silently ignored, naming the new path."""
     err = fails("culvert", "--set", "oidc.issuer=https://idp.example.com")
     expect("the old oidc.issuer path is refused",
            "move the tunnel's own OIDC client-auth fields to vpn.oidc" in err, err.strip()[-300:])

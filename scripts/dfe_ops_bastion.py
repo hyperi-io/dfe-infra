@@ -52,12 +52,16 @@ SCRATCH_KUBECONFIG = REPO_ROOT / ".tmp" / "toolbox-eks-api.kubeconfig"
 
 # What `up`/`down` apply -- the toggleable half of the toolbox (the module's
 # instance/security-group/IAM-role/documents) plus the two EKS access-entry
-# resources the aws root grants alongside it. Not the whole root: applying it
-# in full would also reconcile drift on the cluster and Kafka, which is a
-# bigger and slower operation than "bring the toolbox up". Both access-entry
-# resources live INSIDE module.cluster (kubernetes-cluster/aws/eks.tf,
-# "Toolbox operator"), not at the aws root, so the target address must be
-# module-qualified or tofu reports "Resource not found in module".
+# resources the aws root grants alongside it. A targeted apply still pulls in
+# whatever the target DEPENDS on, so the cluster and Kafka are refreshed and
+# their outputs evaluated; what it skips is everything else in the root, which
+# is what keeps "bring the toolbox up" from reconciling the whole deployment.
+# Both access-entry resources live INSIDE module.cluster
+# (kubernetes-cluster/aws/eks.tf, "Toolbox operator"), not at the aws root, so
+# the target address must be module-qualified or tofu reports "Resource not
+# found in module". A root OUTPUT whose dependencies fall entirely outside the
+# target set is not written at all, so a deployment whose first-ever apply was
+# `bastion up` carries no value for one until a full apply runs.
 TOOLBOX_TARGETS = (
     "-target=module.toolbox",
     "-target=module.cluster.aws_eks_access_entry.toolbox_operator",

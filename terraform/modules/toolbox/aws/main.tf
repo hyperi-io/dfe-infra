@@ -33,6 +33,11 @@ locals {
   // 0.0.0.0/0, matching managed-kafka/msk's own equivalent gap (main.tf).
   control_egress_port = 443
 
+  // The Kubernetes API's own port, which happens to equal the egress constant
+  // above and must not move with it: one is what this instance dials out on,
+  // the other is what a group it does not own has to admit it on.
+  kubernetes_api_port = 443
+
   // Every OTHER target port -- Kafka, ClickHouse, a future Keeper -- lives
   // INSIDE the VPC by construction (targets are only ever cluster-internal
   // endpoints the aws root computed from its own other modules), so egress
@@ -89,6 +94,9 @@ resource "aws_vpc_security_group_egress_rule" "targets" {
 // out against an open client side until the toolbox group is named here.
 // Referenced by group id rather than by CIDR, so the grant names this instance
 // rather than the whole VPC, and `bastion down` takes it away with the group.
+// That group is shared: kubernetes-cluster/aws/karpenter.tf tags it for node
+// discovery, so every Karpenter node attaches it and this rule reaches TCP/443
+// on the nodes as well as the control-plane ENIs.
 resource "aws_vpc_security_group_ingress_rule" "eks_api" {
   count = var.enabled && var.eks_cluster_security_group_id != "" ? 1 : 0
 
@@ -96,8 +104,8 @@ resource "aws_vpc_security_group_ingress_rule" "eks_api" {
 
   referenced_security_group_id = aws_security_group.this[0].id
   ip_protocol                  = "tcp"
-  from_port                    = local.control_egress_port
-  to_port                      = local.control_egress_port
+  from_port                    = local.kubernetes_api_port
+  to_port                      = local.kubernetes_api_port
 
   description = "Kubernetes API from the ${var.name} toolbox instance"
 

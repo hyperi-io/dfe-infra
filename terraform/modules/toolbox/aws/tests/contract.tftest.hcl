@@ -307,9 +307,11 @@ run "the_session_document_carries_the_dials_timeouts" {
 run "forward_documents_fix_host_and_port_with_no_override_parameter" {
   command = plan
 
+  // The NAME set, not a count: `for_each = var.targets` makes a count equality
+  // hold by construction, so it would pass on an empty map too.
   assert {
-    condition     = length(aws_ssm_document.forward) == length(var.targets)
-    error_message = "one forward document must exist per entry in var.targets"
+    condition     = toset(keys(aws_ssm_document.forward)) == toset(["eks-api", "kafka", "kafka-iam", "clickhouse"])
+    error_message = "one forward document must exist per named target, and no other"
   }
 
   assert {

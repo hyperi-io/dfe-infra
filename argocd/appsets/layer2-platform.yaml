@@ -160,11 +160,14 @@ spec:
                   instanceProfile: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_instance_profile" | quote }}
                   kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_kms_key_id" | quote }}
                 {{- if $pools }}
-                # The pools the resolver sized, one line of JSON on the cluster
-                # secret and valid YAML flow style here. Absent, the chart's
-                # own `pools: {}` default renders no NodePool, so every
+                # The pools the resolver sized, carried as one line of JSON on
+                # the cluster secret. Parsed rather than spliced, so an
+                # annotation that is not JSON fails this render instead of
+                # injecting arbitrary values into the Application. Absent, the
+                # chart's own `pools: {}` default renders no NodePool, so every
                 # workload the managed groups cannot fit stays Pending.
-                pools: {{ $pools }}
+                pools:
+                  {{- $pools | fromJson | toYaml | nindent 4 }}
                 {{- end }}
               {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'

@@ -1312,8 +1312,8 @@ def test_the_fixture_parsed_every_type_name_it_was_given() -> None:
 
 
 def test_locked_change_detection_skips_a_field_missing_from_either_document() -> None:
-    """storage_model and controller_mode are deployer-set, never derived here."""
-    sizing = {"locked": {"storage_model": "a migration, not a setting", "cloud_token": "a new deployment"}}
+    """controller_mode is deployer-set, never derived here, so it is never compared."""
+    sizing = {"locked": {"controller_mode": "the quorum re-forms", "cloud_token": "a new deployment"}}
     previous = {"locked": {"cloud_token": "aws"}}
     resolved = {"locked": {"cloud_token": "gcp"}}
     changes = resolve_sizing.find_locked_changes(sizing, previous, resolved)
@@ -1321,6 +1321,74 @@ def test_locked_change_detection_skips_a_field_missing_from_either_document() ->
     assert changes[0].old == "aws"
     assert changes[0].new == "gcp"
     assert changes[0].reason == "a new deployment"
+
+
+def test_the_storage_model_is_recorded_so_the_lock_on_it_can_fire(tmp_path: Path) -> None:
+    """The resolver derives clickhouse.storageModel from sizing.storage_model, so
+    the field sizing.yaml locks has to appear in resolved.yaml to be compared --
+    moving parts between the PVC and the object store is a data migration."""
+    dial = _dial(tmp_path, provider="strimzi", estimate=1000)
+    assert _run(dial, tmp_path) == 0
+    doc = resolve_sizing._load(tmp_path / "sizing" / "resolved.yaml")
+    assert doc["locked"]["storage_model"] == "auto"
+
+
+def test_a_storage_model_change_is_refused_without_migrate(tmp_path: Path, capsys) -> None:
+    first = tmp_path / "first"
+    first.mkdir()
+    _run(_dial(first, provider="strimzi", estimate=1000), first)
+    previous = first / "sizing" / "resolved.yaml"
+
+    second = tmp_path / "second"
+    second.mkdir()
+    dial = _dial(second, provider="strimzi", estimate=1000, extra="  storage_model: local")
+    status = _run(dial, second, previous=previous)
+
+    assert status == resolve_sizing.EXIT_LOCKED_CHANGE
+    err = capsys.readouterr().err
+    assert "LOCKED storage_model: auto -> local" in err
+    assert "--migrate" in err
+
+
+def test_the_hourly_rate_is_the_reports_own_shape_table_total(tmp_path: Path) -> None:
+    """One arithmetic, two readers: the banner reads this field and an operator
+    reads the table, so a shape resolving to zero must not move them apart."""
+    dial = _dial(tmp_path, provider="msk", estimate=1000)
+    assert _run(dial, tmp_path) == 0
+    doc = resolve_sizing._load(tmp_path / "sizing" / "resolved.yaml")
+    report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
+
+    total_row = next(line for line in report.splitlines() if "**total compute**" in line)
+    monthly = float(total_row.split("|")[-2].strip().strip("*").replace(",", ""))
+    hourly = float(doc["compute_usd_per_hour"])
+    assert hourly > 0
+    assert round(hourly * resolve_sizing.HOURS_PER_MONTH) == pytest.approx(monthly, abs=1)
+
+
+def _priced_choice(use_case: str, price: float, count: int) -> resolve_sizing.Choice:
+    return resolve_sizing.Choice(
+        use_case=use_case, instance_type=f"{use_case}.large", fallbacks=[], vcpu=2,
+        memory_gib=8.0, generation=9, generation_policy="floor", price_policy="on-demand",
+        price_usd_hour=price, physical_processor="Graviton", instance_store_gb=0,
+        baseline_iops=3000, baseline_throughput_mib_s=125.0, maximum_iops=48000,
+        maximum_throughput_mib_s=1500.0, volumes={}, count=count,
+    )
+
+
+def test_a_shape_resolving_to_zero_adds_nothing_to_the_hourly_rate(tmp_path: Path) -> None:
+    """A count of zero billed as one is what moved this field away from the
+    table it restates -- a Karpenter pool that holds no node costs nothing."""
+    core = resolve_sizing.Core(
+        tier="scale", focus="economy", headroom=0.0, estimated=True, ingest_gb_per_day=0.0,
+        avg_mb_s=0.0, peak_mb_s=0.0, peak_factor=1.0, required_mb_s=0.0, carried_mb_s=0.0,
+    )
+    dial = resolve_sizing.read_dial(_dial(tmp_path))
+    choices = {
+        "kafka-broker": _priced_choice("kafka-broker", 0.5, 3),
+        "ci-burst": _priced_choice("ci-burst", 4.0, 0),
+    }
+    doc = resolve_sizing.build_resolved(core, dial, None, choices)
+    assert doc["compute_usd_per_hour"] == 1.5
 
 
 def test_an_unchanged_previous_behaves_exactly_as_today(tmp_path: Path) -> None:

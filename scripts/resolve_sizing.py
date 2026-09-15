@@ -56,11 +56,11 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    diffs against -- see --previous below. Only
                                    carries a value for the locked fields this
                                    script itself derives (partition_count,
-                                   cloud_token, msk_broker_type, and az_count on
-                                   a populated cloud) -- storage_model and
-                                   controller_mode are deployer-set chart
-                                   values this script never touches, so they
-                                   carry no entry and are never compared here.
+                                   cloud_token, msk_broker_type, storage_model,
+                                   and az_count on a populated cloud) --
+                                   controller_mode is a deployer-set chart
+                                   value this script never touches, so it
+                                   carries no entry and is never compared here.
     sizing/<tier>.nodes.json       on-prem only: the same node demand as the
                                    report's own table, machine-readable for
                                    scripts/check_node_capacity.py to check
@@ -2754,23 +2754,25 @@ def build_resolved(
 
     Carries just enough identity to say what this run resolved -- tier, focus,
     cloud, region -- plus a ``locked`` section: a current value for every
-    ``sizing.yaml`` ``locked:`` field this script itself derives. Two of the
-    six named there, ``storage_model`` and ``controller_mode``, are
-    deployer-set chart-values overrides this script never computes, so they
-    carry no entry -- a re-size can only be compared on what a resolve
-    actually produces, never on what a deployer later hand-sets.
+    ``sizing.yaml`` ``locked:`` field this script itself derives.
+    ``controller_mode`` is a deployer-set chart-values override this script
+    never computes, so it carries no entry -- a re-size can only be compared on
+    what a resolve actually produces, never on what a deployer later hand-sets.
+    ``storage_model`` IS derived here now, so it is recorded and a change to it
+    is refused without ``--migrate`` like any other locked field.
 
-    ``compute_usd_per_hour`` is the same on-demand arithmetic the report's own
-    shape table prints, summed over every shape this resolve picked. It is here
-    as well as there because the report is prose an operator reads once, and
-    this file is what a tool reads later -- an ephemeral deployment's own
-    running cost has to be legible after the report is gone. Compute only: EBS
-    and the managed broker's storage are usage-based and are not in it.
+    ``compute_usd_per_hour`` is the report's own shape-table total, over every
+    shape this resolve picked at the count it picked. It is here as well as
+    there because the report is prose an operator reads once, and this file is
+    what a tool reads later. Compute only: EBS and the managed broker's storage
+    are usage-based and are not in it, and the Karpenter-backed pools bill only
+    while they hold nodes, so the figure is a sized ceiling and not an idle rate.
     """
     locked: dict[str, object] = {
         "partition_count": core.partitions,
         "cloud_token": dial.cloud,
         "msk_broker_type": dial.kafka_provider,
+        "storage_model": dial.storage_model,
     }
     if catalogue is not None:
         locked["az_count"] = len(catalogue.azs)
@@ -2785,7 +2787,7 @@ def build_resolved(
     }
     if choices:
         doc["compute_usd_per_hour"] = round(
-            sum(choice.price_usd_hour * max(choice.count, 1) for choice in choices.values()), 4
+            sum(choice.price_usd_hour * choice.count for choice in choices.values()), 4
         )
     doc["locked"] = locked
     return doc

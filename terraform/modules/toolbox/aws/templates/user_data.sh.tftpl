@@ -84,6 +84,12 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now toolbox-idle-check.timer
 
+# --- jq, openssl, unzip -- AL2023 base repo packages, ahead of every download
+# below because the tofu and AWS CLI steps unzip what they fetch. No upstream
+# release cadence worth tracking as a versions.yaml pin, matching
+# docker/dfe-toolbox/base/Dockerfile's identical (Debian apt) choice.
+dnf install -y jq openssl unzip
+
 # --- kubectl -- versions.yaml's value already carries its own "v" prefix ----
 curl -fsSL -o "$BIN/kubectl" \
   "https://dl.k8s.io/release/${kubectl_version}/bin/linux/$ARCH/kubectl"
@@ -133,16 +139,12 @@ curl -fsSL -o /tmp/session-manager-plugin.rpm \
   "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_arm64/session-manager-plugin.rpm"
 dnf install -y /tmp/session-manager-plugin.rpm
 rm -f /tmp/session-manager-plugin.rpm
-installed_ssm_plugin="$(session-manager-plugin --version)"
+# Non-fatal under `set -e`: this step only logs a drifted pin, so a plugin that
+# cannot report its version must not abort the installs below it.
+installed_ssm_plugin="$(session-manager-plugin --version || echo unknown)"
 if [ "$installed_ssm_plugin" != "${ssm_plugin_version}" ]; then
   logger -t toolbox-bootstrap "session-manager-plugin: latest is now $installed_ssm_plugin, versions.yaml toolbox.aws-session-manager-plugin says ${ssm_plugin_version} -- bump the pin"
 fi
-
-# --- jq, openssl -- AL2023 base repo packages. No upstream release cadence
-# worth tracking as a versions.yaml pin, matching
-# docker/dfe-toolbox/base/Dockerfile's identical (Debian apt) choice for the
-# same two tools.
-dnf install -y jq openssl
 
 # --- ClickHouse client, pinned to the SAME version this deployment's server
 # runs (versions.yaml services.clickhouse-version), never a version of its own.

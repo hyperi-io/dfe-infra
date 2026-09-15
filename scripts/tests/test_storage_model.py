@@ -522,6 +522,30 @@ def test_clickhouse_storage_model_guards() -> None:
                "clickhouse-cluster", "clickhouse.mode=external", *CACHED_OBJECT_SETS))
 
 
+def test_an_instance_store_cache_with_no_endpoint_names_the_endpoint() -> None:
+    """The resolver emits the cache volume with no storageModel beside it, so
+    under `auto` a missing endpoint fails here -- and the message has to name
+    the endpoint nobody set rather than the model nobody chose. Reachable:
+    bootstrap.sh composes the endpoint annotation only when the tofu output is
+    non-empty, so a run without --from-terraform renders it blank."""
+    err = render_error(
+        "clickhouse-cluster",
+        "clickhouse.objectStore.cache.volume=instance-store",
+        "clickhouse.objectStore.cacheSize=109Gi",
+    )
+    expect("the failure names the missing endpoint",
+           "no clickhouse.objectStore.endpoint is set" in err, err.strip()[-300:])
+    expect("and says which way the model derived",
+           "derived to local" in err, err.strip()[-300:])
+    expect("an explicit local still blames the model the deployer chose",
+           "clickhouse.storageModel=local has none" in render_error(
+               "clickhouse-cluster",
+               "clickhouse.storageModel=local",
+               "clickhouse.objectStore.cache.volume=instance-store",
+               "clickhouse.objectStore.cacheSize=109Gi",
+           ))
+
+
 STORAGE_MODEL_ENDPOINT_SET = "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/parts/"
 
 
