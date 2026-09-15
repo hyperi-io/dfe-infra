@@ -23,6 +23,11 @@ Two doors, both on one public LoadBalancer:
 | WireGuard | 51820/udp | the fast one, and the one a small appliance can run |
 | OpenVPN | 1194/udp | the compatible one, and the one that carries OIDC login |
 
+That is the chart's own default, not a fixed fact: on AWS a LoadBalancer
+bills by the GB, so `argocd/values/aws.yaml` points culvert at a NodePort
+instead, reached through an address the deployer brings -- see
+[aws.md](aws.md#receiver-ingress).
+
 A client on a network that blocks UDP outright needs the OpenVPN TCP fallback:
 add `{ name: openvpn-tcp, port: 1194, protocol: TCP, exposed: true }` to
 `listeners`. It is left out by default because TCP inside TCP is slow and it is

@@ -8,6 +8,12 @@ envoyGateway:
   service:
     type: LoadBalancer
 
+# THE RECEIVER'S FRONT DOOR -- same rule as AWS (argocd/values/aws.yaml's
+# exposure: block, docs/deployment/aws.md#receiver-ingress): GCP's load
+# balancers bill by volume too, so the receiver stays off one by default.
+exposure:
+  mode: vpn
+
 # The engine's runtime store is a PVC against the cluster's default
 # StorageClass (dfe-engine chart config.persistence) -- no per-cloud
 # storage seam needed.

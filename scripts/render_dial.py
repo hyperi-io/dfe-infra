@@ -264,6 +264,37 @@ def _ui_flags(dial: dict[str, object]) -> dict[str, bool]:
     }
 
 
+# The receiver's own exposure.mode vocabulary (dfe-receiver/values.yaml).
+INGEST_MODES = ("public", "internal", "vpn")
+
+# The clouds whose overlay (argocd/values/<cloud>.yaml) sets exposure.mode: vpn,
+# so a dial that omits ingest: still deploys with no load balancer there.
+_VPN_DEFAULT_CLOUDS = ("aws", "gcp", "azure")
+
+# What each mode costs in kind, for the printed summary line.
+_INGEST_MODE_NOTE: dict[str, str] = {
+    "public": "LoadBalancer, billed per GB processed -- costed opt-in",
+    "internal": "routed through the cluster Gateway, still a LoadBalancer on most clouds",
+    "vpn": "no load balancer",
+}
+
+
+def _ingest_mode(dial: dict[str, object]) -> str:
+    """Validate ingest.mode the same way _flag() guards a boolean field.
+
+    Anything outside the receiver's own vocabulary is refused by name before
+    an operator carries it into a real Helm values overlay. A dial with no
+    ingest: block reports the mode its cloud overlay applies, and the chart's
+    own default (public) on a cloud with no overlay override.
+    """
+    cloud = _text(dial, ("k8s", "cloud"))
+    fallback = "vpn" if cloud in _VPN_DEFAULT_CLOUDS else "public"
+    value = _text(dial, ("ingest", "mode"), fallback)
+    if value not in INGEST_MODES:
+        raise DialError(f"ingest.mode must be one of {', '.join(INGEST_MODES)}, got {value!r}")
+    return value
+
+
 def _number(dial: dict[str, object], path: tuple[str, ...]) -> int:
     """Read a whole-number dial field, refusing anything else by name."""
     value = _required(dial, path)
@@ -798,6 +829,17 @@ def main() -> int:
     print(file=sys.stderr)
     print(
         "Public UI exposure (ui.public.*): " + (", ".join(public_uis) if public_uis else "none"),
+        file=sys.stderr,
+    )
+
+    try:
+        ingest_mode = _ingest_mode(dial)
+    except DialError as error:
+        print(f"render_dial: {error}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Receiver ingest door (ingest.mode): {ingest_mode} -- {_INGEST_MODE_NOTE[ingest_mode]}",
         file=sys.stderr,
     )
 

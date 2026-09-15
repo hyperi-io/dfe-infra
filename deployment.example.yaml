@@ -153,6 +153,45 @@ ui:
     min_version: "1.2"
     hsts: true
 
+## THE RECEIVER'S INGRESS DOOR. DFE pushes terabytes a day through the
+## receiver, and every cloud front door bills by volume -- on AWS an NLB is
+## USD 0.006 per LCU-hour with 1 GB processed per LCU-hour, so one fronting
+## the receiver runs about USD 196/month at 1 TB/day and about USD
+## 1,800/month at 10 TB/day (us-east-1, verified 2026-09-15 against AWS's
+## own pricing page -- docs/deployment/aws.md#receiver-ingress has the
+## source and the full arithmetic). So the receiver carries NO public front
+## door by default: it stays private in the VPC, and there are three ways to
+## reach it --
+##   1. culvert (helm/charts/culvert), dialled through an address the
+##      deployer brings -- e.g. an Elastic IP on a small forwarder instance
+##      in front of culvert's NodePort. Free ingress, no per-byte line.
+##   2. the deployer's own peering, VPN or Direct Connect, straight to the
+##      receiver's node port or ClusterIP.
+##   3. a public or internal load balancer, the explicit costed opt-in below
+##      -- `mode: public` plus `loadBalancerSourceRanges` set, never empty.
+## These keys are the dfe-receiver chart's `exposure:` values verbatim, the
+## same paste-into-a-values-file convention as `ui:` above: unquoted
+## true/false and mode as a plain string, because this is meant to land in a
+## real Helm values file rather than go through render_dial.py's own DFE_*
+## translation.
+ingest:
+  mode: vpn                  # public | internal | vpn -- vpn is the safe cloud default
+  public:
+    serviceType: LoadBalancer
+    loadBalancerIP: ""
+    loadBalancerClass: ""
+    annotations: {}
+    ## Empty is not "unset" -- it is 0.0.0.0/0, the whole internet. A
+    ## deployer opting into `mode: public` sets this, always.
+    loadBalancerSourceRanges: []
+  vpn:
+    ## Selector label of the tunnel pods -- dfe-common.selectorLabels on the
+    ## culvert chart. Matches that chart's default project/component name;
+    ## change only alongside a renamed culvert release.
+    podLabel: dfe-culvert
+  networkPolicy:
+    enabled: true
+
 ## TOOLBOX -- two independent troubleshooting surfaces sharing one top-level
 ## key, because this restricted YAML subset allows no duplicate key. `pod:`
 ## is the IN-CLUSTER one (any cloud, or on-prem); `enabled`/`aws:`/

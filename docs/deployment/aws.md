@@ -249,6 +249,38 @@ A few things hold for every deployment:
   sized and keep the chart's fixed 72-hour profile. DLQ topics hold 7
   days (168 hours) regardless of tier.
 
+## Receiver ingress
+
+DFE pushes terabytes a day through the receiver, and every AWS front door
+bills by volume: a Network Load Balancer charges per LCU-hour (1 GB
+processed), a Classic ELB per GB, CloudFront and Global Accelerator per GB,
+WAF per request. A volume-priced front door on that kind of traffic is not
+an option, so the receiver ships with none.
+
+The default is `ingest.mode: vpn` (`deployment.example.yaml`'s `ingest:`
+block, `argocd/values/aws.yaml`'s `exposure:`): the receiver stays on a
+ClusterIP with no public address, and there is no external path until the
+deployer brings one. Three ways to reach it:
+
+- **culvert**, dialled through an address the deployer brings -- e.g. an
+  Elastic IP on a small forwarder instance in front of culvert's NodePort
+  (`exposure.serviceType: NodePort` on AWS). Free ingress; size the
+  instance by bandwidth, not bytes, and keep it in the receiver's
+  availability zone, because cross-AZ transfer is billed per GB.
+- The deployer's own peering, VPN or Direct Connect straight to the node
+  port.
+- The NLB opt-in: `ingest.mode: public` plus
+  `service.beta.kubernetes.io/aws-load-balancer-type: external`,
+  `aws-load-balancer-nlb-target-type: ip`,
+  `aws-load-balancer-scheme: internet-facing` (or `internal`), and
+  `loadBalancerSourceRanges` set -- never left empty.
+
+An NLB costs USD 0.0225/hour plus USD 0.006 per LCU-hour, one LCU-hour
+being 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's
+Elastic Load Balancing pricing page). At 1 TB/day that is about USD
+196/month; at 10 TB/day, about USD 1,800/month, in us-east-1. AWS data
+transfer out still applies to the replies on every path, culvert included.
+
 See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
 for node pools and images, admin UI exposure, teardown, lifecycle tags and
 upgrades.

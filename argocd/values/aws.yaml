@@ -65,8 +65,33 @@ clickhouse:
 # reaches it. Turning a route back on also needs oidc.enabled (below) or
 # ui.allowed_cidrs, which the chart's render guard requires whenever the
 # Service is internet-facing and this switch is on.
+#
+# THE RECEIVER'S FRONT DOOR shares this top-level key with the switch above.
+# Three charts read it without overlap: dfe-receiver takes exposure.mode,
+# public.* and vpn.*, culvert takes exposure.serviceType and
+# externalTrafficPolicy, envoy-gateway-config takes exposure.infraUisExternal.
+#
+# DFE pushes terabytes a day through the receiver, and every AWS front door
+# bills by volume: an NLB is USD 0.006 per LCU-hour with 1 GB processed per
+# LCU-hour, a Classic ELB is USD 0.008/GB, CloudFront and Global Accelerator
+# are per-GB too (verified 2026-09-15 against AWS's own pricing page --
+# docs/deployment/aws.md#receiver-ingress has the source and the full
+# arithmetic: about USD 196/month at 1 TB/day, about USD 1,800/month at
+# 10 TB/day). So the default is `vpn`: ClusterIP only, no LoadBalancer,
+# reached over culvert. A public or internal NLB is the deployer's explicit,
+# costed opt-in (`ingest.mode: public` in the deployment dial).
 exposure:
   infraUisExternal: false
+  mode: vpn                       # dfe-receiver: ClusterIP only, tunnel-reached
+  # culvert must render NO LoadBalancer either, or the tunnel's own bytes hit
+  # the same per-GB NLB this block exists to avoid. NodePort carries no
+  # per-byte charge; the deployer reaches it through an address they bring,
+  # e.g. an Elastic IP on a small forwarder instance in the receiver's AZ.
+  serviceType: NodePort
+  # Cluster, not the chart's own Local default: with Local a NodePort answers
+  # only on the node currently hosting culvert's one pod, and a forwarder
+  # that does not track pod placement needs every node's NodePort to work.
+  externalTrafficPolicy: Cluster
 
 # Edge OIDC on by default for the same reason: a deployer who flips
 # exposure.infraUisExternal back on for one admin route still needs a real

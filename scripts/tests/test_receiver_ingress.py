@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         test_receiver_ingress.py
+#  Purpose:      Prove the AWS cascade never renders a per-GB load balancer for
+#                the receiver's ingest ports by default, that culvert stays off
+#                one too, and that the explicit public opt-in still works.
+#  Language:     Python
+#
+#  License:      BUSL-1.1
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""Q51: the receiver's ingress door must be dirt cheap on AWS, not priced by
+volume -- an NLB bills USD 0.006 per LCU-hour (1 GB processed per LCU-hour)
+and DFE pushes terabytes a day. argocd/values/aws.yaml now defaults
+exposure.mode to vpn and points culvert at a NodePort instead of a
+LoadBalancer; this proves both hold under the REAL cascade an AWS deploy
+gets (common.yaml + aws.yaml + profile-scale.yaml), not just the chart's own
+defaults, and that the costed public opt-in still renders correctly for a
+deployer who wants it.
+
+    python3 scripts/tests/test_receiver_ingress.py
+
+Needs `helm` on PATH. No test runner, matching the other checks here.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+from _expect import expect, standalone, summary
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+CHARTS = REPO_ROOT / "helm" / "charts"
+VALUES = REPO_ROOT / "argocd" / "values"
+
+# The valueFiles order an AWS deploy actually gets (layer2-data /
+# layer2-platform's own cascade), matching test_storage_model.py's
+# test_the_aws_cascade_is_what_turns_pod_identity_on.
+AWS_CASCADE = [VALUES / "common.yaml", VALUES / "aws.yaml", VALUES / "profile-scale.yaml"]
+
+# The annotations docs/deployment/aws.md documents for the costed public
+# opt-in -- proven here to reach the rendered Service verbatim.
+NLB_ANNOTATIONS = {
+    "service.beta.kubernetes.io/aws-load-balancer-type": "external",
+    "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
+    "service.beta.kubernetes.io/aws-load-balancer-scheme": "internal",
+}
+
+
+def render(chart: str, *args: str, values: list[Path] | None = None) -> list[dict]:
+    cmd = ["helm", "template", chart, str(CHARTS / chart)]
+    for v in values or AWS_CASCADE:
+        cmd += ["-f", str(v)]
+    cmd += list(args)
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if out.returncode != 0:
+        raise SystemExit(f"helm template failed for {chart} {args}:\n{out.stderr}")
+    return [d for d in yaml.safe_load_all(out.stdout) if d]
+
+
+def one(docs: list[dict], kind: str, name: str) -> dict:
+    for doc in docs:
+        if doc.get("kind") == kind and doc["metadata"]["name"] == name:
+            return doc
+    raise SystemExit(f"no {kind}/{name} in the render")
+
+
+def test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service() -> None:
+    docs = render("dfe-receiver")
+    services = [d for d in docs if d.get("kind") == "Service"]
+    expect("exactly one Service renders", len(services) == 1, f"got {len(services)}")
+    expect("and it is ClusterIP", services[0]["spec"]["type"] == "ClusterIP",
+           f"got {services[0]['spec']}")
+    labelled_public = [
+        d for d in docs
+        if d.get("metadata", {}).get("labels", {}).get("dfe.hyperi.io/exposure") == "public"
+    ]
+    expect("no object carries dfe.hyperi.io/exposure: public", labelled_public == [],
+           f"got {[d.get('metadata', {}).get('name') for d in labelled_public]}")
+
+
+def test_the_aws_cascade_renders_culvert_with_no_load_balancer() -> None:
+    """aws.yaml's edge oidc.enabled: true collides with culvert's OWN
+    oidc.enabled key -- both charts read a top-level oidc.enabled, and this
+    render is what surfaced it (Q51 write-up flags it as a follow-up). The
+    override isolates the exposure/serviceType behaviour this test is for."""
+    docs = render("culvert", "--set", "oidc.enabled=false")
+    types = {d["spec"]["type"] for d in docs if d.get("kind") == "Service"}
+    expect("no Service is a LoadBalancer", "LoadBalancer" not in types, f"got {types}")
+    expect("the public door is a NodePort instead", "NodePort" in types, f"got {types}")
+
+
+def test_an_explicit_public_opt_in_renders_the_annotated_load_balancer() -> None:
+    docs = render(
+        "dfe-receiver",
+        "--set", "exposure.mode=public",
+        "--set-json", f"exposure.public.annotations={json.dumps(NLB_ANNOTATIONS)}",
+        "--set-json", 'exposure.public.loadBalancerSourceRanges=["203.0.113.0/24"]',
+    )
+    public = one(docs, "Service", "dfe-receiver-public")
+    expect("the opt-in renders a LoadBalancer", public["spec"]["type"] == "LoadBalancer",
+           f"got {public['spec']}")
+    expect("carrying the documented annotations",
+           public["metadata"].get("annotations") == NLB_ANNOTATIONS,
+           f"got {public['metadata'].get('annotations')}")
+    expect("and the source-range allow-list, never empty",
+           public["spec"].get("loadBalancerSourceRanges") == ["203.0.113.0/24"],
+           f"got {public['spec'].get('loadBalancerSourceRanges')}")
+
+
+def test_the_ingest_networkpolicy_admits_culvert_not_the_internet() -> None:
+    docs = render("dfe-receiver")
+    policy = one(docs, "NetworkPolicy", "dfe-receiver-ingest")
+    rule = policy["spec"]["ingress"][0]
+    expect("it admits the culvert pods by label",
+           rule.get("from") == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}}}],
+           f"got {rule.get('from')!r}")
+    expect("no ipBlock names the whole internet",
+           not any("ipBlock" in peer for peer in rule.get("from") or []),
+           f"got {rule.get('from')!r}")
+
+
+def main() -> int:
+    with standalone():
+        test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service()
+        test_the_aws_cascade_renders_culvert_with_no_load_balancer()
+        test_an_explicit_public_opt_in_renders_the_annotated_load_balancer()
+        test_the_ingest_networkpolicy_admits_culvert_not_the_internet()
+        return summary()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
