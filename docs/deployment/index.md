@@ -188,5 +188,10 @@ versionCheck:
 - [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) - which CA signs the gateway
   certificate: the self-signed default, estate PKI, and trusting the root once
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
-- [clickhouse.md](clickhouse.md) - CH target matrix (official operator / ClickHouse Cloud / private-cloud swap; Altinity untested) + operator history
+- [clickhouse.md](clickhouse.md) - CH target matrix (official operator /
+  ClickHouse Cloud; Altinity untested) + operator history, including the
+  retired private-cloud pairing
+- [upgrades.md](upgrades.md#migrating-from-dfe-2x-before-22) - migrating a
+  pre-2.2 private-cloud deployment off the retired ClickHouse fork onto
+  cached-object
 - [deployment-logs/](deployment-logs/TEMPLATE.md) - record every deploy

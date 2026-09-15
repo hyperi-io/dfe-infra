@@ -79,7 +79,9 @@ the reference shape. `cached-object` is our best-effort equivalent of it, and
 is the preferred model wherever an object store exists: always on Kubernetes in
 a cloud, and on-prem whenever an S3-compatible store such as MinIO is supplied.
 `local` is the last resort -- on-prem with no object store, and the slim and
-single tiers, where one volume is the point.
+single tiers, where one volume is the point. A deployment migrating off the
+retired private-cloud ClickHouse fork lands here too -- see
+[Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22).
 
 That order is a three-value dial: `clickhouse.storageModel` takes `auto` (the
 chart default, and what an empty value means too), `cached-object` or `local`.

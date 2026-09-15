@@ -23,9 +23,10 @@ clickhouse:
   # OPERATOR TARGETS (full matrix + history: docs/deployment/clickhouse.md):
   # cluster mode targets the OFFICIAL ClickHouse operator; external covers
   # ClickHouse Cloud/BYO -- the two main public targets. The HyperI private
-  # cloud can swap this chart + operator for the internal n-tier cached
-  # operator + CH fork (SSD cache over spinning disk; not referenced by name
-  # here -- public repo). The Altinity operator is NOT tested with this stack.
+  # cloud ran an internal n-tier cached operator + CH fork (SSD cache over
+  # spinning disk; not referenced by name here -- public repo) until DFE 2.2
+  # retired it for this chart's cached-object storage model. The Altinity
+  # operator is NOT tested with this stack.
   mode: cluster
   name: dfe-clickhouse
   version: "26.3.32.14"

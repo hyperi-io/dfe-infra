@@ -108,6 +108,44 @@ same shape when their roots exist. Pre-flight checks version skew from
 `versions.yaml`: librdkafka against the broker, the ClickHouse client against
 the server, Karpenter against the Kubernetes version.
 
+## Migrating from DFE 2.x before 2.2
+
+A private-cloud DFE deployment run before 2.2 used an internal ClickHouse
+fork with its own SSD cache in front of bulk storage, under an internal
+operator (described, not named, in [clickhouse.md](clickhouse.md)).
+DFE 2.2 retired that pairing: a small performance loss in a couple of
+specific use cases buys much less code to maintain, lower operational risk,
+and a storage model held in common across on-prem and cloud deployments. The
+replacement is the official ClickHouse operator with the `cached-object`
+storage model -- an object-store disk with a local cache disk in front of it,
+under the `s3_cached` policy. `cached-object` is now the default wherever an
+object-store endpoint exists (`sizing.storage_model: auto`); `local` is the
+explicit opt-out.
+
+Migrating off the retired pairing means a second deployment beside the
+first. `clickhouse.storageModel` is a protected var for the life of a
+deployment (see [clickhouse.md](clickhouse.md)), so the storage model cannot
+flip under the running one. Stand up a DFE 2.2 deployment with an
+object-store endpoint: a cloud bucket via the cluster module on AWS, or
+on-prem an S3-compatible endpoint such as MinIO (the supported flavours are
+in [storage.md](storage.md)'s object-store dimension). Run the new deployment
+alongside the old one until data has moved and the cutover is proven.
+
+Move the data by ClickHouse `BACKUP`/`RESTORE` to the object store where the
+source server supports it. This repo carries no documented replay path from
+dfe-archiver or any other component back into ClickHouse, so where
+`BACKUP`/`RESTORE` is not available the re-ingest comes from the deployer's
+own retained raw stream, and is a customer-specific plan. Once the new
+deployment holds the required retention window, cut the senders over to its
+receiver address, then decommission the old deployment.
+
+Three things need a customer-specific plan on top of the steps above: schema
+differences between the fork's engine and upstream MergeTree, any table or
+setting the fork added that upstream does not have, and a retention window
+longer than the cutover overlap can cover. Expect a small performance loss
+against the fork in a couple of specific use cases, and measure it during the
+overlap against the deployment's own heaviest queries.
+
 ## What cannot be rolled back
 
 - Kafka's `metadata.version` bump is one way, so the roll and the finalise are
