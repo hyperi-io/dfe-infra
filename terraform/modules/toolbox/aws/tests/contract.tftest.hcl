@@ -183,6 +183,79 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
   }
 }
 
+// --- a target the deployer brought from OUTSIDE the VPC. The VPC CIDR is the
+// wrong destination for it, so the forward opens and then hangs against a
+// client side that never reports why.
+
+run "an_internet_scoped_target_opens_its_own_port_beyond_the_vpc" {
+  command = plan
+
+  variables {
+    targets = {
+      eks-api    = { host = "ABCDEF1234.gr7.us-west-2.eks.amazonaws.com", port = 443 }
+      kafka      = { host = "b-1.mock.kafka.us-west-2.amazonaws.com", port = 9096 }
+      clickhouse = { host = "mock.clickhouse.cloud", port = 9440, scope = "internet" }
+    }
+  }
+
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_egress_rule.targets : r
+      if r.from_port == 9440 && r.to_port == 9440 && r.cidr_ipv4 == "0.0.0.0/0"
+    ]) == 1
+    error_message = "an internet-scoped target must get one rule, to 0.0.0.0/0 on its own port alone"
+  }
+
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_egress_rule.targets : r
+      if r.from_port == 9096 && r.cidr_ipv4 == var.network.cidr
+    ]) == 1
+    error_message = "a vpc-scoped target beside it must stay on the VPC CIDR"
+  }
+
+  assert {
+    condition = length([
+      for r in aws_vpc_security_group_egress_rule.targets : r if r.cidr_ipv4 == "0.0.0.0/0"
+    ]) == 1
+    error_message = "no target other than the internet-scoped one may reach beyond the VPC"
+  }
+}
+
+// One port, both sides of the VPC boundary -- the rules are keyed on scope as
+// well as port, so neither target loses its destination to the other.
+run "one_port_on_both_sides_of_the_boundary_gets_a_rule_each" {
+  command = plan
+
+  variables {
+    targets = {
+      clickhouse       = { host = "clickhouse.mock.internal", port = 9440 }
+      clickhouse-cloud = { host = "mock.clickhouse.cloud", port = 9440, scope = "internet" }
+    }
+  }
+
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_egress_rule.targets : r.cidr_ipv4
+    ]) == toset([var.network.cidr, "0.0.0.0/0"])
+    error_message = "one port in two scopes must render both destinations, never just one"
+  }
+}
+
+run "rejects_a_target_scope_outside_the_two" {
+  command = plan
+
+  variables {
+    targets = {
+      clickhouse = { host = "mock.clickhouse.cloud", port = 9440, scope = "public" }
+    }
+  }
+
+  expect_failures = [
+    var.targets,
+  ]
+}
+
 // --- the Kubernetes API is reachable only once the control plane's own group
 // admits this instance. Egress on 443 is the client half and was never the
 // problem: the cluster group trusts nodes and pods, and a brand-new group is

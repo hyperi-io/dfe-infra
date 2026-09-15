@@ -18,14 +18,14 @@ this module's to close; see "Out of scope" at the end.
 |-------|------|---------|
 | `name`, `env` | `string` | Name prefix and environment, as everywhere else in this repo. |
 | `enabled` | `bool` | Whether the toolbox INSTANCE exists. `false` tears down the instance, its security group, its instance profile and both kinds of Session document. Does NOT gate the session-log bucket -- see below. |
-| `network` | `object({ vpc_id, cidr, private_subnet_ids })` | Where the instance lands. `cidr` scopes EVERY target-specific egress rule, so a target outside the VPC -- a deployer's ClickHouse Cloud endpoint, say -- gets a forward document and no route to use it. Known gap: the target object carries no scope field. |
+| `network` | `object({ vpc_id, cidr, private_subnet_ids })` | Where the instance lands. `cidr` scopes the egress rule of every target whose `scope` is `vpc`; a target outside the VPC says so and is opened to `0.0.0.0/0` on its own port instead. |
 | `instance_type` | `string` | `toolbox.aws.instance_type` in the dial. Validated as a Graviton (arm64) family. |
 | `ttl_minutes` | `number` | Idle-session bound, 15-480, enforced here AND by `dfe-ops`. |
 | `tool_versions` | `map(string)` | `kubectl`, `helm`, `argocd-cli`, `tofu`, `yq`, `aws-cli`, `aws-session-manager-plugin`, `clickhouse-client`, `psql` -- every key required and non-empty. Assembled by `render_dial.py` from `versions.yaml`; see "Where the tool versions come from" below. |
 | `session` | `object({ idle_timeout_minutes, max_duration_minutes })` | The SHELL document's preferences only. |
 | `session_log_retention_days` | `number` | Default 90. Deliberately independent of `telemetry.retention_days` -- `#18`. |
 | `kms_key_arn` | `string` | The deployment CMK. Used via an IAM role policy, never a key policy of this module's own -- `#6` (see "What this module deliberately does NOT write"). |
-| `targets` | `map(object({ host, port }))` | Named forward targets, computed by the aws root from ITS OTHER modules' outputs. The PORT is fixed at plan time; a host may not resolve until apply -- `#1`, `#7`. |
+| `targets` | `map(object({ host, port, scope }))` | Named forward targets, computed by the aws root from ITS OTHER modules' outputs and the dial. The PORT is fixed at plan time; a host may not resolve until apply -- `#1`, `#7`. `scope` is `vpc` (the default) or `internet`, and it is what aims the target's egress rule -- the root sets `internet` for an address it did not create inside the VPC, a ClickHouse Cloud host or a SaaS broker bootstrap. |
 | `eks_cluster_security_group_id` | `string` | The EKS control plane's own group, which `karpenter.tf` also tags for node discovery. This module adds ONE ingress rule to it, 443 from the toolbox's own group, gated on `enabled`. Empty adds no rule. |
 | `force_destroy_session_logs` | `bool` | Follows the root's `tags.lifecycle` the way `cloudtrail.tf`'s bucket does. |
 | `tags` | `map(string)` | The governance tag set. Merged with `dfe.hyperi.io/component = toolbox` on every resource -- the tag every IAM condition example below scopes against. |

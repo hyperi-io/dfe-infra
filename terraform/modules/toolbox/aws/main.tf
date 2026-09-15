@@ -38,13 +38,18 @@ locals {
   // the other is what a group it does not own has to admit it on.
   kubernetes_api_port = 443
 
-  // Every OTHER target port -- Kafka, ClickHouse, a future Keeper -- lives
-  // INSIDE the VPC by construction (targets are only ever cluster-internal
-  // endpoints the aws root computed from its own other modules), so egress
-  // for them is scoped to the VPC CIDR, never 0.0.0.0/0.
-  // for_each only accepts a set of strings, so the port set is stringified
-  // here and turned back into a number at the one place that needs it.
-  target_ports = toset([for t in var.targets : tostring(t.port) if t.port != local.control_egress_port])
+  // Every OTHER target port -- Kafka, ClickHouse, a future Keeper -- gets one
+  // egress rule, aimed by that target's own scope: the VPC CIDR for an
+  // address inside the VPC, 0.0.0.0/0 for one the deployer brought from
+  // outside it. Keyed on the scope AND the port, so two targets sharing a
+  // port on opposite sides of the VPC boundary get a rule each rather than
+  // collapsing into whichever one the key happened to keep.
+  target_egress = {
+    for pair in distinct([
+      for t in var.targets : { scope = t.scope, port = t.port }
+      if t.port != local.control_egress_port
+    ]) : "${pair.scope}-${pair.port}" => pair
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -76,16 +81,16 @@ resource "aws_vpc_security_group_egress_rule" "control" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "targets" {
-  for_each = var.enabled ? local.target_ports : toset([])
+  for_each = var.enabled ? local.target_egress : {}
 
   security_group_id = aws_security_group.this[0].id
 
-  cidr_ipv4   = var.network.cidr
+  cidr_ipv4   = each.value.scope == "internet" ? "0.0.0.0/0" : var.network.cidr
   ip_protocol = "tcp"
-  from_port   = tonumber(each.value)
-  to_port     = tonumber(each.value)
+  from_port   = each.value.port
+  to_port     = each.value.port
 
-  description = "Forward target on ${each.value}, scoped to the VPC -- every named target lives inside it"
+  description = "Forward target on ${each.value.port}, scope ${each.value.scope}"
 }
 
 // The one rule this module puts on a security group it does not own. Egress on

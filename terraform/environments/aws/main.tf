@@ -333,6 +333,9 @@ locals {
       // Port session document's `host` property takes a bare hostname.
       host = trimsuffix(replace(module.cluster.cluster_endpoint, "https://", ""), "/")
       port = 443
+      // The private endpoint resolves to control-plane interfaces inside the
+      // VPC, and 443 is served by the module's own control rule regardless.
+      scope = "vpc"
     }
   }
 
@@ -351,11 +354,16 @@ locals {
   // AL2023 publishing the package -- see toolbox/aws/CONTRACT.md and
   // docs/deployment/toolbox.md.
   managed_kafka_selected = contains(["msk", "confluent-cloud", "redpanda-cloud"], var.kafka.provider)
+  // MSK's brokers are ENIs in this VPC; Confluent Cloud and Redpanda Cloud
+  // publish a vendor-hosted bootstrap the instance reaches over NAT, so their
+  // egress rule has to leave the VPC or the forward hangs.
+  toolbox_kafka_scope = var.kafka.provider == "msk" ? "vpc" : "internet"
   toolbox_kafka_targets = local.managed_kafka_selected ? merge(
     {
       kafka = {
-        host = split(":", split(",", local.managed_kafka.bootstrap)[0])[0]
-        port = local.managed_kafka.bootstrap_port
+        host  = split(":", split(",", local.managed_kafka.bootstrap)[0])[0]
+        port  = local.managed_kafka.bootstrap_port
+        scope = local.toolbox_kafka_scope
       }
     },
     // MSK's SASL/IAM listener, a SECOND target rather than a variant of the
@@ -367,8 +375,9 @@ locals {
     // Redpanda Cloud publish no IAM listener at all.
     var.kafka.provider == "msk" ? {
       kafka-iam = {
-        host = split(":", split(",", local.managed_kafka.bootstrap_iam)[0])[0]
-        port = 9098
+        host  = split(":", split(",", local.managed_kafka.bootstrap_iam)[0])[0]
+        port  = 9098
+        scope = "vpc"
       }
     } : {},
   ) : {}
@@ -383,18 +392,21 @@ locals {
   // network-policies' own values.yaml documents this port for the same reason).
   // A dotless host counts too: `dfe-clickhouse` is a Service short name that
   // only resolves through a pod's search domains, and the instance has none.
-  // KNOWN GAP: a host that IS reachable but sits outside the VPC -- ClickHouse
-  // Cloud -- still gets an egress rule scoped to var.network.cidr, because the
-  // target object carries no scope field (toolbox/aws/CONTRACT.md).
   clickhouse_host_is_in_cluster = (
     endswith(var.endpoints.clickhouse_host, ".cluster.local")
     || endswith(var.endpoints.clickhouse_host, ".svc")
     || !strcontains(var.endpoints.clickhouse_host, ".")
   )
+  // A name in the deployment's own private zone resolves to an address inside
+  // the VPC; anything else the deployer supplied -- a ClickHouse Cloud host,
+  // the `mode: external` case -- is reached over NAT, so its egress rule has
+  // to leave the VPC.
+  clickhouse_scope = endswith(var.endpoints.clickhouse_host, ".${var.dns.private_zone}") ? "vpc" : "internet"
   toolbox_clickhouse_target = var.endpoints.clickhouse_host != "" && !local.clickhouse_host_is_in_cluster ? {
     clickhouse = {
-      host = var.endpoints.clickhouse_host
-      port = 9440
+      host  = var.endpoints.clickhouse_host
+      port  = 9440
+      scope = local.clickhouse_scope
     }
   } : {}
 

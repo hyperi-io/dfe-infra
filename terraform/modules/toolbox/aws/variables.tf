@@ -21,7 +21,7 @@ variable "enabled" {
 }
 
 variable "network" {
-  description = "Where the instance lands. cidr scopes the target-specific egress rules to the VPC itself, since every named target lives inside it; vpc_id and private_subnet_ids are the cluster module's own network output, unchanged."
+  description = "Where the instance lands. cidr scopes the egress rule of every target whose scope is vpc; vpc_id and private_subnet_ids are the cluster module's own network output, unchanged."
   type = object({
     vpc_id             = string
     cidr               = string
@@ -110,12 +110,18 @@ variable "kms_key_arn" {
 }
 
 variable "targets" {
-  description = "Named forward targets -- host and port fixed at PLAN time, never a caller-supplied value. One customer-managed Session document per entry (sessionType Port, no host/portNumber parameter in the document body at all), so a forward session can only ever reach what this map names. Computed by the aws root from the cluster/kafka modules' own outputs (CONTRACT.md), never invented here."
+  description = "Named forward targets -- host, port and scope fixed at PLAN time, never a caller-supplied value. One customer-managed Session document per entry (sessionType Port, no host/portNumber parameter in the document body at all), so a forward session can only ever reach what this map names. scope says which side of the VPC boundary the address sits on: vpc (the default) scopes the target's egress rule to the VPC CIDR, internet opens its port to 0.0.0.0/0 for an endpoint the deployer brought from outside -- a ClickHouse Cloud host, a SaaS broker. Computed by the aws root from the cluster/kafka modules' own outputs and the dial (CONTRACT.md), never invented here."
   type = map(object({
-    host = string
-    port = number
+    host  = string
+    port  = number
+    scope = optional(string, "vpc")
   }))
   default = {}
+
+  validation {
+    condition     = alltrue([for t in var.targets : contains(["vpc", "internet"], t.scope)])
+    error_message = "every target's scope must be vpc or internet -- vpc scopes that target's egress rule to the VPC CIDR, internet opens its port to 0.0.0.0/0 for an address outside the VPC."
+  }
 }
 
 variable "eks_cluster_security_group_id" {

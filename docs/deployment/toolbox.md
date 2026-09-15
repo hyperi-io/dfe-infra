@@ -80,7 +80,11 @@ SASL/IAM listener, and ClickHouse when the dial names a host OUTSIDE the
 cluster. A Kubernetes Service name is never a target -- it resolves through
 CoreDNS and the instance sits outside the cluster -- so an in-cluster
 ClickHouse is reached with `kubectl port-forward` from `bastion shell`,
-over the EKS API grant below. Each target's key and port are known at plan
+over the EKS API grant below. A target whose address the deployment did not
+create inside the VPC -- a ClickHouse Cloud host, a Confluent Cloud or
+Redpanda Cloud bootstrap -- is opened to `0.0.0.0/0` on its own port rather
+than to the VPC CIDR, because a rule aimed inside the VPC leaves the forward
+hanging with nothing to report it. Each target's key and port are known at plan
 time, so the toolbox can be enabled in the dial before the first apply, and
 reaching a broker proves reachability, TLS and SASL. A client that
 must follow metadata to the other brokers -- most real Kafka clients do --
