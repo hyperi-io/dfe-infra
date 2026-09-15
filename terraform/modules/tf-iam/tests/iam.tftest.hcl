@@ -4,10 +4,10 @@
 # no Vault). A full apply against live Vault/OpenBao is a separate integration
 # concern (VAULT_ADDR/VAULT_TOKEN).
 variables {
-  project   = "dfe"
-  env       = "local"
-  cloud     = "local"
-  services  = ["loader", "receiver"]
+  project  = "dfe"
+  env      = "local"
+  cloud    = "local"
+  services = ["loader", "receiver"]
 }
 
 provider "vault" {

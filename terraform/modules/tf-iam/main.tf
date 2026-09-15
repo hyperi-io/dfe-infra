@@ -31,7 +31,7 @@ resource "vault_approle_auth_backend_role" "service" {
   backend   = var.vault_approle_backend_path
   role_name = module.naming[each.key].vault_approle_name
 
-  token_policies  = [vault_policy.service[each.key].name]
-  token_ttl       = 3600
-  token_max_ttl   = 86400
+  token_policies = [vault_policy.service[each.key].name]
+  token_ttl      = 3600
+  token_max_ttl  = 86400
 }

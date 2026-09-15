@@ -186,6 +186,15 @@ spec:
             {{- if eq .chart "external-dns" }}
             provider:
               name: '{{ index .metadata.labels "dfe.hyperi.io/dns-provider" }}'
+            # Named, not generated -- the same reason the two controllers below
+            # name theirs. The chart derives the account name from the release,
+            # which is external-dns-<cluster>, while the cluster module's Pod
+            # Identity association names external-dns/external-dns; unmatched,
+            # the controller gets no credential and logs a Route 53 401 every
+            # minute while reporting Ready.
+            serviceAccount:
+              create: true
+              name: external-dns
             {{- end }}
             {{- if eq .chart "aws-load-balancer-controller" }}
             # The EKS cluster's own name, not the name Argo registered the

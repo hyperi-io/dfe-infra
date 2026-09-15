@@ -384,6 +384,39 @@ run "aws_dns_zones" {
   }
 }
 
+// Pod Identity resolves a credential by namespace AND service account, so an
+// association naming an account the chart does not create hands the controller
+// nothing -- and external-dns keeps reporting Ready while every record it owes
+// silently never happens. argocd/appsets/layer1-addons.yaml names the account
+// so the chart's release-derived default cannot drift away from this.
+run "aws_external_dns_association_targets_the_account_the_appset_names" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.external_dns.cluster_name == aws_eks_cluster.this.name
+    error_message = "the association must target this cluster"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.external_dns.namespace == "external-dns"
+    error_message = "the namespace must match argocd/appsets/layer1-addons.yaml's external-dns destination"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.external_dns.service_account == "external-dns"
+    error_message = "the service account must match the serviceAccount.name argocd/appsets/layer1-addons.yaml sets, never the chart's release-derived default"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.external_dns.role_arn == aws_iam_role.external_dns.arn
+    error_message = "the association must name the role this file mints, not any other"
+  }
+}
+
 // No public zone means no public zone id, no name servers, and no DNS-01
 // identity for cert-manager to assume.
 run "aws_no_public_zone" {
