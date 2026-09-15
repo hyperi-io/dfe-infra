@@ -88,9 +88,9 @@ clouds:
     volume_baseline_throughput_mib_s: 125
     ## The EBS CSI driver defaults to gp3 with throughput 125 and no iops, so
     ## every PVC lands on the baseline whatever its size. bootstrap.sh creates
-    ## the baseline class (3,000 IOPS / 125 MiB/s, the gp3 free tier) when the
-    ## cluster has none; per-use-case classes with the resolved iops and
-    ## throughput are a follow-on, not yet built.
+    ## the baseline class (3,000 IOPS / 125 MiB/s, the gp3 free tier) whenever
+    ## the deployment's own class is absent; per-use-case classes with the
+    ## resolved iops and throughput are a follow-on.
     storage_class_owner: bootstrap
     ## gp3 USD per GiB-month, keyed by region: there is no describe-price API
     ## for EBS the way there is for EC2 and MSK, so this is a doc-sourced

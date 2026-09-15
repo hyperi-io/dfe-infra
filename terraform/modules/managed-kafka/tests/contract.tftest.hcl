@@ -164,6 +164,14 @@ run "msk_contract_outputs" {
     error_message = "bootstrap_port must be the SASL/SCRAM port MSK serves on, a literal known at plan time"
   }
 
+  // The literal above and the endpoint are two independent spellings, and the
+  // aws root builds its forward target from both -- a drift between them aims
+  // the tunnel at a closed port.
+  assert {
+    condition     = strcontains(output.bootstrap, ":${output.bootstrap_port}")
+    error_message = "bootstrap_port must be the port bootstrap actually advertises"
+  }
+
   assert {
     condition     = strcontains(output.bootstrap_iam, ":9098")
     error_message = "bootstrap_iam must be the SASL/IAM endpoint, which MSK serves on 9098"

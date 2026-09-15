@@ -220,6 +220,20 @@ run "aws_cluster_creator_is_named_not_implied" {
     error_message = "the access entry must never be the raw STS assumed-role session ARN, which EKS's CreateAccessEntry rejects"
   }
 
+  // The SHAPE, not the mock's literal: the two asserts above are satisfied by
+  // any value the mock happens to differ on, including a bare role name.
+  assert {
+    condition     = startswith(aws_eks_access_entry.creator.principal_arn, "arn:${data.aws_partition.current.partition}:iam::") && strcontains(aws_eks_access_entry.creator.principal_arn, ":role/")
+    error_message = "the access entry must be an IAM role ARN -- the only shape CreateAccessEntry accepts"
+  }
+
+  // The policy association carries its own principal_arn, and a half-revert
+  // that leaves it on the caller identity fails at AssociateAccessPolicy.
+  assert {
+    condition     = aws_eks_access_policy_association.creator_admin.principal_arn == aws_eks_access_entry.creator.principal_arn
+    error_message = "the admin association must name the same principal as the access entry it grants against"
+  }
+
   assert {
     condition     = aws_eks_access_entry.creator.type == "STANDARD"
     error_message = "the creator's access entry must be STANDARD -- EC2_LINUX and friends refuse an access policy association"
@@ -824,7 +838,29 @@ run "aws_clickhouse_object_store_bucket_is_locked_down" {
 
   assert {
     condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).kms_master_key_id == aws_kms_key.this.arn
-    error_message = "the object-store bucket must be encrypted with the deployment's own key -- the same one EKS secrets, MSK and the EBS volumes use"
+    error_message = "the object-store bucket must be encrypted with the deployment's own key -- the same one EKS secrets and MSK use"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_ownership_controls.clickhouse_object_store.rule).object_ownership == "BucketOwnerEnforced"
+    error_message = "ACLs must be disabled outright, not left to whatever the account default happens to be"
+  }
+
+  // The bucket policy exists to REFUSE, never to grant: a public-access block
+  // cannot stop a request that already has access arriving over plaintext.
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_s3_bucket_policy.clickhouse_object_store.policy).Statement : s.Effect == "Deny"
+    ])
+    error_message = "every statement on the object-store bucket policy must be a Deny -- this policy grants nothing"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_s3_bucket_policy.clickhouse_object_store.policy).Statement :
+      s.Condition.Bool["aws:SecureTransport"] if s.Sid == "DenyInsecureTransport"
+    ][0] == "false"
+    error_message = "the bucket must refuse a request that arrives over plaintext HTTP"
   }
 
   // No versioning assertion here: this module declares no
@@ -835,6 +871,35 @@ run "aws_clickhouse_object_store_bucket_is_locked_down" {
   assert {
     condition     = aws_s3_bucket_lifecycle_configuration.clickhouse_object_store.rule[0].abort_incomplete_multipart_upload[0].days_after_initiation == 7
     error_message = "an abandoned multipart upload must be aborted after 7 days, or a killed insert leaves the bucket growing forever"
+  }
+
+  // A Disabled rule, or one with no filter block, is present and inert -- the
+  // days above would still assert green while nothing was ever aborted.
+  assert {
+    condition     = aws_s3_bucket_lifecycle_configuration.clickhouse_object_store.rule[0].status == "Enabled"
+    error_message = "the abort rule must be Enabled, not merely declared"
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket_lifecycle_configuration.clickhouse_object_store.rule[0].filter) == 1
+    error_message = "the abort rule needs its empty filter block, or it matches no object at all"
+  }
+
+  // S3's namespace is global and var.name comes from the dial, so the name has
+  // to be both unique and legal before the apply finds out.
+  assert {
+    condition     = length(aws_s3_bucket.clickhouse_object_store.bucket) <= 63 && can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", aws_s3_bucket.clickhouse_object_store.bucket))
+    error_message = "the bucket name must be a legal S3 name -- lowercase, 3-63 characters, no underscore"
+  }
+
+  assert {
+    condition     = strcontains(aws_s3_bucket.clickhouse_object_store.bucket, var.provision.account)
+    error_message = "the bucket name must carry the account id, or two deployments of the same dial name collide in S3's global namespace"
+  }
+
+  assert {
+    condition     = aws_s3_bucket.clickhouse_object_store.tags.Name == aws_s3_bucket.clickhouse_object_store.bucket
+    error_message = "the Name tag must be the bucket's own name, not a second spelling of it"
   }
 
   // The default test tags carry lifecycle = "throwaway", not "ephemeral" --
@@ -898,6 +963,17 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
     error_message = "the KMS grant must be scoped to the deployment's own key"
   }
 
+  // That key also wraps EKS Secrets and MSK, and its key policy delegates to
+  // IAM -- so without ViaService the grant reaches any ciphertext under it,
+  // not just this bucket's.
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement :
+      s.Condition.StringEquals["kms:ViaService"] if s.Sid == "UseTheDeploymentKey"
+    ][0] == "s3.${var.provision.region}.amazonaws.com"
+    error_message = "the KMS grant must be usable only through S3, never called directly"
+  }
+
   assert {
     // No fourth statement, and no statement's Resource is anything but this
     // bucket, its objects, or the deployment key -- the policy names only
@@ -914,6 +990,28 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
       )
     ])
     error_message = "the policy must name only this bucket, its objects and the deployment key -- nothing else"
+  }
+
+  // Scoping the Resource is half the job: "s3:*" on this bucket alone would
+  // still hand a compromised pod the bucket policy and its own KMS grants, and
+  // every Resource assertion above would stay green.
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Action if s.Sid == "ListBucket"][0] == "s3:ListBucket"
+    error_message = "ListBucket must be that one action, never a wildcard"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Action if s.Sid == "ReadWriteObjects"
+    ][0] == ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+    error_message = "the object statement must name exactly the four verbs the S3 disk uses"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Action if s.Sid == "UseTheDeploymentKey"
+    ][0] == ["kms:GenerateDataKey", "kms:Decrypt", "kms:DescribeKey"]
+    error_message = "the KMS statement must name exactly what SSE-KMS needs of the caller, never kms:*"
   }
 }
 
@@ -991,6 +1089,13 @@ run "aws_clickhouse_object_store_endpoint_shape" {
   assert {
     condition     = strcontains(output.clickhouse_object_store_endpoint, output.clickhouse_object_store_bucket)
     error_message = "the endpoint must name the bucket this file provisions"
+  }
+
+  // The S3 disk signs for whatever region the host names; a wrong one fails
+  // every read and write at runtime rather than at plan.
+  assert {
+    condition     = strcontains(output.clickhouse_object_store_endpoint, ".s3.${var.provision.region}.amazonaws.com/")
+    error_message = "the endpoint's region must be the deployment's own"
   }
 
   assert {

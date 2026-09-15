@@ -39,9 +39,8 @@ metadata:
     ${DFE_VPC_ID_ANNOTATION}
     # The ClickHouse object-store bucket URL, for layer2-data.yaml's
     # clickhouse.objectStore.endpoint parameter -- the fact that activates the
-    # cached-object storage model (docs/deployment/storage.md). Blank on a
-    # non-AWS cloud or a deploy that resolved storageModel: local, same as the
-    # cluster_name annotation above.
+    # cached-object storage model (docs/deployment/storage.md). Blank on every
+    # cloud but AWS, same as the cluster_name annotation above.
     ${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION}
     # The karpenter-pools chart's three cluster facts; each renders blank on a
     # non-AWS cloud, same as the cluster_name annotation above.

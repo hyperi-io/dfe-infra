@@ -429,25 +429,111 @@ def test_unknown_stack_is_fatal() -> None:
     expect("an unknown --stack value is fatal", raised)
 
 
-def test_pending_note_fires_when_the_stack_lacks_the_key_entirely() -> None:
-    """rc.13 does not carry the AWS-only keys at all -- still worth a note."""
-    versions = drift.load_versions("2.2.0-rc.13")
-    covered = {c.key for c in drift.CHECKS}
-    notes = drift.pending_notes(versions, "2.2.0-rc.13", covered)
-    expect("toolbox is noted as absent from rc.13",
-           any("toolbox.*" in n and "does not carry" in n for n in notes), f"{notes}")
+def test_pending_keys_are_noted_once_each_not_once_per_mirror() -> None:
+    """rc.13 pins none of the rc.14-only keys, so each is NOTED -- once, however
+    many mirrors point at it, or the wall of notes trains the reader to skip
+    them."""
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(io.StringIO()):
+        rc = drift.main(["--stack", "2.2.0-rc.13"])
+    out = captured.getvalue()
+    expect("rc.13 still passes", rc == 0, f"got rc={rc}")
+    # hashicorp-aws has a CHECKS entry per terraform dir -- eight of them.
+    aws_provider_notes = [ln for ln in out.splitlines() if "providers.hashicorp-aws" in ln]
+    expect("the aws provider pin is noted exactly once",
+           len(aws_provider_notes) == 1, f"{aws_provider_notes}")
+    expect("and the note says the stack does not pin it",
+           "does not pin it yet" in aws_provider_notes[0], aws_provider_notes[0])
 
 
-def test_parse_args_ignores_flags_it_does_not_own() -> None:
-    """main() is called directly by this suite under the test runner's own
-    argv -- an unrelated flag (e.g. -q, a file path) must not be rejected."""
+def test_pending_mirrors_must_be_deleted_once_the_stack_pins_them_all() -> None:
+    """A temporary exemption with no expiry rots into a permanent one."""
+    original = drift.PENDING_MIRRORS
+    captured = io.StringIO()
+    try:
+        # apps.dfe-engine is pinned by every stack, so this stands in for the
+        # day rc.14 lands and every real entry resolves.
+        drift.PENDING_MIRRORS = {"apps.dfe-engine": "stand-in for a landed pin"}
+        with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
+            rc = drift.main()
+    finally:
+        drift.PENDING_MIRRORS = original
+    expect("a fully-landed PENDING_MIRRORS fails the run", rc == 1, f"got rc={rc}")
+    expect("and the failure says to delete it",
+           "delete PENDING_MIRRORS" in captured.getvalue(), captured.getvalue())
+
+
+def test_a_mistyped_stack_flag_is_rejected_rather_than_ignored() -> None:
+    """The one failure a drift gate must not have: a typo that audits the wrong
+    stack and still exits 0."""
+    raised = False
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            drift._parse_args(["--satck", "2.2.0-rc.14"])
+    except SystemExit:
+        raised = True
+    expect("an unrecognised flag is fatal", raised)
+    args = drift._parse_args(["--stack", "2.2.0-rc.13"])
+    expect("the spelling it does own still parses", args.stack == "2.2.0-rc.13")
+
+
+def test_fix_refuses_a_stack_that_is_not_current() -> None:
+    """--fix WRITES the tree, and the tree mirrors `current`; propagating an
+    older block over it would silently downgrade every chart appVersion, appset
+    pin and Dockerfile ARG, and the verify pass that follows would then agree
+    because it compares against the same wrong block."""
+    written = False
+
+    def _never(_versions: dict[str, str]) -> tuple[list[str], list[str]]:
+        nonlocal written
+        written = True
+        return [], []
+
+    original = drift.apply_fix
+    raised = ""
+    try:
+        drift.apply_fix = _never
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            drift.main(["--fix", "--stack", "2.2.0-rc.12"])
+    except SystemExit as exc:
+        raised = str(exc)
+    finally:
+        drift.apply_fix = original
+    expect("the combination is refused", "refusing" in raised, f"got {raised!r}")
+    expect("and the refusal names the stack", "2.2.0-rc.12" in raised, f"got {raised!r}")
+    expect("and nothing was written", not written)
+
+
+def test_pending_mirrors_is_exactly_the_documented_rc14_set() -> None:
+    """Widening this list is the cheapest way to make a real drift failure go
+    away, so it has to be a reviewed edit rather than a quiet one."""
+    expect("PENDING_MIRRORS holds the ten rc.14 patterns and no more",
+           set(drift.PENDING_MIRRORS) == {
+               "operators.karpenter",
+               "operators.aws-load-balancer-controller",
+               "operators.karpenter-al2023-ami",
+               "services.aws-msk-iam-auth",
+               "services.cruise-control-ui",
+               "toolbox.*",
+               "providers.hashicorp-aws",
+               "providers.confluentinc-confluent",
+               "providers.redpanda-data-redpanda",
+               "providers.hashicorp-archive",
+           },
+           f"{sorted(drift.PENDING_MIRRORS)}")
+
+
+def test_main_ignores_the_ambient_argv() -> None:
+    """main() takes its argv from the caller, so this suite running under the
+    test runner's own flags (-q, a file path) never reaches the parser."""
     original = sys.argv
     try:
-        sys.argv = ["check_versions_drift.py", "-q", "some/path", "--stack", "2.2.0-rc.13"]
-        args = drift._parse_args()
-        expect("an unrelated flag is tolerated", args.stack == "2.2.0-rc.13")
+        sys.argv = ["check_versions_drift.py", "-q", "some/path"]
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            rc = drift.main()
     finally:
         sys.argv = original
+    expect("the tree is clean against the default stack", rc == 0, f"got rc={rc}")
 
 
 def main() -> int:

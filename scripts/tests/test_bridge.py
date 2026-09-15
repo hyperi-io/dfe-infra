@@ -148,9 +148,28 @@ def test_aws_sm_backend_with_no_vault_vars_passes_validation() -> None:
     """The aws root never emits DFE_VAULT_ADDR/DFE_VAULT_ROLE_ID -- they are
     openbao-only, and an aws-sm deployment must not be refused for lacking
     them."""
-    env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": "aws-sm"}
+    env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": "aws-sm", "DFE_SECRETS_REGION": "us-east-1"}
     missing = bridge._required_vars(env_vars) - set(env_vars.keys())
     expect("an aws-sm deployment has nothing missing", not missing, f"{missing}")
+
+
+def test_aws_sm_backend_demands_the_store_region_bootstrap_demands() -> None:
+    """bootstrap.sh adds DFE_SECRETS_REGION on every non-openbao backend; the
+    two lists disagreeing makes this gate miss what bootstrap.sh then refuses."""
+    env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": "aws-sm"}
+    missing = bridge._required_vars(env_vars) - set(env_vars.keys())
+    expect("DFE_SECRETS_REGION is named as missing",
+           missing == {"DFE_SECRETS_REGION"}, f"{missing}")
+
+
+def test_an_empty_backend_output_defaults_to_openbao() -> None:
+    """A tofu root that emits DFE_SECRETS_BACKEND as an empty string means the
+    default, exactly as bootstrap.sh's ${DFE_SECRETS_BACKEND:-openbao} reads it
+    -- reading it as aws-sm would drop the AppRole checks AND the region one."""
+    env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": ""}
+    missing = bridge._required_vars(env_vars) - set(env_vars.keys())
+    expect("the AppRole pair is still demanded",
+           missing == {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}, f"{missing}")
 
 
 def test_openbao_backend_with_no_vault_vars_still_fails_naming_both_keys() -> None:

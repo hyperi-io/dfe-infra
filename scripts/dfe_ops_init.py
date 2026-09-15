@@ -865,7 +865,7 @@ def _next_commands(dial_out: Path, a: Answers) -> str:
                 "  tofu -chdir=terraform/environments/aws plan -out=deployment.tfplan",
                 "  tofu -chdir=terraform/environments/aws apply deployment.tfplan",
                 "  eval \"$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)\"",
-                "  python3 scripts/dfe-ops stack-deploy --stack <version> --mode scale \\",
+                f"  python3 scripts/dfe-ops stack-deploy --stack <version> --mode {a.profile} \\",
                 "      --from-terraform terraform/environments/aws --kubeconfig <path>",
             )
         )

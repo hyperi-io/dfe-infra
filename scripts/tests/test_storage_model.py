@@ -251,6 +251,59 @@ def test_clickhouse_cached_object_pod_identity_skips_the_static_key() -> None:
            f"got {object_store_secrets}")
 
 
+def test_clickhouse_cached_object_pod_identity_reaches_single_mode() -> None:
+    """clickhouse-single.yaml carries its own copy of the usePodIdentity gate.
+    A static AWS_ACCESS_KEY_ID there shadows the Pod Identity Agent's injected
+    credential just as surely as in cluster mode, and fails as an auth error
+    nobody attributes to Helm."""
+    docs = render("clickhouse-cluster", *CACHED_OBJECT_SETS,
+                  "clickhouse.mode=single", "clickhouse.objectStore.usePodIdentity=true")
+    container = one(docs, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]
+    credential_env = [e for e in container.get("env", []) if e["name"].startswith("AWS_")]
+    expect("no static credential env vars reach the single-mode pod",
+           credential_env == [], f"got {credential_env}")
+    object_store_secrets = [
+        d for d in docs if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "dfe-clickhouse-s3"
+    ]
+    expect("and no object-store ExternalSecret is minted", object_store_secrets == [],
+           f"got {object_store_secrets}")
+
+
+def test_the_aws_cascade_is_what_turns_pod_identity_on() -> None:
+    """usePodIdentity lives in argocd/values/aws.yaml, not the chart default, so
+    the cluster-mode test above passes on a --set nobody sets in production.
+    This renders the cascade an AWS deploy actually gets."""
+    aws_cascade = [VALUES / "common.yaml", VALUES / "aws.yaml", VALUES / "profile-scale.yaml"]
+    docs = render(
+        "clickhouse-cluster",
+        "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/dfe/",
+        values=aws_cascade,
+    )
+    env = one(docs, "ClickHouseCluster")["spec"]["containerTemplate"].get("env", [])
+    expect("the aws cascade renders no static credential env", env == [], f"got {env}")
+    object_store_secrets = [
+        d for d in docs if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "dfe-clickhouse-s3"
+    ]
+    expect("and no object-store ExternalSecret", object_store_secrets == [],
+           f"got {object_store_secrets}")
+
+
+def test_the_endpoint_alone_derives_cached_object() -> None:
+    """Every other test names clickhouse.storageModel outright, so the
+    derivation the whole AWS chain rests on -- a non-empty objectStore.endpoint
+    turning cached-object on by itself -- is otherwise proven by nothing. Break
+    it and an AWS deploy with a good bucket silently stays local, writing every
+    bulk part to the PVC."""
+    docs = render(
+        "clickhouse-cluster",
+        "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/dfe/",
+    )
+    storage = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]["storage_configuration"]
+    expect("the endpoint alone declares the s3 disk", "s3_object" in storage["disks"], f"{storage['disks'].keys()}")
+    expect("and the cached policy is what MergeTree gets",
+           "s3_cached" in storage["policies"], f"{storage['policies'].keys()}")
+
+
 def test_the_object_store_timeouts_are_unset_by_default_and_settable() -> None:
     """Left at the server defaults a read against an unreachable store blocked
     over nine minutes on the rig; 1 / 2000 / 5000 failed the same read in 10.4s.
@@ -573,6 +626,9 @@ def main() -> int:
         test_the_credential_binding_follows_an_existing_store_entry()
         test_clickhouse_cached_object_keeps_credentials_out_of_git()
         test_clickhouse_cached_object_pod_identity_skips_the_static_key()
+        test_clickhouse_cached_object_pod_identity_reaches_single_mode()
+        test_the_aws_cascade_is_what_turns_pod_identity_on()
+        test_the_endpoint_alone_derives_cached_object()
         test_the_object_store_timeouts_are_unset_by_default_and_settable()
         test_clickhouse_tiered_block_ranks_two_local_volumes()
         test_the_cold_volume_sorts_after_the_hot_one()

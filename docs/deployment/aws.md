@@ -169,12 +169,13 @@ A few things hold for every deployment:
   "authentication required". `DFE_PULL_SECRET_TOKEN` (a GHCR pull token) is
   required the same way, for the dfe-* app images -- export both, or carry
   them in an `--env-file`.
-- On a cluster with no default StorageClass, `bootstrap.sh` creates one
-  named `k8s.storage_class` -- provisioner `ebs.csi.aws.com`, gp3 baseline
+- When `k8s.storage_class` names no class the cluster already has,
+  `bootstrap.sh` creates it -- provisioner `ebs.csi.aws.com`, gp3 baseline
   3,000 IOPS / 125 MiB/s, encrypted with the account's default EBS key,
-  `WaitForFirstConsumer`, marked default -- because EKS 1.30+ ships only
-  `gp2` with no default class and the CSI add-on creates none itself.
-  Per-use-case classes are a follow-on. The same run's internal-CA persist
+  `WaitForFirstConsumer` -- because EKS 1.30+ ships only `gp2` with no default
+  class and the CSI add-on creates none itself. It is marked the cluster
+  default only when the cluster has none, so an existing default is left in
+  place. Per-use-case classes are a follow-on. The same run's internal-CA persist
   step renders the gateway chart with the identical value files Argo layers
   afterwards: `argocd/values/common.yaml`, `argocd/values/<cloud>.yaml`,
   `argocd/values/profile-<profile>.yaml`.

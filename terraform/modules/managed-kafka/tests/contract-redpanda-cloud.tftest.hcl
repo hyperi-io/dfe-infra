@@ -119,6 +119,14 @@ run "redpanda_cloud_contract_outputs" {
     error_message = "bootstrap_port must be the Kafka API client port, a literal known at plan time"
   }
 
+  // The literal above and the endpoint are two independent spellings, and the
+  // aws root builds its forward target from both -- a drift between them aims
+  // the tunnel at a closed port.
+  assert {
+    condition     = strcontains(output.bootstrap, ":${output.bootstrap_port}")
+    error_message = "bootstrap_port must be the port bootstrap actually advertises"
+  }
+
   // Private connectivity is the default, so the PRIVATE seed brokers are what a
   // caller gets without asking for anything.
   assert {

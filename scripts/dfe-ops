@@ -2561,22 +2561,18 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     published = [ln for ln in out.splitlines() if ln.strip().startswith("dfe-") and "@sha256:" in ln]
     print(f"  [ok]   stack {args.stack}: pins resolve ({len(published)} published app image(s))", file=sys.stderr)
 
-    # 2. Drift-check -- working-tree pins == versions.yaml. Validates `current`
-    #    only, so warn (do not fail) when a non-current stack is requested.
-    rc, out, err = _run_text(["python3", str(DRIFT_CHECK)])
+    # 2. Drift-check -- working-tree pins == versions.yaml, against the stack
+    #    being deployed rather than whatever `current` points at, so a deploy of
+    #    an in-flight cut audits its own block. _resolve_stack has already
+    #    defaulted args.stack to `current`, so naming no stack audits what it
+    #    always did.
+    rc, out, err = _run_text(["python3", str(DRIFT_CHECK), "--stack", args.stack])
     if rc != 0:
-        print("  [FAIL] version drift vs versions.yaml (SSoT):", file=sys.stderr)
+        print(f"  [FAIL] version drift vs versions.yaml (SSoT) for stack {args.stack}:", file=sys.stderr)
         print((out or err).rstrip(), file=sys.stderr)
         hard_fail += 1
     else:
         print(f"  [ok]   {_last_line(out) or 'no version drift'}", file=sys.stderr)
-    current = _current_stack()
-    if current and args.stack != current:
-        print(
-            f"  [warn] --stack {args.stack} != versions.yaml current ({current}); the "
-            "drift-check validates `current` only -- deploy from the matching git revision.",
-            file=sys.stderr,
-        )
 
     # 3. Namespace drift -- the operator-namespace SSoT vs where the appsets
     #    install each operator. A selector naming an absent namespace matches

@@ -123,8 +123,8 @@
 #                            clickhouse.objectStore.endpoint -- the fact that
 #                            activates the cached-object storage model
 #                            (docs/deployment/storage.md); empty omits the
-#                            annotation (non-AWS clouds, or a deploy that
-#                            resolved storageModel: local).
+#                            annotation, which is every cloud but AWS, since
+#                            the aws root always provisions a bucket.
 #   DFE_CERTMANAGER_SECRET_ID  AppRole SecretID cert-manager authenticates to the
 #                            estate Vault/OpenBao PKI with, for the gateway
 #                            chart's tls.vault issuer mode. Set it and the edge
@@ -229,6 +229,14 @@ run() {
 # adopt is a later iteration that needs a rich cluster to validate. On a bare
 # cluster they install correctly.
 dfe_have_crd() { kubectl get crd "$1" >/dev/null 2>&1; }
+
+# rc 0 when some StorageClass claims the cluster default. Step [1b/7] asks twice
+# -- once to pick its branch, once after the branches to decide whether the AWS
+# class it creates may claim default too.
+dfe_have_default_storageclass() {
+  kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null \
+    | grep -q true
+}
 
 # dfe_should_install <name> <crd> [<ns> <deploy>]  -> rc 0 = INSTALL, rc 1 = ADOPT.
 # ADOPT only when BOTH the CRD and a running operator deployment are present. A
@@ -372,8 +380,8 @@ export DFE_KUBE_CLUSTER_NAME_ANNOTATION="${DFE_KUBE_CLUSTER_NAME:+dfe.hyperi.io/
 export DFE_VPC_ID="${DFE_VPC_ID:-}"
 export DFE_VPC_ID_ANNOTATION="${DFE_VPC_ID:+dfe.hyperi.io/vpc_id: \"${DFE_VPC_ID}\"}"
 # The ClickHouse object-store bucket URL for the clickhouse-cluster chart's
-# clickhouse.objectStore.endpoint, rendered only when set -- empty on a
-# non-AWS cloud or a deploy that resolved storageModel: local.
+# clickhouse.objectStore.endpoint, rendered only when set -- empty on every
+# cloud but AWS, whose root always provisions a bucket.
 export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:-}"
 export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:+dfe.hyperi.io/clickhouse_object_store_endpoint: \"${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT}\"}"
 # The karpenter-pools chart's three cluster facts, each rendered only when set --
@@ -548,7 +556,16 @@ fi
 # after the detect logic decides "use it as-is". Create the free-tier baseline
 # so the data pods' PVCs have something to bind to with no deployer input.
 if [[ "${DFE_CLOUD}" == "aws" ]] && ! kubectl get storageclass "${DFE_STORAGE_CLASS}" >/dev/null 2>&1; then
-  echo "  AWS: DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS} does not exist -> creating it (gp3, ebs.csi.aws.com)"
+  # Re-read the default AFTER the branches above, because branch 3 marks the
+  # local-path class it installs. Claiming default on top of an existing one
+  # gives the cluster two, and since Kubernetes 1.26 the newest wins -- which
+  # would re-point every unannotated PVC in the cluster, DFE's or not.
+  if kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null | grep -q true; then
+    export DFE_STORAGE_CLASS_IS_DEFAULT="false"
+  else
+    export DFE_STORAGE_CLASS_IS_DEFAULT="true"
+  fi
+  echo "  AWS: DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS} does not exist -> creating it (gp3, ebs.csi.aws.com, default=${DFE_STORAGE_CLASS_IS_DEFAULT})"
   if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
     echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/storageclass-aws.yaml.tpl | kubectl apply -f -"
   else

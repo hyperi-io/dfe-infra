@@ -77,9 +77,15 @@ def _outputs_from_state(tf_dir: str) -> dict[str, tuple[str, bool]]:
 def _required_vars(env_vars: dict[str, str]) -> set[str]:
     """The DFE_* outputs bootstrap.sh cannot run without.
 
+    This mirrors bootstrap.sh's own `required_vars` array and its two backend
+    branches, because the two disagreeing turns an early gate into a false
+    refusal or a miss that surfaces later and worse.
+
     DFE_VAULT_ADDR and DFE_VAULT_ROLE_ID are openbao-only: the aws root never
     emits them, and sets DFE_SECRETS_BACKEND=aws-sm instead, where ESO
-    authenticates through EKS Pod Identity and needs neither.
+    authenticates through EKS Pod Identity and needs neither. aws-sm takes
+    DFE_SECRETS_REGION in their place -- ESO has no store address to resolve
+    without it.
     """
     required = {
         "DFE_ENV",
@@ -92,12 +98,20 @@ def _required_vars(env_vars: dict[str, str]) -> set[str]:
         "DFE_STORAGE_CLASS",
         "DFE_NAMESPACE",
         "DFE_CLICKHOUSE_HOST",
+        # Every root emits this one, empty on a brokerless (slim/mesh) profile,
+        # which is why its PRESENCE is required here where bootstrap.sh leaves
+        # its VALUE optional.
         "DFE_KAFKA_BOOTSTRAP",
         "DFE_OTEL_ENDPOINT",
         "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
     }
-    if env_vars.get("DFE_SECRETS_BACKEND", "openbao") == "openbao":
+    # An empty value defaults to openbao the same way bootstrap.sh's
+    # ${DFE_SECRETS_BACKEND:-openbao} does; `.get(..., "openbao")` alone would
+    # read a present-but-empty output as aws-sm and drop both checks.
+    if (env_vars.get("DFE_SECRETS_BACKEND") or "openbao") == "openbao":
         required |= {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}
+    else:
+        required |= {"DFE_SECRETS_REGION"}
     return required
 
 

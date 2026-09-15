@@ -91,19 +91,28 @@ above still reads `local` as default because
 `cached-object` is render-verified only; it becomes the cluster-tier default
 when it is live-proven, and the table changes then, not before.
 
-**Where the AWS bucket comes from.** `terraform/modules/kubernetes-cluster/aws/object-store.tf`
-provisions the S3 bucket `cached-object` needs on AWS -- SSE-KMS on the
-deployment's own key, all public access blocked, no versioning, a lifecycle
-rule aborting an incomplete multipart upload after 7 days -- and mints a Pod
-Identity role scoped to that bucket alone. `bootstrap.sh` carries the bucket's
-URL onto the cluster secret as the `dfe.hyperi.io/clickhouse_object_store_endpoint`
-annotation, and `argocd/appsets/layer2-data.yaml` passes it through as
-`clickhouse.objectStore.endpoint` -- the value `dfe-clickhouse.storageModel`
-above actually derives `cached-object` from, so an AWS deploy with no bucket
-still resolves `local` rather than a render that never had anywhere to write.
-Set `clickhouse.objectStore.usePodIdentity: true` alongside it and the pod
+**Where the AWS bucket comes from, and what it commits you to.**
+`terraform/modules/kubernetes-cluster/aws/object-store.tf` provisions the S3
+bucket `cached-object` needs on AWS -- SSE-KMS on the deployment's own key,
+ACLs disabled, all public access blocked, plaintext HTTP denied, no versioning,
+a lifecycle rule aborting an incomplete multipart upload after 7 days -- and
+mints a Pod Identity role scoped to that bucket alone. `bootstrap.sh` carries
+the bucket's URL onto the cluster secret as the
+`dfe.hyperi.io/clickhouse_object_store_endpoint` annotation, and
+`argocd/appsets/layer2-data.yaml` passes it through as
+`clickhouse.objectStore.endpoint`. Set
+`clickhouse.objectStore.usePodIdentity: true` alongside it and the pod
 authenticates as that role instead of the static-key ExternalSecret every
 other target uses (Dimension 4: credential binding, below).
+
+That bucket is unconditional, so **every AWS deploy derives `cached-object`**
+-- which is the preference order above applied, not an accident, but it is not
+the opt-in the ClickHouse table still records. The model is locked at first
+deploy, so the first AWS apply is what live-proves it; until then AWS is the
+one target where the table's `opt-in` reads as `derived`. A deployment that
+wants `local` on AWS has to say so: `clickhouse.storageModel: local` in the
+deploy repo's own `infra/clickhouse-cluster.yaml` overlay, before the first
+deploy. There is no dial for it in `deployment.example.yaml` or the aws root.
 
 The two refusals share one guard in `dfe-clickhouse.validateStorageModel`:
 

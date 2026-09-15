@@ -847,34 +847,12 @@ def pending_reason(key: str) -> str | None:
     return PENDING_MIRRORS.get(f"{section}.*")
 
 
-def pending_notes(versions: dict[str, str], stack: str, covered: set[str]) -> list[str]:
-    """One NOTE per PENDING_MIRRORS entry, run unconditionally either way.
-
-    A stack that predates rc.14 (rc.13, rc.12, ...) simply lacks these keys,
-    so nothing in the reactive per-check or coverage loops ever asks about
-    them -- this walks PENDING_MIRRORS itself so a caller auditing that stack
-    still sees which rc.14-only pins it has no value for yet. `covered`
-    excludes a key that has since gained a real CHECKS entry: from that point
-    it is compared strictly, like any other pin, and this function goes quiet
-    for it.
-    """
-    notes: list[str] = []
-    for pattern, reason in sorted(PENDING_MIRRORS.items()):
-        if pattern.endswith(".*"):
-            section = pattern[:-2]
-            keys = sorted(k for k in versions if k.split(".", 1)[0] == section)
-        else:
-            keys = [pattern] if pattern in versions else []
-        if not keys:
-            notes.append(f"  [note] {pattern}: stack '{stack}' does not carry this key yet -- {reason}")
-            continue
-        for key in keys:
-            if key in covered or unconsumed_reason(key):
-                continue
-            notes.append(
-                f"  [note] {key}: stack '{stack}' carries this key with no CHECKS entry yet -- {reason}"
-            )
-    return notes
+def _pattern_is_pinned(pattern: str, versions: dict[str, str]) -> bool:
+    """Whether the selected stack carries a value for a PENDING_MIRRORS entry."""
+    if pattern.endswith(".*"):
+        section = pattern[:-2]
+        return any(k.split(".", 1)[0] == section for k in versions)
+    return pattern in versions
 
 
 # CHECKS runs SSoT -> file, so a literal in a file no check points at is
@@ -1162,22 +1140,35 @@ def apply_fix(versions: dict[str, str]) -> tuple[list[str], list[str]]:
     return fixed, refused
 
 
-def _parse_args() -> argparse.Namespace:
-    """`parse_known_args`, not `parse_args`: main() is called directly by the
-    test suite under the test runner's own argv, which carries flags this
-    script does not own (e.g. `-q`) -- those must be ignored, not rejected."""
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--fix", action="store_true")
-    parser.add_argument("--stack", default=None)
-    args, _unknown = parser.parse_known_args(sys.argv[1:])
-    return args
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    """Strict: an unrecognised flag is an error, not something to skip past.
+
+    A mistyped `--satck 2.2.0-rc.14` that parsed quietly would audit `current`
+    instead and still exit 0, which is the one failure a drift gate must not
+    have. main() takes its argv from the caller rather than reading sys.argv,
+    so the test suite calling main() under the test runner's own argv never
+    reaches this parser at all.
+    """
+    parser = argparse.ArgumentParser(
+        description="Check every version pin in the tree against versions.yaml."
+    )
+    parser.add_argument("--fix", action="store_true", help="rewrite the mirrors that drifted, then re-verify")
+    parser.add_argument("--stack", default=None, help="the stacks.<version> block to audit (default: the `current` pointer)")
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = _parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv or [])
     fix = args.fix
     versions = load_versions(args.stack)
     stack = versions["pointers.current"]
+
+    if fix and args.stack and args.stack != _parse_nested(VERSIONS_FILE.read_text()).get("current"):
+        raise SystemExit(
+            f"--fix WRITES the tree, and the tree mirrors `current`; refusing to "
+            f"propagate stack {args.stack!r} over it. Audit another stack read-only "
+            f"(--stack alone), or move `current` first."
+        )
 
     if fix:
         fixed, refused = apply_fix(versions)
@@ -1197,6 +1188,9 @@ def main() -> int:
 
     failures: list[str] = []
     notes: list[str] = []
+    # A pending key with eight mirrors would otherwise note eight times, and a
+    # wall of notes trains the reader to skip them.
+    noted_pending: set[str] = set()
     checked = 0
 
     for check in CHECKS:
@@ -1205,9 +1199,11 @@ def main() -> int:
         if expected is None:
             reason = pending_reason(key)
             if reason:
-                notes.append(
-                    f"  [note] {label}: stack '{stack}' carries no key '{key}' yet -- {reason}"
-                )
+                if key not in noted_pending:
+                    noted_pending.add(key)
+                    notes.append(
+                        f"  [note] {key}: stack '{stack}' does not pin it yet -- {reason}"
+                    )
                 continue
             failures.append(f"  [config] {label}: versions.yaml key '{key}' not found")
             continue
@@ -1222,18 +1218,32 @@ def main() -> int:
             )
 
     # Coverage: a key read by nothing is dead config, and it stays green forever
-    # unless something asks -- UNLESS it is a known PENDING_MIRRORS key, which
-    # pending_notes (below) reports on its own terms, so this loop just skips
-    # it rather than reporting twice.
+    # unless something asks. A PENDING_MIRRORS key is NOTED rather than failed,
+    # but never skipped in silence -- a pin no check reads is the thing this
+    # file exists to catch.
     covered = {check.key for check in CHECKS}
     for key in sorted(versions):
-        if key in covered or unconsumed_reason(key) or pending_reason(key):
+        if key in covered or unconsumed_reason(key):
+            continue
+        reason = pending_reason(key)
+        if reason:
+            notes.append(
+                f"  [note] {key}: stack '{stack}' pins it with no CHECKS entry yet -- {reason}"
+            )
             continue
         failures.append(
             f"  [dead]    versions.yaml key '{key}' is read by no check -- add a "
             f"CHECKS entry, or an UNCONSUMED reason saying why it has no second copy"
         )
-    notes.extend(pending_notes(versions, stack, covered))
+
+    # PENDING_MIRRORS is temporary by construction: once the selected stack pins
+    # every key on it, it has done its job and must go, or it rots into a
+    # permanent exemption nobody revisits.
+    if PENDING_MIRRORS and all(_pattern_is_pinned(p, versions) for p in PENDING_MIRRORS):
+        failures.append(
+            f"  [stale]   stack '{stack}' pins every PENDING_MIRRORS key -- delete "
+            f"PENDING_MIRRORS; each of those keys is now a normal pin"
+        )
 
     # Stale UNCONSUMED entries rot the same way the pins do.
     for pattern in sorted(UNCONSUMED):
@@ -1275,4 +1285,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

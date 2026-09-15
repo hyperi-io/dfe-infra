@@ -14,8 +14,12 @@
 // clickhouse.objectStore.usePodIdentity) -- the role below is the only
 // credential source ClickHouse ever sees against this bucket.
 
+// The account id qualifies the name because S3's namespace is global and
+// var.name is the dial's own metadata.name -- which deployment.example.yaml
+// ships as "dfe", so an unqualified name would be a bucket anyone could have
+// taken and the first apply would fail BucketAlreadyExists.
 resource "aws_s3_bucket" "clickhouse_object_store" {
-  bucket = "${var.name}-clickhouse"
+  bucket = "${var.name}-clickhouse-${var.provision.account}"
 
   // Same rule as the KMS deletion window above and the root's CloudTrail
   // bucket: only an ephemeral deployment gets the fast, no-confirmation
@@ -23,7 +27,7 @@ resource "aws_s3_bucket" "clickhouse_object_store" {
   // destroy of everything else that shares its lifecycle tag.
   force_destroy = var.tags.lifecycle == "ephemeral"
 
-  tags = { Name = "${var.name}-clickhouse" }
+  tags = { Name = "${var.name}-clickhouse-${var.provision.account}" }
 }
 
 resource "aws_s3_bucket_public_access_block" "clickhouse_object_store" {
@@ -35,9 +39,51 @@ resource "aws_s3_bucket_public_access_block" "clickhouse_object_store" {
   restrict_public_buckets = true
 }
 
-// SSE-KMS on the deployment's own key -- the same key EKS secrets, MSK and the
-// EBS volumes behind every stateful pod already use, so ClickHouse's object
-// data adds no second key for the customer to audit or rotate.
+// ACLs off entirely. Every object here is written by the one Pod Identity role
+// below, so an ACL could only ever carry a grant that role's own policy does
+// not express.
+resource "aws_s3_bucket_ownership_controls" "clickhouse_object_store" {
+  bucket = aws_s3_bucket.clickhouse_object_store.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+// The one deny this bucket carries: the public-access block above refuses a
+// policy or ACL that would grant anyone access, and this refuses a request that
+// already has access but arrives over plaintext HTTP. Same shape the root's
+// CloudTrail bucket uses, built with jsonencode() for the reason the role policy
+// below gives.
+resource "aws_s3_bucket_policy" "clickhouse_object_store" {
+  bucket = aws_s3_bucket.clickhouse_object_store.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.clickhouse_object_store.arn,
+          "${aws_s3_bucket.clickhouse_object_store.arn}/*",
+        ]
+        Condition = {
+          Bool = { "aws:SecureTransport" = "false" }
+        }
+      },
+    ]
+  })
+}
+
+// SSE-KMS on the deployment's own key -- the same key EKS secrets and MSK take,
+// so ClickHouse's object data adds no second key to audit or rotate. The EBS
+// volumes are NOT on it: the gp3 class bootstrap.sh creates
+// (bootstrap/templates/storageclass-aws.yaml.tpl) encrypts with the account's
+// default EBS key, because naming this one also means granting the
+// aws-ebs-csi-driver add-on's role kms:CreateGrant over it.
 resource "aws_s3_bucket_server_side_encryption_configuration" "clickhouse_object_store" {
   bucket = aws_s3_bucket.clickhouse_object_store.id
 
@@ -130,6 +176,18 @@ locals {
         "kms:DescribeKey",
       ]
       Resource = aws_kms_key.this.arn
+      // The same key wraps EKS Secrets and MSK's data at rest, and the key
+      // policy (kms.tf) delegates to IAM, so an unconditioned grant here would
+      // let this pod decrypt any ciphertext under it. ViaService confines the
+      // grant to the calls S3 makes on the pod's behalf. No encryption-context
+      // condition on top: bucket_key_enabled above makes S3 send the BUCKET arn
+      // as the context for the bucket-level key and the object arn for
+      // object-level calls, so pinning one of the two refuses the other.
+      Condition = {
+        StringEquals = {
+          "kms:ViaService" = "s3.${var.provision.region}.amazonaws.com"
+        }
+      }
     },
   ]
 }

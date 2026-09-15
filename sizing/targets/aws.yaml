@@ -25,7 +25,7 @@ node_shapes:
 
 storage_classes:
   state: managed
-  reason: "compute-shapes.yaml sets storage_class_owner: bootstrap for aws -- bootstrap.sh creates the baseline gp3 class (3,000 IOPS / 125 MiB/s, the free tier) when the cluster has none; per-use-case classes with the resolved iops and throughput (A6 in resolve_sizing.py refuses an unset throughput or an iopsPerGB field) are a follow-on, not yet built."
+  reason: "compute-shapes.yaml sets storage_class_owner: bootstrap for aws -- bootstrap.sh creates the baseline gp3 class (3,000 IOPS / 125 MiB/s, the free tier) whenever the deployment's own class is absent, so a PVC always has somewhere to bind; per-use-case classes carrying the resolved iops and throughput (A6 in resolve_sizing.py refuses an unset throughput or an iopsPerGB field) are a follow-on."
 
 karpenter_generation_floor:
   state: managed
