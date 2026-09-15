@@ -40,13 +40,19 @@ CORE_COMPOSITION = frozenset({"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-u
 ARCHIVERLESS = "docker-slim"
 
 # Deployed on demand -- one instance per source, written by the engine.
-ON_DEMAND = ("dfe-fetcher", "dfe-transform-vrl", "dfe-transform-vector", "culvert")
+# dfe-transform-vector belongs here rather than in SEEDED_IDLE because it
+# declares no `idle_when`, so it has no empty state to be stood up in.
+ON_DEMAND = ("dfe-fetcher", "dfe-transform-vector", "culvert")
 
 # Compose declares its services in a committed file and creates none at run time,
 # so the apps a source would otherwise deploy start idle instead, one each.
-COMPOSE_IDLE: dict[str, tuple[str, ...]] = {
-    "docker-single": ("dfe-fetcher", "dfe-transform-vrl")
-}
+COMPOSE_IDLE: dict[str, tuple[str, ...]] = {"docker-single": ("dfe-fetcher",)}
+
+# Seeded empty wherever a transform runs, rather than arriving with a source.
+# Each declares `idle_when` and carries the matching predicate in its own code,
+# so it starts, stays Ready and holds no consumer group until a source fills it.
+SEEDED_IDLE = ("dfe-transform-vrl", "dfe-transform-elastic")
+SEEDED_IDLE_PROFILES = ("single", "scale", "docker-single")
 
 
 def test_the_manifest_names_only_declared_profiles() -> None:
@@ -95,6 +101,18 @@ def test_the_on_demand_apps_are_seeded_only_where_a_source_cannot_deploy_one() -
                 assert app in deployed, f"{app} not in {profile}"
                 continue
             assert app not in deployed, f"{app} in {profile}"
+
+
+def test_the_transforms_are_seeded_idle_rather_than_waiting_for_a_source() -> None:
+    """A tier gets one transform of each kind, stood up empty.
+
+    The pairing is what matters: seeding an app that cannot idle would
+    crash-loop it, so anything listed here must also declare `idle_when`.
+    """
+    for app in SEEDED_IDLE:
+        assert composition.idle_when(app), f"{app} is seeded but declares no idle_when"
+        for profile in SEEDED_IDLE_PROFILES:
+            assert app in composition.default_apps(profile), f"{app} not seeded in {profile}"
 
 
 def test_culvert_is_offered_only_on_the_ha_tiers() -> None:

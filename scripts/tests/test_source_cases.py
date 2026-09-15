@@ -137,6 +137,9 @@ class FakePage:
     def filter(self, has_text=""):
         return self._guard(f"filter:{has_text}")
 
+    def input_value(self, **kwargs):
+        return ""
+
     def inner_text(self, **kwargs):
         return "3 Results"
 
@@ -584,6 +587,14 @@ class TestTheObserveStep:
 
     def test_a_search_that_never_answered_says_so(self):
         assert "no results line" in steps.observe_outcome("fb1", self.FRAME, "", True, "")[1]
+
+    def test_a_frame_already_open_on_the_source_skips_the_dropdown(self):
+        """The frame picks a source of its own; when it is this one there is no option to pick."""
+        frame = FakePage(missing=("option:",))
+        frame.input_value = lambda **kwargs: "fb1"
+
+        assert steps.search_results(frame, "fb1") == (True, "3 Results")
+        assert "option:" not in frame.visited
 
 
 class TestWhatTheRunTidiesUp:
