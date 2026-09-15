@@ -57,7 +57,7 @@ tags:
 
 RESOLVED = """## Written by scripts/resolve_sizing.py -- do not edit by hand.
 tier: scale
-compute_usd_per_hour: 4.2117
+compute_bucket: M
 locked:
   partition_count: 170
 """
@@ -87,13 +87,14 @@ def _deployment(tmp_path: Path, monkeypatch, *, lifecycle: str, created_at: str 
         sizing.write_text(RESOLVED, encoding="utf-8")
 
 
-def test_an_ephemeral_deployment_reports_its_age_and_its_rate(tmp_path: Path, monkeypatch) -> None:
+def test_an_ephemeral_deployment_reports_its_age_and_its_bucket(tmp_path: Path, monkeypatch) -> None:
     _deployment(tmp_path, monkeypatch, lifecycle="ephemeral", created_at=_stamp(2.75), resolved=True)
     notice = dfeops._ephemeral_notice()
     assert notice is not None
     assert "ephemeral deployment (aws)" in notice
     assert "up 2h45m" in notice
-    assert "4.2117 USD/hour" in notice
+    assert "standing compute M" in notice
+    assert "USD" not in notice
 
 
 def test_both_spellings_of_the_stamp_read_the_same(tmp_path: Path, monkeypatch) -> None:
@@ -116,7 +117,7 @@ def test_a_missing_output_or_resolve_still_answers(tmp_path: Path, monkeypatch) 
     notice = dfeops._ephemeral_notice()
     assert notice is not None
     assert "age unavailable (no cluster_created_at output)" in notice
-    assert "compute rate not resolved" in notice
+    assert "compute bucket not resolved" in notice
 
 
 def test_a_stamp_in_no_spelling_at_all_is_unavailable(tmp_path: Path, monkeypatch) -> None:

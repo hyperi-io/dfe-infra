@@ -443,7 +443,7 @@ def test_run_resolve_prints_the_report_even_on_a_fatal_finding(
     report_dir = tmp_path / "sizing"
     report_dir.mkdir()
     (report_dir / "scale.report.md").write_text(
-        "| **total compute** | | | | | | | **1,234** |\n", encoding="utf-8",
+        "| **total compute** | | | | | | **M** |\n", encoding="utf-8",
     )
 
     def fake_run(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess:
@@ -456,7 +456,7 @@ def test_run_resolve_prints_the_report_even_on_a_fatal_finding(
     assert rc == 1
     err = capsys.readouterr().err
     assert "total compute" in err
-    assert "1,234" in err
+    assert "**M**" in err
 
 
 # ---------------------------------------------------------------------------

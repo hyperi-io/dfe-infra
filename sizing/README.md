@@ -58,7 +58,7 @@ target-agnostic core derived here, then concrete shapes from
 | `shapes/resolved/<cloud>-<region>.json` | the committed shape answer, merged over what is there, so API drift is a reviewed diff. Keyed by region: instance-generation availability is not one worldwide |
 | `sizing.auto.tfvars.json` | `node_pools` and `resolved_shapes`, and nothing the root does not declare. Written at the ROOT of `--out`, beside `render_dial.py --tofu`'s own `dial.auto.tfvars.json` -- OpenTofu auto-loads `*.auto.tfvars.json` only from the root module directory, never a subdirectory. This script is the single writer of `node_pools`: it merges the dial's own `node_pools.system` (a group the deployer sizes by hand) with the pools it derives, so the two producers never collide on the same variable |
 | `sizing/<tier>.values.yaml` | only keys the two charts already read |
-| `sizing/<tier>.report.md` | what was sized, from which ratio, at which confidence, at what price, and where the ceiling is |
+| `sizing/<tier>.report.md` | what was sized, from which ratio, at which confidence, in which cost bucket, and where the ceiling is. Prices choose the shapes and are never printed -- see `docs/deployment/aws.md#how-costs-are-described` |
 
 `--fixtures scripts/tests/fixtures/sizing` resolves against captured answers
 instead of calling AWS; `capture` refreshes them and refuses to write an account

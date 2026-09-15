@@ -3541,15 +3541,16 @@ def _ephemeral_notice() -> str | None:
         if created
         else "age unavailable (no cluster_created_at output)"
     )
-    rate = None
+    # A bucket, never a rate: this banner is deployer-facing and states no cost figure.
+    bucket = None
     try:
         resolved = yaml_subset.parse(
             SIZING_RESOLVED.read_text(encoding="utf-8", errors="replace"), source=str(SIZING_RESOLVED)
         )
-        rate = yaml_subset.at(resolved, ("compute_usd_per_hour",))
+        bucket = yaml_subset.at(resolved, ("compute_bucket",))
     except (OSError, yaml_subset.YamlSubsetError):
-        rate = None
-    parts.append(f"standing compute {rate} USD/hour" if rate else "compute rate not resolved")
+        bucket = None
+    parts.append(f"standing compute {bucket}" if bucket else "compute bucket not resolved")
     return " -- ".join(parts)
 
 

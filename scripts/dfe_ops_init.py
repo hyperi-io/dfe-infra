@@ -834,7 +834,7 @@ def _run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, **kwargs)  # type: ignore[call-overload]
 
 
-def _monthly_compute_line(report_text: str) -> str | None:
+def _total_compute_line(report_text: str) -> str | None:
     for line in report_text.splitlines():
         if "total compute" in line:
             return line.strip()
@@ -843,8 +843,9 @@ def _monthly_compute_line(report_text: str) -> str | None:
 
 def run_resolve(dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: Path) -> int:
     """Run `resolve_sizing.py resolve` against the written dial, then print its
-    report path and monthly-compute line. scale tier only -- every other
-    profile is skipped with a one-line explanation, never a crash."""
+    report path and total-compute line, which carries a cost bucket and no
+    figure. scale tier only -- every other profile is skipped with a one-line
+    explanation, never a crash."""
     tier = resolve_sizing.read_dial(dial_path).tier
     if tier != resolve_sizing.SCALE_TIER:
         print(
@@ -875,9 +876,9 @@ def run_resolve(dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: 
         return result.returncode
 
     print(f"dfe-ops init: sizing report at {report_path}", file=sys.stderr)
-    monthly = _monthly_compute_line(report_path.read_text(encoding="utf-8"))
-    if monthly:
-        print(f"dfe-ops init: {monthly}", file=sys.stderr)
+    total = _total_compute_line(report_path.read_text(encoding="utf-8"))
+    if total:
+        print(f"dfe-ops init: {total}", file=sys.stderr)
     if result.returncode != 0:
         print(f"dfe-ops init: resolve_sizing.py refused (exit {result.returncode}) -- see the report above", file=sys.stderr)
     return result.returncode

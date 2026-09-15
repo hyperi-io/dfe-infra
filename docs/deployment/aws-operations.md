@@ -112,8 +112,9 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   deployment tears down cleanly and anything else keeps the vendor's normal
   deletion protection, without a per-resource flag to remember. Every `dfe-ops`
   command against an ephemeral dial also opens with one stderr line: the
-  resolved compute rate from `sizing/resolved.yaml`, plus how long the cluster
-  has been up, from the root's `cluster_created_at` output. Nothing in the tree
+  resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket,
+  never a rate -- plus how long the cluster has been up, from the root's
+  `cluster_created_at` output. Nothing in the tree
   dates a deployment -- a local state file's mtime dates the last apply, and
   the S3 backend leaves none here -- so the control plane's own stamp is the
   reading, and a dial with no cluster behind it reports the age unavailable.

@@ -536,15 +536,32 @@ def test_a5_warns_on_spend_without_failing_the_resolve(catalogue) -> None:
 
 
 def test_a5_prices_storage_at_the_regions_own_rate_not_a_flat_08(catalogue) -> None:
-    """A different region's gp3 price must move the same warning threshold."""
+    """A different region's gp3 price must move the same warning threshold.
+
+    The finding's text states no amount any more, so the proof is which side of
+    one threshold each region lands on rather than two messages differing.
+    """
     choice = _choice(
         volumes={"data": {"type": "gp3", "size_gib": 100000, "iops": 3000, "throughput_mib_s": 500}}
     )
-    cheap = resolve_sizing.assert_caps(choice, {}, catalogue, 1, gp3_usd_per_gib_month=0.01)
-    dear = resolve_sizing.assert_caps(choice, {}, catalogue, 1, gp3_usd_per_gib_month=1.00)
-    cheap_a5 = next(f for f in cheap if f.rule == "A5")
-    dear_a5 = next(f for f in dear if f.rule == "A5")
-    assert cheap_a5.message != dear_a5.message
+    cheap = resolve_sizing.assert_caps(choice, {}, catalogue, 10000, gp3_usd_per_gib_month=0.01)
+    dear = resolve_sizing.assert_caps(choice, {}, catalogue, 10000, gp3_usd_per_gib_month=1.00)
+    assert not [f for f in cheap if f.rule == "A5"]
+    assert [f for f in dear if f.rule == "A5"]
+
+
+def test_a5_states_no_amount_at_all(catalogue) -> None:
+    """The report carries no cost figure, the deployer's own threshold included."""
+    choice = _choice(
+        volumes={"data": {"type": "gp3", "size_gib": 100000, "iops": 3000, "throughput_mib_s": 500}}
+    )
+    finding = next(
+        f
+        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 1000, gp3_usd_per_gib_month=0.08)
+        if f.rule == "A5"
+    )
+    assert "$" not in finding.message
+    assert "1,000" not in finding.message
 
 
 def test_gp3_price_per_gib_month_reads_the_regions_own_value() -> None:
@@ -1503,24 +1520,25 @@ def test_a_storage_model_change_is_refused_without_migrate(tmp_path: Path, capsy
     assert "--migrate" in err
 
 
-def test_the_hourly_rate_is_the_reports_own_shape_table_total(tmp_path: Path) -> None:
-    """One arithmetic, two readers: the banner reads this field and an operator
-    reads the table, so a shape resolving to zero must not move them apart."""
+def test_the_compute_bucket_is_the_reports_own_total_row(tmp_path: Path) -> None:
+    """One bucket, two readers: the banner reads this field and an operator
+    reads the table, so the two may never disagree."""
     dial = _dial(tmp_path, provider="msk", estimate=1000)
     assert _run(dial, tmp_path) == 0
     doc = resolve_sizing._load(tmp_path / "sizing" / "resolved.yaml")
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
 
     total_row = next(line for line in report.splitlines() if "**total compute**" in line)
-    monthly = float(total_row.split("|")[-2].strip().strip("*").replace(",", ""))
-    hourly = float(doc["compute_usd_per_hour"])
-    assert hourly > 0
-    assert round(hourly * resolve_sizing.HOURS_PER_MONTH) == pytest.approx(monthly, abs=1)
+    assert total_row.split("|")[-2].strip().strip("*") == doc["compute_bucket"]
+    assert doc["compute_bucket"] in {"XS", "S", "M", "L", "XL"}
+    assert "compute_usd_per_hour" not in doc
 
 
-def _priced_choice(use_case: str, price: float, count: int) -> resolve_sizing.Choice:
+def _priced_choice(
+    use_case: str, price: float, count: int, vcpu: int = 2
+) -> resolve_sizing.Choice:
     return resolve_sizing.Choice(
-        use_case=use_case, instance_type=f"{use_case}.large", fallbacks=[], vcpu=2,
+        use_case=use_case, instance_type=f"{use_case}.large", fallbacks=[], vcpu=vcpu,
         memory_gib=8.0, generation=9, generation_policy="floor", price_policy="on-demand",
         price_usd_hour=price, physical_processor="Graviton", instance_store_gb=0,
         baseline_iops=3000, baseline_throughput_mib_s=125.0, maximum_iops=48000,
@@ -1528,9 +1546,9 @@ def _priced_choice(use_case: str, price: float, count: int) -> resolve_sizing.Ch
     )
 
 
-def test_a_shape_resolving_to_zero_adds_nothing_to_the_hourly_rate(tmp_path: Path) -> None:
-    """A count of zero billed as one is what moved this field away from the
-    table it restates -- a Karpenter pool that holds no node costs nothing."""
+def test_a_shape_resolving_to_zero_adds_nothing_to_the_compute_bucket(tmp_path: Path) -> None:
+    """A Karpenter pool holding no node stands up no vCPU, so it must not push
+    the deployment a rung up the ladder."""
     core = resolve_sizing.Core(
         tier="scale", focus="economy", headroom=0.0, estimated=True, ingest_gb_per_day=0.0,
         avg_mb_s=0.0, peak_mb_s=0.0, peak_factor=1.0, required_mb_s=0.0, carried_mb_s=0.0,
@@ -1538,10 +1556,12 @@ def test_a_shape_resolving_to_zero_adds_nothing_to_the_hourly_rate(tmp_path: Pat
     dial = resolve_sizing.read_dial(_dial(tmp_path))
     choices = {
         "kafka-broker": _priced_choice("kafka-broker", 0.5, 3),
-        "ci-burst": _priced_choice("ci-burst", 4.0, 0),
+        "ci-burst": _priced_choice("ci-burst", 4.0, 0, vcpu=32),
     }
     doc = resolve_sizing.build_resolved(core, dial, None, choices)
-    assert doc["compute_usd_per_hour"] == 1.5
+    assert doc["compute_bucket"] == "XS"
+    # The rung the empty pool would have crossed, had its one node been counted.
+    assert resolve_sizing._vcpu_bucket(3 * 2 + 32) == "S"
 
 
 def test_an_unchanged_previous_behaves_exactly_as_today(tmp_path: Path) -> None:
@@ -2056,9 +2076,9 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     """Q27/Q29: 3 brokers, 3 ClickHouse replicas plus Keeper, economy, the
     smallest shape that does not OOM.
 
-    gate-3 remedy 1 got this to USD 4,832/month by deriving the data
-    volume's throughput from demand instead of a fixed scale assumption.
-    gate-3 remedy 2 got it to USD 3,274/month by summing `demand_iops` /
+    gate-3 remedy 1 cut this floor by deriving the data volume's throughput
+    from demand instead of a fixed scale assumption.
+    gate-3 remedy 2 cut it again by summing `demand_iops` /
     `demand_throughput_mib_s` in A3 instead of the PROVISIONED figures every
     gp3 volume carries -- but it still gave the mandatory root volume gp3's
     own free minimum (3,000 IOPS / 125 MiB/s) AS its demand, on the theory
@@ -2098,24 +2118,33 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
       (`xlarge`, `4xlarge`) above what root's demand ever forced, so they
       were never inflated by this bug in the first place.
 
-    Verified against the fixture catalogue: total compute USD 1,673/month
-    (kafka-broker $214, kraft-controller $107, clickhouse $351, keeper $214,
-    eks-system $71, general $143 unchanged, ci-burst $572 unchanged) -- a
-    further 28% cut on top of the prior fix's 2,316, from the same counting
-    error one level up: a figure standing in for a demand that was never
-    actually tied to what the deployment carries. The dial asks for a separate
-    controller pool because the controller line is one of the seven above, and
-    a combined quorum sizes no controller shape at all.
+    Verified against the fixture catalogue: total compute S, the shape table
+    reading eks-system XS, general S, kafka-broker S, kraft-controller S,
+    keeper S, clickhouse M and ci-burst M. Both earlier gates cut this floor on
+    the same counting error one level up: a figure standing in for a demand
+    that was never actually tied to what the deployment carries. The dial asks
+    for a separate controller pool because the controller line is one of the
+    seven above, and a combined quorum sizes no controller shape at all.
     """
     _run(_dial(tmp_path, estimate=None, controller_pool="separate"), tmp_path, cloud="aws")
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
-    rows = re.findall(r"\| \*\*total compute\*\* \| .*?\*\*([\d,]+)\*\* \|", report)
+    rows = re.findall(r"\| \*\*total compute\*\* \| .*?\*\*([A-Z]{1,2})\*\* \|", report)
     assert rows, report
-    total = int(rows[0].replace(",", ""))
-    # The verified honest floor, not a hint: state it exactly, not just
-    # "under" some round number, so a future regression that moves it either
-    # way shows up as a failing assertion rather than a silent pass.
-    assert total == 1673, f"the floor's total compute is ${total:,}/month, expected exactly $1,673"
+    # The verified honest floor, not a hint: every line's bucket, so a
+    # regression that moves any one of them shows up as a failing assertion
+    # rather than a silent pass inside a total.
+    assert rows[0] == "S", report
+    assert dict(
+        re.findall(r"^\| ([a-z-]+) \| `[\w.]+` \|.*\| ([A-Z]{1,2}) \|$", report, re.M)
+    ) == {
+        "eks-system": "XS",
+        "general": "S",
+        "kafka-broker": "S",
+        "kraft-controller": "S",
+        "clickhouse": "M",
+        "keeper": "S",
+        "ci-burst": "M",
+    }, report
 
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     shapes = {name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()}

@@ -21,8 +21,9 @@ Two stages, because the ratios are target-agnostic and the shapes are not:
               disk / IOPS / MB/s, partitions, retention, ClickHouse replicas /
               RAM / disk, Keeper, the KRaft controller floor. No cloud in sight.
     target    shapes/compute-shapes.yaml + the cloud's live API -> the concrete
-              instance type, its price, its generation and the silent caps it
-              imposes, asserted against the volume profile.
+              instance type, its generation and the silent caps it imposes,
+              asserted against the volume profile. Prices choose the shape and
+              are never printed -- costs report as T-shirt buckets.
 
 Five artefacts come out, all under ``--out`` (the repo root by default), plus
 ``sizing/<tier>.karpenter.json`` wherever Karpenter runs and
@@ -50,8 +51,8 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    cluster secret. Written only where there are
                                    pools to place.
     sizing/<tier>.report.md        what was sized, from which ratio, at which
-                                   confidence, at what price, and where the
-                                   ceiling is
+                                   confidence, in which cost bucket, and where
+                                   the ceiling is
     sizing/resolved.yaml           the machine-comparable state a re-resolve
                                    diffs against -- see --previous below. Only
                                    carries a value for the locked fields this
@@ -296,6 +297,26 @@ GP3_SOURCE = "https://docs.aws.amazon.com/ebs/latest/userguide/general-purpose.h
 # _gp3_price_per_gib_month below, alongside the live per-region compute price
 # the A5 spend guard already uses.
 HOURS_PER_MONTH = 730
+
+# The cost vocabulary docs/deployment/aws.md#how-costs-are-described defines: a
+# bucket is relative to the deployment's own compute, never to a currency.
+
+# Percent of the deployment's compute total, for one line of the shape table.
+COST_SHARE_BUCKETS: tuple[tuple[float, str], ...] = (
+    (5.0, "XS"),
+    (15.0, "S"),
+    (35.0, "M"),
+    (60.0, "L"),
+)
+
+# vCPU across the whole deployment, because a share of itself is 100 percent for
+# every deployment and would bucket them all alike.
+COMPUTE_VCPU_BUCKETS: tuple[tuple[int, str], ...] = (
+    (16, "XS"),
+    (64, "S"),
+    (256, "M"),
+    (1024, "L"),
+)
 
 BYTES_PER_GIB = 1024**3
 BYTES_PER_GB = 10**9
@@ -2204,8 +2225,7 @@ def assert_caps(
                 "A5",
                 choice.use_case,
                 f"{choice.count} x {choice.instance_type} plus {storage_gib:,} GiB of gp3 each is "
-                f"about ${monthly:,.0f} a month on demand, above the ${spend_warn_usd_month:,.0f} "
-                f"the dial warns at",
+                "over the monthly on-demand spend `sizing.spend_warn_usd_month` warns at",
                 False,
             )
         )
@@ -2771,6 +2791,26 @@ def build_values(
     return out
 
 
+def cost_bucket(share_pct: float) -> str:
+    """One shape line's bucket, from its share of the deployment's compute total."""
+    for ceiling, bucket in COST_SHARE_BUCKETS:
+        if share_pct < ceiling:
+            return bucket
+    return "XL"
+
+
+def compute_bucket(choices: dict[str, Choice]) -> str:
+    """The whole deployment's bucket, from the vCPU every chosen shape stands up."""
+    return _vcpu_bucket(sum(choice.vcpu * choice.count for choice in choices.values()))
+
+
+def _vcpu_bucket(vcpu_total: int) -> str:
+    for ceiling, bucket in COMPUTE_VCPU_BUCKETS:
+        if vcpu_total < ceiling:
+            return bucket
+    return "XL"
+
+
 def build_resolved(
     core: Core,
     dial: Dial,
@@ -2787,12 +2827,14 @@ def build_resolved(
     ``--migrate``. ``storage_model`` is derived here too, so it is recorded and
     a change to it is refused the same way.
 
-    ``compute_usd_per_hour`` is the report's own shape-table total, over every
-    shape this resolve picked at the count it picked. It is here as well as
-    there because the report is prose an operator reads once, and this file is
-    what a tool reads later. Compute only: EBS and the managed broker's storage
-    are usage-based and are not in it, and the Karpenter-backed pools bill only
-    while they hold nodes, so the figure is a sized ceiling and not an idle rate.
+    ``compute_bucket`` is the deployment's own size on the T-shirt scale
+    docs/deployment/aws.md#how-costs-are-described defines, laddered by the vCPU
+    every shape this resolve picked stands up at the count it picked. It is here
+    as well as in the report because the report is prose an operator reads once,
+    and this file is what a tool reads later. A deploy repo carries this file, so
+    it carries a bucket and never a rate. Compute only: EBS and the managed
+    broker's storage are usage-based, and the Karpenter-backed pools hold nodes
+    only while they run, so the bucket is a sized ceiling and not an idle load.
     """
     locked: dict[str, object] = {
         "partition_count": core.partitions,
@@ -2813,9 +2855,7 @@ def build_resolved(
         "resolved": datetime.now(UTC).date().isoformat(),
     }
     if choices:
-        doc["compute_usd_per_hour"] = round(
-            sum(choice.price_usd_hour * choice.count for choice in choices.values()), 4
-        )
+        doc["compute_bucket"] = compute_bucket(choices)
     doc["locked"] = locked
     return doc
 
@@ -2977,25 +3017,32 @@ def build_report(
             "",
             "## The shapes, and what they cost",
             "",
-            "| Workload | Type | vCPU | RAM GiB | Generation | Policy | USD/hour | USD/month |",
-            "|---|---|---|---|---|---|---|---|",
+            "| Workload | Type | vCPU | RAM GiB | Generation | Policy | Cost |",
+            "|---|---|---|---|---|---|---|",
         ]
-        total = 0.0
-        for choice in choices.values():
-            monthly = choice.price_usd_hour * HOURS_PER_MONTH * choice.count
-            total += monthly
+        monthly = {
+            use_case: choice.price_usd_hour * HOURS_PER_MONTH * choice.count
+            for use_case, choice in choices.items()
+        }
+        total = sum(monthly.values())
+        for use_case, choice in choices.items():
+            share = monthly[use_case] / total * 100 if total else 0.0
             lines.append(
                 f"| {choice.use_case} | `{choice.instance_type}` | {choice.vcpu} | "
                 f"{choice.memory_gib:,.0f} | {choice.generation} "
                 f"({choice.physical_processor or 'unnamed'}) | {choice.generation_policy} / "
-                f"{choice.price_policy} | {choice.price_usd_hour:.5f} | {monthly:,.0f} |"
+                f"{choice.price_policy} | {cost_bucket(share)} |"
             )
-        lines.append(f"| **total compute** | | | | | | | **{total:,.0f}** |")
+        lines.append(f"| **total compute** | | | | | | **{compute_bucket(choices)}** |")
         lines += [
             "",
-            "Prices are on-demand Linux from the AWS Pricing API, which is the only source that "
-            "names the Graviton generation -- EC2's `ProcessorInfo` does not. A candidate with no "
-            "price fails the selection rather than winning it silently.",
+            "Costs are T-shirt buckets on the scale "
+            "`docs/deployment/aws.md#how-costs-are-described` defines, never figures: each shape "
+            "line is its share of this deployment's compute, and the total row is the deployment "
+            "itself on a vCPU ladder. On-demand Linux prices from the AWS Pricing API choose the "
+            "shapes and are never printed -- that API is also the only source naming the Graviton "
+            "generation, since EC2's `ProcessorInfo` does not, and a candidate with no price "
+            "fails the selection rather than winning it silently.",
         ]
 
     lines += [
