@@ -29,6 +29,7 @@ import contextlib
 import importlib.util
 import io
 import sys
+import tempfile
 from pathlib import Path
 
 from _expect import expect, standalone, summary
@@ -601,6 +602,91 @@ def test_pending_mirrors_is_exactly_the_documented_rc14_set() -> None:
                "providers.hashicorp-archive",
            },
            f"{sorted(drift.PENDING_MIRRORS)}")
+
+
+def _dead_guards_over(rules: str, versions: dict[str, str]) -> list[str]:
+    """Run dead_guards against a throwaway versions.yaml + constraints pair.
+
+    dead_guards resolves the constraints path out of versions.yaml and then off
+    REPO_ROOT, so both module globals move to a temp tree -- nothing tracked is
+    touched and a failed run leaves no mess.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "constraints").mkdir()
+        (root / "constraints" / "under-test.yaml").write_text(
+            'schema: 1\nstack: "9.9.9"\n\nrules:\n\n' + rules, encoding="utf-8"
+        )
+        (root / "versions.yaml").write_text(
+            'schema: 2\ncurrent: "9.9.9"\n\nstacks:\n\n  9.9.9:\n'
+            '    constraints: "constraints/under-test.yaml"\n',
+            encoding="utf-8",
+        )
+        original_root, original_file = drift.REPO_ROOT, drift.VERSIONS_FILE
+        try:
+            drift.REPO_ROOT = root
+            drift.VERSIONS_FILE = root / "versions.yaml"
+            return drift.dead_guards(versions, "9.9.9")
+        finally:
+            drift.REPO_ROOT, drift.VERSIONS_FILE = original_root, original_file
+
+
+# One rule per guard form, watching the same key, so a test can move that key
+# and see which forms notice (dfe-infra#295: only when-equals did).
+_RANGE_RULE = (
+    "  ceiling:\n"
+    '    severity: "error"\n'
+    '    when-key: "operators.some-operator"\n'
+    '    when-range: ">=0.51.0 <0.52.0"\n'
+    '    require-key: "services.some-service"\n'
+    '    require-range: ">=4.1.0 <=4.2.0"\n'
+)
+_EQUALS_RULE = (
+    "  pairing:\n"
+    '    severity: "warn"\n'
+    '    when-key: "operators.some-operator"\n'
+    '    when-equals: "0.51.0"\n'
+    '    require-key: "services.some-service"\n'
+    '    require-equals: "4.2.0"\n'
+)
+
+
+def test_a_when_range_guard_the_pin_has_left_is_reported_dead() -> None:
+    """Lifting a pinned operator outside its range used to report nothing at
+    all, so an error-severity rule went inert and read as passing."""
+    problems = _dead_guards_over(
+        _RANGE_RULE, {"operators.some-operator": "1.2.0", "services.some-service": "4.2.0"}
+    )
+    expect("the range guard is reported", len(problems) == 1, f"got {problems}")
+    if problems:
+        expect("and the message names when-range", "when-range" in problems[0], problems[0])
+        expect("and the value that left it", "1.2.0" in problems[0], problems[0])
+
+
+def test_a_when_range_guard_the_pin_still_satisfies_is_left_alone() -> None:
+    """The inverse: a live range must not be reported, or the check cries wolf
+    on every stack and stops being read."""
+    problems = _dead_guards_over(
+        _RANGE_RULE, {"operators.some-operator": "0.51.0", "services.some-service": "4.2.0"}
+    )
+    expect("a live range guard raises nothing", problems == [], f"got {problems}")
+
+
+def test_both_guard_forms_are_reported_by_the_same_move() -> None:
+    """The defect was asymmetry: one pin move, one form reported, one silent."""
+    problems = _dead_guards_over(
+        _RANGE_RULE + "\n" + _EQUALS_RULE,
+        {"operators.some-operator": "1.2.0", "services.some-service": "4.2.0"},
+    )
+    expect("both rules are reported", len(problems) == 2, f"got {problems}")
+
+
+def test_the_committed_constraints_carry_no_dead_guard() -> None:
+    """Two of the four live rules are when-range, so this also catches the range
+    comparison being inverted."""
+    versions = drift.load_versions()
+    problems = drift.dead_guards(versions, versions["pointers.current"])
+    expect("the committed rules can all still fire", problems == [], f"got {problems}")
 
 
 def test_main_ignores_the_ambient_argv() -> None:

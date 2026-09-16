@@ -127,6 +127,12 @@ tag certifies the whole set as one stack version (`stack:` metadata +
 lockstep `content:` repo tags); the full release model is in dfe-docs
 `deployment/stack-versioning.md`.
 
+`content:` also records the dfe-docker ref that runs each stack. dfe-docker
+cuts no per-stack tag, so the entry is a commit rather than a version, and
+`dfe-stack cut` re-resolves it from dfe-docker main at cut time. To reproduce
+an old stack's docker path, check dfe-docker out at that stack's recorded ref;
+for the current stack, main is the ref.
+
 `content:` also pins the authored files an app ships and the engine serves -
 the reference transform pipelines, and the source catalogue a transform ships.
 The engine chart's `content.entries` turns each pin into one init container

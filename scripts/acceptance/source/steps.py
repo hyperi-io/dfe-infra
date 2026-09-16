@@ -47,7 +47,7 @@ ARCHIVE_DEADLINE = 300.0
 IDLE_WINDOW = 120
 # Source names this suite mints, so a sweep can tell its own strays from a
 # deployment's real sources.
-RUN_PREFIXES = ("fb", "cw", "el", "onboard")
+RUN_PREFIXES = ("fb", "cw", "el", "vc", "onboard")
 # The whole minted shape rather than the prefix alone, because a sweep removes
 # sources and a deployment may own one called `elastic` or `fbprod`.
 RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")

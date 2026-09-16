@@ -586,6 +586,8 @@ non_members:
 
   dfe-transform-splack: "Coming: alpha, unpublished, and no release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
 
+  dfe-toolbox: "Not a repo: the chart and the dfe-toolbox-{base,aws,gcp,azure} image family are built from Dockerfiles in THIS repo (docker/dfe-toolbox/) off the stack's own toolbox: pins, so it has no upstream to hold a build-cycle edge against. A member is a repo that releases something this repo consumes; dfe-toolbox releases with dfe-infra because it IS dfe-infra."
+
 # ---------------------------------------------------------------------------
 # EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the
 # consumer's own file at a line where a line is meaningful; a whole-file

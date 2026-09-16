@@ -54,6 +54,12 @@ class Run:
     transform_repo: Path
     receiver_url: str
     verify: bool
+    #: Where the program a case uploads is read from. The same checkout as the
+    #: corpus for every case but vector, whose app ships its own pipeline.
+    program_repo: Path | None = None
+
+    def programs(self) -> Path:
+        return self.program_repo or self.transform_repo
 
 
 class Case:
@@ -67,6 +73,10 @@ class Case:
     #: The checkout beside the engine repo this kind reads its inputs from, for
     #: a run that was given no --transform-repo. Empty when it reads none.
     companion_repo: str = ""
+    #: The checkout the program comes from, when it is not the one above. Only
+    #: the vector case splits them: its app ships the pipeline, dfe-transform-vrl
+    #: ships the corpus both of them grade against.
+    program_repo: str = ""
     #: What the two shared waits report as, so the report keeps this kind's words.
     instance_step: str = ""
     reporting_step: str = ""
@@ -267,9 +277,10 @@ class FilebeatCase(Case):
         Those sets only exist once the deploy has created the instance, which is
         why this is not part of create.
         """
+        programs = run.programs()
         wanted = [
-            (self.PROGRAM_SET, Path(self.PROGRAM).name, (run.transform_repo / self.PROGRAM).read_text(encoding="utf-8")),
-            (self.ENRICHMENT_SET, Path(self.ENRICHMENT).name, (run.transform_repo / self.ENRICHMENT).read_text(encoding="utf-8")),
+            (self.PROGRAM_SET, Path(self.PROGRAM).name, (programs / self.PROGRAM).read_text(encoding="utf-8")),
+            (self.ENRICHMENT_SET, Path(self.ENRICHMENT).name, (programs / self.ENRICHMENT).read_text(encoding="utf-8")),
         ]
         console_detail, api_detail, refused = "", "", ""
         hints: list[str] = []
@@ -536,6 +547,43 @@ class ElasticCase(FilebeatCase):
         return []
 
 
+# --- vector: the same program, run by a supervised Vector ---------------------
+
+
+class VectorCase(FilebeatCase):
+    """The same filebeat lines and the same program, through dfe-transform-vector.
+
+    dfe-transform-vector's bundled pipeline EMBEDS dfe-transform-vrl's
+    filebeat.vrl byte-identical, wrapped in a Vector `remap` and carrying the
+    same timezone table (its pipelines/filebeat/README.md records the provenance
+    and the commit). So this is the filebeat case with the program written as
+    Vector YAML into an app that supervises Vector, and the same column proves
+    it: one program, two runtimes, one expected output.
+
+    The corpus still comes out of dfe-transform-vrl; only the program moves, so
+    the case names two checkouts.
+    """
+
+    TRANSFORM_ENGINE = "vector"
+    # dfe-transform-vector pipelines/filebeat/. The wrapper writes a transform
+    # file into Vector's config dir verbatim, so the file declares its own
+    # top-level enrichment_tables and the VRL's timezone lookups resolve.
+    PROGRAM = "pipelines/filebeat/filebeat.yaml"
+    ENRICHMENT = "pipelines/filebeat/timezones.csv"
+    DISPLAY = "Vector transform source test"
+    DESCRIPTION = (
+        "Post-deploy source test: real filebeat lines through the supervised "
+        "Vector pipeline, archived."
+    )
+
+    service = f"dfe-transform-{TRANSFORM_ENGINE}"
+    #: The corpus archive, shared with the filebeat and elastic cases.
+    companion_repo = "dfe-transform-vrl"
+    #: The checkout the program and its table are read from.
+    program_repo = "dfe-transform-vector"
+    prefix = "vc"
+
+
 # --- a fetched AWS upstream --------------------------------------------------
 
 
@@ -632,6 +680,7 @@ CASES: dict[str, type[Case]] = {
     "filebeat": FilebeatCase,
     "cloudwatch": FetchedAwsCase,
     "elastic": ElasticCase,
+    "vector": VectorCase,
 }
 
 

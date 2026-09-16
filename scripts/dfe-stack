@@ -88,6 +88,7 @@ import envfile  # noqa: E402
 import profiles  # noqa: E402
 import registry_pins  # noqa: E402
 import suite_graph  # noqa: E402
+import version_range  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
@@ -717,42 +718,6 @@ def cmd_verify(args: argparse.Namespace) -> int:
 # component locks declared in the stack's constraints file (guard + requirement).
 # ---------------------------------------------------------------------------
 
-_OPS = {
-    ">=": lambda a, b: a >= b,
-    "<=": lambda a, b: a <= b,
-    ">": lambda a, b: a > b,
-    "<": lambda a, b: a < b,
-    "==": lambda a, b: a == b,
-}
-
-
-def _ver_tuple(s: str) -> tuple[int, ...]:
-    """Tolerant version -> tuple of ints (strip a leading v, take leading-numeric
-    dotted segments). 26.3.13.31 -> (26,3,13,31); v26.1.8 -> (26,1,8)."""
-    s = s.strip()
-    if s.startswith("v"):
-        s = s[1:]
-    parts: list[int] = []
-    for seg in s.split("."):
-        m = re.match(r"\d+", seg)
-        if not m:
-            break
-        parts.append(int(m.group(0)))
-    return tuple(parts)
-
-
-def _satisfies_range(version: str, spec: str) -> bool:
-    """ALL whitespace-separated comparators (>= <= > < ==) must hold."""
-    av = _ver_tuple(version)
-    for token in spec.split():
-        m = re.match(r"(>=|<=|==|>|<)\s*(.+)", token)
-        if not m:
-            return False
-        if not _OPS[m.group(1)](av, _ver_tuple(m.group(2))):
-            return False
-    return True
-
-
 def flatten_pins(v: dict) -> dict[str, str]:
     """Pin sections -> dotted keys (operators.keda, services.kafka-version)."""
     flat: dict[str, str] = {}
@@ -774,8 +739,17 @@ def _guard_holds(rule: dict, pins: dict) -> bool:
     if "when-equals" in rule:
         return val == rule["when-equals"]
     if "when-range" in rule:
-        return _satisfies_range(val, rule["when-range"])
+        return version_range.satisfies(val, rule["when-range"])
     return True
+
+
+def _guard_text(rule: dict) -> str:
+    """The guard as written, for a message that names what failed to match."""
+    if "when-equals" in rule:
+        return f"when-equals {rule['when-equals']!r}"
+    if "when-range" in rule:
+        return f"when-range {rule['when-range']!r}"
+    return "when-key"
 
 
 def _requirement_ok(rule: dict, pins: dict) -> tuple[bool, str | None]:
@@ -787,7 +761,7 @@ def _requirement_ok(rule: dict, pins: dict) -> tuple[bool, str | None]:
     if "require-equals" in rule:
         return val == rule["require-equals"], val
     if "require-range" in rule:
-        return _satisfies_range(val, rule["require-range"]), val
+        return version_range.satisfies(val, rule["require-range"]), val
     if "require-matches" in rule:
         return rule["require-matches"] in val, val
     return True, val
@@ -968,17 +942,26 @@ def cmd_compat_check(args: argparse.Namespace) -> int:
     rules = con.get("rules", {})
     waivers = con.get("waivers", {})
     failures = 0
+    dead = 0
     for rid, rule in rules.items():
         if rid in waivers and not _waiver_expired(waivers[rid]):
             print(f"waived {rid}: {waivers[rid].get('reason', '')}")
             continue
         if rid in waivers:  # waiver present but EXPIRED -> rule re-activates
             print(f"WAIVER EXPIRED {rid}: {waivers[rid].get('expires')} -- rule re-activated")
+        sev = rule.get("severity", "error")
         if not _guard_holds(rule, pins):
-            print(f"n/a    {rid}: guard not met (skipped)")
+            # An error-severity rule whose guard cannot match is inert, and an
+            # inert rule reads as a passing one -- so --strict counts it.
+            if sev == "error":
+                print(f"DEAD   {rid}: guard {_guard_text(rule)} does not match "
+                      f"{rule.get('when-key')} = {pins.get(rule.get('when-key'))} -- "
+                      f"the rule can never fire; re-point or delete it")
+                dead += 1
+            else:
+                print(f"n/a    {rid}: guard not met (skipped)")
             continue
         ok, actual = _requirement_ok(rule, pins)
-        sev = rule.get("severity", "error")
         if ok:
             print(f"ok     {rid}: {rule.get('require-key')} = {actual}")
             continue
@@ -991,10 +974,14 @@ def cmd_compat_check(args: argparse.Namespace) -> int:
     for wid, w in sorted(waivers.items()):
         if w.get("expires"):
             print(f"waiver {wid}: expires {w['expires']} ({w.get('scope', w.get('reason', ''))})")
-    if failures and args.strict:
-        print(f"\n{failures} error-severity constraint(s) violated ({name})")
+    if (failures or dead) and args.strict:
+        if failures:
+            print(f"\n{failures} error-severity constraint(s) violated ({name})")
+        if dead:
+            print(f"\n{dead} error-severity rule(s) can never fire ({name}) -- a guard "
+                  f"that matches nothing reports as a pass")
         return 1
-    tail = " (strict: no error violations)" if args.strict else " (advisory)"
+    tail = " (strict: no error violations or dead guards)" if args.strict else " (advisory)"
     print(f"\ncompat-check {name}: {len(rules)} rule(s) checked{tail}")
     return 0
 
@@ -1223,6 +1210,36 @@ def _carry_constraints(root: dict, from_name: str, new: str) -> str | None:
     return dst_rel
 
 
+_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _stamp_git_content(block: list[str], from_pins: dict, org: str, held: list[str]) -> list[str]:
+    """Re-resolve every content entry whose value is a git commit, not a tag.
+
+    A content repo that cuts a tag per stack release (dfe-schemas, dfe-deploy,
+    dfe-hyperdx) is moved by the lockstep tagger and by Renovate. One that does
+    not -- dfe-docker -- can only be recorded by commit, and the key NAMES the
+    repo, so this needs no table: a 40-hex value means "resolve <org>/<key> at
+    main", and any other value is a tag somebody else owns.
+
+    Without this, an old stack names no dfe-docker ref at all and the only
+    pairing that reproduces its docker path is "whatever main looked like that
+    week" (dfe-infra#171).
+    """
+    moved: list[str] = []
+    for name, current in sorted(from_pins.get("content", {}).items()):
+        if not _GIT_SHA.match(current):
+            continue
+        sha = registry_pins.head_commit(org, name)
+        if sha == current:
+            held.append(f"{name} {current[:12]} (already at main)")
+            continue
+        if not _rewrite_scalar(block, "content", name, sha):
+            raise SystemExit(f"error: no content.{name} pin to rewrite")
+        moved.append(f"{name} {current[:12]} -> {sha[:12]} (git ref)")
+    return moved
+
+
 def cmd_cut(args: argparse.Namespace) -> int:
     """Cut a new stack version from the CURRENT LATEST build of every app.
 
@@ -1231,6 +1248,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
     repins the matching digest. Third-party pins carry over untouched: those are
     Renovate's to move, and several are deliberately held below a ceiling (the
     ClickHouse LTS line, the Kafka version strimzi supports).
+
+    A content entry recorded as a git commit rather than a tag is re-resolved
+    here too, so the new stack names the exact ref that ran it.
 
     `stack.previous` is DERIVED, not cloned: the source block is by definition
     the new version's predecessor, so cut re-points it at `--from`.
@@ -1294,6 +1314,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
                 f"block and re-run"
             )
         moved.append(f"{app} {current} -> {tag}")
+
+    moved += _stamp_git_content(block, from_pins, args.org, held)
 
     print(f"cut {new} from {from_name}")
     for line in moved:

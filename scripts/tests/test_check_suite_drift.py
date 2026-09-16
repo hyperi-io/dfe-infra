@@ -339,6 +339,16 @@ def main() -> int:
             "outlived the advisory",
             suite=SUITE + 'non_members:\n  dfe-gone: "no release tag yet"\n',
         )
+
+        # Held at zero on the committed tree: a new chart joins the graph or
+        # records in suite.yaml why it does not.
+        proc = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts" / "check_suite_drift.py")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        expect("the committed suite.yaml raises no advisory",
+               "0 advisory" in proc.stdout, proc.stdout + proc.stderr)
+        expect("and still passes", proc.returncode == 0, f"exit {proc.returncode}")
         return summary()
 
 

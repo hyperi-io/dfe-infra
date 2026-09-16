@@ -175,7 +175,7 @@ spec:
       source:
         repoURL: https://charts.redpanda.com
         chart: operator
-        targetRevision: "26.1.6"
+        targetRevision: "26.1.11"
         helm:
           valuesObject:
             crds:

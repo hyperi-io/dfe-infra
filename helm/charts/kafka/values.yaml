@@ -117,8 +117,8 @@ kafka:
     acceptLicense: false
     image:
       repository: docker.redpanda.com/redpandadata/redpanda
-      # Broker tag the operator chart 26.1.6 pairs with (see versions.yaml).
-      tag: "v26.1.8"
+      # Broker tag the operator chart 26.1.11 pairs with (see versions.yaml).
+      tag: "v26.1.17"
     auth:
       # Bootstrap superuser the operator creates + manages (its admin identity
       # for reconciling the User CR). Operator generates its password Secret.
