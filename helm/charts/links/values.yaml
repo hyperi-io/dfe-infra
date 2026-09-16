@@ -15,7 +15,7 @@ image:
   repository: nginxinc/nginx-unprivileged
   tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
   # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
-  digest: "sha256:aa8c9087d36d93e9d650c5365f883b421e8214aedbad24ade52b844c583358f1"
+  digest: "sha256:2ddec616f1cb58bcac057aa388f28cb81e35137641ef4226d321714499329bd1"
   pullPolicy: IfNotPresent
   # Public Docker Hub image: suppress the fleet-wide imagePullSecrets.
   public: true
