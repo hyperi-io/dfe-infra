@@ -15,7 +15,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:e87c61355f03a7d5825de56c135955e2a91db56755049144be73bf35e676e622"
+  digest: "sha256:83830fe0121fccef9c9685206142f1a7a55ddcc017c2cf0274cb6b6b2f98387d"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -120,7 +120,7 @@ content:
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.38@sha256:748804e59f1394668190aabc6c7d2c0f7199ecb85f3b2f03cf54d74b3eb340ac"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.39@sha256:a0c78809613925977050dc0845c64684de65a484361691cf16d814765c5f9c4f"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
@@ -130,12 +130,12 @@ content:
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.24@sha256:cbf7a83fa756060000c6c7f479cb283da347099f1ccc433ca33804498c139e03"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.26@sha256:7428a262ad6168677eb03446ef338e64e0b23d670c558925ceb0620f899be828"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.23@sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.24@sha256:838de184ba84412bfaaec44463de3d37c0fb0ba44a981792e84456ebd1e686d1"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
