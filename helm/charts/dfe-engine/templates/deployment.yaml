@@ -34,6 +34,22 @@ spec:
         # The engine reads the app manifest once at startup, so a manifest edit
         # reaches a running deployment only by moving the pod template.
         checksum/app-catalogue: {{ include (print $.Template.BasePath "/app-catalogue.yaml") . | sha256sum }}
+        # The same for the three auth ConfigMaps: the init container copies them
+        # into the config volume once at pod start, so an edit sits unread until
+        # something moves the pod template. The deployment supplies them by name,
+        # so their content is outside this chart and `lookup` is what reads it --
+        # which answers on a live `helm install`, the umbrella path this is for.
+        # Under `helm template` it reads empty, and that is the Argo path, where
+        # Reloader is a layer 1 addon and the reload annotations above do the job.
+        {{- with .Values.authConfig.providersConfigMap }}
+        checksum/oidc-providers: {{ (lookup "v1" "ConfigMap" $.Release.Namespace .).data | toYaml | sha256sum }}
+        {{- end }}
+        {{- with .Values.authConfig.groupsConfigMap }}
+        checksum/auth-groups: {{ (lookup "v1" "ConfigMap" $.Release.Namespace .).data | toYaml | sha256sum }}
+        {{- end }}
+        {{- with .Values.authConfig.caBundleConfigMap }}
+        checksum/ca-bundle: {{ (lookup "v1" "ConfigMap" $.Release.Namespace .).data | toYaml | sha256sum }}
+        {{- end }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
@@ -309,17 +325,25 @@ spec:
             # were silently ignored, leaving CH at the localhost:9000 default. The
             # connection authenticates against the always-present `default` db;
             # the startup bootstrap CREATEs the DFE data database (clickhouse.database).
-            # secure=false: in-cluster CH is plaintext HTTP on :8123 (the engine
-            # default secure=true would fail the TLS handshake). The engine has NO
-            # PostgreSQL (YAML/git SSoT) -- the old DFE_ENGINE_PG_* env was dead.
+            # The engine has NO PostgreSQL (YAML/git SSoT) -- the old
+            # DFE_ENGINE_PG_* env was dead.
             - name: DFE_CLICKHOUSE_HOST
               value: {{ .Values.clickhouse.host | quote }}
             - name: DFE_CLICKHOUSE_PORT
               value: {{ .Values.clickhouse.port | quote }}
             - name: DFE_CLICKHOUSE_DATA_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
+            # Default false because in-cluster CH is plaintext HTTP on :8123 and
+            # the engine's own default is secure, which would fail the handshake.
+            # An external TLS ClickHouse sets clickhouse.secure and moves the port.
             - name: DFE_CLICKHOUSE_SECURE
-              value: "false"
+              value: {{ .Values.clickhouse.secure | quote }}
+            {{- if .Values.clickhouse.secure }}
+            # Rendered only under TLS, because a plaintext connection presents no
+            # certificate to verify. false is for a self-signed external server.
+            - name: DFE_CLICKHOUSE_VERIFY
+              value: {{ .Values.clickhouse.verify | quote }}
+            {{- end }}
             # Default TTL for every time-series table; 0 = none; a source or a
             # dfe-schemas TTL overrides it. The dfe-schema Job carries the same value.
             - name: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS
@@ -379,6 +403,12 @@ spec:
             # callback and a hosted IdP refuses to register one.
             - name: DFE_API_FORWARDED_ALLOW_IPS
               value: {{ .Values.api.forwardedAllowIps | quote }}
+            {{- end }}
+            {{- with .Values.api.jwtExpireMinutes }}
+            # How long an issued token stays valid. Unset leaves the engine's own
+            # 60-minute default (settings.py: api.jwt_expire_minutes).
+            - name: DFE_API_JWT_EXPIRE_MINUTES
+              value: {{ . | quote }}
             {{- end }}
             # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
             # the WRITABLE config mount. The default ./.secrets resolves to
@@ -538,6 +568,19 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           # Probes hit the observability port (#106), not the API port -- the
           # engine serves health on 9090 now (with /health/* aliases).
+          #
+          # startupProbe targets /livez -- there is no startup route. Kubernetes
+          # suspends liveness until it passes, so one path buys the long boot
+          # budget and keeps the tight liveness period, and the two cannot drift.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: obs
+            # 30 * 10s = 5 min. First boot seeds every registry, mints its
+            # secrets and reconciles the ClickHouse tenant fence before it
+            # answers, which is longer than the 10s liveness delay allows for.
+            failureThreshold: 30
+            periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /livez

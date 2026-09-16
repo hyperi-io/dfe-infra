@@ -42,6 +42,13 @@
 #   for each profile from this, so adding an app to the default path is an edit
 #   HERE rather than a hand-composed list per tier.
 #
+#   There is deliberately NO maturity key beside it: an app this list seeds has
+#   to be listable, so a maturity gate hiding it from the console would
+#   contradict the same file's own default composition (dfe-infra#329). An app
+#   not ready to be offered is kept out of `default_in` instead. suite.yaml's
+#   `maturity` answers a different question -- whether an unattended suite pass
+#   may pick the member up -- and is not a second copy of this.
+#
 # idle_when
 #   The config dot-paths whose emptiness means the app has NO WORK. It declares
 #   what unconfigured looks like, for the engine, the charts, the docs and

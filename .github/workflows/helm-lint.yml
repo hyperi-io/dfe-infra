@@ -162,20 +162,31 @@ jobs:
       # case above, which stays offline. This repo holds the SSoT and already
       # owns that check, so the third copy is compared here too (dfe-infra#306).
       #
-      # dfe-engine is currently PRIVATE, and the default GITHUB_TOKEN cannot
-      # read a sibling private repo's contents -- the same gap
-      # check_submodule_drift.py already documents for this exact repo. Exit 2
-      # (snapshot unreadable) is logged loudly but does not fail the job; exit
-      # 1 (a real declaration mismatch) does.
+      # dfe-engine is PRIVATE, and the default GITHUB_TOKEN cannot read a
+      # sibling private repo's contents -- the same gap
+      # check_submodule_drift.py documents. Exit 2 (snapshot unreadable) used
+      # to be logged and swallowed, which read as a pass: the mirror went stale
+      # after #300 and #344 moved apps.yaml and nothing said so. Now a run
+      # carrying DFE_DEPLOY_TOKEN must be able to read it, and exit 2 there
+      # FAILS -- that secret needs contents:read on dfe-engine as well as
+      # dfe-deploy. A run without it skips and says so rather than passing (#200).
       - name: Engine's bundled apps.yaml snapshot matches the SSoT
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN || github.token }}
+          HAS_ENGINE_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
         run: |
           set +e
           python3 scripts/composition.py --check-engine-snapshot
           code=$?
           set -e
-          test "$code" -ne 1
+          if [[ "$code" -eq 2 && "$HAS_ENGINE_TOKEN" != "true" ]]; then
+            echo "::notice::engine snapshot not checked -- this run has no token that can read hyperi-io/dfe-engine, so the comparison never ran. Mint DFE_DEPLOY_TOKEN with contents:read on dfe-engine (#200). Skipped rather than reported as a pass."
+            exit 0
+          fi
+          if [[ "$code" -eq 2 ]]; then
+            echo "::error::engine snapshot UNREADABLE with DFE_DEPLOY_TOKEN present -- widen that token to contents:read on hyperi-io/dfe-engine. An unread mirror is not a passing check."
+          fi
+          exit "$code"
 
       # An over-wide egress policy renders green and passes a dry-run, so the
       # derived external-service egress is checked by set equality per mode.
