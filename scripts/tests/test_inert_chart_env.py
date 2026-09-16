@@ -50,6 +50,10 @@ CHARTS = REPO_ROOT / "helm" / "charts"
 MANIFEST = REPO_ROOT / "apps.yaml"
 COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 
+# Where a chart may live. culvert and the gateway moved under helm/edge, so a
+# sweep rooted at helm/charts alone would drop them without saying so.
+CHART_ROOTS = (CHARTS, REPO_ROOT / "helm" / "edge")
+
 # The names scalo's from_env fallback never looks up, so a chart rendering one is
 # addressing a namespace nothing reads.
 INERT_ELASTIC_ENV = ("KAFKA_SOURCE_TOPIC", "KAFKA_DEST_TOPIC", "KAFKA_CONSUMER_GROUP")
@@ -71,6 +75,11 @@ def render(chart: Path, *sets: str) -> list[dict]:
 
 def manifest() -> dict:
     return yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+
+
+def chart_dir(app: str) -> Path | None:
+    """This app's chart, wherever it lives, or None when it ships none."""
+    return next((root / app for root in CHART_ROOTS if (root / app).is_dir()), None)
 
 
 def pod_specs(docs: list[dict]) -> list[dict]:
@@ -178,8 +187,12 @@ def test_no_declared_app_renders_an_unnamed_secret_reference() -> None:
         ("kafka.securityProtocol=SASL_PLAINTEXT", "kafka.saslSecretName="),
     )
     for app in manifest()["apps"]:
-        chart = CHARTS / app
-        if not chart.is_dir():
+        chart = chart_dir(app)
+        # Loud, not skipped: a chart that moved out from under this sweep would
+        # otherwise drop out of it silently, which is the class this file exists
+        # to catch.
+        expect(f"{app} has a chart to render", chart is not None, f"none of {CHART_ROOTS}")
+        if chart is None:
             continue
         for sets in combinations:
             offenders = [
