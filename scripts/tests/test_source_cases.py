@@ -337,6 +337,12 @@ class TestWhichCaseARunGets:
         assert isinstance(case, cases.ElasticCase)
         assert case.service == "dfe-transform-elastic"
 
+    def test_vector_is_the_supervised_one(self):
+        case = cases.build(parse("--case", "vector"))
+
+        assert isinstance(case, cases.VectorCase)
+        assert case.service == "dfe-transform-vector"
+
     def test_each_case_names_its_own_app_and_its_own_wait_rows(self):
         pushed = cases.build(parse())
         elastic = cases.build(parse("--case", "elastic"))
@@ -348,6 +354,10 @@ class TestWhichCaseARunGets:
             "dfe-transform-elastic", "transform-instance", "transform-reporting")
         assert (fetched.service, fetched.instance_step, fetched.reporting_step) == (
             "dfe-fetcher", "fetcher-instance", "fetcher-reporting")
+
+        vector = cases.build(parse("--case", "vector"))
+        assert (vector.service, vector.instance_step, vector.reporting_step) == (
+            "dfe-transform-vector", "transform-instance", "transform-reporting")
 
     def test_a_run_mints_its_own_source_name_so_two_runs_never_collide(self):
         assert cases.build(parse()).name != cases.build(parse()).name
@@ -603,6 +613,76 @@ class TestTheElasticCase:
         _, asked = self._feed(monkeypatch, cases.build(parse()))
 
         assert asked == {"routed": (), "posted": ()}
+
+
+class TestTheVectorCase:
+    """The same program as the filebeat case, run by a supervised Vector.
+
+    dfe-transform-vector's bundled pipeline embeds dfe-transform-vrl's
+    filebeat.vrl byte-identical, so the case is the filebeat one with the
+    program written as Vector YAML -- and a divergence in either runtime shows
+    up as the same column failing to arrive.
+    """
+
+    def test_it_writes_the_pipeline_its_own_app_ships(self):
+        case = cases.build(parse("--case", "vector"))
+
+        assert case.PROGRAM == "pipelines/filebeat/filebeat.yaml"
+        assert case.ENRICHMENT == "pipelines/filebeat/timezones.csv"
+        assert case.PROGRAM_SET == "transforms"
+
+    def test_the_corpus_and_the_program_come_from_different_checkouts(self):
+        """One --transform-repo cannot serve both: dfe-transform-vrl ships the
+        corpus every pushed case grades against, and the pipeline is the app's."""
+        case = cases.build(parse("--case", "vector"))
+
+        assert case.companion_repo == "dfe-transform-vrl"
+        assert case.program_repo == "dfe-transform-vector"
+        assert cases.FilebeatCase.program_repo == ""
+        assert cases.ElasticCase.program_repo == ""
+
+    def test_the_proof_column_is_the_filebeat_one_because_it_is_one_program(self):
+        case = cases.build(parse("--case", "vector"))
+
+        assert case.TRANSFORMED_COLUMN == cases.FilebeatCase.TRANSFORMED_COLUMN
+        assert case._transformed_where == " WHERE log_file_path IS NOT NULL"
+
+    def test_every_corpus_module_is_fed_as_the_filebeat_case_does(self):
+        """The elastic case narrows to cisco_ios because it runs one Elastic data
+        stream; this runs the whole program, so it takes the whole corpus."""
+        assert cases.build(parse("--case", "vector")).MODULES == ()
+
+    def test_the_transform_body_names_the_engine_and_nothing_else(self):
+        """No variant: the pipeline is the file this case writes, not a compiled-in
+        transform selected by name."""
+        assert cases.build(parse("--case", "vector"))._transform_body() == {"engine": "vector"}
+
+    def test_the_program_is_read_from_the_program_checkout(self, tmp_path):
+        """The one behaviour a wrong repo would break silently: the run would
+        upload dfe-transform-vrl's .vrl into an app that reads .yaml."""
+        corpus_repo = tmp_path / "corpus"
+        program_repo = tmp_path / "programs"
+        program = program_repo / cases.VectorCase.PROGRAM
+        program.parent.mkdir(parents=True)
+        program.write_text("transforms: {}\n", encoding="utf-8")
+        (program_repo / cases.VectorCase.ENRICHMENT).write_text(TABLE, encoding="utf-8")
+        corpus_repo.mkdir()
+
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse("--case", "vector"))
+        engine = FakeEngine()
+        run = a_run(driver, engine, parse("--case", "vector"), case.name, corpus_repo)
+        run.program_repo = program_repo
+        case.provision(run)
+
+        assert driver.status("upload-program") in ("done", "api-fallback")
+        assert "filebeat.yaml" in driver.detail("upload-program")
+
+    def test_without_a_program_repo_a_case_still_reads_the_corpus_one(self):
+        """Every other case keeps one checkout, so the seam must default away."""
+        run = a_run(FakeDriver(FakePage()), FakeEngine(), parse(), "fbdeadbeef", Path("/corpus"))
+
+        assert run.programs() == Path("/corpus")
 
 
 class TestTheCorpusFilter:

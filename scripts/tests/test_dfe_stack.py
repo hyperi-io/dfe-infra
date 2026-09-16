@@ -117,6 +117,36 @@ def test_every_app_digest_has_a_tag_verify_can_resolve() -> None:
     expect("every digests: key has a tag to resolve", not missing, f"missing: {missing}")
 
 
+def _renovate_manager() -> tuple[dict, str]:
+    """renovate.json's one custom manager, and the versions.yaml it reads."""
+    import json
+
+    cfg = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
+    managers = cfg.get("customManagers", [])
+    expect("renovate.json declares a custom manager", len(managers) == 1, f"{managers}")
+    return (managers[0] if managers else {}), (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
+
+
+def _as_python(pattern: str) -> str:
+    """Renovate/RE2 spell named groups (?<n>...); python re wants (?P<n>...)."""
+    import re
+
+    return re.sub(r"\(\?<([A-Za-z]+)>", r"(?P<\1>", pattern)
+
+
+def _manager_matches(manager: dict, text: str) -> dict[str, str]:
+    """Run the manager's matchStrings the way `recursive` applies them."""
+    import re
+
+    region = text
+    if manager.get("matchStringsStrategy") == "recursive":
+        narrowed = re.search(_as_python(manager["matchStrings"][0]), text)
+        expect("the scoping pattern narrows to a region", narrowed is not None, "no match")
+        region = narrowed.group("currentStack") if narrowed else ""
+    inner = _as_python(manager["matchStrings"][-1])
+    return {m.group("depName"): m.group("currentValue") for m in re.finditer(inner, region)}
+
+
 def test_renovate_custom_manager_matches_the_annotations() -> None:
     """Tie renovate.json's regex to the file it claims to read.
 
@@ -125,19 +155,12 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
     The validator cannot catch this: it checks schema, not whether the pattern
     finds anything.
     """
-    import json
     import re
 
-    cfg = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
-    managers = cfg.get("customManagers", [])
-    expect("renovate.json declares a custom manager", len(managers) == 1, f"{managers}")
-    if not managers:
+    manager, text = _renovate_manager()
+    if not manager:
         return
-
-    text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
-    # Renovate/RE2 spell named groups (?<n>...); python re wants (?P<n>...).
-    pattern = re.sub(r"\(\?<([A-Za-z]+)>", r"(?P<\1>", managers[0]["matchStrings"][0])
-    matched = {m.group("depName"): m.group("currentValue") for m in re.finditer(pattern, text)}
+    matched = _manager_matches(manager, text)
 
     annotated = re.findall(r"#\s*renovate:.*?depName=(\S+)", text)
     expect(
@@ -154,6 +177,45 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
         "it does NOT pick up the operator-coupled `# image:` pins",
         not any("clickhouse-server" in d or d == "apache/kafka" for d in matched),
         f"{sorted(matched)}",
+    )
+
+
+def test_the_manager_reaches_one_stack_block_only() -> None:
+    """Every stack carries a complete copy of the pin set under the same
+    annotations, so an unscoped manager would rewrite the frozen record of what
+    shipped (#183). Renovate proposes against the stack under development."""
+    import re
+
+    manager, text = _renovate_manager()
+    if not manager:
+        return
+    matched = _manager_matches(manager, text)
+    for dep, value in sorted(matched.items()):
+        copies = len(re.findall(rf"depName={re.escape(dep)}\b", text))
+        expect(
+            f"{dep} is annotated in {copies} block(s) and proposed once",
+            copies > 1 and len([v for v in [value] if v]) == 1,
+            f"matched -> {value!r}",
+        )
+    expect("the scoped manager still finds the pins", len(matched) >= 5, f"{sorted(matched)}")
+
+
+def test_the_current_stack_is_the_last_block_in_the_file() -> None:
+    """The manager's scoping binds to the last block, so `current` has to be it.
+
+    A cut appends the new block and moves `current` onto it; a hand edit that
+    broke that would silently point Renovate at a frozen stack.
+    """
+    import re
+
+    text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
+    current = re.search(r'^current:\s*"([^"]+)"', text, re.MULTILINE)
+    blocks = re.findall(r"^  ([0-9][A-Za-z0-9_.-]*):\s*$", text, re.MULTILINE)
+    expect("versions.yaml carries a current pointer", current is not None, "none found")
+    expect(
+        "and the stack it names is the last block in the file",
+        bool(blocks) and current and blocks[-1] == current.group(1),
+        f"current={current.group(1) if current else None!r} last={blocks[-1] if blocks else None!r}",
     )
 
 
@@ -320,7 +382,10 @@ def test_every_stack_constraints_reference_resolves() -> None:
     )
 
 
-_CUT_FIXTURE = """\
+_OLD_SHA = "1" * 40
+_NEW_SHA = "2" * 40
+
+_CUT_FIXTURE = f"""\
 current: "9.9.0-rc.2"
 stacks:
   9.9.0-rc.1:
@@ -329,6 +394,9 @@ stacks:
       an-app: "v1.0.0"
     digests:
       an-app: "sha256:aaa"
+    content:
+      a-tagged-repo: "v1.0.0"
+      a-git-repo: "{_OLD_SHA}"
     stack:
       previous: ""
       upgrade-order: "an-app"
@@ -338,10 +406,83 @@ stacks:
       an-app: "v2.0.0"
     digests:
       an-app: "sha256:bbb"
+    content:
+      a-tagged-repo: "v1.0.0"
+      a-git-repo: "{_OLD_SHA}"
     stack:
       previous: "9.9.0-rc.1"
       upgrade-order: "an-app"
 """
+
+
+def _cut_into(tmp: Path, head: object) -> int:
+    """Run a cut over the fixture with the registry and git reads stubbed out."""
+    import argparse
+
+    (tmp / "versions.yaml").write_text(_CUT_FIXTURE, encoding="utf-8", newline="\n")
+    original = (stack.REPO_ROOT, stack._latest_published, stack.registry_pins.head_commit)
+    stack.REPO_ROOT = tmp
+    # Offline: no published release, so every app pin holds and no registry is hit.
+    stack._latest_published = lambda org, app: None
+    stack.registry_pins.head_commit = head
+    try:
+        return stack.cmd_cut(
+            argparse.Namespace(
+                version="9.9.0-rc.3", from_stack=None, maturity=None,
+                apps=None, org="test-org", dry_run=False,
+            )
+        )
+    finally:
+        stack.REPO_ROOT, stack._latest_published, stack.registry_pins.head_commit = original
+
+
+def test_a_cut_stamps_the_git_ref_that_ran_it() -> None:
+    """dfe-docker cuts no per-stack tag, so an old stack named no ref at all and
+    the only pairing that reproduced its docker path was whatever main looked
+    like that week (#171)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        rc = _cut_into(tmp, lambda org, repo, ref="main": _NEW_SHA)
+        expect("the cut writes the file", rc == 0, f"exit {rc}")
+        root = stack.parse_simple_yaml((tmp / "versions.yaml").read_text(encoding="utf-8"))
+        content = root["stacks"]["9.9.0-rc.3"]["content"]
+        expect(
+            "the git-ref entry is re-resolved at cut time",
+            content.get("a-git-repo") == _NEW_SHA,
+            f"{content.get('a-git-repo')!r}",
+        )
+        expect(
+            "and a tag entry is left to its own tagger",
+            content.get("a-tagged-repo") == "v1.0.0",
+            f"{content.get('a-tagged-repo')!r}",
+        )
+        expect(
+            "the source block keeps the ref that ran IT",
+            root["stacks"]["9.9.0-rc.2"]["content"]["a-git-repo"] == _OLD_SHA,
+            "an old stack's recorded ref is the whole point",
+        )
+
+
+def test_the_key_names_the_repo_so_no_table_says_which() -> None:
+    """Which repo a content entry resolves against is the key, not a list in the
+    code -- a second content repo recorded by commit needs no code change."""
+    import tempfile
+
+    asked: list[tuple[str, str]] = []
+
+    def _head(org: str, repo: str, ref: str = "main") -> str:
+        asked.append((org, repo))
+        return _NEW_SHA
+
+    with tempfile.TemporaryDirectory() as td:
+        _cut_into(Path(td), _head)
+    expect(
+        "only the git-ref entry is resolved, against its own name",
+        asked == [("test-org", "a-git-repo")],
+        f"{asked}",
+    )
 
 
 def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
@@ -351,29 +492,11 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
     forward and every later cut repeats it, so check-upgrade reads a real
     consecutive upgrade as NOT A VERIFIED PATH.
     """
-    import argparse
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        (tmp / "versions.yaml").write_text(_CUT_FIXTURE, encoding="utf-8", newline="\n")
-        original_root, original_published = stack.REPO_ROOT, stack._latest_published
-        stack.REPO_ROOT = tmp
-        # Offline: no published release, so every app pin holds and no registry is hit.
-        stack._latest_published = lambda org, app: None
-        try:
-            rc = stack.cmd_cut(
-                argparse.Namespace(
-                    version="9.9.0-rc.3",
-                    from_stack=None,
-                    maturity=None,
-                    apps=None,
-                    org="test-org",
-                    dry_run=False,
-                )
-            )
-        finally:
-            stack.REPO_ROOT, stack._latest_published = original_root, original_published
+        rc = _cut_into(tmp, lambda org, repo, ref="main": _OLD_SHA)
 
         expect("the cut writes the file", rc == 0, f"exit {rc}")
         root = stack.parse_simple_yaml((tmp / "versions.yaml").read_text(encoding="utf-8"))
@@ -633,6 +756,94 @@ def test_no_env_file_leaves_the_environment_alone() -> None:
     finally:
         if previous is not None:
             os.environ["GH_TOKEN"] = previous
+
+
+def _compat_check_over(rules: str, pins: str, strict: bool) -> tuple[int, str]:
+    """Run compat-check against a throwaway versions.yaml + constraints pair."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        (tmp / "constraints").mkdir()
+        (tmp / "constraints" / "9.9.9.yaml").write_text(
+            'schema: 1\nstack: "9.9.9"\n\nrules:\n\n' + rules, encoding="utf-8", newline="\n"
+        )
+        (tmp / "versions.yaml").write_text(
+            'schema: 2\ncurrent: "9.9.9"\n\nstacks:\n\n  9.9.9:\n'
+            '    constraints: "constraints/9.9.9.yaml"\n' + pins,
+            encoding="utf-8",
+            newline="\n",
+        )
+        original = stack.REPO_ROOT
+        out = io.StringIO()
+        try:
+            stack.REPO_ROOT = tmp
+            with contextlib.redirect_stdout(out):
+                rc = stack.cmd_compat_check(argparse.Namespace(stack=None, strict=strict))
+        finally:
+            stack.REPO_ROOT = original
+        return rc, out.getvalue()
+
+
+# An operator pin the guards below watch, sitting well outside both of them.
+_MOVED_PINS = '    operators:\n      an-operator: "9.0.0"\n      a-service: "1.0.0"\n'
+_ERROR_RULE = (
+    "  a-ceiling:\n"
+    '    severity: "error"\n'
+    '    when-key: "operators.an-operator"\n'
+    '    when-range: ">=0.51.0 <0.52.0"\n'
+    '    require-key: "operators.a-service"\n'
+    '    require-range: ">=1.0.0"\n'
+)
+_WARN_RULE = (
+    "  a-pairing:\n"
+    '    severity: "warn"\n'
+    '    when-key: "operators.an-operator"\n'
+    '    when-equals: "0.51.0"\n'
+    '    require-key: "operators.a-service"\n'
+    '    require-equals: "1.0.0"\n'
+)
+
+
+def test_strict_fails_an_error_rule_whose_guard_can_never_match() -> None:
+    """A guard that matches nothing makes an error-severity rule inert, and an
+    inert rule prints as a skip -- which reads exactly like a pass (#295)."""
+    rc, out = _compat_check_over(_ERROR_RULE, _MOVED_PINS, strict=True)
+    expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
+    expect("the rule is called out as dead", "DEAD" in out, out)
+    expect("and the message names the guard", "when-range" in out, out)
+    expect("and says what to do about it", "re-point or delete" in out, out)
+
+
+def test_a_dead_error_guard_is_advisory_without_strict() -> None:
+    """compat-check without --strict reports and returns 0, as it does for a
+    violated requirement -- the gate is --strict, in one place."""
+    rc, out = _compat_check_over(_ERROR_RULE, _MOVED_PINS, strict=False)
+    expect("the advisory run still exits 0", rc == 0, f"exit {rc}\n{out}")
+    expect("and still says the rule is dead", "DEAD" in out, out)
+
+
+def test_strict_still_skips_a_warn_rule_whose_guard_is_not_met() -> None:
+    """A warn rule is advice, so a guard it no longer matches stays a skip --
+    only the error tier is strong enough to fail a release gate on."""
+    rc, out = _compat_check_over(_WARN_RULE, _MOVED_PINS, strict=True)
+    expect("strict passes", rc == 0, f"exit {rc}\n{out}")
+    expect("and the warn rule reads as n/a", "n/a" in out, out)
+
+
+def test_the_committed_constraints_pass_strict() -> None:
+    """The repo-level invariant: no committed rule is inert against its stack."""
+    import argparse
+    import contextlib
+    import io
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = stack.cmd_compat_check(argparse.Namespace(stack=None, strict=True))
+    expect("compat-check --strict is green as committed", rc == 0, out.getvalue())
 
 
 def main() -> int:

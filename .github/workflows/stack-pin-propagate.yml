@@ -1,0 +1,80 @@
+# versions.yaml is the SSoT for both deploy targets, but only one of them reads
+# it live. dfe-infra self-updates through GitOps; dfe-docker holds a committed
+# dial, so a `current` move reaches it only when somebody edits that number by
+# hand -- which is how it came to sit two release candidates behind
+# (dfe-infra#116). This carries the move across as a pull request.
+#
+# It moves ONE number. What that number selects still comes out of the signed
+# stack manifest, so nothing here is a second copy of a pin, and the config that
+# genuinely differs between the docker and k8s topologies is not synced.
+name: Stack pin propagate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'versions.yaml'
+      - 'scripts/propagate_stack_pin.py'
+      - '.github/workflows/stack-pin-propagate.yml'
+  workflow_dispatch:
+
+# Nothing is written in THIS repo; the write is on the target, and it comes
+# from DFE_DEPLOY_TOKEN rather than from the ambient token.
+permissions:
+  contents: read
+
+concurrency:
+  group: stack-pin-propagate
+  cancel-in-progress: true
+
+jobs:
+  # Whether this run can write to the target at all. A job of its own because a
+  # job-level `if:` cannot read the secrets context, and the propagation has to
+  # be able to come out SKIPPED: a job that opened no PR while reporting `pass`
+  # is the display defect #200 is about.
+  precondition:
+    name: can this run reach dfe-docker
+    runs-on: ubuntu-latest
+    outputs:
+      can_write: ${{ steps.gate.outputs.can_write }}
+    steps:
+      - name: Check for the cross-repo token
+        id: gate
+        env:
+          HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
+        run: |
+          if [[ "$HAS_DEPLOY_TOKEN" == "true" ]]; then
+            echo "can_write=true" >> "$GITHUB_OUTPUT"
+            echo "DFE_DEPLOY_TOKEN is present -- the propagation runs."
+            exit 0
+          fi
+          echo "can_write=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::stack pin NOT propagated -- this repo has no DFE_DEPLOY_TOKEN secret. It needs contents:write and pull-requests:write on hyperi-io/dfe-docker, which is more than the read scopes it is minted with today. Tracked in #200. The job is skipped rather than reported as a pass."
+
+  propagate:
+    name: move the consumer's stack dial onto current
+    runs-on: ubuntu-latest
+    needs: precondition
+    if: needs.precondition.outputs.can_write == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Open the bump PR on dfe-docker
+        env:
+          GH_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN }}
+        run: python3 scripts/propagate_stack_pin.py --open-pr
+
+  # Runs whatever the token situation is, so the drift is visible in the run
+  # even when nothing can be opened about it.
+  report:
+    name: report the current gap
+    runs-on: ubuntu-latest
+    needs: precondition
+    if: needs.precondition.outputs.can_write != 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: What the propagation would have moved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/propagate_stack_pin.py
