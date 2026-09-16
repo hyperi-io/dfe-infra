@@ -10,7 +10,10 @@ every mode, every model, and the evidence behind each -- is
 
 ## Pick a storage model
 
-`clickhouse.storageModel` is one dial with three settings. There is no second
+`clickhouse.storageModel` is one dial with three settings, plus empty, which is
+what it ships as: empty derives the model from whether an object store is
+supplied (`clickhouse.objectStore.endpoint` set means `cached-object`, nothing
+means `local`), and writing a value here overrides that. There is no second
 knob: the model decides the disks, the policy and the volumes together. The
 names are `<family>-<bulk>`, where the family says whether parts MOVE to the
 bulk store or are COPIED to it. (Previously `tiered` and `s3backed`.)
@@ -19,7 +22,7 @@ bulk store or are COPIED to it. (Previously `tiered` and `s3backed`.)
 | --- | --- | --- | --- |
 | `local` | one PVC | nothing | Default. Small deployments, or storage that is uniformly fast |
 | `tiered-block` | a second PVC on a cheap class | the data PVC on an SSD class, holding recent parts | Block storage only, no object store |
-| `cached-object` | an S3-compatible object store | a read-through cache on the data PVC | An object store is available |
+| `cached-object` | an S3-compatible object store | a read-through cache -- on the data PVC by default, or on node-local NVMe with `clickhouse.objectStore.cache.volume: instance-store` (see [storage.md](storage.md)) | An object store is available |
 
 The constraint that decides between the two non-default models: **ClickHouse
 cannot cache one local disk on another.** The `cache` disk type only wraps
@@ -37,7 +40,7 @@ flowchart LR
         H -. "demoted when the hot volume fills<br/>(moveFactor)" .-> C
     end
     subgraph cachedobject["storageModel: cached-object"]
-        P --> W["disk s3_object_cache<br/>on the data PVC, disposable"]
+        P --> W["disk s3_object_cache<br/>separate volume: PVC or node NVMe, disposable"]
         W -- "miss" --> O[("object store<br/>durable copy")]
     end
 ```

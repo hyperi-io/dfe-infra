@@ -1,7 +1,7 @@
 # Build, test and cleanup on devex
 
 How to build, test, deploy and cleanly tear down dfe-infra on the on-prem
-**devex** environment (Proxmox-hosted RKE2 + Rancher, CoreDNS, OpenBao). For the
+**devex** environment (hypervisor-hosted RKE2 + Rancher, CoreDNS, OpenBao). For the
 platform-side contract -- what devex provides and what it expects cleaned up --
 see `hyperi-io/hyperi-infra:docs/DFE-INFRA-ON-DEVEX.md`.
 
@@ -79,9 +79,9 @@ flowchart LR
   W4 --> W5["DFE services<br/>engine, ui, receiver, loader, archiver, fetcher"]
 ```
 
-Transform services (wasm, vrl, vector, elastic, splack) sync only on clusters
-labelled with the `scale` profile. Set `DFE_DRY_RUN=true` to preview without
-applying.
+Transform services (vrl, vector, elastic) sync only on clusters labelled with
+the `scale` profile. dfe-transform-splack and dfe-transform-wasm are coming and
+sync nowhere yet. Set `DFE_DRY_RUN=true` to preview without applying.
 
 ## Test
 
@@ -107,7 +107,7 @@ flowchart LR
 ```
 
 Service hostnames are served by HTTPRoutes (Envoy Gateway,
-`helm/charts/envoy-gateway-config/`) under the deployment's `*.apps.<your-domain>`
+`helm/edge/gateway/`) under the deployment's `*.apps.<your-domain>`
 wildcard; cert-manager issues the TLS. A service needing a name outside the
 wildcard requires a CoreDNS record added in hyperi-infra
 (`hyperi-io/hyperi-infra:infra/coredns/zones/`).

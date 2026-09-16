@@ -8,7 +8,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-loader (drift-checked).
-  digest: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
+  digest: "sha256:f42ef595b2d608fa9aac3ba4793929d87cc1a18501b336c481455be16b54c3e6"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -67,6 +67,13 @@ config:
   clickhouse:
     protocol: http
 
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
+
 otel:
   endpoint: ""
 
@@ -83,11 +90,15 @@ serviceAccount:
   annotations: {}   # workload identity annotations injected here
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
-# The SHIPPED trigger is the native cpu scaler; the scalo ScalingPressure composite
-# (dfe_scaling_pressure, 0-100) through the fail-safe dfe-keda-shim is opt-in until
-# every app emits the gauge (dfe-infra #302), and the HPA takes the higher of the
-# two where both render. minReplicaCount stays 1
-# (scale-to-zero is 2.2 backlog; set min/idle 0 to opt in).
+# Two triggers render and the HPA takes the higher: the native cpu scaler (no
+# component in the path, so a metric outage cannot take scaling with it) and the
+# scalo ScalingPressure composite (0-100) through the fail-safe dfe-keda-shim. The
+# shim matches the bare `scaling_pressure` gauge and any `<prefix>_scaling_pressure`
+# for this ServiceName (dfe-engine#379), so no app release is needed for the name.
+# Pressure needs the shim in the release namespace -- the engine chart ships it
+# (kedaShim.enabled) -- and the slim profile turns it off because that tier carries
+# no broker, leaving the composite's lag term with nothing to measure.
+# minReplicaCount stays 1 (scale-to-zero is 2.2 backlog; set min/idle 0 to opt in).
 keda:
   enabled: true
   minReplicaCount: 1
@@ -97,10 +108,10 @@ keda:
   cpu:
     targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
+    enabled: true             # scalo ScalingPressure via the fail-safe dfe-keda-shim
     # service: dfe-loader     # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

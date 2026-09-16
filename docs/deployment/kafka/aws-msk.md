@@ -12,6 +12,9 @@ Copyright: HyperI / DFE contributors
 
 # DFE on AWS MSK
 
+Operations (bootstrap Job, autoscaling, telemetry):
+[aws-msk-operations.md](aws-msk-operations.md).
+
 DFE does NOT auto-deploy MSK -- you stand it up, then point DFE at it with
 `kafka.mode=external`. MSK comes in two shapes DFE supports as distinct
 providers:
@@ -95,7 +98,7 @@ resource "aws_msk_configuration" "dfe" {
   name           = "dfe-kafka"
 
   server_properties = <<-PROPERTIES
-    auto.create.topics.enable=true
+    auto.create.topics.enable=false
     default.replication.factor=3
     min.insync.replicas=2
     unclean.leader.election.enable=false
@@ -217,10 +220,12 @@ output "bootstrap_brokers_sasl_iam" {
 
 ### Topics on either MSK (the AWS provider does not manage topics)
 
-Neither `aws_msk_cluster` nor `aws_msk_serverless_cluster` creates topics. DFE
-auto-creates its topics at runtime (the service account holds Create), so this is
-usually unnecessary. If you want IaC-managed topics, use the community
-`Mongey/kafka` provider, which speaks both SCRAM and `aws-iam`:
+Neither `aws_msk_cluster` nor `aws_msk_serverless_cluster` creates topics, and on
+a Provisioned cluster carrying the DFE configuration nothing else will either:
+`auto.create.topics.enable` is false, so that the partition count per source is an
+explicit number rather than a broker default. The kafka chart pre-creates them
+from the bootstrap Job below. If you would rather manage topics as IaC, the
+community `Mongey/kafka` provider speaks both SCRAM and `aws-iam`:
 
 ```hcl
 terraform {
@@ -253,6 +258,11 @@ resource "kafka_topic" "example" {
 For MSK Provisioned with SCRAM, set `sasl_mechanism = "scram-sha512"`,
 `sasl_username`, and `sasl_password` on the provider instead.
 
+See [aws-msk-operations.md](aws-msk-operations.md) for the bootstrap Job
+that writes ACLs and landing topics (and what you set to drive it by hand),
+broker-count autoscaling, telemetry routing, and the broker security
+group's ports.
+
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap endpoint>`.
@@ -279,7 +289,14 @@ caps at 2400 leader partitions and 250 GB/partition, and honours only
 `aws_msk_scram_secret_association`, `aws_msk_serverless_cluster`, and IAM SASL
 resources are all current in the provider.
 
-NOT verified (no live AWS account in this workstream, cannot deploy): the exact
+The bootstrap Job's pinned jar is verified: `aws-msk-iam-auth` v2.3.8 was
+published 2026-09-05 and the sha256 in `values.yaml` matches both the release's
+own `.sha256` asset and a hand-computed sum of the downloaded jar.
+
+NOT verified (no live AWS account in this workstream, cannot deploy): that the
+bootstrap Job authenticates end to end -- the Pod Identity credential reaching the
+IAM login module, and `kafka-acls.sh` writing an ACL over SASL/IAM, have not been
+run against a real cluster. Also the exact
 `kafka_version` string MSK offers today (shown as `3.9.x` -- confirm against
 `aws kafka list-kafka-versions`), the precise `instance_type` / storage sizing
 for your throughput, and that every `server.properties` key above is permitted

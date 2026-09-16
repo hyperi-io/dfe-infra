@@ -24,7 +24,14 @@ spec:
       # definition for both workloads in this chart.
       {{- include "dfe-common.podSecurityContext" (dict "Values" (dict "podSecurityContext" .Values.daemonset.podSecurityContext)) | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.fullname" . }}
-      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.imagePullSecrets" . | nindent 6 }}
+      {{- include "dfe-common.nodeSelector" . | nindent 6 }}
+      # Every taint, rather than the deployment's own toleration list: this is a
+      # node agent, and a node it cannot run on reports no kubelet or host
+      # metrics at all. The dedicated pools scripts/resolve_sizing.py taints are
+      # the nodes whose telemetry matters most.
+      tolerations:
+        - operator: Exists
       containers:
         - name: {{ include "otel-collector.daemonsetContainerName" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"

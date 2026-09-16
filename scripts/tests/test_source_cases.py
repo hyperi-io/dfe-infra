@@ -22,8 +22,11 @@ here opens a socket.
 
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
 import subprocess
 import sys
+import types
 from pathlib import Path
 from typing import ClassVar
 
@@ -38,12 +41,24 @@ from acceptance.source.run import build_parser, walk  # noqa: E402
 PROGRAM = "# a filebeat program\n" * 8
 TABLE = "zone,offset\nUTC,0\n"
 
+# dfe-ops carries no extension, so it is loaded by path rather than imported.
+_loader = importlib.machinery.SourceFileLoader("dfeops_source_cases", str(SCRIPTS / "dfe-ops"))
+_spec = importlib.util.spec_from_loader("dfeops_source_cases", _loader)
+dfeops = importlib.util.module_from_spec(_spec)
+sys.modules["dfeops_source_cases"] = dfeops
+_loader.exec_module(dfeops)
+
 
 def parse(*argv: str):
     return build_parser().parse_args(
         ["--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example",
          "--engine-repo", "/nowhere", *argv]
     )
+
+
+def parse_ops(*argv: str):
+    """The acceptance subcommand, which is where an operator names the case."""
+    return dfeops.build_parser().parse_args(["acceptance", "--repo", "/nowhere", *argv])
 
 
 class FakePage:
@@ -137,6 +152,9 @@ class FakePage:
     def filter(self, has_text=""):
         return self._guard(f"filter:{has_text}")
 
+    def input_value(self, **kwargs):
+        return ""
+
     def inner_text(self, **kwargs):
         return "3 Results"
 
@@ -178,7 +196,7 @@ class FakeEngine:
     #: appmgmt/appconfig.py RESTART_HINT, as a released engine renders it.
     RESTART_HINT: ClassVar[str] = "restart required: docker compose restart dfe-transform-vrl"
 
-    def __init__(self, transform: str = "vrl", committed: bool = True,
+    def __init__(self, transform: str = "vrl", variant: str = "", committed: bool = True,
                  restart_required: tuple[str, ...] = (RESTART_HINT,),
                  deploy_restarts: tuple[str, ...] = ()) -> None:
         self.base = "https://dfe.example"
@@ -186,11 +204,16 @@ class FakeEngine:
         self.token = "t"
         self.restart_required = restart_required
         self.deploy_restarts = deploy_restarts
-        self.source = {"current": "1.0.0", "deployed_version": "1.0.0",
-                       "transform": {"engine": transform} if transform else {}}
+        attached = {}
+        if transform:
+            attached["engine"] = transform
+        if variant:
+            attached["variant"] = variant
+        self.source = {"current": "1.0.0", "deployed_version": "1.0.0", "transform": attached}
         self.committed = committed
         self.calls: list[tuple[str, str]] = []
         self.written: dict[str, str] = {}
+        self.sent: dict[str, dict] = {}
 
     def call(self, method, path, body=None):
         self.calls.append((method, path))
@@ -206,7 +229,8 @@ class FakeEngine:
             return reply(200, {"reporting": True, "uptime_seconds": 3, "telemetry_name": "dfe-fetcher-x"})
         if path == "/apps":
             return reply(200, [{"service": service, "instances": [self.instance]}
-                               for service in ("dfe-transform-vrl", "dfe-fetcher")])
+                               for service in ("dfe-transform-vrl", "dfe-transform-elastic",
+                                               "dfe-fetcher")])
         if path == "/hyperdx/sources":
             return reply(200, {"teams": []})
         if method == "POST" and path.endswith("/deploy"):
@@ -214,7 +238,8 @@ class FakeEngine:
                                "apps_synced": ["deploy instance"],
                                "restart_required": list(self.deploy_restarts)})
         if method == "PUT" and path.startswith("/sources/"):
-            self.source = {**self.source, "transform": {"engine": "vrl"}}
+            self.sent[path] = dict(body or {})
+            self.source = {**self.source, "transform": dict((body or {}).get("transform") or {})}
             return reply(200, self.source)
         if method == "GET" and path.startswith("/sources/"):
             return reply(200, self.source)
@@ -234,6 +259,7 @@ class FakeStore:
     """A datastore that has the table and nothing in it."""
 
     host = "clickhouse.example"
+    database = "dfe"
 
     def table_exists(self, _name):
         return True
@@ -245,13 +271,45 @@ class FakeStore:
         return []
 
 
-def a_run(driver, engine, args, name, transform_repo: Path):
+def a_run(driver, engine, args, name, transform_repo: Path, receiver: str = ""):
     engine.instance = name
     return cases.Run(
         driver=driver, engine=engine, store=FakeStore(), args=args, name=name, run_id="src-test",
         engine_repo=Path("/nowhere"), transform_repo=transform_repo,
-        receiver_url="", verify=False,
+        receiver_url=receiver, verify=False,
     )
+
+
+class FakeCorpus:
+    """dfe-engine's corpus wrapper, without the Elastic-licensed archive behind it."""
+
+    MODULES = ("cisco_umbrella", "cisco_ios", "cisco_meraki")
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[tuple[str, ...], int]] = []
+
+    def samples(self, _path, *, modules, limit):
+        self.asked.append((tuple(modules), limit))
+        return []
+
+    def wrap_all(self, _items, source="", run=""):
+        return []
+
+
+@pytest.fixture
+def corpus_module(monkeypatch):
+    """``tests.e2e.filebeat_corpus`` as post_corpus imports it off the engine repo."""
+    fake = FakeCorpus()
+    package = types.ModuleType("tests")
+    package.__path__ = []
+    e2e = types.ModuleType("tests.e2e")
+    e2e.__path__ = []
+    e2e.filebeat_corpus = fake
+    monkeypatch.setitem(sys.modules, "tests", package)
+    monkeypatch.setitem(sys.modules, "tests.e2e", e2e)
+    # post_corpus prepends the engine repo, and the copy is what gets mutated.
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    return fake
 
 
 @pytest.fixture
@@ -273,20 +331,48 @@ class TestWhichCaseARunGets:
         assert isinstance(case, cases.FetchedAwsCase)
         assert case.upstream.service == "cloudtrail"
 
+    def test_elastic_is_the_compiled_in_transform(self):
+        case = cases.build(parse("--case", "elastic"))
+
+        assert isinstance(case, cases.ElasticCase)
+        assert case.service == "dfe-transform-elastic"
+
     def test_each_case_names_its_own_app_and_its_own_wait_rows(self):
-        pushed, fetched = cases.build(parse()), cases.build(parse("--case", "cloudwatch"))
+        pushed = cases.build(parse())
+        elastic = cases.build(parse("--case", "elastic"))
+        fetched = cases.build(parse("--case", "cloudwatch"))
 
         assert (pushed.service, pushed.instance_step, pushed.reporting_step) == (
             "dfe-transform-vrl", "transform-instance", "transform-reporting")
+        assert (elastic.service, elastic.instance_step, elastic.reporting_step) == (
+            "dfe-transform-elastic", "transform-instance", "transform-reporting")
         assert (fetched.service, fetched.instance_step, fetched.reporting_step) == (
             "dfe-fetcher", "fetcher-instance", "fetcher-reporting")
 
     def test_a_run_mints_its_own_source_name_so_two_runs_never_collide(self):
         assert cases.build(parse()).name != cases.build(parse()).name
 
+    def test_every_registered_case_is_one_the_runner_accepts(self):
+        for name in cases.CASES:
+            assert parse("--case", name).case == name
+
+    def test_dfe_ops_offers_the_operator_the_same_cases(self):
+        for name in cases.CASES:
+            assert parse_ops("--source-case", name).source_case == name
+
+    def test_dfe_ops_refuses_a_case_no_class_answers_to(self):
+        with pytest.raises(SystemExit):
+            parse_ops("--source-case", "nosuchcase")
+
     def test_the_minted_names_are_the_ones_the_sweep_removes(self):
-        for case in (cases.build(parse()), cases.build(parse("--case", "cloudwatch"))):
-            assert case.name.startswith(steps.RUN_PREFIXES)
+        for name in cases.CASES:
+            case = cases.build(parse("--case", name))
+            assert steps.RUN_NAME.fullmatch(case.name)
+
+    def test_a_source_the_deployment_authored_is_not_a_stray(self):
+        """The sweep deletes, so a real source that merely starts like ours must survive."""
+        for owned in ("filebeat", "elastic", "elasticsearch", "fbprod", "cwlogs", "onboarding"):
+            assert not steps.RUN_NAME.fullmatch(owned)
 
     def test_the_fetched_case_authors_a_schema_under_its_own_name(self):
         case = cases.build(parse("--case", "cloudwatch", "--aws-service", "cloudtrail"))
@@ -298,6 +384,12 @@ class TestWhichCaseARunGets:
         fetched = cases.build(parse("--case", "cloudwatch"))
 
         assert fetched.provision(a_run(FakeDriver(FakePage()), FakeEngine(), parse(), "cw1", Path("/"))) == []
+
+    def test_the_companion_checkout_is_the_cases_own(self):
+        """Both pushed cases read one corpus archive; a fetched source reads no repo."""
+        assert cases.build(parse()).companion_repo == "dfe-transform-vrl"
+        assert cases.build(parse("--case", "elastic")).companion_repo == "dfe-transform-vrl"
+        assert cases.build(parse("--case", "cloudwatch")).companion_repo == ""
 
 
 class TestTheConsoleOrApiDecision:
@@ -435,6 +527,107 @@ class TestTheFilebeatCaseProvision:
         assert "was not committed" in driver.detail("upload-program")
 
 
+class TestTheElasticCase:
+    """One compiled-in transform per instance, so the create has a half no console control sets."""
+
+    def _create(self, engine):
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse("--case", "elastic"))
+        case.create(a_run(driver, engine, parse(), case.name, Path("/")))
+        return driver, case
+
+    def test_the_variant_is_the_catalogue_entry_for_cisco_ios(self):
+        """sources.yaml spells it filebeat.<entry>.<transform>, which apps.yaml renders."""
+        assert cases.ElasticCase.VARIANT == "filebeat.cisco_ios.default"
+
+    def test_the_console_sets_the_engine_and_the_api_sets_the_variant(self):
+        engine = FakeEngine(transform="elastic")
+        driver, case = self._create(engine)
+
+        assert driver.status("attach-transform") == "api-fallback"
+        # How far the console got is the finding, so the row names what it set.
+        assert "'engine': 'elastic'" in driver.detail("attach-transform")
+        assert engine.sent[f"/sources/{case.name}"]["transform"] == {
+            "engine": "elastic", "variant": cases.ElasticCase.VARIANT,
+        }
+
+    def test_a_console_that_carried_both_needs_no_fallback(self):
+        """A console that grows the variant control turns this row green on its own."""
+        engine = FakeEngine(transform="elastic", variant=cases.ElasticCase.VARIANT)
+        driver, case = self._create(engine)
+
+        assert driver.status("attach-transform") == "done"
+        assert ("PUT", f"/sources/{case.name}") not in engine.calls
+
+    def test_there_is_no_program_to_upload_and_the_row_says_why(self):
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse("--case", "elastic"))
+
+        hints = case.provision(a_run(driver, FakeEngine(), parse(), case.name, Path("/")))
+
+        assert hints == []
+        assert driver.rows == ["upload-program"]
+        assert driver.status("upload-program") == "skipped"
+        assert cases.ElasticCase.VARIANT in driver.detail("upload-program")
+
+    def test_the_proof_is_a_column_the_posted_record_cannot_carry(self):
+        case = cases.build(parse("--case", "elastic"))
+
+        assert case.TRANSFORMED_COLUMN == "source_ip"
+        assert case._transformed_where == " WHERE source_ip IS NOT NULL"
+
+    def _feed(self, monkeypatch, case):
+        asked: dict[str, tuple[str, ...]] = {}
+
+        def routed(receiver_url, verify, engine_repo, corpus_file, store, name, deadline, modules=()):
+            asked["routed"] = modules
+            return f"routed into dfe.{name} after 1 probe pass(es)"
+
+        def posted(receiver_url, verify, engine_repo, corpus_file, name, run, per_module, modules=()):
+            asked["posted"] = modules
+            return 7
+
+        monkeypatch.setattr(steps, "wait_routed", routed)
+        monkeypatch.setattr(steps, "post_corpus", posted)
+        driver = FakeDriver(FakePage())
+        case.feed(a_run(driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example"))
+        return driver, asked
+
+    def test_both_the_probe_and_the_payload_are_narrowed_to_that_module(self, monkeypatch):
+        driver, asked = self._feed(monkeypatch, cases.build(parse("--case", "elastic")))
+
+        assert asked == {"routed": ("cisco_ios",), "posted": ("cisco_ios",)}
+        assert driver.status("feed") == "done"
+
+    def test_the_filebeat_case_still_feeds_every_module(self, monkeypatch):
+        _, asked = self._feed(monkeypatch, cases.build(parse()))
+
+        assert asked == {"routed": (), "posted": ()}
+
+
+class TestTheCorpusFilter:
+    """post_corpus reads the archive through dfe-engine's wrapper, which caps per module."""
+
+    def test_a_case_with_no_modules_asks_for_every_one_the_wrapper_names(self, corpus_module):
+        steps.post_corpus("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
+                          "fb1", "run", 20)
+
+        assert corpus_module.asked == [(FakeCorpus.MODULES, 20)]
+
+    def test_a_named_module_is_the_only_one_read(self, corpus_module):
+        steps.post_corpus("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
+                          "el1", "run", 20, ("cisco_ios",))
+
+        assert corpus_module.asked == [(("cisco_ios",), 20)]
+
+    def test_the_routing_probe_carries_the_same_filter(self, corpus_module):
+        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
+                                   Path("c.tar.gz"), FakeStore(), "el1", 0.0, ("cisco_ios",))
+
+        assert corpus_module.asked == [(("cisco_ios",), 1)]
+        assert detail.startswith("NOT routed")
+
+
 class TestTheRestartStep:
     """The engine decides, and it names the app in the hint it hands back."""
 
@@ -507,6 +700,21 @@ class TestTheOrderTheRunnerWalks:
         ]
         assert driver.status("observe") == "done"
 
+    def test_the_elastic_case_walks_the_same_rows_with_nothing_to_upload(self, transform_repo):
+        driver, engine = FakeDriver(FakePage()), FakeEngine(transform="elastic")
+        case = cases.build(parse("--case", "elastic"))
+        case.feed = lambda run: None
+        case.prove = lambda run: None
+        steps_seen = self._walk(case, driver, engine, transform_repo)
+
+        assert steps_seen == [
+            "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform",
+            "deploy", "hyperdx-source", "upload-program", "restart", "table",
+            "transform-instance", "transform-reporting", "archived", "observe",
+        ]
+        assert driver.status("upload-program") == "skipped"
+        assert driver.status("transform-instance") == "done"
+
     def test_the_files_are_written_after_the_deploy_that_makes_the_instance(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
         case = cases.build(parse())
@@ -576,6 +784,19 @@ class TestTheObserveStep:
         assert status == "failed"
         assert "does not offer fb1" in detail
 
+    def test_a_pick_that_raised_names_the_exception(self):
+        refused = steps.refusal(TimeoutError("Locator.click: Timeout 30000ms exceeded"))
+        status, detail = steps.observe_outcome("fb1", self.FRAME, "", False, refused)
+
+        assert status == "failed"
+        assert "does not offer fb1" in detail
+        assert "TimeoutError" in detail
+
+    def test_a_count_with_a_thousands_separator_is_a_pass(self):
+        assert steps.results_count("1,050 Results") == 1050
+        assert steps.observe_outcome("cw1", self.FRAME, "", True, "1,050 Results") == (
+            "done", "Observe search over cw1: 1,050 Results")
+
     def test_zero_rows_is_a_failed_row_that_quotes_the_line(self):
         status, detail = steps.observe_outcome("fb1", self.FRAME, "", True, "0 Results")
 
@@ -584,6 +805,235 @@ class TestTheObserveStep:
 
     def test_a_search_that_never_answered_says_so(self):
         assert "no results line" in steps.observe_outcome("fb1", self.FRAME, "", True, "")[1]
+
+    def test_a_frame_already_open_on_the_source_skips_the_dropdown(self):
+        """The frame picks a source of its own; when it is this one there is no option to pick."""
+        frame = FakePage(missing=("option:",))
+        frame.input_value = lambda **kwargs: "fb1"
+
+        assert steps.search_results(frame, "fb1") == (True, "3 Results")
+        assert "option:" not in frame.visited
+
+    def test_a_frame_still_loading_its_sources_is_given_time(self, monkeypatch):
+        """The picker is empty until the frame's source list arrives, so the step waits for a value."""
+        monkeypatch.setattr(steps.time, "sleep", lambda seconds: None)
+        frame = FakePage(missing=("option:",))
+        values = iter(["", "", "fb1"])
+        frame.input_value = lambda **kwargs: next(values, "fb1")
+
+        assert steps.search_results(frame, "fb1") == (True, "3 Results")
+        assert "option:" not in frame.visited
+
+
+class TestTheReportingVerdict:
+    """`reporting` says a container is up; it does not say this instance is working.
+
+    On Compose one container serves the app and every instance of it, so an idle
+    app answers the status call the same way a working instance does (#327).
+    """
+
+    SERVICE = "dfe-transform-elastic"
+    UP = "dfe-transform-elastic/el1 reporting after 0s up"
+
+    class IdleStore(FakeStore):
+        """A datastore whose otel gauge answers per metric.
+
+        `info` is the series every scalo app publishes while it runs;
+        `pipeline_idle` is the one it publishes only while it holds no work.
+        """
+
+        database = "dfe"
+
+        def __init__(self, info: int = 6, samples: int = 0, since: int = 4,
+                     raises: bool = False, table: bool = True) -> None:
+            self.info, self.samples, self.since = info, samples, since
+            self.raises, self.table = raises, table
+
+        def table_exists(self, _name):
+            return self.table
+
+        def query(self, sql):
+            if self.raises:
+                raise OSError("connection refused")
+            if "pipeline_idle" in sql:
+                return [[self.samples, self.since]]
+            return [[self.info, 2]]
+
+    def verdict(self, store, telemetry):
+        """The verdict for a status body the engine answered `reporting` to."""
+        status = {"reporting": True, "telemetry_name": telemetry, "uptime_seconds": 0}
+        return steps.reporting_verdict(store, self.SERVICE, self.UP, status)
+
+    def test_an_instance_doing_work_reads_done(self):
+        state, detail = self.verdict(self.IdleStore(samples=0), f"{self.SERVICE}-el1")
+
+        assert state == "done"
+        assert "no pipeline_idle sample" in detail
+
+    def test_an_idle_app_is_unproven_not_done(self):
+        """The case in the issue: two green rows in front of three real failures."""
+        state, detail = self.verdict(self.IdleStore(samples=6), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "6 pipeline_idle sample(s)" in detail
+        assert "an app holding no work" in detail
+
+    def test_telemetry_the_whole_app_shares_is_unproven(self):
+        """One container per app on Compose, so the app's own name proves nothing per instance."""
+        state, detail = self.verdict(self.IdleStore(), self.SERVICE)
+
+        assert state == "unproven"
+        assert "every instance of the app shares" in detail
+
+    def test_a_reporting_claim_with_no_series_behind_it_is_unproven(self):
+        """The engine reads max(TimeUnix), which ClickHouse answers with the epoch
+        rather than NULL when nothing matched, so it says reporting for an instance
+        that has never emitted a byte."""
+        state, detail = self.verdict(self.IdleStore(info=0), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "not backed by telemetry" in detail
+
+    def test_otel_tables_out_of_reach_are_unproven_not_empty(self):
+        """A query for a table that is not there reads as an empty result, and an
+        empty result is not evidence of anything."""
+        state, detail = self.verdict(self.IdleStore(table=False), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "otel_metrics_gauge is not in this run's reach" in detail
+
+    def test_a_run_that_cannot_read_the_datastore_is_unproven(self):
+        class NoStore(FakeStore):
+            host = ""
+
+        state, detail = self.verdict(NoStore(), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "no datastore access" in detail
+
+    def test_an_otel_table_that_does_not_answer_is_unproven(self):
+        state, detail = self.verdict(self.IdleStore(raises=True), f"{self.SERVICE}-el1")
+
+        assert state == "unproven"
+        assert "did not answer" in detail
+
+    def test_an_instance_that_never_reported_still_fails(self):
+        """The old row read its own message back: "not reporting after 900s" contains
+        "reporting after", so a timed-out wait recorded done."""
+        state, detail = steps.reporting_verdict(
+            FakeStore(), self.SERVICE, f"{self.SERVICE}/el1 not reporting after 900s; last 200", {}
+        )
+
+        assert state == "failed"
+        assert "not reporting" in detail
+
+    def test_an_instance_the_engine_never_listed_fails_its_own_row(self):
+        driver, engine = FakeDriver(FakePage()), FakeEngine()
+        engine.instance = "someone-else"
+
+        steps.record_instance_up(
+            driver, engine, self.IdleStore(), self.SERVICE, "el1",
+            "transform-instance", 0.0, "transform-reporting", 0.0,
+        )
+
+        assert driver.status("transform-instance") == "failed"
+
+    def test_the_row_the_run_lands_goes_through_the_verdict(self):
+        """The wait and the verdict are one step, so no caller can record the raw wait."""
+        driver, engine = FakeDriver(FakePage()), FakeEngine(transform="elastic")
+        engine.instance = "el1"
+
+        steps.record_instance_up(
+            driver, engine, self.IdleStore(samples=3), self.SERVICE, "el1",
+            "transform-instance", 0.0, "transform-reporting", 0.0,
+        )
+
+        assert driver.status("transform-reporting") == "unproven"
+
+    def test_an_unproven_row_is_not_a_failure_either(self):
+        from acceptance.onboarding import wizard
+
+        assert wizard.exit_code([wizard.StepResult("transform-reporting", "unproven", "")]) == 0
+
+
+class TestTheLogstashVariation:
+    """The same corpus lines, reaching the receiver the way a deployment sends them."""
+
+    def test_a_run_pushes_the_wrapped_body_by_default(self, monkeypatch, transform_repo):
+        posted: list[int] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "post_corpus", lambda *a, **k: posted.append(1) or 7)
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse())
+
+        case.feed(a_run(driver, FakeEngine(), parse(), case.name, transform_repo, "https://rx.example"))
+
+        assert posted == [1]
+        assert "posted 7 corpus records" in driver.detail("feed")
+
+    def test_the_switch_needs_the_network_the_stack_runs_on(self, monkeypatch, transform_repo):
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        args = parse("--via", "logstash")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert driver.status("feed") == "skipped"
+        assert "--beats-network" in driver.detail("feed")
+
+    def test_it_stands_the_pair_up_and_reports_what_it_shipped(self, monkeypatch, transform_repo):
+        started: list[str] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one", "two"])
+        monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
+        monkeypatch.setattr(cases.beats, "start_logstash",
+                            lambda pair: (started.append("logstash"), (True, "logstash up"))[1])
+        monkeypatch.setattr(cases.beats, "start_filebeat",
+                            lambda pair: (started.append("filebeat"), (True, "filebeat up"))[1])
+        monkeypatch.setattr(cases.beats, "published", lambda pair, wanted: (wanted, f"filebeat published {wanted}"))
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert started == ["logstash", "filebeat"]
+        assert driver.status("feed") == "done"
+        assert "lumberjack to logstash" in driver.detail("feed")
+
+    def test_a_logstash_that_never_listened_stops_the_feed(self, monkeypatch, transform_repo):
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one"])
+        monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
+        monkeypatch.setattr(cases.beats, "start_logstash", lambda pair: (False, "never ran its pipeline"))
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+
+        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert driver.status("logstash") == "failed"
+        assert driver.status("feed") == "failed"
+
+    def test_the_pair_comes_down_with_the_run(self, monkeypatch, transform_repo):
+        """Every container the suite starts is removed in the same run."""
+        stopped: list[object] = []
+        monkeypatch.setattr(cases.beats, "stop", lambda pair: stopped.append(pair) or "both removed")
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        case = cases.build(args)
+        case._pair = cases.beats.Pair(network="n", receiver_url="u", workdir=transform_repo, run_id="r")
+
+        rows = case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo))
+
+        assert len(stopped) == 1
+        assert [row.slug for row in rows] == ["beats-removed"]
+
+    def test_a_run_that_started_no_pair_has_nothing_to_remove(self, transform_repo):
+        args = parse()
+        case = cases.build(args)
+
+        assert case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo)) == []
 
 
 class TestWhatTheRunTidiesUp:

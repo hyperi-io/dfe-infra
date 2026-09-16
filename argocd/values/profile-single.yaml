@@ -13,6 +13,10 @@ resources:
     cpu: "1"
     memory: 1Gi
 
+# Pressure stays on (the chart default): this tier carries a broker, so the
+# composite's kafka_lag term measures the real backlog the cpu trigger misses on an
+# I/O-bound loader. The ceiling matches defaultTopic.partitions (3) -- a group
+# assigns at most one consumer per partition, so a 4th replica joins and idles.
 keda:
   minReplicaCount: 1
   maxReplicaCount: 3
@@ -35,6 +39,13 @@ clickhouse:
 # (and its operator, installed scale-only via layer-scale.yaml) is used ONLY at scale.
 kafka:
   mode: single
+  # Both dials are pinned to this tier's KEDA maxReplicaCount of 3 so the chart's
+  # partition derivation lands on 3 here, where the scale tier's defaults (a
+  # consumer ceiling of 10 over three brokers) would give a one-broker deployment
+  # 10 partitions that no consumer can reach.
+  sizing:
+    consumerCeiling: 3
+    minPartitionsPerBroker: 3
 
 # Kafbat (Kafka UI) -- deployed with Kafka. Scoped under `kafbat:` (see profile-slim)
 # so the toggle never leaks to other charts in the cascade.
@@ -64,6 +75,8 @@ deployRepo:
     - dfe-engine
     - dfe-loader
     - dfe-receiver
+    - dfe-transform-elastic
+    - dfe-transform-vrl
     - dfe-ui
     - hyperdx
 # END seeded apps

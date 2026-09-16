@@ -1,0 +1,157 @@
+#!/bin/bash
+# Tunnel forwarder bootstrap. The instance holds the deployment's Elastic IP and
+# DNATs each tunnel listener to culvert's nodePort on whichever cluster nodes are
+# running, refreshing that target list every minute.
+#
+# The node list comes from ec2:DescribeInstances rather than the Kubernetes API,
+# because that is the one grant this instance carries -- so a node that is
+# running in EC2 but NotReady in Kubernetes is still a target here. culvert runs
+# with externalTrafficPolicy: Cluster (argocd/values/edge-aws.yaml), so any node
+# forwards to the pod wherever it sits, and what that costs is the client's real
+# source address, which Cluster SNATs to a node either way.
+#
+# AL2023 ships the SSM Agent preinstalled (AWS's own agent-install-al2.html), so
+# nothing here installs or starts it, and there is no ssh path of any kind.
+set -euo pipefail
+
+REGION="${region}"
+CLUSTER_NAME="${cluster_name}"
+VPC_CIDR="${vpc_cidr}"
+VPC_ID="${vpc_id}"
+# One "listen:nodeport" pair per exposed listener, in the chart's own order.
+PORT_MAP="${port_map}"
+
+# AL2023 ships both of these in the AMI; the fallbacks cover an image that stops
+# doing so, and a boot that can get neither must fail rather than come up
+# forwarding nothing.
+command -v iptables >/dev/null 2>&1 || dnf install -y iptables-nft
+command -v aws >/dev/null 2>&1 || dnf install -y awscli-2
+
+# Forwarding is the whole job, and the kernel default is off.
+cat > /etc/sysctl.d/90-dfe-tunnel-forwarder.conf <<SYSCTL
+net.ipv4.ip_forward = 1
+SYSCTL
+sysctl --system
+
+# The DNAT rules live in a chain of their own, so a refresh flushes exactly what
+# it owns and never touches a rule something else wrote.
+iptables -t nat -N DFE_TUNNEL 2>/dev/null || true
+iptables -t nat -C PREROUTING -j DFE_TUNNEL 2>/dev/null ||
+  iptables -t nat -A PREROUTING -j DFE_TUNNEL
+
+# What this instance is allowed to route, and nothing else. ip_forward is on and
+# the EC2 source/destination check is off, so the kernel's own FORWARD ACCEPT
+# would carry any packet handed to it toward the VPC -- not only the two UDP
+# flows the DNAT chain rewrites. Its own chain, inserted first, so a flush
+# touches exactly what it owns.
+iptables -N DFE_TUNNEL_FWD 2>/dev/null || true
+iptables -C FORWARD -j DFE_TUNNEL_FWD 2>/dev/null ||
+  iptables -I FORWARD 1 -j DFE_TUNNEL_FWD
+iptables -F DFE_TUNNEL_FWD
+iptables -A DFE_TUNNEL_FWD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+# The node's reply has to come back through this instance to be un-NATed, which
+# it only does when the node sees this instance as the source. Scoped to the
+# rewritten flows rather than the whole VPC, for the same reason.
+for pair in $PORT_MAP; do
+  node_port=$${pair##*:}
+  iptables -A DFE_TUNNEL_FWD -p udp -d "$VPC_CIDR" --dport "$node_port" -j ACCEPT
+  iptables -t nat -C POSTROUTING -p udp -d "$VPC_CIDR" --dport "$node_port" -j MASQUERADE 2>/dev/null ||
+    iptables -t nat -A POSTROUTING -p udp -d "$VPC_CIDR" --dport "$node_port" -j MASQUERADE
+done
+
+iptables -P FORWARD DROP
+
+cat > /etc/dfe-tunnel-forwarder.env <<ENVFILE
+REGION="$REGION"
+CLUSTER_NAME="$CLUSTER_NAME"
+VPC_ID="$VPC_ID"
+PORT_MAP="$PORT_MAP"
+ENVFILE
+
+cat > /usr/local/sbin/dfe-tunnel-forwarder-refresh.sh <<'SCRIPT'
+#!/bin/bash
+# Rebuild the DNAT chain from the cluster's currently running nodes.
+set -euo pipefail
+
+CHAIN=DFE_TUNNEL
+. /etc/dfe-tunnel-forwarder.env
+
+# EKS managed node groups and Karpenter both tag an instance
+# kubernetes.io/cluster/<name>, the same tag the Karpenter IAM policy conditions
+# on (terraform/modules/kubernetes-cluster/aws/karpenter.tf).
+#
+# The vpc-id filter is the half the tag cannot carry: ec2:DescribeInstances takes
+# no resource scope, so anyone able to tag an instance anywhere in the account
+# could otherwise add it to this forwarder's DNAT target set.
+# Captured before it is filtered: under `set -euo pipefail` a `grep` that matches
+# nothing exits 1 and takes the whole script with it, so the no-nodes branch below
+# could never run and the unit just failed with no line saying why. A real API
+# failure still aborts here, where it should.
+raw=$(aws ec2 describe-instances \
+  --region "$REGION" \
+  --filters \
+    "Name=tag:kubernetes.io/cluster/$CLUSTER_NAME,Values=owned,shared" \
+    "Name=vpc-id,Values=$VPC_ID" \
+    "Name=instance-state-name,Values=running" \
+  --query 'Reservations[].Instances[].PrivateIpAddress' \
+  --output text)
+nodes=$(printf '%s' "$raw" | tr '\t' '\n' | { grep -v '^$' || true; } | sort)
+
+if [ -z "$nodes" ]; then
+  logger -t dfe-tunnel-forwarder "no running node carries the cluster tag -- keeping the rules already in place"
+  exit 0
+fi
+
+# Rebuilt in place. conntrack consults the nat table for the first packet of a
+# flow only, so an established tunnel session rides through the rebuild and only
+# a client dialling in during it could meet a partial rule set.
+iptables -t nat -F "$CHAIN"
+
+count=$(printf '%s\n' "$nodes" | wc -l)
+for pair in $PORT_MAP; do
+  listen=$${pair%%:*}
+  node_port=$${pair##*:}
+  seen=0
+  for ip in $nodes; do
+    # An even split, expressed the way kube-proxy expresses one: each rule takes
+    # 1/(nodes left) of what reached it, so no node carries more than its share
+    # and losing one costs that share alone.
+    remaining=$$(( count - seen ))
+    probability=$$(awk -v n="$$remaining" 'BEGIN { printf "%.6f", 1 / n }')
+    iptables -t nat -A "$CHAIN" \
+      -p udp --dport "$listen" \
+      -m statistic --mode random --probability "$probability" \
+      -j DNAT --to-destination "$$ip:$$node_port"
+    seen=$$(( seen + 1 ))
+  done
+done
+
+logger -t dfe-tunnel-forwarder "refreshed: $count node(s), listeners $PORT_MAP"
+SCRIPT
+chmod +x /usr/local/sbin/dfe-tunnel-forwarder-refresh.sh
+
+cat > /etc/systemd/system/dfe-tunnel-forwarder.service <<'UNIT'
+[Unit]
+Description=Point the tunnel forwarder's DNAT rules at the cluster's current nodes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dfe-tunnel-forwarder-refresh.sh
+UNIT
+
+cat > /etc/systemd/system/dfe-tunnel-forwarder.timer <<'UNIT'
+[Unit]
+Description=Refresh the tunnel forwarder's node list every minute
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now dfe-tunnel-forwarder.timer

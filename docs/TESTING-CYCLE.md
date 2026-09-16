@@ -32,6 +32,16 @@ use your current context; check it first). A failed deploy still destroys -- a
 broken cycle must not strand a half-stack. `--keep` skips the destroy, on a dev
 cluster only.
 
+## Batching a full cloud cycle
+
+A full cloud cycle runs once per BATCH of changes to the managed-Kafka path,
+never once per finding -- a cycle proves a batch. Stage every proof job before
+`tofu apply`, so no cluster time is spent authoring one. The managed cluster is
+the long pole: it comes up first and goes down first, and its proofs run the
+moment it reports ACTIVE. Proofs needing only the Kubernetes side run during its
+waits. A broker-count change runs one direction only. Teardown starts the moment
+the last proof lands.
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not
@@ -124,8 +134,8 @@ Check any cluster read-only before touching it:
         --require-label dfe.hyperi.io/workload=dfe
 
 Verified against both estate clusters 2026-07-22: the DFE cluster passes clean;
-the neighbouring devex one fails exactly one check -- the workload label -- the
-wrong-cluster trap the check exists to catch.
+the neighbouring on-prem reference cluster fails exactly one check -- the
+workload label -- the wrong-cluster trap the check exists to catch.
 
 ## Targets: on-prem now, cloud by parameter
 
@@ -148,7 +158,7 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
 | `capacity-check` | `--lane k8s` reads allocatable minus scheduled requests; `--lane docker` the daemon host's available memory | the mode's `lane_floor` in `scripts/profiles.py`; a breach REFUSES, and `--watch` keeps checking while a lane runs so the newer lane aborts instead of the host swapping |
 | `preflight` | read-only kubectl against the target | cluster contract above |
 | `stack-deploy` | offline pin/drift/render preflight, then `bootstrap/bootstrap.sh` (Layer 0/1 + Argo profile sync at the pinned stack) | bounded readiness + the 2 default E2E tests (receiver->CH data path, self-monitoring OTel) |
-| `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration. The scale proof injects pressure through the shim twice: phase 1 takes a throwaway Deployment 1->2->1, phase 2 takes the real dfe-receiver above its own floor and back, and SKIPS where that app has no shim trigger -- the charts ship `keda.pressure.enabled: false`, so phase 2 only runs where a deploy's overlay turns pressure on |
+| `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration. The scale proof injects pressure through the shim twice: phase 1 takes a throwaway Deployment 1->2->1, phase 2 takes the real dfe-receiver above its own floor and back, and SKIPS where that app has no shim trigger -- the app charts ship `keda.pressure.enabled: true`, so phase 2 runs everywhere except the slim profile, which turns pressure off |
 | `acceptance` | `onboarding` drives the setup wizard and first console session in Chrome (`--console-only` on a deploy already set up); `flows` is the engine repo's live pytest suite over port-forwards; `source` is the section below; a suite needing a source the deployment already carries goes through the pytest passthrough | `all` runs onboarding FIRST and stops on it: a deployment nobody could have onboarded has failed whatever the data path then does. The wizard's screens come from the engine's own `auth/setup-status`, so a screen the deployment no longer asks for is a failure, not a variation |
 | `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then dfe-ui's Playwright specs tagged `@acceptance` over `--ui-url` or a port-forward | the key UI features on a credential that differs from the build default |
 | `teardown` | `bootstrap/destroy.sh` (`--with-terraform` also destroys IaC state) | leaves the cluster as preflight found it |
@@ -159,9 +169,11 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
 Not part of the stock POST: the default E2E tests prove the deploy moved data,
 these prove an operator can add a source and watch it work. Run on demand after
 a deploy, here and on docker through dfe-docker's `make test-source`, which
-calls the same runner. Two cases, chosen with `--source-case`: `filebeat` (the
-default) pushes a real corpus at the receiver, and `cloudwatch` (run as
-`--aws-service cloudtrail`) lets a fetcher pull an AWS upstream.
+calls the same runner. Three cases, chosen with `--source-case`: `filebeat` (the
+default) pushes a real corpus at the receiver through the bundled VRL, `elastic`
+pushes the corpus's cisco_ios lines at a transform compiled into
+dfe-transform-elastic, and `cloudwatch` (run as `--aws-service cloudtrail`) lets
+a fetcher pull an AWS upstream.
 
 The CloudWatch case needs a SIXTH env file naming the upstream
 (`.tmp/aws-test.env`: `DFE_AWS_REGION`, `DFE_AWS_LOG_GROUP`), and

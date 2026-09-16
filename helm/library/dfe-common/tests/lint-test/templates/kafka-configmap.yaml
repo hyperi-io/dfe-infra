@@ -1,0 +1,16 @@
+{{- if (.Values.kafka).provider }}
+# The harness for the DFE Kafka provider table: one render per provider key, so
+# scripts/tests/test_kafka_credential_chain.py can assert the derivation without
+# standing up a chart that happens to consume it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-kafka
+  namespace: {{ include "dfe-common.namespace" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  securityProtocol: {{ include "dfe-common.kafkaSecurityProtocol" .Values.kafka.provider | quote }}
+  saslMechanism: {{ include "dfe-common.kafkaSaslMechanism" .Values.kafka.provider | quote }}
+  hasSchemaRegistry: {{ include "dfe-common.kafkaHasSchemaRegistry" .Values.kafka.provider | quote }}
+{{- end }}

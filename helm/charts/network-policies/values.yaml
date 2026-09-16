@@ -76,6 +76,27 @@ kedaShimPort: 8080
 otelNamespace: otel
 otelPort: 4317
 
+# EKS Pod Identity agent. A host-network DaemonSet, not a Service, so it sits
+# outside the namespace model every other baseline rule uses -- every pod that
+# resolves an AWS credential (the MSK bootstrap Job, an IAM-auth Kafka client,
+# ClickHouse's object-store role) calls it directly at a fixed link-local
+# address on every node. Address, port and the "host-network DaemonSet" shape
+# are AWS-documented, not a cluster choice:
+# https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html
+# ("occupying ports 80 and 2703 on the link-local address (169.254.170.23 for
+# IPv4, [fd00:ec2::23] for IPv6)"). Only 80 is listed: that is the credentials
+# endpoint AWS_CONTAINER_CREDENTIALS_FULL_URI calls; 2703 is the agent's own
+# webhook port and no application pod calls it. The IPv6 address is left out
+# on purpose -- podCIDR/serviceCIDR/linkLocalCIDR above are all IPv4, so this
+# chart renders no IPv6 ipBlock anywhere else; a dual-stack deployment adding
+# an IPv6 networkModel entry should extend baseline-egress.yaml to match.
+# Disable on a cluster that never runs EKS Pod Identity to keep the baseline
+# at its narrowest.
+podIdentityAgent:
+  enabled: true
+  address: 169.254.170.23
+  port: 80
+
 # Internet EGRESS allow-list. The baseline is default-deny-egress, so apps that
 # must INITIATE outbound to the internet need an explicit policy. fetcher polls
 # external data-source APIs; archiver uploads to object storage (S3/GCS/Azure).
@@ -188,8 +209,17 @@ externalEgress:
       - dfe-transform-vrl
       - dfe-transform-vector
       - dfe-transform-elastic
-      - dfe-transform-splack
-      - dfe-transform-wasm
+      # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
+      # - dfe-transform-splack
+      # - dfe-transform-wasm
+    # The MSK bootstrap Job runs in `strimzi` (appsets/layer2-data.yaml pins the
+    # kafka chart there) and is the FIRST thing that has to reach a managed
+    # broker -- it writes the SCRAM principal's ACLs and pre-creates the landing
+    # topics, and dfe-loader crashloops without them. That namespace already
+    # carries a baseline policy, so its egress is denied until this names it.
+    extraNamespaceApps:
+      strimzi:
+        - dfe-kafka        # kafka/templates/msk-bootstrap-job.yaml
     # The managed-broker listener range. 9092-9096 covers the SASL_SSL and
     # SASL_PLAINTEXT listeners Confluent Cloud, MSK and Redpanda Cloud publish
     # between them, and 9098 is MSK's IAM listener.

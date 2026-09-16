@@ -77,6 +77,41 @@ Subcommands:
                pins fresh" gate. Kills the hand look-up-a-sha-and-paste loop. The
                tag->digest core (scripts/registry_pins.py) is what dfe-deploy
                reuses to resolve an overlay's image.tag.
+  bastion      up/join/peers/hub/shell/forward/down/status for the on-demand
+               SSM-managed toolbox instance on a cloud-provisioned deployment
+               (terraform/modules/toolbox/aws). up flips toolbox.enabled in
+               the dial and applies just that target; forward is NOT recorded
+               by Session Manager (toolbox/aws/CONTRACT.md); down proves
+               nothing remains rather than trusting the apply alone. hub
+               routes the fleet tunnel's client range at the culvert pod and
+               opens the logged shell onto one appliance; join, which makes
+               the instance a PEER instead, is refused until
+               hyperi-io/culvert#40 lands.
+  edge-probe   What an unauthenticated caller OUTSIDE the cluster actually
+               reaches: the TLS floor and HSTS on the public listener, the rate
+               limit answering 429, the CIDR filter refusing an off-list
+               address, the receiver reachable only through the tunnel, the
+               otel route private on cloud, every admin UI route absent unless
+               opted in, and dfe-ui's login page answering. Each check prints
+               PASS, FAIL or SKIP with one line of evidence and the verb exits
+               non-zero on any FAIL. Sends no credential, because a credential
+               would prove something an outside caller does not have.
+  init         Prompt-driven wizard over deployment.example.yaml's own fields:
+               target, tier/ingest/focus, Kafka provider, the derived
+               ClickHouse storage model, public UIs + OIDC, telemetry,
+               lifecycle + AZ count, toolbox, sizing overrides -- writes a
+               deployment.yaml render_dial.py accepts. Every answer is
+               validated by CALLING render_dial.py's/resolve_sizing.py's own
+               validators, never a second copy of their rules. --answers
+               drives it non-interactively for CI; --dry-run writes nothing.
+  upgrade      plan/preflight/apply/rollback a stack upgrade against a
+               deployment repo (`--deploy`), walking upgrade-order.yaml stage
+               by stage: plan diffs the pinned stack against a target
+               (`--to`, default the `current` pointer) and runs compat-check
+               + the sizing locked-change classifier; preflight is the gate
+               apply refuses to run without; apply bumps pins.yaml through a
+               surgical field edit and commits per stage (never a hand edit);
+               rollback refuses by name any step with no reverse path.
 
 Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
 this file is committed publicly, so substitute your own node):
@@ -122,6 +157,17 @@ this file is committed publicly, so substitute your own node):
     python3 scripts/dfe-ops ca --kubeconfig .tmp/dfe.kubeconfig
     python3 scripts/dfe-ops ca --install --kubeconfig .tmp/dfe.kubeconfig
 
+    # Walk the wizard to write a deployment.yaml dial, then size it:
+    python3 scripts/dfe-ops init --out deployment.yaml
+    python3 scripts/dfe-ops init --answers wizard-answers.env --fixtures shapes/fixtures/aws
+
+    # Plan a stack upgrade against a deploy-repo checkout, then run its
+    # preflight, then apply stage by stage (asking before each one):
+    python3 scripts/dfe-ops upgrade plan --deploy ../dfe-deploy --to 2.2.0-rc.13
+    python3 scripts/dfe-ops upgrade preflight --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --dry-run
+
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run
     python3 scripts/dfe-ops teardown --force --with-terraform
@@ -137,6 +183,8 @@ from __future__ import annotations
 import argparse
 import atexit
 import base64
+import contextlib
+import io
 import json
 import os
 import platform
@@ -155,6 +203,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -179,12 +228,18 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #   resolve_pins -- `pin`, so the standalone tool and `dfe-ops pin` are one code
 #                   path (dfe-infra#116).
 #   tester_idp   -- `idp`, whose render functions are unit-testable cluster-free.
+#   yaml_subset  -- the one reader every ops script parses a YAML SSoT with.
 sys.path.insert(0, str(SCRIPTS))
 import access_summary as access_summary_file  # noqa: E402
 import capacity  # noqa: E402
 import composition  # noqa: E402
 import envfile  # noqa: E402
 import profiles  # noqa: E402
+import yaml_subset  # noqa: E402
+from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
+from dfe_ops_edge_probe import add_edge_probe_subparser  # noqa: E402
+from dfe_ops_init import add_init_subparser  # noqa: E402
+from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
@@ -194,6 +249,8 @@ DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 # bootstrap.sh's required env (validated up-front so a missing var fails the
 # driver before it touches the cluster, not mid-run). DFE_KAFKA_BOOTSTRAP is
 # intentionally omitted -- it is empty in the brokerless modes (gRPC transport).
+# Backend-independent: the two OpenBao AppRole outputs live in
+# bootstrap_required() below, since the aws-sm root never emits them.
 BOOTSTRAP_REQUIRED = (
     "DFE_ENV",
     "DFE_CLOUD",
@@ -206,10 +263,28 @@ BOOTSTRAP_REQUIRED = (
     "DFE_NAMESPACE",
     "DFE_CLICKHOUSE_HOST",
     "DFE_OTEL_ENDPOINT",
-    "DFE_VAULT_ADDR",
-    "DFE_VAULT_ROLE_ID",
     "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
 )
+
+# The two that depend on which secrets backend the deployment declared, the same
+# split bootstrap.sh and bridge.py already make. DFE_VAULT_ADDR and
+# DFE_VAULT_ROLE_ID are openbao-only: the aws root emits neither and sets
+# DFE_SECRETS_BACKEND=aws-sm, where ESO authenticates through EKS Pod Identity
+# and takes DFE_SECRETS_REGION in their place.
+BOOTSTRAP_REQUIRED_OPENBAO = ("DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID")
+BOOTSTRAP_REQUIRED_AWS_SM = ("DFE_SECRETS_REGION",)
+
+
+def _bootstrap_required(env: dict[str, str]) -> tuple[str, ...]:
+    """Everything bootstrap.sh cannot run without, for this deployment's backend.
+
+    An empty value reads as openbao, matching bootstrap.sh's own
+    ``${DFE_SECRETS_BACKEND:-openbao}`` -- a plain ``get(..., "openbao")`` would
+    read a present-but-empty value as aws-sm and drop both checks.
+    """
+    backend = env.get("DFE_SECRETS_BACKEND") or "openbao"
+    extra = BOOTSTRAP_REQUIRED_OPENBAO if backend == "openbao" else BOOTSTRAP_REQUIRED_AWS_SM
+    return BOOTSTRAP_REQUIRED + extra
 
 # A representative set of app charts is rendered alongside the mode's substrate
 # charts, so an app-side profile break is caught before deploy.
@@ -1324,6 +1399,9 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                               ("--aws-log-group", "DFE_AWS_LOG_GROUP")):
                 if settings.get(key):
                     runner += [flag, settings[key]]
+            # Both pushed cases read their corpus out of this one archive; the
+            # elastic transform is compiled into its own image and publishes no
+            # file the run needs.
             transform_repo = _sibling_repo("dfe-transform-vrl", "DFE_TRANSFORM_VRL_REPO")
             if transform_repo:
                 runner += ["--transform-repo", str(transform_repo)]
@@ -2271,7 +2349,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         sys.path.insert(0, str(BOOTSTRAP))
         from bridge import get_tf_outputs
 
-        file_env.update({k: v for k, v in get_tf_outputs(args.from_terraform).items() if k.startswith("DFE_")})
+        # name -> (value, sensitive), the same unwrap _assemble_env does.
+        file_env.update({
+            k: value
+            for k, (value, _sensitive) in get_tf_outputs(args.from_terraform).items()
+            if k.startswith("DFE_")
+        })
     envfile.load_env_files(args.env_file, file_env)
     namespace = args.namespace or file_env.get("DFE_NAMESPACE") or "dfe-local"
     storage_class = args.storage_class or file_env.get("DFE_STORAGE_CLASS") or ""
@@ -2525,22 +2608,18 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     published = [ln for ln in out.splitlines() if ln.strip().startswith("dfe-") and "@sha256:" in ln]
     print(f"  [ok]   stack {args.stack}: pins resolve ({len(published)} published app image(s))", file=sys.stderr)
 
-    # 2. Drift-check -- working-tree pins == versions.yaml. Validates `current`
-    #    only, so warn (do not fail) when a non-current stack is requested.
-    rc, out, err = _run_text(["python3", str(DRIFT_CHECK)])
+    # 2. Drift-check -- working-tree pins == versions.yaml, against the stack
+    #    being deployed rather than whatever `current` points at, so a deploy of
+    #    an in-flight cut audits its own block. _resolve_stack has already
+    #    defaulted args.stack to `current`, so naming no stack audits what it
+    #    always did.
+    rc, out, err = _run_text(["python3", str(DRIFT_CHECK), "--stack", args.stack])
     if rc != 0:
-        print("  [FAIL] version drift vs versions.yaml (SSoT):", file=sys.stderr)
+        print(f"  [FAIL] version drift vs versions.yaml (SSoT) for stack {args.stack}:", file=sys.stderr)
         print((out or err).rstrip(), file=sys.stderr)
         hard_fail += 1
     else:
         print(f"  [ok]   {_last_line(out) or 'no version drift'}", file=sys.stderr)
-    current = _current_stack()
-    if current and args.stack != current:
-        print(
-            f"  [warn] --stack {args.stack} != versions.yaml current ({current}); the "
-            "drift-check validates `current` only -- deploy from the matching git revision.",
-            file=sys.stderr,
-        )
 
     # 3. Namespace drift -- the operator-namespace SSoT vs where the appsets
     #    install each operator. A selector naming an absent namespace matches
@@ -2646,6 +2725,10 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     optionally, the Argo git ref for the pinned charts. Later sources win, so a
     terraform-supplied DFE_PROFILE (one of MODES) is always replaced by the
     requested mode.
+
+    DFE_REGISTRY is NOT in that set: --registry overrides the env file when it is
+    given, and the shipped default is the floor under both, so a deployer whose
+    env file names their own registry keeps it on a call with no flag.
     """
     env = dict(os.environ)
 
@@ -2656,7 +2739,10 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         from bridge import get_tf_outputs
 
         tf = get_tf_outputs(args.from_terraform)
-        dfe = {k: v for k, v in tf.items() if k.startswith("DFE_")}
+        # get_tf_outputs answers name -> (value, sensitive) by design, so the
+        # value has to be unwrapped -- a raw tuple in the env dict makes
+        # subprocess.run refuse the whole call with a TypeError.
+        dfe = {k: value for k, (value, _sensitive) in tf.items() if k.startswith("DFE_")}
         env.update(dfe)
         print(f"  loaded {len(dfe)} DFE_* var(s) from terraform {args.from_terraform}", file=sys.stderr)
 
@@ -2666,6 +2752,12 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
     env["DFE_PROFILE"] = args.mode
+    # The dial's registry reaches the charts ONLY through this variable: the
+    # --registry flag otherwise stops at `dfe-stack render`, which expands the
+    # version set and never touches what a pod pulls from. An unset flag leaves
+    # the env file's own value standing, because overwriting it deploys every
+    # dfe-* pod against a registry the deployer holds no pull secret for.
+    env["DFE_REGISTRY"] = args.registry or env.get("DFE_REGISTRY") or DEFAULT_REGISTRY
     _apply_domain(env, args.mode)
     if args.target_revision:
         env["DFE_TARGET_REVISION"] = args.target_revision
@@ -2706,7 +2798,7 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     env["DFE_STACK_VERSION"] = args.stack
 
     # Fail early on incomplete env -- clearer than a mid-bootstrap abort.
-    missing = [v for v in BOOTSTRAP_REQUIRED if not env.get(v)]
+    missing = [v for v in _bootstrap_required(env) if not env.get(v)]
     if missing:
         print(f"ERROR: missing required deploy env: {', '.join(missing)}", file=sys.stderr)
         print(
@@ -2838,7 +2930,7 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         preflight_cmd = [
             *self_cmd, "preflight", "--mode", args.mode,
             *passthrough_kube, *passthrough_env,
-            "--registry", args.registry.split("/")[0],
+            "--registry", (args.registry or DEFAULT_REGISTRY).split("/")[0],
         ]
         if args.from_terraform:
             preflight_cmd += ["--from-terraform", args.from_terraform]
@@ -2848,9 +2940,12 @@ def cmd_cycle(args: argparse.Namespace) -> int:
 
     deploy_cmd = [
         *self_cmd, "stack-deploy", "--mode", args.mode, "--stack", args.stack,
-        "--registry", args.registry,
         *passthrough_kube, *passthrough_env,
     ]
+    # Passed on only when the operator gave it, so an unset flag reaches
+    # stack-deploy unset and its own env file still decides.
+    if args.registry:
+        deploy_cmd += ["--registry", args.registry]
     if args.from_terraform:
         deploy_cmd += ["--from-terraform", args.from_terraform]
     if args.target_revision:
@@ -3031,7 +3126,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=900,
         help="bounded readiness wait in seconds (never wait-forever; sets READINESS_TIMEOUT)",
     )
-    sd.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix (passthrough to dfe-stack)")
+    sd.add_argument("--registry", default=None,
+                    help=f"image registry prefix (passthrough to dfe-stack); unset keeps an env "
+                         f"file's own DFE_REGISTRY, then {DEFAULT_REGISTRY}")
     sd.add_argument("--access-out", default="dfe-access.md", help="where the post-deploy access summary is written")
     sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
     sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
@@ -3073,7 +3170,9 @@ def build_parser() -> argparse.ArgumentParser:
     cy.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
     cy.add_argument("--from-terraform", default=None, metavar="DIR", help="read DFE_* outputs from a terraform env dir")
     cy.add_argument("--target-revision", default=None, help="Argo git ref for the pinned charts")
-    cy.add_argument("--registry", default=DEFAULT_REGISTRY, help="image registry prefix")
+    cy.add_argument("--registry", default=None,
+                    help=f"image registry prefix; unset keeps an env file's own DFE_REGISTRY, "
+                         f"then {DEFAULT_REGISTRY}")
     cy.add_argument("--require-label", action="append", default=[], metavar="KEY=VALUE", help="node label the preflight must find (repeatable)")
     cy.add_argument("--skip-preflight", action="store_true", help="skip the online cluster preflight stage")
     cy.add_argument("--skip-capacity-check", action="store_true",
@@ -3249,9 +3348,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip the wizard half of the onboarding suite on a deploy already set up, and prove the console half alone")
     ac.add_argument("--keep", action="store_true",
                     help="the source suite leaves the source it made deployed, for a look")
-    ac.add_argument("--source-case", default="filebeat", choices=("filebeat", "cloudwatch"),
-                    help="which source the source suite creates: filebeat pushed at the receiver, or "
-                         "an AWS upstream a fetcher polls")
+    ac.add_argument("--source-case", default="filebeat", choices=("filebeat", "cloudwatch", "elastic"),
+                    help="which source the source suite creates: filebeat pushed at the receiver "
+                         "through the bundled VRL, elastic pushed at a compiled-in transform, or an "
+                         "AWS upstream a fetcher polls")
     ac.add_argument("--aws-service", default="cloudwatch_logs",
                     help="the AWS service the cloudwatch case polls")
     ac.add_argument("--fetcher-credentials-vault-path", default="", metavar="PATH",
@@ -3355,12 +3455,152 @@ def build_parser() -> argparse.ArgumentParser:
     # external-OIDC login can be proven without borrowing a shared provider.
     add_idp_subparser(sub)
 
+    # bastion -- up/shell/forward/down/status for the on-demand SSM-managed
+    # toolbox instance (terraform/modules/toolbox/aws). Registered from
+    # dfe_ops_bastion.
+    add_bastion_subparser(sub)
+
+    # edge-probe -- what an unauthenticated caller outside the cluster reaches,
+    # which no render assertion can answer. Registered from dfe_ops_edge_probe.
+    add_edge_probe_subparser(sub)
+
+    # init -- the prompt-driven deployment-dial wizard. Registered from
+    # dfe_ops_init.
+    add_init_subparser(sub)
+
+    # upgrade -- plan/preflight/apply/rollback a stack upgrade against a
+    # deployment repo. Registered from dfe_ops_upgrade.
+    add_upgrade_subparser(sub)
+
     return ap
+
+
+# --- the ephemeral-deployment banner -----------------------------------------
+# An ephemeral deployment is a create-prove-destroy cycle, and what decides
+# whether to keep proving is how long it has been up against what it costs an
+# hour. The age comes from the cluster's own creation stamp through the root's
+# outputs, so only a dial that marks itself ephemeral AND names a cloud to
+# provision pays for the reading, and neither reading failing fails a command.
+
+DIAL = REPO_ROOT / "deployment.yaml"
+SIZING_RESOLVED = REPO_ROOT / "sizing" / "resolved.yaml"
+TF_ENVIRONMENTS = REPO_ROOT / "terraform" / "environments"
+
+
+def _dial_tree() -> dict[str, object]:
+    """The dial, or an empty tree -- a missing or unreadable dial is never fatal."""
+    try:
+        return yaml_subset.parse(DIAL.read_text(encoding="utf-8", errors="replace"), source=str(DIAL))
+    except (OSError, yaml_subset.YamlSubsetError):
+        return {}
+
+
+def _tf_output(cloud: str, name: str) -> str | None:
+    """One root output, read through bridge.py's own reader, or None.
+
+    bridge exits the process on a tofu failure -- an uninitialised root, a
+    deployment that has never been applied -- and prints why, so both the exit
+    and the print are contained here: a banner may cost a command its output,
+    never its run.
+    """
+    tf_dir = TF_ENVIRONMENTS / cloud
+    if not tf_dir.is_dir():
+        return None
+    sys.path.insert(0, str(BOOTSTRAP))
+    try:
+        from bridge import get_tf_outputs
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            value, _sensitive = get_tf_outputs(str(tf_dir)).get(name, (None, False))
+    except (Exception, SystemExit):
+        return None
+    return value or None
+
+
+# The AWS provider renders a creation stamp two ways across its resources --
+# RFC 3339, and Go's own `2026-09-15 05:12:33.1 +0000 UTC` -- so both spellings
+# are read rather than one being assumed.
+_CREATED_AT = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[ T](?P<time>\d{2}:\d{2}:\d{2})"
+    r"(?:\.(?P<fraction>\d+))?\s*(?P<zone>Z|[+-]\d{2}:?\d{2})?"
+)
+
+
+def _parse_created_at(raw: str) -> float | None:
+    """A creation stamp as epoch seconds, or None for anything unrecognised."""
+    match = _CREATED_AT.match(raw.strip())
+    if match is None:
+        return None
+    text = f"{match['date']}T{match['time']}"
+    if match["fraction"]:
+        # datetime reads six digits; Go prints up to nine.
+        text += f".{match['fraction'][:6]}"
+    zone = match["zone"] or "Z"
+    if zone == "Z":
+        text += "+00:00"
+    else:
+        text += zone if ":" in zone else f"{zone[:3]}:{zone[3:]}"
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+def _cluster_created_at(cloud: str) -> float | None:
+    """When the cluster this deployment provisions was created, as epoch seconds.
+
+    No file in the tree dates a deployment: a local state file's mtime dates the
+    last apply, and an S3 backend leaves none here at all. The control plane's
+    own creation stamp is the reading that survives both, and the root publishes
+    it as `cluster_created_at`.
+    """
+    raw = _tf_output(cloud, "cluster_created_at")
+    return _parse_created_at(raw) if raw else None
+
+
+def _elapsed(seconds: float) -> str:
+    hours, rest = divmod(int(seconds), 3600)
+    return f"{hours}h{rest // 60:02d}m"
+
+
+def _ephemeral_notice() -> str | None:
+    """One line for a deployment the dial marks ephemeral, or None for any other.
+
+    A dial naming no cloud provisions nothing (target.existing), so it gets no
+    banner rather than a reading taken from an unrelated environment's tree.
+    """
+    tree = _dial_tree()
+    if yaml_subset.at(tree, ("tags", "lifecycle")) != "ephemeral":
+        return None
+    cloud = yaml_subset.at(tree, ("target", "provision", "cloud"))
+    if not cloud:
+        return None
+    parts = [f"ephemeral deployment ({cloud})"]
+    created = _cluster_created_at(str(cloud))
+    parts.append(
+        f"up {_elapsed(time.time() - created)}"
+        if created
+        else "age unavailable (no cluster_created_at output)"
+    )
+    # A bucket, never a rate: this banner is deployer-facing and states no cost figure.
+    bucket = None
+    try:
+        resolved = yaml_subset.parse(
+            SIZING_RESOLVED.read_text(encoding="utf-8", errors="replace"), source=str(SIZING_RESOLVED)
+        )
+        bucket = yaml_subset.at(resolved, ("compute_bucket",))
+    except (OSError, yaml_subset.YamlSubsetError):
+        bucket = None
+    parts.append(f"standing compute {bucket}" if bucket else "compute bucket not resolved")
+    return " -- ".join(parts)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
     args = ap.parse_args(argv)
+    notice = _ephemeral_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     return args.func(args)
 
 

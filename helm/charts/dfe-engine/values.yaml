@@ -15,7 +15,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:a96b8ced525edd723c32e31857c2088e0fa91dd699ca13863023a4fe0afe0c00"
+  digest: "sha256:7be5a50c74d7a3859d67b8552175c12f23401113782af98ddcac9170f966bc7c"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -54,10 +54,12 @@ service:
   type: ClusterIP
   port: 8000
 
-# Authored files another repo ships and this engine serves: the reference
-# transform pipelines the library and the console's copy-paste view show, and the
-# source catalogue a transform ships. Each entry becomes ONE init container that
-# fills a shared emptyDir before the engine starts.
+# Files this engine serves that another image owns: the reference transform
+# pipelines the library and the console's copy-paste view show, the source
+# catalogue a transform ships, and each app's own container contract -- the
+# config schema and capability catalogue the settings API reads. Each entry
+# becomes ONE init container that fills a shared emptyDir before the engine
+# starts.
 #
 # NOT a ConfigMap and not a values blob: the elastic catalogue alone is 344 KB, so
 # either form re-serialises it into etcd on every Argo sync.
@@ -66,20 +68,29 @@ service:
 #   name   the versions.yaml content pin this materialises, and the container name
 #   kind   the vehicle -- `image` copies files out of a pinned app image the
 #          deployment already has pull rights to; `asset` downloads a release
-#          asset over the engine image's python
-#   ref    the pinned image (tag@sha256) for `image`, the asset URL for `asset`
+#          asset over the engine image's python; `emit` runs the pinned app image
+#          so the app writes its own contract, which no image carries as a file
+#   ref    the pinned image (tag@sha256) for `image` and `emit`, the asset URL for
+#          `asset`
 #   role   where the files land, and so what reads them: `library` puts them under
 #          <mountPath>/library/<kind>, `catalogue` under <mountPath>/catalogue and
-#          sets DFE_SOURCE_CATALOGUE_FILE. Vehicle and role are independent.
+#          sets DFE_SOURCE_CATALOGUE_FILE, `contract` under
+#          <mountPath>/contract/<app> where DFE_APP_CONTRACT_DIR points. Vehicle
+#          and role are independent.
+#   app    the service the entry speaks for: the subdirectory it writes, and the
+#          command an `emit` entry runs. Required for `emit`.
 #   files  [{from, to}] -- `from` is a path inside the image or a name inside the
-#          asset, `to` is relative to the role's root
+#          asset, `to` is relative to the role's root. Absent for `emit`, where
+#          the app decides what it writes.
 #
-# EMPTY, and the pins in versions.yaml say why: neither transform release carries
-# its files as an asset, and neither Dockerfile copies them into the image, so
-# there is nothing to fetch yet. Each app that ships its files makes its entry
-# live -- the mechanism needs no change. The live block for the two content pins:
+# The contract entries carry a second copy of the versions.yaml apps + digests
+# pins, so check_versions_drift.py reads both halves of each ref and --fix moves
+# them with the SSoT. A deployment mirroring images elsewhere overrides the ref.
 #
-#   entries:
+# The two LIBRARY pins are still empty, and the pins in versions.yaml say why:
+# neither transform release carries its files as an asset, and neither Dockerfile
+# copies them into the image, so there is nothing to fetch yet. The live block:
+#
 #     - name: dfe-transform-vector-templates
 #       kind: image
 #       ref: "ghcr.io/hyperi-io/dfe-transform-vector:<tag>@<digest>"
@@ -99,7 +110,42 @@ content:
   # The catalogue's filename is the engine's contract, not a deployment choice:
   # the app manifest binds a catalogue by the name its app ships it under.
   catalogueFile: sources.yaml
-  entries: []
+  entries:
+    - name: dfe-receiver-contract
+      kind: emit
+      role: contract
+      app: dfe-receiver
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.36@sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
+    - name: dfe-loader-contract
+      kind: emit
+      role: contract
+      app: dfe-loader
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.37@sha256:f42ef595b2d608fa9aac3ba4793929d87cc1a18501b336c481455be16b54c3e6"
+    - name: dfe-archiver-contract
+      kind: emit
+      role: contract
+      app: dfe-archiver
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.22@sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
+    - name: dfe-fetcher-contract
+      kind: emit
+      role: contract
+      app: dfe-fetcher
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.24@sha256:cbf7a83fa756060000c6c7f479cb283da347099f1ccc433ca33804498c139e03"
+    - name: dfe-transform-vrl-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vrl
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.23@sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
+    - name: dfe-transform-vector-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vector
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.41@sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
+    - name: dfe-transform-elastic-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.2@sha256:a2f5073d0a78c1143ab8cedf738c159fff01dd14292c50fd88aecbf31c09517c"
 
 config:
   mountPath: /config
@@ -365,7 +411,8 @@ huntRunner:
     targetBacklog: 10       # due-hunts per pod (AverageValue -> ceil(due / targetBacklog))
     cooldownPeriod: 300
     pollingInterval: 30
-    shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # Default: dfe-keda-shim in this release's namespace (dfe-common.kedaShimAddress).
+    shimAddress: ""
   # How hunt and rule YAML REACHES the runner. The runner reads them off disk
   # (dfe_engine.hunt_runner.spec_loader on every reload tick) and the engine
   # governs them in the deploy repo, so without this the runner's directories are

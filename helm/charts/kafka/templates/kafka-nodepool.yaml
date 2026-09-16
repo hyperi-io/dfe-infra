@@ -1,7 +1,15 @@
 {{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
-{{- $replicas := ternary 1 (int .Values.kafka.replicas) (eq .Values.kafka.mode "single") }}
-# Node pool for the Kafka cluster. Combined controller+broker roles (KRaft).
-# replicas: single -> 1, cluster -> kafka.replicas (default 3, set higher).
+{{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
+# The pool that always exists. In the chart's default (combined) mode it
+# carries both broker and controller roles -- this file adds the controller
+# role, and kafka-controller-nodepool.yaml renders nothing. Set
+# kafka.controllerPool.enabled=true to split the KRaft controllers into their
+# own pool instead: recommended for a NEW deployment (a broker under GC or IO
+# pressure is otherwise also the metadata quorum), but a migration -- never a
+# default -- on a cluster that already exists.
+# replicas: cluster -> kafka.replicas (default 3, set higher). This is also the
+# ONLY field a scale-out changes, and the only change that triggers Cruise
+# Control's auto-rebalance.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:
@@ -12,7 +20,9 @@ metadata:
 spec:
   replicas: {{ $replicas }}
   roles:
+    {{- if not .Values.kafka.controllerPool.enabled }}
     - controller
+    {{- end }}
     - broker
   storage:
     type: jbod

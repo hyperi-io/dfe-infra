@@ -60,7 +60,7 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
     )
     steps.record_table(run.driver, run.store, case.name)
     steps.record_instance_up(
-        run.driver, run.engine, case.service, case.name,
+        run.driver, run.engine, run.store, case.service, case.name,
         case.instance_step, case.instance_deadline,
         case.reporting_step, case.reporting_deadline,
     )
@@ -114,11 +114,14 @@ def run(args: argparse.Namespace) -> int:
         password=os.environ.get("DFE_E2E_CH_PASSWORD", ""),
         database=os.environ.get("DFE_E2E_CH_DB", "dfe"),
     )
+    case = cases.build(args)
     engine_repo = Path(args.engine_repo).resolve()
-    transform_repo = (
-        Path(args.transform_repo).resolve() if args.transform_repo
-        else companion(engine_repo, "dfe-transform-vrl")
-    )
+    if args.transform_repo:
+        transform_repo = Path(args.transform_repo).resolve()
+    elif case.companion_repo:
+        transform_repo = companion(engine_repo, case.companion_repo)
+    else:
+        transform_repo = engine_repo
     verify = not args.insecure
     # The API calls go straight to the engine when a forward is up: a deploy or a
     # delete can outlast a gateway's timeout. The console still goes through the gateway.
@@ -127,7 +130,6 @@ def run(args: argparse.Namespace) -> int:
     archive_exec = [shlex.split(one) for one in args.archive_exec]
     restart_exec = shlex.split(args.restart_exec)
 
-    case = cases.build(args)
     shots = Path(args.shots_dir)
     with sync_playwright() as play:
         launch_args = [f"--host-resolver-rules=MAP {host} {ip}" for host, ip in args.resolve]
@@ -162,6 +164,11 @@ def run(args: argparse.Namespace) -> int:
 
     print()
     print(wizard.report_table(driver.results))
+    unproven = [row.slug for row in driver.results if row.status == "unproven"]
+    if unproven:
+        # A row that ran and could not decide is neither a pass nor a failure,
+        # and is said again here so a long table cannot be read as green.
+        print(f"\nUNPROVEN: {', '.join(unproven)} -- read the detail before claiming the source works")
     print(f"\nscreenshots: {shots}")
     return wizard.exit_code(driver.results)
 
@@ -175,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ui-url", required=True, help="console base URL")
     parser.add_argument("--engine-url", required=True, help="engine API base URL")
     parser.add_argument("--engine-repo", required=True, help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)")
-    parser.add_argument("--transform-repo", default="", help="dfe-transform-vrl checkout holding the bundled pipeline and corpus (default: beside the engine repo)")
+    parser.add_argument("--transform-repo", default="", help="checkout holding the corpus archive, and the program a case uploads; both pushed cases name dfe-transform-vrl, the elastic transform being compiled into its own image (default: the case's own, beside the engine repo)")
     parser.add_argument("--access-summary", default="", metavar="FILE", help="the deploy's own summary, for the login when not run through dfe-ops")
     parser.add_argument("--org", default="acceptance", help="organisation to create when the deployment still owes its setup wizard")
     parser.add_argument("--first-user", default="operator", help="first user to create when the deployment still owes its setup wizard")
@@ -187,9 +194,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="command prefix that restarts one app by service name, for the apps the "
                              "engine reports it cannot apply where they stand (docker: docker "
                              "restart); unused on Kubernetes, where the controller rolls the pod")
-    parser.add_argument("--case", default="filebeat", choices=("filebeat", "cloudwatch"),
-                        help="filebeat pushes real lines at the receiver; cloudwatch authors a meta "
-                             "schema and lets a fetcher pull an AWS upstream")
+    parser.add_argument("--case", default="filebeat", choices=tuple(cases.CASES),
+                        help="filebeat pushes real lines at the receiver through the bundled VRL; "
+                             "elastic pushes cisco_ios lines at a transform compiled into its app; "
+                             "cloudwatch authors a meta schema and lets a fetcher pull an AWS upstream")
     parser.add_argument("--aws-service", default="cloudwatch_logs", choices=tuple(sorted(fetcher.AWS_CASES)),
                         help="the AWS service the cloudwatch case's fetcher polls")
     parser.add_argument("--aws-region", default=os.environ.get("DFE_E2E_AWS_REGION", ""),
@@ -199,6 +207,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-interval-secs", type=int, default=60,
                         help="how often the fetcher polls its upstream")
     parser.add_argument("--per-module", type=int, default=20, help="corpus lines per filebeat module to feed")
+    parser.add_argument("--via", default="post", choices=("post", "logstash"),
+                        help="how the pushed cases reach the receiver: post wraps each corpus line "
+                             "and POSTs it; logstash stands a real filebeat and logstash pair beside "
+                             "a compose deployment and pushes the envelope a deployment sends")
+    parser.add_argument("--beats-network", default="", metavar="NETWORK",
+                        help="docker network the stack runs on, which the --via logstash pair joins")
+    parser.add_argument("--beats-receiver-url", default="http://dfe-receiver:8080/ingest",
+                        metavar="URL", help="the receiver's ingest URL as seen from that network")
     parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")
     parser.add_argument("--headed", action="store_true", help="show the browser")

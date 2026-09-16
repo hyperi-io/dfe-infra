@@ -1,7 +1,7 @@
 # Hyperi-Infra Repository Analysis for DFE 2.2 Local Rancher Deployment
 
 **Date:** 2026-03-30
-**Repository:** `/projects/hyperi-infra/`
+**Repository:** `hyperi-io/hyperi-infra`
 **Purpose:** Inform DFE 2.2 local Rancher deployment target
 
 ---
@@ -10,7 +10,7 @@
 
 ### 1.1 Overall Infrastructure Design
 
-The `hyperi-infra` repository implements a complete IaC environment running on a single Proxmox VE hypervisor host (`devex.hyperi.io`). Designed as a single-node DevEx environment with HA-ready code paths.
+The `hyperi-infra` repository implements a complete IaC environment running on a single bare-metal hypervisor host (`example.com`). Designed as a single-node DevEx environment with HA-ready code paths.
 
 **Three-tier complexity hierarchy:**
 
@@ -38,23 +38,23 @@ Rancher v2.11.1 deployed as Helm chart into `cattle-system` namespace on the loc
 
 | Node | IP | CPU | RAM | Data Disks |
 |------|-----|-----|-----|------------|
-| k8s-1 | 10.66.0.201 | 24 cores | 64GB | 500GB HDD + 200GB NVMe |
-| k8s-2 | 10.66.0.202 | 24 cores | 64GB | 500GB HDD + 200GB NVMe |
-| k8s-3 | 10.66.0.203 | 24 cores | 64GB | 500GB HDD + 200GB NVMe |
+| k8s-1 | 192.0.2.201 | 24 cores | 64GB | 500GB HDD + 200GB NVMe |
+| k8s-2 | 192.0.2.202 | 24 cores | 64GB | 500GB HDD + 200GB NVMe |
+| k8s-3 | 192.0.2.203 | 24 cores | 64GB | 500GB HDD + 200GB NVMe |
 
-- **API VIP:** 10.66.0.200 (Keepalived)
+- **API VIP:** 192.0.2.200 (Keepalived)
 - **CNI:** Canal (Flannel + Calico)
 - **RKE2:** v1.32.3+rke2r1
 - **nginx-ingress disabled** -- Envoy Gateway instead
 
 ### 1.4 Network Design
 
-Single flat network on Proxmox `vmbr1`:
-- 10.66.0.100-199: Pet VMs (static IPs)
-- 10.66.0.200-250: VIPs and K8s externalIPs
-- Wildcard DNS: `*.apps.devex.hyperi.io` -> K8s VIP (10.66.0.200)
+Single flat network on the hypervisor bridge `vmbr1`:
+- 192.0.2.100-199: Pet VMs (static IPs)
+- 192.0.2.200-250: VIPs and K8s externalIPs
+- Wildcard DNS: `*.apps.example.com` -> K8s VIP (192.0.2.200)
 - K8s services exposed via `externalIPs` on ClusterIP (no MetalLB needed)
-- NAT: Proxmox host provides masquerade to external
+- NAT: the hypervisor host provides masquerade to external
 
 ---
 
@@ -64,10 +64,10 @@ Single flat network on Proxmox `vmbr1`:
 
 | Module | Purpose |
 |--------|---------|
-| `proxmox-vm` | Creates VMs from cloud-init template on Proxmox (bpg/proxmox provider) |
-| `proxmox-vm-existing` | Metadata management on pre-existing VMs |
+| VM creation | Creates VMs from a cloud-init template on the hypervisor (community `bpg` provider) |
+| VM adoption | Metadata management on pre-existing VMs |
 | `acme-cert` | Let's Encrypt wildcards via DNS-01 (Cloudflare). ECDSA P-384 |
-| `pbs-s3-backup` | AWS S3 for Proxmox Backup Server offsite replication |
+| `pbs-s3-backup` | AWS S3 for the on-prem backup server's offsite replication |
 
 Environment: `environments/devex/` defines all VMs, certs, and backup config.
 
@@ -114,9 +114,9 @@ Environment: `environments/devex/` defines all VMs, certs, and backup config.
 ### 2.5 DNS
 
 CoreDNS on infra VM:
-- Main zone + infrastructure includes + manual includes + dynamic (DHCP/Proxmox)
-- Wildcard `*.apps.devex.hyperi.io -> 10.66.0.200`
-- NS delegation from Cloudflare for `devex.hyperi.io`
+- Main zone + infrastructure includes + manual includes + dynamic (DHCP/hypervisor)
+- Wildcard `*.apps.example.com -> 192.0.2.200`
+- NS delegation from Cloudflare for `example.com`
 
 ### 2.6 Bootstrap Process
 
@@ -129,7 +129,7 @@ Cold boot: Bootstrap VM auto-starts, runs `infra-startup.yml` starting all VMs i
 ## 3. Installation Dependencies
 
 **Minimum hardware:** 64+ CPU cores, 256GB+ RAM, NVMe + HDD storage
-**Software:** Proxmox VE 8.x, Python 3.12 + Ansible 10.x, Terraform 1.5+, Helm 3.14+
+**Software:** a bare-metal hypervisor, Python 3.12 + Ansible 10.x, Terraform 1.5+, Helm 3.14+
 **External:** Cloudflare (DNS/certs), Let's Encrypt, Google Workspace (OIDC), GitHub
 
 ---
@@ -185,7 +185,7 @@ SecurityPolicy:
       clientID: "<client-id>"
       clientSecret:
         name: "google-oidc-secret"  # From OpenBao via ESO
-      redirectURL: "https://oidc.apps.devex.hyperi.io/oauth2/callback"
+      redirectURL: "https://oidc.apps.example.com/oauth2/callback"
 ```
 
 For DFE 2.2: parameterise per identity provider (Google for on-prem, cloud-native for AWS/GCP/Azure).
@@ -229,14 +229,14 @@ Options:
 
 ## 6. To-Be Production Deployment (Multi-Server)
 
-The current devex environment runs on a single Proxmox host. The production deployment will use the **same IaC codebase** (dfe-infra) across multiple physical servers.
+The current devex environment runs on a single hypervisor host. The production deployment will use the **same IaC codebase** (dfe-infra) across multiple physical servers.
 
 ### 6.1 Architecture Evolution
 
 ```
 devex (current)                    production (to-be)
 ─────────────────                  ──────────────────
-1 Proxmox host                     N Proxmox hosts (HA cluster)
+1 hypervisor host                  N hypervisor hosts (HA cluster)
 3 K8s VMs (converged)              Dedicated control-plane + worker nodes
 Single flat network                Multi-VLAN: mgmt, data, storage, tenant
 local-path-provisioner             Ceph/Longhorn distributed storage
@@ -265,7 +265,7 @@ What does NOT change between devex and production:
 |-----------|-------|------------|
 | K8s nodes | 3 converged | 3+ control-plane + N workers |
 | Storage | local-path + NFS | Ceph RBD (block) + CephFS (shared) |
-| Networking | Single flat 10.66.0.0/24 | Multi-VLAN with Calico/Cilium |
+| Networking | Single flat 192.0.2.0/24 | Multi-VLAN with Calico/Cilium |
 | HA | Keepalived VIP | kube-vip or cloud LB |
 | Backup | MinIO (local) | S3-compatible (MinIO cluster or cloud) |
 | Tenancy sizing | dev profile | small/large profiles |
@@ -275,6 +275,6 @@ What does NOT change between devex and production:
 ### 6.4 IaC Strategy for Multi-Server
 
 1. **Terraform environments:** `terraform/environments/prod-{site}/` — one per physical deployment site, calling the same modules with different tfvars
-2. **Ansible (from hyperi-infra):** Provisions Proxmox VMs and RKE2 cluster — feeds into dfe-infra's Terraform + bootstrap.sh
+2. **Ansible (from hyperi-infra):** Provisions hypervisor VMs and the RKE2 cluster — feeds into dfe-infra's Terraform + bootstrap.sh
 3. **ArgoCD multi-cluster:** Each production cluster gets its own cluster secret (annotation bridge). Same ApplicationSets deploy to all clusters. Cluster-specific values via annotations.
 4. **Config per tenant:** `argocd/values/` can have per-site overrides (e.g. `prod-sydney.yaml`, `prod-london.yaml`)

@@ -28,7 +28,7 @@ variable "env" {
 }
 
 variable "cloud" {
-  description = "Target cloud (local/aws/gcp/az)"
+  description = "Target cloud (local/aws/gcp/azure)"
   type        = string
 }
 

@@ -25,13 +25,22 @@ x-single-shared:
 kafka:
   kafka:
     mode: single
+    # Source: argocd/values/profile-single.yaml -- both dials pinned to this
+    # tier's KEDA ceiling of 3 so the derivation gives one broker 3 partitions
+    # rather than the scale tier's 10.
+    sizing:
+      consumerCeiling: 3
+      minPartitionsPerBroker: 3
 
 kafbat:
   enabled: true
   kafka:
     clusters:
+      # The broker's only listener is SASL_PLAINTEXT (kafka-single.yaml), so the
+      # identity carries -no-tls; a bare `strimzi` names a TLS endpoint that does
+      # not exist here and kafbat cannot connect (dfe-infra#191).
       - name: dfe
-        provider: strimzi
+        provider: strimzi-no-tls
         bootstrapServers: "dfe-kafka:9092"
         credentialsSecretName: dfe-kafka-user
 

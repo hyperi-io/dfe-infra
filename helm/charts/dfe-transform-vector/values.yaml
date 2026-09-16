@@ -13,7 +13,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-transform-vector (drift-checked).
-  digest: "sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
+  digest: "sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -68,6 +68,13 @@ otel:
 # the records is a deployment fact and not the engine's to author.
 config: {}
 
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
+
 # The Vector transform YAML this instance runs, as a list of {name, content}.
 # Written by dfe-engine into the per-instance overlay and rendered into a ConfigMap
 # mounted at transformFilesDir. A list rather than a map because a filename's own
@@ -101,9 +108,9 @@ serviceAccount:
   annotations: {}
 
 # KEDA autoscaling -- folded into the chart. The SHIPPED trigger is the native KEDA
-# cpu scaler; scalo ScalingPressure (dfe_scaling_pressure, 0-100) is opt-in until
-# every app emits the gauge (dfe-infra #302), and the HPA takes the higher of the two
-# where both render. Pressure is the advanced signal: the composite fuses Kafka CG lag
+# cpu scaler; scalo ScalingPressure (0-100) renders beside it and the HPA takes the
+# higher of the two. The shim matches this ServiceName's gauge under any metric prefix
+# (dfe-engine#379), so no app release is needed for the name. Pressure is the advanced signal: the composite fuses Kafka CG lag
 # + container-contract metrics (buffer, memory) AND hard-gates to 0 when the downstream
 # sink is unreachable (circuit-breaker open), so pressure never scales out pods that
 # would not help when the real bottleneck is downstream. It routes through the fail-safe
@@ -119,10 +126,10 @@ keda:
   cpu:
     targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # OPT-IN: no Rust app emits the gauge yet -- dfe-infra #302
+    enabled: true             # scalo ScalingPressure via the fail-safe dfe-keda-shim
     # service: dfe-transform-vector   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: the library default names namespace dfe -- set this anywhere else (dfe-infra #301)
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

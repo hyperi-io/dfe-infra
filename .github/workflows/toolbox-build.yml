@@ -1,0 +1,235 @@
+# Build and push the dfe-toolbox ops-shell image family: one base image plus
+# three thin per-cloud layers (aws/gcp/azure). Every tool version is a
+# --build-arg resolved from versions.yaml's toolbox.* pins at build time, via
+# the same nested-YAML reader scripts/check_versions_drift.py uses to check
+# them -- so this workflow can never push a version that pin does not say.
+#
+# The cloud images FROM the base image by the tag this run just pushed, so
+# `base` must land in the registry before aws/gcp/azure can build -- hence
+# the `needs:` chain rather than one job building all four.
+name: Toolbox Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/dfe-toolbox/**'
+      - 'versions.yaml'
+      - '.github/workflows/toolbox-build.yml'
+  workflow_dispatch:
+
+# One build at a time: two concurrent runs could push different base digests
+# under the same tag while aws/gcp/azure are still building against it.
+concurrency:
+  group: toolbox-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/hyperi-io
+
+jobs:
+  resolve:
+    name: Resolve pins from versions.yaml
+    runs-on: ubuntu-latest
+    outputs:
+      # Whether this stack block names the toolbox at all. The pins arrive with
+      # the rc.14 block (dfe-infra#315) while the images themselves landed with
+      # the AWS path, so main carries the workflow before it carries the
+      # versions -- and a build with no version to build is a skip, not a
+      # failure. The alternative was a KeyError that turned main red for an
+      # ordering the split deliberately chose.
+      pinned: ${{ steps.pins.outputs.pinned }}
+      dfe_toolbox: ${{ steps.pins.outputs.DFE_TOOLBOX }}
+      kubectl: ${{ steps.pins.outputs.KUBECTL }}
+      helm: ${{ steps.pins.outputs.HELM }}
+      argocd_cli: ${{ steps.pins.outputs.ARGOCD_CLI }}
+      tofu: ${{ steps.pins.outputs.TOFU }}
+      yq: ${{ steps.pins.outputs.YQ }}
+      clickhouse_version: ${{ steps.pins.outputs.CLICKHOUSE_VERSION }}
+      aws_cli: ${{ steps.pins.outputs.AWS_CLI }}
+      aws_session_manager_plugin: ${{ steps.pins.outputs.AWS_SESSION_MANAGER_PLUGIN }}
+      gcloud: ${{ steps.pins.outputs.GCLOUD }}
+      az_cli: ${{ steps.pins.outputs.AZ_CLI }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Imports the SAME parser the drift check runs, rather than a second
+      # YAML reader -- there is exactly one nested-YAML reader in this repo,
+      # and this is it (see check_versions_drift.py's own docstring).
+      - name: Read toolbox.* + services.clickhouse-version
+        id: pins
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import sys
+          sys.path.insert(0, "scripts")
+          from check_versions_drift import load_versions
+
+          v = load_versions()
+          keys = [
+              "toolbox.dfe-toolbox",
+              "toolbox.kubectl",
+              "toolbox.helm",
+              "toolbox.argocd-cli",
+              "toolbox.tofu",
+              "toolbox.yq",
+              "toolbox.aws-cli",
+              "toolbox.aws-session-manager-plugin",
+              "toolbox.gcloud",
+              "toolbox.az-cli",
+              "services.clickhouse-version",
+          ]
+          missing = [key for key in keys if key not in v]
+          if missing:
+              print("pinned=false")
+              sys.exit(0)
+          print("pinned=true")
+          for key in keys:
+              name = key.split(".", 1)[1].replace("-", "_").upper()
+              print(f"{name}={v[key]}")
+          PY
+
+      # A skip that says nothing reads exactly like a build that worked.
+      - name: Say why nothing was built
+        if: steps.pins.outputs.pinned != 'true'
+        run: |
+          echo "::notice::dfe-toolbox images not built -- versions.yaml's current stack block names no toolbox.* pins yet. They arrive with the rc.14 block (dfe-infra#315); this workflow builds on the next push once they land."
+
+  base:
+    name: Build + push dfe-toolbox-base
+    needs: resolve
+    # aws/gcp/azure need base, so gating here skips the whole family.
+    if: needs.resolve.outputs.pinned == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and push dfe-toolbox-base
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file docker/dfe-toolbox/base/Dockerfile \
+            --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
+            --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
+            --build-arg ARGOCD_VERSION="${{ needs.resolve.outputs.argocd_cli }}" \
+            --build-arg TOFU_VERSION="${{ needs.resolve.outputs.tofu }}" \
+            --build-arg YQ_VERSION="${{ needs.resolve.outputs.yq }}" \
+            --build-arg CLICKHOUSE_VERSION="${{ needs.resolve.outputs.clickhouse_version }}" \
+            --provenance=true \
+            --sbom=true \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-base:${{ needs.resolve.outputs.dfe_toolbox }}" \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-base:latest" \
+            --push \
+            docker/dfe-toolbox/base
+
+  aws:
+    name: Build + push dfe-toolbox-aws
+    needs: [resolve, base]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and push dfe-toolbox-aws
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file docker/dfe-toolbox/aws/Dockerfile \
+            --build-arg BASE_TAG="${{ needs.resolve.outputs.dfe_toolbox }}" \
+            --build-arg AWS_CLI_VERSION="${{ needs.resolve.outputs.aws_cli }}" \
+            --build-arg AWS_SSM_PLUGIN_VERSION="${{ needs.resolve.outputs.aws_session_manager_plugin }}" \
+            --provenance=true \
+            --sbom=true \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-aws:${{ needs.resolve.outputs.dfe_toolbox }}" \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-aws:latest" \
+            --push \
+            docker/dfe-toolbox/aws
+
+  gcp:
+    name: Build + push dfe-toolbox-gcp
+    needs: [resolve, base]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and push dfe-toolbox-gcp
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file docker/dfe-toolbox/gcp/Dockerfile \
+            --build-arg BASE_TAG="${{ needs.resolve.outputs.dfe_toolbox }}" \
+            --build-arg GCLOUD_VERSION="${{ needs.resolve.outputs.gcloud }}" \
+            --provenance=true \
+            --sbom=true \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-gcp:${{ needs.resolve.outputs.dfe_toolbox }}" \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-gcp:latest" \
+            --push \
+            docker/dfe-toolbox/gcp
+
+  azure:
+    name: Build + push dfe-toolbox-azure
+    needs: [resolve, base]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and push dfe-toolbox-azure
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file docker/dfe-toolbox/azure/Dockerfile \
+            --build-arg BASE_TAG="${{ needs.resolve.outputs.dfe_toolbox }}" \
+            --build-arg AZ_CLI_VERSION="${{ needs.resolve.outputs.az_cli }}" \
+            --provenance=true \
+            --sbom=true \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-azure:${{ needs.resolve.outputs.dfe_toolbox }}" \
+            --tag "${IMAGE_PREFIX}/dfe-toolbox-azure:latest" \
+            --push \
+            docker/dfe-toolbox/azure

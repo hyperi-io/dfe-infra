@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import CHART_TREES
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -228,7 +229,8 @@ def test_the_fetcher_dlq_follows_the_instance_output() -> None:
 def test_no_chart_derives_the_transport_itself() -> None:
     offenders = [
         str(t.relative_to(REPO_ROOT))
-        for t in CHARTS.glob("*/templates/**/*.yaml")
+        for tree in CHART_TREES
+        for t in tree.glob("*/templates/**/*.yaml")
         if BRANCH in t.read_text(encoding="utf-8", errors="replace")
     ]
     expect("the derivation lives in one helper", offenders == [], f"got {offenders}")

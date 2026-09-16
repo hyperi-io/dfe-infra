@@ -38,6 +38,17 @@ bootstrap/local.env
 # carries estate endpoints. deployment.example.yaml is the committed template.
 /deployment.yaml
 
+# resolve_sizing.py's answers for a resolve run with no --out, which lands them
+# here: they name a deployment's fleet shape and hourly compute rate, so they
+# belong to that deployment rather than this repo. sizing.yaml, targets/ and
+# measurements/ are the committed INPUTS and stay tracked.
+/sizing/resolved.yaml
+/sizing/*.values.yaml
+/sizing/*.report.md
+/sizing/*.nodes.json
+/sizing/*.karpenter.json
+/sizing.auto.tfvars.json
+
 # Scratch / temp
 .tmp/
 # Worktrees (any .wt-<topic>/ checkout rooted in the repo)

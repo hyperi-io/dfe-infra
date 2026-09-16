@@ -11,6 +11,9 @@ cloud: local
 image:
   repository: ""
   tag: ""
+  # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
+  # digests.dfe-transform-elastic (drift-checked).
+  digest: "sha256:a2f5073d0a78c1143ab8cedf738c159fff01dd14292c50fd88aecbf31c09517c"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -33,9 +36,11 @@ kafka:
   # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
   # DFE Kafka credential contract (dfe-engine#98).
   provider: ""
-  sourceTopic: ""        # set per deployment via ArgoCD values
-  destTopic: ""          # set per deployment
-  consumerGroup: ""      # defaults to dfe-transform-elastic
+  # No sourceTopic / destTopic / consumerGroup dials: dfe-engine compiles this
+  # app's routing from the Source definitions and publishes it in the instance
+  # overlay, so a chart-side copy is a hand edit the engine re-syncs away
+  # (dfe-infra#181).
+  #
   # Empty leaves the deployment on plaintext and injects NO credentials. Setting
   # it turns SASL on and requires saslMechanism with it, because the app refuses
   # credentials that its security_protocol would never send.

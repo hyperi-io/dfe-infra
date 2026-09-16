@@ -1,4 +1,17 @@
 {{- if eq .Values.clickhouse.mode "cluster" }}
+{{- if .Values.clickhouse.keeper.serviceAccount.create }}
+# Keeper's own identity -- never the release namespace's default account (see
+# clickhouse.serviceAccount in values.yaml for why sharing it is the fault
+# being avoided). No Pod Identity association ever targets this account.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.clickhouse.keeper.serviceAccount.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+automountServiceAccountToken: {{ .Values.clickhouse.keeper.serviceAccount.automountServiceAccountToken }}
+---
+{{- end }}
 # DFE-owned ClickHouse Keeper for cluster mode (self-contained -- not shared with
 # any other product's keeper). Backs the ReplicatedMergeTree coordination.
 apiVersion: clickhouse.com/v1alpha1
@@ -28,8 +41,11 @@ spec:
     {{- with (.Values.clickhouse.keeper.storage.storageClass | default .Values.storageClass) }}
     storageClassName: {{ . | quote }}
     {{- end }}
-  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled }}
+  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled .Values.clickhouse.keeper.serviceAccount.name }}
   podTemplate:
+    {{- with .Values.clickhouse.keeper.serviceAccount.name }}
+    serviceAccountName: {{ . }}
+    {{- end }}
     {{- if .Values.nodeScheduling }}
     {{- if .Values.nodeScheduling.nodeSelector }}
     nodeSelector:

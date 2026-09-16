@@ -41,6 +41,12 @@ spec:
       labels: *schemaLabels
     spec:
       restartPolicy: Never
+      # Sixth pod in the class the dfe-engine chart documents: this Job runs the
+      # engine image, so k8s injecting DFE_KEDA_SHIM_PORT="tcp://IP:8080" from
+      # svc/dfe-keda-shim hits the same int() parse in settings.py that killed
+      # the Deployment and the hunt-runner. A Job fails it quietly -- it exhausts
+      # backoffLimit and reports as a failed schema apply, not a crashlooping pod.
+      enableServiceLinks: false
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:

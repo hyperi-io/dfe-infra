@@ -26,8 +26,8 @@ So this repo stays GENERIC:
 - **Every deployment choice is a parameter.** A dev preview, a customer's
   bring-your-own cluster, and an AWS-marketplace install differ only by the inputs
   they pass - not by the code that runs.
-- **Test WITH a real cluster, never code FOR one.** We validate against our devex
-  cluster, but nothing here may assume that cluster is ours.
+- **Test WITH a real cluster, never code FOR one.** We validate against our own
+  on-prem reference cluster, but nothing here may assume that cluster is ours.
 
 ## What it does
 

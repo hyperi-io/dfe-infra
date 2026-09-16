@@ -20,17 +20,51 @@ flowchart LR
 - **Pod scaling is KEDA, on every target.** The charts ship the ScaledObjects
   (receiver, loader, hunt-runner via the fail-safe dfe-keda-shim); nothing about
   KEDA changes between on-prem and cloud.
-- **scaling_pressure is opt-in until every app emits the gauge.** The app charts
-  ship `keda.pressure.enabled: false` (dfe-infra #302), so the native cpu scaler is
-  the shipped trigger. A deploy turns pressure on in its own overlay -- see
-  `argocd/values/local-dfe.yaml` -- and the shim's composite then renders alongside
-  cpu, with the HPA taking the higher of the two. Turning it on outside namespace
-  `dfe` also needs `keda.pressure.shimAddress`, because the chart default names
-  `dfe` (dfe-infra #301). `bootstrap/keda-scale-test.sh` proves the path on each
-  deploy and skips its real-app phase where pressure is off.
+- **Two triggers render and the HPA takes the higher.** The app charts ship both
+  `keda.cpu` (native scaler, nothing of ours in the path) and
+  `keda.pressure.enabled: true` -- the scalo ScalingPressure composite through the
+  fail-safe dfe-keda-shim. The shim matches the bare `scaling_pressure` gauge and
+  any `<prefix>_scaling_pressure` for that ServiceName (dfe-engine#379), so the four
+  wire names the Rust apps use today all resolve without an app release. The shim
+  address is derived from the release namespace (dfe-common.kedaShimAddress), so a
+  deployment in any namespace resolves it without a values override;
+  `keda.pressure.shimAddress` is for a shim outside the release namespace only.
+  `bootstrap/keda-scale-test.sh` proves the path on each deploy. Its scale-out bound
+  is derived from the ScaledObject's own polling interval plus the HPA sync period
+  rather than fixed (dfe-infra #275), and it exits 3 for UNPROVEN where the HPA read
+  the injected pressure above target and still left the replicas alone, which is the
+  unreproduced stall in dfe-infra #134 and is neither a working scaler nor a broken one.
 - **Node scaling forks by target.** KEDA makes pods Pending; what turns Pending
   pods into new nodes depends entirely on where the cluster runs. That fork is a
   DECLARED decision, recorded here -- never an assumption baked into a chart.
+
+## Which trigger each tier gets
+
+CPU at 70% is the baseline everywhere and never comes out: it is native KEDA with
+nothing of ours in the path, so a component outage cannot take scaling with it. The
+question each tier answers is whether the composite renders beside it.
+
+| Tier | Pressure | Ceiling | Why |
+| ---- | -------- | ------- | --- |
+| slim | off | 2 | No broker and a 2-replica ceiling. CPU is the whole signal worth having, and the shim is not worth putting in the path for it. |
+| single | on | 3 | Carries a broker, so `kafka_lag` measures the backlog an I/O-bound loader's CPU hides. Ceiling = `defaultTopic.partitions` (3); a 4th consumer joins the group and gets nothing. |
+| mesh | on | 10 | No broker, but every stage holds what the next has not taken, so `buffer_depth` and `memory` carry what `kafka_lag` carries elsewhere. Replicas share load through the Service, so no partition count bounds the ceiling. |
+| scale | on | 12 | Carries a broker. The ceiling is a DIVISOR of `defaultTopic.partitions` (12) so every reachable replica count holds the same number of partitions -- at 10, two consumers hold 2 and eight hold 1, and the busy pair sets the group's lag. |
+
+**Composite pressure, not the native KEDA `kafka` scaler.** The native scaler reads
+consumer-group lag from the broker and needs no shim. It is also blind to the two
+things that decide whether another pod helps: the composite gates to 0 when the
+downstream sink's circuit is open (more loaders cannot relieve a dead ClickHouse)
+and forces 100 over the memory threshold (scale before the OOM). Lag alone would
+scale the loader out against a sink already refusing writes, and the composite
+carries the lag term too. A deployment that wants the native scaler can have it --
+`keda.triggers` takes a verbatim scaler list the chart passes straight through.
+
+**The thresholds are inherited, not measured.** 70 on both the CPU trigger and the
+0-100 composite came across from the fleet default and has no load run behind it.
+Sizing them needs a run with more source topics or more partitions on `default_land`
+than a single-source rig has, because replicas 4-12 would otherwise idle -- that
+work is dfe-infra#146 and is not closed by the trigger choice above.
 
 ## The fork decision for DFE deployments
 

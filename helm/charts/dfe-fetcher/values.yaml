@@ -13,7 +13,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-fetcher (drift-checked).
-  digest: "sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
+  digest: "sha256:cbf7a83fa756060000c6c7f479cb283da347099f1ccc433ca33804498c139e03"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -91,6 +91,13 @@ dlq:
 # declares the container-extractor port 8080 on the pod here, so turning it on
 # also takes the instance out of idle whether or not anything ever posts to it.
 config: {}
+
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
 
 # OTel service.name for this instance. Empty falls back to the app name, which
 # leaves two instances of one app indistinguishable in the otel tables.

@@ -1,0 +1,98 @@
+{{- $k := .Values.karpenter -}}
+{{- range $name, $pool := $k.pools }}
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  {{- with $pool.weight }}
+  # Higher wins for a pod that matches more than one pool.
+  weight: {{ . }}
+  {{- end }}
+  # The ceiling the pool stops buying at.
+  limits:
+    {{- toYaml $pool.limits | nindent 4 }}
+  disruption:
+    consolidationPolicy: {{ $pool.consolidation.policy }}
+    consolidateAfter: {{ $pool.consolidation.after | quote }}
+    budgets:
+      # How many of this pool's nodes may be terminating at once, across every
+      # disruption reason.
+      - nodes: {{ $pool.budgetNodes | quote }}
+  template:
+    {{- with $pool.labels }}
+    metadata:
+      labels:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    spec:
+      # Stated even when it is Never, because the CRD's own default is 720h and
+      # an omission reads as "no expiry" while meaning a forced replacement.
+      expireAfter: {{ $pool.expireAfter | quote }}
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: {{ $name }}
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+            - {{ $pool.arch | quote }}
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            {{- range $pool.capacityTypes }}
+            - {{ . | quote }}
+            {{- end }}
+        # A list, so an InsufficientCapacityError on the first family falls
+        # through to the next rather than leaving the pod pending.
+        - key: karpenter.k8s.aws/instance-family
+          operator: In
+          values:
+            {{- range $pool.families }}
+            - {{ . | quote }}
+            {{- end }}
+        {{- if $pool.generationIn }}
+        # The pinned override: this pool stays on the named generation rather
+        # than following the shape policy's floor.
+        - key: karpenter.k8s.aws/instance-generation
+          operator: In
+          values:
+            {{- range $pool.generationIn }}
+            - {{ . | quote }}
+            {{- end }}
+        {{- else }}
+        # The floor, one below the oldest family named above -- a guard against a
+        # family the policy has not seen, not the selector itself.
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values:
+            - {{ $pool.generationGt | quote }}
+        {{- end }}
+        {{- with $pool.minVcpu }}
+        # families + generation alone bound WHICH instance line, not which SIZE
+        # on it -- a workload sized up for its volume's EBS baseline (a bigger
+        # instance sustains more IOPS/throughput at the same family) still fits
+        # a smaller instance's cpu/memory REQUEST, which is all Karpenter's own
+        # bin-packing looks at. Gt (n-1) expresses ">= n" -- Karpenter's well-known
+        # labels carry no Ge operator (gate-3-correctness.md P3).
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: Gt
+          values:
+            - {{ sub (int .) 1 | quote }}
+        {{- end }}
+        {{- with $pool.minMemoryGib }}
+        - key: karpenter.k8s.aws/instance-memory
+          operator: Gt
+          values:
+            # instance-memory is in MiB; the pool states GiB, so 1024x - 1.
+            - {{ sub (mul (int .) 1024) 1 | quote }}
+        {{- end }}
+      {{- with $pool.taints }}
+      taints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

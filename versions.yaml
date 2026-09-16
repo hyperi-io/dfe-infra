@@ -1910,9 +1910,11 @@ stacks:
       dfe-fetcher: "v1.4.22"        # rebuilt on scalo-rs 2.12.2 (the same memory guard).
       dfe-transform-vrl: "v1.1.23"   # rebuilt on scalo-rs 2.12.2 (the memory guard above).
       dfe-transform-vector: "v1.0.39"  # direct transport through the supervisor bridge, copy-paste templates; rebuilt on scalo-rs 2.12.2 (the memory guard above).
-      dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (dfe-transform-elastic#17); no digest below, so the renderer excludes it
-      dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
+      # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
+      # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
+      # dfe-transform-wasm: "2.2.0"
+      # dfe-transform-splack: "2.2.0"
       # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
       # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
       # repo, so it takes the 7-day supply-chain cooldown like a third party
@@ -2103,17 +2105,19 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.20.6"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #382 and #384: the settings API over each app's container contract, read and write, with provenance and custom env.
+      dfe-engine: "v1.20.15"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #382 to #404: the settings API over each app's container contract (read, write, provenance, custom env, chart-set paths refused), the role claim for HyperDX, the app catalogue following dfe-infra (both transforms seeded idle, elastic consumes its config), a deploy reporting the restart a no-hot-reload app needs, TTL 0 keeping rows forever with the registries read from dfe-schemas 0.2.4, the default TTL taken from the environment, OIDC provider credentials resolved through the secrets seam, compile_ddl building the default type registry so source DDL renders, the compiled loader routing keeping a deployment's own settings, email optional on account create, the KEDA shim and the app-management queries matching the scaling_pressure gauge under any metric prefix with the hunt runner reporting its own backlog, claims, overruns and run outcomes, and the archiver taking its inputs from the sources -- a direct source fans out to it, its topic list is compiled rather than discovered, and deleting a source removes that source's topics; #404 governs the Kafka topic lifecycle through the API and a startup ensure pass, and adds the strimzi-no-tls and redpanda-no-tls provider keys so the engine's table matches dfe-infra's.
       dfe-ui: "v1.6.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). #293/#295: console fixes -- brand caption, Access icon and suite version position corrected, wordmark caption now fits under the wordmark.
-      dfe-receiver: "v1.15.35"      # independent release line; rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup plus the bytes admitted since that sample.
-      dfe-loader: "v1.18.36"        # honours @source so typed columns populate; unknown sources fall back to default_table; a rejected batch can no longer commit offsets for rows nothing kept. Rebuilt on scalo-rs 2.12.2 (the same memory guard).
+      dfe-receiver: "v1.15.36"      # independent release line; rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup plus the bytes admitted since that sample.
+      dfe-loader: "v1.18.37"        # #161: the gRPC transport no longer moves the Kafka offset-commit counters (#125) and metrics-manifest lists the loader's 94 metrics instead of an empty catalogue.
       dfe-archiver: "v1.7.22"       # rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup, not what the allocator asked for.
-      dfe-fetcher: "v1.4.22"        # rebuilt on scalo-rs 2.12.2 (the same memory guard).
+      dfe-fetcher: "v1.4.24"        # #104: every source runs on one generic framework (the rest, db and file shapes in apps.yaml); #108: the PGO profile names the gcp service it declares; #109: the generated chart restored (its KEDA TriggerAuthentication) behind a drift guard. Rebuilt on scalo-rs 2.12.2.
       dfe-transform-vrl: "v1.1.23"   # rebuilt on scalo-rs 2.12.2 (the memory guard above).
-      dfe-transform-vector: "v1.0.39"  # direct transport through the supervisor bridge, copy-paste templates; rebuilt on scalo-rs 2.12.2 (the memory guard above).
-      dfe-transform-wasm: "2.2.0"    # NOT YET PUBLISHED to GHCR (alpha)
-      dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (dfe-transform-elastic#17); no digest below, so the renderer excludes it
-      dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
+      dfe-transform-vector: "v1.0.41"  # #77 #78: PGO- and BOLT-optimised on both arches for the direct-transport path and the supervisor (the bus path's per-record CPU is inside the downloaded upstream Vector binary, which no build of ours reaches), and metrics-manifest lists the app's 42 metrics instead of an empty catalogue.
+      dfe-transform-elastic: "v1.1.2" # first GHCR image (multi-arch, dfe-transform-elastic#17): Elastic ingest pipelines compiled in, parity 99.86 % over the tested sources, idles until a source names it (#52), seeded idle on every tier (#320). Bus transport only until #19; the sources.yaml catalogue asset follows #18.
+      # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
+      # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
+      # dfe-transform-wasm: "2.2.0"
+      # dfe-transform-splack: "2.2.0"
       # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
       # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
       # repo, so it takes the 7-day supply-chain cooldown like a third party
@@ -2128,21 +2132,22 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:a96b8ced525edd723c32e31857c2088e0fa91dd699ca13863023a4fe0afe0c00"
+      dfe-engine: "sha256:7be5a50c74d7a3859d67b8552175c12f23401113782af98ddcac9170f966bc7c"
       dfe-ui: "sha256:c2288ab13066755f6f289318c30874dcb58804c6194f5f0a86de9177a811477e"
-      dfe-receiver: "sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
-      dfe-loader: "sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
+      dfe-receiver: "sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
+      dfe-loader: "sha256:f42ef595b2d608fa9aac3ba4793929d87cc1a18501b336c481455be16b54c3e6"
       dfe-archiver: "sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
-      dfe-fetcher: "sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
+      dfe-fetcher: "sha256:cbf7a83fa756060000c6c7f479cb283da347099f1ccc433ca33804498c139e03"
       dfe-transform-vrl: "sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
-      dfe-transform-vector: "sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
+      dfe-transform-vector: "sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
+      # The multi-arch INDEX digest; a per-platform digest under it would strand the other architecture.
+      dfe-transform-elastic: "sha256:a2f5073d0a78c1143ab8cedf738c159fff01dd14292c50fd88aecbf31c09517c"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
       dfe-hyperdx: "sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f"
       # ghcr.io/hyperi-io/culvert:v2.1.14. Manifest-LIST digest (amd64 + arm64),
       # read off the ghcr v2 API with an anonymous pull token.
       culvert: "sha256:b8b3f8c5450cc8eaa761a5b2de81128d1adc3022fa7aa9746c4c676e4fafd7d3"
-      # dfe-transform-elastic: "sha256:..."   # dfe-transform-elastic#17 -- uncomment with the published digest
 
     # Digests for the DOCKER-path third-party plain images -- the immutable half
     # of the tag@sha256 pin that `dfe-stack render --target docker` emits. Keyed

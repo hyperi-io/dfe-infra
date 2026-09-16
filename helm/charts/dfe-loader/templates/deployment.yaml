@@ -54,6 +54,8 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_LOADER_") | nindent 12 }}
             {{- if eq (include "dfe-common.transport" .) "direct" }}
             # Direct transport (slim, mesh): receiver -> loader gRPC on the
@@ -106,6 +108,11 @@ spec:
             # DLQs on schema_pending_timeout. hosts and protocol must move
             # TOGETHER (the loader validates the pairing). The key is
             # `protocol` -- the loader ignores a `transport` key silently.
+            #
+            # The DOUBLE underscore below is not a typo: `clickhouse.protocol` has
+            # no flat-env name, so it arrives through the figment cascade, where
+            # `__` is the nesting separator (loader.rs:351-367). HOSTS beside it is
+            # single because it does have one (loader.rs:220).
             - name: DFE_LOADER_CLICKHOUSE_HOSTS
               value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
             - name: DFE_LOADER_CLICKHOUSE__PROTOCOL

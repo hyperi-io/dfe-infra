@@ -1,0 +1,1174 @@
+## Project:   dfe-infra
+## File:      sizing/sizing.yaml
+## Purpose:   The sizing SSoT -- every ratio, floor, focus multiplier, ceiling
+##            and retention default the resolver derives a deployment from, each
+##            one carrying the source it came from.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## HOW A DEPLOYMENT IS SIZED. The operator turns two dials -- an estimated
+## `sizing.ingest_gb_per_day` (or nothing, and the tyre-kick floor applies) and
+## `focus` (economy, balanced, performance) -- and the resolver turns them into
+## CPU, memory, disk, IOPS, node counts, partitions and retention bytes using the
+## ratios below. Nothing here is computed in code: tofu and helm receive numbers,
+## they never derive them. Adding a provider or a cloud is an edit to this file
+## and to shapes/compute-shapes.yaml, not a code change.
+##
+## EVERY RATIO CARRIES ITS PROVENANCE, and scripts/validate_sizing.py refuses the
+## file otherwise. A ratio is any map carrying a `value:`, and it must also carry
+##
+##   unit        what the number counts, or `formula` / `policy` for the entries
+##               whose value is an expression or a named policy rather than a
+##               number
+##   applies_to  comma-separated providers or workloads the ratio governs
+##   source      an absolute URL, or a repo path with an optional `:line`. A
+##               source of `sizing/sizing.yaml` means a product decision taken
+##               here, with no external source to point at -- the confidence
+##               field says how much weight it carries
+##   read        the ISO date the source was read
+##   confidence  vendor-documented    the vendor publishes this number
+##               benchmark-named-hardware  a published benchmark on stated hardware
+##               rule-of-thumb        judgement, defensible, not measured
+##               dfe-core-evidence    carried over from the 2.1 estate
+##               measured             OUR measurement, from a spot test or corpus
+##               measure-only         no constant exists; the value is `unmeasured`
+##                                    and the resolver must read it from the
+##                                    running system
+##   spot_test   the one short test that would promote it to `measured`
+##
+## A ratio that has not been shaken out yet is not a defect, it is a labelled
+## estimate: `confidence` says which, and the sizing report prints it beside the
+## number. Spot tests are ten to fifteen minutes on a proof cluster; nothing in
+## this repo is sized by a scale test.
+##
+## NO LISTS. The files the ops scripts read are parsed by scripts/yaml_subset.py
+## -- nested maps and scalars only -- so a list is a map keyed by name, or a
+## comma-separated scalar. Duplicate keys inside one map are an error, because a
+## second `value:` quietly winning is how a wrong number ships.
+
+schema_version: 1
+
+## ---------------------------------------------------------------------------
+## Kafka -- per provider, because the providers do not share a memory model.
+## ---------------------------------------------------------------------------
+kafka:
+
+  strimzi:
+    ## Measured at RF3 with two consumer groups on Graviton, quoted by AWS as
+    ## 3-node totals; above 16 vCPU the EBS volume binds before the CPU does, so
+    ## the formula carries the disk term or scaling up buys nothing.
+    mb_s_per_vcpu:
+      value: 8.3
+      unit: mb-per-second-per-vcpu
+      applies_to: strimzi
+      source: https://aws.amazon.com/blogs/big-data/best-practices-for-right-sizing-your-apache-kafka-clusters-to-optimize-performance-and-cost/
+      read: 2026-09-13
+      confidence: benchmark-named-hardware
+      spot_test: Replay fixtures into a 3-broker kind cluster and read bytes-in per vCPU off the broker metrics.
+    mb_s_per_vcpu_disk_bound:
+      value: 4.2
+      unit: mb-per-second-per-vcpu
+      applies_to: strimzi
+      source: https://aws.amazon.com/blogs/big-data/best-practices-for-right-sizing-your-apache-kafka-clusters-to-optimize-performance-and-cost/
+      read: 2026-09-13
+      confidence: benchmark-named-hardware
+      spot_test: Run the same replay on a 24 vCPU broker and confirm the per-vCPU rate halves.
+    disk_bound_above_vcpu:
+      value: 16
+      unit: vcpu
+      applies_to: strimzi
+      source: https://aws.amazon.com/blogs/big-data/best-practices-for-right-sizing-your-apache-kafka-clusters-to-optimize-performance-and-cost/
+      read: 2026-09-13
+      confidence: benchmark-named-hardware
+      spot_test: Sweep broker vCPU on one storage profile and find where the rate stops tracking cores.
+    ## One kind-cluster run, three brokers at a 500m CPU limit each, nowhere
+    ## near saturated (summed usage 306m of the 1500m available) -- this is
+    ## the CPU cost of a light load, not a right-sizing ceiling like
+    ## mb_s_per_vcpu above, so it does not replace that number. Informational
+    ## only: 1.95 MB/s producer throughput over 0.306 summed vCPU = 6.37
+    ## MB/s per vCPU.
+    mb_s_per_vcpu_kind_check:
+      value: 6.37
+      unit: mb-per-second-per-vcpu
+      applies_to: strimzi
+      source: sizing/measurements/2026-09-13-kind-scale-proof.md
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: Re-run closer to CPU saturation and see whether the per-vCPU figure converges toward mb_s_per_vcpu.
+    heap_gb:
+      value: 6
+      unit: gb
+      applies_to: strimzi
+      source: https://docs.confluent.io/platform/current/kafka/deployment.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Watch G1 pause times and old-gen occupancy through a replay at the target rate.
+    page_cache_seconds:
+      value: 30
+      unit: seconds
+      applies_to: strimzi
+      source: https://docs.confluent.io/platform/current/kafka/deployment.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Measure consumer read hit rate against page cache size while a lagging consumer catches up.
+    ## 12 GiB at the 116 MB/s target, against the 32 GiB the first KRaft profile
+    ## assumed -- a 2.7x over-provision on the largest memory line.
+    ram_formula:
+      value: heap_gb + peak_mb_s * page_cache_seconds / 1024
+      unit: formula
+      applies_to: strimzi
+      source: https://docs.confluent.io/platform/current/kafka/deployment.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Drive a broker at the target rate and check resident memory against the formula.
+    replication_disk_factor:
+      value: 3
+      unit: copies
+      applies_to: strimzi
+      source: helm/charts/kafka/templates/kafka.yaml:43
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Read on-disk bytes per topic against bytes produced on a 3-broker cluster.
+    ## Every byte a leader accepts is sent to RF-1 followers, so the NIC carries
+    ## the produce traffic twice over at RF3 before any consumer reads it.
+    replication_network_factor:
+      value: 2
+      unit: multiplier
+      applies_to: strimzi
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing-use-cases/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Compare broker NIC bytes-out against bytes-in with no consumers attached.
+    disk_headroom:
+      value: 0.75
+      unit: fraction
+      applies_to: strimzi
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Fill a broker volume to the alarm line and confirm retention enforcement keeps up.
+    ## Arithmetic over the terms above; the 0.75 is the vendor-documented part.
+    ## THE RATE HERE IS THE AVERAGE, not the peak. Brokers and ingest are sized
+    ## for peak (average x peak_factor) because a broker built for the average
+    ## falls over at the evening peak; STORAGE is sized from the daily volume,
+    ## because a retention window of a day or more spans the whole diurnal curve
+    ## and peak x retention counts the evening twice.
+    disk_formula:
+      value: retention_h * avg_mb_s * 3600 * replication_disk_factor / brokers / disk_headroom
+      unit: formula
+      applies_to: strimzi
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: Retain a known rate for a known window and compare volume usage to the formula.
+
+  redpanda:
+    ## Redpanda quotes what a core CAN push; MSK quotes what AWS SELLS with
+    ## headroom already taken out. The two are not like for like, and the
+    ## headroom convention is normalised before any cross-provider comparison.
+    mb_s_per_core:
+      value: 100
+      unit: mb-per-second-per-core
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Replay fixtures into a 3-broker Redpanda kind cluster and read bytes-in per core.
+    ## Redpanda bypasses the Linux page cache and manages its own memory, so the
+    ## page-cache term that sizes a JVM broker does not exist here.
+    ram_gb_per_core:
+      value: 2
+      unit: gb-per-core
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Run the replay at the default partition count and compare RSS to cores times two.
+    ram_mb_per_partition_replica:
+      value: 2
+      unit: mb-per-partition-replica
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Raise partitions from 12 to 96 on one broker and read the RSS step.
+    page_cache_seconds:
+      value: 0
+      unit: seconds
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Confirm no page-cache growth on the broker host during a sustained replay.
+    ram_formula:
+      value: cores * ram_gb_per_core + partition_replicas * ram_mb_per_partition_replica / 1024
+      unit: formula
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Compare broker RSS to the formula at 12 and 96 partitions.
+    replication_disk_factor:
+      value: 3
+      unit: copies
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing-use-cases/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Read on-disk bytes per topic against bytes produced at RF3.
+    replication_network_factor:
+      value: 2
+      unit: multiplier
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing-use-cases/
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Compare broker NIC bytes-out against bytes-in with no consumers attached.
+    disk_headroom:
+      value: 0.75
+      unit: fraction
+      applies_to: redpanda
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: Fill a broker volume to the alarm line and confirm retention enforcement keeps up.
+    ## The average rate, for the reason stated on the Strimzi formula above.
+    disk_formula:
+      value: retention_h * avg_mb_s * 3600 * replication_disk_factor / brokers / disk_headroom
+      unit: formula
+      applies_to: redpanda
+      source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing-use-cases/
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: Retain a known rate for a known window and compare volume usage to the formula.
+
+  msk-express:
+    ## Exactly linear across all seven Express sizes: express.m7g.large is 2 vCPU
+    ## at 15.6 MB/s sustained ingress, and every larger size holds the same rate
+    ## per vCPU.
+    mb_s_per_vcpu:
+      value: 7.81
+      unit: mb-per-second-per-vcpu
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Drive the smallest Express cluster to its sustained line and confirm the per-vCPU rate.
+    ## Sustained is what AWS supports without degradation; the throttle sits a
+    ## half again above it, and traffic between the two is a risk, not a budget.
+    sustained_to_max_factor:
+      value: 1.5
+      unit: multiplier
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Push past sustained on the proof cluster and record where throttling starts.
+    per_partition_mb_s_cap:
+      value: 15
+      unit: mb-per-second-per-partition
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/limits.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Produce to a single partition above 15 MB/s and confirm the throttle.
+    ## AWS's 60% is not a comfort margin: it is the slack leadership needs to
+    ## redistribute when a broker is lost, which is why economy never trades it.
+    cpu_utilisation_ceiling:
+      value: 0.60
+      unit: fraction
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Kill a broker at 60% CPU on the proof cluster and watch leadership move.
+    ram_formula:
+      value: provider-managed
+      unit: formula
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/msk-broker-types-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: None -- AWS sizes and bills broker memory with the instance size.
+    disk_formula:
+      value: provider-managed
+      unit: formula
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/msk-broker-types-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: None -- Express storage grows on its own and bills per GB-month.
+    ## Express bills storage per GB-month; whether it bills the replicas as well
+    ## is unstated, and at the Medium band the difference is the whole storage
+    ## line over again, so the spot test below reads it off the bill.
+    replication_disk_factor:
+      value: 1
+      unit: copies
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/msk-broker-types-express.html
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: Retain a known volume on the proof cluster and read the storage line on the bill.
+    replication_network_factor:
+      value: 1
+      unit: multiplier
+      applies_to: msk-express
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: None -- AWS bills no cross-AZ replication traffic on MSK.
+
+## ---------------------------------------------------------------------------
+## KRaft controllers -- sized by PARTITION COUNT, never by throughput. They
+## carry the metadata log, not the data, so a bigger ingest estimate does not
+## make them bigger. Nothing here is read unless kafka.controller_pool is
+## separate, because a combined quorum runs on the brokers themselves.
+## ---------------------------------------------------------------------------
+kraft_controller:
+  vcpu_floor:
+    value: 1
+    unit: vcpu
+    applies_to: kraft-controller
+    source: https://docs.confluent.io/platform/current/installation/system-requirements.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Run a controller quorum at 12 and then 96 partitions and read CPU off the metrics.
+  ram_gib_floor:
+    value: 4
+    unit: gib
+    applies_to: kraft-controller
+    source: https://docs.confluent.io/platform/current/kafka-metadata/config-kraft.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Read controller RSS at 96 partitions against the 4 GiB floor.
+  heap_gib_floor:
+    value: 1
+    unit: gib
+    applies_to: kraft-controller
+    source: https://docs.confluent.io/platform/current/kafka-metadata/config-kraft.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Watch controller heap occupancy through a metadata-heavy rebalance.
+  ## Confluent recommends a 64 GB SSD; a controller in practice uses 10-20 GiB,
+  ## so 20 GiB is the floor we provision and 64 the comfortable number.
+  disk_gib_floor:
+    value: 20
+    unit: gib
+    applies_to: kraft-controller
+    source: https://docs.confluent.io/platform/current/kafka-metadata/config-kraft.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Measure metadata log plus snapshots on the proof cluster at 96 partitions.
+  quorum_size:
+    value: 3
+    unit: nodes
+    applies_to: kraft-controller
+    source: https://docs.confluent.io/platform/current/kafka-metadata/config-kraft.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- an odd quorum is a correctness requirement, not a sizing choice.
+  sizing_driver:
+    value: partition-count
+    unit: policy
+    applies_to: kraft-controller
+    source: https://docs.confluent.io/platform/current/kafka-metadata/config-kraft.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Hold throughput flat, raise partitions from 12 to 96, and watch controller CPU and RSS.
+  ## One kind-cluster run, one host, three controllers -- informational
+  ## support for vcpu_floor/ram_gib_floor above, not a replacement for them.
+  ## Raising our own test topics from 36 to 96 partitions (179 to 239
+  ## cluster-wide) moved controller CPU from 27/21/17m to 25/18/19m and RAM
+  ## from 690/540/536Mi to 691/541/536Mi -- flat within measurement noise, in
+  ## line with vcpu_floor/ram_gib_floor's own spot_test wording.
+  partition_scale_footprint_delta_kind_check:
+    value: 0
+    unit: millicores-per-partition
+    applies_to: kraft-controller
+    source: sizing/measurements/2026-09-13-kind-scale-proof.md
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Repeat at a bigger partition step (e.g. 96 to 300) to confirm the flat line holds past this scale.
+
+## ---------------------------------------------------------------------------
+## ClickHouse.
+## ---------------------------------------------------------------------------
+clickhouse:
+  ram_gib_per_vcpu_general:
+    value: 4
+    unit: gib-per-vcpu
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Run the hunt set at the target ingest rate and check peak query memory per core.
+  ram_gib_per_vcpu_warehouse:
+    value: 8
+    unit: gib-per-vcpu
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Same run with interactive queries added, to see whether the warehouse ratio is needed.
+  ## TWO BANDS, and the choice moves RAM by 2-3x. ClickHouse quotes 1:100-1:130
+  ## for long retention and 1:30-1:50 where access is frequent. DFE's hunts run
+  ## over recent data, which is the frequent case, so the long-retention band is
+  ## the optimistic one -- the sizing report prints both.
+  ram_to_compressed_long_retention_min:
+    value: 100
+    unit: gib-compressed-per-gib-ram
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Load a known compressed volume and read mark-cache and query memory pressure.
+  ram_to_compressed_long_retention_max:
+    value: 130
+    unit: gib-compressed-per-gib-ram
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Same load with queries limited to the oldest partitions.
+  ## How much retained data the frequent-access band applies to. The band is
+  ## about data that is READ often, not about everything on disk, so RAM is
+  ## sized from this window rather than from the whole retention. DFE's hunts
+  ## run over recent data, and one day is the default the dial overrides.
+  hunt_window_days:
+    value: 1
+    unit: days
+    applies_to: clickhouse
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Read the hunt set's own time predicates off system.query_log over a week of scheduled runs.
+  ram_to_compressed_frequent_access_min:
+    value: 30
+    unit: gib-compressed-per-gib-ram
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Run the hunt set over the last 24 hours and read cache hit ratio and query memory.
+  ram_to_compressed_frequent_access_max:
+    value: 50
+    unit: gib-compressed-per-gib-ram
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Same run with the hunt window widened to seven days.
+  ## Measured directly, not derived: a synthetic otel_logs-shaped replay
+  ## clocked 92,010 and 92,203 rows per cpu-second across two Native-format
+  ## runs. sizing.yaml adopts the lower, conservative 91,000. Supersedes the
+  ## earlier division of ClickHouse's 59-core large-load benchmark (65.33
+  ## billion rows in about 240 minutes), which stated no per-core figure of
+  ## its own.
+  ingest_rows_per_s_per_core_native:
+    value: 91000
+    unit: rows-per-second-per-core
+    applies_to: clickhouse
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Replay fixtures through the loader and read rows a second per core off system.query_log.
+  ## The old 15.5 came from an Altinity benchmark on other hardware and an
+  ## older ClickHouse version: 30.2s user against Native's 1.9s for the same
+  ## 100 million rows. Our 26.3.31.5 spot test parsed JSONEachRow at 86k
+  ## rows/cpu-second against Native's 92k on this synthetic otel_logs shape --
+  ## a 1.07x factor, not 15.5x. DFE's loader format still decides how much
+  ## ClickHouse CPU sizing scales, just by far less than the Altinity number
+  ## implied.
+  jsoneachrow_parse_factor:
+    value: 1.07
+    unit: multiplier
+    applies_to: clickhouse
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Insert the same fixture batch as JSONEachRow and as Native and compare CPU seconds.
+  ## No vendor publishes a merge constant. This spot test measured the
+  ## ELAPSED-TIME share -- 32,571 ms of MergeParts events over 74,026 ms total
+  ## across system.part_log, all 4 dfe tables -- because part_log carries no
+  ## per-event CPU-time column, only duration_ms, so 0.44 is a time share, not
+  ## a CPU share. A running cluster's own part_log remains the real input for
+  ## a production-scale re-measurement.
+  merge_cpu_fraction:
+    value: 0.44
+    unit: fraction
+    applies_to: clickhouse
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Sum merge duration from system.part_log over a replay window and divide by total duration.
+  disk_headroom:
+    value: 0.70
+    unit: fraction
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Watch free space through a merge of the largest part on the proof cluster.
+  disk_formula:
+    value: compressed_retained_gb / disk_headroom
+    unit: formula
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Retain a known volume and compare disk usage to the formula through a merge cycle.
+  ## 0.9 of a cgroup limit is an OOMKill rather than a graceful
+  ## MEMORY_LIMIT_EXCEEDED, so usable RAM is 0.8 of what is provisioned.
+  server_memory_usage_to_ram_ratio:
+    value: 0.8
+    unit: fraction
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/operations/server-configuration-parameters/settings
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Drive a heavy hunt to the memory limit and confirm it errors rather than OOMKills.
+
+## ---------------------------------------------------------------------------
+## ClickHouse Keeper -- capacity is irrelevant, IOPS is everything. Keeper
+## fsyncs every Raft append (force_sync), and appends track PARTS CREATED, so
+## the loader's flush size and Keeper's storage profile are one decision: moving
+## the loader from 1 MiB to 8-16 MiB flushes divides Keeper IOPS by the same
+## factor.
+## ---------------------------------------------------------------------------
+keeper:
+  ram_gib_floor:
+    value: 3
+    unit: gib
+    applies_to: keeper
+    source: https://clickhouse.com/docs/guides/oss/deployment-and-scaling/keeper
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Read Keeper RSS at 96 partitions with the default log caches in place.
+  ## SPOT-TEST CONFIRMED (2026-09-13): per-part Keeper cost is roughly constant
+  ## at ~14.8 packets received regardless of flush size (14.76 at 1 MiB, 14.83
+  ## at 16 MiB). The per-GB win comes entirely from fewer, larger parts: 14,782
+  ## packets received per GB at 1 MiB flushes against 1,061 at 16 MiB, a 13.9x
+  ## reduction -- close to the 16x this section assumed. This is the number
+  ## that drives resolve_sizing.py's keeper IOPS demand: parts a second (from
+  ## the resolved ingest and loader_flush_bytes below) times this constant,
+  ## not a flat target -- a fixed IOPS figure regardless of ingest is what put
+  ## a tyre-kick deployment's Keeper on the same shape as a 100,000 GB/day one.
+  raft_appends_per_part:
+    value: 14.8
+    unit: appends-per-part
+    applies_to: keeper
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Compare Keeper mntr packets-received deltas per part at 1 MiB and 16 MiB loader flushes; re-run against a production-scale corpus.
+  iops_driver:
+    value: parts_created_per_second * raft_appends_per_part
+    unit: formula
+    applies_to: keeper
+    source: https://clickhouse.com/docs/guides/oss/deployment-and-scaling/keeper
+    read: 2026-09-13
+    confidence: measure-only
+    spot_test: Compare Keeper write IOPS at 1 MiB and at 16 MiB loader flushes.
+  ## The flush size whose ~16x IOPS-reduction assumption the spot test above
+  ## confirmed at 13.9x measured (14,782 vs 1,061 packets received per GB).
+  loader_flush_bytes:
+    value: 16777216
+    unit: bytes
+    applies_to: loader
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Confirmed 2026-09-13 via Keeper mntr packet deltas at 1 MiB and 16 MiB flushes; re-run against a production-scale corpus.
+
+## ---------------------------------------------------------------------------
+## Compression. The key names say WIRE-TO-DISK, because two different ratios get
+## called "the compression ratio": parts-to-compressed (what ClickHouse reports
+## inside a part) and wire-to-disk (uncompressed bytes in, compressed bytes on
+## disk). Disk sizing wants the second.
+## ---------------------------------------------------------------------------
+compression:
+  ## ClickHouse's own logging benchmark measures 13.0-16.3x on log-shaped
+  ## columns with a deliberately naive schema.
+  wire_to_disk_lz4_min:
+    value: 13
+    unit: ratio
+    applies_to: clickhouse
+    source: https://github.com/ClickHouse/simple-logging-benchmark/blob/main/results/compression.md
+    read: 2026-09-13
+    confidence: benchmark-named-hardware
+    spot_test: Load a fixture day and divide uncompressed by compressed bytes from system.parts.
+  wire_to_disk_lz4_max:
+    value: 16
+    unit: ratio
+    applies_to: clickhouse
+    source: https://github.com/ClickHouse/simple-logging-benchmark/blob/main/results/compression.md
+    read: 2026-09-13
+    confidence: benchmark-named-hardware
+    spot_test: Same measurement over a full retention window, after merges settle.
+  ## The dial default stays conservative until DFE's own schema is measured --
+  ## it is the single largest unmeasured line in the disk estimate.
+  wire_to_disk_default:
+    value: 5
+    unit: ratio
+    applies_to: clickhouse
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Measure DFE's own tables after a fixture day and replace this default.
+  ## The caveat that decides which end of the band applies: a raw JSON payload
+  ## kept in a String column compresses around 3x, not 13-16x. Whether DFE keeps
+  ## one is a schema question for dfe-engine, not a sizing choice.
+  wire_to_disk_raw_json_string_column:
+    value: 3
+    unit: ratio
+    applies_to: clickhouse
+    source: https://github.com/ClickHouse/simple-logging-benchmark/blob/main/results/compression.md
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Load one fixture day with and without the raw payload column and compare on-disk bytes.
+  ## The floor a high-entropy synthetic corpus produces: word-salad Body text
+  ## and random hex TraceId/SpanId/UUID columns compress far worse than a real
+  ## log corpus's repeated substrings. wire_to_disk_default and the vendor
+  ## 13-16x band stay in force until a real DFE corpus is measured -- this is
+  ## a lower bound, not a replacement.
+  wire_to_disk_synthetic_floor:
+    value: 3.27
+    unit: ratio
+    applies_to: clickhouse
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Re-measure against a real DFE corpus once dfe-transform fixtures exist; expect this to rise toward the vendor band.
+  ## Measured on the synthetic otel_logs replay: ZSTD(1) landed at 0.547 of
+  ## LZ4's on-disk size (334,812,515 / 611,832,026), better than the vendor
+  ## docs' general 0.70 -- compression is schema- and entropy-dependent, so
+  ## re-measure against a real DFE corpus before treating 0.547 as general.
+  zstd1_size_vs_lz4:
+    value: 0.547
+    unit: fraction
+    applies_to: clickhouse
+    source: sizing/measurements/2026-09-13-clickhouse-spot-test.md
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Re-encode one fixture day as ZSTD(1) and compare compressed bytes and query latency.
+  zstd1_decompress_cost_min:
+    value: 3
+    unit: multiplier
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/data-compression/compression-in-clickhouse
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Run the hunt set over LZ4 and ZSTD(1) copies and compare CPU seconds.
+  zstd1_decompress_cost_max:
+    value: 5
+    unit: multiplier
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/data-compression/compression-in-clickhouse
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Same comparison with cold cache, where decompression dominates.
+
+## ---------------------------------------------------------------------------
+## The event itself -- what one message weighs, and the size chain that has to
+## move together or a large event is lost somewhere along it.
+## ---------------------------------------------------------------------------
+event:
+  ## GB/day is an average and log volume is diurnal, so brokers and ingest are
+  ## sized for peak_factor x average while storage is sized from the daily
+  ## volume. A 24x7 cloud-audit estate flattens to 1.2-1.5, which is why this
+  ## stays a dial.
+  peak_factor:
+    value: 2.0
+    unit: multiplier
+    applies_to: deployment
+    source: https://docs.fortinet.com/document/fortisiem/7.5.1/sizing-guide-eventdb/965243/fortisiem-sizing-guide-eventdb
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- this is a dial read from the customer's own daily curve, not a spot test.
+  ## Measured over 40,518 real vendor events in the dfe-transform-elastic
+  ## fixtures. The MEDIAN stands in for the mean until a spot test measures the
+  ## mean, and the distribution is long-tailed, so rows per GB is optimistic.
+  ## A synthetic otel_logs-shaped spot-test replay separately averaged 1,485
+  ## wire bytes an event -- close to this figure, but not a replacement for it.
+  p50_event_bytes:
+    value: 1452
+    unit: bytes
+    applies_to: event
+    source: dfe-transform-elastic/tests/fixtures
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Re-measure the distribution whenever new vendor fixtures land.
+  p99_event_bytes:
+    value: 10641
+    unit: bytes
+    applies_to: event
+    source: dfe-transform-elastic/tests/fixtures
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Re-measure the distribution whenever new vendor fixtures land.
+  max_event_bytes:
+    value: 152447
+    unit: bytes
+    applies_to: event
+    source: dfe-transform-elastic/tests/fixtures
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Re-measure the distribution whenever new vendor fixtures land.
+  ## Enrichment re-enters Kafka, and the enriched event measured 1.48x the
+  ## original on the fixture pairs, so the chain is sized for the enriched size.
+  enrichment_growth_factor:
+    value: 1.48
+    unit: multiplier
+    applies_to: event
+    source: dfe-transform-elastic/tests/fixtures
+    read: 2026-09-13
+    confidence: measured
+    spot_test: Compare sink-topic bytes to land-topic bytes over one replay.
+  ## ONE NUMBER, everywhere: broker message.max.bytes, replica.fetch.max.bytes,
+  ## topic max.message.bytes, the producer's own message.max.bytes and the
+  ## consumer's max.partition.fetch.bytes. Raise one alone and the chain breaks
+  ## at whichever link stayed behind.
+  message_chain_bytes:
+    value: 16777216
+    unit: bytes
+    applies_to: all-providers
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Produce an event just under and just over the ceiling and confirm both outcomes.
+  consumer_fetch_max_bytes:
+    value: 52428800
+    unit: bytes
+    applies_to: all-providers
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Confirm the consumer fetch budget against the provider's read-only broker cap.
+  ## The governing ceiling upstream of us: filebeat truncates a single message
+  ## past this, so no filebeat input can deliver a larger event whatever Kafka
+  ## is configured to accept.
+  filebeat_input_max_bytes:
+    value: 10485760
+    unit: bytes
+    applies_to: event
+    source: https://www.elastic.co/docs/reference/beats/filebeat/filebeat-input-log
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Feed a 12 MiB line through filebeat and confirm the delivered event is truncated.
+  ## And the ceiling that BITES FIRST on the way out: filebeat's Kafka output
+  ## DROPS an event over this, and the default is well under the chain above, so
+  ## a deployment that raises the broker alone still loses large events.
+  filebeat_kafka_output_max_message_bytes:
+    value: 1000000
+    unit: bytes
+    applies_to: event
+    source: https://www.elastic.co/docs/reference/beats/filebeat/kafka-output
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Produce a 2 MiB event through filebeat at the default and confirm it is dropped.
+
+## ---------------------------------------------------------------------------
+## The focus dial. Headroom is spare capacity over the sized peak. 20% was the
+## first proposal and sits BELOW every vendor floor -- MSK wants CPU under 60%,
+## AWS sizes to 80% of sustained, Express holds a 1.5x band, Redpanda expects
+## full throughput with a node down -- so economy starts at 40%.
+## ---------------------------------------------------------------------------
+focus:
+  economy:
+    headroom:
+      value: 0.40
+      unit: fraction
+      applies_to: deployment
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Kill one broker at the sized load and confirm the survivors carry it.
+    generation_policy:
+      value: newest
+      unit: policy
+      applies_to: deployment
+      source: shapes/compute-shapes.yaml
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: None -- a policy the resolver applies, printed in the sizing report.
+    storage_profile:
+      value: baseline
+      unit: policy
+      applies_to: deployment
+      source: shapes/compute-shapes.yaml
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: None -- a policy the resolver applies, printed in the sizing report.
+  balanced:
+    headroom:
+      value: 0.60
+      unit: fraction
+      applies_to: deployment
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Kill one broker at the sized load and confirm latency stays inside the target.
+    ## One generation newer where the price step is under 10%, because a
+    ## generation costs about 10% a step and a memory-bound pool at low CPU
+    ## never sees the performance it pays for.
+    generation_policy:
+      value: newest-within:10
+      unit: policy
+      applies_to: deployment
+      source: shapes/compute-shapes.yaml
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: None -- a policy the resolver applies, printed in the sizing report.
+    storage_profile:
+      value: baseline
+      unit: policy
+      applies_to: deployment
+      source: shapes/compute-shapes.yaml
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: None -- a policy the resolver applies, printed in the sizing report.
+  performance:
+    headroom:
+      value: 1.00
+      unit: fraction
+      applies_to: deployment
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: Kill one broker at twice the sized load and confirm the survivors carry it.
+    generation_policy:
+      value: newest
+      unit: policy
+      applies_to: deployment
+      source: shapes/compute-shapes.yaml
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: None -- a policy the resolver applies, printed in the sizing report.
+    storage_profile:
+      value: high-iops,instance-store-cache
+      unit: policy
+      applies_to: deployment
+      source: shapes/compute-shapes.yaml
+      read: 2026-09-13
+      confidence: rule-of-thumb
+      spot_test: None -- a policy the resolver applies, printed in the sizing report.
+  ## What economy does NOT trade. These are correctness and availability, not
+  ## headroom, so the cheapest deployment still carries them.
+  invariants:
+    replication_factor:
+      value: 3
+      unit: copies
+      applies_to: all-providers
+      source: helm/charts/kafka/templates/kafka.yaml:43
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: None -- durability floor, not a sizing choice.
+    min_insync_replicas:
+      value: 2
+      unit: replicas
+      applies_to: all-providers
+      source: helm/charts/kafka/templates/kafka.yaml:44
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: None -- durability floor, not a sizing choice.
+    broker_loss_cpu_slack:
+      value: 0.40
+      unit: fraction
+      applies_to: all-providers
+      source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+      read: 2026-09-13
+      confidence: vendor-documented
+      spot_test: Kill a broker at the sized load and confirm leadership redistributes without throttling.
+
+## ---------------------------------------------------------------------------
+## The tyre-kick floor -- what a deployment gets with NO throughput estimate.
+## The smallest shape that runs the canonical profile without an OOM. Whatever
+## throughput it happens to carry is REPORTED by the sizing report, never
+## targeted.
+## ---------------------------------------------------------------------------
+floors:
+  kafka_brokers:
+    value: 3
+    unit: nodes
+    applies_to: all-providers
+    source: helm/charts/kafka/templates/kafka.yaml:43
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- RF3 needs three brokers; below that the tier is single, not scale.
+  kafka_broker_vcpu:
+    value: 2
+    unit: vcpu
+    applies_to: all-providers
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Run the canonical profile on the floor shape and confirm no request-handler starvation.
+  ## Heap 6 GB plus 30 seconds of page cache at what two vCPU carry, rounded up.
+  kafka_broker_ram_gib:
+    value: 8
+    unit: gib
+    applies_to: all-providers
+    source: https://docs.confluent.io/platform/current/kafka/deployment.html
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Run the floor broker for an hour at its carried rate and confirm no OOMKill.
+  kraft_controllers:
+    value: 3
+    unit: nodes
+    applies_to: kraft-controller
+    source: https://docs.confluent.io/platform/current/kafka-metadata/config-kraft.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- an odd quorum is a correctness requirement.
+  clickhouse_replicas:
+    value: 3
+    unit: nodes
+    applies_to: clickhouse
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- the scale tier's replica floor, not a derived number.
+  clickhouse_vcpu:
+    value: 2
+    unit: vcpu
+    applies_to: clickhouse
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Run the canonical profile plus the scheduled hunts on the floor shape.
+  ## ClickHouse's own floor: total memory should not go below 8 GB whatever the
+  ## data volume is.
+  clickhouse_ram_gib:
+    value: 8
+    unit: gib
+    applies_to: clickhouse
+    source: https://clickhouse.com/docs/guides/sizing-and-hardware-recommendations
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Run a fixture day through the floor shape and confirm no MEMORY_LIMIT_EXCEEDED.
+  keeper_replicas:
+    value: 3
+    unit: nodes
+    applies_to: keeper
+    source: https://clickhouse.com/docs/guides/oss/deployment-and-scaling/keeper
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- an odd quorum is a correctness requirement.
+  keeper_ram_gib:
+    value: 3
+    unit: gib
+    applies_to: keeper
+    source: https://clickhouse.com/docs/guides/oss/deployment-and-scaling/keeper
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Read Keeper RSS on the floor deployment with the default log caches.
+  ## Keeper's own quorum housekeeping -- session heartbeats, watch dispatch,
+  ## periodic snapshot and log-compaction fsyncs -- keeps writing whether or
+  ## not the loader is creating parts, so a deployment with no ingest estimate
+  ## still needs a real Keeper volume, not the derived zero that formula gives
+  ## it. Same reasoning as the root_volume_demand floors below: a deliberately
+  ## small, honest guess at what an idle Keeper actually asks of the instance,
+  ## product decision rather than a measured number.
+  keeper_idle_iops:
+    value: 100
+    unit: iops
+    applies_to: keeper
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Read Keeper's own fsync rate on a floor deployment carrying no loader traffic.
+  ## The mandatory root volume every use case carries is not sized from a
+  ## workload -- it holds the OS, container images and logs, never data (that
+  ## is the "data" volume's job). gp3's own free minimum (3,000 IOPS / 125
+  ## MiB/s) is what CreateVolume provisions it at, but treating that ceiling
+  ## as DEMAND is the same counting error the "data" volume's A3 fix already
+  ## corrected: a root volume nobody is writing to still forced every
+  ## use case past its physical instance-baseline floor. These two ratios are
+  ## a deliberately small, honest guess at what a quiet root disk actually
+  ## asks of the instance; the gp3 minimum stays the provisioned CEILING
+  ## (resolve_sizing.py's A7), never the demand.
+  root_volume_demand_mib_s:
+    value: 10
+    unit: mib-per-second
+    applies_to: all-workloads
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Watch iostat on a running node's root volume over a normal day and read its sustained throughput.
+  root_volume_demand_iops:
+    value: 300
+    unit: iops
+    applies_to: all-workloads
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Watch iostat on a running node's root volume over a normal day and read its sustained IOPS.
+
+## ---------------------------------------------------------------------------
+## Ceilings. The generator REFUSES above its cap rather than extrapolating, and
+## prints the professional-services message with the cap and the provider named.
+## Per-provider ceilings are converted from the documented MB/s figures at
+## 86,400 seconds a day.
+## ---------------------------------------------------------------------------
+ceilings:
+  professional_services_message: "Beyond this band -- telco grade -- DFE recommends a professional-services engagement rather than a generated profile. The generator has not extrapolated."
+  generator_cap:
+    value: 100000
+    unit: gb-per-day
+    applies_to: all-providers
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- a product boundary, not a measurement.
+  ## 3 x express.m7g.12xlarge at sustained ingress, about 1.1 GB/s.
+  msk-express:
+    value: 95040
+    unit: gb-per-day
+    applies_to: msk-express
+    source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- read from the per-size ingress table, not measured by us.
+  ## Strimzi has no vendor ceiling: it scales out, so the generator cap binds
+  ## first. What it costs to get there is the broker count, not a product limit.
+  strimzi:
+    value: 100000
+    unit: gb-per-day
+    applies_to: strimzi
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Scale the proof cluster 3 to 6 brokers and confirm throughput grows by one broker's worth.
+  ## Confluent publishes no fixed Freight ceiling -- the limit is a maximum eCKU
+  ## agreed with their sales team before provisioning, so this is a planning
+  ## figure to confirm in writing, never a promise.
+  confluent-freight:
+    value: 777600
+    unit: gb-per-day
+    applies_to: confluent-cloud
+    source: https://docs.confluent.io/cloud/current/clusters/cluster-types.html
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- confirm the negotiated maximum eCKU with Confluent before quoting it.
+  redpanda-serverless:
+    value: 8640
+    unit: gb-per-day
+    applies_to: redpanda-cloud
+    source: https://docs.redpanda.com/redpanda-cloud/get-started/cluster-types/serverless/
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- read from the published Serverless usage limits.
+  redpanda-dedicated:
+    value: 34560
+    unit: gb-per-day
+    applies_to: redpanda-cloud
+    source: https://docs.redpanda.com/redpanda-cloud/reference/tiers/dedicated-tiers/
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- read from the published Dedicated tier table.
+  redpanda-byoc:
+    value: 172800
+    unit: gb-per-day
+    applies_to: redpanda-cloud
+    source: https://docs.redpanda.com/redpanda-cloud/reference/tiers/byoc-tiers/
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- read from the published BYOC tier table.
+
+## ---------------------------------------------------------------------------
+## Retention. Kafka is the buffer, the archive is object storage, so retention
+## is sized from how long a consumer may be down -- not from how long the data
+## must be kept.
+## ---------------------------------------------------------------------------
+retention:
+  data_topic_hours:
+    value: 24
+    unit: hours
+    applies_to: all-providers
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- a dial, shown with its storage cost per band in the sizing report.
+  ## The weekend profile: enough to survive a Friday-night outage or a long
+  ## weekend before a consumer has to be back.
+  weekend_profile_hours:
+    value: 72
+    unit: hours
+    applies_to: all-providers
+    source: docs/deployment/kafka/README.md:49
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- a dial, shown with its storage cost per band in the sizing report.
+  dlq_days:
+    value: 7
+    unit: days
+    applies_to: all-providers
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- a dial; the DLQ is small and its retention is an operations choice.
+  assumed_consumer_downtime_hours:
+    value: 24
+    unit: hours
+    applies_to: all-providers
+    source: sizing/sizing.yaml
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- an assumption the report states, so an operator can correct it.
+
+## ---------------------------------------------------------------------------
+## Partitions. Highly divisible so 3, 6 and 12 brokers all divide the count
+## evenly, and the count only ever goes UP: a keyed topic cannot be
+## repartitioned without breaking hash(key) % partitions.
+## ---------------------------------------------------------------------------
+partitions:
+  default_count:
+    value: 12
+    unit: partitions
+    applies_to: all-providers
+    source: docs/deployment/kafka/README.md:47
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: None -- divisibility is arithmetic; the consumer-parallelism headroom is deliberate.
+  broker_multiple_rule:
+    value: partitions % brokers == 0
+    unit: formula
+    applies_to: all-providers
+    source: docs/deployment/kafka/README.md:47
+    read: 2026-09-13
+    confidence: rule-of-thumb
+    spot_test: Scale 3 to 6 brokers and confirm the rebalancer spreads leadership evenly.
+  ## Where a provider caps per-partition throughput, that cap sets a partition
+  ## FLOOR: at 100 TB/day MSK Express needs at least 78 partitions whatever the
+  ## divisibility rule says.
+  min_partitions_formula:
+    value: ceil(peak_mb_s / per_partition_mb_s_cap)
+    unit: formula
+    applies_to: msk-express
+    source: https://docs.aws.amazon.com/msk/latest/developerguide/limits.html
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: Produce above the per-partition cap on the proof cluster and confirm the throttle.
+  change_policy:
+    value: increase-only
+    unit: policy
+    applies_to: all-providers
+    source: docs/deployment/kafka/README.md:47
+    read: 2026-09-13
+    confidence: vendor-documented
+    spot_test: None -- a keyed topic cannot be repartitioned without a full replay.
+
+## ---------------------------------------------------------------------------
+## Locked fields. A re-size that changes one of these is REFUSED without an
+## explicit --migrate and the runbook it points at. Each value is the reason,
+## and the reason is what the refusal prints.
+## ---------------------------------------------------------------------------
+locked:
+  partition_count: "A keyed topic cannot be repartitioned without breaking hash(key) % partitions, so the count only ever grows."
+  storage_model: "local and cached-object put parts in different places; changing it is a data migration, not a setting."
+  msk_broker_type: "Standard to Express is a cluster replacement plus a client cutover, not an update."
+  controller_mode: "Combined to separate controllers re-forms the metadata quorum."
+  cloud_token: "The cloud a deployment lives in is not a field; it is a new deployment."
+  az_count: "Changing the AZ count re-homes every replica and every volume."

@@ -22,6 +22,19 @@ Read the opinionated baseline in [README.md](README.md) first. Confluent Cloud
 is the most managed of the three clouds: it exposes very few broker knobs and
 expresses the rest per topic.
 
+**On the AWS path, tofu builds this for you.** Setting `kafka.provider:
+confluent-cloud` in the deployment dial makes `terraform/environments/aws`
+call the maintained, contract-tested `terraform/modules/managed-kafka/confluent-cloud`
+module instead of hand-rolling the snippet below -- see
+[aws.md](../aws.md#kafka-and-clickhouse) and that module's
+`CONTRACT.md`. That module defaults to the **Freight** tier (private
+networking, no public endpoint, autoscales on eCKUs) rather than the
+`standard` tier this page's own worked example uses, and Confluent caps a
+topic's `max.message.bytes` at 8 MiB on every tier -- under the 16 MiB DFE's
+canonical size chain otherwise carries. The example below is for a
+deployment standing Confluent Cloud up by some other means and pointing DFE
+at it with `kafka.mode=external`.
+
 ## What Confluent Cloud lets you set vs manages
 
 Confluent Cloud manages the broker fleet, KRaft metadata plane, segment sizing,
@@ -155,8 +168,12 @@ that pair is what DFE's `confluent-cloud` provider sends as PLAIN over TLS.
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap_endpoint>` (strip
   the `SASL_SSL://` scheme if your endpoint output includes it).
+- `kafka.external.provider=confluent-cloud` -> the chart derives `SASL_SSL` +
+  `PLAIN` and puts the mechanism in the credential Secret beside the API key, so
+  that Secret carries the same `username` / `password` / `sasl.mechanism` shape
+  a DFE-owned broker's does.
 - `KAFKA_PROVIDER=confluent-cloud` / `DFE_KAFKA_PROVIDER=confluent-cloud`
-  -> scalo derives `SASL_SSL` + `PLAIN` (never hand-set). The floor check refuses
+  -> scalo derives the same pair (never hand-set). The floor check refuses
   PLAIN on any non-TLS transport.
 - Credentials: put the Kafka API key (username) + secret (password) in the
   Vault-backed external secret; `kafka.external.auth.type=scram` still works as

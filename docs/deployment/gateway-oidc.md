@@ -5,13 +5,14 @@ nothing: dfe-engine holds the accounts and signs its own tokens. The other is
 edge OIDC, where Envoy Gateway takes the login, verifies the token, and hands
 dfe-engine an already-authenticated identity in `X-Oidc-*` headers.
 
-This page is about the second one, and about the parts of it that Envoy Gateway
-cannot do today. Read it before turning `jwtAuthn.enabled` on.
+This page is the second one, and what Envoy Gateway cannot do today; read it
+before turning `jwtAuthn.enabled` on. [edge.md](edge.md) says which routes take
+an edge policy at all.
 
 ## The values that turn OIDC on
 
-There is no single on/off switch, and deliberately no `auth.oidcEnabled`: the
-engine has no OIDC boolean at all, it reads whatever provider YAML is under
+There is no single on/off switch and deliberately no `auth.oidcEnabled`: the
+engine reads whatever provider YAML is under
 `<config.mountPath>/auth/oidc-providers`. Four values say four separate things.
 
 | chart | value | what it decides |
@@ -20,6 +21,11 @@ engine has no OIDC boolean at all, it reads whatever provider YAML is under
 | dfe-engine | `oidc.enabled` + `oidc.providers` | which client credentials are mounted as env from which Secrets |
 | dfe-engine | `auth.trustProxyHeaders` | whether the engine believes `X-Oidc-*` on an inbound request |
 | envoy-gateway-config | `oidc.enabled` + `oidc.providers` + `oidc.targetRoutes` | which routes get an OIDC SecurityPolicy, and against which IdP |
+
+`oidc.targetRoutes` names `dfe-engine`, and the engine's PUBLIC route follows it
+-- so an edge policy on a cloud deploy also fronts
+`GET /api/v1/auth/oidc/{provider}/callback`, which is where it collides with the
+engine's own external-IdP login ([edge.md](edge.md#what-the-engine-apis-split-gets-wrong)).
 
 ## A private-CA IdP is not discoverable
 
@@ -135,5 +141,5 @@ hostname and serves the wildcard certificate as normal.
 ## Related
 
 - [index.md](index.md) - the deploy layers and the values cascade
-- `helm/charts/envoy-gateway-config/values.yaml` - the `oidc` and `jwtAuthn` keys
+- `helm/edge/gateway/values.yaml` - the `oidc` and `jwtAuthn` keys
 - `helm/charts/dfe-engine/values.yaml` - the `auth`, `oidc` and `authConfig` keys

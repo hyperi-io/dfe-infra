@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import CHART_TREES
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -201,7 +202,7 @@ def test_a_non_dev_posture_cannot_render_without_minting() -> None:
 def test_no_chart_mints_a_secret_behind_a_lookup() -> None:
     """The #224 shape, repo-wide: a cluster read cannot guard a render-time mint."""
     offenders = []
-    for template in CHARTS.glob("*/templates/**/*.yaml"):
+    for template in (t for tree in CHART_TREES for t in tree.glob("*/templates/**/*.yaml")):
         body = template.read_text(encoding="utf-8", errors="replace")
         code = "\n".join(
             line for line in body.splitlines() if "{{" in line or "{{-" in line
