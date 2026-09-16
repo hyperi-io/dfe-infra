@@ -44,6 +44,7 @@ EXISTING cluster needs `bin/v1-api-conversion.sh convert-resource` then
 `crd-upgrade` before the operator is upgraded: 0.51 serves v1 but STORES
 v1beta2, so upgrading the operator first leaves the stored objects unreadable.
 */}}
+{{- $brokers := int (include "dfe-kafka.brokerCount" .) }}
 {{- range $t := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
 ---
 apiVersion: kafka.strimzi.io/v1
@@ -57,8 +58,9 @@ spec:
   topicName: {{ $t.name }}
   partitions: {{ $t.partitions }}
   # Never ask for more replicas than there are brokers -- Strimzi accepts the CR
-  # and the topic then sits un-Ready forever.
-  replicas: {{ min $t.replicationFactor ($.Values.kafka.replicas | int) }}
+  # and the topic then sits un-Ready forever. The count comes from
+  # dfe-kafka.brokerCount, the one place the chart resolves a broker count.
+  replicas: {{ min $t.replicationFactor $brokers }}
   {{- with $t.config }}
   config:
     {{- toYaml . | nindent 4 }}

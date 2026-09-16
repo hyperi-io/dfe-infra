@@ -27,11 +27,11 @@ rules:
   strimzi-kafka-ceiling:
     severity: "error"
     when-key: "operators.strimzi-kafka-operator"
-    when-range: ">=0.51.0 <0.52.0"
+    when-range: ">=1.2.0 <1.3.0"
     require-key: "services.kafka-version"
-    require-range: ">=4.1.0 <=4.2.0"
-    reason: "strimzi 0.51 supports Apache Kafka 4.1.x-4.2.0 only. Past 4.2.0 fails the operator supported-version check and breaks the k8s path (the logical kafka-version is shared by both render paths, so this bounds docker too)."
-    source: "https://github.com/strimzi/strimzi-kafka-operator/blob/main/kafka-versions.yaml"
+    require-range: ">=4.2.0 <=4.3.1"
+    reason: "strimzi 1.2 supports Apache Kafka 4.2.0-4.3.1 (4.3.1 default); 1.1 removed 4.1.x"
+    source: "https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/kafka-versions.yaml"
 
   clickhouse-operator-server-range:
     severity: "warn"
@@ -45,10 +45,10 @@ rules:
   redpanda-operator-broker-pairing:
     severity: "warn"
     when-key: "operators.redpanda-operator"
-    when-equals: "26.1.6"
+    when-equals: "26.2.3"
     require-key: "services.redpanda-version"
-    require-equals: "v26.1.8"
-    reason: "redpanda-operator chart 26.1.6 is tested/paired with broker image v26.1.8. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
+    require-equals: "v26.2.2"
+    reason: "redpanda-operator chart 26.2.3 is tested/paired with broker image v26.2.2. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
     source: "https://github.com/redpanda-data/redpanda-operator/releases"
 
   ferretdb2-requires-documentdb:
