@@ -26,6 +26,11 @@ Everything here is decoupled from any pin FILE. The public surface is:
   resolve(org, app, tag)       -> a Resolved(digest, published) or None
   resolve_digest(org, app, tag)-> just the digest string, or None
   version_key(tag)             -> numeric sort key for vX.Y.Z tags
+  head_commit(org, repo, ref)  -> the commit sha a branch or tag points at
+
+A content repo that ships no container still has to be pinned immutably, so
+head_commit is the same job as resolve_digest for a repo rather than a package:
+a movable name in, an immutable id out.
 
 dfe-deploy usage (an overlay pins image.tag; resolve its digest for a pull-by-
 digest ref) is a two-liner:
@@ -42,6 +47,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from functools import cache
@@ -160,3 +166,27 @@ def resolve_digest(org: str, app: str, tag: str) -> str | None:
 def version_key(tag: str) -> tuple[int, ...]:
     """Numeric sort key so v1.18.19 ranks above v1.18.9, unlike a string sort."""
     return tuple(int(part) if part.isdigit() else 0 for part in tag.lstrip("v").split("."))
+
+
+def head_commit(org: str, repo: str, ref: str = "main") -> str:
+    """The commit sha a branch or tag currently points at.
+
+    The repo half of resolve_digest: a content repo that ships no container has
+    no package to read a digest from, so the immutable id for it is the commit
+    the ref resolves to right now. Raises RegistryError rather than returning
+    None, because a ref that does not resolve is a wrong name, not an absence.
+    """
+    proc = subprocess.run(
+        ["gh", "api", f"/repos/{org}/{repo}/commits/{ref}", "--jq", ".sha"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RegistryError(proc.stderr.strip() or f"gh api could not read {org}/{repo}@{ref}")
+    sha = proc.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise RegistryError(f"{org}/{repo}@{ref} did not resolve to a commit sha: {sha!r}")
+    return sha

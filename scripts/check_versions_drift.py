@@ -47,6 +47,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 
+# Imported by path so `python3 scripts/check_versions_drift.py` works from any cwd.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import version_range  # noqa: E402
+
 
 def _parse_nested(text: str) -> dict:
     """Indent-aware parse of the versions.yaml subset (nested maps of scalars).
@@ -1093,13 +1097,19 @@ def reverse_sweep() -> list[str]:
 
 
 def dead_guards(versions: dict[str, str], stack: str) -> list[str]:
-    """Constraint rules whose `when-equals` no longer matches its key.
+    """Constraint rules whose guard no longer matches the pin it watches.
 
-    A `when-equals` guard is an exact match, so bumping the pin it watches
-    leaves the rule present, green and inert. Any such rule is reported: either
-    re-point it at the new value or delete it. `stack` is the SELECTED stack
-    id (from `load_versions`'s `pointers.current`), so this follows `--stack`
-    rather than always reading the block `current` points at.
+    Both guard forms go dead the same way and for the same reason -- the rule
+    stays present, green and inert, which reads as passing. `when-equals` is an
+    exact match, so bumping the pin it watches kills it; `when-range` is a
+    comparator set, so lifting the pin outside the range kills it just as
+    silently (dfe-infra#295: a strimzi lift walked out of a `when-range` guard
+    and nothing said so, while the `when-equals` rule beside it WAS reported).
+
+    The comparison uses the same `version_range` the compat-check decides with,
+    so a rule cannot read live to one and dead to the other. `stack` is the
+    SELECTED stack id (from `load_versions`'s `pointers.current`), so this
+    follows `--stack` rather than always reading the block `current` points at.
     """
     root = _parse_nested(VERSIONS_FILE.read_text())
     block = root.get("stacks", {}).get(stack, {})
@@ -1115,18 +1125,24 @@ def dead_guards(versions: dict[str, str], stack: str) -> list[str]:
     for rule_id, body in rules.items():
         if not isinstance(body, dict):
             continue
-        pinned = body.get("when-equals")
         when_key = body.get("when-key")
-        if not pinned or not when_key:
+        pinned = body.get("when-equals")
+        spec = body.get("when-range")
+        if not when_key or not (pinned or spec):
             continue
         current = versions.get(when_key)
         if current is None:
             problems.append(
                 f"  [dead guard] {rule_id}: when-key '{when_key}' is not in versions.yaml"
             )
-        elif current != pinned:
+        elif pinned and current != pinned:
             problems.append(
                 f"  [dead guard] {rule_id}: when-equals '{pinned}' but {when_key} "
+                f"is now '{current}' -- the rule can never fire; re-point or delete it"
+            )
+        elif spec and not version_range.satisfies(current, spec):
+            problems.append(
+                f"  [dead guard] {rule_id}: when-range '{spec}' but {when_key} "
                 f"is now '{current}' -- the rule can never fire; re-point or delete it"
             )
     return problems

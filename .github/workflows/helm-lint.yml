@@ -94,8 +94,24 @@ jobs:
       - name: Namespace drift failure paths
         run: python3 scripts/tests/test_check_namespace_drift.py
 
+      # Renovate rewrites a value and never reads the comment; a cut clones the
+      # previous block's comments onto pins it then moves. Either way the
+      # evidence detaches, and the file's whole value is that it can be trusted.
+      - name: Pin evidence failure paths
+        run: python3 scripts/tests/test_pin_evidence.py
+
+      # `with` skips a boolean false, so a dial written that way renders nothing
+      # for the deployment that asked for it off, leaving the consumer default.
+      - name: No chart gates a boolean dial on `with`
+        run: python3 scripts/tests/test_with_on_a_boolean.py
+
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
+
+      # Gates the stack under development only. Historical blocks are frozen
+      # records of what shipped; `--all` reports their backlog without failing.
+      - name: Pin evidence check (a bump must move its justification)
+        run: python3 scripts/check_pin_evidence.py
 
       - name: Namespace drift check (common.yaml is SSoT)
         run: python3 scripts/check_namespace_drift.py

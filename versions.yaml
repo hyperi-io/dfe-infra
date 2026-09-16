@@ -1859,7 +1859,7 @@ stacks:
       cloudnative-pg: "0.29.0"       # 2026-06-29 (chart; operator app 1.30.0; needs K8s >=1.29)
       strimzi-kafka-operator: "0.51.0"  # KEEP -- latest 0.x. 1.0 drops v1alpha1/v1beta1/v1beta2 CRDs we use. CEILING: 0.51 supports Kafka 4.1.x/4.2.0 only -- constrains services.kafka-version.
       clickhouse-operator: "0.0.7"   # OCI helm CHART tag (appVersion v0.0.7; 2026-07-20). OFFICIAL ClickHouse Inc operator (ClickHouseCluster + KeeperCluster CRDs). 0.0.6 (06-19) was skipped -- it was inside the cooldown at the last refresh and 0.0.7 superseded it. DECISION: official over Altinity (greenfield + 1-shard + we own DDL + safe Keeper consensus + CH partner support). Scale-profile only. OCI ghcr.io/clickhouse/clickhouse-operator-helm@sha256:927f432f447af2e10e29caf08389fed1743eef0ffc9203fafb25774551a96190. Altinity NOT TESTED with this stack (never adopted, no validation cycle has run on it). Full target matrix incl. the HyperI private-cloud swap: docs/deployment/clickhouse.md.
-      redpanda-operator: "26.1.6"    # redpanda/operator chart+app (2026-06-17; clears cooldown). Redpanda + User + Topic CRDs (cluster.redpanda.com/v1alpha2). ONLY installed when provider=redpanda AND acceptLicense=true (BSL gate). First-class provider alongside strimzi; same operator+thin-CR model. No LTS line (date trains); 26.1.x current.
+      redpanda-operator: "26.1.11"   # redpanda/operator chart+app (2026-09-03; clears cooldown). Redpanda + User + Topic CRDs (cluster.redpanda.com/v1alpha2). ONLY installed when provider=redpanda AND acceptLicense=true (BSL gate). First-class provider alongside strimzi; same operator+thin-CR model. No LTS line (date trains); 26.1.x current. MOVED 2026-09-16 from 26.1.6 so the broker can reach v26.1.17: the redpanda chart's appVersion IS the tested broker pairing, and 26.1.11 is the chart whose appVersion is v26.1.17 (26.1.6's was v26.1.8), verified against charts/redpanda/v26.1.11 Chart.yaml. 26.1.7 through 26.1.11 are bug fixes on the same v1alpha2 CRD group, so the CR the kafka chart renders is unchanged. NOT YET EXERCISED ON A CLUSTER.
 
     # Stage services: data/backing services -- datastores, brokers, telemetry
     # (ArgoCD waves 4-5, appsets/layer2-data.yaml). Named "services" (not "data")
@@ -1873,7 +1873,7 @@ stacks:
       kafka-replicas: "3"            # Kafka broker count (cluster mode default; settable higher)
       # image: docker.redpanda.com/redpandadata/redpanda -- operator-coupled:
       # refresh-digests resolves the digest, the VERSION moves by hand.
-      redpanda-version: "v26.1.8"    # redpanda broker image tag the operator chart 26.1.6 pairs with (tested pairing). Used in the Redpanda CR spec.clusterSpec.image.tag when provider=redpanda. UNIFIED 2026-07-16: dfe-docker had v26.1.9; both paths now v26.1.8. Bounded to <26.2 in the org Renovate preset, by package (operator-coupled).
+      redpanda-version: "v26.1.17"   # redpanda broker image tag the operator chart 26.1.11 pairs with (tested pairing: that chart's appVersion). Used in the Redpanda CR spec.clusterSpec.image.tag when provider=redpanda. MOVED 2026-09-16 from v26.1.8 with operators.redpanda-operator 26.1.6 -> 26.1.11; v26.1.17 released 2026-08-20, so it clears the cooldown. Bounded to <26.2 in the org Renovate preset, by package (operator-coupled). dfe-loader holds two more copies of this tag (docker-compose.dev.yaml, scripts/pgo-workload.sh) and moves in its own PR -- dfe-infra#272.
       # image: clickhouse/clickhouse-server -- operator-coupled: refresh-digests
       # resolves the digest, but the VERSION moves by hand with the operator.
       clickhouse-version: "26.3.32.14"  # DOCKER tag (NOT the v..-lts release tag -- Docker drops -lts; verified pullable). LTS release v26.3.32.14-lts 2026-09-06, the newest on the 26.3 LTS line (line opened v26.3.1.896-lts 2026-03-27; ClickHouse LTS is supported one year from initial release, so this line ages out ~2027-03). Stays on 26.3 deliberately: 26.4/26.5/26.6/26.7 are stable-line, not LTS. 24.8 past-EOL. UNIFIED 2026-07-16: dfe-docker had drifted to 26.6.1.1193 (off-LTS); both paths now hold this LTS. Same upstream image both paths; services-digests.clickhouse-version pins it. clickhouse-keeper shares the tag (helm/charts/clickhouse-cluster/values.yaml).
@@ -1956,7 +1956,7 @@ stacks:
     services-digests:
       clickhouse-version: "sha256:456063a689194186633bb3db0862283068f4c2ee538852d3aaffa7eb66f1f841"  # clickhouse/clickhouse-server:26.3.32.14 (both paths)
       kafka-version: "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9"       # apache/kafka:4.2.0 (docker path only; strimzi resolves its own image on k8s)
-      redpanda-version: "sha256:38479b2fa7db291dca9809eeb19dbb9309751820d650fef80c3645ed74142570"    # docker.redpanda.com/redpandadata/redpanda:v26.1.8 (both paths)
+      redpanda-version: "sha256:b0887a7bf4a63d667acd18a1fd1686d380486f4cd84c86288f3b2b02efce9cd9"    # docker.redpanda.com/redpandadata/redpanda:v26.1.17 (both paths)
       kafbat: "sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"              # ghcr.io/kafbat/kafka-ui:v1.5.0 (both paths)
       ferretdb: "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985"            # ghcr.io/ferretdb/ferretdb:2.7.0 (both paths; the hyperdx fork target)
       documentdb-pg: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"       # ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0 (both paths; k8s pins it in helm/charts/ferretdb values + cnpg-cluster values)
@@ -1971,7 +1971,14 @@ stacks:
     content:
       dfe-schemas: "v0.2.1"              # baseline DDL; the dfe-schemas release current at this cut (2026-09-08)
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
+      dfe-deploy: "v1.0.2"               # the deploy-repo template (seeded at this tag). 2026-08-30, clears the cooldown; the newest tag on the remote. v1.0.1 documented what an instance values file must carry and gave the substrate and platform charts their own overlay; v1.0.2 followed the storage vocabulary into the template, so the template's words match the charts a deployment gets. No LTS line -- the template is tagged in lockstep with a stack.
+      # A GIT REF, not a version: dfe-docker cuts no per-stack tag, so the
+      # immutable record of what ran a stack is the commit. `dfe-stack cut`
+      # stamps it from dfe-docker main at cut time; this rc.13 value was
+      # recorded on 2026-09-16 when the key was ADDED, so it says "the ref that
+      # runs rc.13 today" rather than "the ref at the rc.13 cut", which nothing
+      # recorded at the time. Old stack = the ref here; current stack = main.
+      dfe-docker: "c748877daa46f4fefb2c612dbd693de6a1f558ca"
       dfe-hyperdx: "v0.2.4"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f (shipped dashboards are read-only without the save-403 warning, plus Duplicate/Delete-with-tombstone/Restore; upstream 2.36.0); deployment tag pin lives in the deploy repo values
       # dfe-transform-elastic-catalogue: "v1.1.1"   # dfe-transform-elastic#18; the sources.yaml release asset the engine offers as the source catalogue
 

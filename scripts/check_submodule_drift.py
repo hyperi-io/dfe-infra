@@ -41,12 +41,11 @@ import sys
 # Shared submodule -> the repos that vendor it, and the path it sits at.
 # A consumer joins by being listed here; nothing discovers them, because a
 # repo we forgot to list is exactly the drift this guard exists to catch.
-SHARED_SUBMODULES = {
-    "dfe-schemas": {
-        "path": "schemas",
-        "consumers": ["dfe-engine", "dfe-loader", "dfe-fetcher"],
-    },
-}
+#
+# EMPTY: no suite repo vendors a shared submodule -- dfe-schemas ships as a
+# pinned wheel, and no DFE repo carries a .gitmodules (verified 2026-09-16
+# across the org). The table stays so the next one is an entry, not a tool.
+SHARED_SUBMODULES: dict[str, dict] = {}
 
 ORG = "hyperi-io"
 
@@ -118,15 +117,16 @@ def audit() -> tuple[list[str], list[dict], list[str]]:
             failures.append(f"{module}: cannot read its default-branch HEAD")
             continue
 
+        looked: list[str] = []
+        missing: list[str] = []
         for consumer in spec["consumers"]:
             if not _readable(consumer):
                 skips.append(f"{consumer}: not readable by this token")
                 continue
+            looked.append(consumer)
             pinned = _pinned_sha(consumer, spec["path"])
             if pinned is None:
-                failures.append(
-                    f"{consumer}: no submodule at `{spec['path']}` -- it was removed or moved"
-                )
+                missing.append(consumer)
                 continue
             behind = _behind(module, pinned, head)
             rows.append(
@@ -143,6 +143,19 @@ def audit() -> tuple[list[str], list[dict], list[str]]:
                     f"{consumer}: pins {module} at {pinned[:7]}, {gap} commit(s) behind {head[:7]}"
                 )
 
+        # No consumer this token could read still vendors it: the class is
+        # retired, so the entry is stale rather than the repos disagreeing.
+        if looked and len(missing) == len(looked):
+            failures.append(
+                f"{module}: none of {', '.join(looked)} vendors it at `{spec['path']}` "
+                f"any more -- delete the entry from SHARED_SUBMODULES"
+            )
+        else:
+            failures += [
+                f"{consumer}: no submodule at `{spec['path']}` -- it was removed or moved"
+                for consumer in missing
+            ]
+
     return failures, rows, skips
 
 
@@ -150,6 +163,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit the pin table as JSON")
     args = parser.parse_args()
+
+    # An empty table is a real state, not an unverified one: nothing in the
+    # suite vendors a shared submodule, so there is no pin to disagree about.
+    if not SHARED_SUBMODULES:
+        print("OK -- no shared submodule is declared; nothing vendors one.")
+        return 0
 
     if shutil.which("gh") is None:
         print(

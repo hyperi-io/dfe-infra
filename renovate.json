@@ -4,10 +4,12 @@
   "extends": ["github>hyperi-io/renovate-config"],
   "customManagers": [
     {
-      "description": "The SSoT's own pins. An annotation comment above a `key: \"value\"` line names the image, so Renovate proposes the bump HERE and the propagator carries it to the mirrors. The org preset's identical manager covers .rs/.py/.sh only, which is why versions.yaml needs its own.",
+      "description": "The SSoT's own pins, SCOPED TO THE STACK UNDER DEVELOPMENT. An annotation comment above a `key: \"value\"` line names the image, so Renovate proposes the bump HERE and the propagator carries it to the mirrors. The org preset's identical manager covers .rs/.py/.sh only, which is why versions.yaml needs its own. The scoping is the first matchString and is not cosmetic: every stack block carries a complete copy of the pin set with the same annotations above it, so an unscoped manager reaches all thirteen and would rewrite the frozen record of what shipped. Under matchStringsStrategy recursive the first pattern narrows to a region and the second runs inside it; the leading greedy `[\\s\\S]*` makes the block header bind to the LAST one in the file, which is the stack `current` points at (test_dfe_stack.py holds that invariant). RE2 has no backreferences, so the block cannot be selected by name.",
       "customType": "regex",
       "managerFilePatterns": ["/^versions\\.yaml$/"],
+      "matchStringsStrategy": "recursive",
       "matchStrings": [
+        "[\\s\\S]*\\n  [0-9][A-Za-z0-9_.-]*:\\n(?<currentStack>[\\s\\S]*)",
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[^\\n]*\\n\\s*[A-Za-z0-9_.-]+:\\s*\"(?<currentValue>[^\"]+)\""
       ],
       "versioningTemplate": "docker"
