@@ -62,8 +62,11 @@ spec:
               kafka_enable_authorization: true
               # DFE broker/topic defaults (Redpanda property names). Single broker
               # is RF1 so default_topic_replications stays 1 (its default).
-              default_topic_partitions: {{ int .Values.kafka.config.numPartitions }}
-              log_segment_size: {{ int .Values.kafka.config.logSegmentBytes }}
+              default_topic_partitions: {{ include "dfe-kafka.partitions" . }}
+              log_retention_ms: {{ include "dfe-kafka.retentionMs" . }}
+              retention_bytes: {{ include "dfe-kafka.retentionBytes" . }}
+              kafka_batch_max_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
+              kafka_max_message_size_upper_limit_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
               CFG
               redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
                 --node-id 0 --check=false \
@@ -135,14 +138,18 @@ data:
     transaction.state.log.min.isr=1
     default.replication.factor=1
     min.insync.replicas=1
-    num.partitions={{ .Values.kafka.config.numPartitions }}
-    log.retention.hours={{ .Values.kafka.config.logRetentionHours }}
-    log.segment.bytes={{ .Values.kafka.config.logSegmentBytes }}
-    # producer -> broker stores the client's codec as-is (no re-compression).
-    compression.type={{ .Values.kafka.config.compressionType }}
-    # single broker is RF1 so unclean election cannot occur; pinned for parity.
-    unclean.leader.election.enable={{ .Values.kafka.config.uncleanLeaderElection }}
-    auto.create.topics.enable=true
+    # Derived, and the same number the landing topic gets. The KRaft thread
+    # pools are NOT set here: this tier runs on a 2-core broker, where they buy
+    # context switching and nothing else.
+    num.partitions={{ include "dfe-kafka.partitions" . }}
+    log.retention.ms={{ include "dfe-kafka.retentionMs" . }}
+    log.retention.bytes={{ include "dfe-kafka.retentionBytes" . }}
+    # The size chain, the same 16 MiB the cluster tier and every topic carry.
+    message.max.bytes={{ include "dfe-kafka.messageMaxBytes" . }}
+    replica.fetch.max.bytes={{ include "dfe-kafka.messageMaxBytes" . }}
+    # ON here, unlike the cluster tier: this tier runs no topic operator, so
+    # nothing else can create the receiver's dynamic {source}_land topics.
+    auto.create.topics.enable={{ .Values.kafka.profile.single.autoCreateTopics }}
   entrypoint.sh: |
     #!/bin/sh
     set -e

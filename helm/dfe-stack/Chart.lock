@@ -3,7 +3,7 @@ dependencies:
   repository: file://../charts/network-policies
   version: 0.4.0
 - name: envoy-gateway-config
-  repository: file://../charts/envoy-gateway-config
+  repository: file://../edge/gateway
   version: 0.2.0
 - name: cnpg-cluster
   repository: file://../charts/cnpg-cluster
@@ -47,5 +47,5 @@ dependencies:
 - name: hyperdx
   repository: file://../charts/hyperdx
   version: 0.2.0
-digest: sha256:63fccec536209a44f328844efbc53fbbf6da7b7b61c535e240b7ca591d2dbba0
-generated: "2026-09-09T17:41:36.61027488+10:00"
+digest: sha256:0fd9655071d5d178c8007c03a8083f456e268344b1abd51e484a32e9c105f2cd
+generated: "2026-09-15T21:37:54.726948532+10:00"

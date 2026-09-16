@@ -1,0 +1,62 @@
+{{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- range $key := $public }}
+{{- $r := index $.Values.routes $key }}
+{{- $paths := include "envoy-gateway-config.publicPaths" (dict "ctx" $ "key" $key) | fromJsonArray }}
+---
+# The public face of an internal route: same backend, own hostname, own
+# listener. A second HTTPRoute rather than a second hostname on the first one,
+# because the policies that make a public route safe -- the CIDR filter, the
+# rate limit, the login on the public callback URL -- attach to a route and must
+# not reach the internal one.
+#
+# A route pinned to another's listener (routes.<key>.publicListenerOf) shares
+# that hostname and certificate and carries its own path matches, which is how
+# the engine API answers on dfe-ui's name without a listener of its own.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $r.routeName }}-public
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+  annotations:
+    {{- include "envoy-gateway-config.dnsMarker" $ | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $.Values.gateway.name }}
+      namespace: {{ $.Values.gateway.namespace }}
+      # Pinned to one public listener, so the public hostname cannot be served
+      # off the internal wildcard listener and its certificate.
+      sectionName: https-public-{{ (index $.Values.routes (include "envoy-gateway-config.publicListenerOwner" (dict "ctx" $ "key" $key))).routeName }}
+  hostnames:
+    - {{ include "envoy-gateway-config.publicHost" (dict "ctx" $ "key" $key) | quote }}
+  rules:
+    -
+      {{- with $paths }}
+      matches:
+        {{- range . }}
+        - path:
+            type: PathPrefix
+            value: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if $.Values.ui.tls.hsts }}
+      # Told once over TLS, a browser refuses to try this name over plaintext
+      # again for the max-age, so a downgrade needs a certificate rather than a
+      # redirect.
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: "max-age=31536000; includeSubDomains"
+      {{- end }}
+      backendRefs:
+        - name: {{ $r.backendService }}
+          port: {{ $r.backendPort }}
+          group: ""
+          kind: Service
+          weight: 1
+{{- end }}

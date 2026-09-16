@@ -93,10 +93,13 @@ kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
   # The shipped broker authenticates with SCRAM over its plain listener. A
   # deployment on a TLS listener moves this to SASL_SSL with bootstrapServers.
+  #
+  # No `sasl:` block here: it fanned `enabled` and `mechanism` out to every app
+  # chart and no chart read either (dfe-infra#79), and the mechanism is derived
+  # from kafka.provider now rather than hand-set (dfe-common.kafkaSaslMechanism,
+  # dfe-infra#191). The otel collector's own clusterTelemetry.kafka.sasl block is
+  # a different key and is read.
   securityProtocol: SASL_PLAINTEXT
-  sasl:
-    enabled: true
-    mechanism: SCRAM-SHA-512
 
 # The pool balancer for the direct transport. A Kubernetes Service balances per
 # CONNECTION and gRPC holds one connection open, so a sender pins itself to one
@@ -194,6 +197,29 @@ networkModel:
 # whole deployment's addressing, not just the app that consumes it.
 vpn:
   clientCIDR: "100.64.0.0/10"
+
+# The edge module -- the public gateway and the fleet tunnel -- as one switch.
+# No chart reads this key: the module's own ApplicationSet is gated on the
+# cluster secret's dfe.hyperi.io/edge annotation instead, so turning the module
+# off stops it generating Applications rather than rendering empty ones.
+edge:
+  enabled: true
+
+# The opt-in in-cluster toolbox pod (helm/charts/dfe-toolbox), always deployed
+# by argocd/appsets/layer2-platform.yaml but idle at replicas: 0 until a
+# deployment turns it on. Off everywhere by default; a deployer opts in
+# through the dial (deployment.yaml's toolbox.pod.*), which
+# layer2-platform.yaml renders as this chart's own parameters and which wins
+# over this file -- never by editing this file directly. See
+# docs/deployment/toolbox.md.
+toolbox:
+  pod:
+    enabled: false
+    # Requires enabled: true as well -- refused by the chart's own guard
+    # otherwise (helm/charts/dfe-toolbox/templates/_validate.tpl).
+    kubeApiAccess: false
+    # Empty = no auto-expiry CronJob; the pod runs until disabled by hand.
+    ttlSeconds: ""
 
 # Key names mirror the ScaledObject spec fields the library helper writes; the
 # earlier minReplicas/maxReplicas spelling matched nothing and never applied.

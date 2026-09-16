@@ -1,0 +1,6 @@
+dependencies:
+- name: dfe-common
+  repository: file://../../library/dfe-common
+  version: 0.13.0
+digest: sha256:70286c4b15e038ddc4058333ac11b1db085e1d3af98179f268fe38435d3820a0
+generated: "2026-09-16T08:04:15.580278969+10:00"

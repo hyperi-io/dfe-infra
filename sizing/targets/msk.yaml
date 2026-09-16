@@ -1,0 +1,31 @@
+## Project:   dfe-infra
+## File:      sizing/targets/msk.yaml
+## Purpose:   The per-target knob matrix for `--target msk` -- a managed Kafka
+##            deployment against terraform/modules/managed-kafka/msk. Every
+##            sizing knob the target changes or refuses, and why.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Read by scripts/resolve_sizing.py's build_report -- see the module
+## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
+## prints beside it. NO LISTS: nested maps and scalars only, parsed by
+## scripts/yaml_subset.py.
+
+broker_shape:
+  state: managed
+  reason: "terraform/modules/managed-kafka/msk/variables.tf's broker_shape_ref and resolved_shapes select the express.* instance type from the resolver's own answer -- AWS runs the broker the module names, never one this resolver invents standalone."
+
+broker_count:
+  state: managed
+  reason: "broker_count is a module input (managed-kafka/msk/variables.tf), floored at 3 and required to be a multiple of the client subnet count -- AWS provisions exactly what the module asks for."
+
+kafka_version:
+  state: managed
+  reason: "kafka_version carries no default in managed-kafka/msk/variables.tf -- CONTRACT.md: the newest supported version is read from the vendor at build time, because a default would rot into a deprecated line silently."
+
+storage:
+  state: blocked
+  reason: "CONTRACT.md: MSK Express manages its own storage end to end -- no storage_info, and nothing here sizes a volume -- so there is no broker disk for sizing.kafka.msk-express.disk_formula to size or the resolver to provision."

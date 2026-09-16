@@ -1,0 +1,23 @@
+{{- if and (eq .Values.kafka.mode "external") (eq .Values.kafka.provider "msk") }}
+{{- $msk := .Values.kafka.external.msk }}
+{{- if and $msk.bootstrap.enabled $msk.bootstrapIam }}
+# The identity the MSK bootstrap Job runs as (msk-bootstrap-job.yaml).
+#
+# It holds no Kubernetes RBAC -- the Job talks to the MSK data plane and never to
+# the API server, so there is no Role and no RoleBinding to bind. What it carries
+# is an AWS identity: `aws_eks_pod_identity_association` in
+# terraform/modules/managed-kafka/msk/bootstrap.tf names a namespace and a service
+# account with no defaults, and the EKS Pod Identity agent injects credentials
+# into a pod only when BOTH match. A rename on either side leaves the Job with no
+# credential, and it fails at the SASL handshake rather than at admission.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $msk.bootstrap.serviceAccount }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # Wave -1: the account has to exist before the Job that names it.
+    argocd.argoproj.io/sync-wave: "-1"
+{{- end }}
+{{- end }}

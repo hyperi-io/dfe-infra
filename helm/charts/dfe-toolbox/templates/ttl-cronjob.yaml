@@ -1,0 +1,118 @@
+{{- if .Values.toolbox.pod.ttlSeconds }}
+{{- /*
+No simpler mechanism found in this repo for "scale to zero N seconds after a
+pod starts": KEDA's cooldownPeriod (_keda.tpl) only fires after a trigger
+goes idle, and this pod has no traffic-shaped trigger to watch -- it is
+either running or it is not. So this is a plain CronJob, checking the
+toolbox Pod's own status.startTime (which resets every time the Deployment
+scales 0 -> 1, unlike the Deployment's own creationTimestamp) against
+toolbox.pod.ttlSeconds, once a minute.
+
+Runs the SAME image as the toolbox pod rather than pinning a second one --
+a troubleshooting base image is assumed to ship kubectl and GNU coreutils
+(date -d). If ghcr.io/hyperi-io/dfe-toolbox-base does not carry those, this
+CronJob needs its own pinned utility image instead of reusing this one.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-ttl
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-ttl
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "dfe-common.fullname" . | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: [{{ include "dfe-common.fullname" . | quote }}]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-ttl
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dfe-common.fullname" . }}-ttl
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dfe-common.fullname" . }}-ttl
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-ttl
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.toolbox.pod.ttlCheckSchedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "dfe-common.labels" . | nindent 12 }}
+        spec:
+          {{- include "dfe-common.podSecurityContext" . | nindent 10 }}
+          serviceAccountName: {{ include "dfe-common.fullname" . }}-ttl
+          {{- include "dfe-common.imagePullSecrets" . | nindent 10 }}
+          restartPolicy: Never
+          containers:
+            - name: ttl
+              image: {{ include "dfe-common.image" . }}
+              {{- include "dfe-common.containerSecurityContext" . | nindent 14 }}
+              env:
+                - name: NAMESPACE
+                  value: {{ .Release.Namespace | quote }}
+                - name: DEPLOYMENT
+                  value: {{ include "dfe-common.fullname" . | quote }}
+                - name: SELECTOR
+                  value: "app.kubernetes.io/name={{ printf "%s-%s" .Values.project .Values.component }}"
+                - name: TTL_SECONDS
+                  value: {{ .Values.toolbox.pod.ttlSeconds | quote }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  START=$(kubectl get pods -n "$NAMESPACE" -l "$SELECTOR" \
+                    --field-selector=status.phase=Running \
+                    -o jsonpath='{.items[0].status.startTime}' 2>/dev/null || true)
+                  if [ -z "$START" ]; then
+                    echo "no running toolbox pod in $NAMESPACE -- nothing to expire"
+                    exit 0
+                  fi
+                  NOW_EPOCH=$(date -u +%s)
+                  START_EPOCH=$(date -u -d "$START" +%s)
+                  ELAPSED=$((NOW_EPOCH - START_EPOCH))
+                  if [ "$ELAPSED" -ge "$TTL_SECONDS" ]; then
+                    echo "toolbox pod has run ${ELAPSED}s (ttl ${TTL_SECONDS}s) -- scaling $DEPLOYMENT to zero"
+                    kubectl scale "deployment/$DEPLOYMENT" -n "$NAMESPACE" --replicas=0
+                  else
+                    echo "toolbox pod has run ${ELAPSED}s of ${TTL_SECONDS}s ttl -- leaving it running"
+                  fi
+{{- end }}

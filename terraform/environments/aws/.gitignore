@@ -1,0 +1,13 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+# A rendered dial names a real account, a real network and a real egress
+# allowlist. example.tfvars.json is the committed shape; the rendered one is
+# never committed.
+*.auto.tfvars.json
+dfe-test.*
+# The resolver's per-deployment artefacts written under --out belong to the
+# deployment, not the repo -- the committed answer is repo-root shapes/resolved/.
+shapes/
+sizing/

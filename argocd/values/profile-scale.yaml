@@ -56,13 +56,10 @@ kafka:
   provider: strimzi
   replicas: 3
   bootstrapServers: "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092"
-  # Partitions cap consumer parallelism -- a group assigns at most one consumer
-  # per partition, so a loader replica past this count joins and idles.
-  # The KEDA ceiling above is a divisor of this count, so every reachable replica
-  # count holds the same number of partitions.
-  # Raise only: Kafka cannot shrink a topic and KIP-694 is unadopted.
-  defaultTopic:
-    partitions: 12
+  # Partitions are derived in the kafka chart (kafka.sizing) from the broker
+  # count, the KEDA consumer ceiling and the per-partition throughput cap, and
+  # feed the broker's num.partitions and the landing topic alike -- so there is
+  # no literal here to drift from the one the broker uses.
 
 # Observability collection -- full set. Container-level kubelet series scale with
 # the node count here; measure before widening metricGroups.

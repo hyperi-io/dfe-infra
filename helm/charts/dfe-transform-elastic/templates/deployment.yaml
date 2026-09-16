@@ -48,16 +48,18 @@ spec:
             {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
           env:
             {{- if (include "dfe-common.transportIsBus" .) }}
+            # BARE names on purpose, and the one app chart where that is right:
+            # this app builds its transport through scalo's KafkaConfig::from_env
+            # (dfe-transform-elastic src/service.rs:438), which falls back to
+            # `KAFKA_<CANONICAL>` (scalo-rs transport/kafka/config.rs:1501). The
+            # receiver and loader charts prefix theirs because those two hand-build
+            # their config and never call from_env. Only CANONICAL names land, so
+            # the topic and group dials were deleted as inert (dfe-infra#181) --
+            # routing is the engine's, in the overlay this chart mounts.
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
-            - name: KAFKA_SOURCE_TOPIC
-              value: {{ .Values.kafka.sourceTopic | quote }}
-            - name: KAFKA_DEST_TOPIC
-              value: {{ .Values.kafka.destTopic | quote }}
-            - name: KAFKA_CONSUMER_GROUP
-              value: {{ .Values.kafka.consumerGroup | default (printf "dfe-%s" .Values.component) | quote }}
-            {{- if .Values.kafka.securityProtocol }}
+            {{- if and .Values.kafka.securityProtocol .Values.kafka.saslSecretName }}
             # check_credentials runs before KafkaTransport::new, and only the
             # latter calls apply_provider, so KAFKA_PROVIDER alone leaves
             # security_protocol at plaintext and the app refuses to start with

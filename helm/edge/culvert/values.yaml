@@ -1,0 +1,313 @@
+project: dfe
+component: culvert
+env: local
+cloud: local
+
+global:
+  registry: ""
+
+image:
+  # culvert is not published under the dfe-<component> convention, so the
+  # repository is spelled out rather than derived from global.registry.
+  repository: ghcr.io/hyperi-io/culvert
+  tag: ""            # == Chart.appVersion == versions.yaml apps.culvert
+  # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
+  # digests.culvert (drift-checked).
+  digest: "sha256:b8b3f8c5450cc8eaa761a5b2de81128d1adc3022fa7aa9746c4c676e4fafd7d3"
+  pullPolicy: IfNotPresent
+  # Public GHCR image: suppress the fleet-wide imagePullSecrets.
+  public: true
+
+# ONE replica, and the chart refuses more. WireGuard server keys are minted in
+# the pod and are sourced from no secrets backend, so a second replica issues
+# client configs the first pod rejects and allocates the same tunnel addresses.
+#
+# Deliberately NOT spelled `replicaCount`: that key is set for every app by the
+# scale profiles, and this app cannot take their value. Reading it would refuse
+# to render on the very profiles the VPN is offered in.
+replicas: 1
+
+# Tunnel listeners -- the SINGLE SOURCE OF TRUTH for ports. The chart renders
+# the container ports, the internal Service and the public LoadBalancer(s) from
+# this list, and the tunnels' own enable flags follow it, so opening a protocol
+# is one edit.
+#   name     -- k8s port name (<=15 chars, lowercase alnum + '-')
+#   port     -- listen port
+#   protocol -- TCP | UDP
+#   exposed  -- include on the public LoadBalancer. The metrics/health listener
+#               is false: it is unauthenticated.
+#   nodePort -- pinned port on every node, rendered under serviceType NodePort
+#               and ignored otherwise. Pinned rather than allocated because
+#               whatever stands in front of a NodePort has to be told the
+#               number, and an allocated one is not knowable until the Service
+#               exists (terraform/modules/edge/aws reads these).
+# Mixed TCP+UDP in one Service is not portable across cloud LBs, so the public
+# path renders ONE LoadBalancer per protocol family that has exposed listeners.
+# Presence in this list is what switches a tunnel on, so removing an entry
+# closes that door end to end.
+listeners:
+  - { name: wireguard, port: 51820, protocol: UDP, exposed: true, nodePort: 31820 }
+  - { name: openvpn-udp, port: 1194, protocol: UDP, exposed: true, nodePort: 31194 }
+  - { name: metrics, port: 9090, protocol: TCP, exposed: false }
+  # Add for a client on a network that blocks UDP; left out by default because
+  # it is slower (TCP inside TCP) and it is a second door to defend:
+  # - { name: openvpn-tcp, port: 1194, protocol: TCP, exposed: true }
+  # Add with vpn.oidc.enabled -- the client completes its login against this port:
+  # - { name: oauth2-udp, port: 9000, protocol: TCP, exposed: true }
+
+# The deployment's own domain and the canonical hostname map, both from the
+# deploy-config SSoT (argocd/values/common.yaml). serverCN derives from them.
+domain: ""
+hostnames: {}
+
+# Named `vpn` to match the deploy-config SSoT's own block, so clientCIDR is
+# declared once there and merged in here.
+vpn:
+  # The DNS name clients dial. It must resolve to the address the public
+  # LoadBalancer below answers on, and it is what the server certificate is
+  # issued for, so a wrong value fails the TLS handshake rather than the route.
+  # Empty derives {hostnames.vpn}.{domain}.
+  serverCN: ""
+  # The reserved CGNAT range (RFC 6598) DFE holds for VPN clients, never for
+  # pod or service ranges. The chart carves one /24 per listener out of it in
+  # listener order, so the three tunnels cannot collide with each other or with
+  # the cluster. Prefix must be /16 or shorter with the last two octets zero.
+  clientCIDR: "100.64.0.0/10"
+  # Split tunnel: a client routes only what is pushed below down the tunnel.
+  # Full tunnel would carry the client's whole internet through the receivers'
+  # namespace, which is not what an ingest tunnel is for.
+  fullTunnel: false
+  # The DNS servers pushed to clients. Cluster DNS is deliberately NOT pushed:
+  # a client resolving cluster names would reach past the receivers.
+  dns:
+    - "1.1.1.1"
+    - "1.0.0.1"
+  # HTTPS tunnelling (OpenVPN in TLS on 443, WireGuard over WebSocket) is the
+  # censorship-evasion path and is off: it needs a public certificate for
+  # serverCN and it opens a third door for no ingest benefit.
+  httpsTunnel: false
+  # OIDC client authentication for the TUNNEL's own login, passed through to
+  # culvert. It sits under vpn because a top-level oidc.enabled is the cloud
+  # overlays' switch for the gateway's EDGE OIDC on the UIs
+  # (envoy-gateway-config), which must never reach this chart. The render
+  # guard in templates/deployment.yaml refuses a values file still carrying
+  # the old oidc.issuer or oidc.clientId. The client secret is never a value:
+  # it rides the Secret named below, which the deployment's own secret
+  # tooling materialises.
+  oidc:
+    enabled: false
+    issuer: ""
+    clientId: ""
+    # Pre-created Secret loaded as environment (envFrom), carrying
+    # CULVERT_OAUTH2_CLIENT_SECRET and CULVERT_OAUTH2_HTTP_SECRET.
+    existingSecret: ""
+    # Group claim values allowed to connect; empty accepts any authenticated user.
+    validateGroups: ""
+
+# Link tuning, mounted as culvert's own profile YAML. Snake_case, because these
+# are the app's key names. Empty takes its shipped defaults (mssfix 1420,
+# OS-auto buffers, 10/60 keepalive), which suit a fixed-line edge fleet; an
+# estate on cellular or satellite links lowers tun_mtu and lengthens the
+# keepalive here. NOTHING about routing, addressing or authentication belongs
+# in this block: the CULVERT_* environment overrides a profile key, so a value
+# set in both places would look like intent and do nothing.
+tuning: {}
+
+# WHAT A CLIENT MAY REACH. Two layers, and both are needed.
+#
+# destinations feeds culvert's own iptables FORWARD chain: a client may
+# initiate only to these CIDRs, and the same list is pushed as the client's
+# routes so it is routed at exactly what it is allowed to reach. It has to be
+# CIDRs -- iptables cannot hold a DNS name -- so it is as narrow as the
+# deployment's addressing allows, and by itself it does not name the receiver.
+#
+# networkPolicy is the layer that does. It selects the receiver pods by label,
+# so it is exact regardless of addressing, and it is what stops the culvert pod
+# (and therefore any client behind it) reaching the engine, ClickHouse or Kafka.
+routes:
+  # Unset, it is the networkModel service range. Narrow it to the receiver
+  # Service address where the deployment pins one.
+  destinations: ~
+
+# WHAT ONE CLIENT MAY DO TO ANOTHER, which `routes:` above says nothing about.
+#
+# `appliance` is every field appliance, and its isolation is what stops one
+# compromised appliance reaching the rest of the fleet through the hub.
+# `admin` is the single peer an operator dials in from to administer one
+# appliance -- `dfe-ops bastion join`, docs/deployment/edge-vpn.md.
+#
+# AN ADMIN THAT DIALS IN AS A PEER GETS NO EXCEPTION, and waits on
+# hyperi-io/culvert#40. culvert installs the client-to-client DROP over every
+# pair of tunnel interfaces BEFORE the admin ACCEPT, and it allocates every peer
+# an address out of one /24 with no way to pin one, so a peer source is dropped
+# before any rule naming it is reached.
+#
+# AN ADMIN THAT IS NOT A PEER WORKS TODAY, which is what adminCIDRs is. culvert
+# appends `-o <tun> -s <cidr> -j ACCEPT` with a NAT RETURN beside it for a source
+# arriving off the pod's ethernet side, so a machine that ROUTES the client range
+# at this pod reaches an appliance while appliance isolation stays on.
+peers:
+  classes:
+    appliance:
+      # Peer-to-peer traffic is dropped in culvert's own FORWARD chain.
+      # Setting false to make the admin peer work opens every appliance to
+      # every other one, so the render guard refuses that pair.
+      isolation: true
+    admin:
+      # On in the cloud flavour overlays; absent on-prem, where the operator
+      # is already on the LAN.
+      enabled: false
+      # The ranges an admin reaches appliances FROM, on the pod's ethernet
+      # side -- the toolbox instance's own /32 on a cloud flavour, written here
+      # by argocd/appsets/layer2-edge.yaml off the cluster secret. Empty until
+      # `dfe-ops bastion up` puts an instance behind it, so there is no hole
+      # while no bastion is running.
+      adminCIDRs: []
+      # The range the admin peer's tunnel address is issued into, which has to
+      # sit inside vpn.clientCIDR. Empty until the deployment names one.
+      peerCIDR: ""
+      # The ports an appliance has to accept from the admin peer on its tunnel
+      # interface for remote administration.
+      reach:
+        - 22
+        - 443
+
+# SSoT is argocd/values/common.yaml `networkModel`; this is a chart default for
+# a standalone render only.
+networkModel:
+  serviceCIDR: "198.19.0.0/16"
+
+# The stage a tunnel exists to reach. The NetworkPolicy is written from this,
+# so pointing culvert at a differently named receiver is one edit. NOT named
+# `receiver`: that key is the receiver chart's own in the shared values
+# cascade, and the two would merge into each other.
+ingest:
+  # Selector label of the receiver pods -- dfe-common.selectorLabels on that
+  # chart, i.e. {project}-{component}.
+  podLabel: dfe-receiver
+  # The receiver ports a tunnelled client is allowed to reach: its ingest
+  # listeners. NOT the Push door on 6000, which is east-west only.
+  ports:
+    - { port: 8080, protocol: TCP }
+    - { port: 8443, protocol: TCP }
+
+# Public exposure. A VPN nobody can dial is pointless, so the chart's OWN
+# default is a LoadBalancer -- the dial is WHO may reach it, not whether. A
+# cloud whose load balancer bills by the GB overrides serviceType to
+# NodePort instead (argocd/values/edge-aws.yaml), reached through an address the
+# deployer brings -- see docs/deployment/aws.md#receiver-ingress.
+exposure:
+  serviceType: LoadBalancer
+  # The address clients dial. Empty lets the pool or CCM choose, so a rebuild
+  # can land somewhere else than the address in every issued client config.
+  # It pins the UDP LB alone: the TCP LB is a separate Service and cannot hold
+  # the same address.
+  loadBalancerIP: ""
+  # SWAPPABLE LB implementation, as on the receiver: "" takes the cluster
+  # default (cloud CCM), or name a class to target a provider.
+  loadBalancerClass: ""
+  annotations: {}
+  # THE INGRESS ALLOW-LIST. Empty is not "unset" -- it is 0.0.0.0/0. An edge
+  # fleet dialling in from anywhere is the point, so empty is the honest
+  # default here; a deployment whose agents sit in known ranges lists them.
+  loadBalancerSourceRanges: []
+  # Preserve the client's real source IP. The connection log and any per-client
+  # rule need it; Cluster (the Kubernetes default) SNATs every client to a node.
+  externalTrafficPolicy: Local
+
+# Egress policy for the culvert pods: the receiver, DNS and telemetry, nothing
+# else. It only bites because the pods opt out of the namespace-wide baseline
+# (podLabels below), so this list is their WHOLE egress surface -- an entry
+# removed here is a hole closed, and one added is a hole opened.
+networkPolicy:
+  enabled: true
+  # Where the collector runs: the pods push OTLP out to it and it scrapes
+  # /metrics back in. Mirrors the network-policies chart's own key.
+  otelNamespace: otel
+  otelPort: 4317
+  # Extra egress rules, in NetworkPolicy's own shape. An external PKI backend
+  # or an OIDC issuer outside the cluster goes here -- there is no baseline
+  # left to carry it.
+  extraEgress: []
+
+# PKI. `local` mints a CA in the pod on first start, which is why persistence
+# below matters: without a volume every restart mints a new CA and every issued
+# client config stops working. `external` takes the CA, server certificate, key
+# and the tls-crypt-v2 key from a Secret, which is what a rebuildable
+# deployment wants.
+pki:
+  mode: local
+  # Secret carrying ca.crt, server.crt, server.key, and optionally crl.pem and
+  # tc.key. Required when mode is external.
+  existingSecret: ""
+  mountPath: /etc/vpn/pki-external
+
+# Durable PKI for local mode. Off by default because it needs a StorageClass,
+# which not every cluster has.
+persistence:
+  enabled: false
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+# The VPN data plane runs as root with NET_ADMIN: OpenVPN and wg-quick create
+# the tun device and program routing and NAT, so the DFE non-root floor cannot
+# apply. The ids go through the shared helper (dfe-common >= 0.9.1 renders an
+# explicit 0), so the seccomp profile and the rest of the hardening stay the
+# ones every other DFE pod gets. A cluster enforcing restricted PodSecurity
+# admission rejects this pod unless its namespace is labelled
+# pod-security.kubernetes.io/enforce=privileged.
+podSecurityContext:
+  runAsNonRoot: false
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
+  seccompProfileType: RuntimeDefault
+
+containerSecurityContext:
+  # Everything is dropped except what the data plane needs: NET_ADMIN opens and
+  # programs the tun device and iptables; SETUID/SETGID let OpenVPN drop to
+  # nobody once its sockets are bound; SETPCAP retains NET_ADMIN across that
+  # drop. Without the last three OpenVPN exits 1 during startup.
+  capabilities:
+    add:
+      - NET_ADMIN
+      - SETPCAP
+      - SETGID
+      - SETUID
+  # Local PKI writes the CA and keys onto the container filesystem.
+  readOnlyRootFilesystem: false
+
+# net.ipv4.ip_forward in the pod's own network namespace, set by a short
+# privileged init container. Client traffic does not leave the pod without it,
+# and the server container cannot set it itself: /proc/sys is mounted read-only
+# in a container whatever capabilities it holds. Turn this off only where the
+# kubelet runs with --allowed-unsafe-sysctls net.ipv4.ip_forward and the sysctl
+# is set through podSecurityContext instead.
+ipForward:
+  enabled: true
+
+# /dev/net/tun passthrough, required by both OpenVPN and WireGuard. On a
+# cluster with a TUN device plugin, turn this off and request the device
+# resource instead.
+tunDevice:
+  enabled: true
+  hostPath: /dev/net/tun
+
+otel:
+  endpoint: ""
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+# Node placement dial (overlay-settable; dfe-common.scheduling reads this).
+nodeScheduling: {}

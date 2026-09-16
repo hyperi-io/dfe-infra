@@ -1,0 +1,24 @@
+## Project:   dfe-infra
+## File:      sizing/targets/onprem.yaml
+## Purpose:   The per-target knob matrix for `cloud: onprem` -- every sizing
+##            knob the target changes or refuses, and why, so the sizing
+##            report can print the whole list rather than implying nothing
+##            was dropped on this target's account.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Read by scripts/resolve_sizing.py's build_report -- see the module
+## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
+## prints beside it. NO LISTS: nested maps and scalars only, parsed by
+## scripts/yaml_subset.py.
+
+node_shapes:
+  state: blocked
+  reason: "compute-shapes.yaml's onprem stub says it plainly: we do not create these nodes, so the resolver only DEMANDS a shape -- bootstrap.sh's on-prem preflight (scripts/check_node_capacity.py) refuses to converge when the cluster's real nodes fall short of it."
+
+storage_classes:
+  state: blocked
+  reason: "compute-shapes.yaml sets storage_class_owner: operator for onprem -- the operator's own CSI driver and StorageClasses provision the disk, not tofu, so the resolver has nothing here to manage."

@@ -1,4 +1,39 @@
 {{/*
+dfe-clickhouse.storageModel -- the storage model in force, and the ONLY reading
+of it any template takes. Never read .Values.clickhouse.storageModel directly.
+
+clickhouse.storageModel is a three-value dial. `auto` (the default -- also
+what an EMPTY value means, so an older values file with storageModel: ""
+still derives) leaves the choice to whether the deployment supplies an object
+store: an endpoint means the preferred `cached-object`, nothing means `local`.
+`cached-object` and `local` are explicit overrides and WIN over that
+derivation outright -- `cached-object` with no endpoint set fails the render
+in validateStorageModel below rather than deploying something inert, and
+`local` keeps local storage even when an endpoint IS set (the appset still
+passes the endpoint through in that case, so a later switch to cached-object
+stays possible -- though switching after first deploy is a data migration,
+not a values edit; see docs/deployment/storage.md). Derivation is skipped
+under mode=external, where the supplied ClickHouse owns its storage and a
+derived non-local model would fail the render for a value nobody set; an
+explicit one still fails there, which is the point of the guard below.
+
+The model is locked at first deploy -- the operator takes no new disk on an
+existing ClickHouseCluster, and the deployment repo's
+governance/policies/storage-layout.yaml refuses the change afterwards -- so this
+derivation decides once.
+*/}}
+{{- define "dfe-clickhouse.storageModel" -}}
+{{- $override := .Values.clickhouse.storageModel -}}
+{{- if and $override (ne $override "auto") -}}
+{{- $override -}}
+{{- else if and .Values.clickhouse.objectStore.endpoint (ne .Values.clickhouse.mode "external") -}}
+cached-object
+{{- else -}}
+local
+{{- end -}}
+{{- end }}
+
+{{/*
 dfe-clickhouse.storageFamily -- the half of storageModel that says what happens
 to the data. `tiered` MOVES parts to the bulk store, so the bulk copy is the only
 one and both stores must be durable; `cached` COPIES them, so the local copy is
@@ -8,8 +43,9 @@ The vocabulary is `<family>-<bulk>` by construction, so a new model claims a cel
 without editing this; validateStorageModel rejects anything off the list first.
 */}}
 {{- define "dfe-clickhouse.storageFamily" -}}
-{{- if ne .Values.clickhouse.storageModel "local" -}}
-{{- first (splitList "-" .Values.clickhouse.storageModel) -}}
+{{- $model := include "dfe-clickhouse.storageModel" . -}}
+{{- if ne $model "local" -}}
+{{- first (splitList "-" $model) -}}
 {{- end -}}
 {{- end }}
 
@@ -19,8 +55,9 @@ copy lives: `block` for a second volume, `object` for an object store. Empty for
 `local`.
 */}}
 {{- define "dfe-clickhouse.storageBulk" -}}
-{{- if ne .Values.clickhouse.storageModel "local" -}}
-{{- last (splitList "-" .Values.clickhouse.storageModel) -}}
+{{- $model := include "dfe-clickhouse.storageModel" . -}}
+{{- if ne $model "local" -}}
+{{- last (splitList "-" $model) -}}
 {{- end -}}
 {{- end }}
 
@@ -32,7 +69,7 @@ Called from validate.yaml so it fires in every mode, including the ones that
 render no ClickHouse object at all.
 */}}
 {{- define "dfe-clickhouse.validateStorageModel" -}}
-{{- $model := .Values.clickhouse.storageModel -}}
+{{- $model := include "dfe-clickhouse.storageModel" . -}}
 {{- /* tiered-object and cached-block are named cells in the vocabulary that this
 chart does not render yet -- see docs/deployment/storage.md. */ -}}
 {{- if not (has $model (list "local" "cached-object" "tiered-block")) -}}
@@ -63,6 +100,51 @@ a cold name sorting first makes the bulk volume the hot tier with no error. */ -
 {{- end }}
 
 {{/*
+dfe-clickhouse.cacheVolume -- where the cached-object cache disk's bytes live:
+`pvc` (the current behaviour, and the only one clickhouse-single.yaml renders)
+or `instance-store` (cluster mode only -- see templates/clickhouse.yaml).
+*/}}
+{{- define "dfe-clickhouse.cacheVolume" -}}
+{{- .Values.clickhouse.objectStore.cache.volume | default "pvc" -}}
+{{- end }}
+
+{{/*
+dfe-clickhouse.validateCacheVolume -- reject a cache-volume placement that
+cannot be honoured, alongside validateStorageModel above.
+
+instance-store needs an object-store cache to exist at all (storageBulk
+"object"), an explicit cacheSize (an emptyDir carries no PVC to size a ratio
+against, unlike the pvc volume), and cluster mode -- clickhouse-single.yaml
+renders no such volume yet, so requesting it there would silently leave the
+cache on the data PVC despite the value claiming otherwise.
+*/}}
+{{- define "dfe-clickhouse.validateCacheVolume" -}}
+{{- $volume := include "dfe-clickhouse.cacheVolume" . -}}
+{{- if not (has $volume (list "pvc" "instance-store")) -}}
+{{- fail (printf "clickhouse.objectStore.cache.volume must be pvc or instance-store, got %q" $volume) -}}
+{{- end -}}
+{{- if eq $volume "instance-store" -}}
+{{- if ne (include "dfe-clickhouse.storageBulk" .) "object" -}}
+{{- /*
+  Name the value the deployer can act on. Under the `auto` default the derived
+  answer is `local` only because no endpoint reached the chart, so blaming
+  storageModel points at a key nobody set.
+*/ -}}
+{{- if and (has .Values.clickhouse.storageModel (list "auto" "")) (not .Values.clickhouse.objectStore.endpoint) -}}
+{{- fail "clickhouse.objectStore.cache.volume=instance-store needs an object-store cache to place, and no clickhouse.objectStore.endpoint is set -- so clickhouse.storageModel derived to local. The deployment's object-store bucket never reached the chart." -}}
+{{- end -}}
+{{- fail (printf "clickhouse.objectStore.cache.volume=instance-store needs an object-store cache to place -- clickhouse.storageModel=%s has none" (include "dfe-clickhouse.storageModel" .)) -}}
+{{- end -}}
+{{- if not .Values.clickhouse.objectStore.cacheSize -}}
+{{- fail "clickhouse.objectStore.cache.volume=instance-store needs clickhouse.objectStore.cacheSize set explicitly -- an emptyDir has no PVC to size a ratio against" -}}
+{{- end -}}
+{{- if ne .Values.clickhouse.mode "cluster" -}}
+{{- fail (printf "clickhouse.objectStore.cache.volume=instance-store needs clickhouse.mode=cluster -- clickhouse-single.yaml mounts no such volume for mode=%s" .Values.clickhouse.mode) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 dfe-clickhouse.storageConfiguration -- the server-config fragment that places
 MergeTree parts for the non-local storage models.
 
@@ -71,8 +153,14 @@ settings.extraConfig (cluster mode) and the config.d ConfigMap (single mode). A
 second spelling would give the two modes different on-disk layouts.
 
 An object bulk store carries no credentials here: use_environment_credentials
-makes the server read AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from its
-environment, which both paths wire from the ESO-materialised Secret.
+makes the server read the AWS SDK's default credential chain from its
+environment. objectStore.usePodIdentity: false (the default, every target but
+AWS Pod Identity) wires AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the
+ESO-materialised Secret (objectStoreEnv below); usePodIdentity: true renders
+neither that Secret nor those env vars, so the chain falls through to the EKS
+Pod Identity Agent's injected credentials instead -- a static key in the
+environment would shadow them, since the SDK checks environment variables
+first.
 
 DISK AND VOLUME NAMES ARE ORDER-BEARING IN BOTH FAMILIES, and they are runtime
 identity -- renaming one on a live deployment is a rebuild, not a values edit.
@@ -120,7 +208,17 @@ storage_configuration:
       type: cache
       disk: s3_object
       path: /var/lib/clickhouse/disks/s3_object_cache/
+      {{- /* The server refuses max_size and max_size_ratio_to_total_space
+      together with BAD_ARGUMENTS at startup, so this is either/or: a fixed
+      cacheSize when the deployment names one, the ratio otherwise. */ -}}
+      {{- if .Values.clickhouse.objectStore.cacheSize }}
       max_size: {{ .Values.clickhouse.objectStore.cacheSize | quote }}
+      {{- else }}
+      max_size_ratio_to_total_space: {{ .Values.clickhouse.objectStore.cache.maxSizeRatioToTotalSpace }}
+      {{- end }}
+      cache_on_write_operations: {{ .Values.clickhouse.objectStore.cache.onWriteOperations }}
+      keep_free_space_size_ratio: {{ .Values.clickhouse.objectStore.cache.keepFreeSpaceSizeRatio }}
+      load_metadata_asynchronously: {{ .Values.clickhouse.objectStore.cache.loadMetadataAsynchronously }}
   policies:
     s3_cached:
       volumes:

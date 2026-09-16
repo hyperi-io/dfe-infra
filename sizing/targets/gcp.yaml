@@ -1,0 +1,29 @@
+## Project:   dfe-infra
+## File:      sizing/targets/gcp.yaml
+## Purpose:   The per-target knob matrix for `cloud: gcp` -- a validated stub,
+##            not a built target. Every sizing knob it would change, marked
+##            blocked until the target itself exists.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Read by scripts/resolve_sizing.py's build_report -- see the module
+## docstring's TARGETS_DIR paragraph. `status` names the stub so the report
+## does not read as a finished target; every knob below carries a `state` of
+## `blocked`, `renamed` or `managed`, plus the one-sentence `reason`. NO LISTS:
+## nested maps and scalars only, parsed by scripts/yaml_subset.py.
+
+status: validated-stub
+
+node_shapes:
+  state: blocked
+  reason: "target not built yet -- compute-shapes.yaml's gcp entry is a validated stub: the storage families are researched, the compute families are not, so there is nothing for select_shape to resolve against a live API."
+
+storage_classes:
+  state: blocked
+  reason: "target not built yet -- compute-shapes.yaml's gcp comment notes pd classes scale IOPS and throughput per GB and Hyperdisk adds per-VM limits on top, neither of which the resolver's assertions cover yet."
+
+karpenter_generation_floor:
+  state: blocked
+  reason: "target not built yet -- there is no live shape resolution for gcp to render a Karpenter pool from."

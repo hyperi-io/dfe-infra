@@ -1,0 +1,38 @@
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" . "key" "hyperdx") }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Values.routes.hyperdx.routeName }}
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" . "key" "hyperdx") }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    {{- include "envoy-gateway-config.dnsMarker" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+      # See httproute-argocd.yaml: pinned off the plaintext :80 listener.
+      sectionName: https
+  hostnames:
+    - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "hyperdx") }}.{{ .Values.domain }}"
+  rules:
+    - filters:
+        # The fork ships frame-ancestors 'self', which blocks its ONE
+        # supported consumer -- the dfe-ui iframe on the deployment's UI
+        # hostname. The deployment overwrites it with that origin until the
+        # fork takes allowed ancestors from env.
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Content-Security-Policy
+                value: "frame-ancestors 'self' https://{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "dfeUi") }}.{{ .Values.domain }}"
+      backendRefs:
+        - name: {{ .Values.routes.hyperdx.backendService }}
+          port: {{ .Values.routes.hyperdx.backendPort }}
+          group: ""
+          kind: Service
+          weight: 1
+{{- end }}

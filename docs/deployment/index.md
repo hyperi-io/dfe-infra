@@ -160,20 +160,41 @@ versionCheck:
 ## Related
 
 - [architecture.md](../architecture.md) - where this repo sits in the suite
+- [wizard.md](wizard.md) - `dfe-ops init`, the prompt-driven wizard that writes a deployment.yaml dial
 - [composition.md](composition.md) - which apps a profile deploys by default,
   how apps.yaml's `default_in` reaches Argo and Compose, and what an app with
   nothing to do does instead of crash-looping
 - [storage.md](storage.md) - the storage-deploy matrix: service x mode x
   storage model, with the status and evidence behind every cell
+- [edge.md](edge.md) - the edge module: every door into a deployment, grouped
+  and tiered, with one table per flavour of what is on, what it costs and which
+  dial key turns it
 - [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on,
   the private-CA IdP shape, and what Envoy Gateway cannot do with a groups claim
 - [edge-vpn.md](edge-vpn.md) - the opt-in tunnel a field appliance dials in on:
   the two ports, the reserved client range, and how it reaches receivers only
+- [toolbox.md](toolbox.md) - the troubleshooting image, the opt-in in-cluster
+  pod, and the on-demand AWS bastion: off by default, read-only Kubernetes API
+  access, and what each surface records
 - [rke2.md](rke2.md) - the default distribution
+- [aws.md](aws.md) - deploying on AWS: EKS, Karpenter, sizing, and the
+  MSK/Confluent/Redpanda Kafka and ClickHouse choices
+- [aws-operations.md](aws-operations.md) - running and tearing down a
+  deployed AWS cluster: node pools and images, admin UI exposure, Kafka
+  telemetry and autoscaling, teardown, upgrades
+- [upgrade-rollback.md](upgrade-rollback.md) - the rollback runbook: what
+  rolling back means per upgrade stage, the `dfe-ops upgrade rollback`
+  refusal rule, the sizing config-vs-data rule, and the soak before a
+  Kafka finalise
 - [DEPLOY-HELPERS.md](../DEPLOY-HELPERS.md) - the release and deploy-overlay
   helpers, the logins a deploy carries, and the end-to-end recipe
 - [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) - which CA signs the gateway
   certificate: the self-signed default, estate PKI, and trusting the root once
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
-- [clickhouse.md](clickhouse.md) - CH target matrix (official operator / ClickHouse Cloud / private-cloud swap; Altinity untested) + operator history
+- [clickhouse.md](clickhouse.md) - CH target matrix (official operator /
+  ClickHouse Cloud; Altinity untested) + operator history, including the
+  retired private-cloud pairing
+- [upgrades.md](upgrades.md#migrating-from-dfe-2x-before-22) - migrating a
+  pre-2.2 private-cloud deployment off the retired ClickHouse fork onto
+  cached-object
 - [deployment-logs/](deployment-logs/TEMPLATE.md) - record every deploy

@@ -1,2 +1,4 @@
-{{/* Renders nothing; exists so the storage-model guard runs in every mode. */}}
+{{/* Renders nothing; exists so the guards run in every mode. */}}
 {{- include "dfe-clickhouse.validateStorageModel" . -}}
+{{- include "dfe-clickhouse.validateCacheVolume" . -}}
+{{- include "dfe-clickhouse.validateUserProfile" . -}}

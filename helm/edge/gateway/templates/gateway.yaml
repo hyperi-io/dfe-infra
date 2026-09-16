@@ -1,0 +1,66 @@
+{{- /* The routes that own a listener, not every public route: one that names
+       another's (routes.<key>.publicListenerOf) answers on that hostname and
+       gets no listener and no certificate of its own. */}}
+{{- $public := include "envoy-gateway-config.publicListenerRoutes" (dict "ctx" .) | fromJsonArray }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- if and (not .Values.tls.wildcardCertificate.enabled) (not $public) }}
+  # Shim-driven issue -- only acts where cert-manager runs with
+  # --enable-gateway-api; templates/wildcard-certificate.yaml is the other half.
+  # Dropped once a UI is public: the annotations are Gateway-wide, so the shim
+  # would issue the PUBLIC listeners' certificates from the internal CA too, and
+  # a browser outside the VPC trusts none of it. The explicit Certificate takes
+  # over the same secret from the same issuer.
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.tls.issuerName }}
+    cert-manager.io/private-key-algorithm: {{ .Values.tls.privateKey.algorithm }}
+    cert-manager.io/private-key-size: {{ .Values.tls.privateKey.size | quote }}
+    cert-manager.io/private-key-rotation-policy: {{ .Values.tls.privateKey.rotationPolicy }}
+  {{- end }}
+spec:
+  gatewayClassName: dfe-envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: {{ .Values.gateway.listenerPort }}
+      hostname: "*.{{ .Values.domain }}"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: dfe-wildcard-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "*.{{ .Values.domain }}"
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- /* One listener per public hostname, each terminating its own publicly
+           trusted certificate. A single wildcard listener would put every UI
+           behind one certificate, so exposing one UI would name them all. */}}
+    {{- range $key := $public }}
+    {{- $r := index $.Values.routes $key }}
+    - name: https-public-{{ $r.routeName }}
+      protocol: HTTPS
+      port: {{ $.Values.gateway.listenerPort }}
+      hostname: {{ include "envoy-gateway-config.publicHost" (dict "ctx" $ "key" $key) | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: dfe-public-{{ $r.routeName }}-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}

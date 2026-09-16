@@ -103,13 +103,13 @@ spec:
             {{- end }}
             {{- end }}
             {{- include "dfe-common.transformFilesEnv" . | nindent 12 }}
-            # The supervisor assembles Vector's config dir, caches the binary and
-            # keeps Vector's data dir; all three must be writable under the
-            # read-only rootfs, and the paths must match the volumes below.
+            # The supervisor assembles Vector's config dir and keeps Vector's data
+            # dir; both must be writable under the read-only rootfs, and the path
+            # must match the volume below. No binary cache: the image ships Vector
+            # and the supervisor never downloads one, so cache_path and seed_cache
+            # lost their callers (dfe-transform-vector#66).
             - name: DFE_TRANSFORM_VECTOR_DATA_DIR
               value: /var/lib/vector
-            - name: DFE_TRANSFORM_VECTOR_CACHE_DIR
-              value: /var/cache/vector
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
@@ -126,8 +126,6 @@ spec:
             {{- include "dfe-common.enrichmentTablesMount" . | nindent 12 }}
             - name: vector-data
               mountPath: /var/lib/vector
-            - name: vector-cache
-              mountPath: /var/cache/vector
             - name: vector-runtime
               mountPath: /var/run/vector
             # Writable scratch: the container rootfs is read-only
@@ -161,8 +159,6 @@ spec:
         {{- include "dfe-common.transformFilesVolume" . | nindent 8 }}
         {{- include "dfe-common.enrichmentTablesVolume" . | nindent 8 }}
         - name: vector-data
-          emptyDir: {}
-        - name: vector-cache
           emptyDir: {}
         - name: vector-runtime
           emptyDir: {}

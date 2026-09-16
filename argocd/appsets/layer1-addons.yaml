@@ -112,6 +112,55 @@ spec:
                   wave: "2"
                   appProject: infra
                   chartValuesYaml: ""
+    # The two AWS-only controllers.
+    #
+    # The AWS Load Balancer Controller: a type=LoadBalancer Service annotated
+    # aws-load-balancer-type: external is OWNED by this controller and sits at
+    # "Ensuring load balancer" forever without it, because the annotation is
+    # also what tells the in-tree cloud provider to keep its hands off. Wave 1
+    # so it is running before any Service that names it.
+    #
+    # Karpenter: the node provisioner every pool outside the managed group comes
+    # from. Wave 1 as well -- a workload scheduled before it is running has
+    # nowhere to go but the managed group, which is sized for the cluster's own
+    # controllers.
+    #
+    # Gated on the cluster's declared cloud, the same shape external-dns uses
+    # above: Exists AND In, because NotIn/In alone matches an absent key.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/cloud
+                    operator: Exists
+                  - key: dfe.hyperi.io/cloud
+                    operator: In
+                    values: ["aws"]
+          - list:
+              elements:
+                - chart: aws-load-balancer-controller
+                  repo: https://aws.github.io/eks-charts
+                  version: "3.5.0"
+                  namespace: kube-system
+                  wave: "1"
+                  appProject: infra
+                  chartValuesYaml: ""
+                # OCI, the only place Karpenter publishes -- same bare-host form
+                # the clickhouse-operator entry in layer-scale.yaml uses. The
+                # chart carries its own crds/ directory, which Argo renders and
+                # applies with the release, so a CRD field added by an upgrade
+                # arrives with the controller that reads it.
+                - chart: karpenter
+                  repo: public.ecr.aws/karpenter
+                  version: "1.14.1"
+                  namespace: kube-system
+                  wave: "1"
+                  appProject: infra
+                  chartValuesYaml: ""
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -137,6 +186,92 @@ spec:
             {{- if eq .chart "external-dns" }}
             provider:
               name: '{{ index .metadata.labels "dfe.hyperi.io/dns-provider" }}'
+            # Named, not generated -- the same reason the two controllers below
+            # name theirs. The chart derives the account name from the release,
+            # which is external-dns-<cluster>, while the cluster module's Pod
+            # Identity association names external-dns/external-dns; unmatched,
+            # the controller gets no credential and logs a Route 53 401 every
+            # minute while reporting Ready.
+            serviceAccount:
+              create: true
+              name: external-dns
+            # sync, not the chart's own upsert-only default: upsert-only never
+            # removes a record it published, so a deleted Service or Ingress
+            # leaves its DNS record behind for as long as the zone exists.
+            # txtOwnerId must be unique per deployment, or two controllers
+            # sharing a zone can delete records neither of them still owns.
+            # '{{ .name }}' is the cluster generator's own field -- the Argo
+            # cluster secret's stringData.name (bootstrap/templates/
+            # cluster-secret.yaml.tpl, "dfe-${DFE_CLOUD}-${DFE_ENV}") -- and it
+            # is present on every managed cluster regardless of cloud. The
+            # dfe.hyperi.io/cluster_name annotation is AWS-only (blank on any
+            # other cloud) and this generator's selector is not cloud-gated,
+            # so reading it here would fail goTemplate's missingkey=error on
+            # the day a second cloud declares a dns-provider.
+            policy: sync
+            txtOwnerId: '{{ .name }}'
+            # The HTTP plane is Gateway API: the gateway chart renders Gateways
+            # and HTTPRoutes and never an Ingress, so the chart's own
+            # service+ingress default can publish no HTTPRoute hostname at all.
+            # It has been working only because the gateway annotates its own
+            # LoadBalancer Service with the hostname, which makes that one
+            # annotation the single point of failure for every DFE hostname.
+            # The chart grants the httproutes RBAC from this list, so naming
+            # the source is the whole change.
+            sources:
+              - service
+              - ingress
+              - gateway-httproute
+            # The Gateway admits routes from EVERY namespace, so with the route
+            # source on, any namespace-scoped actor could otherwise attach an
+            # HTTPRoute to the wildcard listener and have a resolvable, publicly
+            # certificated name published under the deployment's own domain.
+            # helm/edge/gateway marks every route it renders with this
+            # annotation, and its own front-door Service alongside them --
+            # external-dns applies the filter to Services as well as routes, so
+            # an unmarked object of either kind is read by nothing.
+            annotationFilter: dfe.hyperi.io/publish-dns=true
+            {{- end }}
+            {{- if eq .chart "aws-load-balancer-controller" }}
+            # The EKS cluster's own name, not the name Argo registered the
+            # cluster under -- the controller tags what it creates with
+            # kubernetes.io/cluster/<name> and finds its subnets by that tag.
+            clusterName: '{{ index .metadata.annotations "dfe.hyperi.io/cluster_name" }}'
+            region: '{{ index .metadata.annotations "dfe.hyperi.io/region" }}'
+            # IMDS is two hops from a pod, and the managed node groups keep the
+            # hop limit at 1 -- so the controller is told its VPC here.
+            vpcId: '{{ index .metadata.annotations "dfe.hyperi.io/vpc_id" }}'
+            # Named, not generated. The chart would otherwise derive the account
+            # name from the release name, and the cluster module's Pod Identity
+            # association names kube-system/aws-load-balancer-controller.
+            serviceAccount:
+              create: true
+              name: aws-load-balancer-controller
+            # The service mutator webhook makes this controller the default for
+            # EVERY new LoadBalancer Service and fails closed, so while the
+            # controller is down no LoadBalancer Service can be created at all.
+            # Off: the Services that want it say so by annotation.
+            enableServiceMutatorWebhook: false
+            {{- end }}
+            {{- if eq .chart "karpenter" }}
+            settings:
+              # The EKS cluster's own name. Karpenter tags what it launches with
+              # it and refuses to start without it.
+              clusterName: '{{ index .metadata.annotations "dfe.hyperi.io/cluster_name" }}'
+              # The tofu names the interruption queue after the cluster, so there
+              # is one annotation to carry rather than two. Left empty, Karpenter
+              # drops interruption handling silently and a spot node goes away
+              # with its pods still on it.
+              interruptionQueue: '{{ index .metadata.annotations "dfe.hyperi.io/cluster_name" }}'
+              # settings.clusterEndpoint is deliberately absent: the controller
+              # asks EKS for it at startup, which is what its eks:DescribeCluster
+              # grant is for.
+            # Named, not generated. The chart would otherwise derive the account
+            # name from the release, and the cluster module's Pod Identity
+            # association names kube-system/karpenter.
+            serviceAccount:
+              create: true
+              name: karpenter
             {{- end }}
             {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:

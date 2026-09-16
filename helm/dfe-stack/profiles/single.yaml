@@ -25,6 +25,12 @@ x-single-shared:
 kafka:
   kafka:
     mode: single
+    # Source: argocd/values/profile-single.yaml -- both dials pinned to this
+    # tier's KEDA ceiling of 3 so the derivation gives one broker 3 partitions
+    # rather than the scale tier's 10.
+    sizing:
+      consumerCeiling: 3
+      minPartitionsPerBroker: 3
 
 kafbat:
   enabled: true

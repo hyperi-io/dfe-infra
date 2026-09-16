@@ -32,6 +32,16 @@ use your current context; check it first). A failed deploy still destroys -- a
 broken cycle must not strand a half-stack. `--keep` skips the destroy, on a dev
 cluster only.
 
+## Batching a full cloud cycle
+
+A full cloud cycle runs once per BATCH of changes to the managed-Kafka path,
+never once per finding -- a cycle proves a batch. Stage every proof job before
+`tofu apply`, so no cluster time is spent authoring one. The managed cluster is
+the long pole: it comes up first and goes down first, and its proofs run the
+moment it reports ACTIVE. Proofs needing only the Kubernetes side run during its
+waits. A broker-count change runs one direction only. Teardown starts the moment
+the last proof lands.
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not
@@ -124,8 +134,8 @@ Check any cluster read-only before touching it:
         --require-label dfe.hyperi.io/workload=dfe
 
 Verified against both estate clusters 2026-07-22: the DFE cluster passes clean;
-the neighbouring devex one fails exactly one check -- the workload label -- the
-wrong-cluster trap the check exists to catch.
+the neighbouring on-prem reference cluster fails exactly one check -- the
+workload label -- the wrong-cluster trap the check exists to catch.
 
 ## Targets: on-prem now, cloud by parameter
 

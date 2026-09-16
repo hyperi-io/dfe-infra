@@ -62,10 +62,13 @@
 #   HERE - never by a condition in engine code.
 #
 # hot_reload
-#   Whether the app can apply a config change in place, without a restart. A
-#   FACT about the app, reported to the console and nothing more: every chart
-#   checksums the whole config into its pod template, so any change rolls the
-#   pods as a rolling update either way.
+#   Whether the app applies a GOVERNED config change in place, without a
+#   restart. On Kubernetes it changes nothing: every chart checksums the whole
+#   config into its pod template, so any change rolls the pods either way. On
+#   Compose there is no chart, and this one bit decides whether the engine hands
+#   the operator a restart command (dfe-engine appmgmt/appconfig.py:362) -- so an
+#   app that reloads some settings and binds the rest at startup is false when
+#   the ones the engine writes are the startup-bound half.
 #
 # endpoints
 #   The listeners the app runs, by name. `push` is the scalo Push service a
@@ -92,6 +95,11 @@
 #   there. An app with no `consumes` reads no config file the engine renders --
 #   the console and the UI, which carry no data-plane config at all. Fields:
 #     config  the file name, as the image's own CMD spells it
+#   The DIRECTORY is the image's too, and the fleet spells it two ways:
+#   /etc/dfe/<app>.yaml for the loader, fetcher and archiver, and
+#   /etc/dfe-<app>/config.yaml for the receiver and the transforms. Each chart
+#   mirrors its own image's CMD, so unifying the two is one app release per app
+#   for no change in behaviour -- deliberately not done (dfe-infra#79).
 #
 # files[]
 #   A family of files the app reads off disk. Content is carried in the instance's
@@ -234,6 +242,15 @@ apps:
     transports: [bus, direct]
     endpoints:
       push: {port: 6000}
+    # false even though the app DOES run a scalo ConfigReloader, polling every 5 s
+    # and taking SIGHUP (dfe-archiver crates/archiver/src/main.rs:146-163). What
+    # it re-reads is buffer thresholds, memory limits and the scaling tunables;
+    # transport, archive, routing and compression are snapshotted at startup
+    # (archiver.rs:109-111) -- and those are exactly the keys the engine writes
+    # here, `routing.values_paths` and every path in `idle_when` below. One bit
+    # cannot say both, and the engine spends it on whether to tell a Compose
+    # operator to restart (dfe-engine appmgmt/appconfig.py:362), so it answers
+    # for the governed writes.
     hot_reload: false
     consumes:
       config: archiver.yaml
@@ -385,6 +402,12 @@ apps:
         reload: roll
       # Lookup tables the programs read. A second file set rather than a second
       # mechanism: same {name, content} shape, same library, own mount.
+      #
+      # roll, not hot: a table is materialised once at load. The background
+      # refresh (src/enrichment/refresh.rs:29-42, minimum 60 s, atomic swap) is
+      # opt-in per table and only runs for one declaring a `refresh` block, and
+      # the entries this set derives carry {name, path} alone
+      # (dfe-common.enrichmentTablesConfig), so a mounted table needs the roll.
       - name: enrichment
         values_path: enrichmentTables
         links_path: enrichmentTableLinks
@@ -486,7 +509,7 @@ apps:
   # appliance dials before it posts to the receiver -- so it has no transport,
   # no source binding and no routing to compile. It holds at one deployment
   # because WireGuard mints its server key in the pod, and at one replica for
-  # the same reason (helm/charts/culvert refuses more).
+  # the same reason (helm/edge/culvert refuses more).
   culvert:
     multiplicity: single
     scale_deployed: false

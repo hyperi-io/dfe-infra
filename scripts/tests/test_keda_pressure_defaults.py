@@ -32,6 +32,7 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
+VALUES = REPO_ROOT / "argocd" / "values"
 
 # Every app chart whose ScaledObject carries the pressure trigger. dfe-fetcher is
 # absent on purpose: it sets keda.enabled false and renders no ScaledObject.
@@ -136,7 +137,7 @@ def test_the_hunt_runner_shim_address_follows_the_namespace_too() -> None:
 
 
 def overlay(name: str) -> dict:
-    return yaml.safe_load((REPO_ROOT / "argocd" / "values" / f"{name}.yaml").read_text())
+    return yaml.safe_load((VALUES / f"{name}.yaml").read_text())
 
 
 def test_only_the_brokerless_minimum_tier_turns_pressure_off() -> None:
@@ -154,9 +155,22 @@ def test_the_scale_ceiling_divides_the_partition_count() -> None:
     """An uneven ceiling leaves the busy consumers setting the group's lag alone."""
     scale = overlay("profile-scale")
     ceiling = scale["keda"]["maxReplicaCount"]
-    partitions = scale["kafka"]["defaultTopic"]["partitions"]
+    # The count is DERIVED (kafka.sizing), so it is read off the rendered broker
+    # rather than a profile literal -- the two used to be a pair that could
+    # disagree, which is why the literal went.
+    docs = render(
+        "kafka",
+        "-f",
+        str(VALUES / "common.yaml"),
+        "-f",
+        str(VALUES / "profile-scale.yaml"),
+        "--set",
+        "appNamespace=dfe",
+    )
+    kafka_cr = next(d for d in docs if d.get("kind") == "Kafka")
+    partitions = int(kafka_cr["spec"]["kafka"]["config"]["num.partitions"])
     expect(
-        "profile-scale's KEDA ceiling divides defaultTopic.partitions",
+        "profile-scale's KEDA ceiling divides the broker's derived num.partitions",
         partitions % ceiling == 0,
         f"ceiling={ceiling}, partitions={partitions}",
     )

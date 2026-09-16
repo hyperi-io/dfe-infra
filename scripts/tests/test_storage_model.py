@@ -154,6 +154,13 @@ def _external_secret(docs: list[dict], name: str) -> dict:
     raise SystemExit(f"no ExternalSecret {name} in the render")
 
 
+def _service_account(docs: list[dict], name: str) -> dict:
+    matches = [d for d in docs if d.get("kind") == "ServiceAccount" and d["metadata"]["name"] == name]
+    if len(matches) != 1:
+        raise SystemExit(f"expected exactly one ServiceAccount {name}, got {len(matches)}")
+    return matches[0]
+
+
 def test_the_credential_binding_defaults_to_the_dfe_seeded_path() -> None:
     """Unset values must keep the path every seeded deployment already uses."""
     for chart, sets, secret, seeded in (
@@ -226,6 +233,131 @@ def test_clickhouse_cached_object_keeps_credentials_out_of_git() -> None:
     expect("both credential vars come from a secretKeyRef",
            all("secretKeyRef" in e["valueFrom"] for e in env), f"got {env}")
     expect("an ExternalSecret materialises them", "ExternalSecret" in kinds(docs))
+
+
+def test_clickhouse_cached_object_pod_identity_skips_the_static_key() -> None:
+    """usePodIdentity: true must render no ExternalSecret and no credential env
+    vars -- a static AWS_ACCESS_KEY_ID in the pod's environment would shadow the
+    EKS Pod Identity Agent's injected credentials, which the AWS SDK's default
+    credential chain checks first (helm/charts/clickhouse-cluster/templates/
+    _storage.tpl)."""
+    docs = render("clickhouse-cluster", *CACHED_OBJECT_SETS, "clickhouse.objectStore.usePodIdentity=true")
+    disk = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"][
+        "storage_configuration"]["disks"]["s3_object"]
+    expect("the disk still takes credentials from the environment",
+           disk.get("use_environment_credentials") is True)
+    env = one(docs, "ClickHouseCluster")["spec"]["containerTemplate"].get("env", [])
+    expect("no static credential env vars are rendered", env == [], f"got {env}")
+    object_store_secrets = [
+        d for d in docs if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "dfe-clickhouse-s3"
+    ]
+    # admin-secret.yaml still mints its own unrelated ExternalSecret for the
+    # cluster's admin password whenever mode != external, so the assertion
+    # names the object-store secret specifically rather than the kind.
+    expect("no ExternalSecret is minted for the object store", object_store_secrets == [],
+           f"got {object_store_secrets}")
+
+
+def test_clickhouse_cached_object_pod_identity_reaches_single_mode() -> None:
+    """clickhouse-single.yaml carries its own copy of the usePodIdentity gate.
+    A static AWS_ACCESS_KEY_ID there shadows the Pod Identity Agent's injected
+    credential just as surely as in cluster mode, and fails as an auth error
+    nobody attributes to Helm."""
+    docs = render("clickhouse-cluster", *CACHED_OBJECT_SETS,
+                  "clickhouse.mode=single", "clickhouse.objectStore.usePodIdentity=true")
+    container = one(docs, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]
+    credential_env = [e for e in container.get("env", []) if e["name"].startswith("AWS_")]
+    expect("no static credential env vars reach the single-mode pod",
+           credential_env == [], f"got {credential_env}")
+    object_store_secrets = [
+        d for d in docs if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "dfe-clickhouse-s3"
+    ]
+    expect("and no object-store ExternalSecret is minted", object_store_secrets == [],
+           f"got {object_store_secrets}")
+
+
+def test_clickhouse_renders_its_own_service_account() -> None:
+    """Fix: the AWS Pod Identity association used to bind the release
+    namespace's default account, so the dfe-schema Job -- which also runs as
+    default in that namespace -- inherited the object-store role's S3 write
+    and delete rights. The chart now renders a dedicated ServiceAccount and
+    points both the CR and the StatefulSet at it, cluster mode and single
+    alike (terraform/modules/kubernetes-cluster/aws/object-store.tf's
+    clickhouse_object_store_service_account default must keep matching this
+    name -- proven independently by the OpenTofu contract test of the same
+    shape)."""
+    for label, sets in (("cluster", ()), ("single", ("clickhouse.mode=single",))):
+        docs = render("clickhouse-cluster", *sets)
+        sa = _service_account(docs, "dfe-clickhouse")
+        expect(f"{label}: dfe-clickhouse automounts no token",
+               sa.get("automountServiceAccountToken") is False, f"got {sa}")
+        pod_spec = (
+            one(docs, "ClickHouseCluster")["spec"]["podTemplate"]
+            if label == "cluster"
+            else one(docs, "StatefulSet")["spec"]["template"]["spec"]
+        )
+        expect(f"{label}: the workload names that account",
+               pod_spec.get("serviceAccountName") == "dfe-clickhouse", f"got {pod_spec}")
+
+
+def test_clickhouse_external_mode_renders_no_service_account() -> None:
+    """mode=external supplies its own ClickHouse -- nothing here runs as a DFE
+    account, so no ServiceAccount should render for a Pod Identity association
+    to reach even by accident."""
+    docs = render("clickhouse-cluster", "clickhouse.mode=external")
+    expect("no ServiceAccount for a BYO ClickHouse", "ServiceAccount" not in kinds(docs), f"got {kinds(docs)}")
+
+
+def test_clickhouse_keeper_gets_its_own_service_account_too() -> None:
+    """Keeper never touches S3 -- no Pod Identity association targets it --
+    but it must not share the namespace's default account either, or a future
+    association or grant aimed at "default" would reach it too. It also must
+    not share ClickHouse's own account: two workloads on one identity is the
+    same over-sharing fault this whole change fixes, one level down."""
+    docs = render("clickhouse-cluster")
+    sa = _service_account(docs, "dfe-keeper")
+    expect("dfe-keeper automounts no token", sa.get("automountServiceAccountToken") is False, f"got {sa}")
+    keeper = one(docs, "KeeperCluster")
+    expect("the KeeperCluster CR names its own account",
+           keeper["spec"]["podTemplate"].get("serviceAccountName") == "dfe-keeper",
+           f"got {keeper['spec'].get('podTemplate')}")
+    expect("clickhouse and keeper hold DIFFERENT accounts",
+           _service_account(docs, "dfe-clickhouse")["metadata"]["name"] != sa["metadata"]["name"])
+
+
+def test_the_aws_cascade_is_what_turns_pod_identity_on() -> None:
+    """usePodIdentity lives in argocd/values/aws.yaml, not the chart default, so
+    the cluster-mode test above passes on a --set nobody sets in production.
+    This renders the cascade an AWS deploy actually gets."""
+    aws_cascade = [VALUES / "common.yaml", VALUES / "aws.yaml", VALUES / "profile-scale.yaml"]
+    docs = render(
+        "clickhouse-cluster",
+        "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/dfe/",
+        values=aws_cascade,
+    )
+    env = one(docs, "ClickHouseCluster")["spec"]["containerTemplate"].get("env", [])
+    expect("the aws cascade renders no static credential env", env == [], f"got {env}")
+    object_store_secrets = [
+        d for d in docs if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "dfe-clickhouse-s3"
+    ]
+    expect("and no object-store ExternalSecret", object_store_secrets == [],
+           f"got {object_store_secrets}")
+
+
+def test_the_endpoint_alone_derives_cached_object() -> None:
+    """Every other test names clickhouse.storageModel outright, so the
+    derivation the whole AWS chain rests on -- a non-empty objectStore.endpoint
+    turning cached-object on by itself -- is otherwise proven by nothing. Break
+    it and an AWS deploy with a good bucket silently stays local, writing every
+    bulk part to the PVC."""
+    docs = render(
+        "clickhouse-cluster",
+        "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/dfe/",
+    )
+    storage = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]["storage_configuration"]
+    expect("the endpoint alone declares the s3 disk", "s3_object" in storage["disks"], f"{storage['disks'].keys()}")
+    expect("and the cached policy is what MergeTree gets",
+           "s3_cached" in storage["policies"], f"{storage['policies'].keys()}")
 
 
 def test_the_object_store_timeouts_are_unset_by_default_and_settable() -> None:
@@ -364,6 +496,20 @@ def test_clickhouse_cached_object_reaches_single_mode() -> None:
            fragment["merge_tree"]["storage_policy"] == "s3_cached")
 
 
+def test_wait_for_async_insert_guard_catches_every_falsy_spelling() -> None:
+    """gate-3-correctness.md P3: the guard used to compare toString(value) to
+    the literal "0" alone, so a values file writing an unquoted `false` (the
+    Go bool, not the string) sailed through -- ClickHouse itself reads either
+    as the same fire-and-forget setting."""
+    for value in ("false", "no", "off"):
+        err = render_error("clickhouse-cluster", f"clickhouse.userProfile.waitForAsyncInsert={value}")
+        expect(f"waitForAsyncInsert={value} is refused", "must not be" in err, f"got {err[:200]}")
+    expect(
+        "the shipped default (1) still passes",
+        render_error("clickhouse-cluster") == "",
+    )
+
+
 def test_clickhouse_storage_model_guards() -> None:
     expect("an unknown model is refused",
            "must be local, cached-object or tiered-block" in render_error(
@@ -374,6 +520,68 @@ def test_clickhouse_storage_model_guards() -> None:
     expect("cached-object on an external ClickHouse is refused",
            "meaningless with mode=external" in render_error(
                "clickhouse-cluster", "clickhouse.mode=external", *CACHED_OBJECT_SETS))
+
+
+def test_an_instance_store_cache_with_no_endpoint_names_the_endpoint() -> None:
+    """The resolver emits the cache volume with no storageModel beside it, so
+    under `auto` a missing endpoint fails here -- and the message has to name
+    the endpoint nobody set rather than the model nobody chose. Reachable:
+    bootstrap.sh composes the endpoint annotation only when the tofu output is
+    non-empty, so a run without --from-terraform renders it blank."""
+    err = render_error(
+        "clickhouse-cluster",
+        "clickhouse.objectStore.cache.volume=instance-store",
+        "clickhouse.objectStore.cacheSize=109Gi",
+    )
+    expect("the failure names the missing endpoint",
+           "no clickhouse.objectStore.endpoint is set" in err, err.strip()[-300:])
+    expect("and says which way the model derived",
+           "derived to local" in err, err.strip()[-300:])
+    expect("an explicit local still blames the model the deployer chose",
+           "clickhouse.storageModel=local has none" in render_error(
+               "clickhouse-cluster",
+               "clickhouse.storageModel=local",
+               "clickhouse.objectStore.cache.volume=instance-store",
+               "clickhouse.objectStore.cacheSize=109Gi",
+           ))
+
+
+STORAGE_MODEL_ENDPOINT_SET = "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/parts/"
+
+
+def _renders_local(docs: list[dict]) -> bool:
+    extra = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
+    return "storage_configuration" not in extra and "merge_tree" not in extra
+
+
+def _renders_cached_object(docs: list[dict]) -> bool:
+    extra = one(docs, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
+    disks = extra.get("storage_configuration", {}).get("disks", {})
+    return set(disks) == {"s3_object", "s3_object_cache"} and extra.get(
+        "merge_tree", {}
+    ).get("storage_policy") == "s3_cached"
+
+
+def test_storage_model_dial_the_six_cases() -> None:
+    """The three-value dial (auto/cached-object/local) against the two states of
+    objectStore.endpoint -- the full cross product this fix turns on. `auto`
+    derives from the endpoint exactly as an unset value always did; the other two
+    are explicit overrides that win outright, in either direction."""
+    expect("auto with no endpoint renders local",
+           _renders_local(render("clickhouse-cluster", "clickhouse.storageModel=auto")))
+    expect("auto with an endpoint derives cached-object",
+           _renders_cached_object(render("clickhouse-cluster", "clickhouse.storageModel=auto",
+                                          STORAGE_MODEL_ENDPOINT_SET)))
+    expect("cached-object with an endpoint renders cached-object",
+           _renders_cached_object(render("clickhouse-cluster", *CACHED_OBJECT_SETS)))
+    expect("cached-object with no endpoint is refused",
+           "needs clickhouse.objectStore.endpoint" in render_error(
+               "clickhouse-cluster", "clickhouse.storageModel=cached-object"))
+    expect("local with an endpoint still renders local -- the explicit opt-out wins",
+           _renders_local(render("clickhouse-cluster", "clickhouse.storageModel=local",
+                                  STORAGE_MODEL_ENDPOINT_SET)))
+    expect("local with no endpoint renders local",
+           _renders_local(render("clickhouse-cluster", "clickhouse.storageModel=local")))
 
 
 def test_the_unclaimed_cells_are_refused_rather_than_rendered_inert() -> None:
@@ -535,6 +743,13 @@ def main() -> int:
         test_the_credential_binding_defaults_to_the_dfe_seeded_path()
         test_the_credential_binding_follows_an_existing_store_entry()
         test_clickhouse_cached_object_keeps_credentials_out_of_git()
+        test_clickhouse_cached_object_pod_identity_skips_the_static_key()
+        test_clickhouse_cached_object_pod_identity_reaches_single_mode()
+        test_clickhouse_renders_its_own_service_account()
+        test_clickhouse_external_mode_renders_no_service_account()
+        test_clickhouse_keeper_gets_its_own_service_account_too()
+        test_the_aws_cascade_is_what_turns_pod_identity_on()
+        test_the_endpoint_alone_derives_cached_object()
         test_the_object_store_timeouts_are_unset_by_default_and_settable()
         test_clickhouse_tiered_block_ranks_two_local_volumes()
         test_the_cold_volume_sorts_after_the_hot_one()
@@ -542,7 +757,9 @@ def main() -> int:
         test_clickhouse_tiered_block_reaches_single_mode()
         test_clickhouse_tiered_block_guards()
         test_clickhouse_cached_object_reaches_single_mode()
+        test_wait_for_async_insert_guard_catches_every_falsy_spelling()
         test_clickhouse_storage_model_guards()
+        test_storage_model_dial_the_six_cases()
         test_the_unclaimed_cells_are_refused_rather_than_rendered_inert()
         test_the_object_store_batch_delete_switch_is_tri_state()
         test_kafka_local_adds_nothing()

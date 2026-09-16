@@ -15,31 +15,67 @@
 #   - envsubst (gettext package)
 #
 # Required environment variables (export from Terraform outputs):
-#   DFE_ENV                  dev | stg | prod | local
-#   DFE_CLOUD                aws | gcp | az | local
+#   DFE_ENV                  dev | test | staging | prod | local | customer-<id>
+#   DFE_CLOUD                aws | gcp | azure | local -- also names the
+#                            argocd/values/<cloud>.yaml overlay, which must exist
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
 #   DFE_PROFILE              slim | single | scale | mesh (default: scale)
+#   DFE_REGISTRY             registry + path every dfe-* image is published
+#                            under, e.g. ghcr.io/hyperi-io. Reaches every chart
+#                            as global.registry through the cluster secret.
 #   DFE_REPO_URL             Git repo URL for ArgoCD (the CHART source)
 #   DFE_REPO_TOKEN           optional; HTTPS token when the chart repo is private
 #   DFE_REPO_USER            optional; username for DFE_REPO_TOKEN (default: git)
 #   DFE_REPO_SSH_KEY         optional; path to an SSH key when the chart repo is
 #                            private and DFE_REPO_URL is an SSH URL
 #   DFE_TARGET_REVISION      Git branch/tag (e.g. main)
-#   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard
+#   DFE_STORAGE_CLASS        e.g. local-path, gp3, standard. On DFE_CLOUD=aws,
+#                            bootstrap.sh creates this class itself (gp3, the
+#                            free-tier baseline) when the cluster does not
+#                            already have one by this name -- step [1b/7].
 #   DFE_NAMESPACE            K8s namespace for DFE apps (e.g. dfe-prod)
 #   DFE_CLICKHOUSE_HOST      ClickHouse service hostname
 #   DFE_KAFKA_BOOTSTRAP      Kafka bootstrap servers
+#   DFE_KAFKA_PROVIDER       strimzi | redpanda | msk | confluent-cloud |
+#                            redpanda-cloud; gates the otel-collector chart's
+#                            MSK open_monitoring scrape. Optional -- empty on a
+#                            deployment that predates this fact.
+#   DFE_KAFKA_BOOTSTRAP_IAM  the SASL/IAM-authenticated endpoint the in-cluster
+#                            MSK bootstrap Job connects to, from the aws root's
+#                            managed-kafka/msk output. Empty on every provider
+#                            but msk, and on an msk deployment predating this.
+#   DFE_KAFKA_BOOTSTRAP_ROLE_ARN  the role the bootstrap Job's Pod Identity
+#                            association names, from the same output. Carried
+#                            onto the cluster secret for completeness; the Job
+#                            itself needs no role ARN in its own pod spec --
+#                            EKS Pod Identity resolves the credential by
+#                            namespace + service account alone.
+#   DFE_KAFKA_CREDENTIAL_REF where the broker's own copy of the SCRAM
+#                            credential lives, from the same output. Carried
+#                            onto the cluster secret for completeness; no
+#                            current consumer reads it back.
 #   DFE_OTEL_ENDPOINT        OTel Collector gRPC endpoint
-#   DFE_VAULT_ADDR           OpenBao/Vault address
-#   DFE_VAULT_ROLE_ID        ESO AppRole role_id
+#   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
+#   DFE_VAULT_ROLE_ID        ESO AppRole role_id  (DFE_SECRETS_BACKEND=openbao)
 #   DFE_WORKLOAD_IDENTITY_ANNOTATIONS  JSON map of service → cloud identity annotations
 #   DFE_REGISTRY_HOST        JFrog registry hostname
 #   DFE_REGISTRY_USER        JFrog service account username
 #   DFE_REGISTRY_TOKEN       JFrog API token
 #
 # Optional:
+#   DFE_SECRETS_BACKEND      which body the ESO ClusterSecretStore gets: openbao
+#                            (default, needs DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID
+#                            and an AppRole SecretID) or aws-sm (needs none of
+#                            them -- external-secrets authenticates as the pod
+#                            it runs in, through EKS Pod Identity).
+#   DFE_SIZING_DIR           where resolve_sizing.py's --out pointed, which is
+#                            the directory `sizing/` hangs off. Defaults to
+#                            terraform/environments/<cloud> where that exists,
+#                            matching the resolve the deployment docs give.
+#   DFE_SECRETS_REGION       aws-sm only: the region the store reads from.
+#   DFE_SECRETS_PREFIX       aws-sm only: the path every remoteRef hangs off.
 #   DFE_BASE_DOMAIN          estate domain the profile tag is prefixed to when
 #                            DFE_DOMAIN is unset (one cluster, one profile at a
 #                            time, one set of hostnames per profile)
@@ -52,10 +88,50 @@
 #                            because the cluster has no StorageClass. Unset keeps
 #                            upstream's /opt/local-path-provisioner, on the root
 #                            filesystem of a node whose data disk is elsewhere.
+#   DFE_KUBE_CLUSTER_NAME    the EKS cluster's own name, for the AWS Load
+#                            Balancer Controller appset's cluster_name
+#                            annotation; empty omits the annotation (non-EKS
+#                            clouds)
+#   DFE_VPC_ID               the EKS cluster's VPC id, for the AWS Load
+#                            Balancer Controller appset's vpcId annotation --
+#                            the controller's node is one IMDS hop from a pod
+#                            and the managed node groups keep the hop limit at
+#                            1, so it cannot learn its VPC from metadata; empty
+#                            omits the annotation (non-EKS clouds)
+#   DFE_KARPENTER_DISCOVERY_TAG      the karpenter.sh/discovery tag value, for
+#                            karpenter-pools' karpenter.cluster.discoveryTag;
+#                            empty omits the annotation (non-AWS clouds)
+#   DFE_KARPENTER_INSTANCE_PROFILE   the pre-provisioned node instance profile,
+#                            for karpenter-pools' karpenter.cluster.instanceProfile;
+#                            empty omits the annotation (non-AWS clouds)
+#   DFE_KARPENTER_KMS_KEY_ID the deployment CMK every node root volume is
+#                            encrypted with, for
+#                            karpenter-pools' karpenter.cluster.kmsKeyId; empty
+#                            omits the annotation (non-AWS clouds)
+#   DFE_KAFKA_BROKER_HOSTS   derived, not set by the caller: every broker's bare
+#                            host (no port), comma separated, from
+#                            DFE_KAFKA_BOOTSTRAP. Empty on every provider but msk.
+#   DFE_TELEMETRY_SINK       otel (default) | cloudwatch, from the cloud root's
+#                            telemetry dial. On DFE_CLOUD=aws with otel, renders
+#                            the fetcher's AWS telemetry pre-config (below);
+#                            empty or cloudwatch renders nothing here.
+#   DFE_KAFKA_BROKER_LOG_BUCKET  the S3 bucket MSK's broker logs land in under
+#                            the otel sink; empty on every other provider or sink.
+#   DFE_CLOUDTRAIL_BUCKET    the S3 bucket the aws root's CloudTrail delivers to.
+#   DFE_EKS_AUDIT_LOG_GROUP  the CloudWatch log group EKS's control-plane audit
+#                            stream lands in -- unavoidable under either sink.
 #   DFE_CLICKHOUSE_DEFAULT_TTL_DAYS  days every time-series table keeps rows, the
 #                            OTel tables included (default 90; 0 = no default
 #                            TTL). A source or a dfe-schemas definition with its
 #                            own TTL overrides it.
+#   DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT  the S3 bucket URL the aws root's
+#                            object-store.tf provisions, for the
+#                            clickhouse-cluster chart's
+#                            clickhouse.objectStore.endpoint -- the fact that
+#                            activates the cached-object storage model
+#                            (docs/deployment/storage.md); empty omits the
+#                            annotation, which is every cloud but AWS, since
+#                            the aws root always provisions a bucket.
 #   DFE_CERTMANAGER_SECRET_ID  AppRole SecretID cert-manager authenticates to the
 #                            estate Vault/OpenBao PKI with, for the gateway
 #                            chart's tls.vault issuer mode. Set it and the edge
@@ -69,6 +145,12 @@
 #   DFE_CA_SECRET_STORE      ClusterSecretStore the root is saved to and restored
 #                            from (default dfe-secret-store).
 #   DFE_CA_RESTORE_TIMEOUT   seconds to wait for the restore (default 60).
+#   DFE_SIZING_OVERRIDE=1    On-prem only (DFE_CLOUD=local): accept a cluster
+#                            whose real nodes fall short of sizing/<profile>.nodes.json
+#                            -- scripts/check_node_capacity.py prints the
+#                            demanded-vs-allocatable table as a WARNING instead
+#                            of refusing. The warning still stands: the first
+#                            thing to give is the broker under peak.
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
 #   DFE_POST=full            Power-on self test run after the deploy converges:
 #                              full       readiness gate + CORE e2e (default)
@@ -105,11 +187,18 @@ fi
 
 # Read versions from SSOT (versions.yaml)
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.cert-manager)
-EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.external-secrets)
-ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.argocd)
-LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.local-path-provisioner)
-METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" bootstrap.metallb)
+# Same DFE_STACK_VERSION dfe-ops names below for check_platform.py: read THAT
+# stack's bootstrap pins rather than whatever `current` happens to point at,
+# so a deploy of an in-flight cut (e.g. rc.14) installs its own versions.
+version_args=(--file "${REPO_ROOT}/versions.yaml")
+if [[ -n "${DFE_STACK_VERSION:-}" ]]; then
+  version_args+=(--stack "${DFE_STACK_VERSION}")
+fi
+CERT_MANAGER_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.cert-manager)
+EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.external-secrets)
+ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.argocd)
+LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.local-path-provisioner)
+METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.metallb)
 echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION} metallb=${METALLB_VERSION}"
 
 # Each operator below states its own Kubernetes window, so an under-floor cluster
@@ -148,6 +237,14 @@ run() {
 # cluster they install correctly.
 dfe_have_crd() { kubectl get crd "$1" >/dev/null 2>&1; }
 
+# rc 0 when some StorageClass claims the cluster default. Step [1b/7] asks twice
+# -- once to pick its branch, once after the branches to decide whether the AWS
+# class it creates may claim default too.
+dfe_have_default_storageclass() {
+  kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null \
+    | grep -q true
+}
+
 # dfe_should_install <name> <crd> [<ns> <deploy>]  -> rc 0 = INSTALL, rc 1 = ADOPT.
 # ADOPT only when BOTH the CRD and a running operator deployment are present. A
 # LINGERING CRD with no deployment (e.g. left behind by destroy.sh's resource-policy
@@ -177,26 +274,91 @@ dfe_should_install() {
 # estate name -- so the list is the clouds, not the on-prem names. dfe-ops
 # preflight reads this same line so its INSTALL preview matches step [3b/7];
 # scripts/tests/test_pinned_addresses.py holds the two together.
-DFE_CLOUD_LB_PROVIDERS="aws gcp az azure"
+DFE_CLOUD_LB_PROVIDERS="aws gcp azure"
 
 dfe_cloud_programs_loadbalancers() {
   [[ " ${DFE_CLOUD_LB_PROVIDERS} " == *" ${DFE_CLOUD} "* ]]
 }
 
+# Which secret store this deployment reads. openbao stays the default, so a
+# deployment that names no backend behaves exactly as it did.
+export DFE_SECRETS_BACKEND="${DFE_SECRETS_BACKEND:-openbao}"
+case "${DFE_SECRETS_BACKEND}" in
+  openbao|aws-sm) ;;
+  *)
+    echo "ERROR: DFE_SECRETS_BACKEND must be openbao or aws-sm (got '${DFE_SECRETS_BACKEND}')" >&2
+    exit 1
+    ;;
+esac
+# The store lives in the deployment's own region unless it is told otherwise.
+export DFE_SECRETS_REGION="${DFE_SECRETS_REGION:-${DFE_REGION:-}}"
+# The store prepends this to every remoteRef, and ESO adds no separator of its
+# own. Empty leaves keys absolute.
+DFE_SECRETS_PREFIX_PATH="${DFE_SECRETS_PREFIX:+${DFE_SECRETS_PREFIX%/}/}"
+export DFE_SECRETS_PREFIX_PATH
+
 # Validate required variables
+# DFE_REGISTRY is required because an empty one is not a smaller deployment: a
+# dfe-* image with no registry prefix resolves to Docker Hub, which publishes
+# none of them, and the kubelet reports a pull denial that names Docker Hub
+# rather than the missing setting.
 required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
+  DFE_REGISTRY
   DFE_REPO_URL DFE_TARGET_REVISION
   DFE_STORAGE_CLASS DFE_NAMESPACE
   DFE_CLICKHOUSE_HOST DFE_OTEL_ENDPOINT
-  DFE_VAULT_ADDR DFE_VAULT_ROLE_ID
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
+if [[ "${DFE_SECRETS_BACKEND}" == "openbao" ]]; then
+  required_vars+=(DFE_VAULT_ADDR DFE_VAULT_ROLE_ID)
+else
+  required_vars+=(DFE_SECRETS_REGION)
+fi
 # DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim and mesh profiles are gRPC (kafka
 # disabled), so it is empty there; only set when kafka.mode != disabled. Defaulted
 # empty so the cluster-secret annotation renders blank (kafka-dependent apps are
 # gated off on a brokerless profile anyway).
 export DFE_KAFKA_BOOTSTRAP="${DFE_KAFKA_BOOTSTRAP:-}"
+# Who runs the brokers -- the last path segment of the credential's store key,
+# and (below) what gates the otel-collector chart's MSK open_monitoring scrape.
+# Empty on a deployment that predates this fact; the appset defaults it to
+# strimzi, the kafka chart's own default.
+export DFE_KAFKA_PROVIDER="${DFE_KAFKA_PROVIDER:-}"
+# The bare host list a Prometheus scrape target needs (no port, no SASL
+# scheme) -- MSK's own bootstrap string already lists every broker, comma
+# separated, which the kafkametrics receiver's single seed broker does not
+# expose on its own. Empty on every provider but msk.
+DFE_KAFKA_BROKER_HOSTS=""
+if [[ -n "${DFE_KAFKA_BOOTSTRAP}" ]]; then
+  IFS=',' read -ra _dfe_bootstrap_entries <<< "${DFE_KAFKA_BOOTSTRAP}"
+  _dfe_broker_hosts=()
+  for _dfe_entry in "${_dfe_bootstrap_entries[@]}"; do
+    _dfe_broker_hosts+=("${_dfe_entry%%:*}")
+  done
+  DFE_KAFKA_BROKER_HOSTS=$(IFS=,; echo "${_dfe_broker_hosts[*]}")
+  unset _dfe_bootstrap_entries _dfe_broker_hosts _dfe_entry
+fi
+export DFE_KAFKA_BROKER_HOSTS
+# The IAM bootstrap endpoint, its Pod Identity role and the broker's own
+# credential reference -- tofu outputs on an msk deployment, empty everywhere
+# else. Defaulted the same way as DFE_KAFKA_BOOTSTRAP/DFE_KAFKA_PROVIDER above,
+# so the cluster-secret annotations below always render rather than reference
+# an unset variable.
+export DFE_KAFKA_BOOTSTRAP_IAM="${DFE_KAFKA_BOOTSTRAP_IAM:-}"
+export DFE_KAFKA_BOOTSTRAP_ROLE_ARN="${DFE_KAFKA_BOOTSTRAP_ROLE_ARN:-}"
+export DFE_KAFKA_CREDENTIAL_REF="${DFE_KAFKA_CREDENTIAL_REF:-}"
+# kafka.mode flips to "external" only for a managed broker (msk,
+# confluent-cloud, redpanda-cloud) -- strimzi and redpanda run in-cluster and
+# take their mode from the profile overlay (profile-*.yaml), which this must
+# NEVER override. Empty means "leave the profile's own kafka.mode alone": the
+# appset parameter that reads the resulting annotation is emitted only when it
+# is non-empty, for exactly this reason (argocd/appsets/layer2-data.yaml).
+DFE_KAFKA_MODE=""
+case "${DFE_KAFKA_PROVIDER}" in
+  msk|confluent-cloud|redpanda-cloud) DFE_KAFKA_MODE="external" ;;
+esac
+export DFE_KAFKA_MODE
 # external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
 # "none" deploys no external-dns, because its own default provider is aws and an
 # uncredentialled install crash-loops against Route 53 forever (#223).
@@ -214,6 +376,67 @@ export DFE_STACK_VERSION="${DFE_STACK_VERSION:-}"
 # Front-door addresses; empty renders a blank annotation and the pool chooses.
 export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
 export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
+# DFE's monitoring goes to its own OTel feed and HyperDX, never CloudWatch --
+# otel is the default sink a cloud root renders, and cloudwatch is the opt-in
+# AWS-native path. Empty (a non-cloud caller, or one with nothing to report)
+# renders no fetcher pre-config step below, the same as any other unset
+# optional fact.
+export DFE_TELEMETRY_SINK="${DFE_TELEMETRY_SINK:-}"
+export DFE_KAFKA_BROKER_LOG_BUCKET="${DFE_KAFKA_BROKER_LOG_BUCKET:-}"
+export DFE_CLOUDTRAIL_BUCKET="${DFE_CLOUDTRAIL_BUCKET:-}"
+export DFE_EKS_AUDIT_LOG_GROUP="${DFE_EKS_AUDIT_LOG_GROUP:-}"
+# The EKS cluster name for the LBC appset's cluster_name annotation, rendered only when set.
+export DFE_KUBE_CLUSTER_NAME="${DFE_KUBE_CLUSTER_NAME:-}"
+export DFE_KUBE_CLUSTER_NAME_ANNOTATION="${DFE_KUBE_CLUSTER_NAME:+dfe.hyperi.io/cluster_name: \"${DFE_KUBE_CLUSTER_NAME}\"}"
+# The EKS cluster's VPC id for the LBC appset's vpcId annotation, rendered only when set.
+export DFE_VPC_ID="${DFE_VPC_ID:-}"
+export DFE_VPC_ID_ANNOTATION="${DFE_VPC_ID:+dfe.hyperi.io/vpc_id: \"${DFE_VPC_ID}\"}"
+# The ClickHouse object-store bucket URL for the clickhouse-cluster chart's
+# clickhouse.objectStore.endpoint, rendered only when set -- empty on every
+# cloud but AWS, whose root always provisions a bucket.
+export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:-}"
+export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:+dfe.hyperi.io/clickhouse_object_store_endpoint: \"${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT}\"}"
+# The karpenter-pools chart's three cluster facts, each rendered only when set --
+# empty on a non-AWS cloud, where Karpenter does not run.
+export DFE_KARPENTER_DISCOVERY_TAG="${DFE_KARPENTER_DISCOVERY_TAG:-}"
+export DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION="${DFE_KARPENTER_DISCOVERY_TAG:+dfe.hyperi.io/karpenter_discovery_tag: \"${DFE_KARPENTER_DISCOVERY_TAG}\"}"
+export DFE_KARPENTER_INSTANCE_PROFILE="${DFE_KARPENTER_INSTANCE_PROFILE:-}"
+export DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION="${DFE_KARPENTER_INSTANCE_PROFILE:+dfe.hyperi.io/karpenter_instance_profile: \"${DFE_KARPENTER_INSTANCE_PROFILE}\"}"
+export DFE_KARPENTER_KMS_KEY_ID="${DFE_KARPENTER_KMS_KEY_ID:-}"
+export DFE_KARPENTER_KMS_KEY_ID_ANNOTATION="${DFE_KARPENTER_KMS_KEY_ID:+dfe.hyperi.io/karpenter_kms_key_id: \"${DFE_KARPENTER_KMS_KEY_ID}\"}"
+# The in-cluster toolbox pod's dial facts (deployment.yaml's toolbox.pod.*,
+# render_dial.py's DFE_TOOLBOX_POD_* keys). Unlike the karpenter facts above,
+# these are not conditional on AWS -- the chart deploys on every cloud -- so
+# they always render, defaulted to the chart's own off state rather than
+# omitted, and carried straight through as the literal text a real YAML
+# parser reads as a boolean (or an empty/numeric string for ttlSeconds).
+export DFE_TOOLBOX_POD_ENABLED="${DFE_TOOLBOX_POD_ENABLED:-false}"
+export DFE_TOOLBOX_POD_KUBE_API_ACCESS="${DFE_TOOLBOX_POD_KUBE_API_ACCESS:-false}"
+export DFE_TOOLBOX_POD_TTL_SECONDS="${DFE_TOOLBOX_POD_TTL_SECONDS:-}"
+# The edge module's whole-module switch (deployment.yaml's edge.enabled,
+# render_dial.py's DFE_EDGE_ENABLED). ON by default, because a deployment with
+# no door reaches nothing from outside the cluster; "false" leaves
+# appsets/layer2-edge.yaml generating nothing at all. Always rendered, so the
+# gate's Exists test is satisfied on every cluster this bootstrap writes.
+export DFE_EDGE_ENABLED="${DFE_EDGE_ENABLED:-true}"
+if [[ "${DFE_EDGE_ENABLED}" != "true" && "${DFE_EDGE_ENABLED}" != "false" ]]; then
+  echo "ERROR: DFE_EDGE_ENABLED must be true or false (got '${DFE_EDGE_ENABLED}')" >&2
+  exit 1
+fi
+# The fleet tunnel's own address and the zone its forwarder is pinned to
+# (terraform/modules/edge/aws). Both empty on edge.tunnel.address.mode byo,
+# where the deployer already holds the address, and on every flavour with no
+# forwarder at all -- each renders blank then, same as the karpenter facts.
+export DFE_TUNNEL_ADDRESS="${DFE_TUNNEL_ADDRESS:-}"
+export DFE_TUNNEL_ADDRESS_ANNOTATION="${DFE_TUNNEL_ADDRESS:+dfe.hyperi.io/tunnel_address: \"${DFE_TUNNEL_ADDRESS}\"}"
+export DFE_TUNNEL_ZONE="${DFE_TUNNEL_ZONE:-}"
+export DFE_TUNNEL_ZONE_ANNOTATION="${DFE_TUNNEL_ZONE:+dfe.hyperi.io/tunnel_zone: \"${DFE_TUNNEL_ZONE}\"}"
+# The toolbox instance's own /32, which is the only shape culvert's admin hole
+# matches -- a source off the pod's ethernet side, never a peer. Empty whenever
+# no instance exists, and `dfe-ops bastion up` rewrites it each cycle because
+# the instance is rebuilt and its address moves.
+export DFE_TOOLBOX_ADMIN_CIDR="${DFE_TOOLBOX_ADMIN_CIDR:-}"
+export DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION="${DFE_TOOLBOX_ADMIN_CIDR:+dfe.hyperi.io/toolbox_admin_cidr: \"${DFE_TOOLBOX_ADMIN_CIDR}\"}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
 export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"
@@ -240,6 +463,82 @@ done
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "ERROR: Missing required environment variables: ${missing[*]}" >&2
   exit 1
+fi
+
+# Every appset layers argocd/values/<cloud>.yaml over common.yaml, so a cloud
+# with no overlay deploys chart defaults and says nothing (dfe-infra#130).
+DFE_CLOUD_VALUES="${REPO_ROOT}/argocd/values/${DFE_CLOUD}.yaml"
+if [[ ! -f "${DFE_CLOUD_VALUES}" ]]; then
+  echo "ERROR: DFE_CLOUD=${DFE_CLOUD} has no overlay at ${DFE_CLOUD_VALUES}" >&2
+  echo "       Without it every chart takes its own defaults -- no storage class," >&2
+  echo "       no Service type, no per-cloud identity -- and nothing reports it." >&2
+  echo "       Add the overlay, or correct DFE_CLOUD -- the ones that exist are the" >&2
+  echo "       non-profile files in ${REPO_ROOT}/argocd/values/." >&2
+  exit 1
+fi
+echo "Cloud overlay: ${DFE_CLOUD_VALUES}"
+
+# Where resolve_sizing.py wrote its artefacts -- `sizing/` hangs off the
+# resolver's own --out, not off the repo root. docs/deployment/<cloud>.md tells
+# an operator to resolve with --out terraform/environments/<cloud>, so that is
+# the default wherever such a root exists; a resolve run anywhere else sets
+# DFE_SIZING_DIR to whatever --out pointed at.
+DFE_SIZING_DIR_DEFAULT="${REPO_ROOT}"
+if [[ -d "${REPO_ROOT}/terraform/environments/${DFE_CLOUD}" ]]; then
+  DFE_SIZING_DIR_DEFAULT="${REPO_ROOT}/terraform/environments/${DFE_CLOUD}"
+fi
+export DFE_SIZING_DIR="${DFE_SIZING_DIR:-${DFE_SIZING_DIR_DEFAULT}}"
+echo "Sizing artefacts: ${DFE_SIZING_DIR}"
+
+# The Karpenter NodePools, from the resolver's own one-line JSON artefact.
+# The karpenter-pools chart renders nothing without them, so a cluster with no
+# pools answers a pending workload by leaving it pending. An explicit
+# DFE_KARPENTER_POOLS wins, for a deployment whose resolve ran elsewhere.
+DFE_KARPENTER_POOLS_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.karpenter.json"
+if [[ -z "${DFE_KARPENTER_POOLS:-}" && -f "${DFE_KARPENTER_POOLS_FILE}" ]]; then
+  DFE_KARPENTER_POOLS="$(tr -d '\n' < "${DFE_KARPENTER_POOLS_FILE}")"
+  echo "Karpenter pools: ${DFE_KARPENTER_POOLS_FILE}"
+fi
+export DFE_KARPENTER_POOLS="${DFE_KARPENTER_POOLS:-}"
+# A cluster with a Karpenter discovery tag is a cluster running the controller,
+# and the pools are the only thing that tells it what it may launch. Refuse
+# rather than omit the annotation: the chart reports Synced and Healthy with an
+# empty resource list, so an absent pool set otherwise shows up only as a
+# workload that stays Pending for ever.
+if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}" && -z "${DFE_KARPENTER_POOLS}" ]]; then
+  echo "ERROR: this cluster runs Karpenter and no NodePools were found." >&2
+  echo "       Looked for: ${DFE_KARPENTER_POOLS_FILE}" >&2
+  echo "       Resolve them with scripts/resolve_sizing.py --out ${DFE_SIZING_DIR}," >&2
+  echo "       or set DFE_SIZING_DIR to wherever that resolve's --out pointed." >&2
+  exit 1
+fi
+# A single quote inside the JSON would close the YAML scalar early, so double it
+# -- YAML's own escape for a quote inside a single-quoted scalar.
+DFE_KARPENTER_POOLS_YAML="${DFE_KARPENTER_POOLS//\'/\'\'}"
+export DFE_KARPENTER_POOLS_ANNOTATION="${DFE_KARPENTER_POOLS:+dfe.hyperi.io/karpenter_pools: '${DFE_KARPENTER_POOLS_YAML}'}"
+
+echo "==> [0a/7] On-prem node-capacity preflight"
+# DFE_CLOUD=local is this script's own token for "we do not create these
+# nodes" (see the header's DFE_CLOUD comment) -- the same substrate
+# sizing/targets/onprem.yaml and compute-shapes.yaml's onprem stub call
+# `cloud: onprem`. resolve_sizing.py writes the demand only for that cloud, so
+# a nodes.json existing at all already means this deployment is on-prem; a
+# cloud that creates its own nodes never gets one and this step is a no-op.
+DFE_SIZING_NODES_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.nodes.json"
+if [[ "${DFE_CLOUD}" == "local" && -f "${DFE_SIZING_NODES_FILE}" ]]; then
+  echo "  Checking ${DFE_SIZING_NODES_FILE} against the cluster's real nodes..."
+  if ! python3 "${SCRIPT_DIR}/../scripts/check_node_capacity.py" \
+      --nodes-file "${DFE_SIZING_NODES_FILE}" \
+      ${KUBECONFIG:+--kubeconfig "${KUBECONFIG}"}; then
+    echo "ERROR: the cluster's real nodes fall short of the sizing demand -- see the table above." >&2
+    echo "       Add capacity, correct the dial and re-resolve, or set DFE_SIZING_OVERRIDE=1 to" >&2
+    echo "       accept it and continue (the warning still stands: the broker gives first)." >&2
+    exit 1
+  fi
+elif [[ "${DFE_CLOUD}" == "local" ]]; then
+  echo "  No ${DFE_SIZING_NODES_FILE} -- nothing to check, skipping"
+else
+  echo "  DFE_CLOUD=${DFE_CLOUD} creates its own nodes -- nothing to check, skipping"
 fi
 
 # Compute base64 auth for registry (only if registry vars are set)
@@ -287,11 +586,19 @@ else
 fi
 
 echo "==> [1b/7] StorageClass (detect-or-install)"
-# DFE assumes only a bare cluster. If a default StorageClass exists -> ADOPT it.
-# If StorageClasses exist but none is default -> use DFE_STORAGE_CLASS as-is. If
-# NONE exist (bare RKE2/EKS) -> INSTALL local-path-provisioner (pinned) and mark
-# it default, so the substrate's PVCs (CH/Gitea/CNPG) can bind with no deployer
-# input. This is the onboarding-contract storage derive.
+# DFE assumes only a bare cluster, and the cluster shows up in one of four
+# states:
+#   1. a default StorageClass already exists            -> ADOPT it
+#   2. StorageClass(es) exist, none default              -> use DFE_STORAGE_CLASS
+#      as-is (the common case below covers when that class does not exist yet)
+#   3. no StorageClass at all (bare RKE2)                 -> INSTALL
+#      local-path-provisioner (pinned) and mark it default, so the data pods'
+#      PVCs (CH/Gitea/CNPG) can bind with no deployer input
+#   4. DFE_CLOUD=aws and DFE_STORAGE_CLASS still does not exist after the
+#      above -- EKS 1.30+ ships gp2 with no default, and the aws-ebs-csi-driver
+#      add-on makes gp3 POSSIBLE but creates no StorageClass object of its own
+#                                                         -> CREATE it (checked
+#      after this if/elif/else, once the state above is known)
 if kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null | grep -q true; then
   echo "  default StorageClass present -> ADOPT"
 elif [[ -n "$(kubectl get storageclass -o name 2>/dev/null)" ]]; then
@@ -317,6 +624,27 @@ else
       kubectl -n local-path-storage rollout restart deployment/local-path-provisioner
       kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
     fi
+  fi
+fi
+# Case 4: AWS-only, and independent of which branch above ran -- EKS 1.30+
+# ships gp2 with no default, so DFE_STORAGE_CLASS (gp3) can still be missing
+# after the detect logic decides "use it as-is". Create the free-tier baseline
+# so the data pods' PVCs have something to bind to with no deployer input.
+if [[ "${DFE_CLOUD}" == "aws" ]] && ! kubectl get storageclass "${DFE_STORAGE_CLASS}" >/dev/null 2>&1; then
+  # Re-read the default AFTER the branches above, because branch 3 marks the
+  # local-path class it installs. Claiming default on top of an existing one
+  # gives the cluster two, and since Kubernetes 1.26 the newest wins -- which
+  # would re-point every unannotated PVC in the cluster, DFE's or not.
+  if kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null | grep -q true; then
+    export DFE_STORAGE_CLASS_IS_DEFAULT="false"
+  else
+    export DFE_STORAGE_CLASS_IS_DEFAULT="true"
+  fi
+  echo "  AWS: DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS} does not exist -> creating it (gp3, ebs.csi.aws.com, default=${DFE_STORAGE_CLASS_IS_DEFAULT})"
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/storageclass-aws.yaml.tpl | kubectl apply -f -"
+  else
+    envsubst < "${TEMPLATES_DIR}/storageclass-aws.yaml.tpl" | kubectl apply -f -
   fi
 fi
 
@@ -402,13 +730,30 @@ else
   fi
 fi
 
-echo "==> [4/7] ESO ClusterSecretStore (+ OpenBao AppRole SecretID & CA)"
+echo "==> [4/7] ESO ClusterSecretStore (backend: ${DFE_SECRETS_BACKEND})"
+# One store name, dfe-secret-store, whatever backs it -- every ExternalSecret in
+# the tree references that name and none of them knows which cloud it is on.
+if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
+  ESO_STORE_TEMPLATE="${TEMPLATES_DIR}/eso-cluster-secret-store-aws.yaml.tpl"
+else
+  ESO_STORE_TEMPLATE="${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl"
+fi
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-  echo "[DRY-RUN] seed dfe-vault-approle-secret + envsubst store + patch caBundle"
+  if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
+    echo "[DRY-RUN] envsubst ${ESO_STORE_TEMPLATE##*/} | kubectl apply -f -"
+    echo "[DRY-RUN]   region=${DFE_SECRETS_REGION} prefix=${DFE_SECRETS_PREFIX_PATH:-<none>} auth=pod identity"
+  else
+    echo "[DRY-RUN] seed dfe-vault-approle-secret + envsubst store + patch caBundle"
+  fi
+elif [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
+  # No SecretID and no CA patch: the store carries no auth block, so ESO falls
+  # through to the pod's own credentials, and Secrets Manager is a public AWS
+  # endpoint whose certificate the SDK already trusts.
+  envsubst < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
+  echo "  ClusterSecretStore dfe-secret-store -> Secrets Manager in ${DFE_SECRETS_REGION}"
 else
   # Seed the AppRole SecretID the store references. Nothing else creates it, so ESO
-  # could never authenticate to OpenBao (store stuck InvalidProviderConfig). Vault
-  # provider path only; on cloud (AWS SM + IRSA) there is no SecretID.
+  # could never authenticate to OpenBao (store stuck InvalidProviderConfig).
   if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then
     kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f -
     kubectl -n external-secrets create secret generic dfe-vault-approle-secret \
@@ -421,7 +766,7 @@ else
     echo "           Downstream: dfe-local/dfe-kafka-user never appears and the data plane sits in"
     echo "           CreateContainerConfigError. Set DFE_VAULT_SECRET_ID and re-run."
   fi
-  envsubst < "${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl" | kubectl apply -f -
+  envsubst < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
   # ESO's vault provider cannot skip TLS verify (the env's VAULT_SKIP_VERIFY is for
   # terraform, which ESO ignores). Fetch OpenBao's issuing CA from its TLS handshake
   # and patch it into the store so it can verify the cert. No-op if none is found.
@@ -443,8 +788,14 @@ echo "==> [4a/7] Internal CA root: restore from the secret store before cert-man
 # cert-manager then adopts a root that already satisfies the spec.
 # Without a secret store nothing can hold the root between rebuilds.
 if [[ -z "${DFE_CA_PERSIST:-}" ]]; then
-  # A deployment with no store SecretID has nowhere to hold the root.
-  if [[ -n "${DFE_VAULT_SECRET_ID:-}" ]]; then DFE_CA_PERSIST="true"; else DFE_CA_PERSIST="false"; fi
+  # What decides it is whether the store can authenticate at all: on aws-sm the
+  # pod's own identity is the credential, on openbao nothing works without the
+  # AppRole SecretID and there is nowhere to hold the root.
+  if [[ "${DFE_SECRETS_BACKEND}" != "openbao" || -n "${DFE_VAULT_SECRET_ID:-}" ]]; then
+    DFE_CA_PERSIST="true"
+  else
+    DFE_CA_PERSIST="false"
+  fi
 fi
 if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
   echo "  Vault/OpenBao issuer mode seeded -- the estate PKI owns the root, nothing to persist"
@@ -453,15 +804,30 @@ elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
   echo "  client must trust it again after a rebuild. Set DFE_VAULT_SECRET_ID so the deployment"
   echo "  has a working secret store, or DFE_CA_PERSIST=true to force it."
 elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-  echo "[DRY-RUN] helm template envoy-gateway-config -s templates/internal-ca-persist.yaml | kubectl apply -f -"
+  echo "[DRY-RUN] helm template envoy-gateway-config -f common.yaml -f ${DFE_CLOUD}.yaml -f profile-${DFE_PROFILE}.yaml --set domain=${DFE_DOMAIN} --set tls.internalCA.persist.enabled=true -s templates/internal-ca-persist.yaml | kubectl apply -f -"
 else
   kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -
-  helm template dfe-internal-ca "${REPO_ROOT}/helm/charts/envoy-gateway-config" \
+  # --show-only still renders EVERY template before filtering to the one named,
+  # and _routes.tpl's routeHost helper fail()s on a route whose hostname it
+  # cannot resolve against the chart's own bare defaults. Layer the same value
+  # files Argo does (argocd/appsets/layer2-platform.yaml), in the same order,
+  # so this render sees what a real deploy would.
+  ca_value_files=()
+  for ca_values_file in \
+    "${REPO_ROOT}/argocd/values/common.yaml" \
+    "${REPO_ROOT}/argocd/values/${DFE_CLOUD}.yaml" \
+    "${REPO_ROOT}/argocd/values/profile-${DFE_PROFILE}.yaml"; do
+    [[ -f "${ca_values_file}" ]] && ca_value_files+=(-f "${ca_values_file}")
+  done
+  helm template dfe-internal-ca "${REPO_ROOT}/helm/edge/gateway" \
     --namespace cert-manager \
     --show-only templates/internal-ca-persist.yaml \
+    "${ca_value_files[@]}" \
     --set "env=${DFE_ENV}" \
     --set "cloud=${DFE_CLOUD}" \
+    --set "domain=${DFE_DOMAIN}" \
     --set "tls.internalCA.persist.secretStoreName=${DFE_CA_SECRET_STORE:-dfe-secret-store}" \
+    --set "tls.internalCA.persist.enabled=true" \
     | kubectl apply -f -
   # A poll, not `kubectl wait --for=create`: that needs kubectl >= 1.31.
   # A first bootstrap has nothing to restore, so the timeout is expected.
@@ -597,6 +963,33 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
   else
     echo "  WARNING: external deploy repo with no DFE_CONFIG_REPO_TOKEN -- the engine CANNOT push (gitcrud) over SSH; it needs an HTTPS token. Set DFE_CONFIG_REPO_TOKEN for engine writes."
   fi
+fi
+
+echo "==> [4d/7] Fetcher AWS telemetry pre-config (otel sink only)"
+# DFE's monitoring goes to its own OTel feed, never CloudWatch, so on AWS with
+# sink=otel the broker-log bucket, the CloudTrail trail and the EKS audit log
+# have a fetcher-readable path instead. Under sink=cloudwatch these touchpoints
+# already have an AWS-native destination, so nothing is rendered. A STARTER
+# fragment, not a wired instance -- see the template's own header.
+if [[ "${DFE_CLOUD}" == "aws" && "${DFE_TELEMETRY_SINK}" == "otel" ]]; then
+  # `run` echoes instead of executing, so piping `run cmd-a | run cmd-b` under
+  # DFE_DRY_RUN carries the left side's echo TEXT into the right side, which
+  # also just echoes -- neither side ever sees real input. Guarded with an
+  # `if`, like the ConfigMap apply two lines below, so a dry run prints one
+  # readable line and a real run pipes for real.
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] kubectl create namespace ${DFE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
+  else
+    kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  fi
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl | kubectl apply -f -"
+  else
+    envsubst < "${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl" | kubectl apply -f -
+    echo "  ConfigMap dfe-fetcher-aws-telemetry-preconfig applied in ${DFE_NAMESPACE}"
+  fi
+else
+  echo "  Skipped (DFE_CLOUD=${DFE_CLOUD}, DFE_TELEMETRY_SINK=${DFE_TELEMETRY_SINK:-<unset>}) -- otel on aws only"
 fi
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.

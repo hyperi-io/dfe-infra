@@ -28,7 +28,9 @@ DFE auto-deploys two of these providers as in-cluster brokers -- Strimzi
 (default, Apache-2.0) and Redpanda (opt-in, BSL). For the managed clouds DFE
 does NOT auto-deploy, this directory carries one guide each:
 
-- [aws-msk.md](aws-msk.md) -- AWS MSK provisioned (SASL/SCRAM) and MSK Serverless (IAM).
+- [aws-msk.md](aws-msk.md) -- AWS MSK provisioned (SASL/SCRAM) and MSK Serverless (IAM);
+  operating a running MSK deployment (bootstrap Job, autoscaling, telemetry) is
+  [aws-msk-operations.md](aws-msk-operations.md).
 - [confluent-cloud.md](confluent-cloud.md) -- Confluent Cloud (API-key PLAIN over TLS).
 - [redpanda-cloud.md](redpanda-cloud.md) -- Redpanda Cloud Serverless / Dedicated / BYOC (SCRAM).
 

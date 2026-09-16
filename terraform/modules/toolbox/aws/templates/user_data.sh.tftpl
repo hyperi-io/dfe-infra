@@ -1,0 +1,197 @@
+#!/bin/bash
+# Toolbox instance bootstrap -- installs the idle auto-terminate timer, then the
+# same tool list the dfe-toolbox-aws container image carries, at the SAME
+# versions.yaml pins (every substitution below is a render_dial.py-supplied
+# value; nothing here is a literal version). URL shapes below
+# mirror docker/dfe-toolbox/base/Dockerfile and docker/dfe-toolbox/aws/Dockerfile
+# line for line, adjusted for dnf/rpm in place of apt/deb -- the two toolboxes
+# read the SAME versions.yaml toolbox: stage, so they should install the same
+# way wherever the packaging format allows it.
+#
+# AL2023 ships the SSM Agent preinstalled (AWS's own agent-install-al2.html:
+# "AMIs for Amazon Linux 2 and Amazon Linux 2023 ... come with SSM Agent
+# preinstalled by default"), so nothing here installs or starts it.
+set -euo pipefail
+
+ARCH=arm64
+# The RPM/dnf spelling of the same architecture, which the ClickHouse packages
+# below are named with. Every other download here uses the Debian/Docker one.
+RPM_ARCH=aarch64
+BIN=/usr/local/bin
+mkdir -p "$BIN"
+
+# ---------------------------------------------------------------------------
+# Idle auto-terminate -- see CONTRACT.md #9. FIRST, before anything that can
+# fail: this is the only thing bounding an idle instance's cost, and under
+# `set -e` a failed install further down would otherwise leave the box running
+# with no timer on it. No IAM grant of any kind: the instance was launched with
+# instance_initiated_shutdown_behavior = terminate, so `shutdown -h now` on THIS
+# instance IS the teardown, and detecting "idle" by counting local
+# ssm-session-worker processes needs no API call either (ssm:DescribeSessions is
+# unscoped -- Resource: "*" -- and this avoids granting it at all).
+# ---------------------------------------------------------------------------
+cat > /usr/local/sbin/toolbox-idle-check.sh <<'SCRIPT'
+#!/bin/bash
+# Exit 0 (idle) when no ssm-session-worker process has run for TTL_MINUTES.
+# The SSM Agent forks one such process per active session -- shell AND
+# port-forward alike -- so this sees the session type nothing else in this
+# module observes (a forward carries no transcript to check instead).
+set -euo pipefail
+STATE=/var/run/toolbox-idle-since
+TTL_SECONDS=$(( ${ttl_minutes} * 60 ))
+
+if pgrep -f ssm-session-worker >/dev/null 2>&1; then
+  rm -f "$STATE"
+  exit 0
+fi
+
+NOW=$(date +%s)
+if [ ! -f "$STATE" ]; then
+  echo "$NOW" > "$STATE"
+  exit 0
+fi
+
+IDLE_SINCE=$(cat "$STATE")
+if (( NOW - IDLE_SINCE >= TTL_SECONDS )); then
+  logger -t toolbox-idle-check "no active SSM session for $TTL_SECONDS seconds -- shutting down"
+  shutdown -h now
+fi
+SCRIPT
+chmod +x /usr/local/sbin/toolbox-idle-check.sh
+
+cat > /etc/systemd/system/toolbox-idle-check.service <<'UNIT'
+[Unit]
+Description=Terminate this toolbox instance once no SSM session has been active for ttl_minutes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/toolbox-idle-check.sh
+UNIT
+
+cat > /etc/systemd/system/toolbox-idle-check.timer <<'UNIT'
+[Unit]
+Description=Run toolbox-idle-check every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now toolbox-idle-check.timer
+
+# --- jq, openssl, unzip -- AL2023 base repo packages, ahead of every download
+# below because the tofu and AWS CLI steps unzip what they fetch. No upstream
+# release cadence worth tracking as a versions.yaml pin, matching
+# docker/dfe-toolbox/base/Dockerfile's identical (Debian apt) choice.
+dnf install -y jq openssl unzip
+
+# --- kubectl -- versions.yaml's value already carries its own "v" prefix ----
+curl -fsSL -o "$BIN/kubectl" \
+  "https://dl.k8s.io/release/${kubectl_version}/bin/linux/$ARCH/kubectl"
+chmod +x "$BIN/kubectl"
+
+# --- helm --------------------------------------------------------------------
+curl -fsSL -o /tmp/helm.tar.gz \
+  "https://get.helm.sh/helm-${helm_version}-linux-$ARCH.tar.gz"
+tar -xzf /tmp/helm.tar.gz -C /tmp
+install -m 0755 "/tmp/linux-$ARCH/helm" "$BIN/helm"
+rm -rf /tmp/helm.tar.gz "/tmp/linux-$ARCH"
+
+# --- argocd CLI ----------------------------------------------------------
+curl -fsSL -o "$BIN/argocd" \
+  "https://github.com/argoproj/argo-cd/releases/download/${argocd_version}/argocd-linux-$ARCH"
+chmod +x "$BIN/argocd"
+
+# --- OpenTofu -- the release TAG takes a "v" prefix the tarball's own
+# filename does not; tofu_version itself carries neither.
+curl -fsSL -o /tmp/tofu.zip \
+  "https://github.com/opentofu/opentofu/releases/download/v${tofu_version}/tofu_${tofu_version}_linux_$ARCH.zip"
+unzip -q /tmp/tofu.zip -d /tmp/tofu
+install -m 0755 /tmp/tofu/tofu "$BIN/tofu"
+rm -rf /tmp/tofu.zip /tmp/tofu
+
+# --- yq -- no AL2023 package; mikefarah/yq ships an arm64 static binary ----
+curl -fsSL -o "$BIN/yq" \
+  "https://github.com/mikefarah/yq/releases/download/${yq_version}/yq_linux_$ARCH"
+chmod +x "$BIN/yq"
+
+# --- aws CLI v2 -- AWS's own versioned bundled-installer URL, aarch64 naming
+curl -fsSL -o /tmp/awscliv2.zip \
+  "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-${awscli_version}.zip"
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install --update
+rm -rf /tmp/awscliv2.zip /tmp/aws
+
+# --- session-manager-plugin -- AWS publishes no versioned URL for this one,
+# only a floating "latest" per OS/arch, so ssm_plugin_version is informational
+# (versions.yaml's own comment on toolbox.aws-session-manager-plugin): it
+# records what "latest" resolved to when the pin was last verified.
+# docker/dfe-toolbox/aws/Dockerfile FAILS its build on a mismatch, because a
+# stale image is easy to rebuild; this instance instead only LOGS one,
+# because failing the boot would make the one debugging tool unusable at
+# exactly the moment AWS moved "latest" -- the worse failure of the two.
+curl -fsSL -o /tmp/session-manager-plugin.rpm \
+  "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_arm64/session-manager-plugin.rpm"
+dnf install -y /tmp/session-manager-plugin.rpm
+rm -f /tmp/session-manager-plugin.rpm
+# Non-fatal under `set -e`: this step only logs a drifted pin, so a plugin that
+# cannot report its version must not abort the installs below it.
+installed_ssm_plugin="$(session-manager-plugin --version || echo unknown)"
+if [ "$installed_ssm_plugin" != "${ssm_plugin_version}" ]; then
+  logger -t toolbox-bootstrap "session-manager-plugin: latest is now $installed_ssm_plugin, versions.yaml toolbox.aws-session-manager-plugin says ${ssm_plugin_version} -- bump the pin"
+fi
+
+# --- ClickHouse client, pinned to the SAME version this deployment's server
+# runs (versions.yaml services.clickhouse-version), never a version of its own.
+# packages.clickhouse.com/rpm/ holds no files at all, only lts/ and stable/, so
+# the path carries the channel. Both packages go in ONE transaction: dnf cannot
+# resolve clickhouse-client's pinned clickhouse-common-static dependency from a
+# standalone RPM URL, and there is no ClickHouse repo configured to find it in.
+dnf install -y \
+  "https://packages.clickhouse.com/rpm/stable/clickhouse-common-static-${clickhouse_client_version}.$RPM_ARCH.rpm" \
+  "https://packages.clickhouse.com/rpm/stable/clickhouse-client-${clickhouse_client_version}.$RPM_ARCH.rpm"
+
+# --- psql, pinned to the deployment's PostgreSQL MAJOR (services.postgresql)
+dnf install -y "postgresql${postgresql_major_version}"
+
+# --- Java 17 -- the Apache Kafka CLI scripts below need it (KIP-1013: Kafka
+# 4.0 raised brokers, Connect and the console tools to Java 17; only clients
+# and Streams stayed on 11). AL2023's own base repos carry Corretto 17, so
+# nothing beyond this package needs enabling.
+dnf install -y java-17-amazon-corretto-headless
+
+# --- Kafka CLI -- kcat is not an AL2023 package (AWS publishes none in the
+# base repos, unlike the Debian the container image installs it from), so
+# this instance carries the Apache project's own console scripts instead,
+# pinned to versions.yaml services.kafka-version and never to a pin of its
+# own -- the identical pattern clickhouse-client and psql already follow
+# above. That is the IN-CLUSTER broker's version exactly; an MSK deployment
+# names its own kafka.msk.broker_version in the dial, so the two can differ
+# and the CLI is then the newer of the pair. Pulled from
+# archive.apache.org rather than the current-release mirror network, which
+# drops a version the moment it is no longer the latest. Scala 2.13 is the
+# only build the 4.x line publishes, so it is a constant here rather than a
+# second thing to pin.
+curl -fsSL -o /tmp/kafka-cli.tgz \
+  "https://archive.apache.org/dist/kafka/${kafka_cli_version}/kafka_2.13-${kafka_cli_version}.tgz"
+tar -xzf /tmp/kafka-cli.tgz -C /opt
+ln -s "/opt/kafka_2.13-${kafka_cli_version}" /opt/kafka-cli
+rm -f /tmp/kafka-cli.tgz
+# A plain symlink into $BIN would break these scripts: each one finds its own
+# JARs via `dirname $0`, and a symlink's $0 is the LINK's path, never its
+# target -- so a thin wrapper that execs the real script by absolute path is
+# what keeps that lookup resolving inside /opt/kafka-cli, where the JARs
+# actually live.
+for tool in kafka-topics.sh kafka-console-producer.sh kafka-console-consumer.sh \
+  kafka-consumer-groups.sh kafka-broker-api-versions.sh; do
+  cat > "$BIN/$tool" <<WRAPPER
+#!/bin/bash
+exec /opt/kafka-cli/bin/$tool "\$@"
+WRAPPER
+  chmod +x "$BIN/$tool"
+done

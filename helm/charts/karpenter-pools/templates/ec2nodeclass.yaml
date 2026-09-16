@@ -1,0 +1,52 @@
+{{- $k := .Values.karpenter -}}
+{{- range $name, $pool := $k.pools }}
+{{- $nc := include "karpenter-pools.nodeClass" (dict "ctx" $ "pool" $pool) | fromYaml }}
+---
+# One EC2NodeClass per pool, not one shared: the instance-store policy and the
+# root volume differ per workload, and a shared class would carry the widest of
+# each for every pool.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  # An alias carries its own AMI family, so amiFamily is left unset -- setting it
+  # to anything but the alias's family or Custom is rejected by the CRD.
+  amiSelectorTerms:
+    - alias: {{ $nc.amiAlias | quote }}
+  # A profile, not a role: Karpenter manages an instance profile it is given a
+  # role for, and this one is the tofu's to create, tag and delete.
+  instanceProfile: {{ $k.cluster.instanceProfile | quote }}
+  # Private subnets only -- the tag is written on those and on nothing else.
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ $k.cluster.discoveryTag | quote }}
+  # The EKS cluster security group, which is what admits a node to the control
+  # plane.
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ $k.cluster.discoveryTag | quote }}
+  {{- with $nc.instanceStorePolicy }}
+  instanceStorePolicy: {{ . }}
+  {{- end }}
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: {{ $nc.metadata.httpTokens }}
+    httpPutResponseHopLimit: {{ $nc.metadata.httpPutResponseHopLimit }}
+  blockDeviceMappings:
+    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
+    # kubelet keeps its state on.
+    - deviceName: /dev/xvda
+      rootVolume: true
+      ebs:
+        volumeSize: {{ printf "%vGi" $nc.rootVolume.sizeGi | quote }}
+        volumeType: {{ $nc.rootVolume.type }}
+        iops: {{ $nc.rootVolume.iops }}
+        throughput: {{ $nc.rootVolume.throughputMibS }}
+        encrypted: true
+        # The deployment's own key, the same one EKS secrets and Kafka take.
+        kmsKeyID: {{ $k.cluster.kmsKeyId | quote }}
+        deleteOnTermination: true
+{{- end }}
