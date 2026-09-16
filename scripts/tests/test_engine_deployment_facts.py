@@ -54,6 +54,9 @@ PROFILE_ANNOTATION = "dfe.hyperi.io/profile"
 CATALOGUE_CONFIGMAP = "dfe-engine-app-catalogue"
 CATALOGUE_FILE = "/etc/dfe-engine/catalogue/apps.yaml"
 
+# One per deployment-supplied auth ConfigMap the init container copies in.
+AUTH_CHECKSUMS = ("checksum/oidc-providers", "checksum/auth-groups", "checksum/ca-bundle")
+
 
 def render(*args: str, chart: Path = ENGINE_CHART) -> str:
     cmd = ["helm", "template", "dfe-engine", str(chart), *args]
@@ -236,6 +239,92 @@ def test_a_manifest_edit_moves_the_pod_template() -> None:
         )
 
 
+def test_an_auth_configmap_edit_can_reach_the_engine() -> None:
+    """The init container copies the three auth ConfigMaps once at pod start, and
+    the umbrella installs no Reloader, so without a checksum an edit sits unread."""
+    args = (
+        "--set", "authConfig.providersConfigMap=dfe-oidc-providers",
+        "--set", "authConfig.groupsConfigMap=dfe-auth-groups",
+        "--set", "authConfig.caBundleConfigMap=dfe-ca-bundle",
+    )
+    annotations = pod_template(*args)["metadata"]["annotations"]
+    for key in AUTH_CHECKSUMS:
+        expect(
+            f"the pod template carries {key}",
+            bool(annotations.get(key)),
+            f"annotations: {sorted(annotations)}",
+        )
+
+
+def test_an_unset_auth_configmap_renders_no_checksum() -> None:
+    """A checksum over a ConfigMap this deployment does not mount is noise."""
+    annotations = pod_template()["metadata"]["annotations"]
+    for key in AUTH_CHECKSUMS:
+        expect(
+            f"no {key} when nothing supplies that ConfigMap",
+            key not in annotations,
+            f"annotations: {sorted(annotations)}",
+        )
+
+
+def test_the_engine_gets_a_boot_budget() -> None:
+    """Liveness starts at 10s. First boot seeds every registry and reconciles the
+    ClickHouse fence, and k8s suspends liveness while a startupProbe runs."""
+    probe = pod_template()["spec"]["containers"][0].get("startupProbe")
+    expect("the engine container has a startupProbe", probe is not None, "none rendered")
+    if probe:
+        expect(
+            "and it targets the health port the other probes use",
+            probe["httpGet"] == {"path": "/livez", "port": "obs"},
+            f"got {probe['httpGet']!r}",
+        )
+        expect(
+            "with a budget longer than the liveness delay",
+            probe["failureThreshold"] * probe["periodSeconds"] >= 300,
+            f"got {probe['failureThreshold']} * {probe['periodSeconds']}s",
+        )
+
+
+def test_an_external_tls_clickhouse_is_expressible() -> None:
+    """The chart hardcoded secure false, so a deployment whose ClickHouse speaks
+    TLS could not be rendered at all (#277)."""
+    env = engine_env()
+    expect(
+        "the in-cluster default is still plaintext",
+        env.get("DFE_CLICKHOUSE_SECURE") == "false",
+        f"got {env.get('DFE_CLICKHOUSE_SECURE')!r}",
+    )
+    expect(
+        "and a plaintext connection renders no verify dial",
+        "DFE_CLICKHOUSE_VERIFY" not in env,
+        "there is no certificate to verify on 8123",
+    )
+    tls = engine_env("--set", "clickhouse.secure=true", "--set", "clickhouse.verify=false")
+    expect(
+        "a TLS ClickHouse renders secure",
+        tls.get("DFE_CLICKHOUSE_SECURE") == "true",
+        f"got {tls.get('DFE_CLICKHOUSE_SECURE')!r}",
+    )
+    expect(
+        "and a self-signed one renders verify false rather than dropping it",
+        tls.get("DFE_CLICKHOUSE_VERIFY") == "false",
+        f"got {tls.get('DFE_CLICKHOUSE_VERIFY')!r}",
+    )
+
+
+def test_the_token_lifetime_is_a_dial() -> None:
+    expect(
+        "unset leaves the engine's own default",
+        "DFE_API_JWT_EXPIRE_MINUTES" not in engine_env(),
+        "the variable was rendered with nothing behind it",
+    )
+    expect(
+        "and a deployment can shorten it",
+        engine_env("--set", "api.jwtExpireMinutes=15").get("DFE_API_JWT_EXPIRE_MINUTES") == "15",
+        "the dial did not reach the container",
+    )
+
+
 def test_every_profile_still_renders_with_the_real_overlays() -> None:
     for profile in PROFILES:
         env = engine_env(
@@ -268,6 +357,11 @@ def main() -> int:
         test_the_manifest_reaches_the_engine()
         test_the_engine_reads_the_manifest_off_that_configmap()
         test_a_manifest_edit_moves_the_pod_template()
+        test_an_auth_configmap_edit_can_reach_the_engine()
+        test_an_unset_auth_configmap_renders_no_checksum()
+        test_the_engine_gets_a_boot_budget()
+        test_an_external_tls_clickhouse_is_expressible()
+        test_the_token_lifetime_is_a_dial()
         test_every_profile_still_renders_with_the_real_overlays()
         return summary()
 

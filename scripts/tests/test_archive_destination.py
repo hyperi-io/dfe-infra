@@ -93,6 +93,31 @@ def test_the_spool_lands_on_a_writable_volume() -> None:
            working in mounts, f"workingDir {working!r} is not one of {sorted(mounts)}")
 
 
+def test_the_spool_volume_is_bounded() -> None:
+    """The archiver's own brake reads the node's free space, so an unsized
+    emptyDir lets a spooling pod fill the node instead of being evicted."""
+    spec = container(*ON_THE_BUS)
+    spool = next(v for v in spec["volumes"] if v["name"] == "spool")
+    expect(
+        "the spool emptyDir carries a sizeLimit",
+        bool(spool.get("emptyDir", {}).get("sizeLimit")),
+        f"got {spool!r}",
+    )
+    expect(
+        "and it is the app's own max_spool_bytes default",
+        spool["emptyDir"]["sizeLimit"] == "10Gi",
+        f"got {spool['emptyDir']['sizeLimit']!r}, the app defaults to 10GiB",
+    )
+
+
+def test_an_unsized_spool_still_renders_a_volume() -> None:
+    """A deployment that wants the node's whole disk clears the dial, and an
+    `emptyDir:` with nothing under it is not a volume source at all."""
+    spec = container(*ON_THE_BUS, "--set", "spool.sizeLimit=")
+    spool = next(v for v in spec["volumes"] if v["name"] == "spool")
+    expect("the volume is still an emptyDir", spool.get("emptyDir") == {}, f"got {spool!r}")
+
+
 def test_the_broker_reaches_the_app() -> None:
     """The app reads bare KAFKA_*; BOOTSTRAP_SERVERS left it on localhost:9092."""
     env = env_of(container(*ON_THE_BUS))
@@ -162,6 +187,8 @@ def main() -> int:
         test_local_disk_is_a_destination_and_a_volume()
         test_no_local_path_adds_neither()
         test_the_spool_lands_on_a_writable_volume()
+        test_the_spool_volume_is_bounded()
+        test_an_unsized_spool_still_renders_a_volume()
         test_the_broker_reaches_the_app()
         test_the_sasl_credential_rides_its_secret()
         test_the_chart_sends_no_discovery_pattern()

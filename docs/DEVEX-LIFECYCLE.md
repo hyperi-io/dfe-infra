@@ -37,7 +37,7 @@ CI (`.github/workflows/`) runs on every push/PR:
 
 - `tf-validate` -- `terraform validate` + module `*.tftest.hcl`, matrixed over terraform and opentofu.
 - `helm-lint` -- `helm lint` over the charts in `helm/charts/` and the `helm/library/` charts.
-- `docker-build` -- builds the utility images under `docker/` (only on changes there).
+- `toolbox-build` -- builds the `dfe-toolbox` image family under `docker/` (only on changes there, or to `versions.yaml`).
 
 Locally:
 

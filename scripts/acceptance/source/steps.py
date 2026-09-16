@@ -249,10 +249,16 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict)
     """The status a reporting wait earns, once the telemetry has been attributed.
 
     An app reports whether or not the instance this run created is doing any of
-    the work, and on Compose one container serves the app and every instance of
-    it, so ``reporting`` on its own says the container is up and nothing about
-    this instance. Where the two cannot be told apart the row is ``unproven``
-    and says which of them it could not rule out.
+    the work, so ``reporting`` on its own says the container is up and nothing
+    about this instance. What rules that out is the ``pipeline_idle`` series,
+    which scalo publishes only while the app holds NO work.
+
+    Which series carries it depends on the tier. On Kubernetes each instance is
+    its own deployment and publishes under ``<app>-<instance>``. On Compose one
+    container serves the app and every instance of it, so the only series that
+    ever exists is the app's own -- and reading nothing there would make the row
+    permanently ``unproven`` on that tier (#340). The app series IS the
+    instance's series there, so it is read and the row says which one answered.
 
     Args:
         store: The datastore this run can read the otel tables from.
@@ -266,11 +272,13 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict)
     if not status.get("reporting"):
         return "failed", detail
     telemetry = str(status.get("telemetry_name") or "")
-    if telemetry == service:
-        return "unproven", (
-            f"{detail}; the telemetry answers to {service}, which every instance of "
-            "the app shares, so this is not evidence about this instance"
-        )
+    # One container per app: no per-instance series exists to prefer over it.
+    shared = telemetry in ("", service)
+    whose = (
+        f"{service}, the app's own series -- one container serves every instance here"
+        if shared
+        else telemetry
+    )
     if not store.host:
         return "unproven", f"{detail}; no datastore access in this run, so an idle app reads the same"
     try:
@@ -299,7 +307,9 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict)
             + (f", the last {since}s ago" if since is not None else "")
             + ", which is an app holding no work"
         )
-    return "done", f"{detail}; no pipeline_idle sample in the last {IDLE_WINDOW}s"
+    return "done", (
+        f"{detail}; no pipeline_idle sample in the last {IDLE_WINDOW}s, read from {whose}"
+    )
 
 
 def record_instance_up(driver, engine: Engine, store: Datastore, service: str, name: str,
