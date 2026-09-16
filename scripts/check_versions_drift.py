@@ -672,6 +672,19 @@ CHECKS += [
     for half in ("tag", "digest")
 ]
 
+# The one `kind: asset` content entry live today: a release download URL with
+# the tag in its path, not a ghcr.io tag@digest, so contract_ref_pattern does
+# not fit it and there is no second, immutable half to check.
+CHECKS += [
+    Check(
+        "dfe-transform-elastic catalogue asset ref",
+        "content.dfe-transform-elastic-catalogue",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r"name: dfe-transform-elastic-catalogue\n\s*kind: asset\n\s*ref: "
+        r'"https://github\.com/hyperi-io/dfe-transform-elastic/releases/download/([^"]+)"',
+    ),
+]
+
 # The hyperdx chart runs an init container on the ENGINE image to materialise the
 # dashboards the engine owns. Helm cannot read a sibling chart's appVersion, so
 # the engine tag has a second copy here and needs watching like any other.

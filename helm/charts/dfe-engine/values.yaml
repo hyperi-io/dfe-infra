@@ -145,7 +145,19 @@ content:
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.2@sha256:a2f5073d0a78c1143ab8cedf738c159fff01dd14292c50fd88aecbf31c09517c"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.3@sha256:aa919948c1d652c30be4c96cff54ef7a56f179b55f63a463e32ad1510f02a33d"
+    # The source catalogue the settings API offers: v1.1.3 is the first
+    # dfe-transform-elastic release to carry sources.yaml as a release asset
+    # (dfe-transform-elastic#18/#65; content.dfe-transform-elastic-catalogue in
+    # versions.yaml). The ref is the release download root -- `files.from` is
+    # appended to it, matching every other release asset URL shape.
+    - name: dfe-transform-elastic-catalogue
+      kind: asset
+      ref: "https://github.com/hyperi-io/dfe-transform-elastic/releases/download/v1.1.3"
+      role: catalogue
+      files:
+        - from: sources.yaml
+          to: sources.yaml
 
 config:
   mountPath: /config

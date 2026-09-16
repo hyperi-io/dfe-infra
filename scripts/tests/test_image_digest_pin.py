@@ -201,7 +201,9 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
             "initContainers"
         )
         or []
-        if c["name"].startswith(CONTENT_PREFIX)
+        # Contract entries only -- a catalogue asset entry names a release URL,
+        # not an app pin, so it carries no apps/digests key for the loop below.
+        if c["name"].startswith(CONTENT_PREFIX) and c["name"].endswith("-contract")
     }
     expect(
         "the chart mounts a contract for every app that carries a settings surface",
