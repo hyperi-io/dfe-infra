@@ -84,7 +84,7 @@ tags:
 
   maturity:
     # Same ladder as versions.yaml. `support` is the orthogonal stance.
-    ladder: "alpha -> beta -> rc -> ga"
+    ladder: "alpha -> beta -> rc -> release"
     support: "standard | lts | eol"
 
   optional: "True where a complete DFE deployment can omit the member entirely. Anything else is required."
@@ -186,7 +186,7 @@ nodes:
     role: infra
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: none-declared
     classification: product
@@ -208,7 +208,7 @@ nodes:
     role: infra
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -227,7 +227,7 @@ nodes:
     role: content
     language: none
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: none-declared
     classification: product
@@ -247,7 +247,7 @@ nodes:
     role: service
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -267,7 +267,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -283,7 +283,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -299,7 +299,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -315,7 +315,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -333,7 +333,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -349,7 +349,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -389,7 +389,7 @@ nodes:
     role: ui
     language: typescript
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -406,7 +406,7 @@ nodes:
     role: ui
     language: typescript
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: MIT
     classification: fork
@@ -430,7 +430,7 @@ nodes:
     role: library
     language: rust
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: oss
@@ -451,7 +451,7 @@ nodes:
     role: library
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: oss
@@ -470,7 +470,7 @@ nodes:
     role: library
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: general-oss
@@ -489,7 +489,7 @@ nodes:
     role: content
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -511,7 +511,7 @@ nodes:
     role: library
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: general-oss
@@ -530,7 +530,7 @@ nodes:
     role: service
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: general-oss
