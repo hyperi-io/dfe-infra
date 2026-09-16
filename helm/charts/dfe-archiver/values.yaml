@@ -58,6 +58,13 @@ archive:
 # together with it.
 spool:
   path: /var/spool/dfe/archiver
+  # The app's own max_spool_bytes default, 10GiB (dfe-archiver
+  # crates/core/src/buffer/tiered.rs:72). Its disk brake reads free space with
+  # fs2::available_space, which on an emptyDir answers for the NODE's
+  # filesystem, so an unsized volume lets a spooling archiver fill the node it
+  # runs on. With a sizeLimit kubelet evicts this pod instead. Move it together
+  # with the app's max_spool_bytes; empty leaves the volume unbounded.
+  sizeLimit: 10Gi
 
 # Archive destination. Both keys are rendered as env (S3_ENDPOINT / S3_BUCKET,
 # the archiver's flat-env contract) and env BEATS the config file, so a value set

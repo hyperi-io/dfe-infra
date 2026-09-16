@@ -878,12 +878,22 @@ class TestTheReportingVerdict:
         assert "6 pipeline_idle sample(s)" in detail
         assert "an app holding no work" in detail
 
-    def test_telemetry_the_whole_app_shares_is_unproven(self):
-        """One container per app on Compose, so the app's own name proves nothing per instance."""
+    def test_telemetry_the_whole_app_shares_is_read_and_named(self):
+        """One container per app on Compose, so no per-instance series exists to
+        prefer -- reading nothing there left the row permanently unproven (#340)."""
         state, detail = self.verdict(self.IdleStore(), self.SERVICE)
 
+        assert state == "done"
+        assert f"read from {self.SERVICE}" in detail
+        assert "one container serves every instance here" in detail
+
+    def test_a_shared_series_holding_no_work_is_still_unproven(self):
+        """The shared series is read, not believed: an idle container fails the
+        same way a per-instance one does."""
+        state, detail = self.verdict(self.IdleStore(samples=6), self.SERVICE)
+
         assert state == "unproven"
-        assert "every instance of the app shares" in detail
+        assert "an app holding no work" in detail
 
     def test_a_reporting_claim_with_no_series_behind_it_is_unproven(self):
         """The engine reads max(TimeUnix), which ClickHouse answers with the epoch

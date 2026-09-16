@@ -166,6 +166,14 @@ clickhouse:
   host: ""
   port: 8123
   database: dfe
+  # false for the in-cluster server, which is plaintext HTTP on 8123. An external
+  # TLS ClickHouse sets this true and moves `port` with it -- without the dial the
+  # chart could only express the in-cluster case (#277).
+  secure: false
+  # Whether the server certificate is verified. Read only when `secure` is on,
+  # because a plaintext connection presents no certificate; set false for a
+  # self-signed external server.
+  verify: true
 
 # Days every time-series table DFE deploys keeps rows, the OTel tables included.
 # 0 disables the default TTL.
@@ -340,6 +348,9 @@ oidc:
 # register those, so external OIDC cannot complete.
 api:
   forwardedAllowIps: ""
+  # Minutes an issued API token stays valid. Empty leaves the engine's own
+  # 60-minute default; a deployment that wants shorter sessions sets it here.
+  jwtExpireMinutes: ""
 
 authConfig:
   providersConfigMap: ""

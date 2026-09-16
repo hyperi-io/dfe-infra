@@ -187,8 +187,15 @@ spec:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        # Sized, unlike the tmp volume beside it: this one takes the record
+        # backlog, and the app's disk brake reads the node's free space.
         - name: spool
+          {{- with .Values.spool.sizeLimit }}
+          emptyDir:
+            sizeLimit: {{ . | quote }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         {{- with .Values.archive.localPath }}
         - name: archive
           emptyDir: {}
