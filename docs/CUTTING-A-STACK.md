@@ -98,5 +98,20 @@ auto-advance the top-level `latest:` pointer, and only when every app is
 published. Everything below release may carry unpublished apps, which is what
 lets an rc exist while a component is still in flight.
 
+### This ladder is the suite's, not a repo's
+
+`rc` exists only at this layer. It is the stage where the components come
+together and churn against each other, one level above any single repo.
+
+An individual repo runs hyperi-ci's ladder instead, which is `alpha` ->
+`beta` -> `release` and lines up 1:1 with semantic-release's prerelease
+branches. A repo never cuts an `rc`. Where 1.1.1 is released and 1.1.2 is not
+ready, that repo ships `1.1.2-beta.N` off its `beta` branch while `main` keeps
+serving 1.1.1 to anyone pinning a stable version.
+
+Both ladders end at `release`, and the shared vocabulary is deliberate -- the
+only word that differs between the layers is `rc`. hyperi-ci's side of this is
+`docs/versioning-and-the-suite.md` in that repo.
+
 Related: `docs/CI-MAINTENANCE-DESIGN.md` for how shared facts stay current, and
 `docs/TESTING-CYCLE.md` for proving a cut on a real cluster.
