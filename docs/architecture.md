@@ -96,9 +96,10 @@ What that leaves this repo:
   ACLs over SASL/IAM, because on a cluster that has stopped granting by default
   nothing can write the FIRST ACL unless it is already permitted. It creates no
   topic. Its grants are `kafka-user.yaml`'s, grant for grant: Read, Write,
-  Create, Describe and Alter on topic `*`. Create is what lets the engine make
-  the bootstrap topic set; Alter is what lets it raise a partition count. Delete
-  and every cluster operation are withheld.
+  Create, Describe, Alter and Delete on topic `*`. Create makes the bootstrap
+  topic set, Alter raises a partition count, and Delete is what deleting a source
+  needs to take that source's `_land`/`_load` pair with it. Every cluster
+  operation is withheld.
 - **The ordering.** dfe-engine syncs at Argo wave 5, the otel collector at 6 and
   every other app at 7, and each app pod runs a `wait-for-engine` init container
   (`dfe-common.waitForEngine`) that polls the engine Service's `/readyz`. Ready

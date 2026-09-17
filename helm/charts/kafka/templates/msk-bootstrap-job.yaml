@@ -22,11 +22,12 @@
 # makes a topic exist.
 #
 # The ACL set is kafka-user.yaml's, grant for grant: topic literal "*" with Read,
-# Write, Create, Describe and Alter, consumer groups by the "dfe-" prefix with
-# Read and Describe. Alter is what lets the engine raise a topic's partition
-# count when a source's throughput changes. No Delete and no cluster operation --
-# on-prem withholds both, and a compromised engine principal must not be able to
-# drop the bus.
+# Write, Create, Describe, Alter and Delete, consumer groups by the "dfe-" prefix
+# with Read and Describe. Alter raises a topic's partition count when a source's
+# throughput changes; Delete is what DELETE /sources/{name} needs to take a
+# source's _land/_load pair with it. No cluster operation -- on-prem withholds
+# every one of those, and a compromised engine principal must not be able to
+# reconfigure or take over the bus.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -159,7 +160,7 @@ spec:
               done
               # The on-prem grants, verbatim (kafka-user.yaml). kafka-acls.sh --add
               # is idempotent, so a re-run re-asserts rather than duplicates.
-              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Write --operation Create --operation Describe --operation Alter --topic "*" --resource-pattern-type literal
+              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Write --operation Create --operation Describe --operation Alter --operation Delete --topic "*" --resource-pattern-type literal
               # prefixed means the name IS the literal prefix -- never write a '*'
               # glob here, which would match groups starting "dfe-*", not "dfe-".
               /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Describe --group "dfe-" --resource-pattern-type prefixed
