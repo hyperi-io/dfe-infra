@@ -37,7 +37,7 @@ Subcommands:
                  stack.previous, else sequential minors + free z-hops.
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
-  verify         Re-fetch GHCR digests (gh api) and compare to versions.yaml.
+  verify         Re-fetch GHCR digests and compare them to versions.yaml.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
                  graph as JSON, the build-cycle table, a --producer,
                  --consumer or --lane slice, or (re)render the Mermaid blocks
@@ -58,14 +58,16 @@ Examples:
     python3 scripts/dfe-stack suite --render-docs
 
 render/images/graph/check-upgrade/resolve/suite need only python3 + git.
-verify and cut read GHCR through `gh api`, which needs the `read:packages` scope
-a developer's own `gh login` usually lacks -- pass `--env-file PATH` and the
-GHCR_TOKEN (or GH_TOKEN) in that file authenticates gh for this process:
+verify and refresh-digests read the registry through `docker buildx imagetools`,
+which authenticates from the docker credential store and needs no gh scope.
 
-    python3 scripts/dfe-stack --env-file bootstrap/.env verify
+cut still needs the GH packages API, because listing an app's published tags to
+pick the highest has no imagetools equivalent. That API wants the
+`read:packages` scope a developer's own `gh login` usually lacks -- pass
+`--env-file PATH` and the GHCR_TOKEN (or GH_TOKEN) in that file authenticates gh
+for this process:
 
-refresh-digests reads the registry through `docker buildx imagetools`, which
-authenticates from the docker credential store instead.
+    python3 scripts/dfe-stack --env-file bootstrap/.env cut 2.2.0-rc.15
 """
 
 from __future__ import annotations
@@ -685,23 +687,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
     # The HyperDX fork is versioned under content:, so an apps-only lookup finds
     # no tag and reports a correct pin as "(tag not found)".
     content = v.get("content", {})
-    org = args.registry.split("/", 1)[1] if "/" in args.registry else args.registry
+    host, _, org = args.registry.partition("/")
+    if not org:
+        raise SystemExit(f"error: --registry {args.registry!r} names no org (want <host>/<org>)")
     bad = 0
     for name, digest in sorted(digests.items()):
         tag = apps.get(name) or content.get(name)
-        out = _run(
-            [
-                "gh", "api", "--paginate",
-                f"orgs/{org}/packages/container/{name}/versions?per_page=100",
-                "--jq",
-                f'.[] | select(.metadata.container.tags | index("{tag}")) | .name',
-            ]
-        )
-        actual = out.stdout.strip()
-        if out.returncode != 0:
-            print(f"ERROR {name}: gh api failed: {out.stderr.strip()}")
+        try:
+            actual = registry_pins.tag_digest(org, name, tag, registry=host)
+        except registry_pins.RegistryError as exc:
+            print(f"ERROR {name}: {exc}")
             bad += 1
-        elif actual != digest:
+            continue
+        if actual != digest:
             print(f"DRIFT {name}: versions.yaml {digest} != registry {actual or '(tag not found)'}")
             bad += 1
         else:
@@ -807,20 +805,6 @@ def annotated_images(text: str) -> dict[str, tuple[str, str]]:
     return found
 
 
-def resolve_digest(ref: str) -> tuple[str | None, str]:
-    """(manifest-list digest, error). Multi-arch safe -- the LIST digest, not one arch."""
-    out = _run(
-        [
-            "docker", "buildx", "imagetools", "inspect", ref,
-            "--format", "{{.Manifest.Digest}}",
-        ]
-    )
-    if out.returncode != 0:
-        return None, out.stderr.strip().splitlines()[-1] if out.stderr.strip() else "failed"
-    digest = out.stdout.strip()
-    return (digest, "") if digest.startswith("sha256:") else (None, f"unexpected: {digest!r}")
-
-
 def rewrite_digests(
     text: str, stack: str, changes: list[tuple[str, str]]
 ) -> tuple[str, list[str], list[tuple[str, str]]]:
@@ -891,7 +875,7 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
     for key in sorted(recorded):
         ref, tag = images[key]
         full = f"{ref}:{tag}"
-        digest, err = resolve_digest(full)
+        digest, err = registry_pins.ref_digest(full)
         if digest is None:
             print(f"ERROR {key}: {full}: {err}")
             stalled.append(key)
@@ -1363,7 +1347,7 @@ def main() -> int:
         metavar="PATH",
         help=(
             "KEY=VALUE file; GHCR_TOKEN or GH_TOKEN in it authenticates gh for "
-            "the registry reads; repeatable, later wins"
+            "the packages-API reads cut needs; repeatable, later wins"
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)

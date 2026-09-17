@@ -2,18 +2,21 @@
 #  Project:      dfe-infra
 #  File:         test_resolve_pins.py
 #  Purpose:      Prove the tag -> digest resolver + writer: the registry lookup
-#                (mocked, never the network), the fresh/stale/missing verdict,
-#                the cooldown hold, and that --write rewrites ONLY the current
-#                stack's digests: while preserving comments and formatting.
+#                (mocked, never the network), that a registry nobody could reach
+#                raises instead of reading as absent, the fresh/stale/missing
+#                verdict, the cooldown hold, and that --write rewrites ONLY the
+#                current stack's digests: while preserving comments and
+#                formatting.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/registry_pins.py + scripts/resolve_pins.py (dfe-infra#116).
 
-The GH packages API is mocked in every test -- no network, so the suite is
-hermetic and runs on a bare CI image. Runs under pytest, and standalone via the
-main() runner at the bottom (matching the other tests in this dir).
+Both registry reads -- `docker buildx imagetools` and the GH packages API -- are
+mocked in every test, so the suite is hermetic and runs on a bare CI image. Runs
+under pytest, and standalone via the main() runner at the bottom (matching the
+other tests in this dir).
 
     python3 -m pytest scripts/tests/test_resolve_pins.py
     python3 scripts/tests/test_resolve_pins.py
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -169,6 +173,88 @@ def test_gh_api_raises_on_failure(monkeypatch):
         registry_pins._gh_api("/whatever")
     except registry_pins.RegistryError as exc:
         raised = "not authenticated" in str(exc)
+    assert raised
+
+
+# --- registry_pins digest resolution ------------------------------------------
+_INDEX = "sha256:" + "9" * 64
+
+
+class _FakeProc:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _fake_run(docker=None, gh=None):
+    """A subprocess.run stub routing on argv[0]; an Exception value is raised."""
+
+    def run(cmd, *a, **k):
+        proc = docker if cmd[0] == "docker" else gh
+        if isinstance(proc, Exception):
+            raise proc
+        if proc is None:
+            raise AssertionError(f"{cmd[0]} must not be called")
+        return proc
+
+    return run
+
+
+def test_ref_digest_reads_the_digest_imagetools_reports(monkeypatch):
+    monkeypatch.setattr(
+        registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX + "\n"))
+    )
+    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
+
+
+def test_tag_digest_prefers_imagetools_and_leaves_the_api_alone(monkeypatch):
+    monkeypatch.setattr(
+        registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX))
+    )
+    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1") == _INDEX
+
+
+def test_tag_digest_falls_back_to_the_api_without_docker(monkeypatch):
+    registry_pins.package_versions.cache_clear()
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=FileNotFoundError("docker"),
+            gh=_FakeProc(stdout=json.dumps(FAKE_PACKAGES["dfe-engine"])),
+        ),
+    )
+    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1") == "sha256:" + "a" * 64
+
+
+def test_tag_digest_is_none_only_when_the_registry_says_not_found(monkeypatch):
+    registry_pins.package_versions.cache_clear()
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=_FakeProc(returncode=1, stderr="ERROR: ghcr.io/o/a:v9.9.9: not found"),
+            gh=_FakeProc(returncode=1, stderr="gh: You need at least read:packages scope"),
+        ),
+    )
+    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v9.9.9") is None
+
+
+def test_tag_digest_raises_when_neither_read_could_answer(monkeypatch):
+    """An unreachable registry must not read as an absent tag, let alone a match."""
+    registry_pins.package_versions.cache_clear()
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=_FakeProc(returncode=1, stderr="failed to do request: dial tcp: no such host"),
+            gh=_FakeProc(returncode=1, stderr="gh: You need at least read:packages scope"),
+        ),
+    )
+    raised = False
+    try:
+        registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1")
+    except registry_pins.RegistryError as exc:
+        raised = "no such host" in str(exc)
     assert raised
 
 
