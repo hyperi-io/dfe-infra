@@ -326,9 +326,9 @@ data:
         database: {{ .Values.exporters.clickhouse.database | default .Values.clickhouse.database }}
         username: {{ .Values.exporters.clickhouse.username | default .Values.clickhouse.user }}
         password: ${env:CLICKHOUSE_PASSWORD}
-        # dfe-engine owns the otel table DDL (dfe_engine.schema.otel_tables),
-        # applied by dfe-schema before this collector starts. The exporter senses
-        # no topology, so left to create its own tables it emits a plain CREATE
+        # dfe-schemas declares the otel tables and dfe-engine applies them at its
+        # own startup, a wave before this collector. The exporter senses no
+        # topology, so left to create its own tables it emits a plain CREATE
         # TABLE against whichever replica it connected to and the siblings end up
         # without the table -- or with a different engine. With create_schema off
         # the only SQL it sends is INSERT.

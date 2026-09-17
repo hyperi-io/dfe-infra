@@ -28,6 +28,7 @@ spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
         - name: archiver
           image: {{ include "dfe-common.image" . | quote }}
@@ -127,7 +128,7 @@ spec:
             {{- if (include "dfe-common.transportIsBus" .) }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
-            # pre-created by the kafka chart (kafka.dlqTopics); names are the
+            # created by dfe-engine from the dfe-schemas topic set; names are the
             # archiver's bare flat-env contract (core config.rs DLQ_TOPIC/DLQ_MODE).
             - name: DLQ_TOPIC
               value: {{ .Values.dlq.topic | quote }}

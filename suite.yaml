@@ -761,14 +761,8 @@ edges:
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-schema/values.yaml:14"
-    note: "The dfe-schema chart runs an entry point of the ENGINE image, so it is a second copy of the engine tag and moves with it."
-  - from: dfe-engine
-    to: dfe-infra
-    kind: image-pin
-    type: lockstep
     evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:122"
-    note: "A third copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
+    note: "A second copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
 
   # --- dfe-infra -----------------------------------------------------------
 

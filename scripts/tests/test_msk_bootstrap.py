@@ -2,8 +2,8 @@
 #  Project:      dfe-infra
 #  File:         test_msk_bootstrap.py
 #  Purpose:      Prove the MSK bootstrap Job renders only for MSK, writes exactly
-#                the on-prem ACL set, pre-creates the derived topic list, and
-#                carries no credential of its own.
+#                the on-prem ACL set, creates no topic, and carries no credential
+#                of its own.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -18,12 +18,13 @@ fails loudly:
 1. It renders for MSK ALONE. Pointed at Strimzi or Redpanda it would grant a
    principal those brokers have never heard of, and a Job that runs where no
    MSK exists just sits in backoff until the Application reports degraded.
-2. The grants match on-prem's KafkaUser grant for grant. An extra Delete or
-   Alter renders green and passes every schema: the only check that bites is
-   naming the allowed set and refusing the rest.
-3. The topics come from the shared helper, so the cloud tier cannot ship
-   without a topic the apps are configured to write to. Comparing the names
-   against the single tier's Job is what keeps the two lists one list.
+2. The grants match on-prem's KafkaUser grant for grant. An extra cluster
+   operation renders green and passes every schema: the only check that bites
+   is naming the allowed set and refusing the rest.
+3. It creates NO topic. dfe-schemas declares the bootstrap topic set and
+   dfe-engine creates it at its own startup, on every tier -- a second creator
+   here would be a per-tier difference in who owns a topic, which is exactly
+   what engine-only schema control removed.
 
     python3 scripts/tests/test_msk_bootstrap.py
 
@@ -69,11 +70,13 @@ MSK_VALUES = {
 }
 
 # The on-prem grants, read from helm/charts/kafka/templates/kafka-user.yaml.
-TOPIC_OPERATIONS = {"Read", "Write", "Create", "Describe"}
+# Alter raises a topic's partition count; Delete is what deleting a source needs
+# to take its _land/_load pair with it.
+TOPIC_OPERATIONS = {"Read", "Write", "Create", "Describe", "Alter", "Delete"}
 GROUP_OPERATIONS = {"Read", "Describe"}
 # What on-prem deliberately withholds. A cluster operation is not in this set
 # because the word "Cluster" is checked on its own below.
-WITHHELD_OPERATIONS = {"Delete", "Alter", "AlterConfigs", "ClusterAction", "IdempotentWrite", "All"}
+WITHHELD_OPERATIONS = {"AlterConfigs", "ClusterAction", "IdempotentWrite", "All"}
 
 
 def merged(*overlays: dict) -> dict:
@@ -128,18 +131,6 @@ def commands(job: dict) -> list[str]:
 
 def acl_lines(job: dict) -> list[str]:
     return [ln for ln in commands(job) if "kafka-acls.sh" in ln]
-
-
-def topic_creates(job: dict) -> list[str]:
-    return [ln for ln in commands(job) if "--create" in ln]
-
-
-def created_topic_names(job: dict) -> set[str]:
-    out = set()
-    for line in topic_creates(job):
-        parts = line.split()
-        out.add(parts[parts.index("--topic") + 1].strip('"'))
-    return out
 
 
 def test_the_job_and_its_account_render_for_msk() -> None:
@@ -201,7 +192,7 @@ def test_the_acls_are_the_on_prem_grants_and_nothing_more() -> None:
         parts = line.split()
         return {parts[i + 1] for i, p in enumerate(parts) if p == "--operation"}
 
-    expect("the topic grant is Read/Write/Create/Describe",
+    expect("the topic grant is Read/Write/Create/Describe/Alter/Delete",
            operations(topic[0]) == TOPIC_OPERATIONS, f"got {operations(topic[0])}")
     expect("the group grant is Read/Describe",
            operations(group[0]) == GROUP_OPERATIONS, f"got {operations(group[0])}")
@@ -218,62 +209,37 @@ def test_the_acls_are_the_on_prem_grants_and_nothing_more() -> None:
     expect("the resulting ACLs are printed", any("--list" in ln for ln in lines), f"got {lines}")
 
 
+def test_the_job_grants_exactly_what_the_kafkauser_grants() -> None:
+    """Read the on-prem set off the KafkaUser rather than restating it here.
+
+    One principal serves both, so the two drifting apart is a per-cloud
+    difference in what dfe-engine may do -- and the comment in each file has
+    said "grant for grant" since before either had Alter.
+    """
+    docs = render(merged({"kafka": {"mode": "cluster", "provider": "strimzi"}}))
+    users = [d for d in docs if d.get("kind") == "KafkaUser"]
+    expect("the strimzi path renders one KafkaUser", len(users) == 1, f"got {len(users)}")
+    acls = {a["resource"]["type"]: set(a["operations"]) for a in users[0]["spec"]["authorization"]["acls"]}
+    expect("the KafkaUser topic grant is the set this file names",
+           acls["topic"] == TOPIC_OPERATIONS, f"got {acls['topic']}")
+    expect("the KafkaUser group grant is the set this file names",
+           acls["group"] == GROUP_OPERATIONS, f"got {acls['group']}")
+
+
 def test_the_principal_is_a_value() -> None:
     job = bootstrap_job(render(merged({"kafka": {"external": {"msk": {"scramUsername": "dfe-cloud"}}}})))
     expect("the renamed principal reaches both grants",
            script(job).count('--allow-principal "User:dfe-cloud"') == 2, script(job))
 
 
-def test_the_topics_are_the_shared_list() -> None:
+def test_the_job_creates_no_topic() -> None:
+    """The ACL half is the only half. dfe-engine creates every topic, on every tier."""
     job = bootstrap_job(render())
-    names = created_topic_names(job)
-    # The same values against the single tier, whose Job renders the same helper.
-    single = render(merged({"kafka": {"mode": "single", "provider": "strimzi"}}))
-    single_names = created_topic_names(jobs(single)[0])
-    expect("the MSK Job creates the single tier's topic list", names == single_names,
-           f"{sorted(names)} vs {sorted(single_names)}")
-    expect("the landing topic is there", "main_land" in names, f"got {sorted(names)}")
-    expect("a per-source landing topic is there", "okta_land" in names, f"got {sorted(names)}")
-    expect("every DLQ topic is there",
-           {"dfe_receiver_dlq", "dfe_loader_dlq", "dfe_archiver_dlq", "dfe_fetcher_dlq",
-            "dfe_transform_dlq"} <= names, f"got {sorted(names)}")
-    expect("every create is idempotent",
-           all("--if-not-exists" in ln for ln in topic_creates(job)), f"got {topic_creates(job)}")
-
-
-def test_the_topic_configs_are_the_derived_ones() -> None:
-    job = bootstrap_job(render())
-    creates = {ln.split("--topic ")[1].split()[0].strip('"'): ln for ln in topic_creates(job)}
-    expect("the size chain reaches every topic",
-           all("--config max.message.bytes=16777216" in ln for ln in creates.values()),
-           f"got {list(creates.values())}")
-    expect("the landing topic carries the 24h data retention",
-           "--config retention.ms=86400000" in creates["main_land"], creates["main_land"])
-    expect("a DLQ topic carries the 7d DLQ retention",
-           "--config retention.ms=604800000" in creates["dfe_loader_dlq"], creates["dfe_loader_dlq"])
-    expect("the derived partition count reaches the landing topic",
-           "--partitions 12 " in creates["main_land"], creates["main_land"])
-    expect("a per-source partition override wins for that source alone",
-           "--partitions 24 " in creates["m365_land"] and "--partitions 12 " in creates["okta_land"],
-           f"{creates['m365_land']} / {creates['okta_land']}")
-
-
-def test_an_explicit_partition_count_wins_over_the_broker_count_formula() -> None:
-    """kafka.replicas is this chart's own field, never the managed cluster's
-    real broker count at mode=external -- gate-3-correctness.md P2-2. The
-    override must reach every topic the Job creates, and win regardless of
-    what kafka.replicas happens to be set to."""
-    job = bootstrap_job(render(merged({"kafka": {"replicas": 9, "external": {"numPartitions": 48}}})))
-    lines = {
-        ln.split("--topic ")[1].split()[0].strip('"'): ln
-        for ln in commands(job) if "--create" in ln
-    }
-    expect("the override reaches the landing topic",
-           "--partitions 48 " in lines["main_land"], lines["main_land"])
-    expect("the override reaches a per-source topic too, beating its own default",
-           "--partitions 48 " in lines["okta_land"], lines["okta_land"])
-    expect("a DLQ topic keeps its own fixed partition count regardless",
-           "--partitions 1 " in lines["dfe_loader_dlq"], lines["dfe_loader_dlq"])
+    body = script(job)
+    expect("no kafka-topics.sh call", "kafka-topics.sh" not in body, body)
+    expect("no --create flag", "--create" not in body, body)
+    expect("no topic name reaches the Job",
+           "main_land" not in body and "okta_land" not in body and "_dlq" not in body, body)
 
 
 def test_the_iam_jar_is_pinned_and_verified() -> None:
@@ -323,8 +289,8 @@ def test_the_job_is_tracked_and_bounded() -> None:
     expect("backoffLimit is a value", job["spec"]["backoffLimit"] == 5, repr(job["spec"]))
     expect("ttlSecondsAfterFinished is a value",
            job["spec"]["ttlSecondsAfterFinished"] == 600, repr(job["spec"]))
-    expect("a changed topic list is a NEW Job name",
-           bootstrap_job(render(merged({"kafka": {"landingTopics": {"sources": [{"name": "okta"}]}}})))
+    expect("a changed principal is a NEW Job name",
+           bootstrap_job(render(merged({"kafka": {"external": {"msk": {"scramUsername": "dfe-cloud"}}}})))
            ["metadata"]["name"] != job["metadata"]["name"])
 
 
@@ -412,10 +378,9 @@ def main() -> int:
         test_the_job_renders_for_msk_alone()
         test_the_job_needs_somewhere_to_connect_and_an_off_switch()
         test_the_acls_are_the_on_prem_grants_and_nothing_more()
+        test_the_job_grants_exactly_what_the_kafkauser_grants()
         test_the_principal_is_a_value()
-        test_the_topics_are_the_shared_list()
-        test_the_topic_configs_are_the_derived_ones()
-        test_an_explicit_partition_count_wins_over_the_broker_count_formula()
+        test_the_job_creates_no_topic()
         test_the_iam_jar_is_pinned_and_verified()
         test_the_job_carries_no_credential()
         test_the_job_is_tracked_and_bounded()

@@ -33,17 +33,9 @@ spec:
                   namespace: cnpg
                   wave: "4"
                   appProject: data
-                # The schema gate. Wave 5, so it lands after ClickHouse is up and
-                # before anything writes: the collector runs with
-                # create_schema=false and the loader assumes its table exists.
-                # Runs in the clickhouse namespace: it is a ClickHouse client and
-                # that is where the admin credential already lives, so it needs no
-                # projection into the app namespace.
-                - app: dfe-schema
-                  namespace: clickhouse
-                  wave: "5"
-                  appProject: data
-                # Wave 6: needs its otel tables, which dfe-schema creates.
+                # Wave 5 is dfe-engine, deployed from layer2-apps: it is the only
+                # thing that applies schema, and it does it at its own startup.
+                # Wave 6: needs its otel tables, which dfe-engine creates.
                 - app: otel-collector
                   namespace: otel
                   wave: "6"
@@ -110,10 +102,10 @@ spec:
               - '$values/infra/common.yaml'
               - '$values/infra/{{ .app }}.yaml'
             parameters:
-              # The registry every dfe-* image is pulled from -- dfe-schema's
-              # Job and otel-collector both render one. A chart left on
-              # common.yaml's empty default renders the image with no host and
-              # containerd resolves it to Docker Hub, which publishes none.
+              # The registry every dfe-* image is pulled from -- otel-collector
+              # renders one. A chart left on common.yaml's empty default renders
+              # the image with no host and containerd resolves it to Docker Hub,
+              # which publishes none.
               - name: global.registry
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/registry" }}'
               # Where the DFE apps run -- the SAME annotation layer2-apps places them
@@ -137,11 +129,6 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
               - name: cloud
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
-              # Deployment-wide retention, the SAME annotation layer2-apps hands
-              # the engine, so the schema apply and the engine cannot disagree
-              # about a table's TTL. Only dfe-schema reads it; harmless elsewhere.
-              - name: retention.defaultTtlDays
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_default_ttl_days" | default "90" }}'
               # Who runs the brokers, and (msk only) their bare host list -- the
               # otel-collector chart's MSK open_monitoring scrape needs both, to
               # decide whether to render the job and what to target. Only

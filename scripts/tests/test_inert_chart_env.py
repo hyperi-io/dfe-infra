@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_inert_chart_env.py
-#  Purpose:      Pin the absence of chart dials and mounts no app reads, and the
-#                bootstrap Job that stopped re-running itself.
+#  Purpose:      Pin the absence of chart dials and mounts no app reads.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -214,21 +213,6 @@ def test_the_common_overlay_carries_no_unread_sasl_block() -> None:
         kafka.get("securityProtocol") == "SASL_PLAINTEXT",
         f"got {kafka.get('securityProtocol')!r}",
     )
-
-
-def test_the_bootstrap_topics_job_is_not_deleted_and_recreated() -> None:
-    """A TTL on a tracked resource under selfHeal is a re-run loop, not a cleanup."""
-    jobs = [
-        d for d in render(CHARTS / "kafka", "kafka.mode=single", "kafka.provider=strimzi")
-        if d.get("kind") == "Job"
-    ]
-    expect("the single tier renders a topics Job", len(jobs) == 1, f"got {len(jobs)}")
-    for job in jobs:
-        expect(
-            "it sets no ttlSecondsAfterFinished",
-            "ttlSecondsAfterFinished" not in job["spec"],
-            f"got {job['spec'].get('ttlSecondsAfterFinished')!r}",
-        )
 
 
 # --- #278: the reload cells ---------------------------------------------------

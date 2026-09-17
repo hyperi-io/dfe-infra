@@ -26,12 +26,22 @@ spec:
   authorization:
     type: simple
     acls:
-      # Allow DFE services to produce/consume on all dfe topics
+      # Produce, consume, and the whole topic lifecycle dfe-engine drives. Create
+      # makes the declared bootstrap topic set at the engine's own startup --
+      # nothing else creates a topic on any tier. Alter raises a partition count
+      # when a source's throughput changes. Delete is what DELETE /sources/{name}
+      # needs: the same dial that made a source's _land/_load pair removes it,
+      # and without the grant deleting a source leaves its topics behind and
+      # costs the loader a partition assignment for a source nothing can write
+      # to. One principal serves both paths and the ACL is one wildcard rule, so
+      # the grant cannot be narrowed to the source topics alone.
+      # EVERY CLUSTER OPERATION IS STILL WITHHELD: a compromised engine
+      # principal must not be able to reconfigure or take over the bus.
       - resource:
           type: topic
           name: "*"
           patternType: literal
-        operations: ["Read", "Write", "Create", "Describe"]
+        operations: ["Read", "Write", "Create", "Describe", "Alter", "Delete"]
       - resource:
           type: group
           # patternType: prefix means the name IS the literal prefix -- do NOT

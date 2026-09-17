@@ -100,8 +100,8 @@ metadata:
     dfe.hyperi.io/kafka_bootstrap_role_arn: "${DFE_KAFKA_BOOTSTRAP_ROLE_ARN}"
     dfe.hyperi.io/kafka_credential_ref: "${DFE_KAFKA_CREDENTIAL_REF}"
     dfe.hyperi.io/otel_endpoint: "${DFE_OTEL_ENDPOINT}"
-    # Deployment-wide retention; layer2-apps and layer2-data inject it into the
-    # dfe-engine and dfe-schema charts as retention.defaultTtlDays.
+    # Deployment-wide retention; layer2-apps injects it into the dfe-engine
+    # chart as retention.defaultTtlDays.
     dfe.hyperi.io/clickhouse_default_ttl_days: "${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS}"
     # Workload identity annotations JSON (from tf-iam output)
     dfe.hyperi.io/workload_identity_annotations: '${DFE_WORKLOAD_IDENTITY_ANNOTATIONS}'

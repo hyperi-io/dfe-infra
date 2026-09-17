@@ -157,18 +157,6 @@ def test_the_engine_sidecar_workloads_carry_the_digest_too() -> None:
         )
 
 
-def test_the_schema_job_runs_the_pinned_engine_image() -> None:
-    """dfe-schema is the engine image under another entry point, not its own app."""
-    stack = current_stack()
-    want = f"{REGISTRY}/dfe-engine:{stack['apps']['dfe-engine']}@{stack['digests']['dfe-engine']}"
-    rendered = images(render("dfe-schema", f"global.registry={REGISTRY}"))
-    expect(
-        "the dfe-schema Job renders the pinned engine digest",
-        rendered and all(i == want for i in rendered),
-        f"wanted {want}, got {rendered}",
-    )
-
-
 def test_the_hyperdx_dashboards_init_container_carries_the_digest() -> None:
     """A second copy of the engine pin, in a chart named after another app.
 

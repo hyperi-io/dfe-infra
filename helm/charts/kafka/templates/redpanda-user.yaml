@@ -2,10 +2,15 @@
 {{- if eq .Values.kafka.mode "cluster" }}
 # DFE service account on redpanda -- the operator's User CR, the direct analogue
 # of the Strimzi KafkaUser (kafka-user.yaml). Same SCRAM-512 mechanism, same ACLs
-# (topic '*': Read/Write/Create/Describe; consumer groups prefixed 'dfe-':
-# Read/Describe), and the operator writes the generated password into a Secret
-# named after the user -- identical shape to the Strimzi-minted secret, so clients
-# read dfe-kafka-user/password the same way regardless of provider.
+# (topic '*': Read/Write/Create/Describe/Alter/Delete; consumer groups prefixed
+# 'dfe-': Read/Describe), and the operator writes the generated password into a
+# Secret named after the user -- identical shape to the Strimzi-minted secret, so
+# clients read dfe-kafka-user/password the same way regardless of provider.
+#
+# The topic set is the same on every provider because one principal drives the
+# whole topic lifecycle: Create for the bootstrap set at engine startup, Alter to
+# raise a partition count, Delete so removing a source takes its _land/_load pair
+# with it. Cluster operations are withheld here as they are there.
 apiVersion: cluster.redpanda.com/v1alpha2
 kind: User
 metadata:
@@ -54,7 +59,7 @@ spec:
           type: topic
           name: "*"
           patternType: literal
-        operations: ["Read", "Write", "Create", "Describe"]
+        operations: ["Read", "Write", "Create", "Describe", "Alter", "Delete"]
       - type: allow
         resource:
           type: group

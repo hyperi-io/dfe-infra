@@ -95,10 +95,6 @@ dfe-hyperdx:
     host: "dfe-clickhouse-clickhouse-headless"
   resources: *meshResources
 
-dfe-schema:
-  clickhouse:
-    host: "dfe-clickhouse-clickhouse-headless"
-
 otel-collector:
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"

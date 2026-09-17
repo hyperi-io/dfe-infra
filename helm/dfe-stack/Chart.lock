@@ -20,9 +20,6 @@ dependencies:
 - name: kafbat
   repository: file://../charts/kafbat
   version: 0.1.2
-- name: dfe-schema
-  repository: file://../charts/dfe-schema
-  version: 0.1.0
 - name: otel-collector
   repository: file://../charts/otel-collector
   version: 0.1.0
@@ -47,5 +44,5 @@ dependencies:
 - name: hyperdx
   repository: file://../charts/hyperdx
   version: 0.2.0
-digest: sha256:0fd9655071d5d178c8007c03a8083f456e268344b1abd51e484a32e9c105f2cd
-generated: "2026-09-15T21:37:54.726948532+10:00"
+digest: sha256:feeced937f0842ef8a4b9a5d802b3108d84551608bfada3d3224f7aa4c2a690d
+generated: "2026-09-17T13:44:31.769396468+10:00"

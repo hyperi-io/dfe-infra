@@ -1,5 +1,5 @@
-# Wave 5: DFE application services -- deployed per service-instance from the
-# deploy repo via a git-files generator. ONE Application per overlay values file:
+# Waves 5 and 7: DFE application services -- deployed per service-instance from
+# the deploy repo via a git-files generator. ONE Application per overlay values file:
 # the engine (or the dfe-deploy template) writes values/<svc>-<inst>-values.yaml
 # with a `deploy: {service, instance}` block, and the generator fans out one
 # Application per file. This handles BOTH shapes uniformly -- singleton-scaled
@@ -67,9 +67,15 @@ spec:
       name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
       namespace: argocd
       annotations:
-        # Wave 7: after dfe-schema (5) has created the tables these write to,
-        # and after the otel collector (6) they export telemetry to.
-        argocd.argoproj.io/sync-wave: "7"
+        # dfe-engine at wave 5, everything else at 7. The engine applies every
+        # ClickHouse object and every bootstrap topic at its own startup and
+        # reports converged on /readyz, so its Application reaching Healthy IS
+        # the schema being there. Wave 6 (otel-collector) then has its otel
+        # tables, and wave 7 has the tables and topics it writes to. Stamped
+        # here rather than per generator element: this appset's elements come
+        # from the deploy repo's values files, so the wave has to be derived
+        # from the service each file names.
+        argocd.argoproj.io/sync-wave: '{{ if eq .deploy.service "dfe-engine" }}5{{ else }}7{{ end }}'
     spec:
       project: dfe-apps
       sources:
@@ -122,8 +128,8 @@ spec:
               # one. Only dfe-receiver reads it; the other charts ignore it.
               - name: exposure.public.loadBalancerIP
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/receiver_address" }}'
-              # Deployment-wide retention; layer2-data hands the dfe-schema Job the
-              # same annotation. A cluster secret without it falls back to 90.
+              # Deployment-wide retention, read by dfe-engine -- the only thing
+              # that applies a TTL. A cluster secret without it falls back to 90.
               - name: retention.defaultTtlDays
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_default_ttl_days" | default "90" }}'
               # The stack the base charts above are pinned at, so the engine can

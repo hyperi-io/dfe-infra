@@ -1166,7 +1166,7 @@ run "aws_clickhouse_object_store_association_targets_the_chart_default" {
 
   assert {
     condition     = aws_eks_pod_identity_association.clickhouse_object_store.service_account == "dfe-clickhouse"
-    error_message = "the default service account must match the chart's clickhouse.serviceAccount.name -- a dedicated account, not the release namespace's default, which the dfe-schema Job also runs as"
+    error_message = "the default service account must match the chart's clickhouse.serviceAccount.name -- a dedicated account, not the release namespace's default, which every other pod there shares"
   }
 
   assert {

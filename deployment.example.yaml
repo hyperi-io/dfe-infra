@@ -608,12 +608,12 @@ kafka:
       step: ""                 # brokers added per scale-out; empty takes the zone count
       per_broker_capacity_mb_s: 50  # the resolved broker shape's published network throughput
       headroom: 1.3            # multiplies broker_count x per_broker_capacity_mb_s for the alarm threshold; must be > 1
-  ## Topics tofu pre-creates for a managed body with NO bootstrap Job
-  ## (confluent-cloud, redpanda-cloud) -- msk needs none here, since its Job
-  ## above creates the same topics the chart's Strimzi path does. dfe-loader
-  ## treats a missing *_land topic as fatal, so main_land is the floor every
-  ## provider needs; an empty map ({}) takes num_partitions/log_retention_ms
-  ## above, and a topic may override either:
+  ## Topics tofu pre-creates when a managed body is provisioned
+  ## (confluent-cloud, redpanda-cloud), before DFE is deployed onto it at all.
+  ## The DFE bootstrap topic set is NOT this list -- dfe-schemas declares it and
+  ## dfe-engine creates it at startup, on every tier and every provider. An
+  ## empty map ({}) takes num_partitions/log_retention_ms above, and a topic may
+  ## override either:
   ##   landing_topics:
   ##     main_land: {}
   ##     okta_land:

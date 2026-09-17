@@ -17,8 +17,8 @@ appVersion: "2.2.0-rc.14"
 # The dependency set mirrors the SLIM profile's chart set as composed by
 # argocd/appsets/*.yaml (layer2-platform wave 2, layer2-data waves 4-6,
 # layer2-apps wave 7). Helm has no sync waves; install ordering inside one
-# release is kind-sorted, and the dfe-schema Job + the apps retry their
-# backing-service connections, which is what the waves ordered.
+# release is kind-sorted, and dfe-engine's schema bootstrap + the apps retry
+# their backing-service connections, which is what the waves ordered.
 #
 # Deliberately NOT dependencies (they are not in a slim deployment either):
 #   - dfe-archiver / dfe-fetcher / dfe-transform-* / culvert (helm/edge/culvert)
@@ -63,10 +63,6 @@ dependencies:
     version: "0.1.2"
     repository: "file://../charts/kafbat"
     condition: kafbat.enabled
-  - name: dfe-schema
-    version: "0.1.0"
-    repository: "file://../charts/dfe-schema"
-    condition: dfe-schema.enabled
   - name: otel-collector
     version: "0.1.0"
     repository: "file://../charts/otel-collector"

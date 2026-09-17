@@ -48,7 +48,7 @@ ANNOTATION = "dfe.hyperi.io/registry"
 
 # One first-party chart per layer 2 appset, so a chart left without the
 # parameter shows up as its own failure rather than hiding behind a sibling.
-CHARTS = ("dfe-ui", "dfe-schema", "dfe-toolbox")
+CHARTS = ("dfe-ui", "otel-collector", "dfe-toolbox")
 
 # Every appset that deploys a chart rendering a dfe-* image. An appset missing
 # from this list is one whose charts fall back to common.yaml's empty default.

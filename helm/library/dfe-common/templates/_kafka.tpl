@@ -22,7 +22,7 @@ table had no entry for SASL_PLAINTEXT with SCRAM-SHA-512, so a DFE-owned broker
 -- which this repo deploys with SASL on a TLS-off listener (kafka-single.yaml
 `listeners=SASL_PLAINTEXT://:9092`, redpanda.yaml `tls.enabled: false`) -- could
 only be named by a key meaning SASL_SSL. scalo does not parse them yet, so they
-belong on a chart-side consumer (kafbat, the topics Job), not in KAFKA_PROVIDER.
+belong on a chart-side consumer (kafbat, the MSK ACL Job), not in KAFKA_PROVIDER.
 
 PLAIN is the one sanctioned exception to SCRAM-SHA-512 and is permitted only
 where the platform offers no SCRAM (Confluent Cloud, API key as the credential).

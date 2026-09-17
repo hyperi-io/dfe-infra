@@ -16,8 +16,8 @@ Kubernetes objects are named after.
 app; the image belongs to the app, not the instance. Defaults to `component`, so
 a single-instance chart renders the same reference as before.
 
-Not derived from `.Chart.Name`: dfe-schema, clickhouse-cluster and
-envoy-gateway-config all publish under a name their chart does not carry.
+Not derived from `.Chart.Name`: clickhouse-cluster and envoy-gateway-config both
+publish under a name their chart does not carry.
 */}}
 {{- define "dfe-common.imageComponent" -}}
 {{- .Values.imageComponent | default .Values.component -}}
