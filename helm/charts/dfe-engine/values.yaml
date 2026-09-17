@@ -15,7 +15,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:f6315e58784b2ee606fc26e4564bd86099edade1e0cf2166ee70d95a0e045627"
+  digest: "sha256:afba81314c46a215c03c63f805737aa291eacca1b227396817293065a88fd750"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -145,7 +145,7 @@ content:
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.3@sha256:aa919948c1d652c30be4c96cff54ef7a56f179b55f63a463e32ad1510f02a33d"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.4@sha256:ad85ba2d9665a4bb7c363de6ee9184bdb0c5b69bfd3965425ab02bf5636f899b"
     # The source catalogue the settings API offers: v1.1.3 is the first
     # dfe-transform-elastic release to carry sources.yaml as a release asset
     # (dfe-transform-elastic#18/#65; content.dfe-transform-elastic-catalogue in
