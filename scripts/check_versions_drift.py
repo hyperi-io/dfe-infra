@@ -647,13 +647,14 @@ _CONTRACT_ENTRIES = [
     "dfe-fetcher",
     "dfe-transform-vrl",
     "dfe-transform-vector",
+    "dfe-transform-elastic",
 ]
 
 
 def contract_ref_pattern(app: str, half: str) -> str:
     """One half of a content entry's `ref`, anchored on the entry's own app.
 
-    All six refs sit in one file, so a bare `ref:` anchor would hand the first
+    Every ref sits in one file, so a bare `ref:` anchor would hand the first
     entry's value to every check.
     """
     head = r"app: " + re.escape(app) + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
@@ -669,6 +670,19 @@ CHECKS += [
     )
     for app in _CONTRACT_ENTRIES
     for half in ("tag", "digest")
+]
+
+# The one `kind: asset` content entry live today: a release download URL with
+# the tag in its path, not a ghcr.io tag@digest, so contract_ref_pattern does
+# not fit it and there is no second, immutable half to check.
+CHECKS += [
+    Check(
+        "dfe-transform-elastic catalogue asset ref",
+        "content.dfe-transform-elastic-catalogue",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        r"name: dfe-transform-elastic-catalogue\n\s*kind: asset\n\s*ref: "
+        r'"https://github\.com/hyperi-io/dfe-transform-elastic/releases/download/([^"]+)"',
+    ),
 ]
 
 # The hyperdx chart runs an init container on the ENGINE image to materialise the

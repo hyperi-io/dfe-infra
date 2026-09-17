@@ -32,7 +32,7 @@ kafka:
   # (opt-in, BSL -- see docs/REDPANDA-LIMITATIONS.md; requires redpanda.acceptLicense).
   provider: strimzi
   name: dfe-kafka
-  version: "4.2.0"
+  version: "4.3.1"
   # cluster node count. Defaults to 3; set higher for more brokers.
   # (single mode forces 1.)
   replicas: 3
@@ -65,8 +65,8 @@ kafka:
     acceptLicense: false
     image:
       repository: docker.redpanda.com/redpandadata/redpanda
-      # Broker tag the operator chart 26.1.11 pairs with (see versions.yaml).
-      tag: "v26.1.17"
+      # Broker tag the operator chart 26.2.3 pairs with (see versions.yaml).
+      tag: "v26.2.2"
     auth:
       # Bootstrap superuser the operator creates + manages (its admin identity
       # for reconciling the User CR). Operator generates its password Secret.
@@ -173,7 +173,7 @@ kafka:
   # Strimzi operator version this deployment runs -- MUST match versions.yaml
   # strimzi-kafka-operator. spec.kafka.tieredStorage landed in 0.38.0, so a lower
   # pin fails the render rather than emitting config the operator drops silently.
-  operatorVersion: "0.51.0"
+  operatorVersion: "1.2.0"
   # Plugin binding for storageModel: tiered-object. Strimzi supports type=custom
   # ONLY: it ships no RemoteStorageManager, so the broker image must carry a
   # plugin on classPath.
@@ -417,7 +417,7 @@ kafka:
         repository: nginxinc/nginx-unprivileged
         tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
         # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
-        digest: "sha256:aa8c9087d36d93e9d650c5365f883b421e8214aedbad24ade52b844c583358f1"
+        digest: "sha256:2ddec616f1cb58bcac057aa388f28cb81e35137641ef4226d321714499329bd1"
         pullPolicy: IfNotPresent
       # A static file server in front of one upstream, read by a handful of
       # admins -- this is not a data path.

@@ -3,7 +3,7 @@ name: dfe-transform-vrl
 description: "Vector Remap Language transform — Kafka consumer → VRL → Kafka producer"
 type: application
 version: 0.3.0
-appVersion: "v1.1.23"   # == versions.yaml apps.dfe-transform-vrl (drift-checked)
+appVersion: "v1.1.24"   # == versions.yaml apps.dfe-transform-vrl (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.14.0"

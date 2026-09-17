@@ -15,7 +15,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:464d1853700fa8fc433f8587083432f793afc506a0c5110e4a25012ca0da65e4"
+  digest: "sha256:afba81314c46a215c03c63f805737aa291eacca1b227396817293065a88fd750"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -38,7 +38,7 @@ profile: ""
 # names it. Helm cannot read a sibling chart's appVersion, so this is a second
 # copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
 # stops the two diverging.
-uiVersion: "v1.6.3"
+uiVersion: "v1.6.4"
 
 # The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
 # and dfe-common.transport reads a missing map as the bus default. On the bus
@@ -86,7 +86,6 @@ service:
 # The contract entries carry a second copy of the versions.yaml apps + digests
 # pins, so check_versions_drift.py reads both halves of each ref and --fix moves
 # them with the SSoT. A deployment mirroring images elsewhere overrides the ref.
-# dfe-transform-elastic gets an entry when it publishes an image.
 #
 # The two LIBRARY pins are still empty, and the pins in versions.yaml say why:
 # neither transform release carries its files as an asset, and neither Dockerfile
@@ -116,12 +115,12 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.35@sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.36@sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.36@sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.39@sha256:a0c78809613925977050dc0845c64684de65a484361691cf16d814765c5f9c4f"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
@@ -131,17 +130,34 @@ content:
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.22@sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.26@sha256:7428a262ad6168677eb03446ef338e64e0b23d670c558925ceb0620f899be828"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.23@sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.24@sha256:838de184ba84412bfaaec44463de3d37c0fb0ba44a981792e84456ebd1e686d1"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.39@sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.41@sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
+    - name: dfe-transform-elastic-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.4@sha256:ad85ba2d9665a4bb7c363de6ee9184bdb0c5b69bfd3965425ab02bf5636f899b"
+    # The source catalogue the settings API offers: v1.1.3 is the first
+    # dfe-transform-elastic release to carry sources.yaml as a release asset
+    # (dfe-transform-elastic#18/#65; content.dfe-transform-elastic-catalogue in
+    # versions.yaml). The ref is the release download root -- `files.from` is
+    # appended to it, matching every other release asset URL shape.
+    - name: dfe-transform-elastic-catalogue
+      kind: asset
+      ref: "https://github.com/hyperi-io/dfe-transform-elastic/releases/download/v1.1.3"
+      role: catalogue
+      files:
+        - from: sources.yaml
+          to: sources.yaml
 
 config:
   mountPath: /config

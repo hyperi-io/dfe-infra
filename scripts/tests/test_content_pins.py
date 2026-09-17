@@ -309,13 +309,22 @@ def test_the_catalogue_env_follows_the_catalogue_entry() -> None:
         "DFE_SOURCE_CATALOGUE_FILE" not in env,
         f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
     )
-    for label, values in (("no entries at all", NO_ENTRIES), ("the chart's own entries", None)):
-        env = env_of(container(render(values), "engine"))
-        expect(
-            f"and unset with {label}",
-            "DFE_SOURCE_CATALOGUE_FILE" not in env,
-            f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
-        )
+    env = env_of(container(render(NO_ENTRIES), "engine"))
+    expect(
+        "and unset with no entries at all",
+        "DFE_SOURCE_CATALOGUE_FILE" not in env,
+        f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
+    )
+
+    # The chart's own entries now carry a live catalogue (the elastic sources.yaml
+    # asset, dfe-infra#329), so this is the one case that DOES set the env.
+    chart = chart_values()["content"]
+    env = env_of(container(render(None), "engine"))
+    expect(
+        "and set with the chart's own entries",
+        env.get("DFE_SOURCE_CATALOGUE_FILE") == f"{chart['mountPath']}/catalogue/{chart['catalogueFile']}",
+        f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
+    )
 
 
 def test_content_is_not_profile_dependent() -> None:

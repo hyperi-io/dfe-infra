@@ -189,11 +189,13 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
             "initContainers"
         )
         or []
-        if c["name"].startswith(CONTENT_PREFIX)
+        # Contract entries only -- a catalogue asset entry names a release URL,
+        # not an app pin, so it carries no apps/digests key for the loop below.
+        if c["name"].startswith(CONTENT_PREFIX) and c["name"].endswith("-contract")
     }
     expect(
         "the chart mounts a contract for every app that carries a settings surface",
-        len(entries) == 6,
+        len(entries) == 7,
         f"{sorted(entries)}",
     )
     for name, image in sorted(entries.items()):
@@ -207,14 +209,16 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
 
 
 def test_a_chart_with_no_digest_renders_what_it_always_did() -> None:
-    """The helper is optional: an unpublished app has no digest to carry.
+    """The helper is optional: a chart carrying no digest still renders its tag.
 
+    The digest is emptied explicitly rather than borrowed from an app that has
+    not shipped one, which stops holding the day that app is published.
     Rendered with no `global:` block at all, which is what bare `helm lint` and
     a chart-only template do -- the nil-guard case.
     """
     app = "dfe-transform-elastic"
     tag = current_stack()["apps"][app]
-    rendered = images(render(app))
+    rendered = images(render(app, "image.digest="))
     expect(
         "no digest and no global block still renders a plain repo:tag",
         rendered == [f"{app}:{tag}"],
