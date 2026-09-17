@@ -10,9 +10,9 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/check_image_pins.py.
 
-The GH packages API is mocked in every test -- no network, so the suite is
-hermetic and runs on a bare CI image. Runs under pytest, and standalone via the
-main() runner at the bottom (matching the other tests in this dir).
+The registry is mocked in every test -- no network, so the suite is hermetic and
+runs on a bare CI image. Runs under pytest, and standalone via the main() runner
+at the bottom (matching the other tests in this dir).
 
     python3 -m pytest scripts/tests/test_check_image_pins.py
     python3 scripts/tests/test_check_image_pins.py
@@ -83,6 +83,9 @@ def _install(monkeypatch, tmp_path) -> Path:
     vfile = tmp_path / "versions.yaml"
     vfile.write_text(SYNTHETIC_VERSIONS, encoding="utf-8")
     monkeypatch.setattr(resolve_pins, "VERSIONS", vfile)
+    monkeypatch.setattr(
+        check_image_pins, "tag_digest", lambda org, app, tag: FAKE_TAGS.get(app, {}).get(tag)
+    )
     monkeypatch.setattr(check_image_pins, "package_tags", lambda org, app: FAKE_TAGS.get(app, {}))
     return vfile
 

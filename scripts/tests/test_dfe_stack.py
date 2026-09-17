@@ -608,13 +608,15 @@ def _run_refresh(tmp: Path, resolver) -> tuple[int, str]:
     import argparse
 
     (tmp / "versions.yaml").write_text(_REFRESH_FIXTURE, encoding="utf-8", newline="\n")
-    original_root, original_resolve = stack.REPO_ROOT, stack.resolve_digest
+    original_root = stack.REPO_ROOT
+    original_resolve = stack.registry_pins.ref_digest
     stack.REPO_ROOT = tmp
-    stack.resolve_digest = resolver
+    stack.registry_pins.ref_digest = resolver
     try:
         rc = stack.cmd_refresh_digests(argparse.Namespace(stack=None, check=False))
     finally:
-        stack.REPO_ROOT, stack.resolve_digest = original_root, original_resolve
+        stack.REPO_ROOT = original_root
+        stack.registry_pins.ref_digest = original_resolve
     return rc, (tmp / "versions.yaml").read_text(encoding="utf-8")
 
 

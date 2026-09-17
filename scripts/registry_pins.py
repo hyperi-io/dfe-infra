@@ -21,12 +21,24 @@ digest.
 
 Everything here is decoupled from any pin FILE. The public surface is:
 
+  ref_digest(ref)              -> (index digest, error) for a full image ref
+  tag_digest(org, app, tag)    -> the digest a tag resolves to, or None if absent
   package_versions(org, app)   -> the raw GHCR version records (paginated)
   package_tags(org, app)       -> {tag: digest} for every tagged version
   resolve(org, app, tag)       -> a Resolved(digest, published) or None
   resolve_digest(org, app, tag)-> just the digest string, or None
   version_key(tag)             -> numeric sort key for vX.Y.Z tags
   head_commit(org, repo, ref)  -> the commit sha a branch or tag points at
+
+Two ways to reach a registry, because they need different credentials.
+`docker buildx imagetools` authenticates from the docker credential store and
+reads a public package with no credential at all; the GH packages API needs a
+token carrying `read:packages`, which a developer's own `gh login` usually lacks.
+So tag_digest tries imagetools first and the API second, and a checker that only
+needs a digest keeps working on a plain `gh auth login`.
+
+The API is still the only way to LIST a package's tags or to read a version's
+publish time, so package_versions/package_tags/resolve stay on it.
 
 A content repo that ships no container still has to be pinned immutably, so
 head_commit is the same job as resolve_digest for a repo rather than a package:
@@ -39,8 +51,7 @@ digest ref) is a two-liner:
     digest = resolve_digest("hyperi-io", "dfe-loader", "v1.18.21")
     # -> "sha256:..."; write f"{tag}@{digest}" into the overlay's image field.
 
-Needs an authenticated `gh` (the packages API wants read:packages). No third-
-party deps -- gh + stdlib only.
+No third-party deps -- docker + gh + stdlib only.
 """
 
 from __future__ import annotations
@@ -51,6 +62,11 @@ import re
 import subprocess
 from dataclasses import dataclass
 from functools import cache
+
+GHCR = "ghcr.io"
+
+# The only two failures that mean the tag is GONE rather than unreadable.
+_ABSENT = re.compile(r"not found|manifest unknown", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -161,6 +177,60 @@ def resolve_digest(org: str, app: str, tag: str) -> str | None:
     """
     found = resolve(org, app, tag)
     return found.digest if found else None
+
+
+def ref_digest(ref: str) -> tuple[str | None, str]:
+    """(digest, error) for a full image ref, read with `docker buildx imagetools`.
+
+    The multi-arch INDEX digest -- what a pin records -- never one platform's
+    manifest. Reads the registry through the docker credential store, so it needs
+    no read:packages scope, and resolves a public package unauthenticated.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "docker", "buildx", "imagetools", "inspect", ref,
+                "--format", "{{.Manifest.Digest}}",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        # Worded so it cannot match _ABSENT: no docker is a missing tool, not a
+        # missing image.
+        return None, f"cannot run docker buildx: {exc}"
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip()
+        return None, stderr.splitlines()[-1] if stderr else "docker buildx imagetools failed"
+    digest = proc.stdout.strip()
+    if not digest.startswith("sha256:"):
+        return None, f"unexpected digest {digest!r}"
+    return digest, ""
+
+
+def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None:
+    """The digest (org, app, tag) resolves to right now, or None if the tag is absent.
+
+    imagetools first, the packages API second: between them one works on a plain
+    `gh auth login` and the other works where docker is absent. Raises
+    RegistryError when NEITHER could answer, so a registry nobody reached never
+    reads as a verified pin.
+    """
+    digest, err = ref_digest(f"{registry}/{org}/{app}:{tag}")
+    if digest:
+        return digest
+    try:
+        return resolve_digest(org, app, tag)
+    except RegistryError as api_exc:
+        if _ABSENT.search(err):
+            return None
+        raise RegistryError(
+            f"{registry}/{org}/{app}:{tag} did not resolve -- "
+            f"imagetools: {err}; gh api: {api_exc}"
+        ) from api_exc
 
 
 def version_key(tag: str) -> tuple[int, ...]:

@@ -7,7 +7,7 @@ job fails (hyperi-ci#102, live on dfe-loader v1.18.19: GH release v1.18.19 with
 GHCR still at v1.18.18), so a sweep taken from the release page can pin an image
 that was never pushed -- and the deploy discovers it as ImagePullBackOff.
 
-Two assertions per app, against the GH packages API:
+Two assertions per app:
   1. the pinned version tag exists on the package
   2. its digest EQUALS the pinned digest (catches a moved tag, and a sweep that
      paired the right version with the wrong digest)
@@ -17,7 +17,10 @@ run it when pins change, before the sweep lands.
 
 Usage:
     python3 scripts/check_image_pins.py [--app NAME ...] [--org ORG] [--stack VER]
-Requires an authenticated `gh` (the packages API needs read:packages).
+
+Digests resolve through registry_pins.tag_digest, so `docker buildx` alone is
+enough; a `gh` carrying read:packages is the fallback, and also what fills in the
+newest-tags hint when a tag turns out to be missing.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from pathlib import Path
 # comes from resolve_pins for the same reason. Imported by path so it works
 # whether check_image_pins is run as a script or imported.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from registry_pins import RegistryError, package_tags, version_key
+from registry_pins import RegistryError, package_tags, tag_digest, version_key
 from resolve_pins import load_stack
 
 DEFAULT_ORG = "hyperi-io"
@@ -56,6 +59,20 @@ def _section(stack_map: object, name: str) -> dict[str, str]:
     if not isinstance(section, dict):
         return {}
     return {str(k): str(v) for k, v in section.items()}
+
+
+def _newest_tags(org: str, app: str) -> str:
+    """A ` (newest tags: ...)` aside for a missing-tag report, else empty.
+
+    Listing a package's tags needs read:packages, which resolving a digest no
+    longer does, so this hint is advisory -- its absence never changes a verdict.
+    """
+    try:
+        tags = package_tags(org, app)
+    except RegistryError:
+        return ""
+    released = sorted((t for t in tags if t.startswith("v")), key=version_key)
+    return f" (newest tags: {', '.join(released[-3:])})" if released else ""
 
 
 def main() -> int:
@@ -87,25 +104,23 @@ def main() -> int:
             continue
 
         try:
-            tags = package_tags(args.org, app)
+            actual = tag_digest(args.org, app, version)
         except RegistryError as exc:
             failures.append(f"  [api]     {app}: {exc}")
             continue
 
-        if version not in tags:
-            released = sorted((t for t in tags if t.startswith("v")), key=version_key)
-            newest = ", ".join(released[-3:]) or "none"
+        if actual is None:
             failures.append(
                 f"  [MISSING] {app} {version}: NO image with that tag in "
-                f"ghcr.io/{args.org}/{app} (newest tags: {newest}). A release tag "
-                f"without an image -- see hyperi-ci#102."
+                f"ghcr.io/{args.org}/{app}{_newest_tags(args.org, app)}. A release "
+                f"tag without an image -- see hyperi-ci#102."
             )
             continue
 
         checked += 1
-        if tags[version] != digest:
+        if actual != digest:
             failures.append(
-                f"  [DIGEST]  {app} {version}: registry has {tags[version]}, "
+                f"  [DIGEST]  {app} {version}: registry has {actual}, "
                 f"versions.yaml pins {digest}"
             )
 
