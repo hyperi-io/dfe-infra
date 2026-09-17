@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_default_ttl.py
-#  Purpose:      Prove the deployment-wide retention reaches the engine pod and
-#                the schema apply, from the env file through to the charts.
+#  Purpose:      Prove the deployment-wide retention reaches the engine pod,
+#                from the env file through to the chart.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -10,9 +10,10 @@
 """The default TTL knob, end to end.
 
 DFE_CLICKHOUSE_DEFAULT_TTL_DAYS is the TTL every time-series table takes unless a
-source or a dfe-schemas definition declares its own. Two workloads apply it: the
-engine, and the dfe-schema Job that reconciles existing tables. A value that
-reaches one and not the other leaves a table on whichever ran last.
+source or a dfe-schemas definition declares its own. ONE workload applies it:
+dfe-engine, which is the only thing that applies schema at all. The value still
+has to travel env file -> cluster secret -> appset -> chart, or a deployment's
+retention silently stays at the shipped default.
 
     python3 scripts/tests/test_default_ttl.py
 
@@ -32,7 +33,6 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 ENGINE = CHARTS / "dfe-engine"
-SCHEMA = CHARTS / "dfe-schema"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 ENV_EXAMPLE = REPO_ROOT / "bootstrap" / "local.env.example"
@@ -82,25 +82,16 @@ def test_the_engine_takes_the_value_it_is_given() -> None:
     expect("zero renders as zero, not as the default", env.get(ENV_KEY) == "0", f"{env.get(ENV_KEY)}")
 
 
-def test_the_schema_job_carries_the_same_env() -> None:
-    env = container_env(render(SCHEMA), "Job", "schema")
-    expect("the dfe-schema Job carries the TTL env", ENV_KEY in env, f"{sorted(env)}")
-    expect("and it defaults to 90", env.get(ENV_KEY) == "90", f"{env.get(ENV_KEY)}")
-    env = container_env(render(SCHEMA, f"{PARAM}=7"), "Job", "schema")
-    expect("a set value reaches the apply", env.get(ENV_KEY) == "7", f"{env.get(ENV_KEY)}")
-
-
-def test_the_two_charts_agree_on_the_shipped_default() -> None:
+def test_the_engine_ships_the_documented_default() -> None:
     engine = yaml.safe_load((ENGINE / "values.yaml").read_text(encoding="utf-8"))
-    schema = yaml.safe_load((SCHEMA / "values.yaml").read_text(encoding="utf-8"))
     expect(
-        "dfe-engine and dfe-schema ship the same retention.defaultTtlDays",
-        engine["retention"]["defaultTtlDays"] == schema["retention"]["defaultTtlDays"] == 90,
-        f"{engine['retention']} vs {schema['retention']}",
+        "dfe-engine ships retention.defaultTtlDays at 90",
+        engine["retention"]["defaultTtlDays"] == 90,
+        f"{engine['retention']}",
     )
 
 
-# --- the value reaches the charts from the deploy's own env --------------------
+# --- the value reaches the chart from the deploy's own env ---------------------
 def test_the_cluster_secret_carries_the_annotation() -> None:
     body = CLUSTER_SECRET.read_text(encoding="utf-8")
     expect(
@@ -110,24 +101,40 @@ def test_the_cluster_secret_carries_the_annotation() -> None:
     )
 
 
-def test_both_appsets_pass_the_annotation_to_their_chart() -> None:
-    for filename in ("layer2-apps.yaml", "layer2-data.yaml"):
-        appset = yaml.safe_load((APPSETS / filename).read_text(encoding="utf-8"))
-        params = {}
-        for source in appset["spec"]["template"]["spec"]["sources"]:
-            for entry in source.get("helm", {}).get("parameters", []):
-                params[entry["name"]] = entry["value"]
-        expect(f"{filename} sets {PARAM}", PARAM in params, f"got {sorted(params)}")
-        expect(
-            f"{filename} reads it from {ANNOTATION}",
-            ANNOTATION in params.get(PARAM, ""),
-            f"got {params.get(PARAM)}",
-        )
-        expect(
-            f"{filename} falls back to 90 on a cluster secret without it",
-            'default "90"' in params.get(PARAM, ""),
-            f"got {params.get(PARAM)}",
-        )
+def test_the_apps_appset_passes_the_annotation_to_the_engine() -> None:
+    """layer2-apps is the one appset that carries it -- it deploys the engine.
+
+    layer2-data deliberately carries none: no chart it deploys applies a TTL.
+    """
+    filename = "layer2-apps.yaml"
+    appset = yaml.safe_load((APPSETS / filename).read_text(encoding="utf-8"))
+    params = {}
+    for source in appset["spec"]["template"]["spec"]["sources"]:
+        for entry in source.get("helm", {}).get("parameters", []):
+            params[entry["name"]] = entry["value"]
+    expect(f"{filename} sets {PARAM}", PARAM in params, f"got {sorted(params)}")
+    expect(
+        f"{filename} reads it from {ANNOTATION}",
+        ANNOTATION in params.get(PARAM, ""),
+        f"got {params.get(PARAM)}",
+    )
+    expect(
+        f"{filename} falls back to 90 on a cluster secret without it",
+        'default "90"' in params.get(PARAM, ""),
+        f"got {params.get(PARAM)}",
+    )
+
+    data = yaml.safe_load((APPSETS / "layer2-data.yaml").read_text(encoding="utf-8"))
+    data_params = {
+        entry["name"]
+        for source in data["spec"]["template"]["spec"]["sources"]
+        for entry in source.get("helm", {}).get("parameters", [])
+    }
+    expect(
+        f"layer2-data.yaml no longer passes {PARAM} -- nothing there reads it",
+        PARAM not in data_params,
+        f"got {sorted(data_params)}",
+    )
 
 
 def test_bootstrap_defaults_and_validates_the_key() -> None:

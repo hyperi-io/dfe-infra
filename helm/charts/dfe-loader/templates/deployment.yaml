@@ -33,6 +33,7 @@ spec:
       # reads none of these: switch them off rather than wait for the collision.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
         - name: loader
           image: {{ include "dfe-common.image" . | quote }}
@@ -134,8 +135,9 @@ spec:
             # DLQ standard: fixed per-app topic on the kafka backend. The file
             # DLQ cannot work here -- the rootfs is read-only, so a file DLQ
             # write is an EROFS no-op and the poison message vanishes. The
-            # topic is pre-created by the kafka chart (kafka.dlqTopics); names
-            # are the loader's flat-env contract (loader.rs DLQ_TOPIC/DLQ_MODE).
+            # topic is created by dfe-engine from the dfe-schemas topic set;
+            # names are the loader's flat-env contract (loader.rs
+            # DLQ_TOPIC/DLQ_MODE).
             - name: DFE_LOADER_DLQ_TOPIC
               value: {{ .Values.dlq.topic | quote }}
             - name: DFE_LOADER_DLQ_MODE

@@ -170,10 +170,9 @@ externalEgress:
   # Same lateral-movement carve-out internetEgress uses, applied to every purpose.
   exceptCIDRs: ~
 
-  # Every chart that resolves clickhouse.host. dfe-schema is the DDL gate and runs
-  # in the `clickhouse` namespace rather than beside the apps
-  # (appsets/layer2-data.yaml), so it is listed under extraNamespaceApps -- an
-  # external ClickHouse it cannot reach fails the deploy before anything else runs.
+  # Every chart that resolves clickhouse.host. All of them run beside the apps:
+  # dfe-engine is the only thing that applies schema and it does it from its own
+  # pod, so nothing needs egress from another namespace any more.
   clickhouse:
     apps:
       - dfe-loader        # dfe-loader/templates/deployment.yaml
@@ -183,9 +182,7 @@ externalEgress:
       - dfe-hyperdx       # hyperdx/templates/deployment.yaml
     # Apps outside the DFE namespaces, keyed by the namespace they run in. The
     # namespace must already carry a baseline policy.
-    extraNamespaceApps:
-      clickhouse:
-        - dfe-schema      # dfe-schema/templates/job.yaml
+    extraNamespaceApps: {}
     # TLS ports only. ClickHouse Cloud publishes 8443 (HTTPS) and 9440 (native
     # TLS) and answers plain 443 on its own endpoints. A BYO server on plaintext
     # 8123/9000 is a deployer override, never the default -- credentials cross an

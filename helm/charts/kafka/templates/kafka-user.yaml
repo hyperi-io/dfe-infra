@@ -26,12 +26,18 @@ spec:
   authorization:
     type: simple
     acls:
-      # Allow DFE services to produce/consume on all dfe topics
+      # Produce, consume, and the topic lifecycle the engine needs. Create is
+      # what lets dfe-engine make the declared bootstrap topic set at its own
+      # startup -- nothing else creates a topic on any tier. Alter is what lets
+      # it raise a partition count when a source's throughput changes.
+      # DELETE IS DELIBERATELY WITHHELD, and so is every cluster operation: a
+      # compromised engine principal must not be able to drop the bus. Removing
+      # a topic stays an operator action through infra.
       - resource:
           type: topic
           name: "*"
           patternType: literal
-        operations: ["Read", "Write", "Create", "Describe"]
+        operations: ["Read", "Write", "Create", "Describe", "Alter"]
       - resource:
           type: group
           # patternType: prefix means the name IS the literal prefix -- do NOT

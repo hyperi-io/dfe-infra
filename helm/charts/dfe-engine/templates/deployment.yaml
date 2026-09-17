@@ -345,7 +345,7 @@ spec:
               value: {{ .Values.clickhouse.verify | quote }}
             {{- end }}
             # Default TTL for every time-series table; 0 = none; a source or a
-            # dfe-schemas TTL overrides it. The dfe-schema Job carries the same value.
+            # dfe-schemas TTL overrides it.
             - name: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS
               value: {{ .Values.retention.defaultTtlDays | quote }}
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}

@@ -38,7 +38,7 @@ noting it was done, for politeness.
 | ApplicationSets | `argocd/appsets/` | layer1 addons, layer2 data + apps (git-files fan-out over the deploy repo's `values/*-values.yaml`), scale-tier operators |
 | Tier values | `argocd/values/` | `profile-{slim,single,scale}.yaml` + `common.yaml` + per-cloud overlays |
 | App charts | `helm/charts/` | one base chart per dfe-* service + backing services (clickhouse-cluster, kafka, cnpg-cluster, ferretdb, hyperdx, forgejo, kafbat, otel-collector) |
-| Chart library | `helm/library/dfe-common` | shared templates (image, KEDA scaledobject, names) |
+| Chart library | `helm/library/dfe-common` | shared templates (image, KEDA scaledobject, names, the wait-for-engine init container) |
 | Version pins | `versions.yaml` | single source for chart/operator/image versions |
 | Cloud prep | `terraform/` (OpenTofu-first, terraform-compatible) | secrets/IAM prep per cloud target |
 
@@ -73,9 +73,41 @@ shared deploy-config fact -- including the canonical `hostnames:` map
 page and dfe-ui embed URLs all resolve from. A shared fact defined outside
 these two files is config sprawl and gets consolidated on sight.
 
+## Schema and topics: dfe-engine is the only controller
+
+Nothing in this repo creates, alters or drops a ClickHouse database, table,
+view, role or a Kafka topic. `dfe-schemas` declares every one of them and
+dfe-engine applies them at its own startup, from the wheel pinned inside its
+image, on both tiers and every broker provider. A CI guard
+(`scripts/tests/test_engine_only_schema_control.py`) fails the build on DDL or
+a topic-creation step reappearing under `helm/`, `argocd/`, `bootstrap/` or
+`scripts/`.
+
+What that leaves this repo:
+
+- **The clusters themselves.** ClickHouse and Kafka are deployed, sized, backed
+  up and upgraded here. Only the schema inside them moved.
+- **The MSK first ACL.** `msk-bootstrap-job.yaml` writes the SCRAM principal's
+  ACLs over SASL/IAM, because on a cluster that has stopped granting by default
+  nothing can write the FIRST ACL unless it is already permitted. It creates no
+  topic. Its grants are `kafka-user.yaml`'s, grant for grant: Read, Write,
+  Create, Describe and Alter on topic `*`. Create is what lets the engine make
+  the bootstrap topic set; Alter is what lets it raise a partition count. Delete
+  and every cluster operation are withheld.
+- **The ordering.** dfe-engine syncs at Argo wave 5, the otel collector at 6 and
+  every other app at 7, and each app pod runs a `wait-for-engine` init container
+  (`dfe-common.waitForEngine`) that polls the engine Service's `/readyz`. Ready
+  means the last schema pass converged, so an app cannot start against an absent
+  table -- which is the failure that reads as data loss and is really start
+  ordering.
+
+`bootstrap/smoke-test-integration.sh` asserts the engine's own `schema`
+readiness check (CORE 0) before it looks at any pipeline. The per-object record
+is `GET /api/v1/system/schema` on the engine.
+
 ## Dead-letter queues
 
-Every k8s-deployed app dead-letters to a Kafka topic dfe-infra creates:
+Every k8s-deployed app dead-letters to a Kafka topic dfe-engine creates:
 `dfe_receiver_dlq`, `dfe_loader_dlq`, `dfe_archiver_dlq`,
 `dfe_fetcher_dlq`, and one shared `dfe_transform_dlq` for the transforms
 (a transform overrides only when it genuinely needs its own). Kafka is
@@ -84,17 +116,18 @@ read-only rootfs and silently drops. dfe-docker: DLQs are opt-IN per
 component, EXCEPT the single-node full deploy, which carries the same
 DLQ topics as k8s.
 
-The kafka chart's bootstrap-topics seam (`kafka.dlqTopics`) pre-creates
-the five topics on both tiers (cluster tier: Strimzi provider only -- the
-redpanda provider creates no topics on either path) -- a DLQ write
-happens AT failure time, the one moment nothing can be creating topics.
-DLQ topics carry 7-day retention against the 72h data-topic default: a
-poisoned message is exactly the record an operator must still find days
-later, and once its source offset commits it exists nowhere else. The
-four fleet apps are pointed at their topic by chart env (the
-fleet-uniform `DLQ_TOPIC` / `DLQ_MODE` contract, each in the app's own
-env regime); the transforms cannot consume `dfe_transform_dlq` yet
-(dfe-transform-vrl#30, dfe-transform-vector#46 own that wiring).
+The five names and their retention are declared in dfe-schemas and
+created by dfe-engine at its own startup, on every tier and every
+provider -- a DLQ write happens AT failure time, the one moment nothing
+can be creating topics, so the engine's wave-5 sync is what guarantees
+they are there before an app can poison one. DLQ topics carry 7-day
+retention against the 72h data-topic default: a poisoned message is
+exactly the record an operator must still find days later, and once its
+source offset commits it exists nowhere else. The four fleet apps are
+pointed at their topic by chart env (the fleet-uniform `DLQ_TOPIC` /
+`DLQ_MODE` contract, each in the app's own env regime); the transforms
+cannot consume `dfe_transform_dlq` yet (dfe-transform-vrl#30,
+dfe-transform-vector#46 own that wiring).
 
 ## The overlay seam (how engine dials land here)
 

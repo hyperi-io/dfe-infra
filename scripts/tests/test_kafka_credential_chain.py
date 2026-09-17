@@ -101,13 +101,6 @@ def render(chart: Path, *sets: str, values: Path | None = None, show: str = "") 
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
-def render_text(chart: Path, *sets: str, values: Path | None = None) -> str:
-    out = _helm(chart, *sets, values=values)
-    if out.returncode != 0:
-        raise SystemExit(f"helm template failed for {chart.name} {sets}:\n{out.stderr}")
-    return out.stdout
-
-
 def render_error(chart: Path, *sets: str, values: Path | None = None) -> str:
     """helm's stderr when the chart refuses to render, or "" when it rendered."""
     out = _helm(chart, *sets, values=values)
@@ -338,21 +331,6 @@ def test_kafbat_matches_the_broker_in_its_own_render() -> None:
             cluster["properties"]["sasl.mechanism"] == "SCRAM-SHA-512",
             f"got {cluster['properties']['sasl.mechanism']}",
         )
-
-
-def test_the_topics_job_dials_what_the_broker_serves() -> None:
-    """kafbat and the Job disagreed about the same endpoint in one render."""
-    text = render_text(KAFKA, "kafka.mode=single", "kafka.provider=strimzi")
-    expect(
-        "the single-tier topics Job authenticates over SASL_PLAINTEXT",
-        "security.protocol=SASL_PLAINTEXT" in text,
-        "no derived security.protocol in the Job's client properties",
-    )
-    expect(
-        "with the derived mechanism",
-        "sasl.mechanism=SCRAM-SHA-512" in text,
-        "no derived sasl.mechanism in the Job's client properties",
-    )
 
 
 def test_the_matrix_expects_what_the_chart_derives() -> None:

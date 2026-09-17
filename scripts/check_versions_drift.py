@@ -708,21 +708,6 @@ CHECKS += [
         Path("helm/charts/hyperdx/values.yaml"),
         r'repository:\s*ghcr\.io/hyperi-io/dfe-hyperdx[^\n]*\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
-    # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
-    # points, not an artefact of its own -- so the chart name does not match the
-    # pin and it cannot ride _APP_CHARTS.
-    Check(
-        "dfe-schema chart appVersion",
-        "apps.dfe-engine",
-        Path("helm/charts/dfe-schema/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
-    Check(
-        "dfe-schema image digest",
-        "digests.dfe-engine",
-        Path("helm/charts/dfe-schema/values.yaml"),
-        r'digest:\s*"([^"]+)"',
-    ),
     # The engine reports the deployment's dfe-ui version on
     # GET /api/v1/system/deployment. Helm cannot read a sibling chart's
     # appVersion, so the engine chart carries a second copy of the ui pin.

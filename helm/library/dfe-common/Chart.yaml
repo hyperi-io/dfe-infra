@@ -2,6 +2,10 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.14.0: add _waitfor.tpl (dfe-common.waitForEngine -- the init container that
+#        holds an app back until dfe-engine reports ready). dfe-engine is the
+#        only thing that applies schema and topics, and it gates /readyz on the
+#        result, so this is what stops an app starting against an absent table.
 # 0.13.0: add dfe-common.kedaShimAddress -- the dfe-keda-shim Service address
 #        derived from the release namespace, replacing the literal
 #        dfe-keda-shim.dfe.svc.cluster.local default in the ScalingPressure
@@ -64,4 +68,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.13.0
+version: 0.14.0

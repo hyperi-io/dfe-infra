@@ -1,46 +1,40 @@
 {{- if and (eq .Values.kafka.mode "external") (eq .Values.kafka.provider "msk") }}
 {{- $msk := .Values.kafka.external.msk }}
 {{- if and $msk.bootstrap.enabled $msk.bootstrapIam }}
-{{- $topics := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
 {{- $iam := $msk.bootstrap.iamAuth }}
 {{- $jarName := printf "aws-msk-iam-auth-%s-all.jar" $iam.version }}
 {{- $jarUrl := $iam.url | default (printf "https://github.com/aws/aws-msk-iam-auth/releases/download/v%s/%s" $iam.version $jarName) }}
-# The MSK bootstrap: the SCRAM principal's ACLs, and the landing and DLQ topics.
-#
-# Two things have to happen on an MSK cluster before DFE can use it, and neither
-# can happen from a tofu apply.
+# The MSK bootstrap: the SCRAM principal's ACLs, and nothing else.
 #
 # ACLs live in the KAFKA data plane, so the AWS provider has no call that writes
 # one, and the brokers sit in private subnets a deploy runner cannot reach. Worse,
 # once the cluster stops granting by default, nothing can write the FIRST ACL
 # unless it is already permitted. SASL/IAM is the way out: there the IAM policy IS
 # the authorisation and no Kafka ACL has to exist, which is why this pod carries an
-# IAM identity (EKS Pod Identity) while every DFE app stays on SCRAM.
+# IAM identity (EKS Pod Identity) while every DFE app stays on SCRAM. That is the
+# one piece of Kafka bootstrap nothing else can do, so it is the one piece that
+# stays here.
 #
-# Topics have to be pre-created because the MSK configuration sets
-# auto.create.topics.enable=false -- deliberately, so the partition count per
-# source is an explicit number rather than a broker default. Without the landing
-# topic dfe-loader exits on "Auto-discovery found no matching topics" and
-# crashloops until someone publishes, which nothing can do through a loader that is
-# down. Without the DLQ topics the first poisoned message has nowhere to go: the
-# fleet's read-only rootfs makes the file DLQ a no-op (EROFS), and a DLQ write
-# happens AT failure time, the one moment nothing can be creating topics.
+# Topics are NOT created here. dfe-schemas declares the bootstrap topic set and
+# dfe-engine creates it at its own startup, on every tier, which is why the
+# grants below have to include Create -- with auto.create.topics.enable=false on
+# the MSK configuration, the engine's CreateTopics call is the only thing that
+# makes a topic exist.
 #
-# The topic list is the dfe-kafka.bootstrapTopics helper, the same list the
-# single-tier Job and the cluster tier's Strimzi CRs render, so no tier can ship
-# without a topic the apps are configured to write to. The ACL set is
-# kafka-user.yaml's, grant for grant: topic literal "*" with Read, Write, Create
-# and Describe, consumer groups by the "dfe-" prefix with Read and Describe. No
-# Delete, no Alter, no cluster operation -- on-prem withholds all three.
+# The ACL set is kafka-user.yaml's, grant for grant: topic literal "*" with Read,
+# Write, Create, Describe and Alter, consumer groups by the "dfe-" prefix with
+# Read and Describe. Alter is what lets the engine raise a topic's partition
+# count when a source's throughput changes. No Delete and no cluster operation --
+# on-prem withholds both, and a compromised engine principal must not be able to
+# drop the bus.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # The inputs are hashed into the name so a changed topic list, principal or jar
-  # version is a NEW Job rather than an edit to an immutable one. Replace=true
-  # cannot do that job: the API server only defaults spec.selector on CREATE, so
-  # replacing a Job that declares none is rejected and the Application never syncs
-  # again.
-  name: {{ .Values.kafka.name }}-msk-bootstrap-{{ printf "%s|%s|%s" ($topics | toJson) $msk.scramUsername $iam.version | sha256sum | trunc 8 }}
+  # The inputs are hashed into the name so a changed principal or jar version is
+  # a NEW Job rather than an edit to an immutable one. Replace=true cannot do
+  # that job: the API server only defaults spec.selector on CREATE, so replacing
+  # a Job that declares none is rejected and the Application never syncs again.
+  name: {{ .Values.kafka.name }}-msk-bootstrap-{{ printf "%s|%s" $msk.scramUsername $iam.version | sha256sum | trunc 8 }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
   annotations:
@@ -163,23 +157,13 @@ spec:
                 fi
                 sleep 5
               done
-              # --if-not-exists so an operator who repartitioned a topic keeps their
-              # settings; this only guarantees the topics are there at all.
-              {{- range $t := $topics }}
-              {{- /* The toJson round-trip makes numbers float64; a bare render of a
-                     large one is scientific notation, which the broker CLI rejects.
-                     Integral floats render via int64. */}}
-              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --create --if-not-exists --topic "{{ $t.name }}" --partitions {{ $t.partitions }} --replication-factor {{ $t.replicationFactor }}{{ range $k, $v := $t.config }} --config {{ $k }}={{ if kindIs "float64" $v }}{{ int64 $v }}{{ else }}{{ $v }}{{ end }}{{ end }}
-              {{- end }}
               # The on-prem grants, verbatim (kafka-user.yaml). kafka-acls.sh --add
               # is idempotent, so a re-run re-asserts rather than duplicates.
-              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Write --operation Create --operation Describe --topic "*" --resource-pattern-type literal
+              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Write --operation Create --operation Describe --operation Alter --topic "*" --resource-pattern-type literal
               # prefixed means the name IS the literal prefix -- never write a '*'
               # glob here, which would match groups starting "dfe-*", not "dfe-".
               /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Describe --group "dfe-" --resource-pattern-type prefixed
               echo "ACLs now on the cluster:"
               /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --list
-              echo "topics now on the cluster:"
-              /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --list
 {{- end }}
 {{- end }}
