@@ -14,14 +14,14 @@ own startup, from the pinned dfe-schemas manifest, and gates `/readyz` on the
 result. Nothing in dfe-infra creates, alters or drops a database, table, view,
 role or topic any more.
 
-That is a property of the repo, not of a review: a Job, a CR or a shell line that
-creates a table renders green, lints green and passes a server-side dry-run,
-because neither the API server nor helm has an opinion about DDL in a string. So
-it is swept for, in the four trees that deploy things.
+That is a property of the repo, not of a review: a Job, a CR, a shell line or an
+OpenTofu resource that creates a table renders green, lints green and passes a
+server-side dry-run, because neither the API server, helm nor tofu has an opinion
+about DDL in a string. So it is swept for, in the five trees that deploy things.
 
 Three assertions, each the reappearance of something this change deleted:
 
-1. No ClickHouse DDL under helm/, argocd/, bootstrap/ or scripts/.
+1. No ClickHouse DDL under helm/, argocd/, bootstrap/, scripts/ or terraform/.
 2. No topic-creation step in the same trees, and no chart rendering a KafkaTopic.
 3. No schema-apply workload: no dfe-schema chart, no dfe-schema Application in an
    appset, no dfe-schema dependency in the umbrella chart.
@@ -47,9 +47,8 @@ CHARTS = REPO_ROOT / "helm" / "charts"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
 STACK_CHART = REPO_ROOT / "helm" / "dfe-stack" / "Chart.yaml"
 
-# The trees that deploy or operate something. terraform/ is deliberately out of
-# scope: it provisions a managed broker before DFE exists on it at all.
-SWEPT = ("helm", "argocd", "bootstrap", "scripts")
+# The trees that deploy or operate something.
+SWEPT = ("helm", "argocd", "bootstrap", "scripts", "terraform")
 
 # Files that never carry a deploy step.
 SKIP_SUFFIXES = (".tgz", ".png", ".svg", ".lock")
@@ -65,11 +64,15 @@ CLICKHOUSE_DDL = re.compile(
     re.IGNORECASE,
 )
 
-# Creating a Kafka topic, by any of the three tools this repo has ever used.
+# Creating a Kafka topic, by any of the four tools this repo has ever used. The
+# OpenTofu form matches the resource TYPE, so an ACL resource named "topics" is
+# not a hit. It names the Kafka providers rather than any type ending in `topic`,
+# because aws_sns_topic and google_pubsub_topic are not this bus.
 TOPIC_CREATE = re.compile(
     r"kafka-topics\.sh[^\n]*--create"
     r"|rpk\s+topic\s+create"
-    r"|kind:\s*KafkaTopic",
+    r"|kind:\s*KafkaTopic"
+    r"|resource\s+\"(?:[A-Za-z0-9_]*kafka_topic|redpanda_topic)\"",
     re.IGNORECASE,
 )
 
@@ -85,6 +88,9 @@ ALLOWED_TOPIC_CREATE = {
     "scripts/tests/test_engine_only_schema_control.py",
     # Asserts the absence of the topic half, so it quotes the flags it forbids.
     "scripts/tests/test_msk_bootstrap.py",
+    # Provisions a managed cloud broker before DFE exists on it, the same shape as
+    # the MSK ACL job that stays. Whether the path should go at all is dfe-infra#355.
+    "terraform/modules/managed-kafka/",
 }
 
 # PostgreSQL, not ClickHouse: CNPG creating its own databases at initdb is the
@@ -104,12 +110,19 @@ def swept_files() -> list[Path]:
     return out
 
 
+def allowed_path(rel: str, allowed: set[str]) -> bool:
+    """Whether the allow-list covers this path. A trailing slash names a directory."""
+    return rel in allowed or any(
+        entry.endswith("/") and rel.startswith(entry) for entry in allowed
+    )
+
+
 def offenders(pattern: re.Pattern[str], allowed: set[str]) -> list[str]:
     """Every `path:line` in the swept trees matching the pattern, minus the allow-list."""
     hits = []
     for path in swept_files():
         rel = str(path.relative_to(REPO_ROOT))
-        if rel in allowed:
+        if allowed_path(rel, allowed):
             continue
         try:
             body = path.read_text(encoding="utf-8")

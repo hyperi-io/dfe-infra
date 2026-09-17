@@ -80,13 +80,18 @@ view, role or a Kafka topic. `dfe-schemas` declares every one of them and
 dfe-engine applies them at its own startup, from the wheel pinned inside its
 image, on both tiers and every broker provider. A CI guard
 (`scripts/tests/test_engine_only_schema_control.py`) fails the build on DDL or
-a topic-creation step reappearing under `helm/`, `argocd/`, `bootstrap/` or
-`scripts/`.
+a topic-creation step reappearing under `helm/`, `argocd/`, `bootstrap/`,
+`scripts/` or `terraform/`.
 
 What that leaves this repo:
 
 - **The clusters themselves.** ClickHouse and Kafka are deployed, sized, backed
   up and upgraded here. Only the schema inside them moved.
+- **The managed-broker landing topics.** `terraform/modules/managed-kafka/`
+  creates a landing topic for confluent-cloud and redpanda-cloud, driven by
+  `kafka.landing_topics`. It provisions a managed cloud broker before DFE
+  exists on it, the same shape as the MSK ACL job, so the guard allow-lists
+  that one directory by name. Whether the path should go at all is #355.
 - **The MSK first ACL.** `msk-bootstrap-job.yaml` writes the SCRAM principal's
   ACLs over SASL/IAM, because on a cluster that has stopped granting by default
   nothing can write the FIRST ACL unless it is already permitted. It creates no
