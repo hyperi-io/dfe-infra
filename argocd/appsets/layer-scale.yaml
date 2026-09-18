@@ -271,6 +271,12 @@ spec:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
             - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+          parameters:
+            # The registry every dfe-* image is pulled from, guarded exactly as
+            # in layer2-apps: a missing annotation fails the render rather than
+            # sending each image to Docker Hub.
+            - name: global.registry
+              value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
       destination:
         server: '{{ .server }}'
         namespace: '{{ if .namespace }}{{ .namespace }}{{ else }}{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}{{ end }}'
