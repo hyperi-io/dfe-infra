@@ -10,9 +10,11 @@ global:
   cloud: ""
   domain: ""
   region: ""
-  # Container registry — MUST be set in environment-specific values file.
-  # Examples: ghcr.io/my-org, my-registry.example.com/dfe, 123456.dkr.ecr.us-east-1.amazonaws.com/dfe
-  # Charts reference: image: "{{ .Values.global.registry }}/dfe-{component}:{tag}"
+  # The registry every dfe-* image is pulled from. Bootstrap writes it from
+  # DFE_REGISTRY onto the dfe.hyperi.io/registry cluster-secret annotation and
+  # the layer 2 appsets pass it as this parameter, so no values file sets it.
+  # A DFE_REGISTRY looks like: ghcr.io/my-org, my-registry.example.com/dfe,
+  # or 123456.dkr.ecr.us-east-1.amazonaws.com/dfe.
   registry: ""
 
 # THE canonical service-name map: every surface is {hostname}.{domain}, and

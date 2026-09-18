@@ -12,7 +12,6 @@ global:
   cloud: local-dfe
   region: local
   domain: dfe.example.com
-  registry: "ghcr.io/hyperi-io"
 
 domain: dfe.example.com
 storageClass: local-path

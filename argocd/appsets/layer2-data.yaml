@@ -110,12 +110,11 @@ spec:
               - '$values/infra/common.yaml'
               - '$values/infra/{{ .app }}.yaml'
             parameters:
-              # The registry every dfe-* image is pulled from -- dfe-schema's
-              # Job and otel-collector both render one. A chart left on
-              # common.yaml's empty default renders the image with no host and
-              # containerd resolves it to Docker Hub, which publishes none.
+              # The registry dfe-schema's Job pulls the engine image from, guarded
+              # exactly as in layer2-apps: a missing annotation fails the render
+              # rather than sending the image to Docker Hub.
               - name: global.registry
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/registry" }}'
+                value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
               # Where the DFE apps run -- the SAME annotation layer2-apps places them
               # with, so the data services and apps cannot disagree about the
               # namespace. kafka and ferretdb read it (each projects a credential
