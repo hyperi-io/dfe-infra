@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         scripts/dfe-fleet
+#  Purpose:      Ship scalo and rebuild its downstream fleet, via PR merge to main.
+#  Language:     Python
+#
+#  License:      BUSL-1.1
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""Fleet release helpers for scalo (Rust) and scalo-py (Python).
+
+The compatibility entry point: the four subcommands below, unchanged, over
+``hyperi_ai.suite`` -- ``tools/dfe_suite.py`` is the graph-driven one.
+
+Four jobs, one tool::
+
+    dfe-fleet ship-rs    [SUBJECT]              # scalo -> crates.io
+    dfe-fleet ship-py    [SUBJECT]              # scalo -> PyPI
+    dfe-fleet rebuild-rs APP_DIR VERSION [SUB]  # a Rust consumer
+    dfe-fleet rebuild-py APP_DIR VERSION [SUB]  # a Python consumer
+
+**Main is protected: nothing pushes to it.** Every repo the fleet touches now
+carries a ``pull_request`` ruleset on its default branch, so a change lands as
+a branch, a PR, and a squash merge. Approvals required: zero, so this still
+runs completely unattended -- but ``git push origin main`` is gone for good.
+
+The publish trigger is unchanged. hyperi-ci reads ``git log -1 --format=%B``
+on ``refs/heads/main`` and looks for a ``Publish: true`` trailer, so the
+SQUASH COMMIT MESSAGE we author carries the trailer onto main and the merge
+event is itself the publish run. ``hyperi-ci publish`` (the workflow_dispatch
+escape hatch) is used only where there is no new commit to land, because it
+has silently created no run at all before now (2026-07-20).
+
+Runs on macOS and Linux, on the guaranteed homedir venv: no jq, no BSD-vs-GNU
+``stat``/``sed`` divergence, and no assumption about where the projects root
+lives (see ``find_repo``). It needs ``git`` and ``gh`` on PATH, plus the
+toolchain of whichever fleet half it is driving.
+
+Every wait is an ACTIVE poll that early-fails the instant a job goes red, and
+every wait has a hard deadline. A green run is never taken as proof of a
+release: the live registry version has to actually move.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import argparse
+import io
+import sys
+
+from dfe_suite.artefacts import (
+    NOTHING_PUBLISHED,
+    Artefact,
+    await_artefact,
+    crates_version,
+    latest_release_tag,
+    pypi_version,
+)
+from dfe_suite.landing import (
+    _RED_CONCLUSIONS,
+    CI_WORKFLOW_FILE,
+    PUBLISH_TRAILER,
+    RunRow,
+    _pr_number_from_url,
+    _red_checks,
+    _select_run,
+    _slugify,
+    already_released,
+    await_pr_mergeable,
+    await_run,
+    commit_body,
+    existing_pr,
+    find_run_for_sha,
+    follow_release,
+    land_via_pr,
+    poll_run,
+)
+from dfe_suite.proc import (
+    _TAG,
+    ARTEFACT_TIMEOUT,
+    CHECKS_TIMEOUT,
+    DEFAULT_ORG,
+    REGISTRY_POLL_SECONDS,
+    REGISTRY_TIMEOUT,
+    RUN_APPEAR_TIMEOUT,
+    RUN_POLL_SECONDS,
+    RUN_TIMEOUT_PYTHON,
+    RUN_TIMEOUT_RUST,
+    USER_AGENT,
+    FleetError,
+    _http_json,
+    gh_json,
+    out,
+    require_tools,
+    run,
+    say,
+    tag,
+    warn,
+)
+from dfe_suite.rebuild import (
+    _HELM_CONTRACT_CODE,
+    _assert_locked,
+    _bump_py_constraint,
+    _chart_contract_test,
+    _emit_chart,
+    _emit_dockerfile,
+    rebuild_python,
+    rebuild_rust,
+)
+from dfe_suite.repos import (
+    _candidate_roots,
+    current_branch,
+    find_repo,
+    git,
+    has_staged_changes,
+    head_sha,
+    repo_slug,
+    sync_main,
+)
+from dfe_suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library
+
+# The compatibility surface: every name this module carried before the
+# primitives moved into hyperi_ai.suite. Private names are listed too, because
+# callers and tests reach for those directly.
+__all__ = [
+    "ARTEFACT_TIMEOUT",
+    "CHECKS_TIMEOUT",
+    "CI_WORKFLOW_FILE",
+    "DEFAULT_ORG",
+    "NOTHING_PUBLISHED",
+    "PUBLISH_TRAILER",
+    "REGISTRY_POLL_SECONDS",
+    "REGISTRY_TIMEOUT",
+    "RUN_APPEAR_TIMEOUT",
+    "RUN_POLL_SECONDS",
+    "RUN_TIMEOUT_PYTHON",
+    "RUN_TIMEOUT_RUST",
+    "SHIP_PY",
+    "SHIP_RS",
+    "USER_AGENT",
+    "_HELM_CONTRACT_CODE",
+    "_RED_CONCLUSIONS",
+    "_TAG",
+    "Artefact",
+    "FleetError",
+    "RunRow",
+    "ShipSpec",
+    "_assert_locked",
+    "_bump_py_constraint",
+    "_candidate_roots",
+    "_chart_contract_test",
+    "_emit_chart",
+    "_emit_dockerfile",
+    "_http_json",
+    "_pr_number_from_url",
+    "_red_checks",
+    "_select_run",
+    "_slugify",
+    "already_released",
+    "await_artefact",
+    "await_pr_mergeable",
+    "await_run",
+    "build_parser",
+    "cmd_rebuild_py",
+    "cmd_rebuild_rs",
+    "cmd_ship",
+    "commit_body",
+    "crates_version",
+    "current_branch",
+    "existing_pr",
+    "find_repo",
+    "find_run_for_sha",
+    "follow_release",
+    "gh_json",
+    "git",
+    "has_staged_changes",
+    "head_sha",
+    "land_via_pr",
+    "latest_release_tag",
+    "main",
+    "out",
+    "poll_run",
+    "pypi_version",
+    "rebuild_python",
+    "rebuild_rust",
+    "repo_slug",
+    "require_tools",
+    "run",
+    "say",
+    "ship_library",
+    "sync_main",
+    "tag",
+    "warn",
+]
+
+
+# ---------------------------------------------------------------------------
+# Subcommands -- argparse in, the suite module out
+# ---------------------------------------------------------------------------
+
+
+def cmd_ship(spec: ShipSpec, args: argparse.Namespace) -> int:
+    """Release scalo itself, landing any staged fix through a PR first."""
+    return ship_library(
+        spec,
+        repo_dir=args.repo_dir,
+        org=args.org,
+        subject=args.subject,
+        dry_run=args.dry_run,
+    )
+
+
+def cmd_rebuild_rs(args: argparse.Namespace) -> int:
+    """Move one Rust consumer onto a new scalo and release it."""
+    return rebuild_rust(
+        args.app_dir,
+        args.version,
+        subject=args.subject,
+        run_tests=not args.no_tests,
+        emit_chart=not args.no_chart,
+        watch=not args.no_watch,
+        dry_run=args.dry_run,
+        org=args.org,
+    )
+
+
+def cmd_rebuild_py(args: argparse.Namespace) -> int:
+    """Move one Python consumer onto a new scalo and release it."""
+    return rebuild_python(
+        args.app_dir,
+        args.version,
+        subject=args.subject,
+        watch=not args.no_watch,
+        dry_run=args.dry_run,
+        org=args.org,
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Assemble the argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="dfe-fleet",
+        description=(
+            "Ship scalo and rebuild its downstream fleet. Main is protected, so "
+            "every change lands as a branch, a PR, and a squash merge whose "
+            "message carries the release trailer."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  git add <fix-files>\n"
+            "  dfe-fleet ship-rs 'fix: <root cause>'\n"
+            "  dfe-fleet ship-py\n"
+            "  dfe-fleet rebuild-rs ~/projects/dfe-fetcher 2.11.0\n"
+            "  dfe-fleet rebuild-rs ~/projects/dfe-loader 2.11.0 --no-tests\n"
+            "  dfe-fleet rebuild-py ~/projects/dfe-engine 2.29.10\n"
+        ),
+    )
+    parser.add_argument(
+        "--org",
+        default=DEFAULT_ORG,
+        help=f"GitHub org used when the remote cannot be read (default: {DEFAULT_ORG})",
+    )
+    parser.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="say what would happen, touch nothing",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def add_shared(target: argparse.ArgumentParser) -> None:
+        """Repeat the global flags on a subcommand, so either position works.
+
+        SUPPRESS rather than a default, so an unused subcommand flag does not
+        overwrite the value given before the subcommand.
+        """
+        target.add_argument("--org", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        target.add_argument(
+            "-n",
+            "--dry-run",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="say what would happen, touch nothing",
+        )
+
+    for name, help_text in (
+        ("ship-rs", "release scalo (Rust) to crates.io"),
+        ("ship-py", "release scalo (Python) to PyPI"),
+    ):
+        ship = sub.add_parser(name, help=help_text)
+        add_shared(ship)
+        ship.add_argument(
+            "subject",
+            nargs="?",
+            default="",
+            help="conventional-commit subject, required when a fix is staged",
+        )
+        ship.add_argument("--repo-dir", help="the checkout, if it is not where we look")
+
+    for name, help_text in (
+        ("rebuild-rs", "move a Rust consumer onto a new scalo"),
+        ("rebuild-py", "move a Python consumer onto a new scalo"),
+    ):
+        rebuild = sub.add_parser(name, help=help_text)
+        add_shared(rebuild)
+        rebuild.add_argument("app_dir", help="the consumer's checkout")
+        rebuild.add_argument("version", help="the scalo version to move onto")
+        rebuild.add_argument(
+            "subject",
+            nargs="?",
+            default="",
+            help="commit subject (default: fix: rebuild on ...)",
+        )
+        rebuild.add_argument(
+            "--no-watch",
+            action="store_true",
+            help="merge and return, do not follow the release",
+        )
+        if name == "rebuild-rs":
+            rebuild.add_argument(
+                "--no-tests",
+                action="store_true",
+                help="skip the local nextest gate (dfe-loader: its suite is Docker-bound)",
+            )
+            rebuild.add_argument(
+                "--no-chart",
+                action="store_true",
+                help=(
+                    "skip chart/ regeneration (for an app with neither an "
+                    "emit-chart subcommand nor a helm_contract test -- "
+                    "dfe-receiver today)"
+                ),
+            )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point. Returns the process exit code -- non-zero means STOP."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    args = build_parser().parse_args(argv)
+    handlers = {
+        "ship-rs": lambda: cmd_ship(SHIP_RS, args),
+        "ship-py": lambda: cmd_ship(SHIP_PY, args),
+        "rebuild-rs": lambda: cmd_rebuild_rs(args),
+        "rebuild-py": lambda: cmd_rebuild_py(args),
+    }
+    try:
+        return handlers[args.command]()
+    except FleetError as exc:
+        print(f"[{tag()}] ERROR: {exc}", file=sys.stderr, flush=True)
+        return 1
+    except KeyboardInterrupt:
+        print(f"[{tag()}] interrupted", file=sys.stderr, flush=True)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

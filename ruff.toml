@@ -16,6 +16,8 @@ target-version = "py312"
 extend-include = [
     "scripts/dfe-ops",
     "scripts/dfe-stack",
+    "scripts/dfe-suite",
+    "scripts/dfe-fleet",
 ]
 
 extend-exclude = [
@@ -54,3 +56,11 @@ known-first-party = ["_charts", "_expect"]
 # Test helpers load the script under test by path, which needs the import
 # machinery rather than a module import.
 "scripts/tests/*" = ["S102"]
+# The suite CLIs and their tests put `scripts/` on sys.path before importing
+# the package, which is an import that cannot be at the top of the file.
+"scripts/dfe-suite" = ["E402"]
+"scripts/dfe-fleet" = ["E402"]
+"scripts/tests/test_suite_kinds.py" = ["S102", "E402", "N802"]
+"scripts/tests/test_dfe_suite_cli.py" = ["S102", "E402"]
+"scripts/tests/test_scalo_fleet.py" = ["S102", "E402"]
+
