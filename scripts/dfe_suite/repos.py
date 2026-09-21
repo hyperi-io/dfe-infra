@@ -7,9 +7,9 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Finding a checkout, and the small git reads the suite helpers depend on.
 
-No disk layout is hardcoded: the Mac, dragonfly and desktop-derek all park
-their projects somewhere different, so a repo is resolved through an explicit
-env var first and a short list of roots after that.
+No disk layout is hardcoded: macOS and Linux hosts park their projects in
+different places, so a repo is resolved through an explicit env var first
+and a short list of roots after that.
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ def _candidate_roots() -> list[Path]:
         roots.append(Path(explicit))
     roots.extend(
         [
-            Path("/Volumes/projects"),  # the Mac
+            Path("/Volumes/projects"),  # macOS
             Path.home() / "projects",
-            Path("/projects"),  # dragonfly and the Linux boxes
+            Path("/projects"),  # the Linux hosts
         ]
     )
     return roots

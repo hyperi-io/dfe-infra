@@ -586,6 +586,31 @@ esac
 """
 
 
+def _hyperi_ai_installed() -> bool:
+    """True when hyperi-ai's fixes_scan.py is reachable.
+
+    `signals` and the review pack's signal line read it. Without hyperi-ai
+    there is nothing to gather, so those cases SKIP -- mocking the scanner
+    would assert against our own stub rather than the real gather.
+    """
+    from pathlib import Path as _P
+
+    root = os.environ.get("HYPERI_AI_ROOT")
+    candidates = [_P(root) / "tools" / "fixes_scan.py"] if root else []
+    candidates += [
+        _P.home() / ".local" / "share" / "hyperi-ai" / "tools" / "fixes_scan.py",
+        _P("/usr/local/share/hyperi-ai/tools/fixes_scan.py"),
+    ]
+    return any(path.is_file() for path in candidates)
+
+
+NEEDS_HYPERI_AI = pytest.mark.skipif(
+    not _hyperi_ai_installed(),
+    reason="signal gather needs hyperi-ai's fixes_scan.py",
+)
+
+
+@NEEDS_HYPERI_AI
 class SignalsTests(unittest.TestCase):
     """`signals` reports a member's open signals through the same gather /fixes uses.
 
@@ -770,6 +795,7 @@ class ReviewPlanTests(unittest.TestCase):
         assert "suite-infra-xyzzy | image-pin | lockstep" in pack
         assert "language rules: ~/.local/share/hyperi-ai/standards/languages/rust.md" in pack
 
+    @NEEDS_HYPERI_AI
     def test_a_member_that_is_not_checked_out_is_said_so_not_guessed(self) -> None:
         code, output = self._plan("rust")
         assert code == 0, output
