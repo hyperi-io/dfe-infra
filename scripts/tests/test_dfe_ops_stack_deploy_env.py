@@ -2,8 +2,9 @@
 #  Project:      dfe-infra
 #  File:         test_dfe_ops_stack_deploy_env.py
 #  Purpose:      Prove stack-deploy's env assembly unwraps the terraform bridge's
-#                (value, sensitive) pairs and demands only the secrets vars the
-#                declared backend actually uses.
+#                (value, sensitive) pairs, demands only the secrets vars the
+#                declared backend actually uses, and runs its preflight with no
+#                --registry given.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -89,6 +90,34 @@ def test_the_registry_flag_reaches_bootstrap(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setitem(sys.modules, "bridge", bridge)
     env = dfeops._assemble_env(_args(tmp_path))
     assert env["DFE_REGISTRY"] == "registry.example.com/dfe"
+
+
+def _preflight_render_argv(monkeypatch, registry: str | None) -> list[str]:
+    """The argv the offline preflight's first step runs, stopping it right there."""
+    seen: list[list[str]] = []
+
+    def fake_run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
+        seen.append(cmd)
+        return 1, "", "stopped by the test"
+
+    monkeypatch.setattr(dfeops, "_run_text", fake_run_text)
+    args = argparse.Namespace(registry=registry, stack="2.2.0-rc.99", strict_compat=False, mode="single")
+    assert dfeops._offline_preflight(args) == 1
+    return seen[0]
+
+
+def test_preflight_runs_with_no_registry_flag(monkeypatch) -> None:
+    """--registry defaults to None, and a None in argv refused the whole run with
+    a TypeError before any check had run."""
+    argv = _preflight_render_argv(monkeypatch, None)
+    assert None not in argv
+    assert "--registry" not in argv
+    assert argv[-3:] == ["render", "--stack", "2.2.0-rc.99"]
+
+
+def test_preflight_passes_a_given_registry_on(monkeypatch) -> None:
+    argv = _preflight_render_argv(monkeypatch, "registry.example.com/dfe")
+    assert argv[argv.index("--registry") + 1] == "registry.example.com/dfe"
 
 
 def test_openbao_is_required_only_when_the_backend_is_openbao() -> None:
