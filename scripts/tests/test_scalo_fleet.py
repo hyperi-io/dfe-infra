@@ -736,6 +736,8 @@ class ChartRegenerationTests(OnPathTestCase):
         repo_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-regen-")
         self.addCleanup(repo_tmp.cleanup)
         self.repo = Path(repo_tmp.name)
+        # Only answers require_tools: the cargo stand-in decides what nextest returns.
+        _fake_bin(self.bindir, "cargo-nextest", status=0)
 
     def _write(self, relative: str, body: str) -> Path:
         path = self.repo / relative
