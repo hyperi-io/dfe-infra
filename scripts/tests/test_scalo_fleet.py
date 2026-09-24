@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import sys
@@ -38,7 +39,12 @@ sf = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(sf)
 
 from dfe_suite.landing import dispatch_release
-from dfe_suite.rebuild import _check_unoptimized_caller, _drift_filter
+from dfe_suite.rebuild import (
+    _check_unoptimized_caller,
+    _drift_filter,
+    _gate_exclusions,
+    _gate_features,
+)
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "Test",
@@ -119,17 +125,23 @@ def _fake_bin(
 
 
 def _emitting_cargo(
-    directory: Path, chart: dict[str, str], *, nextest_status: int = 0
+    directory: Path,
+    chart: dict[str, str],
+    *,
+    nextest_status: int = 0,
+    spelling: str = "emit-chart",
 ) -> None:
-    """A cargo stand-in whose ``emit-chart DIR`` writes ``chart`` into DIR.
+    """A cargo stand-in whose ``<spelling> DIR`` writes ``chart`` into DIR.
 
     The same argv log as ``_fake_bin``. ``emit-dockerfile`` prints a Dockerfile,
-    ``nextest run`` exits ``nextest_status``, and every other call succeeds.
+    ``nextest run`` exits ``nextest_status``, and every other call succeeds
+    without writing a chart, so the other chart spellings produce nothing.
 
     Args:
         directory: Scratch directory that is on the front of PATH.
         chart: Relative path -> content of every file the generator writes.
         nextest_status: The exit code of a ``cargo nextest run``.
+        spelling: The one chart-emit form the app answers, e.g. ``--emit-helm``.
     """
     lines = [
         "#!/bin/sh",
@@ -138,7 +150,7 @@ def _emitting_cargo(
         'case " $* " in',
         f'  *" nextest run "*) exit {nextest_status} ;;',
         "  *\" emit-dockerfile \"*) echo 'FROM scratch'; exit 0 ;;",
-        '  *" emit-chart "*)',
+        f'  *" {spelling} "*)',
         '    mkdir -p "$last/templates"',
     ]
     for rel, body in chart.items():
@@ -625,6 +637,23 @@ class EmitChartTests(OnPathTestCase):
         with pytest.raises(sf.FleetError):
             sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
 
+    def test_a_failing_drift_test_names_the_exact_command_it_ran(self) -> None:
+        # The gate's feature flags are the operator's rerun, so the message
+        # carries the argv as run rather than a --all-features that was not.
+        self._chart()
+        self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
+        _fake_bin(self.bindir, "cargo-nextest", status=0)  # cargo itself fails
+        features = ["--no-default-features", "--features", "app/db,app/default"]
+        with pytest.raises(sf.FleetError) as caught:
+            sf._emit_chart(self.repo, "dfe-app", run_drift_tests=True, features=features)
+        assert (
+            "Rerun them: cargo nextest run --workspace --no-default-features "
+            "--features app/db,app/default -E 'test(/helm_contract/)'"
+        ) in str(caught.value)
+        argv = _fake_argv(self.bindir, "cargo")
+        assert _contains(argv, ["nextest", "run", "--workspace", *features, "-E"]) != -1
+        assert "--all-features" not in argv
+
     def test_no_tests_runs_a_committed_chart_matches_the_generator_test(self) -> None:
         # dfe-loader's shape: the full-chart drift test sits OUTSIDE
         # `mod helm_contract`, so a helm_contract-only gate passed a stale chart.
@@ -845,6 +874,29 @@ class ChartRegenerationTests(OnPathTestCase):
         # Nothing to gate on, so no nextest run was invented.
         assert "nextest" not in _fake_argv(self.bindir, "cargo")
 
+    def test_an_app_that_only_answers_emit_helm_is_regenerated_from_scratch(self) -> None:
+        # dfe-loader's and dfe-receiver's shape: `--emit-helm DIR` is their only
+        # chart emitter, so without it a changed contract leaves the chart stale
+        # and the drift test fails the rebuild.
+        self._committed(
+            "chart", {"Chart.yaml": "name: app\nversion: 1.0.0", "values.yaml": "port: 50051"}
+        )
+        self._write(
+            "tests/integration/deployment.rs",
+            "#[test]\nfn committed_chart_matches_the_generator() {}\n",
+        )
+        _emitting_cargo(self.bindir, self.FRESH, spelling="--emit-helm")
+        result, out, _err = self._emit(run_drift_tests=True)
+        assert result == self.repo / "chart"
+        assert self._read("chart/values.yaml") == "replicas: 1\n"
+        assert self._read("chart/templates/deployment.yaml") == "kind: Deployment  # generated\n"
+        assert "regenerated chart from a fresh emit" in out
+        # The emit went to scratch, never into the committed chart.
+        argv = _fake_argv(self.bindir, "cargo")
+        target = Path(argv[argv.index("--emit-helm") + 1])
+        assert target.is_absolute()
+        assert not target.is_relative_to(self.repo)
+
     def test_a_chart_equal_to_a_fresh_emit_is_not_rewritten(self) -> None:
         self._committed("chart", self.FRESH)
         self._write("src/deployment.rs", "#[test]\nfn committed_chart_matches_the_generator() {}\n")
@@ -913,6 +965,14 @@ class RebuildRsChartTests(OnPathTestCase):
             sf.cmd_rebuild_rs(self._args("--no-tests"))
         assert "emit-chart" in _fake_argv(self.bindir, "cargo")
 
+    def test_a_chart_step_that_stops_the_rebuild_leaves_docs_regenerated(self) -> None:
+        # The chart is the step that stops a rebuild; docs/ went stale behind it.
+        with pytest.raises(sf.FleetError):
+            sf.cmd_rebuild_rs(self._args("--no-tests"))
+        argv = _fake_argv(self.bindir, "cargo")
+        assert "config-schema" in argv
+        assert argv.index("config-schema") < argv.index("emit-chart")
+
     def test_the_dry_run_names_the_chart_when_it_will_regenerate_one(self) -> None:
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
@@ -979,6 +1039,176 @@ class RebuildRsChartLandingTests(OnPathTestCase):
         touched = _git(self.origin, "show", "--name-only", "--format=", self.BRANCH).split()
         assert "chart/templates/keda-triggerauth.yaml" in touched
         assert "chart/templates/deployment.yaml" in touched
+
+
+# dfe-fetcher's workspace as `cargo metadata --no-deps` reports it, cut to the
+# features that matter: the db crate's `odbc` links unixODBC, and the app's
+# `db-odbc` and `full` both turn it on.
+_FETCHER_METADATA = {
+    "packages": [
+        {
+            "name": "dfe-fetcher",
+            "features": {
+                "default": [],
+                "jemalloc": ["dep:tikv-jemallocator"],
+                "db-odbc": ["dfe-fetcher-db/odbc"],
+                "db-clickhouse": ["dfe-fetcher-db/clickhouse"],
+                "file": [],
+                "file-tail": ["file", "dfe-fetcher-file/tail"],
+                "full": ["jemalloc", "db-odbc", "db-clickhouse", "file-tail"],
+            },
+            "dependencies": [
+                {"name": "dfe-fetcher-db", "rename": None},
+                {"name": "dfe-fetcher-file", "rename": None},
+                {"name": "tikv-jemallocator", "rename": None},
+            ],
+        },
+        {
+            "name": "dfe-fetcher-db",
+            "features": {
+                "default": [],
+                "odbc": ["dep:odbc-api"],
+                "clickhouse": ["dep:clickhouse"],
+            },
+            "dependencies": [],
+        },
+        {
+            "name": "dfe-fetcher-file",
+            "features": {"default": [], "tail": ["dep:file-source"]},
+            "dependencies": [],
+        },
+    ]
+}
+
+_FETCHER_GATE = [
+    "--no-default-features",
+    "--features",
+    "dfe-fetcher/db-clickhouse,dfe-fetcher/default,dfe-fetcher/file,dfe-fetcher/file-tail,"
+    "dfe-fetcher/jemalloc,dfe-fetcher-db/clickhouse,dfe-fetcher-db/default,"
+    "dfe-fetcher-file/default,dfe-fetcher-file/tail",
+]
+
+_METADATA_CALL = "metadata --format-version 1 --no-deps"
+
+
+class GateFeaturesTests(OnPathTestCase):
+    """The local gate builds every feature but those a suite node keeps out."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        repo_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-features-")
+        self.addCleanup(repo_tmp.cleanup)
+        self.repo = Path(repo_tmp.name)
+
+    def _metadata(self, payload: dict) -> None:
+        _fake_bin(self.bindir, "cargo", routes=[(_METADATA_CALL, json.dumps(payload))], status=1)
+
+    def test_nothing_excluded_is_all_features_and_asks_cargo_nothing(self) -> None:
+        assert _gate_features(self.repo, []) == ["--all-features"]
+        assert _fake_argv(self.bindir, "cargo") == []
+
+    def test_the_excluded_feature_and_every_feature_that_turns_it_on_are_dropped(self) -> None:
+        # `full` is the umbrella: listing it would link unixODBC all over again.
+        self._metadata(_FETCHER_METADATA)
+        assert _gate_features(self.repo, ["dfe-fetcher-db/odbc"]) == _FETCHER_GATE
+        assert _contains(_fake_argv(self.bindir, "cargo"), _METADATA_CALL.split()) != -1
+
+    def test_a_feature_reaching_it_through_a_renamed_weak_dependency_is_dropped(self) -> None:
+        # A feature names a dependency by its Cargo.toml key, which a rename changes.
+        payload = {
+            "packages": [
+                {
+                    "name": "app",
+                    "features": {"default": [], "sql": ["db?/odbc"], "fast": []},
+                    "dependencies": [{"name": "dfe-fetcher-db", "rename": "db"}],
+                },
+                _FETCHER_METADATA["packages"][1],
+            ]
+        }
+        self._metadata(payload)
+        features = _gate_features(self.repo, ["dfe-fetcher-db/odbc"])[2].split(",")
+        assert "app/sql" not in features
+        assert "app/fast" in features
+
+    def test_an_exclusion_naming_no_feature_is_refused(self) -> None:
+        # A stale entry must not quietly exclude nothing.
+        self._metadata(_FETCHER_METADATA)
+        with pytest.raises(sf.FleetError) as caught:
+            _gate_features(self.repo, ["dfe-fetcher-db/odbc-api"])
+        assert "dfe-fetcher-db/odbc-api" in str(caught.value)
+
+    def test_metadata_that_does_not_describe_a_workspace_is_refused(self) -> None:
+        _fake_bin(self.bindir, "cargo", stdout="not json")
+        with pytest.raises(sf.FleetError) as caught:
+            _gate_features(self.repo, ["dfe-fetcher-db/odbc"])
+        assert "cargo metadata --format-version 1 --no-deps" in str(caught.value)
+
+    def test_the_suite_graph_keeps_odbc_out_of_the_fetcher_gate_only(self) -> None:
+        # The committed suite.yaml, read the way a rebuild reads it.
+        assert _gate_exclusions("dfe-fetcher") == ["dfe-fetcher-db/odbc"]
+        assert _gate_exclusions("dfe-loader") == []
+        assert _gate_exclusions("not-a-suite-member-xyzzy") == []
+
+
+class RebuildRsGateFeaturesTests(OnPathTestCase):
+    """A suite node's exclusion reaches clippy, nextest and the drift gate alike."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-gate-")
+        self.addCleanup(root_tmp.cleanup)
+        root = Path(root_tmp.name)
+        origin = root / "origin.git"
+        _git(root, "init", "--bare", "-b", "main", str(origin))
+        seed = root / "seed"
+        _git(root, "clone", str(origin), str(seed))
+        _identify(seed)
+        (seed / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        _git(seed, "add", "Cargo.toml")
+        _git(seed, "commit", "-m", "chore: seed")
+        _git(seed, "push", "origin", "main")
+
+        # Named for the suite node whose committed exclusion is under test.
+        self.repo = root / "dfe-fetcher"
+        _git(root, "clone", str(origin), str(self.repo))
+        _identify(self.repo)
+        _fake_bin(
+            self.bindir,
+            "cargo",
+            stdout="FROM scratch",
+            routes=[(_METADATA_CALL, json.dumps(_FETCHER_METADATA))],
+        )
+        _fake_bin(self.bindir, "cargo-nextest")
+        os.environ["SCALO_REBUILD_TARGET"] = str(root / "target")
+
+    def _rebuild(self, *extra: str) -> str:
+        args = sf.build_parser().parse_args(["rebuild-rs", str(self.repo), "2.11.0", *extra])
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            assert sf.cmd_rebuild_rs(args) == 0
+        return buffer.getvalue()
+
+    def test_clippy_and_the_test_suite_build_without_the_excluded_feature(self) -> None:
+        output = self._rebuild("--no-chart")
+        argv = _fake_argv(self.bindir, "cargo")
+        clippy = ["clippy", "--workspace", "--all-targets", *_FETCHER_GATE, "--", "-D", "warnings"]
+        assert _contains(argv, clippy) != -1
+        assert _contains(argv, ["nextest", "run", "--workspace", *_FETCHER_GATE]) != -1
+        assert "--all-features" not in argv
+        assert "(suite.yaml keeps dfe-fetcher-db/odbc out)" in output
+
+    def test_the_drift_gate_builds_without_the_excluded_feature(self) -> None:
+        chart = self.repo / "chart"
+        chart.mkdir()
+        (chart / "Chart.yaml").write_text("name: dfe-fetcher\n", encoding="utf-8")
+        drift = self.repo / "tests" / "integration" / "helm_contract.rs"
+        drift.parent.mkdir(parents=True)
+        drift.write_text("// values sync\n", encoding="utf-8")
+        self._rebuild("--no-tests")
+        argv = _fake_argv(self.bindir, "cargo")
+        drift_run = ["nextest", "run", "--workspace", *_FETCHER_GATE, "-E", "test(/helm_contract/)"]
+        assert _contains(argv, drift_run) != -1
+        assert "--all-features" not in argv
 
 
 class FindRepoTests(unittest.TestCase):
