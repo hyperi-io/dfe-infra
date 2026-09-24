@@ -28,7 +28,9 @@ on ``refs/heads/main`` and looks for a ``Publish: true`` trailer, so the
 SQUASH COMMIT MESSAGE we author carries the trailer onto main and the merge
 event is itself the publish run. ``hyperi-ci publish`` (the workflow_dispatch
 escape hatch) is used only where there is no new commit to land, because it
-has silently created no run at all before now (2026-07-20).
+has silently created no run at all before now (2026-07-20). ``rebuild-rs
+--release-unoptimized`` is the other dispatch: its per-run consent is a
+workflow input, and a push event carries none.
 
 Runs on macOS and Linux, on the guaranteed homedir venv: no jq, no BSD-vs-GNU
 ``stat``/``sed`` divergence, and no assumption about where the projects root
@@ -226,6 +228,7 @@ def cmd_rebuild_rs(args: argparse.Namespace) -> int:
         watch=not args.no_watch,
         dry_run=args.dry_run,
         org=args.org,
+        release_unoptimized=args.release_unoptimized,
     )
 
 
@@ -263,6 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  dfe-fleet ship-py\n"
             "  dfe-fleet rebuild-rs ~/projects/dfe-fetcher 2.11.0\n"
             "  dfe-fleet rebuild-rs ~/projects/dfe-loader 2.11.0 --no-tests\n"
+            "  dfe-fleet rebuild-rs ~/projects/dfe-loader 2.11.0 --release-unoptimized\n"
             "  dfe-fleet rebuild-py ~/projects/dfe-engine 2.29.10\n"
         ),
     )
@@ -340,6 +344,17 @@ def build_parser() -> argparse.ArgumentParser:
                     "skip chart/ regeneration (for an app with neither an "
                     "emit-chart subcommand nor a helm_contract test -- "
                     "dfe-receiver today)"
+                ),
+            )
+            rebuild.add_argument(
+                "--release-unoptimized",
+                action="store_true",
+                help=(
+                    "release a consumer with build.skip_optimize set as an unoptimised "
+                    "build: land with no release trailer, then dispatch ci.yml with the "
+                    "per-run consent inputs skip-optimize and release-unoptimized, which "
+                    "a push run cannot carry. The caller ci.yml must declare both as "
+                    "workflow_dispatch inputs and forward both in with:"
                 ),
             )
     return parser
