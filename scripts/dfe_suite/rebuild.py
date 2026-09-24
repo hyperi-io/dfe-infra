@@ -31,17 +31,25 @@ released through one consented ``workflow_dispatch`` instead.
 A regenerated chart replaces only the directory holding the committed
 ``Chart.yaml``, and never one whose app pins hand fixes to it: that chart stays
 as committed and the app's own chart drift tests decide.
+
+The local Rust gate builds every feature, less any the consumer's suite.yaml
+node lists under ``local_gate_exclude_features`` -- a feature that links a
+system library the host may lack -- and every feature that turns one on.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shlex
 import shutil
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 from dfe_suite.artefacts import Artefact
+from dfe_suite.graph import load_graph
 from dfe_suite.landing import (
     CI_WORKFLOW_FILE,
     _slugify,
@@ -248,8 +256,8 @@ def _chart_differences(fresh: Path, committed: Path) -> list[str]:
 def _emit_to_scratch(repo: Path, app: str, scratch: Path) -> Path | None:
     """Emit a fresh chart into ``scratch`` and return the chart root in it.
 
-    A chart is a directory, so nothing can go to stdout: only the two
-    path-taking spellings are tried here, and neither touches the committed
+    A chart is a directory, so nothing can go to stdout: only the path-taking
+    spellings the fleet uses are tried here, and none touches the committed
     chart.
 
     Returns:
@@ -259,6 +267,7 @@ def _emit_to_scratch(repo: Path, app: str, scratch: Path) -> Path | None:
     for form in (
         [*base, "emit-chart", str(scratch)],
         [*base, "--emit-chart", str(scratch)],
+        [*base, "--emit-helm", str(scratch)],
     ):
         shutil.rmtree(scratch, ignore_errors=True)
         if run(form, cwd=repo, check=False).returncode != 0 or not scratch.is_dir():
@@ -284,30 +293,150 @@ def _drift_filter(tests: dict[str, Path]) -> str:
     return expression
 
 
-def _run_drift_tests(repo: Path, tests: dict[str, Path], *, why: str) -> None:
+def _run_drift_tests(
+    repo: Path, tests: dict[str, Path], *, why: str, features: Sequence[str]
+) -> None:
     """Run the app's chart drift tests and stop the rebuild if any fails.
 
     Args:
         repo: The consumer checkout.
         tests: The drift tests, from :func:`_chart_drift_tests`.
         why: What the failure means for this chart, appended to the error.
+        features: The cargo feature flags, from :func:`_gate_features`.
 
     Raises:
-        FleetError: Naming the tests, when any of them fails.
+        FleetError: Naming the tests and the exact command, when any fails.
     """
     expression = _drift_filter(tests)
     names = ", ".join(sorted(tests))
     say(f"gate: the chart drift tests ({names})")
     require_tools("cargo-nextest")
-    argv = ["cargo", "nextest", "run", "--workspace", "--all-features", "-E", expression]
+    argv = ["cargo", "nextest", "run", "--workspace", *features, "-E", expression]
     if run(argv, cwd=repo, check=False, capture=False).returncode != 0:
         raise FleetError(
-            f"the chart drift tests failed ({names}). {why} "
-            f"Rerun them: cargo nextest run --workspace --all-features -E '{expression}'"
+            f"the chart drift tests failed ({names}). {why} Rerun them: {shlex.join(argv)}"
         )
 
 
-def _emit_chart(repo: Path, app: str, *, run_drift_tests: bool = False) -> Path | None:
+# The suite.yaml node key naming the features the local gate leaves out.
+_GATE_EXCLUDE_KEY = "local_gate_exclude_features"
+
+# The dfe-infra checkout this module ships in, so the gate reads the suite.yaml
+# that matches the tool reading it.
+_SUITE_CHECKOUT = Path(__file__).resolve().parents[2]
+
+
+def _gate_exclusions(app: str) -> list[str]:
+    """The features the consumer's suite.yaml node keeps out of the local gate.
+
+    Args:
+        app: The consumer's node name, which is its checkout directory name.
+
+    Returns:
+        ``package/feature`` entries; empty when the app is not a suite member
+        or its node excludes nothing.
+
+    Raises:
+        FleetError: If the graph cannot be read, or the key holds anything but
+            a list of ``package/feature`` entries.
+    """
+    nodes = load_graph(dfe_infra=_SUITE_CHECKOUT).get("nodes")
+    node = nodes.get(app) if isinstance(nodes, dict) else None
+    excluded = node.get(_GATE_EXCLUDE_KEY, []) if isinstance(node, dict) else []
+    well_formed = isinstance(excluded, list) and all(
+        isinstance(entry, str) and "/" in entry for entry in excluded
+    )
+    if not well_formed:
+        raise FleetError(
+            f"suite.yaml node {app}: {_GATE_EXCLUDE_KEY} is {excluded!r}, not a "
+            f"list of package/feature entries"
+        )
+    return excluded
+
+
+def _gate_features(repo: Path, excluded: Sequence[str]) -> list[str]:
+    """The cargo feature flags the local gate builds with.
+
+    ``--all-features``, unless the node excludes some. Then every feature of
+    every workspace member is named instead, less each excluded one and each
+    feature that turns one on, so an umbrella such as ``full`` cannot bring it
+    back; ``--no-default-features`` stops a ``default`` doing the same.
+
+    Args:
+        repo: The consumer checkout.
+        excluded: ``package/feature`` entries, from :func:`_gate_exclusions`.
+
+    Returns:
+        The flags that follow ``--workspace``.
+
+    Raises:
+        FleetError: If ``cargo metadata`` does not describe the workspace, or an
+            entry names a feature no workspace member has.
+    """
+    if not excluded:
+        return ["--all-features"]
+    argv = ["cargo", "metadata", "--format-version", "1", "--no-deps"]
+    try:
+        packages = json.loads(run(argv, cwd=repo).stdout)["packages"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise FleetError(
+            f"{shlex.join(argv)} in {repo} did not describe the workspace: {exc}"
+        ) from exc
+
+    features: dict[str, dict[str, list[str]]] = {}
+    # A feature names a dependency by its key in Cargo.toml, which a rename changes.
+    members_by_key: dict[str, dict[str, str]] = {}
+    for package in packages:
+        features[package["name"]] = package.get("features") or {}
+        members_by_key[package["name"]] = {
+            dep.get("rename") or dep["name"]: dep["name"]
+            for dep in package.get("dependencies") or []
+        }
+    for entry in excluded:
+        member, _, feature = entry.partition("/")
+        if feature not in features.get(member, {}):
+            raise FleetError(
+                f"suite.yaml keeps {entry} out of the {repo.name} gate, but no "
+                f"workspace member of {repo} has that feature"
+            )
+
+    dropped = set(excluded)
+
+    def turns_on_dropped(member: str, feature: str, seen: set[str]) -> bool:
+        name = f"{member}/{feature}"
+        if name in dropped:
+            return True
+        if name in seen:
+            return False
+        seen.add(name)
+        for value in features[member].get(feature, []):
+            if value.startswith("dep:"):
+                continue
+            key, slash, target = value.partition("/")
+            if not slash:
+                if turns_on_dropped(member, value, seen):
+                    return True
+                continue
+            other = members_by_key[member].get(key.removesuffix("?"))
+            if other in features and turns_on_dropped(other, target, seen):
+                return True
+        return False
+
+    kept: list[str] = []
+    for member in sorted(features):
+        for feature in sorted(features[member]):
+            if not turns_on_dropped(member, feature, set()):
+                kept.append(f"{member}/{feature}")
+    return ["--no-default-features", "--features", ",".join(kept)]
+
+
+def _emit_chart(
+    repo: Path,
+    app: str,
+    *,
+    run_drift_tests: bool = False,
+    features: Sequence[str] = ("--all-features",),
+) -> Path | None:
     """Regenerate the committed Helm chart, if the app ships one.
 
     A stale chart fails nothing -- it just stops matching what the app would
@@ -326,6 +455,8 @@ def _emit_chart(repo: Path, app: str, *, run_drift_tests: bool = False) -> Path 
         run_drift_tests: Gate on the app's chart drift tests here. True when
             the caller skipped the test suite, which is otherwise where they
             run.
+        features: The cargo feature flags the drift tests build with, from
+            :func:`_gate_features`.
 
     Returns:
         The chart directory it rewrote, or None when it left the chart as
@@ -380,6 +511,7 @@ def _emit_chart(repo: Path, app: str, *, run_drift_tests: bool = False) -> Path 
                         f"emit: {', '.join(differing)}. Regenerate the files the "
                         f"tests name and keep each hand fix."
                     ),
+                    features=features,
                 )
                 say(f"the chart drift tests pass -- {where} stays as committed")
                 return None
@@ -391,7 +523,7 @@ def _emit_chart(repo: Path, app: str, *, run_drift_tests: bool = False) -> Path 
                 say(f"regenerated {where} from a fresh emit ({len(differing)} file(s))")
 
     if run_drift_tests and tests:
-        _run_drift_tests(repo, tests, why=why)
+        _run_drift_tests(repo, tests, why=why, features=features)
     return regenerated
 
 
@@ -689,6 +821,12 @@ def rebuild_rust(
         )
         dispatch = _unoptimized_dispatch(slug)
 
+    # Resolved on a dry run too, so a stale exclusion fails before a real run.
+    excluded = _gate_exclusions(app)
+    features = _gate_features(repo, excluded)
+    kept_out = f" (suite.yaml keeps {', '.join(excluded)} out)" if excluded else ""
+    say(f"gate features: {' '.join(features)}{kept_out}")
+
     if dry_run:
         gate = "fmt, clippy, nextest" if run_tests else "fmt, clippy"
         artefacts = "the Dockerfile and docs/ artefacts"
@@ -721,15 +859,10 @@ def rebuild_rust(
 
     say("regenerate the Dockerfile from the deployment contract")
     _emit_dockerfile(repo, app)
-    regenerated: Path | None = None
-    if emit_chart:
-        say("regenerate the Helm chart from the deployment contract")
-        regenerated = _emit_chart(repo, app, run_drift_tests=not run_tests)
-    else:
-        say("chart/ regeneration SKIPPED (--no-chart)")
     # config-schema is a scalo StandardCommand, so every app spells it the same
     # way. It writes into docs/, where the fleet commits config-schema.* and
-    # capability-catalog.*.
+    # capability-catalog.*. Before the chart, whose step is the one that stops
+    # a rebuild, so a stopped rebuild leaves docs/ current.
     say("regenerate the committed config artefacts")
     run(
         [
@@ -746,21 +879,18 @@ def rebuild_rust(
         cwd=repo,
         capture=False,
     )
+    regenerated: Path | None = None
+    if emit_chart:
+        say("regenerate the Helm chart from the deployment contract")
+        regenerated = _emit_chart(repo, app, run_drift_tests=not run_tests, features=features)
+    else:
+        say("chart/ regeneration SKIPPED (--no-chart)")
 
     say("gate: fmt")
     run(["cargo", "fmt", "--all", "--", "--check"], cwd=repo, capture=False)
-    say("gate: clippy (all targets, all features, -D warnings)")
+    say("gate: clippy (all targets, gate features, -D warnings)")
     run(
-        [
-            "cargo",
-            "clippy",
-            "--workspace",
-            "--all-targets",
-            "--all-features",
-            "--",
-            "-D",
-            "warnings",
-        ],
+        ["cargo", "clippy", "--workspace", "--all-targets", *features, "--", "-D", "warnings"],
         cwd=repo,
         capture=False,
     )
@@ -768,10 +898,10 @@ def rebuild_rust(
         # nextest, not `cargo test`: these apps hold process-global state (the
         # metrics recorder, the config registry) that cross-talks under cargo
         # test's in-process parallelism and produces false failures.
-        say("gate: tests (nextest, all features)")
+        say("gate: tests (nextest, gate features)")
         require_tools("cargo-nextest")
         run(
-            ["cargo", "nextest", "run", "--workspace", "--all-features"],
+            ["cargo", "nextest", "run", "--workspace", *features],
             cwd=repo,
             capture=False,
         )
