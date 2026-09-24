@@ -28,7 +28,9 @@ kafka:
   saslSecretName: dfe-kafka-user
   # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
   # confluent-cloud | msk_iam | plaintext). Empty = unset. When set, scalo's
-  # KafkaConfig DERIVES security_protocol + sasl_mechanism from it.
+  # KafkaConfig DERIVES security_protocol + sasl_mechanism from it. plaintext is
+  # not 'the others without TLS': no TLS and no SASL, so no credential is sent.
+  # It suits only a supplied broker with no authentication.
   provider: ""
 
 # API credentials are injected via External Secrets Operator
