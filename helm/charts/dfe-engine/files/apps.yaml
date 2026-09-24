@@ -73,9 +73,15 @@
 #   restart. On Kubernetes it changes nothing: every chart checksums the whole
 #   config into its pod template, so any change rolls the pods either way. On
 #   Compose there is no chart, and this one bit decides whether the engine hands
-#   the operator a restart command (dfe-engine appmgmt/appconfig.py:362) -- so an
+#   the operator a restart command (dfe-engine appmgmt/appconfig.py _render_one) -- so an
 #   app that reloads some settings and binds the rest at startup is false when
 #   the ones the engine writes are the startup-bound half.
+#
+# reload_setting
+#   The app's own config key that turns its config watcher on, for an app whose
+#   watcher ships off. Where the engine renders the config it sets the key true
+#   unless the deployment already set it, and reports a restart when the
+#   deployment set it false. Absent means the app watches without being asked.
 #
 # endpoints
 #   The listeners the app runs, by name. `push` is the scalo Push service a
@@ -226,8 +232,9 @@ apps:
     multiplicity: single
     scale_deployed: true
     transports: [bus, direct]
-    # Watching is opt-in per deployment (config.hot_reload.enabled).
     hot_reload: true
+    # HotReloadConfig::enabled defaults false (dfe-loader src/config/pipeline.rs).
+    reload_setting: config.hot_reload.enabled
     endpoints:
       push: {port: 6000}
     consumes:
@@ -236,6 +243,10 @@ apps:
       compiler: loader
       values_paths:
         routing: config.routing
+        # Per-table _json/_raw capture, compiled from each source's derived
+        # schema. Its own path, not the whole metadata block, because the rest
+        # of that block is the deployment's.
+        capture: config.metadata.table_capture_modes
     # No idle_when: a bound listener always has work, and on the bus an empty
     # topic list is auto-discovery, so a topic appearing gives the loader work
     # with no config change for the gate to wake on.
@@ -256,7 +267,7 @@ apps:
     # (archiver.rs:109-111) -- and those are exactly the keys the engine writes
     # here, `routing.values_paths` and every path in `idle_when` below. One bit
     # cannot say both, and the engine spends it on whether to tell a Compose
-    # operator to restart (dfe-engine appmgmt/appconfig.py:362), so it answers
+    # operator to restart (dfe-engine appmgmt/appconfig.py _render_one), so it answers
     # for the governed writes.
     hot_reload: false
     consumes:
