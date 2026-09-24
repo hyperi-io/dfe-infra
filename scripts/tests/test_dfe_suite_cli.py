@@ -566,6 +566,36 @@ class WalkActsTests(unittest.TestCase):
                 assert "2 edge(s) need a person" in output
                 assert "rebuilding onto" in output
 
+    def test_a_skip_optimize_consumer_is_released_through_the_consent(self) -> None:
+        # walk has no --release-unoptimized to pass, so the consumer's own CI
+        # config is what has to route it past hyperi-ci's Build refusal.
+        repo = self.root / "suite-consumer-xyzzy"
+        workflows = repo / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (repo / ".hyperi-ci.yaml").write_text(
+            "build:\n  skip_optimize: true\n", encoding="utf-8", newline="\n"
+        )
+        (workflows / "ci.yml").write_text(
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "    inputs:\n"
+            "      skip-optimize: {type: string}\n"
+            "      release-unoptimized: {type: string}\n"
+            "jobs:\n"
+            "  ci:\n"
+            "    uses: example-org/ci/.github/workflows/rust-ci.yml@main\n"
+            "    with:\n"
+            "      skip-optimize: ${{ inputs.skip-optimize }}\n"
+            "      release-unoptimized: ${{ inputs.release-unoptimized }}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        code, output = self._walk()
+        assert code == 0, output
+        assert "release path: consented workflow_dispatch" in output
+        assert "without the release trailer" in output
+        assert "-f release-unoptimized=true" in output
+
     def test_an_edge_the_rebuild_provably_covers_is_not_counted(self) -> None:
         # rebuild_rust regenerates the Dockerfile, which IS the generated-file
         # edge, so that one is stated as covered rather than left for a person.

@@ -28,9 +28,10 @@ on ``refs/heads/main`` and looks for a ``Publish: true`` trailer, so the
 SQUASH COMMIT MESSAGE we author carries the trailer onto main and the merge
 event is itself the publish run. ``hyperi-ci publish`` (the workflow_dispatch
 escape hatch) is used only where there is no new commit to land, because it
-has silently created no run at all before now (2026-07-20). ``rebuild-rs
---release-unoptimized`` is the other dispatch: its per-run consent is a
-workflow input, and a push event carries none.
+has silently created no run at all before now (2026-07-20). A ``rebuild-rs``
+of a consumer whose ``.hyperi-ci.yaml`` sets ``build.skip_optimize: true`` is
+the other dispatch, taken automatically: its per-run consent is a workflow
+input, and a push event carries none. ``--release-unoptimized`` forces it.
 
 Runs on macOS and Linux, on the guaranteed homedir venv: no jq, no BSD-vs-GNU
 ``stat``/``sed`` divergence, and no assumption about where the projects root
@@ -105,12 +106,15 @@ from dfe_suite.proc import (
     warn,
 )
 from dfe_suite.rebuild import (
-    _HELM_CONTRACT_CODE,
+    _DRIFT_TEST_NAMES,
     _assert_locked,
     _bump_py_constraint,
-    _chart_contract_test,
+    _chart_drift_tests,
+    _chart_root,
     _emit_chart,
     _emit_dockerfile,
+    _hand_fix_markers,
+    _skip_optimize,
     rebuild_python,
     rebuild_rust,
 )
@@ -123,6 +127,7 @@ from dfe_suite.repos import (
     head_sha,
     repo_slug,
     sync_main,
+    worktree_holding,
 )
 from dfe_suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library
 
@@ -145,7 +150,7 @@ __all__ = [
     "SHIP_PY",
     "SHIP_RS",
     "USER_AGENT",
-    "_HELM_CONTRACT_CODE",
+    "_DRIFT_TEST_NAMES",
     "_RED_CONCLUSIONS",
     "_TAG",
     "Artefact",
@@ -155,13 +160,16 @@ __all__ = [
     "_assert_locked",
     "_bump_py_constraint",
     "_candidate_roots",
-    "_chart_contract_test",
+    "_chart_drift_tests",
+    "_chart_root",
     "_emit_chart",
     "_emit_dockerfile",
+    "_hand_fix_markers",
     "_http_json",
     "_pr_number_from_url",
     "_red_checks",
     "_select_run",
+    "_skip_optimize",
     "_slugify",
     "already_released",
     "await_artefact",
@@ -198,6 +206,7 @@ __all__ = [
     "sync_main",
     "tag",
     "warn",
+    "worktree_holding",
 ]
 
 
@@ -342,16 +351,16 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help=(
                     "skip chart/ regeneration (for an app with neither an "
-                    "emit-chart subcommand nor a helm_contract test -- "
-                    "dfe-receiver today)"
+                    "emit-chart subcommand nor a chart drift test)"
                 ),
             )
             rebuild.add_argument(
                 "--release-unoptimized",
                 action="store_true",
                 help=(
-                    "release a consumer with build.skip_optimize set as an unoptimised "
-                    "build: land with no release trailer, then dispatch ci.yml with the "
+                    "force the unoptimised release, which a consumer whose "
+                    ".hyperi-ci.yaml sets build.skip_optimize: true takes anyway: "
+                    "land with no release trailer, then dispatch ci.yml with the "
                     "per-run consent inputs skip-optimize and release-unoptimized, which "
                     "a push run cannot carry. The caller ci.yml must declare both as "
                     "workflow_dispatch inputs and forward both in with:"

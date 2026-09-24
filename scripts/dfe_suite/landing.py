@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -166,6 +167,8 @@ def await_run(
     branch: str = "main",
     workflow: str = CI_WORKFLOW_FILE,
     after_run_id: int | None = None,
+    release_command: Sequence[str] | None = None,
+    timeout: int = RUN_APPEAR_TIMEOUT,
 ) -> int:
     """Wait for the ``workflow`` run to register for ``sha`` and return its id.
 
@@ -175,12 +178,26 @@ def await_run(
     failing publish. ``after_run_id`` closes the same hole for a dispatch that
     re-releases a sha which already has a green run of its own.
 
+    Args:
+        slug: ``owner/name`` on GitHub.
+        sha: The head commit the run has to belong to.
+        branch: The branch the run has to sit on.
+        workflow: The workflow FILE, filtered server-side by gh.
+        after_run_id: Reject any run at or below this id.
+        release_command: The command that releases this sha by hand, named in
+            the timeout. None names ``hyperi-ci publish``, which carries no
+            per-run consent, so a consented release has to pass its own.
+        timeout: How long the run has to register, in seconds.
+
+    Returns:
+        The run id.
+
     Raises:
         FleetError: If no run appears before the deadline.
     """
     say(f"finding the {workflow} run for {sha[:12]}")
     skipping = f" (ignoring runs up to {after_run_id})" if after_run_id else ""
-    deadline = time.monotonic() + RUN_APPEAR_TIMEOUT
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         run_id = find_run_for_sha(
             slug, sha, branch=branch, workflow=workflow, after_run_id=after_run_id
@@ -188,12 +205,15 @@ def await_run(
         if run_id is not None:
             return run_id
         time.sleep(5)
+    if release_command:
+        by_hand = f"`{' '.join(release_command)}`"
+    else:
+        by_hand = "`hyperi-ci publish` from a checkout sitting on that commit"
     raise FleetError(
         f"no {workflow} run appeared for {sha} on {slug}@{branch} after "
-        f"{RUN_APPEAR_TIMEOUT // 60}min{skipping}. Is .github/workflows/{workflow} "
+        f"{timeout // 60}min{skipping}. Is .github/workflows/{workflow} "
         f"present in the repo? Check `gh run list -R {slug} --workflow {workflow}`; "
-        f"if the push genuinely triggered nothing, release it with "
-        f"`hyperi-ci publish` from a checkout sitting on that commit."
+        f"if the push genuinely triggered nothing, release it with {by_hand}."
     )
 
 
@@ -528,6 +548,8 @@ def follow_release(
     before: str,
     timeout: int,
     after_run_id: int | None = None,
+    release_command: Sequence[str] | None = None,
+    appear_timeout: int = RUN_APPEAR_TIMEOUT,
 ) -> None:
     """Follow the publish run for ``sha`` and prove the artefact moved.
 
@@ -539,8 +561,17 @@ def follow_release(
         timeout: The run's own ceiling.
         after_run_id: Ignore runs at or below this id -- the caller snapshotted
             the run already sitting on ``sha`` before it dispatched a new one.
+        release_command: What releases ``sha`` by hand if no run registers;
+            see :func:`await_run`.
+        appear_timeout: How long the run has to register, in seconds.
     """
-    run_id = await_run(slug, sha, after_run_id=after_run_id)
+    run_id = await_run(
+        slug,
+        sha,
+        after_run_id=after_run_id,
+        release_command=release_command,
+        timeout=appear_timeout,
+    )
     poll_run(slug, run_id, timeout=timeout)
     after = await_artefact(artefact, before, slug=slug, run_id=run_id)
     was = before or "nothing"
@@ -558,6 +589,7 @@ def dispatch_release(
     timeout: int,
     just_merged: bool = False,
     watch: bool = True,
+    appear_timeout: int = RUN_APPEAR_TIMEOUT,
 ) -> None:
     """Release main's HEAD through a workflow_dispatch and follow the run it creates.
 
@@ -580,13 +612,18 @@ def dispatch_release(
             cancels in-progress runs in a per-ref concurrency group, so a push
             run that registers after the dispatch cancels the release.
         watch: Follow the release. False returns once the dispatch is sent.
+        appear_timeout: How long each run has to register, in seconds.
 
     Raises:
         FleetError: If the push run never registers, the dispatch fails, or the
-            release does not complete.
+            release does not complete. A run that never registers names
+            ``dispatch`` as the way to release by hand, since only it carries
+            the release's inputs.
     """
     if just_merged:
-        previous: int | None = await_run(slug, sha)
+        previous: int | None = await_run(
+            slug, sha, release_command=dispatch, timeout=appear_timeout
+        )
     else:
         previous = find_run_for_sha(slug, sha)
     if previous is not None:
@@ -603,6 +640,8 @@ def dispatch_release(
         before=before,
         timeout=timeout,
         after_run_id=previous,
+        release_command=dispatch,
+        appear_timeout=appear_timeout,
     )
 
 
