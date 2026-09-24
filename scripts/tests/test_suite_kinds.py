@@ -49,7 +49,7 @@ from dfe_suite.kinds import (
     python_range,
     semver_admits,
 )
-from dfe_suite.rebuild import _chart_contract_test
+from dfe_suite.rebuild import _chart_drift_tests
 from dfe_suite.repos import repo_slug
 
 _GIT_ENV = {
@@ -717,20 +717,20 @@ class HoistedHelperTests(unittest.TestCase):
         tests.mkdir()
         target = tests / "helm_contract.rs"
         target.write_text("fn main() {}\n", encoding="utf-8", newline="\n")
-        assert _chart_contract_test(self.repo) == target
+        assert _chart_drift_tests(self.repo) == {"helm_contract": target}
 
     def test_a_chart_contract_test_is_found_by_its_module_or_fn(self) -> None:
         src = self.repo / "src"
         src.mkdir()
         target = src / "lib.rs"
         target.write_text("mod helm_contract;\n", encoding="utf-8", newline="\n")
-        assert _chart_contract_test(self.repo) == target
+        assert _chart_drift_tests(self.repo) == {"helm_contract": target}
         target.write_text(
             "#[test]\nfn chart_helm_contract_holds() {}\n",
             encoding="utf-8",
             newline="\n",
         )
-        assert _chart_contract_test(self.repo) == target
+        assert _chart_drift_tests(self.repo) == {"chart_helm_contract_holds": target}
 
     def test_a_mention_in_a_comment_is_not_a_gate(self) -> None:
         src = self.repo / "src"
@@ -738,7 +738,7 @@ class HoistedHelperTests(unittest.TestCase):
         (src / "lib.rs").write_text(
             "// TODO: write a helm_contract test\n", encoding="utf-8", newline="\n"
         )
-        assert _chart_contract_test(self.repo) is None
+        assert _chart_drift_tests(self.repo) == {}
 
 
 class WalkPastTests(unittest.TestCase):

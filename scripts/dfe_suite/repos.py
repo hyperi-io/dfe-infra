@@ -113,12 +113,49 @@ def repo_slug(repo: Path, org: str) -> str:
     return f"{org}/{repo.name}"
 
 
+def worktree_holding(repo: Path, branch: str) -> Path | None:
+    """Another worktree of this repo that has ``branch`` checked out, or None.
+
+    Git refuses to check a branch out twice, so ``git switch`` from any other
+    worktree fails with its own one-line error that names neither the fix nor
+    which checkout to use.
+
+    Args:
+        repo: A checkout of the repo.
+        branch: The short branch name, e.g. ``main``.
+
+    Returns:
+        The holding worktree's path, or None when no other worktree holds it.
+    """
+    here = Path(git("rev-parse", "--show-toplevel", cwd=repo)).resolve()
+    listing = git("worktree", "list", "--porcelain", cwd=repo)
+    path: Path | None = None
+    for line in listing.splitlines():
+        if line.startswith("worktree "):
+            path = Path(line.removeprefix("worktree "))
+        elif line == f"branch refs/heads/{branch}" and path is not None:
+            if path.resolve() != here:
+                return path
+    return None
+
+
 def sync_main(repo: Path, *, dry_run: bool) -> None:
     """Get onto an up-to-date ``main``, preserving any working-tree WIP.
 
     The WIP is deliberately kept: the fleet folds existing uncommitted work
     into the release commit rather than stranding it (no SEP fields).
+
+    Raises:
+        FleetError: If another worktree holds ``main``, naming that worktree.
+            Checked on a dry run too, so the dry run cannot pass a checkout the
+            real run would fail on.
     """
+    holder = worktree_holding(repo, "main")
+    if holder is not None:
+        raise FleetError(
+            f"main is checked out in the worktree at {holder}, so {repo} cannot "
+            f"switch to it. Run the tool against {holder} instead."
+        )
     if dry_run:
         say("[dry-run] would fetch origin and fast-forward main")
         return

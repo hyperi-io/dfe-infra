@@ -24,8 +24,13 @@ moved artefact.
 A Rust consumer with ``build.skip_optimize`` set cannot release through the
 merge: hyperi-ci refuses a stable build with its optimisation stage skipped
 unless the run carries the per-run ``release-unoptimized`` input, and a push
-event carries no inputs. ``release_unoptimized`` lands the change with no
-trailer and releases it through one consented ``workflow_dispatch`` instead.
+event carries no inputs. So when the consumer's ``.hyperi-ci.yaml`` sets it, or
+``release_unoptimized`` forces it, the change lands with no trailer and is
+released through one consented ``workflow_dispatch`` instead.
+
+A regenerated chart replaces only the directory holding the committed
+``Chart.yaml``, and never one whose app pins hand fixes to it: that chart stays
+as committed and the app's own chart drift tests decide.
 """
 
 from __future__ import annotations
@@ -52,6 +57,7 @@ from dfe_suite.proc import (
     require_tools,
     run,
     say,
+    warn,
 )
 from dfe_suite.repos import (
     git,
@@ -94,133 +100,342 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
     raise FleetError(f"cannot regenerate the Dockerfile for {app} -- no known emit CLI")
 
 
-# What a real helm_contract gate looks like in Rust source: the module the
-# suite declares (`mod helm_contract;`) or a test function whose name carries
-# the word. A bare mention -- `// TODO: write a helm_contract test` -- is the
-# opposite of a gate, so a substring search over the file would disarm the
-# chart check on a comment.
-_HELM_CONTRACT_CODE = re.compile(
-    r"(?m)^\s*(?:mod\s+helm_contract\b"
-    r"|(?:#\[\w+\]\s*)?(?:pub\s+)?fn\s+\w*helm_contract\w*\s*\()"
+# The names the fleet gives its chart drift tests: a test fn, module or file
+# whose name carries one of these compares the committed chart, or its values,
+# with what the generator writes.
+_DRIFT_TEST_NAMES = (
+    "helm_contract",
+    "committed_chart_matches_the_generator",
+    "checked_in_chart_matches_generated",
+    "checked_in_chart_matches_generate_chart",
+    "committed_chart_config_block_matches_the_contract_default",
+    "the_chart_config_block_matches_the_contract",
+    "checked_in_keda_scaledobject_survives_emit_chart",
 )
 
+# scalo's own drift check: a test that calls it is a drift test whatever its name.
+_SCALO_DRIFT_CALL = re.compile(r"\b(?:assert_no_chart_drift|check_chart_drift)\s*\(")
 
-def _chart_contract_test(repo: Path) -> Path | None:
-    """The app's chart contract test, if it gates the chart with one.
+# A fn or mod declared at the start of a line, so a comment that mentions a
+# name -- `// TODO: write a helm_contract test` -- declares nothing.
+_RUST_ITEM = re.compile(
+    r"^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(fn|mod)\s+(\w+)"
+)
+
+# A committed chart that pins a hand edit: a HAND_FIXED exemption list, or a
+# scalo ChartPatch (non_exhaustive, so built only through ChartPatch::new).
+_HAND_FIX = re.compile(r"\bHAND_FIXED\b|\bChartPatch::new\s*\(")
+
+# Where a Rust app keeps code and tests: `crates/` holds a workspace's members.
+_RUST_SOURCE_ROOTS = ("tests", "src", "crates")
+
+
+def _rust_sources(repo: Path) -> list[Path]:
+    """Every Rust file under the app's source roots, build output excluded."""
+    found: list[Path] = []
+    for name in _RUST_SOURCE_ROOTS:
+        root = repo / name
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.rs")):
+            parts = path.relative_to(root).parts
+            if any(part == "target" or part.startswith(".") for part in parts):
+                continue
+            found.append(path)
+    return found
+
+
+def _code_lines(path: Path) -> list[tuple[int, str]]:
+    """The file's lines, numbered from 1, with comment-only lines dropped."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    numbered = enumerate(text.splitlines(), start=1)
+    return [(number, line) for number, line in numbered if not line.lstrip().startswith("//")]
+
+
+def _chart_drift_tests(repo: Path) -> dict[str, Path]:
+    """The app's chart drift tests, by the name a nextest filter selects them on.
 
     An in-repo ``chart/`` is the app's contract MIRROR, not the deploy
-    artefact -- dfe-infra's ``helm/charts/*`` is what deploys -- and each app
-    keeps its mirror honest with a ``helm_contract`` test that values-syncs the
-    chart against the app's own defaults. A chart the gates already test is
-    maintained, not stale (issue #84).
+    artefact -- dfe-infra's ``helm/charts/*`` is what deploys -- and the fleet
+    keeps each mirror honest with tests of many names (issue #84). A chart
+    those tests check is maintained, not stale.
 
     Args:
         repo: The consumer checkout.
 
     Returns:
-        The test file, or None when the app has no such gate.
+        Each fn, module or file name that makes a drift test, mapped to the
+        file it is in. Empty when the app has none.
     """
-    for parent in ("tests", "src"):
-        root = repo / parent
-        if not root.is_dir():
+    found: dict[str, Path] = {}
+    for path in _rust_sources(repo):
+        if any(name in path.stem for name in _DRIFT_TEST_NAMES):
+            found.setdefault(path.stem, path)
+        enclosing = ""
+        for _number, line in _code_lines(path):
+            item = _RUST_ITEM.match(line)
+            if item is not None:
+                kind, ident = item.groups()
+                if kind == "fn":
+                    enclosing = ident
+                if any(name in ident for name in _DRIFT_TEST_NAMES):
+                    found.setdefault(ident, path)
+            elif enclosing and _SCALO_DRIFT_CALL.search(line):
+                found.setdefault(enclosing, path)
+    return found
+
+
+def _hand_fix_markers(repo: Path) -> list[str]:
+    """Where the app pins a hand edit to its committed chart, as ``file:line``.
+
+    Args:
+        repo: The consumer checkout.
+
+    Returns:
+        The first marker in each file that carries one, or empty when none does.
+    """
+    markers: list[str] = []
+    for path in _rust_sources(repo):
+        for number, line in _code_lines(path):
+            if _HAND_FIX.search(line):
+                markers.append(f"{path.relative_to(repo)}:{number}")
+                break
+    return markers
+
+
+def _chart_root(directory: Path) -> Path | None:
+    """The chart in ``directory``: its own ``Chart.yaml``, else one level down.
+
+    Args:
+        directory: A ``chart/`` directory, committed or freshly emitted.
+
+    Returns:
+        The directory holding ``Chart.yaml``, or None when neither level has one.
+
+    Raises:
+        FleetError: If more than one chart sits one level down.
+    """
+    if (directory / "Chart.yaml").is_file():
+        return directory
+    nested = sorted(path.parent for path in directory.glob("*/Chart.yaml"))
+    if len(nested) > 1:
+        raise FleetError(
+            f"{directory} holds {len(nested)} charts "
+            f"({', '.join(path.name for path in nested)}) and the fleet regenerates "
+            f"one. Pass --no-chart and regenerate them by hand."
+        )
+    return nested[0] if nested else None
+
+
+def _chart_differences(fresh: Path, committed: Path) -> list[str]:
+    """Every file that differs between two chart trees, relative to each root."""
+
+    def files(root: Path) -> dict[str, Path]:
+        return {p.relative_to(root).as_posix(): p for p in root.rglob("*") if p.is_file()}
+
+    new, old = files(fresh), files(committed)
+    differing: list[str] = []
+    for rel in sorted(new.keys() | old.keys()):
+        if rel not in old:
+            differing.append(f"{rel} (only in the fresh emit)")
+        elif rel not in new:
+            differing.append(f"{rel} (only in the committed chart)")
+        elif new[rel].read_bytes() != old[rel].read_bytes():
+            differing.append(rel)
+    return differing
+
+
+def _emit_to_scratch(repo: Path, app: str, scratch: Path) -> Path | None:
+    """Emit a fresh chart into ``scratch`` and return the chart root in it.
+
+    A chart is a directory, so nothing can go to stdout: only the two
+    path-taking spellings are tried here, and neither touches the committed
+    chart.
+
+    Returns:
+        The fresh chart, or None when no spelling produced one.
+    """
+    base = ["cargo", "run", "--quiet", "--bin", app, "--"]
+    for form in (
+        [*base, "emit-chart", str(scratch)],
+        [*base, "--emit-chart", str(scratch)],
+    ):
+        shutil.rmtree(scratch, ignore_errors=True)
+        if run(form, cwd=repo, check=False).returncode != 0 or not scratch.is_dir():
             continue
-        for path in sorted(root.rglob("*.rs")):
-            if "helm_contract" in path.name:
-                return path
-            if _HELM_CONTRACT_CODE.search(
-                path.read_text(encoding="utf-8", errors="replace")
-            ):
-                return path
+        fresh = _chart_root(scratch)
+        if fresh is not None:
+            return fresh
     return None
 
 
-def _emit_chart(repo: Path, app: str, *, run_contract_test: bool = False) -> None:
+def _drift_filter(tests: dict[str, Path]) -> str:
+    """The nextest filterset that selects every named drift test.
+
+    A fn or module name is matched against test names. A file directly under a
+    ``tests/`` directory is an integration-test binary, whose own test names
+    need not carry the file's, so it is selected whole by binary name -- and
+    only then, because nextest refuses a ``binary()`` that names no binary.
+    """
+    expression = f"test(/{'|'.join(sorted(tests))}/)"
+    for name, path in sorted(tests.items()):
+        if path.stem == name and path.parent.name == "tests":
+            expression += f" | binary(={name})"
+    return expression
+
+
+def _run_drift_tests(repo: Path, tests: dict[str, Path], *, why: str) -> None:
+    """Run the app's chart drift tests and stop the rebuild if any fails.
+
+    Args:
+        repo: The consumer checkout.
+        tests: The drift tests, from :func:`_chart_drift_tests`.
+        why: What the failure means for this chart, appended to the error.
+
+    Raises:
+        FleetError: Naming the tests, when any of them fails.
+    """
+    expression = _drift_filter(tests)
+    names = ", ".join(sorted(tests))
+    say(f"gate: the chart drift tests ({names})")
+    require_tools("cargo-nextest")
+    argv = ["cargo", "nextest", "run", "--workspace", "--all-features", "-E", expression]
+    if run(argv, cwd=repo, check=False, capture=False).returncode != 0:
+        raise FleetError(
+            f"the chart drift tests failed ({names}). {why} "
+            f"Rerun them: cargo nextest run --workspace --all-features -E '{expression}'"
+        )
+
+
+def _emit_chart(repo: Path, app: str, *, run_drift_tests: bool = False) -> Path | None:
     """Regenerate the committed Helm chart, if the app ships one.
 
     A stale chart fails nothing -- it just stops matching what the app would
     produce, so chart changes never reach the fleet. Hence: regenerate, or
-    defer to the contract test that already checks it; never leave it stale
+    defer to the drift tests that already check it, and never leave it stale
     and unchecked.
 
-    The contract test is checked FIRST because it is a filesystem scan, while
-    every emit-chart spelling costs a full debug build to find out that this
-    app has no such subcommand.
+    The fresh emit always lands in scratch first. It replaces only the
+    directory holding the committed ``Chart.yaml`` (``chart/`` or one level
+    down), and never a chart that pins hand fixes: there the fresh emit stays
+    in scratch and the app's drift tests decide.
 
     Args:
         repo: The consumer checkout.
         app: The binary name, which is also the directory name.
-        run_contract_test: Run the contract test here when the chart is
-            deferred to it. True when the caller skipped the tests gate, which
-            is otherwise the very gate the chart was just handed to.
+        run_drift_tests: Gate on the app's chart drift tests here. True when
+            the caller skipped the test suite, which is otherwise where they
+            run.
+
+    Returns:
+        The chart directory it rewrote, or None when it left the chart as
+        committed.
 
     Raises:
-        FleetError: If the app commits a chart with neither an emit-chart
-            subcommand nor a contract test, or if the contract test fails.
+        FleetError: If the chart cannot be located, if the app commits a chart
+            with neither an emit-chart subcommand nor a drift test, or if a
+            drift test fails.
     """
-    chart = repo / "chart"
-    if not chart.is_dir():
+    top = repo / "chart"
+    if not top.is_dir():
         say("no chart/ -- skipping (this app does not ship one)")
-        return
-
-    contract = _chart_contract_test(repo)
-    if contract is not None:
-        say(
-            f"{contract.relative_to(repo)} values-syncs chart/ against the app's "
-            f"defaults -- leaving the chart to that gate"
+        return None
+    chart = _chart_root(top)
+    if chart is None:
+        raise FleetError(
+            f"{top} holds no Chart.yaml, at its root or one level down. Pass "
+            f"--no-chart if it is not a Helm chart."
         )
-        if run_contract_test:
-            # --no-tests skips the suite this chart was just deferred to, so
-            # run that one test on its own. dfe-loader is both the app with the
-            # contract test and the app --no-tests exists for.
-            say("gate: the chart contract test (the full suite is skipped)")
-            require_tools("cargo-nextest")
-            run(
-                [
-                    "cargo",
-                    "nextest",
-                    "run",
-                    "--workspace",
-                    "--all-features",
-                    "-E",
-                    "test(/helm_contract/)",
-                ],
-                cwd=repo,
-                capture=False,
-            )
-        return
+    where = chart.relative_to(repo)
+    tests = _chart_drift_tests(repo)
+    markers = _hand_fix_markers(repo)
+    if not tests:
+        warn(f"{app} has no chart drift test -- nothing checks {where} against the generator")
 
-    base = ["cargo", "run", "--quiet", "--bin", app, "--"]
-    chart_yaml = chart / "Chart.yaml"
-
-    # A chart is a directory, so nothing can go to stdout. Try the two
-    # path-taking spellings against scratch first, and only fall back to the
-    # in-place form, which overwrites the committed chart as it runs.
+    regenerated: Path | None = None
     with tempfile.TemporaryDirectory(prefix="scalo-fleet-") as tmp:
-        scratch = Path(tmp) / "chart"
-        for form in (
-            [*base, "emit-chart", str(scratch)],
-            [*base, "--emit-chart", str(scratch)],
-        ):
-            if (
-                run(form, cwd=repo, check=False).returncode == 0
-                and (scratch / "Chart.yaml").exists()
-            ):
+        fresh = _emit_to_scratch(repo, app, Path(tmp) / "chart")
+        if fresh is None:
+            why = f"{where} is as committed, and no emit-chart CLI could regenerate it."
+            if _without_emitter(repo, app, chart, tests=tests, markers=markers):
+                regenerated = chart
+        else:
+            differing = _chart_differences(fresh, chart)
+            if not differing:
+                why = f"{where} already matches a fresh emit."
+                say(f"{where} already matches a fresh emit -- nothing to regenerate")
+            elif markers:
+                say(
+                    f"{where} pins hand fixes ({', '.join(markers)}) -- the fresh emit "
+                    f"stays in scratch and the chart drift tests decide"
+                )
+                if not tests:
+                    warn(f"{where} is left as committed and not regenerated")
+                    return None
+                _run_drift_tests(
+                    repo,
+                    tests,
+                    why=(
+                        f"{where} is left as committed. Files that differ from a fresh "
+                        f"emit: {', '.join(differing)}. Regenerate the files the "
+                        f"tests name and keep each hand fix."
+                    ),
+                )
+                say(f"the chart drift tests pass -- {where} stays as committed")
+                return None
+            else:
                 shutil.rmtree(chart)
-                shutil.copytree(scratch, chart)
-                return
-            shutil.rmtree(scratch, ignore_errors=True)
+                shutil.copytree(fresh, chart)
+                regenerated = chart
+                why = f"{where} was just regenerated from the contract."
+                say(f"regenerated {where} from a fresh emit ({len(differing)} file(s))")
 
-    # A regeneration rewrites Chart.yaml even when the content is unchanged,
-    # so mtime -- not content -- is what proves the in-place emit ran.
-    before = chart_yaml.stat().st_mtime if chart_yaml.exists() else 0.0
-    emitted = run([*base, "emit-chart"], cwd=repo, check=False).returncode == 0
-    if emitted and chart_yaml.exists() and chart_yaml.stat().st_mtime != before:
-        return
+    if run_drift_tests and tests:
+        _run_drift_tests(repo, tests, why=why)
+    return regenerated
 
+
+def _without_emitter(
+    repo: Path,
+    app: str,
+    chart: Path,
+    *,
+    tests: dict[str, Path],
+    markers: list[str],
+) -> bool:
+    """Handle a chart no path-taking emit-chart spelling could regenerate.
+
+    Drift tests take the chart over. With neither tests nor hand fixes, the
+    in-place ``emit-chart`` is the last resort, and only for a chart at
+    ``chart/`` itself, which is the one place that form is known to write.
+
+    Returns:
+        True when the in-place form rewrote the chart.
+
+    Raises:
+        FleetError: If nothing regenerates or checks the chart.
+    """
+    where = chart.relative_to(repo)
+    if tests:
+        say(f"no emit-chart CLI -- leaving {where} to its chart drift tests")
+        return False
+    if markers:
+        warn(f"{where} pins hand fixes ({', '.join(markers)}) -- left as committed")
+        return False
+    if chart == repo / "chart":
+        chart_yaml = chart / "Chart.yaml"
+        # A regeneration rewrites Chart.yaml even when the content is
+        # unchanged, so mtime -- not content -- proves the in-place emit ran.
+        before = chart_yaml.stat().st_mtime
+        base = ["cargo", "run", "--quiet", "--bin", app, "--"]
+        emitted = run([*base, "emit-chart"], cwd=repo, check=False).returncode == 0
+        if emitted and chart_yaml.exists() and chart_yaml.stat().st_mtime != before:
+            return True
     raise FleetError(
-        f"{app} commits a chart/ but exposes neither a known emit-chart CLI nor "
-        f"a helm_contract test -- refusing to leave it stale and unchecked. Pass "
-        f"--no-chart if the chart is maintained some other way."
+        f"{app} commits {where} but exposes neither a known emit-chart CLI nor a "
+        f"chart drift test (a test named for {', '.join(_DRIFT_TEST_NAMES)}, or "
+        f"one calling scalo's assert_no_chart_drift) -- refusing to leave it stale "
+        f"and unchecked. Pass --no-chart if the chart is maintained some other way."
     )
 
 
@@ -298,6 +513,66 @@ def _consent_gaps(doc: object) -> list[str]:
     return gaps + unforwarded
 
 
+def _load_yaml(path: Path) -> object:
+    """Parse one YAML file, so a commented-out line reads as absent.
+
+    Raises:
+        FleetError: If ruamel.yaml is missing or the file does not parse.
+    """
+    # Imported here so a path that reads no YAML stays stdlib-only.
+    try:
+        from ruamel.yaml import YAML
+        from ruamel.yaml.error import YAMLError
+    except ImportError as exc:
+        raise FleetError(
+            f"ruamel.yaml is required to read {path} "
+            f"(scripts/tests/requirements-ci.txt pins it)"
+        ) from exc
+    try:
+        return YAML(typ="safe").load(path.read_text(encoding="utf-8", errors="replace"))
+    except YAMLError as exc:
+        raise FleetError(f"{path} does not parse as YAML: {exc}") from exc
+
+
+def _skip_optimize(repo: Path) -> bool:
+    """Whether the consumer's ``.hyperi-ci.yaml`` sets ``build.skip_optimize: true``.
+
+    Only a YAML boolean counts: the consented dispatch skips optimisation for
+    the release it cuts, so a value that merely reads as true must not choose it.
+
+    Raises:
+        FleetError: If the file is there and cannot be read as YAML.
+    """
+    config = repo / ".hyperi-ci.yaml"
+    if not config.is_file():
+        return False
+    doc = _load_yaml(config)
+    build = doc.get("build") if isinstance(doc, dict) else None
+    return isinstance(build, dict) and build.get("skip_optimize") is True
+
+
+def _release_path(*, forced: bool, configured: bool) -> str:
+    """Which release path a Rust rebuild takes, and why, as one log line."""
+    config = ".hyperi-ci.yaml sets build.skip_optimize: true"
+    if forced and configured:
+        return f"consented workflow_dispatch -- --release-unoptimized given, and {config}"
+    if configured:
+        return (
+            f"consented workflow_dispatch -- {config}, and hyperi-ci refuses a "
+            f"stable release of that build without the per-run consent"
+        )
+    if forced:
+        return (
+            "consented workflow_dispatch -- --release-unoptimized given, though "
+            ".hyperi-ci.yaml does not set build.skip_optimize, so this release "
+            "skips optimisation by choice"
+        )
+    return (
+        "publish trailer on the squash merge -- .hyperi-ci.yaml does not set "
+        "build.skip_optimize"
+    )
+
+
 def _check_unoptimized_caller(repo: Path) -> Path:
     """Prove the caller workflow can carry the per-run consent to hyperi-ci.
 
@@ -318,20 +593,7 @@ def _check_unoptimized_caller(repo: Path) -> Path:
     workflow = repo / ".github" / "workflows" / CI_WORKFLOW_FILE
     if not workflow.is_file():
         raise FleetError(f"{workflow} is not there -- nothing to dispatch the release through")
-    # Imported here so every other dfe-fleet path stays stdlib-only.
-    try:
-        from ruamel.yaml import YAML
-        from ruamel.yaml.error import YAMLError
-    except ImportError as exc:
-        raise FleetError(
-            "ruamel.yaml is required to read the caller workflow "
-            "(scripts/tests/requirements-ci.txt pins it)"
-        ) from exc
-    try:
-        doc = YAML(typ="safe").load(workflow.read_text(encoding="utf-8", errors="replace"))
-    except YAMLError as exc:
-        raise FleetError(f"{workflow} does not parse as YAML: {exc}") from exc
-    gaps = _consent_gaps(doc)
+    gaps = _consent_gaps(_load_yaml(workflow))
     if gaps:
         raise FleetError(
             f"{workflow} cannot carry the consent for an unoptimised release: "
@@ -370,10 +632,11 @@ def rebuild_rust(
         watch: Follow the release after the merge.
         dry_run: Say what would happen, touch nothing.
         org: GitHub org used when the remote cannot be read.
-        release_unoptimized: Release a consumer with ``build.skip_optimize``
-            set: check its caller workflow can carry the per-run consent before
-            touching anything, land with no release trailer, then release
-            main's HEAD through a ``workflow_dispatch`` that sets
+        release_unoptimized: Force the consented release, which a consumer
+            whose ``.hyperi-ci.yaml`` sets ``build.skip_optimize: true`` takes
+            anyway: check its caller workflow can carry the per-run consent
+            before touching anything, land with no release trailer, then
+            release main's HEAD through a ``workflow_dispatch`` that sets
             ``skip-optimize`` and ``release-unoptimized``.
 
     Returns:
@@ -411,8 +674,12 @@ def rebuild_rust(
 
     sync_main(repo, dry_run=dry_run)
 
+    configured = _skip_optimize(repo)
+    unoptimized = release_unoptimized or configured
+    say(f"release path: {_release_path(forced=release_unoptimized, configured=configured)}")
+
     dispatch: list[str] = []
-    if release_unoptimized:
+    if unoptimized:
         # Before the bump and the build: a caller that cannot carry the consent
         # would otherwise merge, then have its release refused.
         caller = _check_unoptimized_caller(repo)
@@ -430,7 +697,7 @@ def rebuild_rust(
         say(f"[dry-run] would pin {package} to {version} and relock")
         say(f"[dry-run] would regenerate {artefacts}")
         say(f"[dry-run] would gate on {gate}, then commit '{subject}'")
-        if release_unoptimized:
+        if unoptimized:
             say(f"[dry-run] would land it on {slug} main via a PR without the release trailer")
             say("[dry-run] would wait for the merge's push run, then dispatch the release:")
             say(f"[dry-run]   {' '.join(dispatch)}")
@@ -454,9 +721,10 @@ def rebuild_rust(
 
     say("regenerate the Dockerfile from the deployment contract")
     _emit_dockerfile(repo, app)
+    regenerated: Path | None = None
     if emit_chart:
         say("regenerate the Helm chart from the deployment contract")
-        _emit_chart(repo, app, run_contract_test=not run_tests)
+        regenerated = _emit_chart(repo, app, run_drift_tests=not run_tests)
     else:
         say("chart/ regeneration SKIPPED (--no-chart)")
     # config-schema is a scalo StandardCommand, so every app spells it the same
@@ -517,6 +785,9 @@ def rebuild_rust(
     # add -u folds in migration work already in the tree, while leaving
     # untracked legacy files (.releaserc.yaml, set-version.py) out.
     git("add", "-u", cwd=repo)
+    if regenerated is not None:
+        # A template the generator now writes is untracked, which add -u skips.
+        git("add", "--all", "--", str(regenerated.relative_to(repo)), cwd=repo)
     if not has_staged_changes(repo):
         say(f"{app} already current on scalo {version} -- nothing to commit")
         return 0
@@ -524,7 +795,7 @@ def rebuild_rust(
     artefact = Artefact(kind="ghrelease", name=slug)
     before = artefact.baseline()
     note = f"Rebuild on {package} {version}."
-    if release_unoptimized:
+    if unoptimized:
         note = f"{note} Released unoptimised by a consented workflow_dispatch."
     merged = land_via_pr(
         repo=repo,
@@ -532,12 +803,12 @@ def rebuild_rust(
         branch=f"scalo/{_slugify(f'rebuild-{version}')}",
         subject=subject,
         note=note,
-        publish=not release_unoptimized,
+        publish=not unoptimized,
         dry_run=False,
     )
     assert merged is not None
 
-    if release_unoptimized:
+    if unoptimized:
         dispatch_release(
             repo=repo,
             slug=slug,

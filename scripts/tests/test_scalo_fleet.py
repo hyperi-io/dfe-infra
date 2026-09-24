@@ -38,7 +38,7 @@ sf = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(sf)
 
 from dfe_suite.landing import dispatch_release
-from dfe_suite.rebuild import _check_unoptimized_caller
+from dfe_suite.rebuild import _check_unoptimized_caller, _drift_filter
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "Test",
@@ -116,6 +116,37 @@ def _fake_bin(
     script.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     script.chmod(0o755)
     return script
+
+
+def _emitting_cargo(
+    directory: Path, chart: dict[str, str], *, nextest_status: int = 0
+) -> None:
+    """A cargo stand-in whose ``emit-chart DIR`` writes ``chart`` into DIR.
+
+    The same argv log as ``_fake_bin``. ``emit-dockerfile`` prints a Dockerfile,
+    ``nextest run`` exits ``nextest_status``, and every other call succeeds.
+
+    Args:
+        directory: Scratch directory that is on the front of PATH.
+        chart: Relative path -> content of every file the generator writes.
+        nextest_status: The exit code of a ``cargo nextest run``.
+    """
+    lines = [
+        "#!/bin/sh",
+        f'printf "%s\\n" "$@" >> "{directory / "cargo.argv"}"',
+        'for last in "$@"; do :; done',
+        'case " $* " in',
+        f'  *" nextest run "*) exit {nextest_status} ;;',
+        "  *\" emit-dockerfile \"*) echo 'FROM scratch'; exit 0 ;;",
+        '  *" emit-chart "*)',
+        '    mkdir -p "$last/templates"',
+    ]
+    for rel, body in chart.items():
+        lines.extend([f'    cat > "$last/{rel}" <<\'FAKE_EOF\'', body, "FAKE_EOF"])
+    lines.extend(["    exit 0 ;;", "esac", "exit 0"])
+    script = directory / "cargo"
+    script.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    script.chmod(0o755)
 
 
 def _fake_argv(directory: Path, name: str) -> list[str]:
@@ -564,20 +595,25 @@ class EmitChartTests(OnPathTestCase):
             sf._emit_chart(self.repo, "dfe-receiver")
         assert "helm_contract" in str(caught.value)
 
-    def test_the_contract_test_costs_no_build_when_it_is_found(self) -> None:
-        # The filesystem scan comes FIRST: no `cargo run` attempt is spent
-        # discovering that the app has no emit-chart subcommand.
+    def test_a_gated_chart_never_runs_the_in_place_emit(self) -> None:
+        # The in-place form overwrites the committed chart as it runs, so a
+        # chart its drift tests already check only ever sees the scratch forms.
         self._chart()
         self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
         sf._emit_chart(self.repo, "dfe-loader")
-        assert _fake_argv(self.bindir, "cargo") == []
+        argv = _fake_argv(self.bindir, "cargo")
+        emits = [i for i, arg in enumerate(argv) if arg in ("emit-chart", "--emit-chart")]
+        assert emits
+        for i in emits:
+            assert i + 1 < len(argv)
+            assert argv[i + 1].startswith("/")
 
     def test_no_tests_runs_the_very_gate_the_chart_was_deferred_to(self) -> None:
         self._chart()
         self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
         _fake_bin(self.bindir, "cargo", status=0)
         _fake_bin(self.bindir, "cargo-nextest", status=0)
-        sf._emit_chart(self.repo, "dfe-loader", run_contract_test=True)
+        sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
         argv = _fake_argv(self.bindir, "cargo")
         assert "nextest" in argv
         assert argv[argv.index("-E") + 1] == "test(/helm_contract/)"
@@ -587,7 +623,245 @@ class EmitChartTests(OnPathTestCase):
         self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
         _fake_bin(self.bindir, "cargo-nextest", status=0)  # cargo itself fails
         with pytest.raises(sf.FleetError):
-            sf._emit_chart(self.repo, "dfe-loader", run_contract_test=True)
+            sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
+
+    def test_no_tests_runs_a_committed_chart_matches_the_generator_test(self) -> None:
+        # dfe-loader's shape: the full-chart drift test sits OUTSIDE
+        # `mod helm_contract`, so a helm_contract-only gate passed a stale chart.
+        self._chart()
+        self._test_file("tests/integration/mod.rs", "mod deployment;\nmod helm_contract;\n")
+        self._test_file("tests/integration/helm_contract.rs", "#[test]\nfn values() {}\n")
+        self._test_file(
+            "tests/integration/deployment.rs",
+            "#[test]\nfn committed_chart_matches_the_generator() {}\n",
+        )
+        _fake_bin(self.bindir, "cargo", status=0)
+        _fake_bin(self.bindir, "cargo-nextest", status=0)
+        sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
+        argv = _fake_argv(self.bindir, "cargo")
+        expression = argv[argv.index("-E") + 1]
+        assert expression == "test(/committed_chart_matches_the_generator|helm_contract/)"
+
+    def test_a_stale_chart_fails_the_no_tests_gate_and_names_the_test(self) -> None:
+        self._chart()
+        self._test_file(
+            "tests/integration/deployment.rs",
+            "#[test]\nfn committed_chart_matches_the_generator() {}\n",
+        )
+        _fake_bin(self.bindir, "cargo-nextest", status=0)  # cargo, and so nextest, fails
+        with pytest.raises(sf.FleetError) as caught:
+            sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
+        assert "committed_chart_matches_the_generator" in str(caught.value)
+
+    def test_every_fleet_drift_test_name_is_selected(self) -> None:
+        # One per shape the fleet uses, including scalo's own drift assertion
+        # under a name that matches none of the others.
+        self._chart()
+        self._test_file(
+            "crates/fetcher/src/deployment.rs",
+            "    #[test]\n    fn checked_in_chart_matches_generated() {}\n",
+        )
+        self._test_file(
+            "src/deployment.rs",
+            "#[test]\nfn checked_in_chart_matches_generate_chart() {}\n"
+            "#[test]\nfn the_chart_config_block_matches_the_contract() {}\n"
+            "#[test]\nfn chart_is_current() {\n"
+            "    scalo::deployment::assert_no_chart_drift(&contract(), &chart, &[]);\n}\n",
+        )
+        self._test_file(
+            "tests/integration/deployment.rs",
+            "#[tokio::test]\nasync fn checked_in_keda_scaledobject_survives_emit_chart() {}\n",
+        )
+        found = sf._chart_drift_tests(self.repo)
+        assert set(found) == {
+            "checked_in_chart_matches_generated",
+            "checked_in_chart_matches_generate_chart",
+            "the_chart_config_block_matches_the_contract",
+            "chart_is_current",
+            "checked_in_keda_scaledobject_survives_emit_chart",
+        }
+
+    def test_an_integration_test_file_is_selected_as_a_whole_binary(self) -> None:
+        # Its own test names need not carry the file's, and nextest refuses a
+        # binary() that names no binary, so only a real tests/<name>.rs gets one.
+        self._chart()
+        self._test_file("tests/helm_contract.rs", "#[test]\nfn values_sync() {}\n")
+        self._test_file("tests/integration/committed_chart_matches_the_generator.rs", "\n")
+        found = sf._chart_drift_tests(self.repo)
+        expression = _drift_filter(found)
+        assert expression == (
+            "test(/committed_chart_matches_the_generator|helm_contract/)"
+            " | binary(=helm_contract)"
+        )
+
+    def test_a_chart_patch_named_in_a_comment_is_not_a_hand_fix(self) -> None:
+        # dfe-transform-vrl's shape: the doc comment names ChartPatch, the call
+        # passes none.
+        self._test_file(
+            "src/deployment.rs",
+            "    /// A hand fix goes in as a pinned `ChartPatch`, never an exempt file.\n"
+            "    // HAND_FIXED would be the wrong shape here.\n"
+            "    fn test_committed_chart_matches_the_generator() {\n"
+            "        scalo::deployment::assert_no_chart_drift(&contract(), &chart, &[]);\n"
+            "    }\n",
+        )
+        assert sf._hand_fix_markers(self.repo) == []
+
+    def test_a_hand_fixed_list_and_a_chart_patch_are_hand_fixes(self) -> None:
+        self._test_file(
+            "tests/integration/deployment.rs",
+            "// the exemptions\n    const HAND_FIXED: &[&str] = &[\"values.yaml\"];\n",
+        )
+        self._test_file(
+            "src/deployment.rs",
+            "let patches = [ChartPatch::new(\"templates/x.yaml\", \"a\", \"b\")];\n",
+        )
+        assert sorted(sf._hand_fix_markers(self.repo)) == [
+            "src/deployment.rs:1",
+            "tests/integration/deployment.rs:2",
+        ]
+
+
+class ChartRegenerationTests(OnPathTestCase):
+    """A fresh emit lands in scratch, and replaces only a chart that pins no hand fix."""
+
+    FRESH: ClassVar[dict[str, str]] = {
+        "Chart.yaml": "name: app\nversion: 2.0.0",
+        "values.yaml": "replicas: 1",
+        "templates/deployment.yaml": "kind: Deployment  # generated",
+    }
+
+    def setUp(self) -> None:
+        super().setUp()
+        repo_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-regen-")
+        self.addCleanup(repo_tmp.cleanup)
+        self.repo = Path(repo_tmp.name)
+        # Only answers require_tools: the cargo stand-in decides what nextest returns.
+        _fake_bin(self.bindir, "cargo-nextest", status=0)
+
+    def _write(self, relative: str, body: str) -> Path:
+        path = self.repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def _committed(self, root: str, files: dict[str, str]) -> None:
+        for rel, body in files.items():
+            self._write(f"{root}/{rel}", body + "\n")
+
+    def _read(self, relative: str) -> str:
+        return (self.repo / relative).read_text(encoding="utf-8")
+
+    def _emit(self, **kwargs: object) -> tuple[object, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = sf._emit_chart(self.repo, "dfe-app", **kwargs)
+        return result, out.getvalue(), err.getvalue()
+
+    def _hand_fixed(self) -> None:
+        """dfe-transform-vector's shape: a HAND_FIXED list beside its drift test."""
+        self._committed(
+            "chart",
+            {
+                "Chart.yaml": "name: app\nversion: 2.0.0",
+                "values.yaml": "replicas: 1",
+                "templates/deployment.yaml": "kind: Deployment  # hand-fixed port",
+            },
+        )
+        self._write(
+            "tests/integration/deployment.rs",
+            "#[test]\nfn committed_chart_matches_the_generator() {\n"
+            '    const HAND_FIXED: &[&str] = &["templates/deployment.yaml"];\n}\n',
+        )
+
+    def test_a_hand_fixed_chart_is_kept_and_its_drift_tests_decide(self) -> None:
+        self._hand_fixed()
+        _emitting_cargo(self.bindir, self.FRESH, nextest_status=0)
+        result, out, _err = self._emit()
+        assert result is None
+        assert self._read("chart/templates/deployment.yaml") == (
+            "kind: Deployment  # hand-fixed port\n"
+        )
+        argv = _fake_argv(self.bindir, "cargo")
+        assert argv[argv.index("-E") + 1] == "test(/committed_chart_matches_the_generator/)"
+        assert "tests/integration/deployment.rs:3" in out
+        assert "stays as committed" in out
+
+    def test_a_hand_fixed_chart_that_drifted_stops_and_names_tests_and_files(self) -> None:
+        self._hand_fixed()
+        _emitting_cargo(self.bindir, self.FRESH, nextest_status=1)
+        with pytest.raises(sf.FleetError) as caught:
+            self._emit()
+        message = str(caught.value)
+        assert "committed_chart_matches_the_generator" in message
+        assert "templates/deployment.yaml" in message
+        assert "chart is left as committed" in message
+        assert self._read("chart/templates/deployment.yaml") == (
+            "kind: Deployment  # hand-fixed port\n"
+        )
+
+    def test_a_hand_fixed_chart_without_a_drift_test_is_left_alone_with_a_warning(
+        self,
+    ) -> None:
+        self._committed("chart", {"Chart.yaml": "name: app\nversion: 1.0.0"})
+        self._write("src/deployment.rs", 'let p = ChartPatch::new("a", "b", "c");\n')
+        _emitting_cargo(self.bindir, self.FRESH)
+        result, _out, err = self._emit()
+        assert result is None
+        assert self._read("chart/Chart.yaml") == "name: app\nversion: 1.0.0\n"
+        assert "WARNING" in err
+        assert "no chart drift test" in err
+        assert not (self.repo / "chart" / "values.yaml").exists()
+
+    def test_a_nested_chart_is_regenerated_where_it_sits_and_not_flattened(self) -> None:
+        # dfe-transform-elastic's shape: the chart lives one level down, and
+        # emit-chart DIR writes the chart's files flat into DIR.
+        self._committed(
+            "chart/dfe-app", {"Chart.yaml": "name: app\nversion: 1.0.0", "values.yaml": "old"}
+        )
+        self._write("chart/README.md", "notes beside the chart\n")
+        self._write("src/deployment.rs", "#[test]\nfn the_chart_config_block_matches_the_contract() {}\n")
+        _emitting_cargo(self.bindir, self.FRESH)
+        result, out, err = self._emit()
+        assert result == self.repo / "chart" / "dfe-app"
+        assert self._read("chart/dfe-app/Chart.yaml") == "name: app\nversion: 2.0.0\n"
+        assert self._read("chart/dfe-app/templates/deployment.yaml") == (
+            "kind: Deployment  # generated\n"
+        )
+        assert not (self.repo / "chart" / "Chart.yaml").exists()
+        assert not (self.repo / "chart" / "templates").exists()
+        assert self._read("chart/README.md") == "notes beside the chart\n"
+        assert "regenerated chart/dfe-app" in out
+        assert "WARNING" not in err
+
+    def test_a_plain_chart_with_no_drift_test_regenerates_with_a_warning(self) -> None:
+        self._committed("chart", {"Chart.yaml": "name: app\nversion: 1.0.0"})
+        _emitting_cargo(self.bindir, self.FRESH)
+        result, _out, err = self._emit(run_drift_tests=True)
+        assert result == self.repo / "chart"
+        assert self._read("chart/values.yaml") == "replicas: 1\n"
+        assert "WARNING" in err
+        assert "no chart drift test" in err
+        # Nothing to gate on, so no nextest run was invented.
+        assert "nextest" not in _fake_argv(self.bindir, "cargo")
+
+    def test_a_chart_equal_to_a_fresh_emit_is_not_rewritten(self) -> None:
+        self._committed("chart", self.FRESH)
+        self._write("src/deployment.rs", "#[test]\nfn committed_chart_matches_the_generator() {}\n")
+        before = (self.repo / "chart" / "Chart.yaml").stat().st_mtime_ns
+        _emitting_cargo(self.bindir, self.FRESH)
+        result, out, _err = self._emit()
+        assert result is None
+        assert "already matches a fresh emit" in out
+        assert (self.repo / "chart" / "Chart.yaml").stat().st_mtime_ns == before
+
+    def test_two_nested_charts_are_refused_rather_than_guessed(self) -> None:
+        self._committed("chart/one", {"Chart.yaml": "name: one"})
+        self._committed("chart/two", {"Chart.yaml": "name: two"})
+        with pytest.raises(sf.FleetError) as caught:
+            self._emit()
+        assert "2 charts" in str(caught.value)
+        assert _fake_argv(self.bindir, "cargo") == []
 
 
 class RebuildRsChartTests(OnPathTestCase):
@@ -608,8 +882,8 @@ class RebuildRsChartTests(OnPathTestCase):
         _git(seed, "commit", "-m", "chore: seed")
         _git(seed, "push", "origin", "main")
 
-        # dfe-receiver's shape: a committed chart, no emit-chart subcommand and
-        # no contract test, so the chart step fails unless it is skipped.
+        # A committed chart, no emit-chart subcommand and no chart drift test,
+        # so the chart step fails unless it is skipped.
         self.repo = root / "dfe-receiver"
         _git(root, "clone", str(origin), str(self.repo))
         _identify(self.repo)
@@ -652,6 +926,59 @@ class RebuildRsChartTests(OnPathTestCase):
         output = buffer.getvalue()
         assert "the Dockerfile and docs/ artefacts" in output
         assert "chart/" not in output
+
+
+class RebuildRsChartLandingTests(OnPathTestCase):
+    """A regenerated chart reaches the release commit whole, new templates included."""
+
+    BRANCH = "scalo/rebuild-2-11-0"
+
+    def setUp(self) -> None:
+        super().setUp()
+        root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-chart-land-")
+        self.addCleanup(root_tmp.cleanup)
+        root = Path(root_tmp.name)
+        self.origin = root / "origin.git"
+        _git(root, "init", "--bare", "-b", "main", str(self.origin))
+        seed = root / "seed"
+        _git(root, "clone", str(self.origin), str(seed))
+        _identify(seed)
+        (seed / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        (seed / "Dockerfile").write_text("FROM old\n", encoding="utf-8")
+        (seed / "chart" / "templates").mkdir(parents=True)
+        (seed / "chart" / "Chart.yaml").write_text("name: app\n", encoding="utf-8")
+        (seed / "chart" / "templates" / "deployment.yaml").write_text("old\n", encoding="utf-8")
+        _git(seed, "add", "Cargo.toml", "Dockerfile", "chart")
+        _git(seed, "commit", "-m", "chore: seed")
+        _git(seed, "push", "origin", "main")
+        main_sha = _git(self.origin, "rev-parse", "main")
+
+        self.repo = root / "dfe-app"
+        _git(root, "clone", str(self.origin), str(self.repo))
+        _identify(self.repo)
+        # The generator now writes a template the committed chart never had.
+        _emitting_cargo(
+            self.bindir,
+            {
+                "Chart.yaml": "name: app",
+                "templates/deployment.yaml": "new",
+                "templates/keda-triggerauth.yaml": "kind: TriggerAuthentication",
+            },
+        )
+        _dispatching_gh(self.bindir, sha=main_sha, push_run=1, dispatch_run=2)
+        os.environ["SCALO_REBUILD_TARGET"] = str(root / "target")
+
+    def test_a_template_the_generator_adds_is_committed(self) -> None:
+        args = sf.build_parser().parse_args(
+            ["--org", "example-org", "rebuild-rs", str(self.repo), "2.11.0", "--no-tests", "--no-watch"]
+        )
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+            code = sf.cmd_rebuild_rs(args)
+        assert code == 0, buffer.getvalue()
+        touched = _git(self.origin, "show", "--name-only", "--format=", self.BRANCH).split()
+        assert "chart/templates/keda-triggerauth.yaml" in touched
+        assert "chart/templates/deployment.yaml" in touched
 
 
 class FindRepoTests(unittest.TestCase):
@@ -867,6 +1194,30 @@ class SyncMainTests(unittest.TestCase):
         sf.sync_main(self.work, dry_run=True)
         assert sf.head_sha(self.work) == before
         assert not (self.work / "b.txt").exists()
+
+    def test_a_worktree_holding_main_is_named_not_left_to_git(self) -> None:
+        # scalo-rs, dfe-engine and dfe-fetcher all had main checked out in a
+        # worktree while the tool ran against the primary checkout.
+        _git(self.work, "switch", "-c", "some-side-branch")
+        holder = Path(self._tmp.name) / "holder"
+        _git(self.work, "worktree", "add", str(holder), "main")
+        for dry_run in (False, True):
+            with self.subTest(dry_run=dry_run):
+                with pytest.raises(sf.FleetError) as caught:
+                    sf.sync_main(self.work, dry_run=dry_run)
+                message = str(caught.value)
+                # macOS parks temp dirs behind a /var -> /private/var symlink.
+                assert str(holder) in message or str(holder.resolve()) in message
+                assert "Run the tool against" in message
+                assert "already used by worktree" not in message
+        assert sf.current_branch(self.work) == "some-side-branch"
+
+    def test_running_against_the_worktree_that_holds_main_syncs(self) -> None:
+        _git(self.work, "switch", "-c", "some-side-branch")
+        holder = Path(self._tmp.name) / "holder"
+        _git(self.work, "worktree", "add", str(holder), "main")
+        sf.sync_main(holder, dry_run=False)
+        assert (holder / "b.txt").exists()
 
 
 class PyConstraintTests(unittest.TestCase):
@@ -1328,6 +1679,63 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
         assert _contains(argv, ["run", "view", str(self.PUSH_RUN)]) == -1
         assert f"SHIPPED: {self.SLUG} v1.0.0 -> v1.0.1" in output
 
+        # The explicit flag still works, and the log says it is why.
+        assert (
+            "release path: consented workflow_dispatch -- --release-unoptimized given, "
+            "though .hyperi-ci.yaml does not set build.skip_optimize"
+        ) in output
+
+    def _ci_config(self, skip_optimize: str) -> None:
+        """The consumer's .hyperi-ci.yaml, with ``build.skip_optimize`` as given."""
+        (self.repo / ".hyperi-ci.yaml").write_text(
+            f"build:\n  skip_optimize: {skip_optimize}\n  type: app\n", encoding="utf-8"
+        )
+
+    def test_skip_optimize_takes_the_consented_path_unasked(self) -> None:
+        # No --release-unoptimized: the consumer's own CI config is the consent.
+        self._ci_config("true")
+        self._consent_in_the_tree()
+        code, output = self._rebuild("--no-watch")
+        assert code == 0, output
+        argv = _fake_argv(self.bindir, "gh")
+        assert _contains(argv, self.DISPATCH) != -1
+        assert "Publish: true" not in self._landed_message()
+        assert (
+            "release path: consented workflow_dispatch -- .hyperi-ci.yaml sets "
+            "build.skip_optimize: true"
+        ) in output
+
+    def test_skip_optimize_is_refused_before_the_bump_when_the_caller_cannot_consent(
+        self,
+    ) -> None:
+        self._ci_config("true")
+        with pytest.raises(sf.FleetError) as caught:
+            self._rebuild("--no-watch")
+        assert "cannot carry the consent" in str(caught.value)
+        assert _fake_argv(self.bindir, "cargo") == []
+        assert _git(self.origin, "branch", "--list", "scalo/*") == ""
+
+    def test_only_a_yaml_true_selects_the_consented_path(self) -> None:
+        # The dispatch skips optimisation, so a string that reads as true must
+        # not choose it.
+        for value in ("false", '"true"', "yes-please"):
+            with self.subTest(skip_optimize=value):
+                self._ci_config(value)
+                code, output = self._rebuild("-n")
+                assert code == 0, output
+                assert "release path: publish trailer on the squash merge" in output
+                assert "preflight" not in output
+
+    def test_both_the_flag_and_the_config_are_named_when_both_apply(self) -> None:
+        self._ci_config("true")
+        self._consent_in_the_tree()
+        code, output = self._rebuild("--release-unoptimized", "-n")
+        assert code == 0, output
+        assert (
+            "release path: consented workflow_dispatch -- --release-unoptimized given, "
+            "and .hyperi-ci.yaml sets build.skip_optimize: true"
+        ) in output
+
     def test_a_push_run_that_registers_late_is_waited_for_before_the_dispatch(self) -> None:
         # Dispatching first would let the push run, registering after it, cancel
         # the release in the workflow's concurrency group. Costs one 5s poll.
@@ -1368,6 +1776,7 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
         assert _contains(argv, ["workflow", "run"]) == -1
         assert _contains(argv, ["run", "list"]) == -1
         assert "preflight" not in output
+        assert "release path: publish trailer on the squash merge" in output
 
     def test_a_caller_without_the_consent_stops_before_the_bump(self) -> None:
         with pytest.raises(sf.FleetError) as caught:
@@ -1428,6 +1837,50 @@ class DispatchReleaseTests(OnPathTestCase):
         assert _contains(argv, ["run", "view", "200"]) != -1
         assert _contains(argv, ["run", "view", "100"]) == -1
         assert f"SHIPPED: {self.SLUG} v1.0.0 -> v1.0.1" in buffer.getvalue()
+
+
+class RunAppearHintTests(OnPathTestCase):
+    """A run that never registers names the command that releases the sha by hand."""
+
+    SLUG = "example-org/dfe-app"
+    CONSENT: ClassVar[list[str]] = ["gh", *RebuildRsUnoptimizedTests.DISPATCH]
+
+    def _dispatch(self, *, just_merged: bool) -> str:
+        """Dispatch the consented release with no time for any run to register."""
+        with pytest.raises(sf.FleetError) as caught, contextlib.redirect_stdout(io.StringIO()):
+            dispatch_release(
+                repo=self.bindir,
+                slug=self.SLUG,
+                sha="abc123",
+                dispatch=self.CONSENT,
+                artefact=sf.Artefact(kind="ghrelease", name=self.SLUG),
+                before="v1.0.0",
+                timeout=60,
+                just_merged=just_merged,
+                appear_timeout=0,
+            )
+        return str(caught.value)
+
+    def test_a_trailer_release_still_names_hyperi_ci_publish(self) -> None:
+        with pytest.raises(sf.FleetError) as caught, contextlib.redirect_stdout(io.StringIO()):
+            sf.await_run(self.SLUG, "abc123", timeout=0)
+        assert "`hyperi-ci publish` from a checkout sitting on that commit" in str(caught.value)
+
+    def test_a_missing_push_run_names_the_consented_dispatch(self) -> None:
+        # hyperi-ci publish carries no consent, so naming it here sends the
+        # operator to a release hyperi-ci's Build refuses.
+        message = self._dispatch(just_merged=True)
+        assert f"`{' '.join(self.CONSENT)}`" in message
+        assert "-f release-unoptimized=true" in message
+        assert "hyperi-ci publish" not in message
+        assert _contains(_fake_argv(self.bindir, "gh"), ["workflow", "run"]) == -1
+
+    def test_a_dispatched_run_that_never_registers_names_the_dispatch(self) -> None:
+        _dispatching_gh(self.bindir, sha="abc123", push_run=100, dispatch_run=200)
+        message = self._dispatch(just_merged=False)
+        assert "ignoring runs up to 100" in message
+        assert f"`{' '.join(self.CONSENT)}`" in message
+        assert "hyperi-ci publish" not in message
 
 
 if __name__ == "__main__":
