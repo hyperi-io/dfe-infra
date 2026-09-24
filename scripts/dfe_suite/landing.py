@@ -16,7 +16,9 @@ red rather than blocking opaquely to a deadline.
 The squash message is the publish trigger. hyperi-ci reads
 ``git log -1 --format=%B`` on ``refs/heads/main`` and looks for a
 ``Publish: true`` trailer, so the message authored at merge time -- not the
-branch commit -- is what turns the merge event into the publish run.
+branch commit -- is what turns the merge event into the publish run. A release
+that needs workflow inputs a push event cannot carry lands with no trailer and
+is fired by :func:`dispatch_release` instead.
 """
 
 from __future__ import annotations
@@ -479,7 +481,8 @@ def land_via_pr(
 
     await_pr_mergeable(slug, pr)
 
-    say(f"squash-merging PR #{pr} (the squash message carries the release trailer)")
+    trailer = "carries the release trailer" if publish else "carries no release trailer"
+    say(f"squash-merging PR #{pr} (the squash message {trailer})")
     run(
         [
             "gh",
@@ -542,6 +545,65 @@ def follow_release(
     after = await_artefact(artefact, before, slug=slug, run_id=run_id)
     was = before or "nothing"
     say(f"SHIPPED: {artefact.name} {was} -> {after} live on {artefact.describe()}")
+
+
+def dispatch_release(
+    *,
+    repo: Path,
+    slug: str,
+    sha: str,
+    dispatch: list[str],
+    artefact: Artefact,
+    before: str,
+    timeout: int,
+    just_merged: bool = False,
+    watch: bool = True,
+) -> None:
+    """Release main's HEAD through a workflow_dispatch and follow the run it creates.
+
+    A dispatch is fire-and-forget: it returns no run id, and ``sha`` already
+    carries the push run that landed it. That run is snapshotted FIRST, so the
+    wait refuses it and follows the run the dispatch creates -- otherwise the
+    tool watches a run that predates the release and judges the artefact
+    against it.
+
+    Args:
+        repo: The checkout the dispatch runs from.
+        slug: ``owner/name`` on GitHub.
+        sha: main's HEAD, the commit the dispatched run releases.
+        dispatch: The argv that fires the dispatch.
+        artefact: Where the release lands.
+        before: The version that destination served before the release.
+        timeout: The run's own ceiling.
+        just_merged: ``sha`` landed moments ago, so wait for its push run to
+            register before taking the snapshot. hyperi-ci's rust-ci.yml
+            cancels in-progress runs in a per-ref concurrency group, so a push
+            run that registers after the dispatch cancels the release.
+        watch: Follow the release. False returns once the dispatch is sent.
+
+    Raises:
+        FleetError: If the push run never registers, the dispatch fails, or the
+            release does not complete.
+    """
+    if just_merged:
+        previous: int | None = await_run(slug, sha)
+    else:
+        previous = find_run_for_sha(slug, sha)
+    if previous is not None:
+        say(f"run {previous} already sits on this sha -- the dispatch must beat it")
+    say(f"dispatching: {' '.join(dispatch)}")
+    run(dispatch, cwd=repo, capture=False)
+    if not watch:
+        say(f"dispatched -- not watching (--no-watch). Check: gh run list -R {slug}")
+        return
+    follow_release(
+        slug=slug,
+        sha=sha,
+        artefact=artefact,
+        before=before,
+        timeout=timeout,
+        after_run_id=previous,
+    )
 
 
 def already_released(repo: Path, live: str) -> str | None:

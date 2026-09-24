@@ -20,6 +20,12 @@ scalo's pin whichever producer released.
 Both end the same way: a staged change lands through
 :func:`hyperi_ai.suite.landing.land_via_pr`, and the release is followed to a
 moved artefact.
+
+A Rust consumer with ``build.skip_optimize`` set cannot release through the
+merge: hyperi-ci refuses a stable build with its optimisation stage skipped
+unless the run carries the per-run ``release-unoptimized`` input, and a push
+event carries no inputs. ``release_unoptimized`` lands the change with no
+trailer and releases it through one consented ``workflow_dispatch`` instead.
 """
 
 from __future__ import annotations
@@ -32,7 +38,9 @@ from pathlib import Path
 
 from dfe_suite.artefacts import Artefact
 from dfe_suite.landing import (
+    CI_WORKFLOW_FILE,
     _slugify,
+    dispatch_release,
     follow_release,
     land_via_pr,
 )
@@ -216,6 +224,124 @@ def _emit_chart(repo: Path, app: str, *, run_contract_test: bool = False) -> Non
     )
 
 
+# The per-run consent hyperi-ci needs before it releases a build whose
+# optimisation stage was skipped. Neither has a repo variable or config key.
+_CONSENT_INPUTS = ("skip-optimize", "release-unoptimized")
+
+_EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+
+
+def _unoptimized_dispatch(slug: str) -> list[str]:
+    """The ``gh workflow run`` that releases main's HEAD with the consent set."""
+    argv = ["gh", "workflow", "run", CI_WORKFLOW_FILE, "-R", slug, "--ref", "main"]
+    argv.extend(["-f", "from-head=true"])
+    for name in _CONSENT_INPUTS:
+        argv.extend(["-f", f"{name}=true"])
+    return argv
+
+
+def _forwards(value: object, name: str) -> bool:
+    """True when a ``with:`` value passes the dispatch input ``name`` through.
+
+    A constant does not count, because ``'true'`` would make the consent
+    permanent, and neither does a reference to any other input name.
+    """
+    if not isinstance(value, str):
+        return False
+    reference = re.compile(r"(?<![\w-])inputs\." + re.escape(name) + r"(?![\w-])")
+    return any(reference.search(expr) for expr in _EXPRESSION.findall(value))
+
+
+def _consent_gaps(doc: object) -> list[str]:
+    """Every piece of the consent a parsed caller workflow is missing.
+
+    Args:
+        doc: The parsed ``ci.yml``.
+
+    Returns:
+        One line per missing piece; empty when the caller declares both inputs
+        and at least one job that calls a reusable workflow forwards both.
+    """
+    workflow = doc if isinstance(doc, dict) else {}
+    triggers = workflow.get("on")
+    dispatch = triggers.get("workflow_dispatch") if isinstance(triggers, dict) else None
+    inputs = dispatch.get("inputs") if isinstance(dispatch, dict) else None
+    declared = inputs if isinstance(inputs, dict) else {}
+    gaps = [
+        f"on.workflow_dispatch.inputs.{name} is not declared"
+        for name in _CONSENT_INPUTS
+        if name not in declared
+    ]
+
+    jobs = workflow.get("jobs")
+    callers: dict[str, dict] = {}
+    if isinstance(jobs, dict):
+        for job_id, job in jobs.items():
+            if isinstance(job, dict) and job.get("uses"):
+                callers[str(job_id)] = job
+    if not callers:
+        gaps.append("no job calls a reusable workflow (jobs.<id>.uses)")
+        return gaps
+
+    unforwarded: list[str] = []
+    for job_id, job in callers.items():
+        passed = job.get("with")
+        passed = passed if isinstance(passed, dict) else {}
+        job_gaps = [
+            f"jobs.{job_id}.with.{name} does not pass inputs.{name}"
+            for name in _CONSENT_INPUTS
+            if not _forwards(passed.get(name), name)
+        ]
+        if not job_gaps:
+            return gaps
+        unforwarded.extend(job_gaps)
+    return gaps + unforwarded
+
+
+def _check_unoptimized_caller(repo: Path) -> Path:
+    """Prove the caller workflow can carry the per-run consent to hyperi-ci.
+
+    Reads the WORKING TREE: the caller is edited in place before the run, and
+    ``git add -u`` folds that edit into the release commit. The file is parsed,
+    never grepped, so a commented-out line counts as absent.
+
+    Args:
+        repo: The consumer checkout.
+
+    Returns:
+        The caller workflow that passed.
+
+    Raises:
+        FleetError: Naming the file and every missing piece, when the caller
+            cannot carry the consent or does not parse.
+    """
+    workflow = repo / ".github" / "workflows" / CI_WORKFLOW_FILE
+    if not workflow.is_file():
+        raise FleetError(f"{workflow} is not there -- nothing to dispatch the release through")
+    # Imported here so every other dfe-fleet path stays stdlib-only.
+    try:
+        from ruamel.yaml import YAML
+        from ruamel.yaml.error import YAMLError
+    except ImportError as exc:
+        raise FleetError(
+            "ruamel.yaml is required to read the caller workflow "
+            "(scripts/tests/requirements-ci.txt pins it)"
+        ) from exc
+    try:
+        doc = YAML(typ="safe").load(workflow.read_text(encoding="utf-8", errors="replace"))
+    except YAMLError as exc:
+        raise FleetError(f"{workflow} does not parse as YAML: {exc}") from exc
+    gaps = _consent_gaps(doc)
+    if gaps:
+        raise FleetError(
+            f"{workflow} cannot carry the consent for an unoptimised release: "
+            f"{'; '.join(gaps)}. Declare {' and '.join(_CONSENT_INPUTS)} as "
+            f"workflow_dispatch inputs and pass each to the reusable workflow's "
+            f"with: as its own inputs.<name>."
+        )
+    return workflow
+
+
 def rebuild_rust(
     repo: Path,
     version: str,
@@ -227,6 +353,7 @@ def rebuild_rust(
     watch: bool = True,
     dry_run: bool = False,
     org: str = DEFAULT_ORG,
+    release_unoptimized: bool = False,
 ) -> int:
     """Move one Rust consumer onto a new producer release and ship it.
 
@@ -243,9 +370,18 @@ def rebuild_rust(
         watch: Follow the release after the merge.
         dry_run: Say what would happen, touch nothing.
         org: GitHub org used when the remote cannot be read.
+        release_unoptimized: Release a consumer with ``build.skip_optimize``
+            set: check its caller workflow can carry the per-run consent before
+            touching anything, land with no release trailer, then release
+            main's HEAD through a ``workflow_dispatch`` that sets
+            ``skip-optimize`` and ``release-unoptimized``.
 
     Returns:
         The process exit code -- non-zero means STOP.
+
+    Raises:
+        FleetError: If any step fails, including a caller workflow that cannot
+            carry the consent.
     """
     require_tools("git", "gh", "cargo")
     repo = Path(repo).expanduser().resolve()
@@ -275,6 +411,17 @@ def rebuild_rust(
 
     sync_main(repo, dry_run=dry_run)
 
+    dispatch: list[str] = []
+    if release_unoptimized:
+        # Before the bump and the build: a caller that cannot carry the consent
+        # would otherwise merge, then have its release refused.
+        caller = _check_unoptimized_caller(repo)
+        say(
+            f"preflight: {caller.relative_to(repo)} declares and forwards "
+            f"{' and '.join(_CONSENT_INPUTS)}"
+        )
+        dispatch = _unoptimized_dispatch(slug)
+
     if dry_run:
         gate = "fmt, clippy, nextest" if run_tests else "fmt, clippy"
         artefacts = "the Dockerfile and docs/ artefacts"
@@ -283,7 +430,16 @@ def rebuild_rust(
         say(f"[dry-run] would pin {package} to {version} and relock")
         say(f"[dry-run] would regenerate {artefacts}")
         say(f"[dry-run] would gate on {gate}, then commit '{subject}'")
-        say(f"[dry-run] would land it on {slug} main via a PR and follow the release")
+        if release_unoptimized:
+            say(f"[dry-run] would land it on {slug} main via a PR without the release trailer")
+            say("[dry-run] would wait for the merge's push run, then dispatch the release:")
+            say(f"[dry-run]   {' '.join(dispatch)}")
+            if watch:
+                say("[dry-run] would follow the dispatched run until the GitHub release moves")
+            else:
+                say("[dry-run] would return once the dispatch is sent (--no-watch)")
+        else:
+            say(f"[dry-run] would land it on {slug} main via a PR and follow the release")
         say("dry run complete -- nothing changed, nothing pushed")
         return 0
 
@@ -367,16 +523,33 @@ def rebuild_rust(
 
     artefact = Artefact(kind="ghrelease", name=slug)
     before = artefact.baseline()
+    note = f"Rebuild on {package} {version}."
+    if release_unoptimized:
+        note = f"{note} Released unoptimised by a consented workflow_dispatch."
     merged = land_via_pr(
         repo=repo,
         slug=slug,
         branch=f"scalo/{_slugify(f'rebuild-{version}')}",
         subject=subject,
-        note=f"Rebuild on {package} {version}.",
-        publish=True,
+        note=note,
+        publish=not release_unoptimized,
         dry_run=False,
     )
     assert merged is not None
+
+    if release_unoptimized:
+        dispatch_release(
+            repo=repo,
+            slug=slug,
+            sha=merged,
+            dispatch=dispatch,
+            artefact=artefact,
+            before=before,
+            timeout=RUN_TIMEOUT_RUST,
+            just_merged=True,
+            watch=watch,
+        )
+        return 0
 
     if not watch:
         say(

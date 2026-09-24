@@ -24,7 +24,7 @@ from dfe_suite.artefacts import Artefact
 from dfe_suite.landing import (
     _slugify,
     already_released,
-    find_run_for_sha,
+    dispatch_release,
     follow_release,
     land_via_pr,
 )
@@ -34,7 +34,6 @@ from dfe_suite.proc import (
     RUN_TIMEOUT_RUST,
     FleetError,
     require_tools,
-    run,
     say,
     warn,
 )
@@ -158,23 +157,14 @@ def ship_library(
         return 0
 
     require_tools("hyperi-ci")
-    sha = head_sha(repo)
-    # `hyperi-ci publish` is a fire-and-forget `gh workflow run`: it returns no
-    # run id, and this sha already carries the green push run that landed it.
-    # Snapshot that run FIRST, so the wait below refuses it and follows the run
-    # the dispatch creates -- otherwise the tool watches a run that predates
-    # the release and judges the registry against it.
-    previous = find_run_for_sha(slug, sha)
-    if previous is not None:
-        say(f"run {previous} already sits on this sha -- the dispatch must beat it")
     say("nothing staged -- dispatching a from-head release for main HEAD")
-    run(["hyperi-ci", "publish"], cwd=repo, capture=False)
-    follow_release(
+    dispatch_release(
+        repo=repo,
         slug=slug,
-        sha=sha,
+        sha=head_sha(repo),
+        dispatch=["hyperi-ci", "publish"],
         artefact=spec.artefact,
         before=before,
         timeout=spec.run_timeout,
-        after_run_id=previous,
     )
     return 0

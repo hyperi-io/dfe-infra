@@ -37,6 +37,9 @@ _SPEC = importlib.util.spec_from_file_location(
 sf = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(sf)
 
+from dfe_suite.landing import dispatch_release
+from dfe_suite.rebuild import _check_unoptimized_caller
+
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "Test",
     "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -963,9 +966,468 @@ class CliTests(unittest.TestCase):
         with pytest.raises(SystemExit):
             sf.build_parser().parse_args(["rebuild-py", "/x", "1.0.0", "--no-chart"])
 
+    def test_rebuild_rs_takes_release_unoptimized_and_rebuild_py_does_not(self) -> None:
+        # dfe-engine is Python and has no optimisation stage to consent to skipping.
+        rs = sf.build_parser().parse_args(["rebuild-rs", "/x", "1.0.0", "--release-unoptimized"])
+        assert rs.release_unoptimized
+        assert not sf.build_parser().parse_args(["rebuild-rs", "/x", "1.0.0"]).release_unoptimized
+        with pytest.raises(SystemExit):
+            sf.build_parser().parse_args(["rebuild-py", "/x", "1.0.0", "--release-unoptimized"])
+
     def test_a_subcommand_is_required(self) -> None:
         with pytest.raises(SystemExit):
             sf.build_parser().parse_args([])
+
+
+# ---------------------------------------------------------------------------
+# Unoptimised release: the consent preflight, the trailer-less land, and the
+# consented dispatch
+# ---------------------------------------------------------------------------
+
+_CONSENT = ("skip-optimize", "release-unoptimized")
+
+_CALLER_HEAD = """\
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      from-head:
+        type: string
+        required: false
+        default: ""
+      bump:
+        type: string
+        required: false
+        default: "auto"
+"""
+
+_CALLER_JOB = """\
+
+jobs:
+  ci:
+    uses: example-org/ci/.github/workflows/rust-ci.yml@main
+    with:
+      from-head: ${{ inputs.from-head || '' }}
+      bump: ${{ inputs.bump || 'auto' }}
+"""
+
+_CALLER_SECRETS = """\
+    secrets:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+"""
+
+
+def _commented(text: str) -> str:
+    """The same lines, each turned into a YAML comment at its own indent."""
+    return "".join(
+        f"{line[: len(line) - len(line.lstrip())]}# {line.lstrip()}\n"
+        for line in text.splitlines()
+    )
+
+
+def _caller_yml(
+    *,
+    declared: Sequence[str] = _CONSENT,
+    forwarded: Sequence[str] = _CONSENT,
+    commented: Sequence[str] = (),
+    values: dict[str, str] | None = None,
+) -> str:
+    """A caller ci.yml shaped like the fleet's, with the consent inputs varied.
+
+    Args:
+        declared: Consent inputs declared under workflow_dispatch.
+        forwarded: Consent inputs passed in the reusable workflow's with:.
+        commented: Consent inputs present in BOTH places, but only as comments.
+        values: A with: value to use instead of ``${{ inputs.<name> || '' }}``.
+    """
+    values = values or {}
+    inputs = ""
+    passes = ""
+    for name in _CONSENT:
+        block = f'      {name}:\n        type: string\n        required: false\n        default: ""\n'
+        line = f"      {name}: " + values.get(name, "${{ inputs." + name + " || '' }}") + "\n"
+        if name in commented:
+            inputs += _commented(block)
+            passes += _commented(line)
+            continue
+        if name in declared:
+            inputs += block
+        if name in forwarded:
+            passes += line
+    return _CALLER_HEAD + inputs + _CALLER_JOB + passes + _CALLER_SECRETS
+
+
+def _contains(seq: Sequence[str], sub: Sequence[str]) -> int:
+    """Where ``sub`` first sits contiguously inside ``seq``, or -1."""
+    width = len(sub)
+    for start in range(len(seq) - width + 1):
+        if list(seq[start : start + width]) == list(sub):
+            return start
+    return -1
+
+
+def _dispatching_gh(
+    directory: Path, *, sha: str, push_run: int, dispatch_run: int, push_appears: int = 1
+) -> None:
+    """A gh stand-in for a whole land-then-dispatch release.
+
+    The same argv log as ``_fake_bin``. ``workflow run`` leaves a marker, and
+    ``run list`` and ``release list`` answer from it: before the dispatch the
+    sha carries only the merge's push run and the release is the old tag, after
+    it the dispatched run has registered and the release has moved. Anything
+    unrouted fails, so ``repo view`` falls back to the org and the dir name.
+
+    Args:
+        directory: Scratch directory that is on the front of PATH.
+        sha: The head commit every run belongs to.
+        push_run: The merge's push run id.
+        dispatch_run: The id the dispatched run registers under.
+        push_appears: The ``run list`` call on which the push run first shows.
+    """
+    marker = directory / "gh.dispatched"
+    count = directory / "gh.run-lists"
+    row = '{{"databaseId":{id},"headSha":"' + sha + '","workflowName":"CI"}}'
+    before_rows = "[" + row.format(id=push_run) + "]"
+    after_rows = "[" + row.format(id=dispatch_run) + "," + row.format(id=push_run) + "]"
+    green = (
+        '{"status":"completed","conclusion":"success",'
+        '"jobs":[{"name":"publish","conclusion":"success"}]}'
+    )
+    clean = '{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","statusCheckRollup":[]}'
+    lines = [
+        "#!/bin/sh",
+        f'printf "%s\\n" "$@" >> "{directory / "gh.argv"}"',
+        'case " $* " in',
+        f'  *" workflow run "*) : > "{marker}"; exit 0 ;;',
+        '  *" run list "*)',
+        f'    echo x >> "{count}"',
+        f'    if [ -e "{marker}" ]; then echo \'{after_rows}\'',
+        # Unquoted: BSD wc pads the count with spaces, which word splitting drops.
+        f'    elif [ $(wc -l < "{count}") -ge {push_appears} ]; then echo \'{before_rows}\'',
+        "    else echo '[]'; fi",
+        "    exit 0 ;;",
+        f"  *\" run view \"*) echo '{green}'; exit 0 ;;",
+        '  *" release list "*)',
+        f'    if [ -e "{marker}" ]; then echo \'[{{"tagName":"v1.0.1"}}]\'; '
+        "else echo '[{\"tagName\":\"v1.0.0\"}]'; fi",
+        "    exit 0 ;;",
+        "  *\" pr list \"*) echo '[]'; exit 0 ;;",
+        '  *" pr create "*) echo "https://github.com/example-org/dfe-app/pull/7"; exit 0 ;;',
+        f"  *\" pr view \"*) echo '{clean}'; exit 0 ;;",
+        '  *" pr merge "*) exit 0 ;;',
+        "esac",
+        "exit 1",
+    ]
+    script = directory / "gh"
+    script.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    script.chmod(0o755)
+
+
+class UnoptimizedCallerTests(unittest.TestCase):
+    """The preflight reads the caller's working tree, parsed, before anything runs."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-caller-")
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+        self.workflow = self.repo / ".github" / "workflows" / "ci.yml"
+        self.workflow.parent.mkdir(parents=True)
+
+    def _check(self, text: str) -> str:
+        """The preflight's refusal for a caller with this body."""
+        self.workflow.write_text(text, encoding="utf-8")
+        with pytest.raises(sf.FleetError) as caught:
+            _check_unoptimized_caller(self.repo)
+        message = str(caught.value)
+        assert str(self.workflow) in message
+        return message
+
+    def test_a_caller_that_declares_and_forwards_both_passes(self) -> None:
+        self.workflow.write_text(_caller_yml(), encoding="utf-8")
+        assert _check_unoptimized_caller(self.repo) == self.workflow
+
+    def test_a_caller_with_neither_input_names_all_four_missing_pieces(self) -> None:
+        message = self._check(_caller_yml(declared=(), forwarded=()))
+        for name in _CONSENT:
+            assert f"on.workflow_dispatch.inputs.{name} is not declared" in message
+            assert f"jobs.ci.with.{name} does not pass inputs.{name}" in message
+
+    def test_a_missing_input_is_named_and_nothing_else(self) -> None:
+        message = self._check(_caller_yml(declared=("skip-optimize",)))
+        assert "on.workflow_dispatch.inputs.release-unoptimized is not declared" in message
+        assert "inputs.skip-optimize is not declared" not in message
+        assert "does not pass" not in message
+
+    def test_an_input_declared_but_not_forwarded_is_named(self) -> None:
+        message = self._check(_caller_yml(forwarded=("skip-optimize",)))
+        assert "jobs.ci.with.release-unoptimized does not pass inputs.release-unoptimized" in (
+            message
+        )
+        assert "is not declared" not in message
+
+    def test_commented_out_lines_are_absent_not_present(self) -> None:
+        # A grep for the input names would find all four of these lines.
+        text = _caller_yml(commented=_CONSENT)
+        assert "# release-unoptimized:" in text
+        message = self._check(text)
+        for name in _CONSENT:
+            assert f"on.workflow_dispatch.inputs.{name} is not declared" in message
+            assert f"jobs.ci.with.{name} does not pass inputs.{name}" in message
+
+    def test_a_constant_in_with_is_not_forwarding(self) -> None:
+        # 'true' there would make the consent permanent rather than per-run.
+        message = self._check(_caller_yml(values={"release-unoptimized": "'true'"}))
+        assert "jobs.ci.with.release-unoptimized does not pass" in message
+
+    def test_a_misspelt_input_reference_is_not_forwarding(self) -> None:
+        # A near-miss name is a different input, so the consent never arrives.
+        misspelt = "${{ inputs.release_unoptimized || '' }}"
+        message = self._check(_caller_yml(values={"release-unoptimized": misspelt}))
+        assert "jobs.ci.with.release-unoptimized does not pass" in message
+
+    def test_a_list_of_triggers_declares_no_inputs(self) -> None:
+        text = _caller_yml(declared=()).replace(
+            _CALLER_HEAD, "name: CI\n\non: [push, workflow_dispatch]\n"
+        )
+        message = self._check(text)
+        assert "does not parse" not in message
+        assert "on.workflow_dispatch.inputs.skip-optimize is not declared" in message
+
+    def test_no_reusable_workflow_job_is_named(self) -> None:
+        text = _caller_yml().replace(
+            "    uses: example-org/ci/.github/workflows/rust-ci.yml@main\n",
+            "    runs-on: ubuntu-latest\n",
+        )
+        message = self._check(text)
+        assert "no job calls a reusable workflow" in message
+
+    def test_a_missing_caller_is_refused(self) -> None:
+        with pytest.raises(sf.FleetError) as caught:
+            _check_unoptimized_caller(self.repo)
+        assert "is not there" in str(caught.value)
+
+    def test_a_caller_that_does_not_parse_is_refused_not_a_traceback(self) -> None:
+        message = self._check("on:\n  workflow_dispatch: [\n")
+        assert "does not parse as YAML" in message
+
+
+class RebuildRsUnoptimizedTests(OnPathTestCase):
+    """--release-unoptimized lands with no trailer, then dispatches with consent."""
+
+    SLUG = "example-org/dfe-app"
+    PUSH_RUN = 33054359645
+    DISPATCH_RUN = 33054900002
+    DISPATCH = (
+        "workflow",
+        "run",
+        "ci.yml",
+        "-R",
+        SLUG,
+        "--ref",
+        "main",
+        "-f",
+        "from-head=true",
+        "-f",
+        "skip-optimize=true",
+        "-f",
+        "release-unoptimized=true",
+    )
+    BRANCH = "scalo/rebuild-2-11-0"
+
+    def setUp(self) -> None:
+        super().setUp()
+        root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-unopt-")
+        self.addCleanup(root_tmp.cleanup)
+        root = Path(root_tmp.name)
+        self.origin = root / "origin.git"
+        _git(root, "init", "--bare", "-b", "main", str(self.origin))
+        seed = root / "seed"
+        _git(root, "clone", str(self.origin), str(seed))
+        _identify(seed)
+        (seed / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        (seed / "Dockerfile").write_text("FROM old\n", encoding="utf-8")
+        workflow = seed / ".github" / "workflows" / "ci.yml"
+        workflow.parent.mkdir(parents=True)
+        # Committed WITHOUT the consent, the shape every consumer has on main.
+        workflow.write_text(_caller_yml(declared=(), forwarded=()), encoding="utf-8")
+        _git(seed, "add", "Cargo.toml", "Dockerfile", ".github/workflows/ci.yml")
+        _git(seed, "commit", "-m", "chore: seed")
+        _git(seed, "push", "origin", "main")
+        self.main_sha = _git(self.origin, "rev-parse", "main")
+
+        self.repo = root / "dfe-app"
+        _git(root, "clone", str(self.origin), str(self.repo))
+        _identify(self.repo)
+        self.caller = self.repo / ".github" / "workflows" / "ci.yml"
+
+        # Every cargo call succeeds, and the stdout emit writes a new Dockerfile,
+        # so the rebuild has a tracked change to land.
+        _fake_bin(self.bindir, "cargo", stdout="FROM scratch")
+        _dispatching_gh(
+            self.bindir,
+            sha=self.main_sha,
+            push_run=self.PUSH_RUN,
+            dispatch_run=self.DISPATCH_RUN,
+        )
+        os.environ["SCALO_REBUILD_TARGET"] = str(root / "target")
+
+    def _consent_in_the_tree(self) -> None:
+        """The operator's edit, made in the working tree before the run."""
+        self.caller.write_text(_caller_yml(), encoding="utf-8")
+
+    def _rebuild(self, *extra: str) -> tuple[int, str]:
+        """Run the CLI handler; ``self.output`` keeps what it said even if it raises."""
+        args = sf.build_parser().parse_args(
+            ["--org", "example-org", "rebuild-rs", str(self.repo), "2.11.0", "--no-tests", *extra]
+        )
+        self.output = io.StringIO()
+        with contextlib.redirect_stdout(self.output):
+            code = sf.cmd_rebuild_rs(args)
+        return code, self.output.getvalue()
+
+    def _landed_message(self) -> str:
+        """The commit message the PR branch carried to the remote."""
+        return _git(self.origin, "log", "-1", "--format=%B", self.BRANCH)
+
+    def test_the_release_is_dispatched_with_the_consent_and_followed(self) -> None:
+        self._consent_in_the_tree()
+        code, output = self._rebuild("--release-unoptimized")
+        assert code == 0, output
+        argv = _fake_argv(self.bindir, "gh")
+
+        # Landed with no trailer: neither the branch commit nor any gh call
+        # (the squash message rides on `gh pr merge --body`) carries one.
+        assert "Publish: true" not in self._landed_message()
+        assert not any("Publish: true" in arg for arg in argv)
+        assert _contains(argv, ["pr", "merge"]) != -1
+        assert "carries no release trailer" in output
+
+        # The caller edit made in the tree is folded into the release commit.
+        touched = _git(self.origin, "show", "--name-only", "--format=", self.BRANCH).split()
+        assert ".github/workflows/ci.yml" in touched
+
+        # Exactly that dispatch, and no other input: -f appears only there.
+        dispatched = _contains(argv, self.DISPATCH)
+        assert dispatched != -1
+        inputs = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-f"]
+        assert inputs == ["from-head=true", "skip-optimize=true", "release-unoptimized=true"]
+
+        # The merge's push run is waited for BEFORE the dispatch, so it cannot
+        # register later and cancel the release in the concurrency group.
+        listed = _contains(argv, ["run", "list"])
+        assert listed != -1
+        assert listed < dispatched
+
+        # The dispatched run is the one followed, never the push run.
+        assert _contains(argv, ["run", "view", str(self.DISPATCH_RUN)]) != -1
+        assert _contains(argv, ["run", "view", str(self.PUSH_RUN)]) == -1
+        assert f"SHIPPED: {self.SLUG} v1.0.0 -> v1.0.1" in output
+
+    def test_a_push_run_that_registers_late_is_waited_for_before_the_dispatch(self) -> None:
+        # Dispatching first would let the push run, registering after it, cancel
+        # the release in the workflow's concurrency group. Costs one 5s poll.
+        _dispatching_gh(
+            self.bindir,
+            sha=self.main_sha,
+            push_run=self.PUSH_RUN,
+            dispatch_run=self.DISPATCH_RUN,
+            push_appears=2,
+        )
+        self._consent_in_the_tree()
+        code, output = self._rebuild("--release-unoptimized", "--no-watch")
+        assert code == 0, output
+        argv = _fake_argv(self.bindir, "gh")
+        dispatched = _contains(argv, self.DISPATCH)
+        assert dispatched != -1
+        lists_before = [
+            i for i in range(dispatched) if argv[i : i + 2] == ["run", "list"]
+        ]
+        assert len(lists_before) == 2
+        assert f"run {self.PUSH_RUN} already sits on this sha" in output
+
+    def test_no_watch_dispatches_and_returns(self) -> None:
+        self._consent_in_the_tree()
+        code, output = self._rebuild("--release-unoptimized", "--no-watch")
+        assert code == 0, output
+        argv = _fake_argv(self.bindir, "gh")
+        assert _contains(argv, self.DISPATCH) != -1
+        assert _contains(argv, ["run", "view"]) == -1
+        assert "not watching (--no-watch)" in output
+
+    def test_the_default_path_keeps_the_trailer_and_never_dispatches(self) -> None:
+        # No consent in the caller either: the default path never reads it.
+        code, output = self._rebuild("--no-watch")
+        assert code == 0, output
+        argv = _fake_argv(self.bindir, "gh")
+        assert "Publish: true" in self._landed_message().splitlines()
+        assert _contains(argv, ["workflow", "run"]) == -1
+        assert _contains(argv, ["run", "list"]) == -1
+        assert "preflight" not in output
+
+    def test_a_caller_without_the_consent_stops_before_the_bump(self) -> None:
+        with pytest.raises(sf.FleetError) as caught:
+            self._rebuild("--release-unoptimized")
+        message = str(caught.value)
+        assert str(self.caller) in message
+        assert "on.workflow_dispatch.inputs.release-unoptimized is not declared" in message
+        # Refused before any cargo step and before anything reached the remote.
+        assert _fake_argv(self.bindir, "cargo") == []
+        assert _git(self.origin, "branch", "--list", "scalo/*") == ""
+
+    def test_the_dry_run_names_every_new_step(self) -> None:
+        self._consent_in_the_tree()
+        before = sf.head_sha(self.repo)
+        code, output = self._rebuild("--release-unoptimized", "-n")
+        assert code == 0, output
+        assert (
+            "preflight: .github/workflows/ci.yml declares and forwards "
+            "skip-optimize and release-unoptimized"
+        ) in output
+        assert f"would land it on {self.SLUG} main via a PR without the release trailer" in output
+        assert "gh " + " ".join(self.DISPATCH) in output
+        assert "would follow the dispatched run until the GitHub release moves" in output
+        # A dry run: the checkout and the remote are untouched.
+        assert sf.head_sha(self.repo) == before
+        assert _fake_argv(self.bindir, "cargo") == []
+        assert _contains(_fake_argv(self.bindir, "gh"), ["workflow", "run"]) == -1
+
+    def test_the_dry_run_still_refuses_a_caller_without_the_consent(self) -> None:
+        with pytest.raises(sf.FleetError) as caught:
+            self._rebuild("--release-unoptimized", "-n")
+        assert "cannot carry the consent" in str(caught.value)
+        output = self.output.getvalue()
+        assert "DRY RUN" in output
+        assert "would pin" not in output
+
+
+class DispatchReleaseTests(OnPathTestCase):
+    """The shared dispatch tail, in ship's shape: the sha has sat on main a while."""
+
+    SLUG = "example-org/dfe-app"
+
+    def test_the_run_already_on_the_sha_is_refused_and_the_dispatch_followed(self) -> None:
+        _dispatching_gh(self.bindir, sha="abc123", push_run=100, dispatch_run=200)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            dispatch_release(
+                repo=self.bindir,
+                slug=self.SLUG,
+                sha="abc123",
+                dispatch=["gh", "workflow", "run", "ci.yml"],
+                artefact=sf.Artefact(kind="ghrelease", name=self.SLUG),
+                before="v1.0.0",
+                timeout=60,
+            )
+        argv = _fake_argv(self.bindir, "gh")
+        assert "run 100 already sits on this sha" in buffer.getvalue()
+        assert _contains(argv, ["run", "view", "200"]) != -1
+        assert _contains(argv, ["run", "view", "100"]) == -1
+        assert f"SHIPPED: {self.SLUG} v1.0.0 -> v1.0.1" in buffer.getvalue()
 
 
 if __name__ == "__main__":
