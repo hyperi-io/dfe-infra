@@ -112,6 +112,12 @@ Subcommands:
                apply refuses to run without; apply bumps pins.yaml through a
                surgical field edit and commits per stage (never a hand edit);
                rollback refuses by name any step with no reverse path.
+  kind         up/status/down for a throwaway local kind cluster running one
+               tier: up creates the cluster on a docker network of its own,
+               adds the StorageClass the overlay asks for and the two
+               front-door addresses MetalLB announces, then runs the NAMED
+               ref's own stack-deploy from a checkout of that ref; down deletes
+               the cluster, its network and its state, then proves each gone.
 
 Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
 this file is committed publicly, so substitute your own node):
@@ -172,7 +178,12 @@ this file is committed publicly, so substitute your own node):
     python3 scripts/dfe-ops teardown --dry-run
     python3 scripts/dfe-ops teardown --force --with-terraform
 
-kubeconfig + probe need only python3. deploy/stack-deploy/teardown/verify shell
+    # The single tier from a named ref on a local kind cluster, then remove it:
+    python3 scripts/dfe-ops kind up --ref main --mode single --env-file bootstrap/.env
+    python3 scripts/dfe-ops kind status
+    python3 scripts/dfe-ops kind down
+
+kubeconfig + probe need only python3. kind also needs kind and docker. deploy/stack-deploy/teardown/verify shell
 out to the repo's bootstrap/*.sh + scripts/dfe-stack (found relative to this
 file), so they need whatever those need (kubectl, helm, terraform/tofu on PATH,
 VAULT_* env, ...). stack-deploy's pre-flight needs only python3 + helm.
@@ -239,6 +250,7 @@ import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_edge_probe import add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
+from dfe_ops_kind import add_kind_subparser  # noqa: E402
 from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
@@ -2604,9 +2616,11 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     )
     hard_fail = 0
 
-    # 1. Stack pins resolve (and are the real, published set).
+    # 1. Stack pins resolve (and are the real, published set). An unset
+    #    --registry leaves dfe-stack's own default: this render only prints refs.
+    registry = ["--registry", args.registry] if args.registry else []
     rc, out, err = _run_text(
-        ["python3", str(DFE_STACK), "--registry", args.registry, "render", "--stack", args.stack]
+        ["python3", str(DFE_STACK), *registry, "render", "--stack", args.stack]
     )
     if rc != 0:
         print(f"  [FAIL] stack {args.stack!r} does not resolve: {err.strip() or _last_line(out)}", file=sys.stderr)
@@ -3479,6 +3493,10 @@ def build_parser() -> argparse.ArgumentParser:
     # upgrade -- plan/preflight/apply/rollback a stack upgrade against a
     # deployment repo. Registered from dfe_ops_upgrade.
     add_upgrade_subparser(sub)
+
+    # kind -- up/status/down for a local kind cluster running one tier from a
+    # named git ref. Registered from dfe_ops_kind.
+    add_kind_subparser(sub)
 
     return ap
 
