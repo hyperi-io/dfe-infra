@@ -1,6 +1,7 @@
-# The harness for dfe-common.rollout, dfe-common.pdb and the two security
-# helpers: the same shape every app chart's Deployment has -- the rollout
-# strategy beside the replica count, and the config checksum on the pod template.
+# The harness for dfe-common.rollout, dfe-common.pdb, the two security helpers,
+# the grace period and the namespace env: the same shape every app chart's
+# Deployment has -- the rollout strategy beside the replica count, and the
+# config checksum on the pod template.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,7 +22,10 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/config-configmap.yaml") . | sha256sum }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       containers:
         - name: app
           image: "example:0.0.1"
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          env:
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}

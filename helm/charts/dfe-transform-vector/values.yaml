@@ -109,9 +109,19 @@ serviceAccount:
   create: true
   annotations: {}
 
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
+
+# The supervisor waits up to 55 s for its Vector child to exit, so this app gets
+# 70 s rather than the library's 45 s (dfe-common.terminationGrace).
+terminationGracePeriodSeconds: 70
+
 # KEDA autoscaling -- folded into the chart. The SHIPPED trigger is the native KEDA
-# cpu scaler; scalo ScalingPressure (0-100) renders beside it and the HPA takes the
-# higher of the two. The shim matches this ServiceName's gauge under any metric prefix
+# cpu scaler; scalo ScalingPressure (0-100) renders beside it when pressure.enabled
+# is on, and the HPA takes the higher of the two. The shim matches this ServiceName's gauge under any metric prefix
 # (dfe-engine#379), so no app release is needed for the name. Pressure is the advanced signal: the composite fuses Kafka CG lag
 # + container-contract metrics (buffer, memory) AND hard-gates to 0 when the downstream
 # sink is unreachable (circuit-breaker open), so pressure never scales out pods that
@@ -128,7 +138,8 @@ keda:
   cpu:
     targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: true             # scalo ScalingPressure via the fail-safe dfe-keda-shim
+    # Off: this app sets no scaling_pressure gauge, so the trigger would read 0 and only cpu scales it.
+    enabled: false
     # service: dfe-transform-vector   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
     # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)

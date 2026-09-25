@@ -133,6 +133,31 @@ mesh:
   # The port the listener answers on, matching the platform push port every
   # stage's listener already uses (dfe-common.pushPort).
   port: 6000
+  # Each pool's own policy, an Envoy Gateway BackendTrafficPolicy on its route
+  # (dfe-common.poolListener). Another Gateway API implementation sets enabled
+  # false and brings its own equivalent.
+  routePolicy:
+    enabled: true
+    # At or above the sender's 30 s send deadline. The next stage holds a
+    # request until its own ack is released, so a shorter timeout here cuts a
+    # request the sender is still waiting on.
+    requestTimeout: 30s
+    # Retries fire only on connect-failure and resource-exhausted, the two
+    # failures where no pod took the request. The trigger list is fixed in the
+    # helper, because widening it re-delivers batches.
+    retry:
+      numRetries: 2
+      baseInterval: 100ms
+      maxInterval: 1s
+    # Passive outlier detection. Envoy maps a gRPC unavailable in the response
+    # headers to 503, so a pod answering it five times running leaves the
+    # rotation for 30 s, and at most half the pool is out at once.
+    # resource-exhausted maps to 429 and ejects nothing.
+    outlier:
+      consecutive5xxErrors: 5
+      interval: 3s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
 
 # Read only by the kafka chart, which projects the SCRAM credential into the
 # namespaces that need it beyond appNamespace. The collector's kafka_metrics

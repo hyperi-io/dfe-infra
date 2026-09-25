@@ -123,21 +123,26 @@ receiver:
   # normal pod anyway. The pod's exposure is the Services and LBs above.
   listenAddress: "0.0.0.0"
 
-  # What the receiver holds while the next stage is not taking records. On the
-  # bus the broker is that slack; on the direct transport nothing downstream
-  # stores anything, so this IS the slack in the whole chain and a profile
-  # without a broker raises it. The keys map onto the app's own config.buffer,
-  # and the chart writes them there -- the engine compiles routing, not
-  # buffering, so this block is the one source for both the config file and the
-  # spool volume the deployment mounts.
+  # What the receiver holds while the next stage is not taking records, read
+  # only with acknowledgements off. With them on (the default) the receiver
+  # builds no buffer or spool: a sender's request waits for delivery and gets a
+  # 503 once its hold expires, and the sender retries from its own copy. With
+  # them off, on the bus the broker is the slack; on the direct transport
+  # nothing downstream stores anything, so this IS the slack in the whole chain
+  # and a profile without a broker raises it. The keys map onto the app's own
+  # config.buffer, and the chart writes them there -- the engine compiles
+  # routing, not buffering, so this block is the one source for both the config
+  # file and the spool volume the deployment mounts.
   buffer:
     # Bytes the buffers may hold. 0 = the app's auto-detect, which takes 85% of
     # the pod's memory limit and back-pressures at 80% of that.
     memoryLimit: 0
     spillover:
       # Spill to disk instead of dropping when memory fills. The trade belongs
-      # in the values file that turns it on: an outage shorter than the buffer
-      # is invisible to senders, a longer one back-pressures them.
+      # in the values file that turns it on, and it holds only with
+      # acknowledgements off: an outage shorter than the buffer is invisible to
+      # senders, a longer one back-pressures them, and a spooled record has
+      # already had its 2xx.
       enabled: false
       path: /var/spool/dfe-receiver
       # How large the spool volume may grow. Kubernetes' cap on the emptyDir,
@@ -205,6 +210,12 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
 # The engine/overlay drives these via the per-instance values file. Two triggers

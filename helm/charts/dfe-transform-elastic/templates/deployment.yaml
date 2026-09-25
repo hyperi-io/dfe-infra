@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -26,6 +30,7 @@ spec:
       # engine, loader and receiver charts already guard.
       enableServiceLinks: false
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       containers:
@@ -47,6 +52,7 @@ spec:
               protocol: TCP
             {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
           env:
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # BARE names on purpose, and the one app chart where that is right:
             # this app builds its transport through scalo's KafkaConfig::from_env

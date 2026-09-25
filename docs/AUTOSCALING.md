@@ -29,6 +29,8 @@ flowchart LR
   address is derived from the release namespace (dfe-common.kedaShimAddress), so a
   deployment in any namespace resolves it without a values override;
   `keda.pressure.shimAddress` is for a shim outside the release namespace only.
+  dfe-transform-vector ships `keda.pressure.enabled: false`: it sets no
+  `scaling_pressure` gauge, so cpu is its only live trigger.
   `bootstrap/keda-scale-test.sh` proves the path on each deploy. Its scale-out bound
   is derived from the ScaledObject's own polling interval plus the HPA sync period
   rather than fixed (dfe-infra #275), and it exits 3 for UNPROVEN where the HPA read

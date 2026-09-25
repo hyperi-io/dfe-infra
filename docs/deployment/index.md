@@ -54,13 +54,21 @@ Which APPS a tier deploys is `apps.yaml`'s, not the profile file's --
 [composition.md](composition.md) has the table and the derivation.
 
 The `mesh` tier is `scale` without a broker: the stages hand records to each
-other over gRPC. That makes two things its own. `mesh.enabled` puts a
-Gateway API listener in front of every stage pool, because a Kubernetes
-Service balances per connection and gRPC holds one open, so a sender would
-otherwise pin itself to one pod however many replicas KEDA adds. And the
-receiver's buffer is raised, because with no broker downstream what it
-holds is the only slack in the chain -- an outage shorter than the buffer
-is invisible to senders, a longer one back-pressures them.
+other over gRPC. `mesh.enabled` puts a Gateway API listener in front of every
+stage pool, because a Kubernetes Service balances per connection and gRPC
+holds one open, so a sender would otherwise pin itself to one pod however many
+replicas KEDA adds. Each pool's route carries its own policy
+(`mesh.routePolicy`): a request timeout at or above the sender's 30 s deadline,
+and retries only on connect failure and resource exhausted. A pod that keeps
+answering unavailable leaves the rotation.
+
+The receiver answers a sender only once the loader confirms delivery
+(`acknowledgements.enabled`, on by default), and with that on it builds no
+buffer or spool. A loader outage reaches senders as a 503 (unavailable over
+gRPC) once the hold expires, and they retry from their own copy. With
+acknowledgements off, the raised receiver buffer on this tier is the only
+slack in the chain. An outage shorter than it is invisible to senders, and a
+held record has already had its 2xx, so it dies with the pod.
 
 ## Storage model - decided at deploy, not after
 

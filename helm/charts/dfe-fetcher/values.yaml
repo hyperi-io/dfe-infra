@@ -51,12 +51,15 @@ apiCredentials:
 credentials:
   secretName: dfe-fetcher-credentials
 
-# Cursor store. The fetcher records the window each connection resumed from at
-# cursor.file_path (/var/lib/dfe-fetcher/cursors.json by default) and the rootfs
-# is read-only, so that directory is a volume either way. Default emptyDir: the
+# Cursor store. The fetcher records the window each connection resumed from in
+# one file per connection, <instance_id>.<connection>.cursor.json, under
+# cursor.directory (the configmap sets /var/lib/dfe-fetcher), and the rootfs is
+# read-only, so that directory is a volume either way. Default emptyDir: the
 # slim tier is not guaranteed a StorageClass, and a lost cursor re-fetches the
 # default window rather than losing data. Turn this on where a re-fetch is
-# expensive (rate-limited or metered upstreams).
+# expensive (rate-limited or metered upstreams). Each lost cursor counts in
+# cursor_cold_start_total{source}: alert when it rises for a source that has
+# run before, because that source restarted from its default window.
 persistence:
   enabled: false
   size: 1Gi
@@ -119,6 +122,12 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
 
 # KEDA -- fetchers are DIFFERENT from the pipeline apps. A fetcher app is 1:1 with a
 # DFE source's fetcher CONFIG (the engine writes the overlay; Argo deploys it per

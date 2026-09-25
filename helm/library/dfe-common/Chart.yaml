@@ -2,6 +2,15 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.14.0: add dfe-common.terminationGrace (45 s unless a chart sets
+#        terminationGracePeriodSeconds, so a stage releasing held source acks
+#        finishes its drain before SIGKILL) and dfe-common.podNamespaceEnv
+#        (POD_NAMESPACE from the downward API, for pods that mount no
+#        service-account token). dfe-common.poolListener renders a third object,
+#        a BackendTrafficPolicy on each pool's GRPCRoute: request timeout,
+#        retries on connect-failure and resource-exhausted only, and passive
+#        outlier ejection (mesh.routePolicy). The extraEnv doc now matches its
+#        callers, which render the block first.
 # 0.13.0: add dfe-common.kedaShimAddress -- the dfe-keda-shim Service address
 #        derived from the release namespace, replacing the literal
 #        dfe-keda-shim.dfe.svc.cluster.local default in the ScalingPressure
@@ -64,4 +73,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.13.0
+version: 0.14.0
