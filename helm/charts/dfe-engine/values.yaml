@@ -49,6 +49,11 @@ kafka:
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
   provider: ""
+  # The max.message.bytes every topic the engine creates takes, in bytes -- the
+  # kafka chart's own key for the same number. A managed broker sets it from the
+  # message size the broker was built with (layer2-apps.yaml); empty leaves the
+  # engine's own default.
+  messageMaxBytes: ""
 
 service:
   type: ClusterIP

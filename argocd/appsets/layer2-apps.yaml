@@ -144,6 +144,7 @@ spec:
             values: |
               {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
+              {{- $kafkaMessageMaxBytes := index .metadata.annotations "dfe.hyperi.io/kafka_message_max_bytes" }}
               {{- if $kafkaMode }}
               # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
               # only case bootstrap.sh sets this annotation for, so an
@@ -155,6 +156,12 @@ spec:
                 mode: {{ $kafkaMode | quote }}
                 {{- if and (eq $kafkaMode "external") $kafkaBootstrap }}
                 bootstrapServers: {{ $kafkaBootstrap | quote }}
+                {{- end }}
+                {{- if $kafkaMessageMaxBytes }}
+                # The message size the managed broker was built with, so the
+                # topics dfe-engine creates are not left at the provider's
+                # default. Only dfe-engine reads it.
+                messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}
                 {{- end }}
               {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'

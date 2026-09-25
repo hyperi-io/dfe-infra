@@ -325,6 +325,42 @@ def test_the_token_lifetime_is_a_dial() -> None:
     )
 
 
+TOPIC_SIZE_ENV = "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"
+
+
+def test_the_topic_size_reaches_the_engine_only_when_set() -> None:
+    """A managed broker refuses a record above its provider default, so the
+    engine's own topics take the size the landing topics were created at."""
+    expect(
+        "unset leaves the engine's own default",
+        TOPIC_SIZE_ENV not in engine_env(),
+        "the variable was rendered with nothing behind it",
+    )
+    # layer2-apps.yaml hands the annotation over as a quoted string.
+    got = engine_env("--set-string", "kafka.messageMaxBytes=8388608").get(TOPIC_SIZE_ENV)
+    expect("the appset's string reaches the container", got == "8388608", f"got {got!r}")
+    # A values file reads a number as a float64, which renders as 1.6777216e+07 bare.
+    with tempfile.TemporaryDirectory(prefix="dfe-engine-topic-size-") as tmp:
+        overlay = Path(tmp) / "size.yaml"
+        overlay.write_text("kafka:\n  messageMaxBytes: 16777216\n", encoding="utf-8", newline="\n")
+        got = engine_env("-f", str(overlay)).get(TOPIC_SIZE_ENV)
+    expect("a number from a values file renders as whole bytes", got == "16777216", f"got {got!r}")
+
+
+def test_a_topic_size_that_is_not_bytes_fails_the_render() -> None:
+    """A unit suffix would reach the engine as a setting it cannot parse."""
+    out = subprocess.run(
+        ["helm", "template", "dfe-engine", str(ENGINE_CHART),
+         "--set-string", "kafka.messageMaxBytes=16MiB"],
+        capture_output=True, text=True, check=False,
+    )
+    expect(
+        "the render refuses it by name",
+        out.returncode != 0 and "kafka.messageMaxBytes" in out.stderr,
+        f"rc={out.returncode} stderr={out.stderr[-300:]!r}",
+    )
+
+
 def test_every_profile_still_renders_with_the_real_overlays() -> None:
     for profile in PROFILES:
         env = engine_env(
@@ -362,6 +398,8 @@ def main() -> int:
         test_the_engine_gets_a_boot_budget()
         test_an_external_tls_clickhouse_is_expressible()
         test_the_token_lifetime_is_a_dial()
+        test_the_topic_size_reaches_the_engine_only_when_set()
+        test_a_topic_size_that_is_not_bytes_fails_the_render()
         test_every_profile_still_renders_with_the_real_overlays()
         return summary()
 

@@ -56,6 +56,11 @@
 #                            credential lives, from the same output. Carried
 #                            onto the cluster secret for completeness; no
 #                            current consumer reads it back.
+#   DFE_KAFKA_MESSAGE_MAX_BYTES  the message size a managed broker was built
+#                            with, from the aws root's output. The engine
+#                            creates its own topics at the same size. Empty on
+#                            an in-cluster broker, where the engine keeps its
+#                            own default.
 #   DFE_OTEL_ENDPOINT        OTel Collector gRPC endpoint
 #   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
 #   DFE_VAULT_ROLE_ID        ESO AppRole role_id  (DFE_SECRETS_BACKEND=openbao)
@@ -348,6 +353,13 @@ export DFE_KAFKA_BROKER_HOSTS
 export DFE_KAFKA_BOOTSTRAP_IAM="${DFE_KAFKA_BOOTSTRAP_IAM:-}"
 export DFE_KAFKA_BOOTSTRAP_ROLE_ARN="${DFE_KAFKA_BOOTSTRAP_ROLE_ARN:-}"
 export DFE_KAFKA_CREDENTIAL_REF="${DFE_KAFKA_CREDENTIAL_REF:-}"
+# The managed broker's message size. A managed topic left at the provider
+# default refuses a record above it (2,097,164 bytes on Confluent Cloud).
+export DFE_KAFKA_MESSAGE_MAX_BYTES="${DFE_KAFKA_MESSAGE_MAX_BYTES:-}"
+if [[ -n "${DFE_KAFKA_MESSAGE_MAX_BYTES}" && ! "${DFE_KAFKA_MESSAGE_MAX_BYTES}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: DFE_KAFKA_MESSAGE_MAX_BYTES must be a positive whole number of bytes (got '${DFE_KAFKA_MESSAGE_MAX_BYTES}')" >&2
+  exit 1
+fi
 # kafka.mode flips to "external" only for a managed broker (msk,
 # confluent-cloud, redpanda-cloud) -- strimzi and redpanda run in-cluster and
 # take their mode from the profile overlay (profile-*.yaml), which this must

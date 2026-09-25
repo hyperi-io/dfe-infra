@@ -99,6 +99,10 @@ metadata:
     dfe.hyperi.io/kafka_bootstrap_iam: "${DFE_KAFKA_BOOTSTRAP_IAM}"
     dfe.hyperi.io/kafka_bootstrap_role_arn: "${DFE_KAFKA_BOOTSTRAP_ROLE_ARN}"
     dfe.hyperi.io/kafka_credential_ref: "${DFE_KAFKA_CREDENTIAL_REF}"
+    # The message size a managed broker was built with, read back by
+    # layer2-apps.yaml into the dfe-engine chart's kafka.messageMaxBytes. Empty
+    # on an in-cluster broker, where the engine keeps its own default.
+    dfe.hyperi.io/kafka_message_max_bytes: "${DFE_KAFKA_MESSAGE_MAX_BYTES}"
     dfe.hyperi.io/otel_endpoint: "${DFE_OTEL_ENDPOINT}"
     # Deployment-wide retention; layer2-apps and layer2-data inject it into the
     # dfe-engine and dfe-schema charts as retention.defaultTtlDays.
