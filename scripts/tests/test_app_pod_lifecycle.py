@@ -20,7 +20,9 @@ reaches a running pod only through the Reloader annotation.
 
 No data-plane app calls the Kubernetes API, so none mounts a service-account
 token. scalo falls back to that mount for the pod's namespace, so POD_NAMESPACE
-arrives from the downward API instead.
+arrives from the downward API instead. Its version check derives the instance
+id from ca.crt and namespace in the same directory, so those two files are
+projected there on their own, and a pod start does not read as a new install.
 
     python3 scripts/tests/test_app_pod_lifecycle.py
 
@@ -56,6 +58,10 @@ APPS = {
 PROFILES = (None, "slim", "single", "scale", "mesh")
 
 RELOAD_ANNOTATION = "reloader.stakater.com/auto"
+
+# Where scalo's version_check::k8s_instance_id() reads, and the files it reads.
+SERVICE_ACCOUNT_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+INSTANCE_ID_FILES = {"ca.crt", "namespace"}
 
 
 def label(profile: str | None) -> str:
@@ -107,6 +113,28 @@ def deployment(docs: tuple[dict, ...]) -> dict:
 
 def pod_spec(docs: tuple[dict, ...]) -> dict:
     return deployment(docs)["spec"]["template"]["spec"]
+
+
+def files_at(pod: dict, container: dict, directory: str) -> tuple[set[str], list[dict]]:
+    """File names a container sees in a directory, and the projected sources behind them.
+
+    Only projected volumes are read, which is the one kind the service-account
+    path is ever mounted from. A token source shows up by its path, so a
+    projection that adds one fails the absence check rather than slipping by.
+    """
+    names = {m["name"] for m in container.get("volumeMounts") or [] if m["mountPath"] == directory}
+    files: set[str] = set()
+    sources: list[dict] = []
+    for volume in pod.get("volumes") or []:
+        if volume["name"] not in names:
+            continue
+        for source in (volume.get("projected") or {}).get("sources") or []:
+            sources.append(source)
+            for kind in ("configMap", "downwardAPI", "secret"):
+                files |= {item["path"] for item in (source.get(kind) or {}).get("items") or []}
+            if "serviceAccountToken" in source:
+                files.add(source["serviceAccountToken"].get("path", "token"))
+    return files, sources
 
 
 def test_every_app_pod_outlasts_its_drain() -> None:
@@ -181,6 +209,61 @@ def test_a_supplied_service_account_still_mounts_no_token() -> None:
         pod_spec(docs).get("automountServiceAccountToken") is False,
         f"got {pod_spec(docs).get('automountServiceAccountToken')!r}",
     )
+
+
+def test_the_instance_id_files_are_there_and_the_token_is_not() -> None:
+    for chart in APPS:
+        for profile in PROFILES:
+            pod = pod_spec(render(chart, profile))
+            for container in pod["containers"]:
+                files, sources = files_at(pod, container, SERVICE_ACCOUNT_DIR)
+                where = f"{chart}/{container['name']} on {label(profile)}"
+                expect(
+                    f"{where} sees ca.crt and namespace in the service-account directory",
+                    INSTANCE_ID_FILES <= files,
+                    f"got {sorted(files)}",
+                )
+                expect(
+                    f"{where} sees no token there",
+                    "token" not in files and not any("serviceAccountToken" in s for s in sources),
+                    f"got {sorted(files)}",
+                )
+                config_maps = [s["configMap"] for s in sources if "configMap" in s]
+                expect(
+                    f"{where} takes ca.crt from the cluster's kube-root-ca.crt",
+                    [(c["name"], c["items"][0]["key"]) for c in config_maps]
+                    == [("kube-root-ca.crt", "ca.crt")],
+                    f"got {config_maps!r}",
+                )
+                fields = [
+                    item["fieldRef"]["fieldPath"]
+                    for s in sources
+                    for item in (s.get("downwardAPI") or {}).get("items") or []
+                ]
+                expect(
+                    f"{where} takes namespace from the pod's own metadata",
+                    fields == ["metadata.namespace"],
+                    f"got {fields!r}",
+                )
+
+
+def test_the_file_reader_catches_a_token() -> None:
+    """The absence check is only as good as this read, so a token must show up."""
+    pod = {
+        "volumes": [
+            {
+                "name": "sa",
+                "projected": {
+                    "sources": [
+                        {"serviceAccountToken": {"path": "token", "expirationSeconds": 3607}}
+                    ]
+                },
+            }
+        ]
+    }
+    container = {"volumeMounts": [{"name": "sa", "mountPath": SERVICE_ACCOUNT_DIR}]}
+    files, _ = files_at(pod, container, SERVICE_ACCOUNT_DIR)
+    expect("a projected token is read as a token file", "token" in files, f"got {sorted(files)}")
 
 
 def test_every_app_container_knows_its_namespace() -> None:

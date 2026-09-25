@@ -4,9 +4,11 @@ description: Shared Helm template helpers for all DFE charts. Provides commonLab
 type: library
 # 0.14.0: add dfe-common.terminationGrace (45 s unless a chart sets
 #        terminationGracePeriodSeconds, so a stage releasing held source acks
-#        finishes its drain before SIGKILL) and dfe-common.podNamespaceEnv
-#        (POD_NAMESPACE from the downward API, for pods that mount no
-#        service-account token). dfe-common.poolListener renders a third object,
+#        finishes its drain before SIGKILL), dfe-common.podNamespaceEnv
+#        (POD_NAMESPACE from the downward API) and
+#        dfe-common.serviceAccountFilesVolume/Mount (ca.crt and namespace at the
+#        service-account path with no token, for pods that mount none).
+#        dfe-common.poolListener renders a third object,
 #        a BackendTrafficPolicy on each pool's GRPCRoute: request timeout,
 #        retries on connect-failure and resource-exhausted only, and passive
 #        outlier ejection (mesh.routePolicy). The extraEnv doc now matches its

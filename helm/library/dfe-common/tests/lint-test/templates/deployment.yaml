@@ -1,5 +1,6 @@
 # The harness for dfe-common.rollout, dfe-common.pdb, the two security helpers,
-# the grace period and the namespace env: the same shape every app chart's
+# the grace period, the namespace env and the tokenless service-account files:
+# the same shape every app chart's
 # Deployment has -- the rollout strategy beside the replica count, and the
 # config checksum on the pod template.
 apiVersion: apps/v1
@@ -29,3 +30,7 @@ spec:
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           env:
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
+      volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
