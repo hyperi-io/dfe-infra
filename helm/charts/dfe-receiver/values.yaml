@@ -210,6 +210,8 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+  # Mount the service-account token. Turn on only for Vault's Kubernetes auth method (VAULT_K8S_ROLE), which logs in with it.
+  mountToken: false
 
 # Restart this workload when a Secret or ConfigMap it consumes changes. Env from
 # a secretKeyRef resolves once at pod start, so without this a rotated credential

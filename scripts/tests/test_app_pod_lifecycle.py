@@ -211,6 +211,44 @@ def test_a_supplied_service_account_still_mounts_no_token() -> None:
     )
 
 
+def test_the_token_dial_turns_the_token_back_on_for_that_app() -> None:
+    """Vault's Kubernetes auth logs in with the token, so one app can ask for it back.
+
+    With the dial on, the kubelet's own automount supplies token, ca.crt and
+    namespace at the service-account path, so the chart's projection there must
+    step aside rather than collide with it.
+    """
+    docs = with_values("dfe-fetcher", "serviceAccount.mountToken=true")
+    pod = pod_spec(docs)
+    accounts = [d for d in docs if d.get("kind") == "ServiceAccount"]
+    expect(
+        "serviceAccount.mountToken=true mounts the token on the ServiceAccount",
+        len(accounts) == 1 and accounts[0].get("automountServiceAccountToken") is True,
+        f"got {accounts!r}",
+    )
+    expect(
+        "and on the pod",
+        pod.get("automountServiceAccountToken") is True,
+        f"got {pod.get('automountServiceAccountToken')!r}",
+    )
+    for container in pod["containers"]:
+        files, _ = files_at(pod, container, SERVICE_ACCOUNT_DIR)
+        mounts = [
+            m for m in container.get("volumeMounts") or [] if m["mountPath"] == SERVICE_ACCOUNT_DIR
+        ]
+        expect(
+            f"{container['name']} leaves the service-account path to the automount",
+            not files and not mounts,
+            f"got files {sorted(files)}, mounts {mounts!r}",
+        )
+    other = pod_spec(render("dfe-loader", None))
+    expect(
+        "another app keeps its token off",
+        other.get("automountServiceAccountToken") is False,
+        f"got {other.get('automountServiceAccountToken')!r}",
+    )
+
+
 def test_the_instance_id_files_are_there_and_the_token_is_not() -> None:
     for chart in APPS:
         for profile in PROFILES:

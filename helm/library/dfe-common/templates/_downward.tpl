@@ -17,6 +17,33 @@ Usage (container env block, after dfe-common.extraEnv):
 {{- end -}}
 
 {{/*
+dfe-common.serviceAccountTokenMounted -- non-empty when this app mounts its
+service-account token, so it reads as a boolean in an `if`.
+
+serviceAccount.mountToken, off by default: no data-plane app calls the
+Kubernetes API. The one reason to turn it on is Vault's Kubernetes auth method,
+which logs in with that token.
+*/}}
+{{- define "dfe-common.serviceAccountTokenMounted" -}}
+{{- $sa := .Values.serviceAccount | default dict -}}
+{{- if $sa.mountToken -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-common.automountServiceAccountToken -- the field, from the dial above, for
+both the ServiceAccount and the pod spec, so an account the operator supplies
+follows the same setting.
+
+Usage:
+  {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+*/}}
+{{- define "dfe-common.automountServiceAccountToken" -}}
+automountServiceAccountToken: {{ if (include "dfe-common.serviceAccountTokenMounted" .) }}true{{ else }}false{{ end }}
+{{- end -}}
+
+{{/*
 dfe-common.serviceAccountFilesVolume / dfe-common.serviceAccountFilesMount --
 the service-account directory with ca.crt and namespace in it and no token, for
 a pod with automountServiceAccountToken false.
@@ -26,11 +53,15 @@ them every pod start reports as a new install. ca.crt comes from the
 kube-root-ca.crt ConfigMap Kubernetes publishes into every namespace, the same
 source the token automount itself projects it from.
 
+Both render nothing when the token is mounted: the automount already puts
+ca.crt and namespace at that path, and a second mount there would collide.
+
 Usage (pod spec volumes, and the app container's volumeMounts):
   {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
   {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
 */}}
 {{- define "dfe-common.serviceAccountFilesVolume" -}}
+{{- if not (include "dfe-common.serviceAccountTokenMounted" .) -}}
 - name: serviceaccount-files
   projected:
     sources:
@@ -45,9 +76,12 @@ Usage (pod spec volumes, and the app container's volumeMounts):
               fieldRef:
                 fieldPath: metadata.namespace
 {{- end -}}
+{{- end -}}
 
 {{- define "dfe-common.serviceAccountFilesMount" -}}
+{{- if not (include "dfe-common.serviceAccountTokenMounted" .) -}}
 - name: serviceaccount-files
   mountPath: /var/run/secrets/kubernetes.io/serviceaccount
   readOnly: true
+{{- end -}}
 {{- end -}}

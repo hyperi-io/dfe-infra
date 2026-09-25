@@ -7,7 +7,9 @@ type: library
 #        finishes its drain before SIGKILL), dfe-common.podNamespaceEnv
 #        (POD_NAMESPACE from the downward API) and
 #        dfe-common.serviceAccountFilesVolume/Mount (ca.crt and namespace at the
-#        service-account path with no token, for pods that mount none).
+#        service-account path with no token, for pods that mount none), with
+#        dfe-common.automountServiceAccountToken reading the
+#        serviceAccount.mountToken dial that turns the token back on.
 #        dfe-common.poolListener renders a third object,
 #        a BackendTrafficPolicy on each pool's GRPCRoute: request timeout,
 #        retries on connect-failure and resource-exhausted only, and passive
