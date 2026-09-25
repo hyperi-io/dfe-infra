@@ -56,17 +56,22 @@ locals {
   // One private subnet per zone, in the order the zones are listed.
   subnet_by_az = zipmap(var.network.azs, var.network.private_subnet_ids)
 
-  // Confluent Cloud refuses a topic max.message.bytes above 8 MiB on every
-  // tier this module offers. Applied as given rather than clamped -- a setting
-  // this body quietly halved would be worse than one the vendor rejects out
-  // loud -- with the check block below saying so at plan.
-  confluent_max_message_bytes = 8388608
+  // Confluent Cloud's ceiling on a topic's max.message.bytes, by cluster type:
+  // 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated
+  // (docs.confluent.io/cloud/current/topics/manage.html), and 20 MB on Freight
+  // in the cluster-type limits table. Applied as given rather than clamped, with
+  // the check block below saying so at plan.
+  confluent_max_message_bytes = {
+    basic      = 8388608
+    enterprise = 20971520
+    freight    = 20971520
+  }[var.tier]
 }
 
 check "message_size_within_confluent_ceiling" {
   assert {
     condition     = var.message_max_bytes <= local.confluent_max_message_bytes
-    error_message = "message_max_bytes is ${var.message_max_bytes}, above Confluent Cloud's 8388608 ceiling for a topic's max.message.bytes. The apply will be refused by Confluent. Lower the dial's message size for this deployment, or put it on a Kafka we run."
+    error_message = "message_max_bytes is ${var.message_max_bytes}, above the ${local.confluent_max_message_bytes} Confluent Cloud allows for a topic's max.message.bytes on a ${var.tier} cluster (8388608 on Basic and Standard, 20971520 on Enterprise, Dedicated and Freight). Confluent will refuse the topics at apply. Lower the dial's message size, move to a tier with the higher ceiling, or put the deployment on a Kafka we run."
   }
 }
 
