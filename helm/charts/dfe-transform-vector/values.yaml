@@ -117,9 +117,10 @@ serviceAccount:
 reload:
   enabled: true
 
-# The supervisor waits up to 55 s for its Vector child to exit, so this app gets
-# 70 s rather than the library's 45 s (dfe-common.terminationGrace).
-terminationGracePeriodSeconds: 70
+# The supervisor waits up to 55 s for its Vector child to exit and the bridge then
+# drains for up to 15 s, so this app gets 90 s rather than the library's 45 s
+# (dfe-common.terminationGrace), leaving time for the telemetry flush and exit.
+terminationGracePeriodSeconds: 90
 
 # KEDA autoscaling -- folded into the chart. The SHIPPED trigger is the native KEDA
 # cpu scaler; scalo ScalingPressure (0-100) renders beside it when pressure.enabled

@@ -43,14 +43,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
 
 # Every data-plane app, and the grace its pods get. dfe-transform-vector waits
-# up to 55 s for its child process to exit, so it carries a figure of its own.
+# up to 55 s for its child process to exit and then drains its bridge, so it
+# carries a figure of its own.
 APPS = {
     "dfe-archiver": 45,
     "dfe-fetcher": 45,
     "dfe-loader": 45,
     "dfe-receiver": 45,
     "dfe-transform-elastic": 45,
-    "dfe-transform-vector": 70,
+    "dfe-transform-vector": 90,
     "dfe-transform-vrl": 45,
 }
 
