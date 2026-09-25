@@ -40,6 +40,8 @@ spec:
       # engine, loader and receiver charts already guard.
       enableServiceLinks: false
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account mounts no token either.
+      automountServiceAccountToken: false
       {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}

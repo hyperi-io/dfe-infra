@@ -28,6 +28,8 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account mounts no token either.
+      automountServiceAccountToken: false
       {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       # Same class as dfe-engine and dfe-loader: k8s injects DFE_RECEIVER_PORT=
       # "tcp://IP:8080" from svc/dfe-receiver, into a pod that reads DFE_RECEIVER_*

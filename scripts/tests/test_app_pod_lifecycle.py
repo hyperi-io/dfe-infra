@@ -2,8 +2,8 @@
 #  Project:      dfe-infra
 #  File:         test_app_pod_lifecycle.py
 #  Purpose:      Prove every data-plane app pod drains inside its grace period,
-#                restarts on a rotated Secret and knows its namespace, on the
-#                chart defaults and every profile.
+#                restarts on a rotated Secret, mounts no API token and still
+#                knows its namespace, on the chart defaults and every profile.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -18,8 +18,9 @@ on every app and every profile rather than trusted to a default.
 Env taken from a secretKeyRef resolves once at pod start, so a rotated Secret
 reaches a running pod only through the Reloader annotation.
 
-scalo reads the pod's namespace from POD_NAMESPACE before it falls back to the
-service-account token mount, so the downward API supplies it on every app.
+No data-plane app calls the Kubernetes API, so none mounts a service-account
+token. scalo falls back to that mount for the pod's namespace, so POD_NAMESPACE
+arrives from the downward API instead.
 
     python3 scripts/tests/test_app_pod_lifecycle.py
 
@@ -147,6 +148,38 @@ def test_reload_can_be_turned_off_without_a_null_annotations_map() -> None:
         "reload.enabled=false renders no annotations key at all",
         "annotations" not in metadata,
         f"got {metadata.get('annotations')!r}",
+    )
+
+
+def test_no_app_pod_mounts_an_api_token() -> None:
+    for chart in APPS:
+        for profile in PROFILES:
+            docs = render(chart, profile)
+            accounts = [d for d in docs if d.get("kind") == "ServiceAccount"]
+            expect(
+                f"{chart} on {label(profile)} renders one ServiceAccount that mounts no token",
+                len(accounts) == 1 and accounts[0].get("automountServiceAccountToken") is False,
+                f"got {accounts!r}",
+            )
+            expect(
+                f"{chart} on {label(profile)} pod mounts no token",
+                pod_spec(docs).get("automountServiceAccountToken") is False,
+                f"got {pod_spec(docs).get('automountServiceAccountToken')!r}",
+            )
+
+
+def test_a_supplied_service_account_still_mounts_no_token() -> None:
+    """The pod-level setting is what covers an account the operator brings."""
+    docs = with_values("dfe-loader", "serviceAccount.create=false")
+    expect(
+        "no ServiceAccount is rendered",
+        not [d for d in docs if d.get("kind") == "ServiceAccount"],
+        "serviceAccount.create=false still rendered one",
+    )
+    expect(
+        "the pod still mounts no token",
+        pod_spec(docs).get("automountServiceAccountToken") is False,
+        f"got {pod_spec(docs).get('automountServiceAccountToken')!r}",
     )
 
 
