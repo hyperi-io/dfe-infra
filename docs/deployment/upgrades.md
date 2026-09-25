@@ -146,6 +146,10 @@ own retained raw stream, and is a customer-specific plan. Once the new
 deployment holds the required retention window, cut the senders over to its
 receiver address, then decommission the old deployment.
 
+### Payload format
+
+JSON is the only payload format. MessagePack, supported in DFE/XDR 2.0 and 2.1, is deprecated in DFE 2.2 and no longer accepted: the JSON path (SIMD parsing with sonic-rs, zstd on the wire) is fast enough that MessagePack gave no CPU saving. A producer outside DFE that writes MessagePack to a DFE topic has to switch to JSON, because a MessagePack record is dead-lettered as not JSON. The loader's `payload.format` and dfe-transform-vrl's `source.format` settings are gone. Fluentd input over the Fluent Forward protocol is unaffected: the receiver still accepts it and turns it into JSON.
+
 Three things need a customer-specific plan on top of the steps above: schema
 differences between the fork's engine and upstream MergeTree, any table or
 setting the fork added that upstream does not have, and a retention window
