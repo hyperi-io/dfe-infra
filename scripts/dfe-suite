@@ -1,0 +1,853 @@
+#!/usr/bin/env python3
+#  Project:      dfe-infra
+#  File:         scripts/dfe-suite
+#  Purpose:      Graph-driven suite CLI: release a node, or check a producer's edges.
+#  Language:     Python
+#
+#  License:      BUSL-1.1
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+"""Drive the DFE suite from the graph rather than from a memorised roster.
+
+Six jobs::
+
+    dfe-suite release <node> [SUBJECT]        # ship a library node
+    dfe-suite check <producer> <version>      # dry-run walk of its out-edges
+    dfe-suite walk <producer> <version>       # the same walk, rebuilding what moved
+    dfe-suite signals <member>                # every open signal on a member
+    dfe-suite review-plan <group>             # a review pack per member of a group
+    dfe-suite kinds                           # what each edge check does
+
+``signals`` is the clean-state gate: a member's open issues, bot PRs,
+code-scanning findings and the WARNINGS in its latest CI run's logs -- not only
+the failures -- each of which is resolved, closed as not required, or marked in
+code as risk accepted before that member's rebuild commit lands. It reports;
+/fixes clears. The name is deliberately not ``hygiene``: that is
+``hyperi-ai helper hygiene``, which is repo tidiness and a different job.
+
+The graph is dfe-infra's ``suite.yaml``, read through its own
+``scripts/dfe-stack suite --producer <name>``. Nothing here parses that file:
+the parser stays with the graph so the product's dependency picture is
+readable with no hyperi-ai installed.
+
+``check`` is the DRY-RUN half. It reads each out-edge, runs the check for that
+edge's kind, and prints what moved and what the next step is. It changes
+nothing. ``walk`` runs the same checks and then rebuilds each consumer whose
+check said so -- serially, one PR per consumer, stopping on the first failed
+rebuild. Every edge the rebuild does not answer is reported and counted,
+whether or not a rebuild ran for that consumer, and the list of what is left
+for a person is printed before the walk returns however it ends.
+
+``review-plan`` is the scheduling half: a language group -- rust, python,
+typescript -- expands to its members in lane order and each one gets a
+/complete-review context pack. It picks no model. Which model a member's
+subagent runs on is the agent's call at dispatch time, so the pack says what to
+review and what to leave off that subagent, and the caller decides the rest.
+
+``scripts/dfe-fleet`` is the compatibility entry point for the same release
+machinery, with the older subcommand names.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import argparse
+import io
+import json
+import os
+import subprocess
+from collections.abc import Callable
+
+from dfe_suite.graph import in_edges, load_graph, load_producer, out_edges
+from dfe_suite.kinds import (
+    ACTION_HUMAN_READ,
+    ACTION_REBUILD_PYTHON,
+    ACTION_REBUILD_RUST,
+    CHECKS,
+    KIND_SUMMARY,
+    CheckResult,
+    check_edge,
+)
+from dfe_suite.proc import DEFAULT_ORG, FleetError, say, set_tag
+from dfe_suite.rebuild import rebuild_python, rebuild_rust
+from dfe_suite.repos import find_repo
+from dfe_suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library
+
+TAG = "dfe-suite"
+
+# The read-only signal gather /fixes uses. It ships with hyperi-ai and is
+# REFERENCED, never copied: a second copy here would be 774 lines drifting
+# against the original in another repo under another licence.
+def _fixes_scan() -> Path | None:
+    """hyperi-ai's signal scanner, or None when hyperi-ai is not installed."""
+    root = os.environ.get("HYPERI_AI_ROOT")
+    candidates = [Path(root) / "tools" / "fixes_scan.py"] if root else []
+    candidates += [
+        Path.home() / ".local" / "share" / "hyperi-ai" / "tools" / "fixes_scan.py",
+        Path("/usr/local/share/hyperi-ai/tools/fixes_scan.py"),
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+FIXES_SCAN = _fixes_scan()
+
+# Library nodes this tool can release today. A node absent from here is not a
+# refusal on principle -- it is a node whose release path has not been proven,
+# and inventing one would be the opposite of what the release helpers are for.
+RELEASABLE: dict[str, ShipSpec] = {
+    "scalo-rs": SHIP_RS,
+    "scalo-py": SHIP_PY,
+}
+
+# The packages the rebuilds know how to bump. Every rebuild path -- the cargo
+# --precise, the pyproject floor, the lock assertion -- is a package name, so a
+# producer outside this set has no automated rebuild and is said so.
+REBUILDABLE_PACKAGES = ("scalo",)
+
+# What a rebuild provably re-does, per rebuild shape. rebuild_rust regenerates
+# the Dockerfile through _emit_dockerfile, which is the generated-file edge.
+COVERED_BY_REBUILD = {"rebuild_rust": ("generated-file",), "rebuild_python": ()}
+
+_MOVED = {True: "needs-change", False: "no", None: "unknown"}
+
+# The language groups `review-plan` accepts, mapped to the graph's own
+# `language` value. `ts` is here because that is what people type.
+GROUPS = {
+    "rust": "rust",
+    "python": "python",
+    "typescript": "typescript",
+    "ts": "typescript",
+}
+
+# Where a language's full standard lives once hyperi-ai is installed. The pack
+# names the file rather than quoting it, so the member's subagent reads the
+# current one rather than a copy that ages here.
+RULES_DIR = "~/.local/share/hyperi-ai/standards/languages"
+
+# Lanes a group expands into, in this order. `toolchain` is absent on purpose:
+# its two members bookend a release pass rather than sitting in a language
+# slice, so they join a plan only when the caller names them.
+GROUP_LANES = ("libraries", "consumers", "deployment")
+
+# Roles a group leaves out unless --role says otherwise or the member is named:
+# charts and declarative content are not what a language review is for.
+SKIPPED_ROLES = frozenset({"infra", "content"})
+
+# The /complete-review passes each member's subagent runs, in order.
+REVIEW_PASSES = (
+    "1 hygiene",
+    "2 deps",
+    "3 review -- code, simplification, tests and the language pass",
+    "4 simplify",
+    "5 docs",
+    "6 slop-fix",
+    "7 verification",
+)
+
+# The one pass that does NOT go to the member's subagent. Stated as a fixed
+# block in every pack so a brief cannot be assembled without it.
+NOT_ON_THIS_MODEL = (
+    "NOT ON THIS MODEL: the security pass -- it runs separately on the standard tier\n"
+    "  Dispatched per member as its own subagent, per skills/complete-review/SKILL.md."
+)
+
+# The model is the caller's decision, not this tool's: a subagent's model is an
+# Agent-tool argument, and nothing here can set it.
+MODEL_LINE = "<the caller's choice; fable is gated and needs the user's opt-in>"
+
+DISPATCH_RULE = (
+    "one subagent per member, serial, the security pass to the standard tier"
+)
+
+NOT_ON_DISK = "not on disk"
+
+
+def cmd_release(args: argparse.Namespace) -> int:
+    """Ship one library node."""
+    spec = RELEASABLE.get(args.node)
+    if spec is None:
+        raise FleetError(
+            f"'{args.node}' is not a node this can release. Supported today: "
+            f"{', '.join(sorted(RELEASABLE))}. Any other node releases through "
+            f"its own repo's CI."
+        )
+    return ship_library(
+        spec,
+        repo_dir=args.repo_dir,
+        org=args.org,
+        subject=args.subject,
+        dry_run=args.dry_run,
+    )
+
+
+def _consumer_repo(consumer: str, repos: str | None) -> Path:
+    """Where the consumer's checkout is, under ``--repos`` or the usual roots."""
+    if repos:
+        return Path(repos).expanduser() / consumer
+    return find_repo(consumer)
+
+
+def _report(consumer: str, edge: dict, result: CheckResult) -> None:
+    print(
+        f"{consumer} | {edge.get('kind', '?')} | {edge.get('type', '?')} | "
+        f"{_MOVED[result.moved]} | {result.action or '-'} | {result.detail}",
+        flush=True,
+    )
+
+
+def _producer_package(payload: dict, producer: str) -> str | None:
+    """What the producer node says it publishes under, if the graph says."""
+    nodes = payload.get("nodes")
+    node = nodes.get(producer) if isinstance(nodes, dict) else None
+    package = node.get("package") if isinstance(node, dict) else None
+    return str(package) if package else None
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """Walk one producer's out-edges and report what each one needs."""
+    dfe_infra = Path(args.dfe_infra).expanduser() if args.dfe_infra else None
+    payload = load_producer(args.producer, dfe_infra=dfe_infra)
+    edges = out_edges(payload, args.producer)
+    package = _producer_package(payload, args.producer)
+    say(
+        f"{args.producer} {args.version}: {len(edges)} out-edge(s), "
+        f"graph schema {payload.get('schema', '?')} verified "
+        f"{payload.get('verified', '?')}, package {package or 'not declared'}"
+    )
+    for edge in edges:
+        consumer = str(edge.get("to") or "?")
+        try:
+            repo = _consumer_repo(consumer, args.repos)
+        except FleetError as exc:
+            _report(consumer, edge, CheckResult(None, str(exc), ACTION_HUMAN_READ))
+            continue
+        _report(
+            consumer,
+            edge,
+            check_edge(
+                edge,
+                producer_version=args.version,
+                consumer_repo=repo,
+                package=package,
+                dry_run=True,
+            ),
+        )
+    return 0
+
+
+def _flag_applies(value: str | None, consumer: str) -> bool:
+    """Whether a bare-or-list flag was asked for on this consumer.
+
+    None is the flag absent, an empty string is the bare flag (every
+    consumer), and anything else is a comma-separated list of consumers.
+    """
+    if value is None:
+        return False
+    if not value.strip():
+        return True
+    return consumer in {part.strip() for part in value.split(",") if part.strip()}
+
+
+def _included(args: argparse.Namespace) -> set[str]:
+    """The consumers named with --include, which overrides default_in_pass."""
+    named: set[str] = set()
+    for value in args.include or []:
+        named.update(part.strip() for part in value.split(",") if part.strip())
+    return named
+
+
+def _rebuild_for(action: str) -> Callable[..., int]:
+    """The rebuild an action token names."""
+    return rebuild_rust if action == ACTION_REBUILD_RUST else rebuild_python
+
+
+def cmd_walk(args: argparse.Namespace) -> int:
+    """Walk one producer's out-edges and ACT: rebuild each consumer that moved.
+
+    Serial, one consumer at a time, and a consumer with several edges is
+    rebuilt once. What the rebuild does NOT re-do is reported under "after the
+    rebuild, confirm:" and counted, so a lockstep edge cannot be swallowed by
+    a sibling edge that happened to dispatch a rebuild first.
+
+    A rebuild only runs for a producer whose package the rebuild knows how to
+    bump; any other producer's rebuild action is left for a person. A failed
+    rebuild stops the walk, and the person-list is printed either way.
+    """
+    dfe_infra = Path(args.dfe_infra).expanduser() if args.dfe_infra else None
+    payload = load_producer(args.producer, dfe_infra=dfe_infra)
+    edges = out_edges(payload, args.producer)
+    nodes = payload.get("nodes") if isinstance(payload.get("nodes"), dict) else {}
+    package = _producer_package(payload, args.producer)
+    by_consumer: dict[str, list[dict]] = {}
+    for edge in edges:
+        by_consumer.setdefault(str(edge.get("to") or "?"), []).append(edge)
+    say(
+        f"{args.producer} {args.version}: {len(edges)} out-edge(s) over "
+        f"{len(by_consumer)} consumer(s), package {package or 'not declared'}"
+        f"{' [dry-run]' if args.dry_run else ''}"
+    )
+    include = _included(args)
+    left_for_a_person: list[tuple[str, str, str]] = []
+    failed = 0
+    for consumer, group in by_consumer.items():
+        node = nodes.get(consumer) if isinstance(nodes.get(consumer), dict) else {}
+        if node.get("default_in_pass") is False and consumer not in include:
+            say(
+                f"{consumer}: skipped: {node.get('maturity', 'not in a default pass')}"
+                f", name it with --include {consumer}"
+            )
+            continue
+        failed = _walk_consumer(
+            consumer, group, args, package=package, left=left_for_a_person
+        )
+        if failed:
+            break
+    if left_for_a_person:
+        say(f"{len(left_for_a_person)} edge(s) need a person or another tool:")
+        for consumer, action, detail in left_for_a_person:
+            print(f"  {consumer}: {action} -- {detail}", flush=True)
+    if failed:
+        return failed
+    return 2 if left_for_a_person else 0
+
+
+def _walk_consumer(
+    consumer: str,
+    group: list[dict],
+    args: argparse.Namespace,
+    *,
+    package: str | None,
+    left: list[tuple[str, str, str]],
+) -> int:
+    """Check one consumer's edges and rebuild it if the graph says so.
+
+    Returns:
+        The rebuild's exit code, or 0 when none ran or none was needed. Edges
+        a person has to take are appended to ``left`` rather than returned.
+    """
+    try:
+        repo = _consumer_repo(consumer, args.repos)
+    except FleetError as exc:
+        print(f"{consumer} | - | - | unknown | {ACTION_HUMAN_READ} | {exc}", flush=True)
+        left.append((consumer, ACTION_HUMAN_READ, str(exc)))
+        return 0
+
+    acting: list[tuple[dict, CheckResult]] = []
+    rebuild_action: str | None = None
+    for edge in group:
+        try:
+            result = check_edge(
+                edge,
+                producer_version=args.version,
+                consumer_repo=repo,
+                package=package,
+                dry_run=args.dry_run,
+            )
+        except FleetError as exc:
+            result = CheckResult(None, str(exc), ACTION_HUMAN_READ)
+        _report(consumer, edge, result)
+        if result.action is None:
+            continue
+        acting.append((edge, result))
+        if result.action in (ACTION_REBUILD_RUST, ACTION_REBUILD_PYTHON):
+            rebuild_action = result.action
+
+    if rebuild_action is not None and package not in REBUILDABLE_PACKAGES:
+        for _edge, result in acting:
+            detail = result.detail
+            if result.action == rebuild_action:
+                detail = (
+                    f"rebuild for {package or 'an undeclared package'} is not "
+                    f"automated yet. {detail}"
+                )
+            left.append((consumer, result.action or ACTION_HUMAN_READ, detail))
+        return 0
+
+    if rebuild_action is None:
+        left.extend(
+            (consumer, result.action or ACTION_HUMAN_READ, result.detail)
+            for _, result in acting
+        )
+        return 0
+
+    covered = COVERED_BY_REBUILD[rebuild_action]
+    others = [
+        (edge, result) for edge, result in acting if result.action != rebuild_action
+    ]
+    if others:
+        say(f"{consumer}: after the rebuild, confirm:")
+        for edge, result in others:
+            kind = str(edge.get("kind") or "?")
+            if kind in covered:
+                print(
+                    f"  {kind}: {result.action} -- covered by the rebuild", flush=True
+                )
+                continue
+            print(f"  {kind}: {result.action} -- {result.detail}", flush=True)
+            left.append((consumer, result.action or ACTION_HUMAN_READ, result.detail))
+
+    say(f"{consumer}: rebuilding onto {args.producer} {args.version}")
+    rebuild = _rebuild_for(rebuild_action)
+    kwargs: dict[str, object] = {
+        "package": package,
+        "subject": args.subject,
+        "dry_run": args.dry_run,
+        "org": args.org,
+    }
+    if rebuild is rebuild_rust:
+        kwargs["run_tests"] = not _flag_applies(args.no_tests, consumer)
+        kwargs["emit_chart"] = not _flag_applies(args.no_chart, consumer)
+    try:
+        rc = rebuild(repo, args.version, **kwargs)
+    except FleetError as exc:
+        say(f"{consumer}: rebuild failed -- {exc}")
+        left.append((consumer, rebuild_action, str(exc)))
+        return 1
+    if rc != 0:
+        say(f"{consumer}: rebuild returned {rc} -- the walk stops here")
+    return rc
+
+
+def _gather(member: str, repo: Path) -> dict:
+    """The read-only signal gather /fixes runs, parsed.
+
+    Args:
+        member: The member name, for the message when it goes wrong.
+        repo: Its checkout.
+
+    Returns:
+        The gather's report.
+
+    Raises:
+        FleetError: If the gather fails or answers with something that is not
+            JSON.
+    """
+    if FIXES_SCAN is None:
+        raise FleetError(
+            f"signal gather needs hyperi-ai's fixes_scan.py and it is not "
+            f"installed (looked under HYPERI_AI_ROOT, ~/.local/share/hyperi-ai "
+            f"and /usr/local/share/hyperi-ai). Run `/fixes` in {member} instead."
+        )
+    proc = subprocess.run(
+        [sys.executable, str(FIXES_SCAN), "--repo", str(repo), "--no-audit"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise FleetError(
+            f"signal gather failed for {member}: "
+            f"{proc.stderr.strip() or proc.stdout.strip()}"
+        )
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise FleetError(
+            f"signal gather for {member} did not return JSON: {proc.stdout[:200]}"
+        ) from exc
+
+
+def _counts(report: dict) -> dict[str, int]:
+    """The open-signal tallies, in the order both callers print them."""
+    summary = report["summary"]
+    return {
+        "issues": summary["open_issues"],
+        "bot PRs": summary["bot_prs"],
+        "dependabot": summary["dependabot"],
+        "code-scanning": summary["code_scanning"],
+        "ci warnings": summary["ci_warnings"],
+    }
+
+
+def cmd_signals(args: argparse.Namespace) -> int:
+    """List every open signal on one member: what has to be clean before its commit lands.
+
+    Report only. The gather is the same read-only scan /fixes runs, so the
+    two never disagree about what is open; /fixes is what clears it.
+
+    Returns 1 when anything is open AND when the CI warnings could not be read
+    at all -- an unread log is not a clean one, and returning 0 there would
+    pass the gate on a check that never ran.
+    """
+    repo = _consumer_repo(args.member, args.repos)
+    report = _gather(args.member, repo)
+    alerts = report["alerts"]
+    counts = _counts(report)
+    total = sum(counts.values())
+    say(
+        f"{args.member}: {total} open signal(s) -- "
+        + ", ".join(f"{k} {v}" for k, v in counts.items())
+    )
+    for issue in report["issues"]:
+        print(f"  issue #{issue.get('number')}: {issue.get('title')}", flush=True)
+    for pr in alerts["bot_prs"]:
+        print(f"  bot PR #{pr.get('number')}: {pr.get('title')}", flush=True)
+    for line in report["ci"]["warnings"]:
+        print(f"  ci warning: {line}", flush=True)
+    checked = bool(report["ci"]["checked"])
+    if not checked:
+        print("  ci warnings: NOT CHECKED -- see notes", flush=True)
+    for note in report["notes"]:
+        print(f"  note: {note}", flush=True)
+    return 1 if total or not checked else 0
+
+
+def _node(graph: dict, member: str) -> dict:
+    """One node's record, or an empty one when the graph does not carry it."""
+    nodes = graph.get("nodes")
+    node = nodes.get(member) if isinstance(nodes, dict) else None
+    return node if isinstance(node, dict) else {}
+
+
+def _wanted_role(node: dict, roles: set[str] | None) -> bool:
+    """Whether the role filter admits this node."""
+    role = node.get("role")
+    return role in roles if roles else role not in SKIPPED_ROLES
+
+
+def _split_targets(graph: dict, targets: list[str]) -> tuple[set[str], set[str]]:
+    """Sort the arguments into languages to expand and members named outright.
+
+    Raises:
+        FleetError: On a target that is neither, naming the valid groups.
+    """
+    languages: set[str] = set()
+    named: set[str] = set()
+    for target in targets:
+        language = GROUPS.get(target)
+        if language:
+            languages.add(language)
+        elif _node(graph, target):
+            named.add(target)
+        else:
+            raise FleetError(
+                f"'{target}' is neither a group nor a member of the graph. "
+                f"Groups: {', '.join(sorted(GROUPS))}. Members are the nodes "
+                f"dfe-infra's suite.yaml declares."
+            )
+    return languages, named
+
+
+def _members_for(graph: dict, targets: list[str], roles: set[str] | None) -> list[str]:
+    """The members a plan covers, in the graph's own lane order.
+
+    A member named outright is always in, whatever its language, role or lane.
+    Anything else has to sit in one of GROUP_LANES, speak a language the caller
+    asked for, and pass the role filter. First lane position wins, so a member
+    listed in two lanes is planned once.
+    """
+    languages, named = _split_targets(graph, targets)
+    ordered: list[str] = []
+    for lane in graph.get("lanes") or []:
+        for member in lane.get("members") or []:
+            if member in ordered:
+                continue
+            if member in named:
+                ordered.append(member)
+                continue
+            if lane.get("name") not in GROUP_LANES:
+                continue
+            node = _node(graph, member)
+            if node.get("language") in languages and _wanted_role(node, roles):
+                ordered.append(member)
+    ordered.extend(sorted(named.difference(ordered)))
+    return ordered
+
+
+def _member_path(member: str, repos: str | None) -> str:
+    """Where the member is checked out, or NOT_ON_DISK -- never a guess."""
+    try:
+        path = _consumer_repo(member, repos)
+    except FleetError:
+        return NOT_ON_DISK
+    return str(path) if path.is_dir() else NOT_ON_DISK
+
+
+def _signal_line(member: str, path: str) -> str:
+    """The member's open signals as one line, or why there is no reading."""
+    if path == NOT_ON_DISK:
+        return f"{NOT_ON_DISK} -- run `signals {member}` where it is checked out"
+    try:
+        report = _gather(member, Path(path))
+    except FleetError as exc:
+        return f"not gathered -- {exc}"
+    counts = _counts(report)
+    tallies = ", ".join(f"{name} {count}" for name, count in counts.items())
+    checked = "yes" if report["ci"]["checked"] else "no"
+    return f"{sum(counts.values())} open -- {tallies}; ci.checked {checked}"
+
+
+def _edge_line(edge: dict, field: str) -> str:
+    """One edge as ``other-member | kind | type``."""
+    return (
+        f"{edge.get(field) or '?'} | {edge.get('kind') or '?'} | "
+        f"{edge.get('type') or '?'}"
+    )
+
+
+def _pack(graph: dict, member: str, args: argparse.Namespace) -> dict:
+    """Everything one member's review subagent is given."""
+    node = _node(graph, member)
+    language = str(node.get("language") or "none")
+    path = _member_path(member, args.repos)
+    rules = f"{RULES_DIR}/{language}.md" if language in GROUPS.values() else "none"
+    return {
+        "member": member,
+        "repo": node.get("repo") or "not declared",
+        "path": path,
+        "language": language,
+        "role": node.get("role") or "not declared",
+        "audience": node.get("audience") or "not declared",
+        "maturity": node.get("maturity") or "not declared",
+        "default_in_pass": bool(node.get("default_in_pass")),
+        "language_rules": rules,
+        "signals": _signal_line(member, path),
+        "in_edges": [_edge_line(edge, "from") for edge in in_edges(graph, member)],
+        "out_edges": [_edge_line(edge, "to") for edge in out_edges(graph, member)],
+        "passes": list(REVIEW_PASSES),
+        "not_on_this_model": NOT_ON_THIS_MODEL,
+    }
+
+
+def _render(pack: dict) -> str:
+    """One member's pack as the markdown a subagent brief is built from."""
+    lines = [
+        "",
+        f"## {pack['member']}",
+        f"repo: {pack['repo']}",
+        f"path: {pack['path']}",
+        f"language: {pack['language']}",
+        f"role: {pack['role']}",
+        f"audience: {pack['audience']}",
+        f"maturity: {pack['maturity']}",
+        "default_in_pass: "
+        + ("true" if pack["default_in_pass"] else "false -- name it to include"),
+        f"language rules: {pack['language_rules']}",
+        f"open signals: {pack['signals']}",
+        "in-edges (what reaches this member):",
+    ]
+    lines.extend(f"  - {edge}" for edge in pack["in_edges"] or ["none"])
+    lines.append("out-edges (what a release here moves):")
+    lines.extend(f"  - {edge}" for edge in pack["out_edges"] or ["none"])
+    lines.append(f"passes: {', '.join(pack['passes'])}")
+    lines.append(pack["not_on_this_model"])
+    return "\n".join(lines)
+
+
+def cmd_review_plan(args: argparse.Namespace) -> int:
+    """Print one /complete-review context pack per member of a language group.
+
+    No model is chosen or pinned here. A subagent's model is an argument to the
+    agent's own dispatch, so this prints what each member's brief has to carry
+    and leaves the routing to the caller.
+    """
+    dfe_infra = Path(args.dfe_infra).expanduser() if args.dfe_infra else None
+    graph = load_graph(dfe_infra=dfe_infra)
+    members = _members_for(graph, args.target, set(args.role) if args.role else None)
+    packs = [_pack(graph, member, args) for member in members]
+    if args.json:
+        print(json.dumps(packs, indent=2), flush=True)
+        return 0
+    print(f"# review plan: {', '.join(args.target)}", flush=True)
+    print(f"members: {len(packs)}", flush=True)
+    print(f"lane order: {', '.join(GROUP_LANES)}", flush=True)
+    print(f"order: {', '.join(members) or 'none'}", flush=True)
+    print(f"model: {MODEL_LINE}", flush=True)
+    print(f"rule: {DISPATCH_RULE}", flush=True)
+    for pack in packs:
+        print(_render(pack), flush=True)
+    return 0
+
+
+def cmd_kinds(args: argparse.Namespace) -> int:
+    """Print the edge kinds this tool knows and what each check does."""
+    for kind in sorted(CHECKS):
+        print(f"{kind}: {KIND_SUMMARY[kind]}", flush=True)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Assemble the argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="dfe-suite",
+        description=(
+            "Drive the DFE suite from dfe-infra's graph: release a library node, "
+            "dry-run the checks a producer release implies for its consumers, "
+            "or plan a review across one language group."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  dfe-suite kinds\n"
+            "  dfe-suite check scalo-rs 2.11.0\n"
+            "  dfe-suite check scalo-py 2.29.10 --repos ~/projects\n"
+            "  dfe-suite walk scalo-rs 2.11.0 --no-tests dfe-loader\n"
+            "  dfe-suite signals dfe-loader\n"
+            "  dfe-suite review-plan rust\n"
+            "  dfe-suite review-plan typescript --role ui --json\n"
+            "  git add <fix-files>\n"
+            "  dfe-suite release scalo-rs 'fix: <root cause>'\n"
+        ),
+    )
+    parser.add_argument(
+        "--org",
+        default=DEFAULT_ORG,
+        help=f"GitHub org used when the remote cannot be read (default: {DEFAULT_ORG})",
+    )
+    parser.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="say what would happen, touch nothing",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def add_shared(target: argparse.ArgumentParser) -> None:
+        """Repeat the global flags on a subcommand, so either position works.
+
+        SUPPRESS rather than a default, so an unused subcommand flag does not
+        overwrite the value given before the subcommand.
+        """
+        target.add_argument("--org", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        target.add_argument(
+            "-n",
+            "--dry-run",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="say what would happen, touch nothing",
+        )
+
+    release = sub.add_parser("release", help="ship a library node")
+    add_shared(release)
+    release.add_argument("node", help=f"one of: {', '.join(sorted(RELEASABLE))}")
+    release.add_argument(
+        "subject",
+        nargs="?",
+        default="",
+        help="conventional-commit subject, required when a fix is staged",
+    )
+    release.add_argument("--repo-dir", help="the checkout, if it is not where we look")
+
+    check = sub.add_parser("check", help="dry-run walk of a producer's out-edges")
+    add_shared(check)
+    check.add_argument("producer", help="the node that is releasing, e.g. scalo-rs")
+    check.add_argument("version", help="the version it is releasing")
+    check.add_argument("--dfe-infra", help="the dfe-infra checkout holding suite.yaml")
+    check.add_argument("--repos", help="directory holding the consumer checkouts")
+
+    walk = sub.add_parser(
+        "walk", help="check every out-edge and rebuild the consumers that moved"
+    )
+    add_shared(walk)
+    walk.add_argument("producer", help="the node that released, e.g. scalo-rs")
+    walk.add_argument("version", help="the version it released")
+    walk.add_argument("--subject", default="", help="commit subject for each rebuild")
+    walk.add_argument(
+        "--no-tests",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="CONSUMERS",
+        help=(
+            "skip the local test gate on Rust rebuilds: bare for every "
+            "consumer, or a comma-separated list of the ones to skip it on"
+        ),
+    )
+    walk.add_argument(
+        "--no-chart",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="CONSUMERS",
+        help=(
+            "skip chart/ regeneration on Rust rebuilds: bare for every "
+            "consumer, or a comma-separated list"
+        ),
+    )
+    walk.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="CONSUMER",
+        help=(
+            "walk a consumer the graph marks default_in_pass: false; repeat "
+            "or comma-separate"
+        ),
+    )
+    walk.add_argument("--dfe-infra", help="the dfe-infra checkout holding suite.yaml")
+    walk.add_argument("--repos", help="directory holding the consumer checkouts")
+
+    signals = sub.add_parser(
+        "signals", help="every open signal on a member, before its commit lands"
+    )
+    add_shared(signals)
+    signals.add_argument("member", help="the member repo to report on")
+    signals.add_argument("--repos", help="directory holding the member checkouts")
+
+    review = sub.add_parser(
+        "review-plan", help="a /complete-review context pack per member of a group"
+    )
+    add_shared(review)
+    review.add_argument(
+        "target",
+        nargs="+",
+        metavar="GROUP|MEMBER",
+        help=f"a language group ({', '.join(sorted(GROUPS))}) or a member name",
+    )
+    review.add_argument(
+        "--role",
+        action="append",
+        default=[],
+        metavar="ROLE",
+        help=(
+            "keep only nodes of this role; repeat. Default: every role except "
+            f"{' and '.join(sorted(SKIPPED_ROLES))}"
+        ),
+    )
+    review.add_argument("--dfe-infra", help="the dfe-infra checkout holding suite.yaml")
+    review.add_argument("--repos", help="directory holding the member checkouts")
+    review.add_argument(
+        "--json", action="store_true", help="the packs as JSON rather than markdown"
+    )
+
+    sub.add_parser("kinds", help="what each edge kind's check does here")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point. Returns the process exit code -- non-zero means STOP."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    set_tag(TAG)
+    args = build_parser().parse_args(argv)
+    handlers = {
+        "release": cmd_release,
+        "check": cmd_check,
+        "walk": cmd_walk,
+        "signals": cmd_signals,
+        "review-plan": cmd_review_plan,
+        "kinds": cmd_kinds,
+    }
+    try:
+        return handlers[args.command](args)
+    except FleetError as exc:
+        print(f"[{TAG}] ERROR: {exc}", file=sys.stderr, flush=True)
+        return 1
+    except KeyboardInterrupt:
+        print(f"[{TAG}] interrupted", file=sys.stderr, flush=True)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

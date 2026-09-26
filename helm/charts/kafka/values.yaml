@@ -310,8 +310,13 @@ kafka:
       # create the receiver's dynamic {source}_land topics.
       autoCreateTopics: true
   # Dropped from the previous block, each for a stated reason rather than lost:
-  # compression.type=producer (already the Kafka default, and Redpanda ignores
-  # the property outright); unclean.leader.election.enable=false (the 4.x
+  # compression.type=producer at the BROKER level (already the Kafka default
+  # here, and Redpanda ignores the property outright regardless) -- but a
+  # customer's cluster may run a different broker default, which would then
+  # recompress every topic that does not say otherwise. So it ships per TOPIC
+  # instead: dfe-engine creates every topic, and sets compression.type=producer
+  # on each from its kafka.topic_compression_type setting;
+  # unclean.leader.election.enable=false (the 4.x
   # default, and read-only on MSK Express); log.segment.bytes 512 MiB (it
   # DOUBLES the mmap count against vm.max_map_count at this shape -- the 1 GiB
   # default is the right one at high throughput);

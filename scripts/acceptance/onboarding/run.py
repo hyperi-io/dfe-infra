@@ -15,7 +15,9 @@
 #        --ui-url https://dfe.example --engine-url https://dfe.example/api \
 #        --shots-dir .tmp/onboarding
 #    (the admin password comes from DFE_E2E_ADMIN_PASSWORD; dfe-ops acceptance
-#     --suite onboarding fetches it from the lane and exports it)
+#     --suite onboarding fetches it from the lane and exports it. The console
+#     forces the admin to change that issued password at first login, to
+#     DFE_E2E_ADMIN_NEW_PASSWORD, which the run signs the admin in with after.)
 """onboarding.run -- the wizard, then the console, in a browser.
 
 The first thing an operator does with a new deployment is open it and be walked
@@ -23,7 +25,8 @@ through setup. Nothing else in the acceptance suite covers that: the API tests
 authenticate straight past it, so a wizard that cannot be finished ships.
 
 Two phases. The wizard phase signs in as the admin the deploy minted (the wizard
-sits behind the login) and walks the screens the engine's own setup contract asks
+sits behind the login), makes the password change the console forces on that
+issued credential, and walks the screens the engine's own setup contract asks
 for -- and asserts that a screen it does NOT ask for never appears, which is what
 catches a console still demanding a step the product dropped. Then the console
 phase logs in as the account the wizard just created, checks the navigation
@@ -57,19 +60,33 @@ CONSOLE_LANDMARKS = ("Sources", "Meta Schemas")
 # The login page's local-account tab, shown once a provider is registered.
 LOCAL_LOGIN_TAB = "Login with Local"
 
+# The Add Source drawer's name field: "Source Name *" from ui v1.7.0, "Source" before it.
+SOURCE_NAME_LABELS = ("Source Name", "Source")
+
+# Where the console holds an account on an issued password until it sets its own.
+CHANGE_PASSWORD_PATH = "/change-password"
+
 STEP_TIMEOUT_MS = 30_000
 # How long the run keeps checking that the source it made has gone.
 TEARDOWN_DEADLINE = 120.0
 
 
-def _label(name: str) -> re.Pattern[str]:
+def _label(*names: str) -> re.Pattern[str]:
     """Match a field by its label, with or without the console's required marker.
 
     A required field's accessible name carries the asterisk the console renders
     beside it ("Username *"), and an optional one a trailing space ("Name "), so
     an exact match finds neither. Anchoring keeps "Name" off "Username".
+
+    Args:
+        *names: Every label the field has carried across console releases; any
+            one of them matches.
+
+    Returns:
+        A pattern for the field's accessible name.
     """
-    return re.compile(rf"^\s*{re.escape(name)}\s*\*?\s*$")
+    alternatives = "|".join(re.escape(name) for name in names)
+    return re.compile(rf"^\s*(?:{alternatives})\s*\*?\s*$")
 
 
 class Driver:
@@ -101,8 +118,8 @@ class Driver:
     def button(self, name: str):
         return self.page.get_by_role("button", name=name, exact=True)
 
-    def textbox(self, name: str):
-        return self.page.get_by_role("textbox", name=_label(name))
+    def textbox(self, *names: str):
+        return self.page.get_by_role("textbox", name=_label(*names))
 
 
 def sign_in(driver: Driver, user: str, password: str) -> None:
@@ -122,15 +139,73 @@ def sign_in(driver: Driver, user: str, password: str) -> None:
     driver.button("Login").click(timeout=STEP_TIMEOUT_MS)
 
 
+def _left_login(url: str) -> bool:
+    return "/login" not in url.split("?")[0]
+
+
+def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str) -> str:
+    """Sign the admin in, completing the forced change a fresh deployment's admin is due.
+
+    The admin holds either the password the deploy issued or, once a run has made
+    the change, ``new_password``: the issued one is tried first and the new one
+    when the console refuses it.
+
+    Returns:
+        The admin's password from here on.
+
+    Raises:
+        wizard.OnboardingError: The console demands a change and no new password
+            was given, or it accepted the issued password without demanding one.
+        playwright.sync_api.TimeoutError: The console refused every password
+            the run holds.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    sign_in(driver, user, password)
+    try:
+        driver.page.wait_for_url(_left_login, timeout=STEP_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        # Still on the login form, so the issued password was refused.
+        if not new_password:
+            raise
+        sign_in(driver, user, new_password)
+        driver.page.wait_for_url(_left_login, timeout=STEP_TIMEOUT_MS)
+        return new_password
+    if CHANGE_PASSWORD_PATH not in driver.page.url:
+        if new_password and password != new_password:
+            raise wizard.OnboardingError(
+                f"the console let '{user}' in on its issued password without the forced change"
+            )
+        return password
+    if not new_password:
+        raise wizard.OnboardingError(
+            f"the console holds '{user}' on its issued password until it sets its own. "
+            "Set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
+        )
+    for label in ("New Password", "Confirm Password"):
+        driver.textbox(label).fill(new_password)
+    driver.button("Set password").click(timeout=STEP_TIMEOUT_MS)
+    driver.page.wait_for_url(
+        lambda url: CHANGE_PASSWORD_PATH not in url, timeout=STEP_TIMEOUT_MS * 2
+    )
+    driver.record("change-password", "done", f"'{user}' replaced its issued password")
+    return new_password
+
+
 def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, password: str,
-                breakglass_password: str, admin_user: str, admin_password: str) -> None:
+                breakglass_password: str, admin_user: str, admin_password: str,
+                new_admin_password: str = "") -> str:
     """Complete every screen the deployment asks for, in the console's order.
 
     Each screen is completed rather than clicked past: a wizard that can be
     skipped proves nothing about whether its work lands. The wizard sits behind
-    the login, so the run signs in as the admin the deploy minted first.
+    the login, so the run signs in as the admin the deploy minted first, and
+    makes the forced password change the console puts before the wizard.
+
+    Returns:
+        The admin's password from here on.
     """
-    sign_in(driver, admin_user, admin_password)
+    admin_password = sign_in_as_admin(driver, admin_user, admin_password, new_admin_password)
     driver.page.wait_for_url("**/setup**", timeout=STEP_TIMEOUT_MS * 2)
     driver.record("login", "done", f"signed in as {admin_user}; the console opened the wizard")
     driver.page.goto(f"{driver.ui}/setup/{wizard.WELCOME}", wait_until="domcontentloaded",
@@ -165,7 +240,7 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
             "absent-as-expected",
             "the first user already existed, so the wizard ended at the organisation",
         )
-        return
+        return admin_password
 
     driver.page.wait_for_url(f"**/setup/{wizard.LOGIN}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.LOGIN)
@@ -208,7 +283,7 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
                 "failed",
                 "the engine no longer declares admin_password, so this screen must not appear",
             )
-            return
+            return admin_password
         driver.record(
             wizard.RESET_BREAK_GLASS,
             "absent-as-expected",
@@ -218,15 +293,22 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     driver.page.wait_for_url(f"**/setup/{wizard.COMPLETE}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.COMPLETE)
     driver.record(wizard.COMPLETE, "done", "the wizard finished")
+    return admin_password
 
 
-def check_console(driver: Driver, user: str, password: str) -> str:
+def check_console(driver: Driver, user: str, password: str, new_password: str = "") -> str:
     """Log in as the account the wizard made, and use the console once.
+
+    ``new_password`` is for the admin, when no first user was made: a deployment
+    set up by other means can still hold it on its issued password.
 
     Returns:
         The source it created, for the caller to remove. Empty when it made none.
     """
-    sign_in(driver, user, password)
+    if new_password:
+        sign_in_as_admin(driver, user, password, new_password)
+    else:
+        sign_in(driver, user, password)
     driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
     driver.record("login", "done", f"signed in as {user}")
 
@@ -246,7 +328,7 @@ def check_console(driver: Driver, user: str, password: str) -> str:
 
     name = f"onboard{uuid.uuid4().hex[:8]}"
     driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
-    driver.textbox("Source").fill(name)
+    driver.textbox(*SOURCE_NAME_LABELS).fill(name)
     driver.textbox("Display Name").fill(name)
     driver.textbox("Field").fill("app")
     driver.textbox("Value").fill(name)
@@ -309,6 +391,9 @@ def run(args: argparse.Namespace) -> int:
         )
         return 1
 
+    # A fresh deployment's admin is forced to replace the issued password first.
+    new_admin_password = os.environ.get("DFE_E2E_ADMIN_NEW_PASSWORD", "")
+    admin_password = password
     shots = Path(args.shots_dir)
     created = ""
     with sync_playwright() as play:
@@ -330,9 +415,9 @@ def run(args: argparse.Namespace) -> int:
         driver = Driver(context.new_page(), args.ui_url, shots)
         try:
             if not complete:
-                walk_wizard(
+                admin_password = walk_wizard(
                     driver, expected, args.org, args.first_user, password, password,
-                    admin_user, password,
+                    admin_user, password, new_admin_password,
                 )
                 surplus = wizard.unexpected_screens(expected, driver.seen)
                 if surplus:
@@ -348,9 +433,10 @@ def run(args: argparse.Namespace) -> int:
             # The console session is the first user's when this run created one,
             # otherwise the admin's.
             made_first_user = not complete and wizard.FIRST_USER in expected
-            created = check_console(
-                driver, args.first_user if made_first_user else admin_user, password
-            )
+            if made_first_user:
+                created = check_console(driver, args.first_user, password)
+            else:
+                created = check_console(driver, admin_user, admin_password, new_admin_password)
         except Exception as exc:  # a Playwright timeout IS the finding
             driver.record("run", "failed", f"{type(exc).__name__}: {str(exc).splitlines()[0]}")
         finally:
@@ -358,7 +444,10 @@ def run(args: argparse.Namespace) -> int:
             browser.close()
 
     if created:
-        token = engine_token(args.engine_url, not args.insecure, admin_user, password)
+        # The admin holds the issued password or the one this run changed it to.
+        token = engine_token(args.engine_url, not args.insecure, admin_user, admin_password)
+        if not token and new_admin_password:
+            token = engine_token(args.engine_url, not args.insecure, admin_user, new_admin_password)
         detail = (
             remove_source(args.engine_url, not args.insecure, token, created, TEARDOWN_DEADLINE)
             if token

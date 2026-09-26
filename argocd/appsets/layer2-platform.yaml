@@ -141,11 +141,11 @@ spec:
               - '$values/infra/{{ .app }}.yaml'
             parameters:
               # The registry every dfe-* image is pulled from -- dfe-toolbox
-              # renders one here. A chart left on common.yaml's empty default
-              # renders the image with no host and containerd resolves it to
-              # Docker Hub, which publishes none.
+              # renders one here. A missing annotation fails the render rather
+              # than handing the charts an empty registry, which beats every
+              # values file and sends each image to Docker Hub.
               - name: global.registry
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/registry" }}'
+                value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
               # The deployment's own domain, from the cluster fact rather than a
               # values file -- the tracked overlays carry placeholders only. Every
               # hostname envoy-gateway-config publishes derives from it.

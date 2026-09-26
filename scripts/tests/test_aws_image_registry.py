@@ -15,10 +15,11 @@ Docker Hub, and the kubelet reports a pull denial naming Docker Hub rather than
 the missing setting -- so the obvious diagnosis is a bad pull secret, which is
 the wrong one.
 
-aws.yaml carries no registry literal on purpose, because the dial is the one
+No cloud values file carries a registry literal, because the dial is the one
 source. The value reaches a chart as the dfe.hyperi.io/registry cluster-secret
-annotation, which each layer 2 appset passes back as the global.registry
-parameter, so these tests hold all four spellings of that chain together.
+annotation, which the appsets pass back as the global.registry parameter. These
+tests hold the bootstrap and chart ends of that chain;
+test_appset_registry_guard.py holds the appset end.
 
     python3 scripts/tests/test_aws_image_registry.py
 
@@ -38,7 +39,6 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
-APPSETS = REPO_ROOT / "argocd" / "appsets"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 
@@ -50,17 +50,16 @@ ANNOTATION = "dfe.hyperi.io/registry"
 # parameter shows up as its own failure rather than hiding behind a sibling.
 CHARTS = ("dfe-ui", "otel-collector", "dfe-toolbox")
 
-# Every appset that deploys a chart rendering a dfe-* image. An appset missing
-# from this list is one whose charts fall back to common.yaml's empty default.
-APPSETS_THAT_PASS_THE_REGISTRY = ("layer2-apps.yaml", "layer2-data.yaml", "layer2-platform.yaml")
+# Every cloud values file an appset layers on common.yaml.
+CLOUDS = ("aws.yaml", "azure.yaml", "gcp.yaml", "local.yaml", "local-dfe.yaml")
 
 
-def render(chart: str, registry: str) -> list[dict]:
-    """Every object one chart renders on the AWS cascade the appsets layer."""
+def render(chart: str, registry: str, cloud: str = "aws.yaml") -> list[dict]:
+    """Every object one chart renders on a cloud cascade the appsets layer."""
     cmd = [
         "helm", "template", "t", str(chart_dir(chart)),
         "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / "aws.yaml"),
+        "-f", str(VALUES / cloud),
     ]
     if registry:
         cmd += ["--set", f"global.registry={registry}"]
@@ -103,16 +102,17 @@ def test_every_dfe_image_carries_the_registry() -> None:
 
 
 def test_the_cascade_alone_names_no_registry() -> None:
-    """aws.yaml stays literal-free on purpose, so the appset parameter is the
-    only source and a chart deployed without it is a caught failure."""
-    for chart in CHARTS:
-        for spec in pod_specs(render(chart, "")):
-            for image in dfe_images(spec):
-                expect(
-                    f"{chart}: {image} has no host without the parameter",
-                    "/" not in image.split(":")[0],
-                    "aws.yaml has grown a registry literal, which the dial can no longer override",
-                )
+    """Every cloud file stays literal-free, so the appset parameter is the only
+    source and a chart deployed without it is a caught failure."""
+    for cloud in CLOUDS:
+        for chart in CHARTS:
+            for spec in pod_specs(render(chart, "", cloud)):
+                for image in dfe_images(spec):
+                    expect(
+                        f"{cloud} {chart}: {image} has no host without the parameter",
+                        "/" not in image.split(":")[0],
+                        f"{cloud} has grown a registry literal, a second source beside the dial",
+                    )
 
 
 def test_every_pod_carries_the_pull_secret() -> None:
@@ -143,20 +143,6 @@ def test_the_cluster_secret_carries_the_registry() -> None:
     expect(f"cluster-secret.yaml.tpl writes {ANNOTATION}",
            f'{ANNOTATION}: "${{DFE_REGISTRY}}"' in template,
            "the annotation is not written from DFE_REGISTRY")
-
-
-def test_every_layer2_appset_reads_it_back() -> None:
-    """An appset that reads no registry annotation leaves its charts on
-    common.yaml's empty default, with no error anywhere."""
-    for appset in APPSETS_THAT_PASS_THE_REGISTRY:
-        lines = (APPSETS / appset).read_text().splitlines()
-        read = f'.metadata.annotations "{ANNOTATION}"'
-        paired = [
-            i for i, ln in enumerate(lines)
-            if read in ln and i and "name: global.registry" in lines[i - 1]
-        ]
-        expect(f"{appset} lands {ANNOTATION} on global.registry", paired != [],
-               f"no global.registry parameter in {appset} reads {ANNOTATION}")
 
 
 def main() -> int:

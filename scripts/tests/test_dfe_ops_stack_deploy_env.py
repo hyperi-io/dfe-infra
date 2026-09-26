@@ -2,8 +2,9 @@
 #  Project:      dfe-infra
 #  File:         test_dfe_ops_stack_deploy_env.py
 #  Purpose:      Prove stack-deploy's env assembly unwraps the terraform bridge's
-#                (value, sensitive) pairs and demands only the secrets vars the
-#                declared backend actually uses.
+#                (value, sensitive) pairs, demands only the secrets vars the
+#                declared backend actually uses, and runs its preflight with no
+#                --registry given.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -89,6 +90,110 @@ def test_the_registry_flag_reaches_bootstrap(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setitem(sys.modules, "bridge", bridge)
     env = dfeops._assemble_env(_args(tmp_path))
     assert env["DFE_REGISTRY"] == "registry.example.com/dfe"
+
+
+def _no_terraform(tmp_path: Path, **over: object) -> argparse.Namespace:
+    args = _args(tmp_path)
+    args.from_terraform = None
+    for key, value in over.items():
+        setattr(args, key, value)
+    return args
+
+
+def test_the_access_summary_defaults_into_this_repos_run_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A cycle launched from another repo wrote dfe-access.md into THAT repo's tree."""
+    elsewhere = tmp_path / "another-repo"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    env = dfeops._assemble_env(_no_terraform(tmp_path, access_out="", stack="2.2.0-rc.99"))
+
+    out = Path(env["DFE_ACCESS_OUT"])
+    assert out == REPO_ROOT / ".tmp" / "2.2.0-rc.99-scale" / dfeops.ACCESS_OUT_FILENAME
+    assert out.is_absolute()
+    assert elsewhere not in out.parents
+
+
+def test_the_access_summary_sits_beside_the_launchers_login_file(tmp_path: Path) -> None:
+    env = dfeops._assemble_env(_no_terraform(tmp_path, access_out=""))
+
+    assert Path(env["DFE_ACCESS_OUT"]).parent == Path(env["DFE_ACCESS_SUMMARY_OUT"]).parent
+
+
+def test_an_explicit_access_out_is_used_as_given(tmp_path: Path) -> None:
+    chosen = tmp_path / "mine.md"
+
+    env = dfeops._assemble_env(_no_terraform(tmp_path, access_out=str(chosen)))
+
+    assert env["DFE_ACCESS_OUT"] == str(chosen)
+
+
+def test_the_summary_directory_exists_before_bootstrap_writes_into_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """access-summary.sh writes through tee, which fails on a missing directory."""
+    out = tmp_path / "run" / "nested" / "summary.md"
+    seen: dict[str, bool] = {}
+
+    def fake_bootstrap(cmd: list[str], *, env: dict | None = None) -> int:
+        seen["parent_existed"] = out.parent.is_dir()
+        seen["pointed_at_it"] = env is not None and env["DFE_ACCESS_OUT"] == str(out)
+        return 0
+
+    monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_bootstrap_required", lambda _env: ())
+    monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
+    monkeypatch.delenv("DFE_VAULT_ADDR", raising=False)
+    args = _no_terraform(tmp_path, access_out=str(out), check_only=False, mode="single")
+
+    assert dfeops.cmd_stack_deploy(args) == 0
+    assert seen == {"parent_existed": True, "pointed_at_it": True}
+
+
+def test_the_flag_defaults_empty_so_the_run_directory_decides() -> None:
+    args = dfeops.build_parser().parse_args(["stack-deploy"])
+
+    assert args.access_out == ""
+
+
+def test_a_hand_run_bootstrap_also_writes_under_the_repos_tmp() -> None:
+    """bootstrap.sh run without dfe-ops falls back to its own default, not the cwd."""
+    body = (REPO_ROOT / "bootstrap" / "bootstrap.sh").read_text(encoding="utf-8")
+
+    assert '"${DFE_ACCESS_OUT:-${REPO_ROOT}/.tmp/dfe-access.md}"' in body
+    assert '"${DFE_ACCESS_SUMMARY_OUT:-${REPO_ROOT}/.tmp/access-summary.md}"' in body
+
+
+def _preflight_render_argv(monkeypatch, registry: str | None) -> list[str]:
+    """The argv the offline preflight's first step runs, stopping it right there."""
+    seen: list[list[str]] = []
+
+    def fake_run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
+        seen.append(cmd)
+        return 1, "", "stopped by the test"
+
+    monkeypatch.setattr(dfeops, "_run_text", fake_run_text)
+    args = argparse.Namespace(registry=registry, stack="2.2.0-rc.99", strict_compat=False, mode="single")
+    assert dfeops._offline_preflight(args) == 1
+    return seen[0]
+
+
+def test_preflight_runs_with_no_registry_flag(monkeypatch) -> None:
+    """--registry defaults to None, and a None in argv refused the whole run with
+    a TypeError before any check had run."""
+    argv = _preflight_render_argv(monkeypatch, None)
+    assert None not in argv
+    assert "--registry" not in argv
+    assert argv[-3:] == ["render", "--stack", "2.2.0-rc.99"]
+
+
+def test_preflight_passes_a_given_registry_on(monkeypatch) -> None:
+    argv = _preflight_render_argv(monkeypatch, "registry.example.com/dfe")
+    assert argv[argv.index("--registry") + 1] == "registry.example.com/dfe"
 
 
 def test_openbao_is_required_only_when_the_backend_is_openbao() -> None:

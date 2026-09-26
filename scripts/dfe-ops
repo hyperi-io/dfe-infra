@@ -112,6 +112,12 @@ Subcommands:
                apply refuses to run without; apply bumps pins.yaml through a
                surgical field edit and commits per stage (never a hand edit);
                rollback refuses by name any step with no reverse path.
+  kind         up/status/down for a throwaway local kind cluster running one
+               tier: up creates the cluster on a docker network of its own,
+               adds the StorageClass the overlay asks for and the two
+               front-door addresses MetalLB announces, then runs the NAMED
+               ref's own stack-deploy from a checkout of that ref; down deletes
+               the cluster, its network and its state, then proves each gone.
 
 Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
 this file is committed publicly, so substitute your own node):
@@ -172,7 +178,12 @@ this file is committed publicly, so substitute your own node):
     python3 scripts/dfe-ops teardown --dry-run
     python3 scripts/dfe-ops teardown --force --with-terraform
 
-kubeconfig + probe need only python3. deploy/stack-deploy/teardown/verify shell
+    # The single tier from a named ref on a local kind cluster, then remove it:
+    python3 scripts/dfe-ops kind up --ref main --mode single --env-file bootstrap/.env
+    python3 scripts/dfe-ops kind status
+    python3 scripts/dfe-ops kind down
+
+kubeconfig + probe need only python3. kind also needs kind and docker. deploy/stack-deploy/teardown/verify shell
 out to the repo's bootstrap/*.sh + scripts/dfe-stack (found relative to this
 file), so they need whatever those need (kubectl, helm, terraform/tofu on PATH,
 VAULT_* env, ...). stack-deploy's pre-flight needs only python3 + helm.
@@ -239,12 +250,16 @@ import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_edge_probe import add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
+from dfe_ops_kind import add_kind_subparser  # noqa: E402
 from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
+
+# The post-deploy summary bootstrap/access-summary.sh writes: endpoints and fetch commands.
+ACCESS_OUT_FILENAME = "dfe-access.md"
 
 # bootstrap.sh's required env (validated up-front so a missing var fails the
 # driver before it touches the cluster, not mid-run). DFE_KAFKA_BOOTSTRAP is
@@ -1338,6 +1353,10 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         env["DFE_E2E_ENGINE_USER"] = user
         env["DFE_E2E_ENGINE_PASSWORD"] = password
         env["DFE_E2E_ADMIN_PASSWORD"] = password
+        # The engine forces the admin off that issued password at first login;
+        # every suite changes it to this one, and signs in with it from then on.
+        if settings.get(NEW_ADMIN_PASSWORD_VAR):
+            env[NEW_ADMIN_PASSWORD_VAR] = settings[NEW_ADMIN_PASSWORD_VAR]
     else:
         env.pop("DFE_E2E_ENGINE_URL", None)
         stop.set()
@@ -1518,6 +1537,8 @@ DOCKER_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 # A password the caller fed the deploy, so a test run knows it without reading
 # anything back.
 FED_ADMIN_PASSWORD_VAR = "DFE_E2E_ADMIN_PASSWORD"
+# What a suite changes the admin to at the forced first-login password change.
+NEW_ADMIN_PASSWORD_VAR = "DFE_E2E_ADMIN_NEW_PASSWORD"
 
 ADMIN_USER = "admin"
 BREAKGLASS_USER = "breakglass"
@@ -2039,10 +2060,21 @@ def cmd_ca(args: argparse.Namespace) -> int:
 
 
 # --- ui subcommand (the dfe-ui Playwright acceptance specs over port-forwards) -
+# Playwright budgets for a deployed stack, which answers several times slower than
+# the docker stack the dfe-ui suite's own defaults were set against.
+UI_TEST_TIMEOUT_MS = 120_000
+UI_EXPECT_TIMEOUT_MS = 30_000
+UI_NAV_TIMEOUT_MS = 30_000
+# The dfe-ui tag on specs that need the docker stack's own daemon.
+UI_DOCKER_ONLY_TAG = "@docker-only"
+
+
 def _rotate_break_glass(engine_url: str, name: str, current: str) -> str:
     """Rotate the break-glass password through the product API; return the new one.
 
-    In-process on purpose: the token never reaches a command line or a log.
+    In-process on purpose: the token never reaches a command line or a log. The
+    account changes its own password, the one route the engine serves an admin
+    still on its issued password, and the change clears that forced change too.
     """
     new_password = secrets.token_urlsafe(24)
     login = urllib.request.Request(
@@ -2054,7 +2086,7 @@ def _rotate_break_glass(engine_url: str, name: str, current: str) -> str:
     with urllib.request.urlopen(login, timeout=15) as response:
         token = json.loads(response.read())["access_token"]
     reset = urllib.request.Request(
-        f"{engine_url}/api/v1/auth/accounts/{name}/reset-password",
+        f"{engine_url}/api/v1/auth/accounts/reset-password",
         data=json.dumps({"new_password": new_password}).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
@@ -2143,10 +2175,20 @@ def cmd_ui(args: argparse.Namespace) -> int:
         "BASE_URL": ui_url,
         "NEXT_PUBLIC_API_URL": engine_url,
         "E2E_ADMIN_PASSWORD": rotated,
+        # What the onboarding spec changes the admin to at its forced first-login change.
+        "E2E_ADMIN_NEW_PASSWORD": settings.get(NEW_ADMIN_PASSWORD_VAR) or secrets.token_urlsafe(24),
         "E2E_BOOTSTRAP_PASSWORD": bootstrap,
+        "E2E_TEST_TIMEOUT_MS": str(args.test_timeout_ms),
+        "E2E_EXPECT_TIMEOUT_MS": str(args.expect_timeout_ms),
+        "E2E_NAV_TIMEOUT_MS": str(args.nav_timeout_ms),
         "CI": "1",
     })
-    cmd = ["yarn", "playwright", "test", "--grep", args.grep, *args.playwright_args]
+    cmd = ["yarn", "playwright", "test"]
+    if args.grep:
+        cmd += ["--grep", args.grep]
+    if args.grep_invert:
+        cmd += ["--grep-invert", args.grep_invert]
+    cmd += args.playwright_args
     done = subprocess.run(cmd, cwd=Path(args.ui_repo) / "apps" / "dfe-core-ui", env=env)
     stop.set()
     return done.returncode
@@ -2604,9 +2646,11 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     )
     hard_fail = 0
 
-    # 1. Stack pins resolve (and are the real, published set).
+    # 1. Stack pins resolve (and are the real, published set). An unset
+    #    --registry leaves dfe-stack's own default: this render only prints refs.
+    registry = ["--registry", args.registry] if args.registry else []
     rc, out, err = _run_text(
-        ["python3", str(DFE_STACK), "--registry", args.registry, "render", "--stack", args.stack]
+        ["python3", str(DFE_STACK), *registry, "render", "--stack", args.stack]
     )
     if rc != 0:
         print(f"  [FAIL] stack {args.stack!r} does not resolve: {err.strip() or _last_line(out)}", file=sys.stderr)
@@ -2770,13 +2814,14 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     if args.kubeconfig:
         env["KUBECONFIG"] = args.kubeconfig
     env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
-    env["DFE_ACCESS_OUT"] = args.access_out
+    run_dir = access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode)
+    # Anchored to this repo's gitignored run directory, never the caller's cwd,
+    # which may be another repo's tracked tree.
+    env["DFE_ACCESS_OUT"] = args.access_out or str(run_dir / ACCESS_OUT_FILENAME)
     # The launcher's own copy: bootstrap.sh calls `dfe-ops access-summary --out`
     # with this, so a deploy started by hand or through the cycle writes the
     # same file to the same place.
-    env["DFE_ACCESS_SUMMARY_OUT"] = str(
-        access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode) / access_summary_file.FILENAME
-    )
+    env["DFE_ACCESS_SUMMARY_OUT"] = str(run_dir / access_summary_file.FILENAME)
     if args.skip_e2e:
         env["DFE_SKIP_INTEGRATION_TESTS"] = "true"
     if args.dry_run:
@@ -2824,6 +2869,9 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     script = _require_script("bootstrap.sh")
     if script is None:
         return 1
+    access_out = Path(env["DFE_ACCESS_OUT"])
+    # access-summary.sh writes through tee, which creates no parent directory.
+    access_out.parent.mkdir(parents=True, exist_ok=True)
 
     print("", file=sys.stderr)
     print("=== stack-deploy ===", file=sys.stderr)
@@ -2873,11 +2921,11 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     )
     if not args.skip_e2e:
         print("  Two default E2E tests passed (receiver->CH data path + self-monitoring OTel).", file=sys.stderr)
-    if Path(args.access_out).is_file():
-        print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    if access_out.is_file():
+        print(f"  Access summary written to: {access_out}", file=sys.stderr)
     else:
         print(
-            f"  Access summary NOT written to {args.access_out}: bootstrap/access-summary.sh "
+            f"  Access summary NOT written to {access_out}: bootstrap/access-summary.sh "
             "did not run (see above)",
             file=sys.stderr,
         )
@@ -3135,7 +3183,9 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--registry", default=None,
                     help=f"image registry prefix (passthrough to dfe-stack); unset keeps an env "
                          f"file's own DFE_REGISTRY, then {DEFAULT_REGISTRY}")
-    sd.add_argument("--access-out", default="dfe-access.md", help="where the post-deploy access summary is written")
+    sd.add_argument("--access-out", default="",
+                    help=f"where the post-deploy access summary is written (default: "
+                         f".tmp/<stack>-<mode>/{ACCESS_OUT_FILENAME} in this repo, gitignored)")
     sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
     sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
     sd.add_argument("--check-only", action="store_true", help="run only the offline pre-flight, then stop (no cluster changes)")
@@ -3376,8 +3426,8 @@ def build_parser() -> argparse.ArgumentParser:
         "ui",
         help="run the dfe-ui Playwright acceptance specs against a deployed stack",
         description="Beside `acceptance`, which proves the data path. This rotates the "
-                    "break-glass password, then drives the UI with the dfe-ui suite's "
-                    "acceptance-tagged specs.",
+                    "break-glass password, then drives the UI with every dfe-ui spec "
+                    "except the docker-only ones, on time budgets sized for a deployed stack.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ui.add_argument("--env-file", action="append", default=[], metavar="PATH",
@@ -3395,8 +3445,17 @@ def build_parser() -> argparse.ArgumentParser:
     ui_repo = _sibling_repo("dfe-ui", "DFE_UI_REPO")
     ui.add_argument("--ui-repo", default=ui_repo, required=ui_repo is None,
                     help="dfe-ui checkout the suite runs from (default: $DFE_UI_REPO, else the dfe-ui checkout beside this repo; required when there is neither)")
-    ui.add_argument("--grep", default="@acceptance", help="Playwright --grep selecting the acceptance-tier specs")
+    ui.add_argument("--grep", default="", help="Playwright --grep: run only the specs matching it (default: every spec)")
+    ui.add_argument("--grep-invert", default=UI_DOCKER_ONLY_TAG,
+                    help="Playwright --grep-invert: skip the specs matching it; the default skips the "
+                         "specs that shell out to a docker daemon this lane does not have")
     ui.add_argument("--no-rotate", action="store_true", help="skip the break-glass rotation (the run then proves less)")
+    ui.add_argument("--test-timeout-ms", type=int, default=UI_TEST_TIMEOUT_MS,
+                    help="per-test budget, beforeEach seeding included (E2E_TEST_TIMEOUT_MS)")
+    ui.add_argument("--expect-timeout-ms", type=int, default=UI_EXPECT_TIMEOUT_MS,
+                    help="per-assertion budget, the post-login landing included (E2E_EXPECT_TIMEOUT_MS)")
+    ui.add_argument("--nav-timeout-ms", type=int, default=UI_NAV_TIMEOUT_MS,
+                    help="per-navigation budget for page.goto and waitForURL (E2E_NAV_TIMEOUT_MS)")
     ui.add_argument("playwright_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to playwright test")
     ui.set_defaults(func=cmd_ui)
@@ -3479,6 +3538,10 @@ def build_parser() -> argparse.ArgumentParser:
     # upgrade -- plan/preflight/apply/rollback a stack upgrade against a
     # deployment repo. Registered from dfe_ops_upgrade.
     add_upgrade_subparser(sub)
+
+    # kind -- up/status/down for a local kind cluster running one tier from a
+    # named git ref. Registered from dfe_ops_kind.
+    add_kind_subparser(sub)
 
     return ap
 

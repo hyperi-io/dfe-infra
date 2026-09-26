@@ -106,28 +106,30 @@ def console_outcome(console_detail: str, refused: str, api_detail: str) -> tuple
     return "api-fallback", f"{api_detail} ({refused})"
 
 
-def open_console(driver, engine: Engine, admin_user: str, password: str, org: str, first_user: str) -> None:
+def open_console(driver, engine: Engine, admin_user: str, password: str, org: str, first_user: str,
+                 new_password: str = "") -> None:
     """Sign in, completing the first-login wizard when the deployment still owes it.
 
     The wizard sits behind the login and holds the console there until it is
     finished, so a deployment nobody has onboarded has no Sources page for this
     suite to test against. The walk is the onboarding suite's own, not a second
-    copy of it, and it records the login and each screen as it goes.
+    copy of it, and it records the login and each screen as it goes. So is the
+    forced change of the admin's issued password, to ``new_password``.
     """
     status = setup_status(engine.base, engine.verify)
     if wizard.setup_complete(status):
-        onboarding.sign_in(driver, admin_user, password)
+        onboarding.sign_in_as_admin(driver, admin_user, password, new_password)
         driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
         driver.record("login", "done", f"signed in as {admin_user}")
         return
-    onboarding.walk_wizard(
+    admin_password = onboarding.walk_wizard(
         driver,
         wizard.expected_slugs(wizard.engine_steps(status), wizard.pending_steps(status)),
-        org, first_user, password, password, admin_user, password,
+        org, first_user, password, password, admin_user, password, new_password,
     )
     # The wizard hands the console to the account it just made; the rest of this
     # run is the admin's, which is who its API calls are.
-    onboarding.sign_in(driver, admin_user, password)
+    onboarding.sign_in(driver, admin_user, admin_password)
     driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
     driver.record("console", "done", f"the console opened for {admin_user} after the setup wizard")
 

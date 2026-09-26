@@ -95,6 +95,8 @@ tags:
 
   classification_source: "Which rung answered `classification`: in-repo for a marker in the repo itself (.hyperi-ci.yaml or .hyperi-classification), org-property for the hyperi-io custom property that answers when the repo declares nothing."
 
+  local_gate_exclude_features: "Cargo features, as package/feature, that the dfe-fleet local gate leaves out because building them links a system library the host may lack. Every feature that turns one on is left out with it. Name the feature that pulls the library in, not the app feature that forwards to it."
+
   # `licence` records what the repo DECLARES, in the repo's own words, and
   # `none-declared` there is a reading rather than an omission in the graph.
   # `classification` always has an answer, and `classification_source` says
@@ -305,6 +307,8 @@ nodes:
     classification: product
     classification_source: org-property
     default_in_pass: true
+    # Links unixODBC (libodbc); db-odbc and full turn it on and are left out with it.
+    local_gate_exclude_features: [dfe-fetcher-db/odbc]
     artefacts:
       - kind: container
         registry: ghcr

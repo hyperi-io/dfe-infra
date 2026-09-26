@@ -906,8 +906,7 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
   # The Forgejo -> Argo push webhook's shared secret. Forgejo signs the delivery
   # with it and Argo verifies against argocd-secret's webhook.gogs.secret, so
   # both ends carry the one value; minted once and reused, like the password
-  # above. argocd-secret is PATCHED, never applied over: it also holds Argo's
-  # server signing key and admin hash, adopted install or not.
+  # above. The Argo half is patched in [6/7], once argocd-secret exists.
   if kubectl -n forgejo get secret dfe-argo-webhook >/dev/null 2>&1; then
     ARGO_WEBHOOK_SECRET=$(kubectl -n forgejo get secret dfe-argo-webhook -o jsonpath='{.data.secret}' | base64 -d)
   else
@@ -916,14 +915,7 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
   kubectl -n forgejo create secret generic dfe-argo-webhook \
     --from-literal=secret="${ARGO_WEBHOOK_SECRET}" \
     --dry-run=client -o yaml | kubectl apply -f -
-  if kubectl -n argocd patch secret argocd-secret --type merge \
-      -p "{\"stringData\":{\"webhook.gogs.secret\":\"${ARGO_WEBHOOK_SECRET}\"}}" >/dev/null 2>&1; then
-    echo "  Argo push webhook secret ready (forgejo ns + argocd-secret)"
-  else
-    echo "  WARNING: could not patch argocd-secret with webhook.gogs.secret."
-    echo "           Forgejo will still register the hook, Argo will reject every"
-    echo "           delivery, and a source write waits out the 300s poll instead."
-  fi
+  echo "  Argo push webhook secret minted (forgejo ns)"
 elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   # EXTERNAL git (GitHub/GitLab/self-hosted): register the Argo READ credential so
   # Argo can pull the deploy repo -- EITHER HTTPS+token (DFE_CONFIG_REPO_USER +
@@ -1028,6 +1020,20 @@ if dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
     --wait --timeout 10m
 else
   echo "  Using existing ArgoCD; registering DFE AppProjects + ApplicationSets into it."
+fi
+
+# argocd-secret exists only once Argo is installed or adopted, so the push
+# webhook's Argo half is patched here rather than in [4c/7].
+# PATCHED, never applied over: the Secret also holds Argo's signing key and admin hash.
+if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  if kubectl -n argocd patch secret argocd-secret --type merge \
+      -p "{\"stringData\":{\"webhook.gogs.secret\":\"${ARGO_WEBHOOK_SECRET}\"}}" >/dev/null 2>&1; then
+    echo "  Argo push webhook secret ready (argocd-secret webhook.gogs.secret)"
+  else
+    echo "  WARNING: could not patch argocd-secret with webhook.gogs.secret."
+    echo "           Forgejo will still register the hook, Argo will reject every"
+    echo "           delivery, and a source write waits out the 300s poll instead."
+  fi
 fi
 
 # Argo CD repo credential for the CHART repo (DFE_REPO_URL), which is where Argo
@@ -1214,7 +1220,10 @@ fi
 # DFE_POST=readiness the pipelines are unproven, and under DFE_POST=off nothing
 # was verified at all. Printed here AND written to a file.
 echo ""
-"${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${DFE_ACCESS_OUT:-dfe-access.md}" || \
+# Both summaries default into this repo's gitignored .tmp/, never the caller's cwd.
+ACCESS_OUT="${DFE_ACCESS_OUT:-${REPO_ROOT}/.tmp/dfe-access.md}"
+mkdir -p "$(dirname "${ACCESS_OUT}")"
+"${SCRIPT_DIR}/access-summary.sh" "${KUBECONFIG:-}" "${ACCESS_OUT}" || \
   echo "  (access-summary skipped -- run bootstrap/access-summary.sh manually)"
 
 # The launcher's own copy: the two minted passwords in plaintext, 0600, on the
@@ -1222,6 +1231,6 @@ echo ""
 # need a cluster login the operator does not have yet.
 echo ""
 python3 "$(cd "${SCRIPT_DIR}/.." && pwd)/scripts/dfe-ops" access-summary \
-  --out "${DFE_ACCESS_SUMMARY_OUT:-.tmp/access-summary.md}" \
+  --out "${DFE_ACCESS_SUMMARY_OUT:-${REPO_ROOT}/.tmp/access-summary.md}" \
   --namespace "${DFE_NAMESPACE:-}" || \
   echo "  (login summary skipped -- run scripts/dfe-ops access-summary manually)"

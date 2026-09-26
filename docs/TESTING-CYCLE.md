@@ -22,7 +22,7 @@ on Compose):
 
 A dev/test deployment is ephemeral by design: create it, test it, destroy it,
 redeploy it in another mode, without asking anyone. The one exception is a
-resident reference deployment (ghostburner), pinned to a version and updated
+resident reference deployment, pinned to a version and updated
 only explicitly after an extended stable-release period.
 
 Each stage self-executes as its own `dfe-ops` subcommand, so the cycle and the
@@ -150,6 +150,7 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
   destroys by default, and when it was provisioned via `--from-terraform` the
   destroy stage also runs the IaC destroy (`teardown --with-terraform`), so the
   control plane and nodes die with the test, not just the DFE workloads on them.
+- **Local kind** (a throwaway cluster on the machine you run it from): `dfe-ops kind up --ref <ref> --mode single --env-file bootstrap/.env` creates the cluster on a docker network of its own, has the cluster CA sign each kubelet's serving certificate (kind's own carries no IP SAN, which metrics-server refuses), adds the StorageClass the `local-dfe` overlay asks for and two front-door addresses from that network for bootstrap's MetalLB, then runs the ref's OWN `stack-deploy` from a checkout of it, with Argo pinned to the resolved commit. `DFE_*` comes from the env files alone; DNS, an external deploy repo and CA persistence are forced off. On Linux the front door answers from the host; on Docker Desktop use the port-forwards `acceptance` and `ui` open. `kind status` reports health, and `kind down` removes the cluster, its network and `.tmp/kind/<name>`, then proves each gone.
 
 ## What the stages actually run
 
@@ -160,7 +161,7 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
 | `stack-deploy` | offline pin/drift/render preflight, then `bootstrap/bootstrap.sh` (Layer 0/1 + Argo profile sync at the pinned stack) | bounded readiness + the 2 default E2E tests (receiver->CH data path, self-monitoring OTel) |
 | `verify` | `bootstrap/run-all-smoke-tests.sh` | readiness, auth, data, KEDA, integration. The scale proof injects pressure through the shim twice: phase 1 takes a throwaway Deployment 1->2->1, phase 2 takes the real dfe-receiver above its own floor and back, and SKIPS where that app has no shim trigger -- the app charts ship `keda.pressure.enabled: true`, so phase 2 runs everywhere except the slim profile, which turns pressure off |
 | `acceptance` | `onboarding` drives the setup wizard and first console session in Chrome (`--console-only` on a deploy already set up); `flows` is the engine repo's live pytest suite over port-forwards; `source` is the section below; a suite needing a source the deployment already carries goes through the pytest passthrough | `all` runs onboarding FIRST and stops on it: a deployment nobody could have onboarded has failed whatever the data path then does. The wizard's screens come from the engine's own `auth/setup-status`, so a screen the deployment no longer asks for is a failure, not a variation |
-| `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then dfe-ui's Playwright specs tagged `@acceptance` over `--ui-url` or a port-forward | the key UI features on a credential that differs from the build default |
+| `ui` (opt-in: `--ui-repo`) | rotates the break-glass password, then every dfe-ui Playwright spec except those tagged `@docker-only`, over `--ui-url` or a port-forward, with the suite's time budgets raised for a deployed stack (`--test-timeout-ms` 120000, `--expect-timeout-ms` 30000, `--nav-timeout-ms` 30000) | the UI end to end on a credential that differs from the build default |
 | `teardown` | `bootstrap/destroy.sh` (`--with-terraform` also destroys IaC state) | leaves the cluster as preflight found it |
 | `refresh` (not a cycle stage) | the section above | the tracked ref landed and every tracked Application is Synced + Healthy, then bounded readiness + the full smoke suite |
 

@@ -103,12 +103,13 @@ spec:
             # what Argo reads. Only the dfe-engine chart has a gitops block; other
             # charts ignore these params.
             parameters:
-              # The registry every dfe-* image is pulled from. A chart left on
-              # common.yaml's empty default renders the image with no host and
-              # containerd resolves it to Docker Hub, which publishes no DFE
-              # image, so the pull is denied against the wrong registry.
+              # The registry every dfe-* image is pulled from. `index` returns an
+              # empty string for a missing annotation, and an empty parameter
+              # beats every values file, so a cluster secret written before this
+              # fact existed would send each image to Docker Hub. The render
+              # fails instead, which leaves every Application on its current spec.
               - name: global.registry
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/registry" }}'
+                value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
               - name: gitops.repoUrl
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
               - name: gitops.branch
