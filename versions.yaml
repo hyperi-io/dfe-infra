@@ -2187,7 +2187,6 @@ stacks:
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
       dfe-hyperdx: "v0.2.4"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f (shipped dashboards are read-only without the save-403 warning, plus Duplicate/Delete-with-tombstone/Restore; upstream 2.36.0); deployment tag pin lives in the deploy repo values
-      dfe-transform-elastic-catalogue: "v1.1.3"   # dfe-transform-elastic#18/#65 -- first release to carry sources.yaml as a release asset (344252 bytes, sha256:4b5f11631ab451ca3e09f775dc3308a57e1544226fb884a4bcd4f6ac920e2b82, verified via `gh release download`); wired into content.entries in the engine chart (dfe-infra#329)
 
     # Stage toolbox: the dfe-toolbox ops shell image family (docker/dfe-toolbox/),
     # NOT a component of the deployed stack -- an operator convenience

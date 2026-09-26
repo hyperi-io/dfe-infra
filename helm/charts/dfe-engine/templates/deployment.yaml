@@ -101,6 +101,23 @@ spec:
                   dst.write_bytes(r.read())
               print("content: fetched", dst)
               {{- end }}
+          {{- else if and (eq $entry.kind "emit") (eq ($entry.role | default "library") "catalogue") }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              dst="{{ $root }}/{{ $.Values.content.catalogueFile }}"
+              mkdir -p "{{ $root }}"
+              # An image that predates emit-catalogue exits non-zero; the engine
+              # still starts, and its catalogue API reports the file as missing.
+              if {{ $entry.app }} emit-catalogue > "$dst.tmp"; then
+                mv "$dst.tmp" "$dst"
+                echo "content: {{ $entry.app }} emitted its catalogue to $dst"
+              else
+                rm -f "$dst.tmp"
+                echo "content: {{ $entry.app }} emitted no catalogue; the engine reports it missing" >&2
+              fi
           {{- else if eq $entry.kind "emit" }}
           command:
             - /bin/sh

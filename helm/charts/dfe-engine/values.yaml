@@ -69,7 +69,9 @@ service:
 #   kind   the vehicle -- `image` copies files out of a pinned app image the
 #          deployment already has pull rights to; `asset` downloads a release
 #          asset over the engine image's python; `emit` runs the pinned app image
-#          so the app writes its own contract, which no image carries as a file
+#          so the app writes its own contract (role `contract`) or its own source
+#          catalogue (role `catalogue`), neither of which the image carries as a
+#          file
 #   ref    the pinned image (tag@sha256) for `image` and `emit`, the asset URL for
 #          `asset`
 #   role   where the files land, and so what reads them: `library` puts them under
@@ -83,9 +85,9 @@ service:
 #          asset, `to` is relative to the role's root. Absent for `emit`, where
 #          the app decides what it writes.
 #
-# The contract entries carry a second copy of the versions.yaml apps + digests
-# pins, so check_versions_drift.py reads both halves of each ref and --fix moves
-# them with the SSoT. A deployment mirroring images elsewhere overrides the ref.
+# The emit entries carry a second copy of the versions.yaml apps + digests pins,
+# so check_versions_drift.py reads both halves of each ref and --fix moves them
+# with the SSoT. A deployment mirroring images elsewhere overrides the ref.
 #
 # The two LIBRARY pins are still empty, and the pins in versions.yaml say why:
 # neither transform release carries its files as an asset, and neither Dockerfile
@@ -146,18 +148,16 @@ content:
       role: contract
       app: dfe-transform-elastic
       ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.4@sha256:ad85ba2d9665a4bb7c363de6ee9184bdb0c5b69bfd3965425ab02bf5636f899b"
-    # The source catalogue the settings API offers: v1.1.3 is the first
-    # dfe-transform-elastic release to carry sources.yaml as a release asset
-    # (dfe-transform-elastic#18/#65; content.dfe-transform-elastic-catalogue in
-    # versions.yaml). The ref is the release download root -- `files.from` is
-    # appended to it, matching every other release asset URL shape.
+    # The source catalogue the settings API offers, printed by the pinned image
+    # itself (`dfe-transform-elastic emit-catalogue`, dfe-transform-elastic#92)
+    # so the deployment needs no access to the app's repository. An image that
+    # predates the subcommand writes nothing, and the engine's catalogue API
+    # then reports the file missing rather than the pod failing to start.
     - name: dfe-transform-elastic-catalogue
-      kind: asset
-      ref: "https://github.com/hyperi-io/dfe-transform-elastic/releases/download/v1.1.3"
+      kind: emit
       role: catalogue
-      files:
-        - from: sources.yaml
-          to: sources.yaml
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.4@sha256:ad85ba2d9665a4bb7c363de6ee9184bdb0c5b69bfd3965425ab02bf5636f899b"
 
 config:
   mountPath: /config

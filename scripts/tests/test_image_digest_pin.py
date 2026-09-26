@@ -189,17 +189,23 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
             "initContainers"
         )
         or []
-        # Contract entries only -- a catalogue asset entry names a release URL,
-        # not an app pin, so it carries no apps/digests key for the loop below.
-        if c["name"].startswith(CONTENT_PREFIX) and c["name"].endswith("-contract")
+        # The emit entries -- each app's contract and the catalogue its image
+        # prints -- are the ones that run an app's own pin.
+        if c["name"].startswith(CONTENT_PREFIX) and c["name"].endswith(("-contract", "-catalogue"))
     }
+    contracts = [name for name in entries if name.endswith("-contract")]
     expect(
         "the chart mounts a contract for every app that carries a settings surface",
-        len(entries) == 7,
+        len(contracts) == 7,
+        f"{sorted(contracts)}",
+    )
+    expect(
+        "and the source catalogue the elastic image prints",
+        f"{CONTENT_PREFIX}dfe-transform-elastic-catalogue" in entries,
         f"{sorted(entries)}",
     )
     for name, image in sorted(entries.items()):
-        app = name[len(CONTENT_PREFIX) :].removesuffix("-contract")
+        app = name[len(CONTENT_PREFIX) :].removesuffix("-contract").removesuffix("-catalogue")
         want = f"{REGISTRY}/{app}:{apps[app]}@{digests[app]}"
         expect(
             f"{name} runs {app}'s own tag@sha256 from the SSoT",

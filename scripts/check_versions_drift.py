@@ -651,38 +651,36 @@ _CONTRACT_ENTRIES = [
 ]
 
 
-def contract_ref_pattern(app: str, half: str) -> str:
-    """One half of a content entry's `ref`, anchored on the entry's own app.
+# The source catalogue is emitted by an app image as well, so it is one more
+# copy of that app's pin -- a second entry for an app already in the list above.
+_CATALOGUE_ENTRIES = ["dfe-transform-elastic"]
+
+
+def content_ref_pattern(role: str, app: str, half: str) -> str:
+    """One half of a content entry's `ref`, anchored on the entry's role and app.
 
     Every ref sits in one file, so a bare `ref:` anchor would hand the first
-    entry's value to every check.
+    entry's value to every check. The role is part of the anchor because one app
+    can back two entries -- its contract and its catalogue -- and a check claims
+    its FIRST match only.
     """
-    head = r"app: " + re.escape(app) + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+    head = (
+        r"role: " + re.escape(role) + r"\n\s*app: " + re.escape(app)
+        + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+    )
     return head + (r"([^\"@]+)@" if half == "tag" else r"[^\"@]+@([^\"]+)\"")
 
 
 CHECKS += [
     Check(
-        f"{app} contract entry image {half}",
+        f"{app} {role} entry image {half}",
         f"{'apps' if half == 'tag' else 'digests'}.{app}",
         Path("helm/charts/dfe-engine/values.yaml"),
-        contract_ref_pattern(app, half),
+        content_ref_pattern(role, app, half),
     )
-    for app in _CONTRACT_ENTRIES
+    for role, apps in (("contract", _CONTRACT_ENTRIES), ("catalogue", _CATALOGUE_ENTRIES))
+    for app in apps
     for half in ("tag", "digest")
-]
-
-# The one `kind: asset` content entry live today: a release download URL with
-# the tag in its path, not a ghcr.io tag@digest, so contract_ref_pattern does
-# not fit it and there is no second, immutable half to check.
-CHECKS += [
-    Check(
-        "dfe-transform-elastic catalogue asset ref",
-        "content.dfe-transform-elastic-catalogue",
-        Path("helm/charts/dfe-engine/values.yaml"),
-        r"name: dfe-transform-elastic-catalogue\n\s*kind: asset\n\s*ref: "
-        r'"https://github\.com/hyperi-io/dfe-transform-elastic/releases/download/([^"]+)"',
-    ),
 ]
 
 # The hyperdx chart runs an init container on the ENGINE image to materialise the

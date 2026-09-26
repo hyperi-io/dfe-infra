@@ -369,7 +369,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -379,9 +379,6 @@ nodes:
       - kind: container
         registry: ghcr
         public: false
-        published: false
-    # Its versions.yaml pin is a placeholder, not a release tag, and it
-    # carries no digest, so the renderer excludes it from every manifest.
 
   # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
   # uncomment their versions.yaml pins and add them here when they ship. See

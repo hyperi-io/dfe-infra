@@ -289,6 +289,57 @@ def test_a_contract_entry_ref_is_visible_to_the_sweep() -> None:
         drift.CHECKS = original
 
 
+def test_fix_moves_both_entries_one_app_backs() -> None:
+    """The elastic image backs two entries, its contract and its catalogue.
+
+    Each is its own copy of the same app pin, so a bump that reached only the
+    first would leave the catalogue emitted by a release the deployment no
+    longer runs.
+    """
+    versions = dict(drift.load_versions())
+    digest = "sha256:" + "8" * 64
+    versions["apps.dfe-transform-elastic"] = "v1.9.99"
+    versions["digests.dfe-transform-elastic"] = digest
+
+    writes, _, refused = drift.plan_fix(versions)
+    expect("propagation refuses nothing on a plain app bump", refused == [], f"{refused}")
+    values = writes.get(Path("helm/charts/dfe-engine/values.yaml"), "")
+    new_ref = f'ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.9.99@{digest}"'
+    expect(
+        "the contract and the catalogue entry both carry the new tag@sha256",
+        values.count(new_ref) == 2,
+        f"{[line for line in values.splitlines() if 'dfe-transform-elastic:' in line]}",
+    )
+    catalogue = values.split("name: dfe-transform-elastic-catalogue", 1)[-1].split("\n\n", 1)[0]
+    expect("one of them is the catalogue entry", new_ref in catalogue, catalogue)
+
+
+def test_the_catalogue_entry_ref_is_visible_to_the_sweep() -> None:
+    """A second ref for an app already checked must not hide behind the first.
+
+    Each check claims its first match only, so without its own anchored check the
+    catalogue ref would be a pin nobody reads.
+    """
+    original = drift.CHECKS
+    try:
+        drift.CHECKS = [c for c in original if "catalogue entry" not in c.label]
+        unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p and "content ref" in p]
+        text = drift.read_source(Path("helm/charts/dfe-engine/values.yaml"))
+        line = text[: text.index("name: dfe-transform-elastic-catalogue")].count("\n") + 1
+        expect(
+            "the unchecked catalogue ref surfaces, and only that one",
+            len(unswept) == 1 and "dfe-engine/values.yaml" in unswept[0],
+            f"got {unswept}",
+        )
+        expect(
+            "at the catalogue entry, not the contract entry above it",
+            bool(unswept) and f"values.yaml:{line + 4} " in unswept[0],
+            f"entry at line {line}, got {unswept}",
+        )
+    finally:
+        drift.CHECKS = original
+
+
 def test_fix_refuses_rather_than_guessing() -> None:
     """A pattern that stopped matching means the file changed shape.
 
