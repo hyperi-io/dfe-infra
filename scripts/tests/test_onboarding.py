@@ -176,10 +176,10 @@ class _Page:
 
     def wait_for_url(self, predicate, **_):
         if not predicate(self.url):
-            raise _Timeout()
+            raise _StubTimeoutError()
 
 
-class _Timeout(Exception):
+class _StubTimeoutError(Exception):
     pass
 
 
@@ -203,7 +203,7 @@ class TestTheForcedChange:
     @pytest.fixture(autouse=True)
     def _no_browser(self, monkeypatch):
         stub = type(sys)("playwright.sync_api")
-        stub.TimeoutError = _Timeout
+        stub.TimeoutError = _StubTimeoutError
         monkeypatch.setitem(sys.modules, "playwright", type(sys)("playwright"))
         monkeypatch.setitem(sys.modules, "playwright.sync_api", stub)
 
