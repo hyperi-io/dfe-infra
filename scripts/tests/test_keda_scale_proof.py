@@ -176,7 +176,7 @@ def test_every_term_of_the_bound_is_a_knob() -> None:
 
 
 def test_the_proof_waits_for_the_stack_to_stop_rolling() -> None:
-    """A run started inside a roll is what missed the bound on dfe-b (#275)."""
+    """A run started inside a roll is what missed the bound on a live deploy (#275)."""
     rolling = ["dfe-loader 2 1 1 4 3"]
     out = run_proof({"rolling": [rolling, rolling, SETTLED], "ready": SCALED})
 

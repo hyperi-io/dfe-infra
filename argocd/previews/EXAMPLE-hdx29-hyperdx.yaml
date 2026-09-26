@@ -24,7 +24,7 @@ registry: harbor.example.com/dfe-preview            # global.registry (Harbor pr
 image: harbor.example.com/dfe-preview/hyperdx:hdx29-abc1234   # built preview image (repo:tag)
 
 # CONTEXT (not consumed by the appset -- operator intent, for humans):
-#   owner    derek         -- who to ping, GC owner on the shared cluster.
+#   owner    <handle>      -- who to ping, GC owner on the shared cluster.
 #   profile  preview-slim  -- single CH, Kafka off, no fetcher/transforms (light).
 #   The `image` tag is built + pushed by preview.sh (dfe-hyperdx @ the branch
 #   above). Rust apps (receiver/loader) stay :latest from Harbor `dfe`, and
@@ -33,4 +33,4 @@ image: harbor.example.com/dfe-preview/hyperdx:hdx29-abc1234   # built preview im
 # A MULTI-SERVICE preview = more files sharing the same <name>: add
 # hdx29-engine.yaml (service: engine, chart: dfe-engine, its own image) and both
 # land in namespace dfe-preview-hdx29. CONCURRENT previews = more <name>s:
-# dev-*.yaml (shared, tracks main), kaz-*.yaml, derek-*.yaml -- each its own ns.
+# dev-*.yaml (shared, tracks main), <handle>-*.yaml per developer -- each its own ns.

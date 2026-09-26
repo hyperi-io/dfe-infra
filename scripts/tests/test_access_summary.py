@@ -347,10 +347,10 @@ def test_the_gateway_falls_back_to_its_class() -> None:
 
 def test_the_seed_logins_are_still_listed() -> None:
     """The rest of the summary has to survive the endpoints rework."""
-    text = run_summary(seed_accounts=[{"username": "kaz", "groups": ["dfe_admin"]}])
+    text = run_summary(seed_accounts=[{"username": "alice", "groups": ["dfe_admin"]}])
     expect(
         "a configured seed account is printed with its groups",
-        "- `kaz`  groups=[dfe_admin]" in text,
+        "- `alice`  groups=[dfe_admin]" in text,
         text,
     )
     expect(

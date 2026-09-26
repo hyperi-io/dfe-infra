@@ -220,7 +220,7 @@ def test_bootstrap_installs_metallb_on_prem_only() -> None:
 
 
 def test_preflight_previews_metallb_off_the_same_list() -> None:
-    """Cluster B is local-dfe: a preview keyed on the literal 'local' warned where it installs."""
+    """An on-prem cluster is local-dfe: a preview keyed on 'local' warned where it installs."""
     for cloud in ("aws", "gcp", "azure"):
         expect(f"{cloud} programs its own LoadBalancers", dfeops._cloud_programs_loadbalancers(cloud))
     for cloud in ("local", "local-dfe", "example-onprem", "az", ""):

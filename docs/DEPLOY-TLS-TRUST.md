@@ -4,7 +4,7 @@ Which CA signed the gateway's `*.<domain>` certificate is a per-deployment
 choice, and the two modes ask different things of a developer box. One command
 says which is live, and the readiness gate and access summary print it too:
 
-    python3 scripts/dfe-ops ca --status --kubeconfig .tmp/kubeconfig-dfe-b
+    python3 scripts/dfe-ops ca --status --kubeconfig .tmp/dfe.kubeconfig
 
 Release and deploy helpers around this one live in
 [DEPLOY-HELPERS.md](DEPLOY-HELPERS.md).
