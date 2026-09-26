@@ -258,6 +258,9 @@ from tester_idp import add_idp_subparser  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
+# The post-deploy summary bootstrap/access-summary.sh writes: endpoints and fetch commands.
+ACCESS_OUT_FILENAME = "dfe-access.md"
+
 # bootstrap.sh's required env (validated up-front so a missing var fails the
 # driver before it touches the cluster, not mid-run). DFE_KAFKA_BOOTSTRAP is
 # intentionally omitted -- it is empty in the brokerless modes (gRPC transport).
@@ -2051,6 +2054,15 @@ def cmd_ca(args: argparse.Namespace) -> int:
 
 
 # --- ui subcommand (the dfe-ui Playwright acceptance specs over port-forwards) -
+# Playwright budgets for a deployed stack, which answers several times slower than
+# the docker stack the dfe-ui suite's own defaults were set against.
+UI_TEST_TIMEOUT_MS = 120_000
+UI_EXPECT_TIMEOUT_MS = 30_000
+UI_NAV_TIMEOUT_MS = 30_000
+# The dfe-ui tag on specs that need the docker stack's own daemon.
+UI_DOCKER_ONLY_TAG = "@docker-only"
+
+
 def _rotate_break_glass(engine_url: str, name: str, current: str) -> str:
     """Rotate the break-glass password through the product API; return the new one.
 
@@ -2156,9 +2168,17 @@ def cmd_ui(args: argparse.Namespace) -> int:
         "NEXT_PUBLIC_API_URL": engine_url,
         "E2E_ADMIN_PASSWORD": rotated,
         "E2E_BOOTSTRAP_PASSWORD": bootstrap,
+        "E2E_TEST_TIMEOUT_MS": str(args.test_timeout_ms),
+        "E2E_EXPECT_TIMEOUT_MS": str(args.expect_timeout_ms),
+        "E2E_NAV_TIMEOUT_MS": str(args.nav_timeout_ms),
         "CI": "1",
     })
-    cmd = ["yarn", "playwright", "test", "--grep", args.grep, *args.playwright_args]
+    cmd = ["yarn", "playwright", "test"]
+    if args.grep:
+        cmd += ["--grep", args.grep]
+    if args.grep_invert:
+        cmd += ["--grep-invert", args.grep_invert]
+    cmd += args.playwright_args
     done = subprocess.run(cmd, cwd=Path(args.ui_repo) / "apps" / "dfe-core-ui", env=env)
     stop.set()
     return done.returncode
@@ -2784,13 +2804,14 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     if args.kubeconfig:
         env["KUBECONFIG"] = args.kubeconfig
     env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
-    env["DFE_ACCESS_OUT"] = args.access_out
+    run_dir = access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode)
+    # Anchored to this repo's gitignored run directory, never the caller's cwd,
+    # which may be another repo's tracked tree.
+    env["DFE_ACCESS_OUT"] = args.access_out or str(run_dir / ACCESS_OUT_FILENAME)
     # The launcher's own copy: bootstrap.sh calls `dfe-ops access-summary --out`
     # with this, so a deploy started by hand or through the cycle writes the
     # same file to the same place.
-    env["DFE_ACCESS_SUMMARY_OUT"] = str(
-        access_summary_file.run_dir(REPO_ROOT, args.stack, args.mode) / access_summary_file.FILENAME
-    )
+    env["DFE_ACCESS_SUMMARY_OUT"] = str(run_dir / access_summary_file.FILENAME)
     if args.skip_e2e:
         env["DFE_SKIP_INTEGRATION_TESTS"] = "true"
     if args.dry_run:
@@ -2838,6 +2859,9 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     script = _require_script("bootstrap.sh")
     if script is None:
         return 1
+    access_out = Path(env["DFE_ACCESS_OUT"])
+    # access-summary.sh writes through tee, which creates no parent directory.
+    access_out.parent.mkdir(parents=True, exist_ok=True)
 
     print("", file=sys.stderr)
     print("=== stack-deploy ===", file=sys.stderr)
@@ -2887,11 +2911,11 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     )
     if not args.skip_e2e:
         print("  Two default E2E tests passed (receiver->CH data path + self-monitoring OTel).", file=sys.stderr)
-    if Path(args.access_out).is_file():
-        print(f"  Access summary written to: {args.access_out}", file=sys.stderr)
+    if access_out.is_file():
+        print(f"  Access summary written to: {access_out}", file=sys.stderr)
     else:
         print(
-            f"  Access summary NOT written to {args.access_out}: bootstrap/access-summary.sh "
+            f"  Access summary NOT written to {access_out}: bootstrap/access-summary.sh "
             "did not run (see above)",
             file=sys.stderr,
         )
@@ -3149,7 +3173,9 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--registry", default=None,
                     help=f"image registry prefix (passthrough to dfe-stack); unset keeps an env "
                          f"file's own DFE_REGISTRY, then {DEFAULT_REGISTRY}")
-    sd.add_argument("--access-out", default="dfe-access.md", help="where the post-deploy access summary is written")
+    sd.add_argument("--access-out", default="",
+                    help=f"where the post-deploy access summary is written (default: "
+                         f".tmp/<stack>-<mode>/{ACCESS_OUT_FILENAME} in this repo, gitignored)")
     sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
     sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
     sd.add_argument("--check-only", action="store_true", help="run only the offline pre-flight, then stop (no cluster changes)")
@@ -3390,8 +3416,8 @@ def build_parser() -> argparse.ArgumentParser:
         "ui",
         help="run the dfe-ui Playwright acceptance specs against a deployed stack",
         description="Beside `acceptance`, which proves the data path. This rotates the "
-                    "break-glass password, then drives the UI with the dfe-ui suite's "
-                    "acceptance-tagged specs.",
+                    "break-glass password, then drives the UI with every dfe-ui spec "
+                    "except the docker-only ones, on time budgets sized for a deployed stack.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ui.add_argument("--env-file", action="append", default=[], metavar="PATH",
@@ -3409,8 +3435,17 @@ def build_parser() -> argparse.ArgumentParser:
     ui_repo = _sibling_repo("dfe-ui", "DFE_UI_REPO")
     ui.add_argument("--ui-repo", default=ui_repo, required=ui_repo is None,
                     help="dfe-ui checkout the suite runs from (default: $DFE_UI_REPO, else the dfe-ui checkout beside this repo; required when there is neither)")
-    ui.add_argument("--grep", default="@acceptance", help="Playwright --grep selecting the acceptance-tier specs")
+    ui.add_argument("--grep", default="", help="Playwright --grep: run only the specs matching it (default: every spec)")
+    ui.add_argument("--grep-invert", default=UI_DOCKER_ONLY_TAG,
+                    help="Playwright --grep-invert: skip the specs matching it; the default skips the "
+                         "specs that shell out to a docker daemon this lane does not have")
     ui.add_argument("--no-rotate", action="store_true", help="skip the break-glass rotation (the run then proves less)")
+    ui.add_argument("--test-timeout-ms", type=int, default=UI_TEST_TIMEOUT_MS,
+                    help="per-test budget, beforeEach seeding included (E2E_TEST_TIMEOUT_MS)")
+    ui.add_argument("--expect-timeout-ms", type=int, default=UI_EXPECT_TIMEOUT_MS,
+                    help="per-assertion budget, the post-login landing included (E2E_EXPECT_TIMEOUT_MS)")
+    ui.add_argument("--nav-timeout-ms", type=int, default=UI_NAV_TIMEOUT_MS,
+                    help="per-navigation budget for page.goto and waitForURL (E2E_NAV_TIMEOUT_MS)")
     ui.add_argument("playwright_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to playwright test")
     ui.set_defaults(func=cmd_ui)
