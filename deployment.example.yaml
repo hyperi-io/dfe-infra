@@ -8,8 +8,7 @@
 
 ## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. This is the
 ## CANONICAL SUPERSET: it spans every substrate (docker-vm + k8s) and every cloud,
-## and it is the persisted, wizard-populatable form of the DeployContext (the
-## LOCKED schema in docs/plans/2026-07-08-branch-preview-cycle.md). The chain is
+## and it is the persisted, wizard-populatable form of the DeployContext. The chain is
 ##
 ##     dial  ->  DeployContext  ->  deploy(context)  ->  running stack
 ##

@@ -21,10 +21,7 @@ Endpoints come from env (defaults match the laptop port-forward layout):
     kubectl -n dfe-local port-forward svc/dfe-ui 13001:3000
     kubectl -n dfe-local port-forward svc/dfe-engine 18000:8000
 
-The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD`
-(and `E2E_OIDC_PROVIDER` when the provider is not named dex). Fetch it with
-the identity fixture's devpack (`fetch-secrets.sh` in the infrastructure
-repository's dfe-oidc-testing subproject) -- never commit it.
+The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD` (and `E2E_OIDC_PROVIDER` when the provider is not named dex). `dfe-ops idp deploy` writes it as `TESTER_IDP_USER_PASSWORD` in its `--secrets-out` file ([`docs/AUTH-TESTING.md`](../../docs/AUTH-TESTING.md)) -- never commit it.
 
 The tenancy project talks to ClickHouse directly: `E2E_CH_URL` (default
 localhost:18124 over a port-forward) and `E2E_CH_CREDS_JSON`, a
@@ -41,9 +38,7 @@ One harness, one Playwright project per deployed app, specs under
 
 - `harness/env.ts` -- every endpoint, env-driven; the config and all helpers
   read from here.
-- `harness/users.ts` -- the identities the suite acts as. Grows into the
-  shared 12-user OIDC fixture (docs/AUTH-TESTING.md) and the per-role
-  capability truth table the RBA specs assert against.
+- `harness/users.ts` -- the identities the suite acts as. Grows into the OIDC fixture identities (docs/AUTH-TESTING.md) and the per-role capability truth table the RBA specs assert against.
 - `harness/auth.ts` -- login strategies. Today: hyperdx local email/password
   (register-or-login). Next: the dex redirect flow, same shape.
 - `harness/fixtures.ts` -- extended `test` with `hyperdxPage`: a page already

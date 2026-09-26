@@ -76,11 +76,7 @@ work is dfe-infra#146 and is not closed by the trigger choice above.
 | GCP GKE | **GKE Node Auto-Provisioning** (native) | No native Karpenter on GCP -- do not plan for it. |
 | Multi-cloud / mixed | **cluster-autoscaler** | The portable fallback; runs everywhere. |
 
-Rationale, the general rule this instantiates (any target-conditional
-component is a documented fork, chart stays neutral, name the portable
-fallback), and the Karpenter guard-rail examples live in the HyperI k8s
-standard (`standards/infrastructure/k8s.md`, "Node Autoscaling") -- this file
-records only what THIS repo deploys per target.
+The table follows one rule, which covers every component whose best implementation differs by target (node autoscaler, gateway controller, secret store, load balancer, storage class): state the choice per target, keep the chart neutral with the choice in values or the target overlay, and name the portable fallback -- here cluster-autoscaler -- so no target is stranded.
 
 ## Where the choice lives
 
