@@ -247,6 +247,10 @@ def test_the_topic_configs_are_the_derived_ones() -> None:
     expect("the size chain reaches every topic",
            all("--config max.message.bytes=16777216" in ln for ln in creates.values()),
            f"got {list(creates.values())}")
+    expect("every topic pins compression.type=producer, so a customer's broker "
+           "default can never recompress it",
+           all("--config compression.type=producer" in ln for ln in creates.values()),
+           f"got {list(creates.values())}")
     expect("the landing topic carries the 24h data retention",
            "--config retention.ms=86400000" in creates["main_land"], creates["main_land"])
     expect("a DLQ topic carries the 7d DLQ retention",

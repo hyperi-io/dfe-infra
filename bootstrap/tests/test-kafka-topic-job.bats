@@ -63,6 +63,23 @@ setup() {
     [[ ! "$output" =~ "dfe-kafka-bootstrap-topics" ]]
 }
 
+@test "every topic gets an explicit topic-level compression.type=producer" {
+    run helm template test "${REPO_ROOT}/helm/charts/kafka/" "${SINGLE[@]}"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--config compression.type=producer" ]]
+    # Landing topic plus five DLQ topics -- six --create calls, six configs.
+    compression_count=$(grep -o -- "--config compression.type=producer" <<< "$output" | wc -l)
+    [ "$compression_count" -eq 6 ]
+}
+
+@test "the cluster tier's Strimzi CRs also carry compression.type=producer" {
+    run helm template test "${REPO_ROOT}/helm/charts/kafka/" \
+        --set kafka.mode=cluster --set appNamespace=dfe-local
+    [ "$status" -eq 0 ]
+    compression_count=$(grep -c "compression.type: producer" <<< "$output")
+    [ "$compression_count" -eq 6 ]
+}
+
 @test "the single tier renders no Strimzi CR -- nothing would reconcile it" {
     run helm template test "${REPO_ROOT}/helm/charts/kafka/" "${SINGLE[@]}"
     [ "$status" -eq 0 ]

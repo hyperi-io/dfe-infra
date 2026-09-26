@@ -285,10 +285,15 @@ Usage:
 {{- define "dfe-kafka.bootstrapTopics" -}}
 {{- $out := list -}}
 {{/* max.message.bytes is the topic end of the size chain -- a topic left at the
-     broker default rejects the very event the broker was raised to accept. */}}
+     broker default rejects the very event the broker was raised to accept.
+     compression.type=producer is set per topic, not just at the broker,
+     so a customer cluster with a different broker default can never make
+     the broker recompress what the producer already compressed. Redpanda
+     ignores the property, so this is a no-op there rather than a break. */}}
 {{- $landingConfig := dict
       "max.message.bytes" (include "dfe-kafka.messageMaxBytes" .)
-      "retention.ms" (include "dfe-kafka.retentionMs" .) -}}
+      "retention.ms" (include "dfe-kafka.retentionMs" .)
+      "compression.type" "producer" -}}
 {{/* Tiered storage is per-topic as well as per-broker: without
      remote.storage.enable the brokers hold the plugin and move nothing. Only
      the landing topic gets it -- a DLQ is small and read by a human. */}}
@@ -315,9 +320,12 @@ Usage:
 {{- end -}}
 {{- end -}}
 {{- if .Values.kafka.dlqTopics.create -}}
+{{/* compression.type=producer here too -- an explicit kafka.dlqTopics.config
+     entry still wins, since it is the destination in this merge. */}}
 {{- $dlqConfig := merge (deepCopy (.Values.kafka.dlqTopics.config | default (dict))) (dict
       "max.message.bytes" (include "dfe-kafka.messageMaxBytes" .)
-      "retention.ms" (include "dfe-kafka.dlqRetentionMs" .)) -}}
+      "retention.ms" (include "dfe-kafka.dlqRetentionMs" .)
+      "compression.type" "producer") -}}
 {{- range .Values.kafka.dlqTopics.names -}}
 {{- $out = append $out (dict
       "name" .
