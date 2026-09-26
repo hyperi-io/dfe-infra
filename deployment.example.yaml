@@ -28,9 +28,9 @@
 ##     dial just feeds it.
 ##
 ## SECRETS ARE REFERENCES, never values (a bao path + field, resolved at deploy).
-## ESTATE ENDPOINTS stay BLANK in this committed template -- hyperi-infra's thin
-## caller injects them from OpenBao at deploy time, or an operator fills them by
-## hand in the copied deployment.yaml. This file ships publicly, so it must never
+## ESTATE ENDPOINTS stay BLANK in this committed template -- the operator's own
+## tooling injects them from the deployment's secrets backend at deploy time, or
+## an operator fills them by hand in the copied deployment.yaml. This file ships publicly, so it must never
 ## carry a real domain, host, cluster address, or credential.
 ##
 ## Copy to deployment.yaml (gitignored) and populate.
@@ -57,7 +57,7 @@ metadata:
 
 ## WHERE it lands. Exactly one of existing | provision (steps.provision gates it).
 ## The committed default is `existing` -- deploy ONTO a cluster you already have
-## (preview, BYO-prod, devex). `provision` runs OpenTofu to create the cluster
+## (preview, BYO-prod, a shared dev cluster). `provision` runs OpenTofu to create the cluster
 ## first (marketplace / greenfield); see the AWS worked example under `cloud:`.
 target:
   existing:
@@ -743,8 +743,8 @@ k8s:
 #   config_storage: s3
 #   # secrets.backend: aws-sm    # AWS Secrets Manager via ESO instead of OpenBao
 
-## ENDPOINTS -- estate-specific, BLANK in the committed template. Injected by
-## hyperi-infra's thin caller from OpenBao at deploy time, or set by hand. Left
+## ENDPOINTS -- estate-specific, BLANK in the committed template. Injected by the
+## operator's own tooling from the secrets backend at deploy time, or set by hand. Left
 ## empty, the in-cluster service DNS defaults in argocd/values/common.yaml apply.
 endpoints:
   clickhouse_host: ""        # DFE_CLICKHOUSE_HOST

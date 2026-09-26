@@ -119,7 +119,7 @@ The API follows **v1 versioned REST** at `/api/v1/`. OpenAPI spec at `openapi-sp
 
 The `DFESettings` Pydantic model contains 15 nested settings groups.
 
-**Config directory** (`config/` submodule = `dfe-devex` repo):
+**Config directory** (`config/` submodule = the deployment's config repo):
 ```
 config/
   environments/    -- EnvironmentConfig YAML
@@ -276,7 +276,7 @@ config/
 
 ### 5.2 Shared Configuration
 
-- **Config repo** (`dfe-devex` submodule at `config/`): Shared between engine and Rust services
+- **Config repo** (a submodule at `config/`): Shared between engine and Rust services
 - **Environment config** (`environments/*.yaml`): Single YAML per deployment environment
 - **Secrets strategy:** YAML files never contain secrets inline; K8s Secrets referenced by name
 

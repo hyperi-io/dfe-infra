@@ -1,9 +1,9 @@
-# Build, test and cleanup on devex
+# Build, test and clean up on an on-prem cluster
 
-How to build, test, deploy and cleanly tear down dfe-infra on the on-prem
-**devex** environment (hypervisor-hosted RKE2 + Rancher, CoreDNS, OpenBao). For the
-platform-side contract -- what devex provides and what it expects cleaned up --
-see `hyperi-io/hyperi-infra:docs/DFE-INFRA-ON-DEVEX.md`.
+How to build, test, deploy and cleanly tear down dfe-infra on an on-prem RKE2 +
+Rancher cluster, with CoreDNS and OpenBao beside it, through the `local` cloud
+target. The repeatable create -> test -> destroy loop over the same scripts is
+[TESTING-CYCLE.md](../TESTING-CYCLE.md).
 
 ## Model: two layers
 
@@ -23,7 +23,13 @@ All component versions come from `versions.yaml` (the SSoT).
 
 ## Prerequisites
 
-- A kubeconfig for the devex RKE2 cluster -- `kubectl get nodes` works.
+- A kubeconfig for the target RKE2 cluster -- `kubectl get nodes` works.
+- Nodes for DFE to run on, labelled `dfe.hyperi.io/workload=dfe`. The `local`
+  overlay (`argocd/values/local.yaml`) pins DFE to them with a hard nodeSelector
+  and tolerates a matching `NoSchedule` taint, so a pool tainted at provisioning
+  keeps other workloads off it. Bootstrap labels every node on this target
+  (`DFE_LABEL_WORKLOAD_NODES`, default `true` for `local`); on a shared cluster,
+  label the DFE nodes yourself and set it to `false`.
 - An OpenBao token for your Vault/OpenBao (e.g. `bao.example.com`; Terraform uses it).
 - Registry pull credentials: copy `bootstrap/local.env.example` to
   `bootstrap/local.env` and fill it in.
@@ -50,7 +56,7 @@ terraform -chdir=terraform/modules/<module> test
 DFE service images themselves are built per-service (via hyperi-ci), not here --
 dfe-infra ships the Helm charts that deploy them.
 
-## Deploy to devex
+## Deploy
 
 Integrated path:
 
@@ -95,6 +101,11 @@ Smoke tests check namespaces, pod readiness, CRDs, and Gateway/HTTPRoute/network
 policies against the live cluster. Note: there is no isolated integration-test
 namespace today -- smoke tests validate the running deployment.
 
+Argo `Healthy` and a pod's `Running` are not proof: a Running pod can be 0/1
+ready, and an app can report Healthy while a workload crashloops. Gate on
+`bootstrap/smoke-test-readiness.sh` plus `kubectl wait --for=condition=Ready` on
+the operator's own condition. A timeout is a backstop, never the thing you race.
+
 ## DNS and ingress
 
 ```mermaid
@@ -109,8 +120,7 @@ flowchart LR
 Service hostnames are served by HTTPRoutes (Envoy Gateway,
 `helm/edge/gateway/`) under the deployment's `*.apps.<your-domain>`
 wildcard; cert-manager issues the TLS. A service needing a name outside the
-wildcard requires a CoreDNS record added in hyperi-infra
-(`hyperi-io/hyperi-infra:infra/coredns/zones/`).
+wildcard needs its own record in whatever DNS serves the deployment's domain.
 
 ## Cleanup / teardown
 
@@ -129,7 +139,7 @@ flowchart LR
 3. **Manual sweep** (not yet automated -- checklist):
    - [ ] `kubectl get pv` -- confirm local-path PVs were reclaimed.
    - [ ] Clear stuck finalizers (CNPG / Strimzi / ClickHouse) if deletion hangs.
-   - [ ] Remove any non-wildcard CoreDNS records added in hyperi-infra.
+   - [ ] Remove any non-wildcard DNS records added for the deployment.
    - [ ] Remove DFE node taints/labels so future scheduling is not blocked.
    - [ ] Confirm no orphaned OpenBao paths remain.
 
@@ -141,8 +151,8 @@ Redeploy with `terraform apply` + `bridge.py` again.
 - **App stuck OutOfSync** -- `kubectl -n argocd get app`; check ESO / SecretStore health.
 - **Route not serving** -- is the Gateway/HTTPRoute programmed and the cert issued?
 - **Teardown hangs** -- clear CRD finalizers (`kubectl patch ... --type merge -p '{"metadata":{"finalizers":[]}}'`).
-
-## See also
-
-- `hyperi-io/hyperi-infra:docs/DFE-INFRA-ON-DEVEX.md` -- the platform-side contract
-- `hyperi-io/hyperi-infra:docs/ARCHITECTURE.md`, `ENVIRONMENTS.md`, `DNS-ARCHITECTURE.md`, `OPENBAO-SECRETS.md`
+- **DFE pods Pending on node affinity/selector** -- the DFE nodes lack the
+  `dfe.hyperi.io/workload=dfe` label, or are gone. Label or restore them rather
+  than removing the selector, which puts DFE on nodes it does not own.
+  `dfe-ops preflight --require-label dfe.hyperi.io/workload=dfe` catches a missing
+  label before a deploy.

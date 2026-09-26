@@ -87,7 +87,7 @@ NODE SCALING (capacity autoscaling)
 - On-prem: Cluster API (CAPI) + the community CAPI infrastructure provider for the on-prem hypervisor. Autoscaler watches pending pods → provisions VMs via the hypervisor API → cloud-init → RKE2 join. ~2 min.
 - AWS: Karpenter (preserved from dfe-core 2.1)
 - GCP/Azure: native node autoscalers
-- DevEx (now): fixed 3 nodes, overprovisioned (72 cores, 192GB). No autoscaling until production.
+- The dev cluster (now): fixed 3 nodes, overprovisioned (72 cores, 192GB). No autoscaling until production.
 - New TF module: tf-node-autoscaler (CAPI for on-prem, Karpenter for AWS)
 
 

@@ -183,6 +183,8 @@ versionCheck:
   pod, and the on-demand AWS bastion: off by default, read-only Kubernetes API
   access, and what each surface records
 - [rke2.md](rke2.md) - the default distribution
+- [on-prem.md](on-prem.md) - build, deploy, test and tear down on an on-prem
+  cluster through the `local` target
 - [aws.md](aws.md) - deploying on AWS: EKS, Karpenter, sizing, and the
   MSK/Confluent/Redpanda Kafka and ClickHouse choices
 - [aws-operations.md](aws-operations.md) - running and tearing down a

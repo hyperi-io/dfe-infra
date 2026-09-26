@@ -25,8 +25,7 @@
 #    `client-secret` (clientSecretName below).
 # 3. The dfe-infra groups the RBAC subjects reference must be REAL group claims
 #    the IdP emits: dfe-infra, dfe-admins (full admin) and dfe-infra-viewers
-#    (read-only). The staged OIDC test fixture emits exactly these - see
-#    hyperi-infra subprojects/dfe-oidc-testing/fixture.yaml.
+#    (read-only). An OIDC test fixture for this overlay must emit exactly these.
 # 4. Cluster B has NO working L7 gateway yet (the Envoy Gateway controller is
 #    unwired - see dfe-infra bootstrap). Exposing kafbat at a hostname needs the
 #    gateway stood up first, OR reach it via `kubectl -n kafka port-forward`.

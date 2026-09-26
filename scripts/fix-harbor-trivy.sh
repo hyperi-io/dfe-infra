@@ -11,7 +11,7 @@
 # This script offers the reliable fix (init-container chown) and prints the
 # alternatives. Review before running.
 set -euo pipefail
-CTX="${KUBE_CONTEXT:-devex}"
+CTX="${KUBE_CONTEXT:?set KUBE_CONTEXT to the kubeconfig context of the cluster running Harbor}"
 NS=harbor
 
 echo "== current trivy state =="
