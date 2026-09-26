@@ -679,7 +679,7 @@ steps:
 ## empty means the deployment's own <project>/<env> path with nothing above it.
 secrets:
   backend: openbao           # file | openbao | eso | aws-sm | gcp-sm | azure-kv
-  ref: kv/services           # base path; the value (which path) is estate context
+  ref: ""                    # base path; estate context, blank in the template
 
 ## OVERLAY -- optional private-context ref (fleet-scale ops, per-env config repo).
 ## Blank in the committed template; its value points at a private repo.

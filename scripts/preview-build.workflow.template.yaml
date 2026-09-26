@@ -8,7 +8,7 @@
 # Kept as a .template here (not under .github/workflows/) so it is authored now and
 # copied in the morning; it does NOT need main to be free.
 #
-# Secrets (from OpenBao kv/services/harbor -> repo/org secrets):
+# Secrets (from the registry's robot account in your secret store -> repo/org secrets):
 #   HARBOR_ROBOT_USER / HARBOR_ROBOT_TOKEN  (the dfe-preview robot)
 # Vars:
 #   HARBOR_HOST=harbor.example.com   PREVIEW_PROJECT=dfe-preview

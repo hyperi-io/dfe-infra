@@ -197,7 +197,7 @@ config/
 ### 3.1 Requirements
 - **Python 3.12+**, package manager: **uv**, build system: **hatchling**
 - Container: `python:3.12-slim`, multi-arch (amd64, arm64), non-root user
-- Registry: Harbor (`harbor.hyperi.io/dfe/dfe-engine`)
+- Registry: a self-hosted Harbor (`<registry>/dfe/dfe-engine`)
 
 ### 3.2 External Services
 | Service | Required For |

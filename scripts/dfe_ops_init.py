@@ -861,7 +861,7 @@ def build_dial_text(a: Answers) -> str:
             '  smoke: "true"\n\n',
             "secrets:\n",
             "  backend: openbao\n",
-            "  ref: kv/services\n\n",
+            '  ref: ""\n\n',
             'overlay: ""\n\n',
             "retention:\n",
             "  default_ttl_days: 90\n\n",

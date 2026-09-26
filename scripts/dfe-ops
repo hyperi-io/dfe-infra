@@ -122,7 +122,8 @@ Subcommands:
 Examples (addresses are RFC 5737 documentation IPs, never a real estate's --
 this file is committed publicly, so substitute your own node):
     # Pull a cluster's kubeconfig from one of its server nodes to a local file:
-    python3 scripts/dfe-ops kubeconfig --node 192.0.2.10 --out .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops kubeconfig --node 192.0.2.10 --vault-path kv/example/ssh \
+        --out .tmp/dfe.kubeconfig
 
     # Probe an endpoint (prints the status line then the body):
     python3 scripts/dfe-ops probe GET http://localhost:8000/readyz
@@ -134,7 +135,7 @@ this file is committed publicly, so substitute your own node):
     # Offline-only: validate stack + mode render before touching a cluster:
     python3 scripts/dfe-ops stack-deploy --stack 2.2.0-rc.1 --mode single --check-only
 
-    # Deploy stack 2.2.0-rc.1 in single mode onto the existing dfe-k8s cluster,
+    # Deploy stack 2.2.0-rc.1 in single mode onto an existing cluster,
     # secrets from a terraform env dir, then run the two default E2E tests:
     python3 scripts/dfe-ops stack-deploy --stack 2.2.0-rc.1 --mode single \
         --kubeconfig .tmp/dfe.kubeconfig --from-terraform terraform/environments/local
@@ -307,7 +308,6 @@ _PREFLIGHT_APPS = ("dfe-receiver", "dfe-loader", "dfe-engine")
 
 # --- kubeconfig defaults -----------------------------------------------------
 DEFAULT_USER = "ubuntu"
-DEFAULT_VAULT_PATH = "kv/infrastructure/ssh"
 DEFAULT_VAULT_FIELD = "private_key_b64"
 DEFAULT_REMOTE_PATH = "/etc/rancher/rke2/rke2.yaml"
 DEFAULT_VAULT_CMD = "bao"
@@ -3081,7 +3081,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     kc.add_argument("--node", required=True, help="node host/IP to SSH to (the API server node)")
     kc.add_argument("--user", default=DEFAULT_USER, help="SSH user")
-    kc.add_argument("--vault-path", default=DEFAULT_VAULT_PATH, help="Vault/OpenBao kv path of the SSH key")
+    kc.add_argument("--vault-path", required=True, help="Vault/OpenBao kv path of the SSH key")
     kc.add_argument("--vault-field", default=DEFAULT_VAULT_FIELD, help="field holding the base64 private key")
     kc.add_argument("--vault-cmd", default=DEFAULT_VAULT_CMD, help="secrets CLI: bao or vault")
     kc.add_argument("--remote-path", default=DEFAULT_REMOTE_PATH, help="kubeconfig path on the node")
