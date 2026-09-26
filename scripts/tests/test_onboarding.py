@@ -139,6 +139,92 @@ class TestHowAFieldIsFound:
             assert not pattern.match(neighbour), neighbour
 
 
+class _Control:
+    def __init__(self, page, label=""):
+        self._page, self._label = page, label
+
+    def count(self):
+        return 0
+
+    def wait_for(self, **_):
+        pass
+
+    def fill(self, value):
+        self._page.filled[self._label] = value
+
+    def click(self, **_):
+        self._page.clicked(self._label)
+
+
+class _Page:
+    """A console that lands each password on a scripted URL, or keeps it on the form."""
+
+    def __init__(self, ui, landings):
+        self.ui, self.landings, self.url, self.filled = ui, landings, f"{ui}/login", {}
+
+    def goto(self, url, **_):
+        self.url = url
+
+    def get_by_role(self, _role, **_):
+        return _Control(self)
+
+    def clicked(self, label):
+        if label == "Login":
+            self.url = f"{self.ui}{self.landings.get(self.filled['Password'], '/login')}"
+        elif label == "Set password":
+            self.url = f"{self.ui}/setup"
+
+    def wait_for_url(self, predicate, **_):
+        if not predicate(self.url):
+            raise _Timeout()
+
+
+class _Timeout(Exception):
+    pass
+
+
+class _Driver:
+    def __init__(self, landings):
+        self.ui = "https://dfe.example"
+        self.page = _Page(self.ui, landings)
+        self.records = []
+
+    def textbox(self, *names):
+        return _Control(self.page, names[0])
+
+    def button(self, *names):
+        return _Control(self.page, names[0])
+
+    def record(self, *row):
+        self.records.append(row)
+
+
+class TestTheForcedChange:
+    @pytest.fixture(autouse=True)
+    def _no_browser(self, monkeypatch):
+        stub = type(sys)("playwright.sync_api")
+        stub.TimeoutError = _Timeout
+        monkeypatch.setitem(sys.modules, "playwright", type(sys)("playwright"))
+        monkeypatch.setitem(sys.modules, "playwright.sync_api", stub)
+
+    def test_the_issued_password_leads_to_the_change(self):
+        driver = _Driver({"issued": onboarding_run.CHANGE_PASSWORD_PATH})
+
+        assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+        assert driver.page.filled["New Password"] == "chosen"
+
+    def test_an_issued_password_let_straight_in_fails_the_run(self):
+        driver = _Driver({"issued": "/setup"})
+
+        with pytest.raises(wizard.OnboardingError, match="without the forced change"):
+            onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen")
+
+    def test_a_password_already_changed_signs_straight_in(self):
+        driver = _Driver({"chosen": "/sources"})
+
+        assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+
+
 class TestTheRunsVerdict:
     def test_any_failed_step_fails_the_run(self):
         results = [

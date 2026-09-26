@@ -155,7 +155,7 @@ def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str
 
     Raises:
         wizard.OnboardingError: The console demands a change and no new password
-            was given.
+            was given, or it accepted the issued password without demanding one.
         playwright.sync_api.TimeoutError: The console refused every password
             the run holds.
     """
@@ -172,6 +172,10 @@ def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str
         driver.page.wait_for_url(_left_login, timeout=STEP_TIMEOUT_MS)
         return new_password
     if CHANGE_PASSWORD_PATH not in driver.page.url:
+        if new_password and password != new_password:
+            raise wizard.OnboardingError(
+                f"the console let '{user}' in on its issued password without the forced change"
+            )
         return password
     if not new_password:
         raise wizard.OnboardingError(
