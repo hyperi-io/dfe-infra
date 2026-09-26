@@ -30,9 +30,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# The zone the estate is served from, the hosts addressed by nickname, and the
-# two private ranges it numbers. Each is matched case-insensitively, so a
-# capitalised product or heading is caught alongside a hostname.
+# The zone the estate is served from, the hosts and deployments addressed by
+# nickname, and the two private ranges it numbers. Each is matched
+# case-insensitively, so a capitalised product or heading is caught alongside a
+# hostname.
 INTERNAL = re.compile(
     r"devex\.hyperi\.io"
     r"|tyrell"
@@ -41,6 +42,7 @@ INTERNAL = re.compile(
     r"|10\.1\.2\."
     r"|dragonfly"
     r"|desktop-derek"
+    r"|ghostburner"
     r"|proxmox",
     re.IGNORECASE,
 )
@@ -98,5 +100,11 @@ def test_no_tracked_file_names_the_internal_estate() -> None:
 
 def test_the_sweep_would_catch_a_leak() -> None:
     """The guard is worth nothing if the pattern never matches, so prove it does."""
-    for sample in ("k8s-1.devex.hyperi.io", "10.66.0.200", "Proxmox VE", "dragonfly"):
+    for sample in (
+        "k8s-1.devex.hyperi.io",
+        "10.66.0.200",
+        "Proxmox VE",
+        "dragonfly",
+        "ghostburner",
+    ):
         assert INTERNAL.search(sample), sample

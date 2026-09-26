@@ -370,7 +370,7 @@ ArgoCD takes over:
 ### 4.2 What's Fragile or Problematic
 
 1. **Subnet CIDR calculation duplication** -- Same `cidrsubnet()` in 3 modules
-2. **Hardcoded values in GitOps** -- `region: ap-southeast-2`, `cluster.name: ghostburner` in YAML files
+2. **Hardcoded values in GitOps** -- `region: ap-southeast-2`, a literal `cluster.name` in YAML files
 3. **Terraform backend on JFrog** -- Unusual, creates Artifactory dependency for state
 4. **Lambda always re-runs** -- `timestamp()` in hash breaks idempotency
 5. **OAuth2 proxy uses Redis** -- Should become Valkey

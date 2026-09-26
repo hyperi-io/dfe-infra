@@ -22,7 +22,7 @@ on Compose):
 
 A dev/test deployment is ephemeral by design: create it, test it, destroy it,
 redeploy it in another mode, without asking anyone. The one exception is a
-resident reference deployment (ghostburner), pinned to a version and updated
+resident reference deployment, pinned to a version and updated
 only explicitly after an extended stable-release period.
 
 Each stage self-executes as its own `dfe-ops` subcommand, so the cycle and the
