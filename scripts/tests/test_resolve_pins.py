@@ -27,6 +27,7 @@ from __future__ import annotations
 import datetime
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -358,6 +359,49 @@ def test_ad_hoc_write_refuses_tag_mismatch(monkeypatch, tmp_path):
     assert rc == 1  # refused -> use bump-app first
 
 
+# --- registry token from an env file ------------------------------------------
+_FILE_TOKEN = "ghp_fromtheenvfile"
+
+
+def test_pin_takes_repeatable_env_files():
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    resolve_pins.add_pin_subparser(ap.add_subparsers(dest="command"))
+    args = ap.parse_args(["pin", "--env-file", "a.env", "--env-file", "b.env"])
+    assert args.env_file == ["a.env", "b.env"]
+
+
+def test_the_env_file_token_reaches_the_registry_and_is_never_printed(
+    monkeypatch, tmp_path, capsys
+):
+    """gh without read:packages gets a 403 from ghcr; the scoped token lives in a file."""
+    _install(monkeypatch, tmp_path)
+    token_file = tmp_path / "ghcr.env"
+    token_file.write_text(f"GHCR_TOKEN={_FILE_TOKEN}\n", encoding="utf-8", newline="\n")
+    seen_tokens: list[str | None] = []
+
+    def reading_versions(org, app):
+        seen_tokens.append(os.environ.get("GH_TOKEN"))
+        return tuple(FAKE_PACKAGES.get(app, []))
+
+    monkeypatch.setattr(registry_pins, "package_versions", reading_versions)
+    previous = os.environ.pop("GH_TOKEN", None)
+    try:
+        rc = resolve_pins.cmd_pin(_args(check=True, env_file=[str(token_file)]))
+    finally:
+        os.environ.pop("GH_TOKEN", None)
+        if previous is not None:
+            os.environ["GH_TOKEN"] = previous
+
+    out = capsys.readouterr()
+    assert rc == 1  # the synthetic stack carries stale pins; the read itself ran
+    assert seen_tokens
+    assert all(token == _FILE_TOKEN for token in seen_tokens)
+    assert _FILE_TOKEN not in out.out
+    assert _FILE_TOKEN not in out.err
+
+
 # --- arg helper ---------------------------------------------------------------
 def _args(**over):
     import argparse
@@ -372,6 +416,7 @@ def _args(**over):
         write=False,
         cooldown_days=7,
         allow_fresh=False,
+        env_file=[],
         func=None,
     )
     for k, v in over.items():

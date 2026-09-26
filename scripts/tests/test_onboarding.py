@@ -125,6 +125,19 @@ class TestHowAFieldIsFound:
     def test_a_shorter_label_does_not_match_a_longer_one(self):
         assert not onboarding_run._label("Name").match("Username *")
 
+    def test_the_source_name_field_is_found_on_either_console(self):
+        # ui v1.7.0 renders "Source Name *"; the rc.13 console renders "Source".
+        pattern = onboarding_run._label(*onboarding_run.SOURCE_NAME_LABELS)
+
+        assert pattern.match("Source Name *")
+        assert pattern.match("Source")
+
+    def test_the_source_name_labels_match_no_neighbouring_field(self):
+        pattern = onboarding_run._label(*onboarding_run.SOURCE_NAME_LABELS)
+
+        for neighbour in ("Display Name", "Source Type *", "Name *", "Field *"):
+            assert not pattern.match(neighbour), neighbour
+
 
 class TestTheRunsVerdict:
     def test_any_failed_step_fails_the_run(self):

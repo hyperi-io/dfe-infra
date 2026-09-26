@@ -57,19 +57,30 @@ CONSOLE_LANDMARKS = ("Sources", "Meta Schemas")
 # The login page's local-account tab, shown once a provider is registered.
 LOCAL_LOGIN_TAB = "Login with Local"
 
+# The Add Source drawer's name field: "Source Name *" from ui v1.7.0, "Source" before it.
+SOURCE_NAME_LABELS = ("Source Name", "Source")
+
 STEP_TIMEOUT_MS = 30_000
 # How long the run keeps checking that the source it made has gone.
 TEARDOWN_DEADLINE = 120.0
 
 
-def _label(name: str) -> re.Pattern[str]:
+def _label(*names: str) -> re.Pattern[str]:
     """Match a field by its label, with or without the console's required marker.
 
     A required field's accessible name carries the asterisk the console renders
     beside it ("Username *"), and an optional one a trailing space ("Name "), so
     an exact match finds neither. Anchoring keeps "Name" off "Username".
+
+    Args:
+        *names: Every label the field has carried across console releases; any
+            one of them matches.
+
+    Returns:
+        A pattern for the field's accessible name.
     """
-    return re.compile(rf"^\s*{re.escape(name)}\s*\*?\s*$")
+    alternatives = "|".join(re.escape(name) for name in names)
+    return re.compile(rf"^\s*(?:{alternatives})\s*\*?\s*$")
 
 
 class Driver:
@@ -101,8 +112,8 @@ class Driver:
     def button(self, name: str):
         return self.page.get_by_role("button", name=name, exact=True)
 
-    def textbox(self, name: str):
-        return self.page.get_by_role("textbox", name=_label(name))
+    def textbox(self, *names: str):
+        return self.page.get_by_role("textbox", name=_label(*names))
 
 
 def sign_in(driver: Driver, user: str, password: str) -> None:
@@ -246,7 +257,7 @@ def check_console(driver: Driver, user: str, password: str) -> str:
 
     name = f"onboard{uuid.uuid4().hex[:8]}"
     driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
-    driver.textbox("Source").fill(name)
+    driver.textbox(*SOURCE_NAME_LABELS).fill(name)
     driver.textbox("Display Name").fill(name)
     driver.textbox("Field").fill("app")
     driver.textbox("Value").fill(name)

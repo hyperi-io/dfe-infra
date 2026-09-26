@@ -101,11 +101,13 @@ spec:
               done
 
               # Recorded even on a partial run, so an app that DID land is not
-              # seeded a second time on the retry.
+              # seeded a second time on the retry. Written whenever it is absent,
+              # even with nothing new to seed: the engine reads a missing marker
+              # as "nothing here was seeded".
               have=$(printf '%s\n' "${seeded}" | grep -v '^$' | sort -u)
               want=$(printf '%s\n%s\n' "${seeded}" "$(printf '%s' "${added}" | tr ' ' '\n')" \
                 | grep -v '^$' | sort -u)
-              if [ "${want}" != "${have}" ]; then
+              if [ -z "${marker_sha}" ] || [ "${want}" != "${have}" ]; then
                 content=$(printf '%s\n' "${want}" | base64 | tr -d '\n')
                 if [ -n "${marker_sha}" ]; then
                   method=PUT; payload="{\"content\":\"${content}\",\"branch\":\"${BRANCH}\",\"sha\":\"${marker_sha}\",\"message\":\"record seeded apps\"}"
