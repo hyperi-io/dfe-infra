@@ -78,8 +78,8 @@ class Engine:
         """Replace the issued password, which the engine demands before anything else."""
         if not self.new_password:
             raise RuntimeError(
-                f"'{self.user}' must change its issued password before the engine serves it; "
-                "set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
+                f"'{self.user}' must change its issued password before the engine serves it. "
+                "Set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
             )
         changed = self._request("POST", "/auth/accounts/reset-password", {"new_password": self.new_password})
         if changed.status != 200:

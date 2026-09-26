@@ -175,8 +175,8 @@ def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str
         return password
     if not new_password:
         raise wizard.OnboardingError(
-            f"the console holds '{user}' on its issued password until it sets its own; "
-            "set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
+            f"the console holds '{user}' on its issued password until it sets its own. "
+            "Set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
         )
     for label in ("New Password", "Confirm Password"):
         driver.textbox(label).fill(new_password)
