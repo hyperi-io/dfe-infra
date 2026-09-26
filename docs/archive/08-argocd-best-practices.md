@@ -338,7 +338,7 @@ The `.auto.tfvars` approach (dev/small/large) produces different resource alloca
 
 **1. Hardcoded cloud-specific values in GitOps YAML**
 
-The `ClusterSecretStore` has `region: ap-southeast-2` hardcoded. Other YAML files reference `cluster.name: ghostburner`. These should be parameterised via the annotation bridge or Helm values. Hardcoded values break the multi-cloud abstraction that the annotation bridge is designed to provide.
+The `ClusterSecretStore` has `region: ap-southeast-2` hardcoded. Other YAML files hardcode a literal `cluster.name`. These should be parameterised via the annotation bridge or Helm values. Hardcoded values break the multi-cloud abstraction that the annotation bridge is designed to provide.
 
 **2. Single monolithic `stage_1/` Terraform root**
 
