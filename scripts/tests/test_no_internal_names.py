@@ -30,12 +30,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# The zone the estate is served from, the hosts and deployments addressed by
-# nickname, and the two private ranges it numbers. Each is matched
-# case-insensitively, so a capitalised product or heading is caught alongside a
-# hostname.
+# The estate's name (which is also its zone), the private repo that runs it,
+# its OpenBao base path, the hosts and deployments addressed by nickname, and
+# the two private ranges it numbers. Each is matched case-insensitively, so a
+# capitalised product or heading is caught alongside a hostname. The OpenBao
+# path stops short of a hyphen: `secret/dfe-cluster` is a Kubernetes kind/name
+# reference to a product Secret, not a vault path.
 INTERNAL = re.compile(
-    r"devex\.hyperi\.io"
+    r"devex"
+    r"|hyperi-infra"
+    r"|secret/dfe(?![\w-])"
     r"|tyrell"
     r"|hypersec"
     r"|10\.66\."
@@ -102,9 +106,23 @@ def test_the_sweep_would_catch_a_leak() -> None:
     """The guard is worth nothing if the pattern never matches, so prove it does."""
     for sample in (
         "k8s-1.devex.hyperi.io",
+        "on the DevEx fleet",
+        "hyperi-io/hyperi-infra",
+        "ref: secret/dfe",
+        "secret/dfe/ghcr-pull-secret",
+        "(secret/dfe)",
         "10.66.0.200",
         "Proxmox VE",
         "dragonfly",
         "ghostburner",
     ):
         assert INTERNAL.search(sample), sample
+
+
+def test_a_kubernetes_secret_reference_is_not_a_vault_path() -> None:
+    """kubectl names a product Secret `secret/dfe-<name>`; that is product text."""
+    for sample in (
+        "secret/dfe-cluster",
+        "secret/dfe-fetcher-credentials configured",
+    ):
+        assert not INTERNAL.search(sample), sample

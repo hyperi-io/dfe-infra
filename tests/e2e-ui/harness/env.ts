@@ -6,7 +6,7 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
 // Single source for every endpoint the suite touches. Env-driven so the same
-// suite runs against any deployment (product rule: devex is ONE deployment);
+// suite runs against any deployment (product rule: no deployment is special);
 // the defaults match the laptop port-forward layout in the README.
 
 export const HYPERDX_URL = process.env.HYPERDX_URL ?? 'http://localhost:18080';

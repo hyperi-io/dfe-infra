@@ -115,6 +115,7 @@ a chart value).
 |---|---|
 | [deployment/index.md](deployment/index.md) | layers, tiers, values cascade, bootstrap contract |
 | [deployment/rke2.md](deployment/rke2.md) | RKE2, the hardened default distribution |
+| [deployment/on-prem.md](deployment/on-prem.md) | build, deploy, test and tear down on an on-prem cluster (the `local` target) |
 | [deployment/kafka/](deployment/kafka/README.md) | managed-Kafka guides + Redpanda licence gate |
 | [deployment/clickhouse.md](deployment/clickhouse.md) | CH target matrix + operator history (official operator / ClickHouse Cloud; private-cloud swap; Altinity untested) |
 | [deployment/deployment-logs/](deployment/deployment-logs/TEMPLATE.md) | per-deploy log template |
@@ -124,7 +125,3 @@ a chart value).
 | [EDGE-AUTH.md](EDGE-AUTH.md) | web-plane exposure + auth: every UI external by default, route class (product/infra/ingest), the infra kill switch, edge OIDC + group RBAC, per-surface policy |
 | [INGEST-EDGE.md](INGEST-EDGE.md) | the dfe-receiver data door: public LoadBalancers vs the Gateway route, source ranges, why an empty allow-list is the whole internet |
 | [archive/](archive/) | the 2026-03 research corpus + superseded material (decision trail) |
-
-DEVEX-LIFECYCLE.md and DEVEX-OPERATIONS.md remain at docs/ root pending
-relocation to the private ops repo (they describe one vendor deployment,
-not the product).

@@ -962,8 +962,8 @@ def _next_commands(dial_out: Path, a: Answers) -> str:
     )
 
 
-# Estate context deployment.example.yaml ships blank -- injected by
-# hyperi-infra's thin caller or filled by hand, never invented here.
+# Estate context deployment.example.yaml ships blank -- injected by the
+# operator's own tooling or filled by hand, never invented here.
 # render_dial.py --tofu refuses on k8s.repo_url until one of those happens.
 _ESTATE_BLANKS_AWS = ("k8s.repo_url", "state.bucket", "state.region", "tags.owner", "tags.cost-center")
 

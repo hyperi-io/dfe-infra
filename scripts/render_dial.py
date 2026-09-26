@@ -31,8 +31,9 @@ the orchestrator, unchanged; the dial just feeds it.
 The env file is SEEDED from ``bootstrap/local.env.example`` on first render (so
 every DFE_* key + its comments are present), then the dial's non-empty values
 are merged in place over it. Estate ENDPOINTS and SECRETS stay blank in the
-committed template -- hyperi-infra's thin caller injects them from OpenBao at
-deploy time, or an operator fills the copied ``.env`` by hand. This renderer
+committed template -- the operator's own tooling injects them from the
+deployment's secrets backend at deploy time, or an operator fills the copied
+``.env`` by hand. This renderer
 never reads or writes a secret.
 
 Dependency-free (no PyYAML) and stdlib only, matching the dfe-ops rule -- the

@@ -7,7 +7,7 @@ per-target instantiation of that contract; the seam DEFINITIONS (the knob each o
 turns) live in [../architecture.md](../architecture.md) "Swappable components" and
 stay the SSoT.
 
-RKE2 on-prem is the STANDARD and the tested path (devex is its test rig). The
+RKE2 on-prem is the STANDARD and the tested path. The
 managed-cloud columns are overlays: same charts, same seams, different values +
 credentials. A cloud column is not built until the on-prem path is green, but the
 SEAM must be clean now so the overlay is config, not rework.

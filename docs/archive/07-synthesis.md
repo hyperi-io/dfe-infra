@@ -11,7 +11,7 @@
 
 | Decision | Rationale |
 |----------|-----------|
-| **Envoy Gateway** replaces nginx-ingress + ALB Controller + oauth2-proxy | Gateway API standard, native OIDC SecurityPolicy, already proven in hyperi-infra |
+| **Envoy Gateway** replaces nginx-ingress + ALB Controller + oauth2-proxy | Gateway API standard, native OIDC SecurityPolicy, already proven on an on-prem estate |
 | **Envoy Gateway handles auth** (OIDC) | Single SecurityPolicy at gateway level, eliminates per-app oauth2-proxy |
 | **KEDA scales from OTel metrics** | Not Prometheus, not CloudWatch. Direct OTel -> KEDA pipeline |
 | **Rancher is local-only** | On-prem/edge deployments use Rancher-managed RKE2. Cloud uses native K8s (EKS/GKE/AKS) |
@@ -25,12 +25,12 @@
 
 | Target | K8s | Ingress | Auth | Secrets | Storage | Kafka |
 |--------|-----|---------|------|---------|---------|-------|
-| **Rancher local** | RKE2 (hyperi-infra) | Envoy Gateway + externalIPs | OpenBao + Envoy OIDC | OpenBao | local-path | Strimzi |
+| **Rancher local** | RKE2 (pre-provisioned) | Envoy Gateway + externalIPs | OpenBao + Envoy OIDC | OpenBao | local-path | Strimzi |
 | **AWS** | EKS | Envoy Gateway + NLB | Envoy OIDC + Cognito/Entra | AWS SM or OpenBao | EBS CSI (gp3) | MSK or Strimzi |
 | **GCP** | GKE | Envoy Gateway + GCP LB | Envoy OIDC + Google IdP | GCP SM or OpenBao | PD CSI | Confluent or Strimzi |
 | **Azure** | AKS | Envoy Gateway + Azure LB | Envoy OIDC + Entra ID | Azure KV or OpenBao | Azure Disk CSI | Confluent or Strimzi |
 
-### 1.3 Two-Layer Architecture (from hyperi-infra)
+### 1.3 Two-Layer Architecture (from the on-prem estate)
 
 This is the key architectural pattern for DFE 2.2:
 
@@ -69,19 +69,19 @@ This is the key architectural pattern for DFE 2.2:
 | Transport abstraction (7 backends, enum dispatch) | rustlib | Yes -- cloud-agnostic |
 | Flat env var config override (DFE_{SERVICE}_{KEY}) | rustlib | Yes -- Helm -> env -> service |
 | Config hot-reload (file polling) | rustlib | Yes -- ArgoCD ConfigMap updates |
-| Envoy Gateway + OIDC SecurityPolicy | hyperi-infra | Yes -- already replaces nginx |
-| OpenBao + ESO ClusterSecretStore | hyperi-infra | Yes -- secrets pattern |
-| cert-manager + OpenBao PKI | hyperi-infra | Yes |
-| Strimzi Kafka (KRaft, SASL/SCRAM) | hyperi-infra | Yes -- replaces MSK |
-| CNPG PostgreSQL 17 | hyperi-infra, dfe-core | Yes |
-| HyperDX + FerretDB + OTel Collector | hyperi-infra | Yes |
+| Envoy Gateway + OIDC SecurityPolicy | on-prem estate | Yes -- already replaces nginx |
+| OpenBao + ESO ClusterSecretStore | on-prem estate | Yes -- secrets pattern |
+| cert-manager + OpenBao PKI | on-prem estate | Yes |
+| Strimzi Kafka (KRaft, SASL/SCRAM) | on-prem estate | Yes -- replaces MSK |
+| CNPG PostgreSQL 17 | on-prem estate, dfe-core | Yes |
+| HyperDX + FerretDB + OTel Collector | on-prem estate | Yes |
 | HyperDX postMessage bridge for rule creation | dfe-ui | Yes |
 
 ### 2.2 Components Being Removed
 
 | Component | Replaced By | Risk |
 |-----------|------------|------|
-| nginx-ingress | Envoy Gateway | Low (already proven in hyperi-infra) |
+| nginx-ingress | Envoy Gateway | Low (already proven on-prem) |
 | ALB Controller | Envoy Gateway + cloud LB | Low |
 | oauth2-proxy + Redis | Envoy Gateway OIDC + Valkey (for ArgoCD only) | Low |
 | AWS Cognito | External OIDC provider via Envoy SecurityPolicy | Medium (all auth flows change) |
@@ -99,7 +99,7 @@ This is the key architectural pattern for DFE 2.2:
 | Integration | Status | Recommendation |
 |-------------|--------|---------------|
 | **KEDA scaling from OTel metrics** | Not proven anywhere yet | Top priority R&D. Options: (1) Kedify OTEL Scaler (direct push), (2) OTel Collector -> Prometheus remote-write -> KEDA, (3) Custom ClickHouse external scaler. Recommend Kedify if available, otherwise option 2. |
-| **FerretDB for HyperDX** | Deployed in hyperi-infra (v2-beta) | Needs workload testing for aggregation pipeline compatibility |
+| **FerretDB for HyperDX** | Deployed on the on-prem estate (v2-beta) | Needs workload testing for aggregation pipeline compatibility |
 | **dfe-engine OIDC token validation** | Not implemented | Needs JWKS discovery, dual-mode auth (local fallback + OIDC) |
 | **dfe-engine OTel auto-instrumentation** | Not implemented | Needs opentelemetry-instrumentation-fastapi |
 | **rustlib unified OTel init** | Gaps identified | Needs single otel::init() for metrics + traces + logs |
@@ -113,7 +113,7 @@ This is the key architectural pattern for DFE 2.2:
 
 | Component | Local (Rancher) | AWS | GCP | Azure |
 |-----------|----------------|-----|-----|-------|
-| K8s | RKE2 via hyperi-infra | EKS (TF module) | GKE (TF module) | AKS (TF module) |
+| K8s | RKE2 (pre-provisioned) | EKS (TF module) | GKE (TF module) | AKS (TF module) |
 | Ingress | Envoy Gateway + externalIPs | Envoy Gateway + NLB | Envoy Gateway + GCP LB | Envoy Gateway + Azure LB |
 | Certs | cert-manager + OpenBao PKI | cert-manager + Let's Encrypt | cert-manager + Let's Encrypt | cert-manager + Let's Encrypt |
 | Secrets | OpenBao + ESO | AWS SM + ESO or OpenBao | GCP SM + ESO or OpenBao | Azure KV + ESO or OpenBao |
@@ -192,7 +192,7 @@ This is the key architectural pattern for DFE 2.2:
 
 ### Phase 1: Foundation
 1. Repository structure (Terraform modules, GitOps layout, Helm values structure)
-2. Local Rancher target (leveraging hyperi-infra Layer 1)
+2. Local Rancher target (leveraging an existing on-prem Layer 1)
 3. ArgoCD bootstrap (port app-of-apps from dfe-core)
 4. Layer 2 operator deployment (Strimzi, ClickHouse, CNPG, KEDA)
 
@@ -239,5 +239,4 @@ This is the key architectural pattern for DFE 2.2:
 | Rustlib Analysis | `docs/03-hyperi-rustlib-analysis.md` | Shared Rust lib, config, metrics, transport |
 | DFE UI Analysis | `docs/04-dfe-ui-analysis.md` | Next.js UI, HyperDX integration |
 | Best Practices Research | `docs/05-best-practices-research.md` | Web research on tech stack best practices |
-| Hyperi-Infra Analysis | `docs/06-hyperi-infra-analysis.md` | Local Rancher K8s deployment |
 | Synthesis (this doc) | `docs/07-synthesis.md` | Cross-cutting findings and recommendations |
