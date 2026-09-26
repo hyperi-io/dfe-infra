@@ -58,6 +58,10 @@ CONSOLE_LANDMARKS = ("Sources", "Meta Schemas")
 LOCAL_LOGIN_TAB = "Login with Local"
 
 STEP_TIMEOUT_MS = 30_000
+# Any wizard screen: /setup itself redirects straight on to one.
+SETUP_SCREEN = re.compile(r"/setup/\w+")
+# The screens the console can open the wizard on, and the run can carry on from.
+LANDINGS = (wizard.WELCOME, wizard.ORGANISATION, wizard.LOGIN)
 # How long the run keeps checking that the source it made has gone.
 TEARDOWN_DEADLINE = 120.0
 
@@ -122,6 +126,25 @@ def sign_in(driver: Driver, user: str, password: str) -> None:
     driver.button("Login").click(timeout=STEP_TIMEOUT_MS)
 
 
+def walk_organisation(driver: Driver, org: str) -> None:
+    """Complete the organisation screen the console is on."""
+    driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
+    driver.seen.append(wizard.ORGANISATION)
+    name = driver.textbox("Name")
+    if name.count():
+        name.fill(org)
+        driver.textbox("Display Name").fill(org.replace("-", " ").title())
+        driver.button("Save").click(timeout=STEP_TIMEOUT_MS)
+        driver.record(wizard.ORGANISATION, "done", f"created the organisation {org}")
+        return
+    # A deployment that already has one shows the screen with no form on it, and
+    # the walk moves on rather than asserting a second organisation.
+    driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
+    driver.record(
+        wizard.ORGANISATION, "done", "an organisation already existed, so the screen was satisfied"
+    )
+
+
 def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, password: str,
                 breakglass_password: str, admin_user: str, admin_password: str) -> None:
     """Complete every screen the deployment asks for, in the console's order.
@@ -131,30 +154,38 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     the login, so the run signs in as the admin the deploy minted first.
     """
     sign_in(driver, admin_user, admin_password)
-    driver.page.wait_for_url("**/setup**", timeout=STEP_TIMEOUT_MS * 2)
-    driver.record("login", "done", f"signed in as {admin_user}; the console opened the wizard")
-    driver.page.goto(f"{driver.ui}/setup/{wizard.WELCOME}", wait_until="domcontentloaded",
-                     timeout=STEP_TIMEOUT_MS * 2)
-    driver.button("Next").wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    driver.seen.append(driver.current_slug())
-    driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
-    driver.record(wizard.WELCOME, "done", "the wizard opened and moved on")
-
-    driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
-    driver.seen.append(wizard.ORGANISATION)
-    name = driver.textbox("Name")
-    if name.count():
-        name.fill(org)
-        driver.textbox("Display Name").fill(org.replace("-", " ").title())
-        driver.button("Save").click(timeout=STEP_TIMEOUT_MS)
-        driver.record(wizard.ORGANISATION, "done", f"created the organisation {org}")
-    else:
-        # A deployment that already has one shows the screen with no form on it,
-        # and the walk moves on rather than asserting a second organisation.
-        driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
+    driver.page.wait_for_url(SETUP_SCREEN, timeout=STEP_TIMEOUT_MS * 2)
+    landed = driver.current_slug()
+    driver.record(
+        "login",
+        "done",
+        f"signed in as {admin_user}; the console opened the wizard at {landed or driver.page.url}",
+    )
+    # The console opens on the first pending step, so the run follows it rather than
+    # navigating to a screen of its own choosing.
+    if landed not in LANDINGS:
         driver.record(
-            wizard.ORGANISATION, "done", "an organisation already existed, so the screen was satisfied"
+            "landing",
+            "failed",
+            f"the console opened the wizard at {landed or driver.page.url}, a screen this "
+            "run does not know how to complete",
         )
+        return
+    if landed == wizard.WELCOME:
+        driver.seen.append(wizard.WELCOME)
+        driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
+        driver.record(wizard.WELCOME, "done", "the wizard opened on welcome and moved on")
+        driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
+        landed = wizard.ORGANISATION
+
+    if landed == wizard.LOGIN:
+        driver.record(
+            wizard.ORGANISATION,
+            "absent-as-expected",
+            "an organisation already existed, so the console opened past its screen",
+        )
+    else:
+        walk_organisation(driver, org)
 
     if wizard.FIRST_USER not in expected:
         # The first user already exists, so the organisation was the last required

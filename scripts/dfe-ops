@@ -200,7 +200,6 @@ import json
 import os
 import platform
 import re
-import secrets
 import shlex
 import shutil
 import socket
@@ -2050,48 +2049,64 @@ def cmd_ca(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- ui subcommand (the dfe-ui Playwright acceptance specs over port-forwards) -
-def _rotate_break_glass(engine_url: str, name: str, current: str) -> str:
-    """Rotate the break-glass password through the product API; return the new one.
+# --- ui subcommand (onboarding root, then the dfe-ui Playwright suite) --------
+# The tag dfe-ui puts on the specs that shell out to a docker daemon, which a
+# Kubernetes run does not have.
+DOCKER_ONLY_TAG = "@docker-only"
+# The engine's e2e seed scripts create or reset every account with this one
+# password (dfe-engine api/e2e/seed/accounts.py), so the suite signs in with it.
+E2E_SEED_PASSWORD = "changeme"
 
-    In-process on purpose: the token never reaches a command line or a log.
+
+def e2e_routes_mounted(engine_url: str, *, opener=urllib.request.urlopen) -> bool:
+    """Whether the engine mounted its /api/e2e seed routes, i.e. runs the e2e posture.
+
+    Args:
+        engine_url: Engine API base, with no path.
+        opener: urlopen-compatible callable.
+
+    Returns:
+        True only when /api/e2e/status answers with enabled true.
     """
-    new_password = secrets.token_urlsafe(24)
-    login = urllib.request.Request(
-        f"{engine_url}/api/v1/auth/login",
-        data=json.dumps({"username": name, "password": current}).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(login, timeout=15) as response:
-        token = json.loads(response.read())["access_token"]
-    reset = urllib.request.Request(
-        f"{engine_url}/api/v1/auth/accounts/{name}/reset-password",
-        data=json.dumps({"new_password": new_password}).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(reset, timeout=15) as response:
-        response.read()
-    return new_password
+    try:
+        with opener(f"{engine_url}/api/e2e/status", timeout=15) as response:
+            body = json.loads(response.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+    return isinstance(body, dict) and body.get("enabled") is True
+
+
+def playwright_argv(grep_invert: str, grep: str, extra: list[str]) -> list[str]:
+    """The `yarn playwright test` command the suite runs.
+
+    Args:
+        grep_invert: Tag expression the run excludes; empty excludes nothing.
+        grep: Tag expression the run keeps; empty keeps everything.
+        extra: Arguments passed through to playwright test.
+
+    Returns:
+        The argv.
+    """
+    argv = ["yarn", "playwright", "test"]
+    if grep_invert:
+        argv += ["--grep-invert", grep_invert]
+    if grep:
+        argv += ["--grep", grep]
+    return argv + [a for a in extra if a != "--"]
 
 
 def cmd_ui(args: argparse.Namespace) -> int:
-    """Run the dfe-ui acceptance specs against a deployed stack.
+    """Onboard a deployment in the e2e posture, then run the dfe-ui suite on it.
 
-    `acceptance` proves the data path with the engine's pytest suite. This
-    drives the UI, which sits on top of the gateway, the engine API, auth and
-    the datastore, so one pass exercises all of them.
+    The ROOT step signs in through the console with the admin password the deploy
+    minted and completes every wizard screen the console shows, with the same
+    runner `acceptance --suite onboarding` uses. A failed root step stops the run:
+    a deployment nobody could onboard has failed whatever the suite then says.
 
-    The break-glass password is rotated FIRST and the suite gets the new value
-    as E2E_ADMIN_PASSWORD (docs/ACCEPTANCE-AUTOMATION.md: the stack under test
-    must differ from the build defaults). The bootstrap value it replaces comes
-    from DFE_AUTH_LOCAL_ADMIN_PASSWORD in the env file, else the seed default.
-
-    Reach the UI at --ui-url when a gateway serves it. The port-forward is a
-    fallback and is announced as one: next-auth builds its callback URLs from
-    the deployment's NEXTAUTH_URL, so a localhost origin can refuse the login
-    round-trip.
+    Then every dfe-ui spec not tagged @docker-only, against the gateway URL the
+    console is published on. The specs seed and reset through the engine's
+    unauthenticated /api/e2e routes over a port-forward, which only a deployment
+    stood up with `stack-deploy --e2e` mounts, so the run refuses any other.
     """
     settings = dict(os.environ)
     for env_file in args.env_file:
@@ -2111,54 +2126,89 @@ def cmd_ui(args: argparse.Namespace) -> int:
     if server:
         kube += ["--server", server]
 
-    stop = threading.Event()
-    forwards = [("engine", namespace, args.engine_target, args.engine_port, 8000)]
-    if not args.ui_url:
+    # The console pod bounces a browser's /api call to /login, because routing /api
+    # to the engine is the gateway's job, so the UI is only ever reached through it.
+    ui_url = args.ui_url or _console_urls(kube, namespace)[0]
+    if "localhost" in ui_url:
         print(
-            "  no --ui-url: forwarding the UI to localhost. next-auth may refuse "
-            "the login round-trip on this origin; a gateway URL is the real test.",
+            "the suite drives the console through its gateway URL and this deployment "
+            "has no domain annotation; pass --ui-url",
             file=sys.stderr,
         )
-        forwards.append(("ui", namespace, args.ui_target, args.ui_port, 3000))
-    for label, ns, target, local, remote in forwards:
-        threading.Thread(
-            target=_forward,
-            args=(label, kube, ns, target, local, remote, stop),
-            daemon=True,
-        ).start()
-
-    engine_url = f"http://localhost:{args.engine_port}"
-    ui_url = args.ui_url or f"http://localhost:{args.ui_port}"
-    ready = _forward_ready(f"{engine_url}/livez", "engine", 90.0)
-    ready = _forward_ready(f"{ui_url}/livez", "ui", 90.0) and ready
-    if not ready:
-        stop.set()
-        print("the suite needs the engine and the UI; neither is optional", file=sys.stderr)
+        return 1
+    host = urllib.parse.urlsplit(ui_url).hostname or ""
+    if not _resolves(host):
+        print(
+            f"{host} does not resolve here, and the dfe-ui suite's browser has no way to "
+            "be pointed at an address: publish the deployment's DNS first",
+            file=sys.stderr,
+        )
         return 1
 
-    admin = settings.get("DFE_AUTH_LOCAL_ADMIN_NAME") or "admin"
-    bootstrap = settings.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD") or "changeme"
-    if args.no_rotate:
-        rotated = bootstrap
-        print("  --no-rotate: the suite runs on the bootstrap credential", file=sys.stderr)
+    stop = threading.Event()
+    threading.Thread(
+        target=_forward,
+        args=("engine", kube, namespace, args.engine_target, args.engine_port, 8000, stop),
+        daemon=True,
+    ).start()
+    engine_url = f"http://localhost:{args.engine_port}"
+    if not _forward_ready(f"{engine_url}/livez", "engine", 90.0):
+        stop.set()
+        print("the suite seeds through the engine, so it cannot run without it", file=sys.stderr)
+        return 1
+    if not e2e_routes_mounted(engine_url):
+        stop.set()
+        print(
+            f"the engine in {namespace} serves no /api/e2e routes, so the suite has nothing "
+            "to seed through: stand the deployment up with `dfe-ops stack-deploy --e2e`",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.skip_onboarding:
+        print("  --skip-onboarding: the root step did not run, so the run proves less",
+              file=sys.stderr)
     else:
         try:
-            rotated = _rotate_break_glass(engine_url, admin, bootstrap)
-        except (urllib.error.HTTPError, urllib.error.URLError, KeyError) as exc:
+            _, minted = admin_credential(
+                "k8s",
+                kube=kube,
+                namespace=namespace,
+                settings=settings,
+                access_summary=Path(args.access_summary) if args.access_summary else None,
+            )
+        except CredentialNotFoundError as exc:
             stop.set()
-            print(f"break-glass rotation failed, so the run would prove nothing: {exc}", file=sys.stderr)
+            print(f"ui: {exc}", file=sys.stderr)
             return 1
-        print(f"  break-glass '{admin}' rotated for this run", file=sys.stderr)
+        print("\n>>> ui root step: onboarding", file=sys.stderr)
+        runner = [
+            sys.executable, str(ONBOARDING_RUNNER),
+            "--ui-url", ui_url,
+            "--engine-url", ui_url,
+            "--shots-dir", args.shots_dir,
+        ]
+        if args.insecure:
+            runner.append("--insecure")
+        onboarding_env = dict(os.environ)
+        onboarding_env[FED_ADMIN_PASSWORD_VAR] = minted
+        rc = subprocess.run(runner, env=onboarding_env).returncode
+        if rc != 0:
+            stop.set()
+            print(f"\n>>> ui root step FAILED (rc {rc}): the dfe-ui suite did not run",
+                  file=sys.stderr)
+            return rc
 
+    print(f"\n>>> ui suite: every spec not tagged {args.grep_invert or '(nothing)'}",
+          file=sys.stderr)
     env = dict(os.environ)
     env.update({
         "BASE_URL": ui_url,
         "NEXT_PUBLIC_API_URL": engine_url,
-        "E2E_ADMIN_PASSWORD": rotated,
-        "E2E_BOOTSTRAP_PASSWORD": bootstrap,
+        "E2E_ADMIN_PASSWORD": E2E_SEED_PASSWORD,
         "CI": "1",
     })
-    cmd = ["yarn", "playwright", "test", "--grep", args.grep, *args.playwright_args]
+    cmd = playwright_argv(args.grep_invert, args.grep, args.playwright_args)
     done = subprocess.run(cmd, cwd=Path(args.ui_repo) / "apps" / "dfe-core-ui", env=env)
     stop.set()
     return done.returncode
@@ -2795,6 +2845,8 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
         env["DFE_SKIP_INTEGRATION_TESTS"] = "true"
     if args.dry_run:
         env["DFE_DRY_RUN"] = "true"
+    # Forced both ways, so an env file can never turn the seed routes on unasked.
+    env["DFE_E2E_SERVER"] = "true" if args.e2e else "false"
     return env
 
 
@@ -2855,6 +2907,11 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  Kubeconfig: {env.get('KUBECONFIG', '(current context)')}", file=sys.stderr)
     print(f"  Readiness:  bounded at {env['READINESS_TIMEOUT']}s", file=sys.stderr)
     print(f"  E2E tests:  {'SKIPPED' if args.skip_e2e else 'ON (data path + self-monitoring)'}", file=sys.stderr)
+    print(
+        "  E2E posture: "
+        + ("ON (engine DFE_ENV=test, /api/e2e seed routes mounted)" if args.e2e else "off"),
+        file=sys.stderr,
+    )
     print(f"  Dry run:    {'yes (no cluster changes)' if args.dry_run else 'no'}", file=sys.stderr)
     print("", file=sys.stderr)
 
@@ -2920,6 +2977,13 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     interactive debugging on a dev cluster. A FAILED deploy still destroys,
     so a broken run never strands a half-stack.
     """
+    if args.ui_repo and not args.e2e:
+        print(
+            "ERROR: the ui stage runs the dfe-ui suite, which seeds through the engine's "
+            "e2e routes: add --e2e so the deploy mounts them",
+            file=sys.stderr,
+        )
+        return 2
     if _resolve_stack(args) != 0:
         return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
@@ -2970,6 +3034,8 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         deploy_cmd += ["--from-terraform", args.from_terraform]
     if args.target_revision:
         deploy_cmd += ["--target-revision", args.target_revision]
+    if args.e2e:
+        deploy_cmd.append("--e2e")
     stages.append(("deploy+e2e", deploy_cmd))
     # The smoke stage needs the deploy's env too, not just its cluster: the
     # namespaces it checks come from those same sources.
@@ -3152,6 +3218,10 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--access-out", default="dfe-access.md", help="where the post-deploy access summary is written")
     sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
     sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
+    sd.add_argument("--e2e", action="store_true",
+                    help="the e2e posture the dfe-ui suite needs: the engine runs as DFE_ENV=test with "
+                         "unauthenticated seed routes that wipe every account. Refused outside a dev "
+                         "posture; for a throwaway deployment under test only")
     sd.add_argument("--check-only", action="store_true", help="run only the offline pre-flight, then stop (no cluster changes)")
     sd.add_argument("--dry-run", action="store_true", help="pre-flight + bootstrap in DFE_DRY_RUN mode (prints commands, no apply)")
     sd.set_defaults(func=cmd_stack_deploy)
@@ -3198,10 +3268,12 @@ def build_parser() -> argparse.ArgumentParser:
     cy.add_argument("--skip-capacity-check", action="store_true",
                     help="deploy without asking whether the host can carry this lane beside the other one")
     cy.add_argument("--keep", action="store_true", help="do NOT destroy at the end (dev-cluster debugging only; cloud cycles must destroy)")
+    cy.add_argument("--e2e", action="store_true",
+                    help="deploy in the e2e posture the ui stage needs (stack-deploy --e2e); refused outside a dev posture")
     cy.add_argument("--ui-repo", default=None, metavar="DIR",
-                    help="dfe-ui checkout; given, the ui stage runs after smoke (needs node + a browser)")
+                    help="dfe-ui checkout; given, the ui stage runs after smoke (needs --e2e, node and a browser)")
     cy.add_argument("--ui-url", default=None,
-                    help="the gateway URL the UI is served on; without it the ui stage port-forwards and says so")
+                    help="the gateway URL the console is served on (default: the cluster's domain annotation)")
     cy.set_defaults(func=cmd_cycle)
 
     # teardown
@@ -3388,10 +3460,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui = sub.add_parser(
         "ui",
-        help="run the dfe-ui Playwright acceptance specs against a deployed stack",
-        description="Beside `acceptance`, which proves the data path. This rotates the "
-                    "break-glass password, then drives the UI with the dfe-ui suite's "
-                    "acceptance-tagged specs.",
+        help="onboard an e2e-posture deployment through the console, then run the dfe-ui Playwright suite",
+        description="Beside `acceptance`, which proves the data path. The root step signs in "
+                    "with the minted admin password and completes the setup wizard the "
+                    "console shows, and stops the run if it fails; then every dfe-ui spec "
+                    "not tagged @docker-only runs against the gateway URL. Needs a deployment "
+                    "stood up with `stack-deploy --e2e`.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ui.add_argument("--env-file", action="append", default=[], metavar="PATH",
@@ -3401,16 +3475,24 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--namespace", default=None, help="namespace the apps run in (default: DFE_NAMESPACE, else dfe-local)")
     ui.add_argument("--server", default=None,
                     help="API address, for a kubeconfig whose server name does not resolve here (default: DFE_KUBE_SERVER)")
-    ui.add_argument("--ui-url", default=None, help="the gateway URL the UI is served on (omit to port-forward, with a warning)")
-    ui.add_argument("--ui-target", default="svc/dfe-ui", help="port-forward target for the UI when --ui-url is not given")
-    ui.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
-    ui.add_argument("--ui-port", type=int, default=13000, help="local port for the UI forward")
+    ui.add_argument("--ui-url", default=None,
+                    help="console URL through the gateway (default: https://dfe.<domain> from the cluster annotation)")
+    ui.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API the specs seed through")
     ui.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
     ui_repo = _sibling_repo("dfe-ui", "DFE_UI_REPO")
     ui.add_argument("--ui-repo", default=ui_repo, required=ui_repo is None,
                     help="dfe-ui checkout the suite runs from (default: $DFE_UI_REPO, else the dfe-ui checkout beside this repo; required when there is neither)")
-    ui.add_argument("--grep", default="@acceptance", help="Playwright --grep selecting the acceptance-tier specs")
-    ui.add_argument("--no-rotate", action="store_true", help="skip the break-glass rotation (the run then proves less)")
+    ui.add_argument("--grep-invert", default=DOCKER_ONLY_TAG,
+                    help="Playwright --grep-invert: specs a Kubernetes run cannot carry; empty runs every spec")
+    ui.add_argument("--grep", default="", help="Playwright --grep narrowing the run further; empty keeps every spec")
+    ui.add_argument("--access-summary", default="", metavar="FILE",
+                    help="the deploy's access summary, so the root step signs in with exactly what its launcher holds")
+    ui.add_argument("--shots-dir", default=".tmp/onboarding",
+                    help="where the root step writes its per-step screenshots")
+    ui.add_argument("--insecure", action="store_true",
+                    help="the root step accepts a gateway certificate this machine does not trust")
+    ui.add_argument("--skip-onboarding", action="store_true",
+                    help="skip the root step on a deployment already onboarded (the run then proves less)")
     ui.add_argument("playwright_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to playwright test")
     ui.set_defaults(func=cmd_ui)
