@@ -134,7 +134,12 @@ def run(args: argparse.Namespace) -> int:
     # The API calls go straight to the engine when a forward is up: a deploy or a
     # delete can outlast a gateway's timeout. The console still goes through the gateway.
     api_url = os.environ.get("DFE_E2E_ENGINE_URL") or args.engine_url
-    engine = Engine(api_url, admin_user, password, verify or api_url != args.engine_url)
+    # What a fresh deployment's admin is changed to at its forced first-login change.
+    new_password = os.environ.get("DFE_E2E_ADMIN_NEW_PASSWORD", "")
+    engine = Engine(
+        api_url, admin_user, password, verify or api_url != args.engine_url,
+        new_password=new_password,
+    )
     archive_exec = [shlex.split(one) for one in args.archive_exec]
     restart_exec = shlex.split(args.restart_exec)
 
@@ -152,14 +157,18 @@ def run(args: argparse.Namespace) -> int:
         )
         try:
             try:
-                steps.open_console(driver, engine, admin_user, password, args.org, args.first_user)
+                steps.open_console(
+                    driver, engine, admin_user, password, args.org, args.first_user, new_password
+                )
             except Exception as exc:
                 # Chrome reconfigures its certificate verifier right after
                 # launch and fails the first navigation with ERR_CERT_VERIFIER_CHANGED.
                 if "ERR_CERT_VERIFIER_CHANGED" not in str(exc):
                     raise
                 driver.page.wait_for_timeout(3000)
-                steps.open_console(driver, engine, admin_user, password, args.org, args.first_user)
+                steps.open_console(
+                    driver, engine, admin_user, password, args.org, args.first_user, new_password
+                )
             driver.record("sweep", "done", steps.sweep_strays(engine, verify))
             walk(current, case, archive_exec, restart_exec)
         except Exception as exc:  # a Playwright timeout IS the finding

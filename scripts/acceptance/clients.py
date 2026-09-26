@@ -48,19 +48,43 @@ class Reply:
 
 @dataclass
 class Engine:
-    """The engine's API with a token kept fresh across a long run."""
+    """The engine's API with a token kept fresh across a long run.
+
+    A fresh deployment's admin must replace its issued password before the engine
+    serves it anything else, and a run that has made that change holds the admin
+    on ``new_password`` after it; login handles both.
+    """
 
     base: str
     user: str
     password: str = field(repr=False)
     verify: bool = True
     token: str = field(default="", repr=False)
+    new_password: str = field(default="", repr=False)
 
     def login(self) -> None:
         reply = self._request("POST", "/auth/login", {"username": self.user, "password": self.password}, auth=False)
+        if reply.status == 401 and self.new_password and self.new_password != self.password:
+            # An earlier run already replaced the issued password.
+            self.password = self.new_password
+            reply = self._request("POST", "/auth/login", {"username": self.user, "password": self.password}, auth=False)
         if reply.status != 200:
             raise RuntimeError(f"engine login failed: {reply.status} {reply.body}")
         self.token = str(reply["access_token"])
+        if isinstance(reply.body, dict) and reply.body.get("password_change_required"):
+            self._complete_forced_change()
+
+    def _complete_forced_change(self) -> None:
+        """Replace the issued password, which the engine demands before anything else."""
+        if not self.new_password:
+            raise RuntimeError(
+                f"'{self.user}' must change its issued password before the engine serves it. "
+                "Set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
+            )
+        changed = self._request("POST", "/auth/accounts/reset-password", {"new_password": self.new_password})
+        if changed.status != 200:
+            raise RuntimeError(f"forced password change failed: {changed.status} {changed.body}")
+        self.password = self.new_password
 
     def call(self, method: str, path: str, body: object = None) -> Reply:
         if not self.token:
