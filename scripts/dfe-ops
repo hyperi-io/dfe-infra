@@ -1353,6 +1353,10 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         env["DFE_E2E_ENGINE_USER"] = user
         env["DFE_E2E_ENGINE_PASSWORD"] = password
         env["DFE_E2E_ADMIN_PASSWORD"] = password
+        # The engine forces the admin off that issued password at first login;
+        # every suite changes it to this one, and signs in with it from then on.
+        if settings.get(NEW_ADMIN_PASSWORD_VAR):
+            env[NEW_ADMIN_PASSWORD_VAR] = settings[NEW_ADMIN_PASSWORD_VAR]
     else:
         env.pop("DFE_E2E_ENGINE_URL", None)
         stop.set()
@@ -1533,6 +1537,8 @@ DOCKER_ADMIN_PASSWORD_KEY = "DFE_AUTH_LOCAL_ADMIN_PASSWORD"
 # A password the caller fed the deploy, so a test run knows it without reading
 # anything back.
 FED_ADMIN_PASSWORD_VAR = "DFE_E2E_ADMIN_PASSWORD"
+# What a suite changes the admin to at the forced first-login password change.
+NEW_ADMIN_PASSWORD_VAR = "DFE_E2E_ADMIN_NEW_PASSWORD"
 
 ADMIN_USER = "admin"
 BREAKGLASS_USER = "breakglass"
@@ -2066,7 +2072,9 @@ UI_DOCKER_ONLY_TAG = "@docker-only"
 def _rotate_break_glass(engine_url: str, name: str, current: str) -> str:
     """Rotate the break-glass password through the product API; return the new one.
 
-    In-process on purpose: the token never reaches a command line or a log.
+    In-process on purpose: the token never reaches a command line or a log. The
+    account changes its own password, the one route the engine serves an admin
+    still on its issued password, and the change clears that forced change too.
     """
     new_password = secrets.token_urlsafe(24)
     login = urllib.request.Request(
@@ -2078,7 +2086,7 @@ def _rotate_break_glass(engine_url: str, name: str, current: str) -> str:
     with urllib.request.urlopen(login, timeout=15) as response:
         token = json.loads(response.read())["access_token"]
     reset = urllib.request.Request(
-        f"{engine_url}/api/v1/auth/accounts/{name}/reset-password",
+        f"{engine_url}/api/v1/auth/accounts/reset-password",
         data=json.dumps({"new_password": new_password}).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
@@ -2167,6 +2175,8 @@ def cmd_ui(args: argparse.Namespace) -> int:
         "BASE_URL": ui_url,
         "NEXT_PUBLIC_API_URL": engine_url,
         "E2E_ADMIN_PASSWORD": rotated,
+        # What the onboarding spec changes the admin to at its forced first-login change.
+        "E2E_ADMIN_NEW_PASSWORD": settings.get(NEW_ADMIN_PASSWORD_VAR) or secrets.token_urlsafe(24),
         "E2E_BOOTSTRAP_PASSWORD": bootstrap,
         "E2E_TEST_TIMEOUT_MS": str(args.test_timeout_ms),
         "E2E_EXPECT_TIMEOUT_MS": str(args.expect_timeout_ms),
