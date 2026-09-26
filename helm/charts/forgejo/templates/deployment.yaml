@@ -29,10 +29,9 @@ spec:
       initContainers:
         # Rancher's local-path provisioner (and some CSI drivers) do NOT honour the
         # pod fsGroup, so a freshly-provisioned PVC stays root-owned and the uid-1000
-        # init below fails at `mkdir` on /data. Chown it first, as root. Same root
-        # cause and same fix as scripts/fix-harbor-trivy.sh; do NOT "fix" it by
-        # running Forgejo as root instead. Reuses the (pinned) Forgejo image so no
-        # extra image is introduced.
+        # init below fails at `mkdir` on /data. Chown it first, as root; do NOT
+        # "fix" it by running Forgejo as root instead. Reuses the (pinned) Forgejo
+        # image so no extra image is introduced.
         - name: fix-data-perms
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}

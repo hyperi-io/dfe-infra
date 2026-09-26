@@ -31,8 +31,7 @@ is reported as skipped, never as passed.
 
 - A deployment the agent has reason to believe is working end to end -- the
   automated cycle green, every pod healthy, the data path proven.
-- The identity fixture. Four providers and twelve test users already exist; see
-  [`AUTH-TESTING.md`](AUTH-TESTING.md). Do not build new ones.
+- The identity fixture. `dfe-ops idp` stands up the tester IdP and its users, and the external-provider steps need identities in your own Entra ID tenant; see [`AUTH-TESTING.md`](AUTH-TESTING.md). Do not build another IdP.
 - Deployment specifics (cluster, domain, credentials) come from the deployment's
   own private config, never from this repo.
 

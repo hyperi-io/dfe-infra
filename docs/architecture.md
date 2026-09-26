@@ -124,4 +124,3 @@ a chart value).
 | [AUTOSCALING.md](AUTOSCALING.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |
 | [EDGE-AUTH.md](EDGE-AUTH.md) | web-plane exposure + auth: every UI external by default, route class (product/infra/ingest), the infra kill switch, edge OIDC + group RBAC, per-surface policy |
 | [INGEST-EDGE.md](INGEST-EDGE.md) | the dfe-receiver data door: public LoadBalancers vs the Gateway route, source ranges, why an empty allow-list is the whole internet |
-| [archive/](archive/) | the 2026-03 research corpus + superseded material (decision trail) |
