@@ -119,8 +119,12 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
           volumeMounts:
+            # The file, not the directory: the enrichment tables mount at
+            # /etc/dfe-transform-vector/data, and a directory mount here would put
+            # that volume inside this one. checksum/config rolls the pod on a change.
             - name: config
-              mountPath: /etc/dfe-transform-vector
+              mountPath: /etc/dfe-transform-vector/config.yaml
+              subPath: config.yaml
               readOnly: true
             {{- include "dfe-common.transformFilesMount" . | nindent 12 }}
             {{- include "dfe-common.enrichmentTablesMount" . | nindent 12 }}
