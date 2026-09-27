@@ -2115,14 +2115,14 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.22.8"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #537: stored credentials are masked on every read the API serves them through, and a masked value written back keeps the stored credential only while the object holding it is otherwise unchanged; platform rights (the HyperDX connection, ClickHouse group users, JIT team, otel_reader) come from system-scope grants only; every topic the engine creates carries max.message.bytes (DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES, 16 MiB default) beside compression.type=producer; MessagePack removed. On scalo-py 2.30.5.
+      dfe-engine: "v1.22.9"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #561: a transform on the direct transport keys its output by the source's _load topic, so a program that rebuilds the event no longer loads into the default table; #560: deploy-repo writes get their own timeout and a bounded, jittered retry, answer 503 instead of 500 when the forge stays down, never revert a peer's newer write after a lost push answer, and dfe local push keeps break-glass commits; #559: image defaults point at ghcr.io/hyperi-io. #537: stored credentials are masked on every read the API serves them through, and a masked value written back keeps the stored credential only while the object holding it is otherwise unchanged; platform rights (the HyperDX connection, ClickHouse group users, JIT team, otel_reader) come from system-scope grants only; every topic the engine creates carries max.message.bytes (DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES, 16 MiB default) beside compression.type=producer; MessagePack removed. On scalo-py 2.30.5.
       dfe-ui: "v1.7.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). Released 2026-09-26. #385: API types synced with the engine; #386: CI warnings cleared.
       dfe-receiver: "v1.15.41"      # independent release line. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-loader: "v1.18.44"        # Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-archiver: "v1.7.26"       # Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-fetcher: "v1.4.31"        # Rebuilt on scalo-rs 2.13.0; the Kafka producer defaults to zstd level 3. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-transform-vrl: "v1.1.28"   # #85: the source ack is held until the record is delivered. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
-      dfe-transform-vector: "v1.0.43"  # #91: security and delivery fixes. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-transform-vector: "v1.0.44"  # #94: the startup config check stays off the broker, so a SASL (SCRAM) broker no longer refuses it the literal secret reference and a broker outage at pod start is no longer fatal. #91: security and delivery fixes. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-transform-elastic: "v1.1.7" # #92: the image carries the source catalogue and prints it with `emit-catalogue`, which the engine chart's catalogue init container runs. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised). Idles until a source names it (#52), seeded idle on every tier (#320).
       # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
       # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
@@ -2142,14 +2142,14 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:998ca49ac3294b8bb98ad24ac62bc9e9f4b7a6b99be61bc08633879734e273e0"
+      dfe-engine: "sha256:0a37e6e6b94588528c301146c8ffb6ea3cb073b2bc36b034eafdc6e0728dba17"
       dfe-ui: "sha256:500532c25b2e35115b06eee7fb46b6fab2e21eee2e5f77314fb8d20ca1f9f94c"
       dfe-receiver: "sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
       dfe-loader: "sha256:9ed2cf569f29e1da653268811483bf795a52c7f5f2d6ffa1981f8d133c4bd81b"
       dfe-archiver: "sha256:c443241daccd21da9c7d95632c67fa3d71d91c86605f655ce24b88fb9a690d1a"
       dfe-fetcher: "sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
       dfe-transform-vrl: "sha256:1dd3d91de6fa896f1210db5e8bf3b035724f3c7f3895fa0de3a3872bf1f921d5"
-      dfe-transform-vector: "sha256:455e1ba2d70ce4e2bffda00ff2359aef1c15db750b51d2cf6400f104228211d2"
+      dfe-transform-vector: "sha256:f0e3ccfe6c4dac66e5256da1272c4c0dcfee97ef1b1dc2388fe9e1a4e299d465"
       # The multi-arch INDEX digest; a per-platform digest under it would strand the other architecture.
       dfe-transform-elastic: "sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
       # Keyed here rather than under content:, which carries versions and
@@ -2189,7 +2189,7 @@ stacks:
       # A GIT REF, not a version: dfe-docker cuts no per-stack tag, so the
       # immutable record of what ran a stack is the commit. `dfe-stack cut`
       # re-resolves it from dfe-docker main.
-      dfe-docker: "47bdc35d09be74d4e41931ecd8be9c217db98fe9"
+      dfe-docker: "6893f538032d56f5f6fa70e9513c474fb718c4f9"
       dfe-hyperdx: "v0.2.7"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d (an engine token still pending a password change is refused, members read their own team, the restore surface is gated, and the node base is pinned by digest; upstream 2.36.0); deployment tag pin lives in the deploy repo values
 
     # Stage toolbox: the dfe-toolbox ops shell image family (docker/dfe-toolbox/),

@@ -22,7 +22,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:998ca49ac3294b8bb98ad24ac62bc9e9f4b7a6b99be61bc08633879734e273e0"
+  digest: "sha256:0a37e6e6b94588528c301146c8ffb6ea3cb073b2bc36b034eafdc6e0728dba17"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -149,7 +149,7 @@ content:
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.43@sha256:455e1ba2d70ce4e2bffda00ff2359aef1c15db750b51d2cf6400f104228211d2"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.44@sha256:f0e3ccfe6c4dac66e5256da1272c4c0dcfee97ef1b1dc2388fe9e1a4e299d465"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract
