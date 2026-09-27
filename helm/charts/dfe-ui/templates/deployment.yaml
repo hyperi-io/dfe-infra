@@ -46,8 +46,10 @@ spec:
               value: {{ .Values.config.nextPublicApiUrl | quote }}
             # NextAuth's authorize fetch runs server-side; a missing base URL
             # makes every credentials login fail before reaching the engine.
+            # The engine shares this release's namespace, which DFE_NAMESPACE
+            # names and need not be {project}-{env}.
             - name: INTERNAL_API_URL
-              value: {{ .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project (include "dfe-common.namespace" .)) | quote }}
+              value: {{ .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project .Release.Namespace) | quote }}
             # Read at request time by the (auth) layout: lights the /observe/*
             # sidebar entries that iframe the chromeless dfe-hyperdx fork.
             - name: HYPERDX_URL
