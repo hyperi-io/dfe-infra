@@ -2115,13 +2115,13 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.22.9"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #561: a transform on the direct transport keys its output by the source's _load topic, so a program that rebuilds the event no longer loads into the default table; #560: deploy-repo writes get their own timeout and a bounded, jittered retry, answer 503 instead of 500 when the forge stays down, never revert a peer's newer write after a lost push answer, and dfe local push keeps break-glass commits; #559: image defaults point at ghcr.io/hyperi-io. #537: stored credentials are masked on every read the API serves them through, and a masked value written back keeps the stored credential only while the object holding it is otherwise unchanged; platform rights (the HyperDX connection, ClickHouse group users, JIT team, otel_reader) come from system-scope grants only; every topic the engine creates carries max.message.bytes (DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES, 16 MiB default) beside compression.type=producer; MessagePack removed. On scalo-py 2.30.5.
+      dfe-engine: "v1.22.10"        # ghcr.io/hyperi-io/dfe-engine (Python; own line). #575: a proxied OIDC subject can no longer sign in as a local account of the same name (the admin included) or skip its forced password change, an apikey: subject is refused, and an unknown user is checked at the real bcrypt cost; #578: alert destination URLs are masked on read and a masked multi-credential write answers a right and a wrong guess alike. #561: a transform on the direct transport keys its output by the source's _load topic, so a program that rebuilds the event no longer loads into the default table; #560: deploy-repo writes get their own timeout and a bounded, jittered retry, answer 503 instead of 500 when the forge stays down, never revert a peer's newer write after a lost push answer, and dfe local push keeps break-glass commits; #559: image defaults point at ghcr.io/hyperi-io. #537: stored credentials are masked on every read the API serves them through, and a masked value written back keeps the stored credential only while the object holding it is otherwise unchanged; platform rights (the HyperDX connection, ClickHouse group users, JIT team, otel_reader) come from system-scope grants only; every topic the engine creates carries max.message.bytes (DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES, 16 MiB default) beside compression.type=producer; MessagePack removed. On scalo-py 2.30.5.
       dfe-ui: "v1.7.5"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). Released 2026-09-27. #398: the GitOps auto-merge toggle follows the stored flag, not whether it is allowed, and Stored/Effective/Allowed always show; #390: e2e specs match the rc.14 console; #385: API types synced with the engine; #386: CI warnings cleared.
       dfe-receiver: "v1.15.41"      # independent release line. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
-      dfe-loader: "v1.18.44"        # Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
-      dfe-archiver: "v1.7.26"       # Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-loader: "v1.18.45"        # Rebuilt on scalo-rs 2.13.1: a consumer librdkafka flags fatal is rebuilt rather than kept, so a roll can no longer leave a Ready loader consuming nothing; classic is the default group protocol. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-archiver: "v1.7.27"       # Rebuilt on scalo-rs 2.13.1 (a fatal consumer is rebuilt, classic group protocol). PGO+BOLT off for rc.14 (released unoptimised).
       dfe-fetcher: "v1.4.31"        # Rebuilt on scalo-rs 2.13.0; the Kafka producer defaults to zstd level 3. PGO+BOLT off for rc.14 (released unoptimised).
-      dfe-transform-vrl: "v1.1.28"   # #85: the source ack is held until the record is delivered. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-transform-vrl: "v1.1.29"   # #85: the source ack is held until the record is delivered. Rebuilt on scalo-rs 2.13.1 (a fatal consumer is rebuilt, classic group protocol). PGO+BOLT off for rc.14 (released unoptimised).
       dfe-transform-vector: "v1.0.44"  # #94: the startup config check stays off the broker, so a SASL (SCRAM) broker no longer refuses it the literal secret reference and a broker outage at pod start is no longer fatal. #91: security and delivery fixes. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-transform-elastic: "v1.1.8" # #90: the source ack (Kafka commit or push answer) is held until the sink delivers, a refusing sink is retried rather than exiting the pod, input that is not JSON is dead-lettered and counted, and batch saturation is measured against the governed receive cap. #92: the image carries the source catalogue and prints it with `emit-catalogue`, which the engine chart's catalogue init container runs. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised). Idles until a source names it (#52), seeded idle on every tier (#320).
       # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
@@ -2142,13 +2142,13 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:0a37e6e6b94588528c301146c8ffb6ea3cb073b2bc36b034eafdc6e0728dba17"
+      dfe-engine: "sha256:1a68bd0c0581f298a48cb96ebf5a21814bea24966c92778daac6d4d4596de248"
       dfe-ui: "sha256:144800e1cc7479ca1fd713228daaa02bbb348b2293a02abdbac9c581b9a3e2dd"
       dfe-receiver: "sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
-      dfe-loader: "sha256:9ed2cf569f29e1da653268811483bf795a52c7f5f2d6ffa1981f8d133c4bd81b"
-      dfe-archiver: "sha256:c443241daccd21da9c7d95632c67fa3d71d91c86605f655ce24b88fb9a690d1a"
+      dfe-loader: "sha256:26e3e438cafa1b3b3305299ce07d6040abbb829b123575f13e26ccb5463fd9a2"
+      dfe-archiver: "sha256:1ccaa927a5a2398c3448b04ed8c6a608484218a4238ed3980fda365d7463f698"
       dfe-fetcher: "sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
-      dfe-transform-vrl: "sha256:1dd3d91de6fa896f1210db5e8bf3b035724f3c7f3895fa0de3a3872bf1f921d5"
+      dfe-transform-vrl: "sha256:75d97417d09456fabc0931202cbcb7a13e015b1eae46ccde67b920e8a2514a2c"
       dfe-transform-vector: "sha256:f0e3ccfe6c4dac66e5256da1272c4c0dcfee97ef1b1dc2388fe9e1a4e299d465"
       # The multi-arch INDEX digest; a per-platform digest under it would strand the other architecture.
       dfe-transform-elastic: "sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"

@@ -8,7 +8,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-loader (drift-checked).
-  digest: "sha256:9ed2cf569f29e1da653268811483bf795a52c7f5f2d6ffa1981f8d133c4bd81b"
+  digest: "sha256:26e3e438cafa1b3b3305299ce07d6040abbb829b123575f13e26ccb5463fd9a2"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
