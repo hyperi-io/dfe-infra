@@ -45,4 +45,8 @@ spec:
           group: ""
           kind: Service
           weight: 1
+      {{- with .Values.routes.dfeEngine.requestTimeout }}
+      timeouts:
+        request: {{ . | quote }}
+      {{- end }}
 {{- end }}
