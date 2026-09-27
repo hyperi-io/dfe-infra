@@ -1,0 +1,77 @@
+# The engine's group -> role mapping for the `dfe-ops idp` fixture.
+#
+# `dfe-ops idp wire-engine` renders one engine group file per entry into a
+# ConfigMap (default dfe-auth-groups); the engine chart seeds them into its
+# auth/groups directory when authConfig.groupsConfigMap names it. The names
+# match the groups in tester-idp-users.toml, which is what the IdP puts in the
+# groups claim.
+#
+#   roles    -- engine role names (dfe-engine auth/resources/roles.yaml)
+#   scope    -- `system`, or `org:<id>` to bind the roles at that org only
+#   org_ids  -- org memberships the group confers
+#
+# The engine seeds its own four defaults only into an EMPTY group store, so
+# dfe-admins, dfe-analysts, dfe-viewers and dfe-infra are repeated here with
+# the roles the engine gives them.
+#
+# dfe-nogroup is deliberately absent: its member must resolve to no role.
+
+[[groups]]
+  name = "dfe-admins"
+  roles = ["admin"]
+  description = "Full administrative access"
+
+[[groups]]
+  name = "dfe-infra"
+  roles = ["infra_admin"]
+  description = "Service and deployment management"
+
+[[groups]]
+  name = "dfe-infra-viewers"
+  roles = ["infra_viewer"]
+  description = "Infrastructure, read-only"
+
+[[groups]]
+  name = "dfe-analysts"
+  roles = ["data_analyst"]
+  description = "Hunt, query, source CRUD"
+
+[[groups]]
+  name = "dfe-analyst-viewers"
+  roles = ["data_analyst_viewer"]
+  description = "Analyst surfaces, read-only"
+
+[[groups]]
+  name = "dfe-viewers"
+  roles = ["data_viewer"]
+  description = "Dashboard and query access"
+
+[[groups]]
+  name = "dfe-operators"
+  roles = ["dfe_operator"]
+  description = "Curated operational dials"
+
+[[groups]]
+  name = "dfe-test-org-viewers"
+  roles = ["org_viewer"]
+  scope = "org:test_org"
+  org_ids = ["test_org"]
+  description = "Data plane for one org, bound at that org"
+
+# org_ids WITHOUT an org scope: the role is held at system scope over two orgs,
+# which is the case an org filter must not widen.
+[[groups]]
+  name = "dfe-multi-viewers"
+  roles = ["org_viewer"]
+  org_ids = ["test_org", "test_org_2"]
+  description = "Data plane for two orgs"
+
+[[groups]]
+  name = "dfe-nested-parent"
+  roles = ["data_analyst"]
+  description = "Reached only through dfe-nested-child"
+
+[[groups]]
+  name = "dfe-nested-child"
+  roles = []
+  description = "Grants nothing of its own"
