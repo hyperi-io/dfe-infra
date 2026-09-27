@@ -177,14 +177,18 @@ class FilebeatCase(Case):
         driver.record("add-source-configuration", "done",
                       f"filled the Configuration tab for {self.name}, archive on")
 
-        # The console names this tab Table Settings and keeps the header under its
-        # defaults, so only the meta schema and its version are picked here.
         page.get_by_role("tab", name="Table Settings", exact=True).click(timeout=STEP_TIMEOUT_MS)
         page.get_by_text("Define Schema", exact=True).click(timeout=STEP_TIMEOUT_MS)
-        steps.search_select(page, "#schema_meta_schema", self.META_SCHEMA.rsplit("/", 1)[-1])
-        steps.select_by_id(page, "#schema_meta_schema_version", self.META_SCHEMA_VERSION)
+        # The selects group by family and show the leaf: meta > beats > filebeat.
+        steps.select_field(page, "schema_meta_schema", self.META_SCHEMA.rsplit("/", 1)[-1])
+        steps.select_field(page, "schema_meta_schema_version", self.META_SCHEMA_VERSION)
+        # The header is a deployment default the form fills in; picking one is an override.
+        driver.button("Override Defaults").click(timeout=STEP_TIMEOUT_MS)
+        steps.select_field(page, "header_type", self.HEADER.rsplit("/", 1)[-1])
+        steps.select_field(page, "header_version", self.HEADER_VERSION)
         driver.record("add-source-meta-schema", "done",
-                      f"picked {self.META_SCHEMA} {self.META_SCHEMA_VERSION}")
+                      f"picked {self.HEADER} {self.HEADER_VERSION} and "
+                      f"{self.META_SCHEMA} {self.META_SCHEMA_VERSION}")
 
         # The Transform tab renders only once a meta schema is picked, so it is
         # filled in here and the create carries the transform with it.
@@ -207,7 +211,7 @@ class FilebeatCase(Case):
         """
         page.get_by_role("tab", name="Transform", exact=True).click(timeout=STEP_TIMEOUT_MS)
         page.get_by_text("Define Transform", exact=True).click(timeout=STEP_TIMEOUT_MS)
-        steps.select_by_id(page, "#transform_engine", self.service)
+        steps.select_field(page, "transform_engine", self.service)
 
     def _record_transform(self, run: Run, refused: str) -> None:
         """The attach-transform row, read back off the engine rather than off the form."""

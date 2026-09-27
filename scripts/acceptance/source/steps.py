@@ -56,20 +56,21 @@ RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 # --- console helpers ---------------------------------------------------------
 
 
-def select_by_id(page, selector: str, text: str) -> None:
-    """Pick *text* from the Ant Design select whose input the form ids as *selector*.
+def field_select(field: str) -> str:
+    """The locator for the Ant Design select bound to the form field *field*."""
+    return f'input[role="combobox"][id$="{field}"]'
 
-    By id rather than position: the source form force-renders every tab, so the
-    page's combobox order counts controls the operator cannot see.
+
+def select_field(page, field: str, text: str) -> None:
+    """Pick *text* from the Ant Design select bound to the form field *field*.
+
+    By field rather than by position or label: the source form force-renders
+    every tab, so the page's combobox order counts controls the operator cannot
+    see, and a required field's label carries a `*` into its accessible name.
+    Ant Design ids a Form.Item's control by its field path joined with `_`
+    (`schema_meta_schema` for ``['schema', 'meta_schema']``).
     """
-    page.locator(selector).click(timeout=STEP_TIMEOUT_MS)
-    _pick_open_option(page, text)
-
-
-def search_select(page, selector: str, text: str) -> None:
-    """Type *text* into a searchable select first, so a long virtual list renders it."""
-    page.locator(selector).click(timeout=STEP_TIMEOUT_MS)
-    page.keyboard.insert_text(text)
+    page.locator(field_select(field)).first.click(timeout=STEP_TIMEOUT_MS)
     _pick_open_option(page, text)
 
 
@@ -129,7 +130,9 @@ def open_console(driver, engine: Engine, admin_user: str, password: str, org: st
         org, first_user, password, password, admin_user, password, new_password,
     )
     # The wizard hands the console to the account it just made; the rest of this
-    # run is the admin's, which is who its API calls are.
+    # run is the admin's, which is who its API calls are. The console sends a
+    # signed-in session away from /login, so that session is dropped first.
+    driver.page.context.clear_cookies()
     onboarding.sign_in(driver, admin_user, admin_password)
     driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
     driver.record("console", "done", f"the console opened for {admin_user} after the setup wizard")
@@ -512,6 +515,20 @@ def record_archive(driver, archive_exec: list[list[str]], name: str) -> None:
     driver.record("archived", "done" if wrote else "failed", detail)
 
 
+_HINT_SERVICE = re.compile(r"SERVICES=(\S+)")
+
+
+def hinted_service(hint: str) -> str:
+    """The Compose service one engine restart hint names.
+
+    appconfig.RESTART_HINT and RECREATE_HINT name it as ``make apply
+    SERVICES=<service>``; an engine from before that ended the hint on
+    ``docker compose restart <service>``, so the service was the last word.
+    """
+    found = _HINT_SERVICE.search(hint)
+    return found.group(1) if found else hint.rsplit(" ", 1)[-1]
+
+
 def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
     """Restart the apps the engine says cannot take a write where they stand.
 
@@ -536,9 +553,7 @@ def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
         return
     done = []
     for hint in hints:
-        # appconfig.RESTART_HINT: "restart required: docker compose restart
-        # <service>", so the service is the last word and the rest is the reason.
-        service = hint.rsplit(" ", 1)[-1]
+        service = hinted_service(hint)
         reply = subprocess.run([*prefix, service], capture_output=True, text=True, check=False)
         done.append(f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {(reply.stderr or reply.stdout).strip()[:120]}'}")
     driver.record(

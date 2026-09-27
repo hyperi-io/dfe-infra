@@ -194,7 +194,9 @@ class FakeEngine:
     ON_DISK: ClassVar[dict[str, int]] = {"filebeat.vrl": len(PROGRAM), "timezones.csv": len(TABLE)}
 
     #: appmgmt/appconfig.py RESTART_HINT, as a released engine renders it.
-    RESTART_HINT: ClassVar[str] = "restart required: docker compose restart dfe-transform-vrl"
+    RESTART_HINT: ClassVar[str] = "restart required: make apply SERVICES=dfe-transform-vrl"
+    #: The same hint from an engine that predates `make apply`.
+    LEGACY_RESTART_HINT: ClassVar[str] = "restart required: docker compose restart dfe-transform-vrl"
 
     def __init__(self, transform: str = "vrl", variant: str = "", committed: bool = True,
                  restart_required: tuple[str, ...] = (RESTART_HINT,),
@@ -441,14 +443,15 @@ class TestTheFilebeatCaseCreate:
             "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform"
         ]
 
-    def test_the_schema_is_picked_on_the_table_settings_tab(self):
-        """The console renamed the tab from Meta Schema, and the header moved under its defaults."""
+    def test_the_schema_is_picked_on_the_table_settings_tab_by_field(self):
+        """The console names the tab Table Settings and fills the header from its defaults."""
         driver, _, _ = self._create()
+        visited = driver.page.visited
 
-        assert "tab:Table Settings" in driver.page.visited
-        assert "tab:Meta Schema" not in driver.page.visited
-        assert "locator:#schema_meta_schema" in driver.page.visited
-        assert "locator:#schema_meta_schema_version" in driver.page.visited
+        assert "tab:Table Settings" in visited
+        assert "button:Override Defaults" in visited
+        for field in ("schema_meta_schema", "schema_meta_schema_version", "header_type", "header_version"):
+            assert f"locator:{steps.field_select(field)}" in visited
 
     def test_the_transform_goes_on_through_the_console_when_the_tab_is_there(self):
         driver, engine, case = self._create()
@@ -465,7 +468,9 @@ class TestTheFilebeatCaseCreate:
         assert ("PUT", f"/sources/{case.name}") in engine.calls
 
     def test_a_console_without_the_engine_picker_falls_back_the_same_way(self):
-        driver, engine, case = self._create(missing=("locator:#transform_engine",))
+        driver, engine, case = self._create(
+            missing=(f"locator:{steps.field_select('transform_engine')}",)
+        )
 
         assert driver.status("attach-transform") == "api-fallback"
         assert ("PUT", f"/sources/{case.name}") in engine.calls
@@ -740,11 +745,22 @@ class TestTheRestartStep:
         assert driver.status("restart") == "skipped"
         assert ran == []
 
-    def test_the_service_is_the_last_word_of_the_engine_s_hint(self, monkeypatch):
-        """appconfig.RESTART_HINT ends in the service; the rest of it is the reason."""
+    def test_the_service_is_the_one_the_engine_s_hint_names(self, monkeypatch):
+        """appconfig.RESTART_HINT names the service as `SERVICES=<service>`."""
         driver, ran = self._apply(monkeypatch, ["docker", "restart"], [FakeEngine.RESTART_HINT])
 
         assert driver.status("restart") == "done"
+        assert ran == [["docker", "restart", self.SERVICE]]
+
+    def test_a_new_instance_s_recreate_hint_names_its_own_service(self, monkeypatch):
+        hint = "recreate required: make apply SERVICES=dfe-transform-vrl-fb0147f03c"
+        _, ran = self._apply(monkeypatch, ["docker", "restart"], [hint])
+
+        assert ran == [["docker", "restart", "dfe-transform-vrl-fb0147f03c"]]
+
+    def test_an_older_engine_s_hint_ends_in_the_service(self, monkeypatch):
+        _, ran = self._apply(monkeypatch, ["docker", "restart"], [FakeEngine.LEGACY_RESTART_HINT])
+
         assert ran == [["docker", "restart", self.SERVICE]]
 
     def test_one_restart_per_app_however_many_writes_reported_it(self, monkeypatch):
