@@ -3,7 +3,7 @@ name: dfe-transform-elastic
 description: "Elasticsearch format conversion transform — Kafka consumer → ES format → Kafka producer"
 type: application
 version: 0.3.0
-appVersion: "v1.1.7"
+appVersion: "v1.1.8"
 dependencies:
   - name: dfe-common
     version: "0.14.0"

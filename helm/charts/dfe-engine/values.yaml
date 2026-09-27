@@ -154,7 +154,7 @@ content:
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.7@sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
     # The source catalogue the settings API offers, printed by the pinned image
     # itself (`dfe-transform-elastic emit-catalogue`, dfe-transform-elastic#92)
     # so the deployment needs no access to the app's repository. An image that
@@ -164,7 +164,7 @@ content:
       kind: emit
       role: catalogue
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.7@sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
 
 config:
   mountPath: /config

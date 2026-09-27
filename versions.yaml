@@ -2123,7 +2123,7 @@ stacks:
       dfe-fetcher: "v1.4.31"        # Rebuilt on scalo-rs 2.13.0; the Kafka producer defaults to zstd level 3. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-transform-vrl: "v1.1.28"   # #85: the source ack is held until the record is delivered. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
       dfe-transform-vector: "v1.0.44"  # #94: the startup config check stays off the broker, so a SASL (SCRAM) broker no longer refuses it the literal secret reference and a broker outage at pod start is no longer fatal. #91: security and delivery fixes. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
-      dfe-transform-elastic: "v1.1.7" # #92: the image carries the source catalogue and prints it with `emit-catalogue`, which the engine chart's catalogue init container runs. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised). Idles until a source names it (#52), seeded idle on every tier (#320).
+      dfe-transform-elastic: "v1.1.8" # #90: the source ack (Kafka commit or push answer) is held until the sink delivers, a refusing sink is retried rather than exiting the pod, input that is not JSON is dead-lettered and counted, and batch saturation is measured against the governed receive cap. #92: the image carries the source catalogue and prints it with `emit-catalogue`, which the engine chart's catalogue init container runs. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised). Idles until a source names it (#52), seeded idle on every tier (#320).
       # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
       # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
       # dfe-transform-wasm: "2.2.0"
@@ -2151,7 +2151,7 @@ stacks:
       dfe-transform-vrl: "sha256:1dd3d91de6fa896f1210db5e8bf3b035724f3c7f3895fa0de3a3872bf1f921d5"
       dfe-transform-vector: "sha256:f0e3ccfe6c4dac66e5256da1272c4c0dcfee97ef1b1dc2388fe9e1a4e299d465"
       # The multi-arch INDEX digest; a per-platform digest under it would strand the other architecture.
-      dfe-transform-elastic: "sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
+      dfe-transform-elastic: "sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
       dfe-hyperdx: "sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d"
