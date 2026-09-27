@@ -16,7 +16,7 @@ image:
   tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-hyperdx (drift-checked). The tag and this must move together.
-  digest: "sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f"
+  digest: "sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d"
   pullPolicy: IfNotPresent
 
 # The image runs as USER node, which its node:alpine base creates as uid 1000, so

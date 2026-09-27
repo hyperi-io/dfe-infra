@@ -2154,7 +2154,7 @@ stacks:
       dfe-transform-elastic: "sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
-      dfe-hyperdx: "sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f"
+      dfe-hyperdx: "sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d"
       # ghcr.io/hyperi-io/culvert:v2.1.15. Manifest-LIST digest (amd64 + arm64),
       # read via `oras manifest fetch --descriptor`.
       culvert: "sha256:a58a2ee3daeffc7cbb72deb1d58968441fa7507c9959395cf1824671aebbaf0b"
@@ -2183,10 +2183,14 @@ stacks:
     # the whole set). PENDING entries have no release tag / published image yet;
     # the first release cut stamps them.
     content:
-      dfe-schemas: "v0.2.1"              # baseline DDL; the dfe-schemas release current at this cut (2026-09-08)
+      dfe-schemas: "v0.2.8"              # baseline DDL; the dfe-schemas release engine v1.22.8 locks and applies at startup
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.0"               # the deploy-repo template (seeded at this tag)
-      dfe-hyperdx: "v0.2.4"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f (shipped dashboards are read-only without the save-403 warning, plus Duplicate/Delete-with-tombstone/Restore; upstream 2.36.0); deployment tag pin lives in the deploy repo values
+      dfe-deploy: "v1.0.4"               # the deploy-repo template (seeded at this tag); the newest tag on the remote at this cut
+      # A GIT REF, not a version: dfe-docker cuts no per-stack tag, so the
+      # immutable record of what ran a stack is the commit. `dfe-stack cut`
+      # re-resolves it from dfe-docker main.
+      dfe-docker: "47bdc35d09be74d4e41931ecd8be9c217db98fe9"
+      dfe-hyperdx: "v0.2.7"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d (an engine token still pending a password change is refused, members read their own team, the restore surface is gated, and the node base is pinned by digest; upstream 2.36.0); deployment tag pin lives in the deploy repo values
 
     # Stage toolbox: the dfe-toolbox ops shell image family (docker/dfe-toolbox/),
     # NOT a component of the deployed stack -- an operator convenience
