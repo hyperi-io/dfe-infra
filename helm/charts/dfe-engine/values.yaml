@@ -15,7 +15,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:952f3cd1e247f4a3fffeb36d2d3d09be178daa91216344cb02ad7b3b259d9df2"
+  digest: "sha256:998ca49ac3294b8bb98ad24ac62bc9e9f4b7a6b99be61bc08633879734e273e0"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -38,7 +38,7 @@ profile: ""
 # names it. Helm cannot read a sibling chart's appVersion, so this is a second
 # copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
 # stops the two diverging.
-uiVersion: "v1.6.4"
+uiVersion: "v1.7.4"
 
 # The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
 # and dfe-common.transport reads a missing map as the bus default. On the bus
@@ -117,37 +117,37 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.36@sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.41@sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.39@sha256:a0c78809613925977050dc0845c64684de65a484361691cf16d814765c5f9c4f"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.44@sha256:9ed2cf569f29e1da653268811483bf795a52c7f5f2d6ffa1981f8d133c4bd81b"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.22@sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.26@sha256:c443241daccd21da9c7d95632c67fa3d71d91c86605f655ce24b88fb9a690d1a"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.26@sha256:7428a262ad6168677eb03446ef338e64e0b23d670c558925ceb0620f899be828"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.31@sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.24@sha256:838de184ba84412bfaaec44463de3d37c0fb0ba44a981792e84456ebd1e686d1"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.28@sha256:1dd3d91de6fa896f1210db5e8bf3b035724f3c7f3895fa0de3a3872bf1f921d5"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.41@sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.43@sha256:455e1ba2d70ce4e2bffda00ff2359aef1c15db750b51d2cf6400f104228211d2"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.4@sha256:ad85ba2d9665a4bb7c363de6ee9184bdb0c5b69bfd3965425ab02bf5636f899b"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.7@sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
     # The source catalogue the settings API offers, printed by the pinned image
     # itself (`dfe-transform-elastic emit-catalogue`, dfe-transform-elastic#92)
     # so the deployment needs no access to the app's repository. An image that
@@ -157,7 +157,7 @@ content:
       kind: emit
       role: catalogue
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.4@sha256:ad85ba2d9665a4bb7c363de6ee9184bdb0c5b69bfd3965425ab02bf5636f899b"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.7@sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
 
 config:
   mountPath: /config

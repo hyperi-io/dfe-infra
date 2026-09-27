@@ -2115,15 +2115,15 @@ stacks:
     # ghcr.io/hyperi-io/<app>. check_versions_drift.py enforces chart appVersion
     # == the pin here.
     apps:
-      dfe-engine: "v1.21.2"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #435 closes #434: a `/app/schemas` volume seeded by a v1.20.x engine no longer shadows the image's own seed, so an upgrade in place stops crash-looping on `topics/kafka.yaml` -- the root predicate now requires `manifest.yaml` as well as `common-header/`, which keys on completeness rather than on a version string and so covers the `dfe-schema` k8s Job, which runs neither the FastAPI lifespan nor a compose entrypoint. #420: the engine applies every ClickHouse object and every bootstrap Kafka topic from the dfe-schemas manifest pinned in its image at startup, and reports healthy only once that pass converged -- the compose dfe-schema-init and the dfe-schema Job are redundant against it and have to go with this pin, dfe-docker #118 and dfe-infra #304, because neither can run a v1.21.x image (the dfe-schema entry point is gone); #432 closes #423: dfe-schemas 0.2.7 corrects the `_raw` index strings ClickHouse broke by retiring the `default` tokenizer, which had left every new source on the default profile with no landing table, the landing topic's replication now clamps to the broker count read from describe_cluster rather than to the configured factor, and DFE_KAFKA_TIERED_STORAGE (off by default) puts remote.storage.enable on the landing topic.
-      dfe-ui: "v1.6.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). Released 2026-09-14. #299: the wordmark and caption sit on the sidebar's left gutter.
-      dfe-receiver: "v1.15.36"      # independent release line. Released 2026-09-15. #112: signed webhooks accepted on a generic intake; #115: an inbound caller setup guide.
-      dfe-loader: "v1.18.39"        # #161 #163 #164: the gRPC transport no longer moves the Kafka offset-commit counters (#125) and metrics-manifest lists the loader's 94 metrics instead of an empty catalogue; #163 runs scalo config::setup before Config::load so the scaling gate and four other cascade sections are settable, counts a source record whose routing field is absent behind a debounced warn, and gives the memory guard its jemalloc heap source; #164 fans a batched JSON array out into records before the memory guard sees it, and fires the absent-table warning once per transition rather than per record.
-      dfe-archiver: "v1.7.22"       # rebuilt on scalo-rs 2.12.2: the memory guard reads what the kernel charges the cgroup, not what the allocator asked for.
-      dfe-fetcher: "v1.4.26"        # #104: every source runs on one generic framework (the rest, db and file shapes in apps.yaml); #108: the PGO profile names the gcp service it declares; #109: the generated chart restored (its KEDA TriggerAuthentication) behind a drift guard; #113 #123 #127 #128 #129: one config grammar across every database engine, a db credential spec the resolver cannot read refused with the accepted auth modes named, the database engines and the file tail shipped in the release image, and the api-key redaction proved by test; #130: a container env spec the resolver cannot read is refused. Rebuilt on scalo-rs 2.12.2.
-      dfe-transform-vrl: "v1.1.24"   # #61: the SASL password carried as a redacted type end to end, and an empty SASL secret refuses to start. Rebuilt on scalo-rs 2.12.2 (the memory guard above).
-      dfe-transform-vector: "v1.0.41"  # #77 #78: PGO- and BOLT-optimised on both arches for the direct-transport path and the supervisor (the bus path's per-record CPU is inside the downloaded upstream Vector binary, which no build of ours reaches), and metrics-manifest lists the app's 42 metrics instead of an empty catalogue.
-      dfe-transform-elastic: "v1.1.4" # #73: the batch loop driven over the direct transport end to end; #74 #76 #77: PGO and BOLT enabled on the release build, but this interim release ships PGO-only on a 25 minute workload window (hyperi-ci#135 #136), so it does NOT yet meet the rc.14 PGO+BOLT gate; #78 #79: the aarch64 instrumented build given a linker that fits its branch ranges (hyperi-ci#142); #75: rustls bumped to clear RUSTSEC-2026-0285. Transports stays [bus] here pending the flip. idles until a source names it (#52), seeded idle on every tier (#320).
+      dfe-engine: "v1.22.8"         # ghcr.io/hyperi-io/dfe-engine (Python; own line). #537: stored credentials are masked on every read the API serves them through, and a masked value written back keeps the stored credential only while the object holding it is otherwise unchanged; platform rights (the HyperDX connection, ClickHouse group users, JIT team, otel_reader) come from system-scope grants only; every topic the engine creates carries max.message.bytes (DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES, 16 MiB default) beside compression.type=producer; MessagePack removed. On scalo-py 2.30.5.
+      dfe-ui: "v1.7.4"              # ghcr.io/hyperi-io/dfe-ui (Next.js, node 24 LTS). Released 2026-09-26. #385: API types synced with the engine; #386: CI warnings cleared.
+      dfe-receiver: "v1.15.41"      # independent release line. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-loader: "v1.18.44"        # Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-archiver: "v1.7.26"       # Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-fetcher: "v1.4.31"        # Rebuilt on scalo-rs 2.13.0; the Kafka producer defaults to zstd level 3. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-transform-vrl: "v1.1.28"   # #85: the source ack is held until the record is delivered. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-transform-vector: "v1.0.43"  # #91: security and delivery fixes. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised).
+      dfe-transform-elastic: "v1.1.7" # #92: the image carries the source catalogue and prints it with `emit-catalogue`, which the engine chart's catalogue init container runs. Rebuilt on scalo-rs 2.13.0. PGO+BOLT off for rc.14 (released unoptimised). Idles until a source names it (#52), seeded idle on every tier (#320).
       # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished, uncomment when they ship.
       # A commented pin is read by nothing, so no pin sweep, drift check, appset or acceptance case picks them up meanwhile.
       # dfe-transform-wasm: "2.2.0"
@@ -2142,16 +2142,16 @@ stacks:
     # working; dfe-stack renders the combined tag@sha256). An app with no digest
     # here is NOT YET PUBLISHED and is excluded from rendered manifests.
     digests:
-      dfe-engine: "sha256:952f3cd1e247f4a3fffeb36d2d3d09be178daa91216344cb02ad7b3b259d9df2"
-      dfe-ui: "sha256:c2288ab13066755f6f289318c30874dcb58804c6194f5f0a86de9177a811477e"
-      dfe-receiver: "sha256:3cec494722a46511b8ef60d6b49e9e9c1220da826b498edeac93fc7f3a3c14ce"
-      dfe-loader: "sha256:a0c78809613925977050dc0845c64684de65a484361691cf16d814765c5f9c4f"
-      dfe-archiver: "sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
-      dfe-fetcher: "sha256:7428a262ad6168677eb03446ef338e64e0b23d670c558925ceb0620f899be828"
-      dfe-transform-vrl: "sha256:838de184ba84412bfaaec44463de3d37c0fb0ba44a981792e84456ebd1e686d1"
-      dfe-transform-vector: "sha256:a7fa01794d7621b3eb38164ec4e2f3a29f8d220bff332fbbb954ee0e683ad9bf"
+      dfe-engine: "sha256:998ca49ac3294b8bb98ad24ac62bc9e9f4b7a6b99be61bc08633879734e273e0"
+      dfe-ui: "sha256:500532c25b2e35115b06eee7fb46b6fab2e21eee2e5f77314fb8d20ca1f9f94c"
+      dfe-receiver: "sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
+      dfe-loader: "sha256:9ed2cf569f29e1da653268811483bf795a52c7f5f2d6ffa1981f8d133c4bd81b"
+      dfe-archiver: "sha256:c443241daccd21da9c7d95632c67fa3d71d91c86605f655ce24b88fb9a690d1a"
+      dfe-fetcher: "sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
+      dfe-transform-vrl: "sha256:1dd3d91de6fa896f1210db5e8bf3b035724f3c7f3895fa0de3a3872bf1f921d5"
+      dfe-transform-vector: "sha256:455e1ba2d70ce4e2bffda00ff2359aef1c15db750b51d2cf6400f104228211d2"
       # The multi-arch INDEX digest; a per-platform digest under it would strand the other architecture.
-      dfe-transform-elastic: "sha256:ad85ba2d9665a4bb7c363de6ee9184bdb0c5b69bfd3965425ab02bf5636f899b"
+      dfe-transform-elastic: "sha256:924641705172137736ec38a12fb29fb7fbaee0de24f5c42086153d6a3768ed9a"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
       dfe-hyperdx: "sha256:d772edcd16f5548ece49e58f112da80b9a5187112c5adbe27a51459135fb9a4f"

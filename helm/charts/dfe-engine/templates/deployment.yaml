@@ -90,16 +90,22 @@ spec:
             - python3
             - -c
             - |
+              import sys
               import urllib.request
               from pathlib import Path
               {{- range $f := $entry.files }}
               dst = Path("{{ $root }}/{{ $f.to }}")
               dst.parent.mkdir(parents=True, exist_ok=True)
               # A private release needs a credential the pod does not carry, so
-              # the URL has to be reachable as it stands.
-              with urllib.request.urlopen("{{ $entry.ref }}/{{ $f.from }}") as r:
-                  dst.write_bytes(r.read())
-              print("content: fetched", dst)
+              # the URL has to be reachable as it stands. A failed fetch must not
+              # wedge the engine's pod: the file stays absent and the engine
+              # reports it missing.
+              try:
+                  with urllib.request.urlopen("{{ $entry.ref }}/{{ $f.from }}") as r:
+                      dst.write_bytes(r.read())
+                  print("content: fetched", dst)
+              except Exception as exc:
+                  print("content: could not fetch", dst, "--", exc, file=sys.stderr)
               {{- end }}
           {{- else if and (eq $entry.kind "emit") (eq ($entry.role | default "library") "catalogue") }}
           command:
