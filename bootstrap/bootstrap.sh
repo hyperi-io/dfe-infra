@@ -945,6 +945,16 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
     --from-literal=secret="${ARGO_WEBHOOK_SECRET}" \
     --dry-run=client -o yaml | kubectl apply -f -
   echo "  Argo push webhook secret minted (forgejo ns)"
+
+  # Argo's read credential for the same repo, registered before [7/7] applies the
+  # ApplicationSets: an Application that first syncs without it caches the error.
+  kubectl -n argocd create secret generic repo-deploy \
+    --from-literal=type=git \
+    --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+    --from-literal=username="${FORGEJO_ADMIN_USER}" \
+    --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
+    --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+  echo "  Argo repo cred registered for ${DFE_CONFIG_REPO_URL}"
 elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   # EXTERNAL git (GitHub/GitLab/self-hosted): register the Argo READ credential so
   # Argo can pull the deploy repo -- EITHER HTTPS+token (DFE_CONFIG_REPO_USER +
@@ -1153,20 +1163,6 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   echo "  [ok] chart repo readable"
 fi
 
-# Argo CD repo credential for the bundled in-cluster Forgejo deploy repo, so Argo
-# can pull it. Uses the Forgejo admin creds. External git repo creds are handled
-# in [4c/7] above; this block is the FALLBACK (bundled) path only.
-if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
-  FORGEJO_PW=$(kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
-  if [[ -n "${FORGEJO_PW}" ]]; then
-    kubectl -n argocd create secret generic repo-deploy \
-      --from-literal=type=git \
-      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
-      --from-literal=username="${FORGEJO_ADMIN_USER}" \
-      --from-literal=password="${FORGEJO_PW}" \
-      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
-  fi
-fi
 # NOTE: the deploy-repo app-of-apps is retired. The engine no longer authors Argo
 # Application/AppProject manifests -- the dfe-layer2-apps ApplicationSet fans out
 # one Application per deploy-repo values file (git-files generator). The deploy
