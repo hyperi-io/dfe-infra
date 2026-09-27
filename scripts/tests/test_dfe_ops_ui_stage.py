@@ -58,6 +58,8 @@ def _suite_run(monkeypatch, args: argparse.Namespace) -> tuple[list[str], dict[s
 
     monkeypatch.setattr(dfeops, "_forward", lambda *_a, **_k: None)
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *_a, **_k: True)
+    # Forwards are stubbed, so the host's own port state has no bearing on these runs.
+    monkeypatch.setattr(dfeops, "_taken_ports", lambda _ports: [])
     monkeypatch.setattr(dfeops, "_rotate_break_glass", lambda *_a, **_k: "rotated-for-the-run")
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)
     for name in BUDGET_VARS:
