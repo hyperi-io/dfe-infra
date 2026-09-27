@@ -219,7 +219,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -937,6 +937,42 @@ def _forward_ready(url: str, label: str, timeout: float) -> bool:
     return False
 
 
+def _taken_ports(ports: Iterable[int]) -> list[int]:
+    """The local ports another process already holds, in the order given.
+
+    kubectl cannot bind a taken port and exits, while whatever holds it goes on
+    answering, so _forward_ready would pass against a deployment that is not the
+    one under test -- and a suite seeding through it would reset that one.
+
+    Args:
+        ports: Local ports the run is about to forward onto.
+
+    Returns:
+        Each port that cannot be bound on the loopback address.
+    """
+    taken = []
+    for port in ports:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                taken.append(port)
+    return taken
+
+
+def _refuse_taken_ports(ports: Iterable[int]) -> bool:
+    """Say which local ports are taken; True when the run must not start."""
+    taken = _taken_ports(ports)
+    if taken:
+        print(
+            f"local port(s) {', '.join(str(p) for p in taken)} already held by another "
+            "process: a forward there would test whatever answers on it, not this "
+            "deployment. Pass free ports with this stage's --*-port flags.",
+            file=sys.stderr,
+        )
+    return bool(taken)
+
+
 def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
     """One key out of a cluster secret, or empty when it cannot be read."""
     done = subprocess.run(
@@ -1185,6 +1221,8 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
     """
     apps = composition.default_apps(profile)
     print(f"  idle check: {profile} deploys {', '.join(apps)}", file=sys.stderr)
+    if _refuse_taken_ports([port]):
+        return 1
     failures: list[str] = []
 
     listed = subprocess.run(
@@ -1359,6 +1397,8 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 f"  {host} does not resolve here: mapping {', '.join(mapped)} to the gateway at {address}",
                 file=sys.stderr,
             )
+    if _refuse_taken_ports(local for _label, _ns, _target, local, _remote in forwards):
+        return 1
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
@@ -2399,6 +2439,8 @@ def cmd_ui(args: argparse.Namespace) -> int:
         )
         return 1
 
+    if _refuse_taken_ports([args.engine_port]):
+        return 1
     stop = threading.Event()
     threading.Thread(
         target=_forward,

@@ -320,6 +320,8 @@ def _staged_ui(monkeypatch, *, routes: bool, root_rc: int) -> list[tuple[list[st
     monkeypatch.setattr(dfeops, "_resolves", lambda host: True)
     monkeypatch.setattr(dfeops, "_forward", lambda *a, **k: None)
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *a, **k: True)
+    # Forwards are stubbed, so the host's own port state has no bearing on these runs.
+    monkeypatch.setattr(dfeops, "_taken_ports", lambda _ports: [])
     monkeypatch.setattr(dfeops, "e2e_routes_mounted", lambda url: routes)
     monkeypatch.setattr(dfeops, "admin_credential", lambda *a, **k: ("admin", "minted-pw"))
     monkeypatch.setattr(dfeops.subprocess, "run", run)

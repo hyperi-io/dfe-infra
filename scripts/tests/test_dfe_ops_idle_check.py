@@ -70,6 +70,8 @@ def _idle_check(tmp_path: Path, monkeypatch, profile: str, deployed: dict[str, s
     kubectl.write_text(FAKE_KUBECTL.format(deployed=json.dumps(deployed)), encoding="utf-8")
     monkeypatch.setattr(dfeops, "_forward", lambda *_args: None)
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *_args: True)
+    # Forwards are stubbed, so the host's own port state has no bearing on these runs.
+    monkeypatch.setattr(dfeops, "_taken_ports", lambda _ports: [])
     monkeypatch.setattr(dfeops, "_metrics_body", lambda _url: "pipeline_idle 1\n")
     monkeypatch.setattr(dfeops, "_health_body", lambda _url: None)
     monkeypatch.setattr(dfeops, "_health_component", lambda _url, _name: None)
