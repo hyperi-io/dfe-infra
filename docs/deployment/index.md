@@ -50,6 +50,24 @@ Kafka on tier `single` uses the non-operator single-broker KRaft path
 (`helm/charts/kafka`, `kafka.mode: single`); the Strimzi operator installs
 only on `scale` clusters (`layer-scale.yaml`).
 
+### Secrets store and pull secret
+
+| Tier | Reads the secrets store | What to set |
+|---|---|---|
+| slim, single, mesh | nothing | nothing: `DFE_SECRETS_BACKEND` resolves to `none`, no ClusterSecretStore |
+| scale | the Strimzi broker's client credential | `DFE_SECRETS_BACKEND=openbao` with `DFE_VAULT_ADDR`, `DFE_VAULT_ROLE_ID`, `DFE_VAULT_SECRET_ID`, or `aws-sm` with `DFE_SECRETS_REGION` |
+
+`dfe-ops stack-deploy` checks each store-referencing template's render
+condition and refuses `none` where one fires. `DFE_CA_PERSIST=true`, gateway
+OIDC (on in `aws.yaml`), an external or managed broker, an external ClickHouse
+and object storage each add a consumer on any tier. A deploy-repo overlay can
+too, unseen before the deploy. Any OpenBao value keeps the `openbao` default.
+
+The published images pull anonymously, so no pod names a pull secret unless
+`DFE_PULL_SECRET_TOKEN` is set for a private registry. bootstrap then creates
+`ghcr-pull-secret` per DFE namespace and records it on the cluster secret
+(`dfe.hyperi.io/image_pull_secret`), and every appset hands it to its charts.
+
 Which APPS a tier deploys is `apps.yaml`'s, not the profile file's --
 [composition.md](composition.md) has the table and the derivation.
 

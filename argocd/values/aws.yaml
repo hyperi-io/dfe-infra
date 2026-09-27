@@ -11,13 +11,6 @@ global:
 
 storageClass: gp3
 
-# The private-registry pull secret bootstrap.sh creates in every DFE namespace
-# from DFE_PULL_SECRET_SERVER/_USER/_TOKEN. Named here so the common library's
-# imagePullSecrets helper renders it onto every pod that is not marked
-# image.public; a chart whose image is public suppresses it by itself.
-imagePullSecrets:
-  - ghcr-pull-secret
-
 # THE EDGE MODULE'S OWN AWS KEYS LIVE IN argocd/values/edge-aws.yaml, layered
 # after this file by argocd/appsets/layer2-edge.yaml: the gateway Service and
 # its controller annotations, the infra-class kill switch, the tunnel's Service
