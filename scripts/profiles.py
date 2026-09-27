@@ -75,6 +75,9 @@ class Profile:
     # direct gRPC.
     has_kafka: bool
     description: str
+    # Whether the broker's user password comes from the deployment's secrets store
+    # (the kafka chart's cluster mode) rather than an in-cluster generator.
+    kafka_from_store: bool = False
     # Substrate charts the tier actually deploys -- the offline helm-render
     # pre-flight renders exactly these.
     substrate_charts: tuple[str, ...] = ()
@@ -121,6 +124,7 @@ PROFILES: dict[str, Profile] = {
     "scale": Profile(
         platform=KUBERNETES,
         has_kafka=True,
+        kafka_from_store=True,
         substrate_charts=("clickhouse-cluster", "kafka"),
         capacity_floor=(6.0, 12 * 1024**3, 3),
         lane_floor=16 * 1024**3,
@@ -184,6 +188,21 @@ def has_kafka(mode: str) -> bool:
     """
     profile = PROFILES.get(mode)
     return bool(profile and profile.has_kafka)
+
+
+def kafka_from_store(mode: str) -> bool:
+    """Whether the mode's broker credential has to come from the secrets store.
+
+    Args:
+        mode: A deploy mode name.
+
+    Returns:
+        True for the tier whose Kafka user password ESO reads from the store,
+        False for the tier that generates it in-cluster, for the brokerless
+        tiers and for any name that is not a mode.
+    """
+    profile = PROFILES.get(mode)
+    return bool(profile and profile.kafka_from_store)
 
 
 def substrate(mode: str) -> tuple[str, ...]:

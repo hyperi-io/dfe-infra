@@ -154,6 +154,35 @@ def test_the_summary_directory_exists_before_bootstrap_writes_into_it(
     assert seen == {"parent_existed": True, "pointed_at_it": True}
 
 
+def _deploy_with_a_store_and_no_secret_id(tmp_path: Path, monkeypatch, mode: str) -> tuple[int, bool]:
+    """Run stack-deploy with an OpenBao address and no SecretID; return (rc, bootstrap ran)."""
+    ran: list[bool] = []
+
+    def fake_bootstrap(cmd: list[str], *, env: dict | None = None) -> int:
+        ran.append(True)
+        return 0
+
+    monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_bootstrap_required", lambda _env: ())
+    monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
+    monkeypatch.setenv("DFE_VAULT_ADDR", "https://openbao.example.com:8200")
+    monkeypatch.delenv("DFE_VAULT_SECRET_ID", raising=False)
+    args = _no_terraform(tmp_path, access_out=str(tmp_path / "access.md"), check_only=False, mode=mode)
+    return dfeops.cmd_stack_deploy(args), bool(ran)
+
+
+def test_the_single_tier_deploys_without_the_approle_secret_id(tmp_path: Path, monkeypatch) -> None:
+    """single generates its broker password in-cluster, so a deploy with no store still runs."""
+    assert _deploy_with_a_store_and_no_secret_id(tmp_path, monkeypatch, "single") == (0, True)
+
+
+def test_the_scale_tier_refuses_without_the_approle_secret_id(tmp_path: Path, monkeypatch) -> None:
+    """scale reads its broker password from the store, which ESO reaches only with the SecretID."""
+    assert _deploy_with_a_store_and_no_secret_id(tmp_path, monkeypatch, "scale") == (1, False)
+
+
 def test_the_flag_defaults_empty_so_the_run_directory_decides() -> None:
     args = dfeops.build_parser().parse_args(["stack-deploy"])
 

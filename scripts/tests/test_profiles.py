@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -100,6 +101,22 @@ def test_an_unknown_mode_is_not_credited_with_a_broker() -> None:
     """A typo or a retired name answers no, so the broker checks SKIP not FAIL."""
     assert not profiles.has_kafka("")
     assert not profiles.has_kafka("not-a-mode")
+
+
+def test_only_the_scale_tier_needs_a_secrets_store_for_its_broker() -> None:
+    """single generates its broker password in-cluster, so a deploy with no store stands it up."""
+    assert profiles.kafka_from_store("scale")
+    for mode in ("single", "slim", "mesh", "docker-single", "", "not-a-mode"):
+        assert not profiles.kafka_from_store(mode), mode
+
+
+def test_the_store_flag_follows_the_kafka_chart_mode() -> None:
+    """The kafka chart reads the store only in cluster mode, so the table and the overlays agree."""
+    for mode in profiles.MODES:
+        overlay = (REPO_ROOT / profiles.PROFILES[mode].argocd_values).read_text(encoding="utf-8")
+        found = re.search(r"^kafka:\n  mode: (\w+)", overlay, re.MULTILINE)
+        assert found, mode
+        assert profiles.kafka_from_store(mode) == (found.group(1) == "cluster"), mode
 
 
 def test_mesh_is_sized_like_scale() -> None:
