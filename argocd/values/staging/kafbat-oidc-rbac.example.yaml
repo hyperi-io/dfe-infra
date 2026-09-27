@@ -7,9 +7,10 @@
 #
 # It lives under argocd/values/staging/ so ArgoCD does NOT read it (the appset
 # cascade only reads common.yaml + <cloud>.yaml + profile-<tier>.yaml). Applying =
-# merge this `kafbat:` block into argocd/values/local-dfe.yaml (Cluster B / the
-# DFE cloud) and commit - but ONLY after the parked provisioning below, because
-# kafbat REFUSES TO BOOT if OAUTH2 is enabled with no reachable provider/secret.
+# merge this `kafbat:` block into the deployment's cloud overlay (for example
+# argocd/values/local-dfe.yaml) and commit - but ONLY after the parked
+# provisioning below, because kafbat REFUSES TO BOOT if OAUTH2 is enabled with
+# no reachable provider/secret.
 #
 # ---------------------------------------------------------------------------
 # PARKED provisioning (do these first, in order - each needs network/bao/live IdP)
@@ -25,15 +26,13 @@
 #    `client-secret` (clientSecretName below).
 # 3. The dfe-infra groups the RBAC subjects reference must be REAL group claims
 #    the IdP emits: dfe-infra, dfe-admins (full admin) and dfe-infra-viewers
-#    (read-only). The staged OIDC test fixture emits exactly these - see
-#    hyperi-infra subprojects/dfe-oidc-testing/fixture.yaml.
-# 4. Cluster B has NO working L7 gateway yet (the Envoy Gateway controller is
-#    unwired - see dfe-infra bootstrap). Exposing kafbat at a hostname needs the
-#    gateway stood up first, OR reach it via `kubectl -n kafka port-forward`.
-#    kafbat is deliberately NOT behind the Envoy google-oidc edge policy: it does
+#    (read-only). An OIDC test fixture for this overlay must emit exactly these.
+# 4. Exposing kafbat at a hostname needs a working L7 gateway on the target
+#    cluster; without one, reach it via `kubectl -n kafka port-forward`.
+#    kafbat is deliberately NOT behind the Envoy edge OIDC policy: it does
 #    its OWN OIDC so it can read the group claim for RBAC (the edge only injects
 #    X-Oidc-* headers, which carry no groups).
-# 5. Merge the block below into argocd/values/local-dfe.yaml and commit.
+# 5. Merge the block below into that cloud overlay and commit.
 #
 # Break-glass stays enabled throughout: if the IdP is down, flip
 # kafbat.auth.type to LOGIN_FORM and log in as dfe-breakglass (secret

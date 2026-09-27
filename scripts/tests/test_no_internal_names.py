@@ -2,7 +2,8 @@
 #  Project:      dfe-infra
 #  File:         test_no_internal_names.py
 #  Purpose:      Guard the public-at-GA rule: no internal estate hostname, host
-#                nickname or private address survives anywhere in the tree.
+#                or cluster nickname, vault path or private address survives
+#                anywhere in the tree.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -30,12 +31,20 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# The zone the estate is served from, the hosts and deployments addressed by
-# nickname, and the two private ranges it numbers. Each is matched
+# The estate's name (which is also its zone), the private repo that runs it,
+# its OpenBao base paths, the hosts, clusters, nodes and deployments addressed
+# by nickname, and the two private ranges it numbers. Each is matched
 # case-insensitively, so a capitalised product or heading is caught alongside a
-# hostname.
+# hostname. The `secret/dfe` path stops short of a hyphen: `secret/dfe-cluster`
+# is a Kubernetes kind/name reference to a product Secret, not a vault path.
+# Word boundaries keep "cluster bootstrap" and "dfe-backup" out of the match.
 INTERNAL = re.compile(
-    r"devex\.hyperi\.io"
+    r"devex"
+    r"|hyperi-infra"
+    r"|secret/dfe(?![\w-])"
+    r"|kv/services\b"
+    r"|kv/infrastructure\b"
+    r"|kv/dfe-test\b"
     r"|tyrell"
     r"|hypersec"
     r"|10\.66\."
@@ -43,9 +52,18 @@ INTERNAL = re.compile(
     r"|dragonfly"
     r"|desktop-derek"
     r"|ghostburner"
-    r"|proxmox",
+    r"|proxmox"
+    r"|\bdfe-b\b"
+    r"|dfe-k8s-[0-9]"
+    r"|\bcluster b\b",
     re.IGNORECASE,
 )
+
+# The vendor-domain hosts the product names on purpose: the Kubernetes label and
+# annotation prefix, and the public brand-token site. Any other host under
+# hyperi.io is estate; an apex mail address (sales@hyperi.io) has no host label.
+PUBLIC_HOSTS = frozenset({"dfe.hyperi.io", "graphics.hyperi.io"})
+_VENDOR_HOST = re.compile(r"(?<![\w.-])((?:[\w-]+\.)+hyperi\.io)(?![\w-])", re.IGNORECASE)
 
 # versions.yaml and constraints/ are the version SSoT and are compared
 # byte-for-byte against main by the drift guards, so they are never rewritten
@@ -72,6 +90,12 @@ def _in_scope(name: str) -> bool:
     return name not in EXCLUDED and not name.startswith(EXCLUDED_PREFIXES)
 
 
+def _names_the_estate(line: str) -> bool:
+    if INTERNAL.search(line):
+        return True
+    return any(host.lower() not in PUBLIC_HOSTS for host in _VENDOR_HOST.findall(line))
+
+
 def _hits(name: str) -> list[str]:
     try:
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
@@ -82,7 +106,7 @@ def _hits(name: str) -> list[str]:
     return [
         f"{name}:{number}: {line.strip()}"
         for number, line in enumerate(text.splitlines(), start=1)
-        if INTERNAL.search(line)
+        if _names_the_estate(line)
     ]
 
 
@@ -102,9 +126,52 @@ def test_the_sweep_would_catch_a_leak() -> None:
     """The guard is worth nothing if the pattern never matches, so prove it does."""
     for sample in (
         "k8s-1.devex.hyperi.io",
+        "on the DevEx fleet",
+        "hyperi-io/hyperi-infra",
+        "ref: secret/dfe",
+        "secret/dfe/ghcr-pull-secret",
+        "(secret/dfe)",
         "10.66.0.200",
         "Proxmox VE",
         "dragonfly",
         "ghostburner",
+        "Registry: Harbor (`harbor.hyperi.io/dfe/dfe-engine`)",
+        "https://grafana.ops.hyperi.io/d/abc",
+        "ops@mail.hyperi.io",
+        "--kubeconfig .tmp/kubeconfig-dfe-b",
+        'apply_fetcher_credentials(KUBE, "dfe-b", ...)',
+        "Target dedicated DFE worker nodes (dfe-k8s-1/2/3).",
+        '{"node": "dfe-k8s-2"}',
+        "| kind, Cluster B |",
+        "DFE clean cluster (Cluster B) overlay",
+        "ref: kv/services",
+        "kv/services/harbor",
+        'DEFAULT_VAULT_PATH = "kv/infrastructure/ssh"',
+        "kv/dfe-test/aws",
     ):
-        assert INTERNAL.search(sample), sample
+        assert _names_the_estate(sample), sample
+
+
+def test_a_kubernetes_secret_reference_is_not_a_vault_path() -> None:
+    """kubectl names a product Secret `secret/dfe-<name>`; that is product text."""
+    for sample in (
+        "secret/dfe-cluster",
+        "secret/dfe-fetcher-credentials configured",
+    ):
+        assert not _names_the_estate(sample), sample
+
+
+def test_the_product_s_own_vendor_names_are_product_text() -> None:
+    """The label prefix, the brand-token site and the apex mail addresses ship on purpose."""
+    for sample in (
+        "dfe.hyperi.io/managed: \"true\"",
+        "selected by dfe.hyperi.io/profile.",
+        "verbatim from https://graphics.hyperi.io/tokens/tokens.css.",
+        "**Email**: sales@hyperi.io",
+        "- **Security reports**: security@hyperi.io",
+        'git config user.email "ci@hyperi.io"',
+        "the idempotent cluster bootstrap",
+        "the cluster baseline (detect-or-install)",
+        "a dfe-backup volume",
+    ):
+        assert not _names_the_estate(sample), sample

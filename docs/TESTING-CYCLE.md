@@ -1,8 +1,8 @@
 # The validation cycle: create -> test e2e -> destroy
 
-This repeatable loop is the validation SSoT this repo owns -- THE way we prove
-a DFE deployment works: on our clusters, on a teammate's clone, on a
-customer's estate. Everything estate-specific rides in a gitignored env file,
+This repeatable loop is the validation SSoT this repo owns -- THE way to prove
+a DFE deployment works: on a development cluster, on a teammate's clone, on a
+production estate. Everything estate-specific rides in a gitignored env file,
 so the committed repo runs the same cycle everywhere.
 
 ```mermaid
@@ -94,9 +94,10 @@ Bitwarden secure note.
 The whole onboarding:
 
 1. `git clone` this repo.
-2. Get the deployment's `.env` (Bitwarden) -> save as `bootstrap/.env`.
-3. Get a kubeconfig (`python3 scripts/dfe-ops kubeconfig --node <addr> --out
-   .tmp/target.kubeconfig`, or from whoever runs the cluster).
+2. Get the deployment's `.env` out-of-band -> save as `bootstrap/.env`.
+3. Get a kubeconfig (`python3 scripts/dfe-ops kubeconfig --node <addr>
+   --vault-path <kv path of the node SSH key> --out .tmp/target.kubeconfig`, or
+   from whoever runs the cluster).
 4. `python3 scripts/dfe-ops cycle --mode single --kubeconfig
    .tmp/target.kubeconfig --env-file bootstrap/.env`
 
@@ -133,9 +134,8 @@ Check any cluster read-only before touching it:
     python3 scripts/dfe-ops preflight --mode scale --env-file bootstrap/.env \
         --require-label dfe.hyperi.io/workload=dfe
 
-Verified against both estate clusters 2026-07-22: the DFE cluster passes clean;
-the neighbouring on-prem reference cluster fails exactly one check -- the
-workload label -- the wrong-cluster trap the check exists to catch.
+On a shared cluster whose nodes lack the workload label, preflight fails that
+check -- the wrong-cluster trap it exists to catch.
 
 ## Targets: on-prem now, cloud by parameter
 

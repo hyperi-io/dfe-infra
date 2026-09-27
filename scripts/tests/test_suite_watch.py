@@ -351,7 +351,7 @@ def test_pr_shaping_and_labels() -> None:
         {
             "number": 42,
             "title": "fix(loader): honour @source",
-            "author": {"login": "kaz"},
+            "author": {"login": "octocat"},
             "isDraft": True,
             "updatedAt": days_ago(2),
             "labels": [{"name": "rc14"}],
@@ -365,7 +365,7 @@ def test_pr_shaping_and_labels() -> None:
     expect("one PR shaped", len(prs) == 1)
     pr = prs[0]
     expect("number/title/author carried through",
-           (pr.number, pr.title, pr.author) == (42, "fix(loader): honour @source", "kaz"))
+           (pr.number, pr.title, pr.author) == (42, "fix(loader): honour @source", "octocat"))
     expect("draft flag carried through", pr.draft is True)
     expect("head/base carried through", (pr.head, pr.base) == ("fix/source", "main"))
     expect("age in whole days", pr.age_days == 2)
@@ -399,7 +399,7 @@ def test_stale_flag_both_sides() -> None:
     table = base_table(repo)
     table[f"issue:{repo}"] = [
         {"number": 1, "title": "just inside", "assignees": [], "updatedAt": days_ago(2)},
-        {"number": 2, "title": "just outside", "assignees": [{"login": "derek"}], "updatedAt": days_ago(4)},
+        {"number": 2, "title": "just outside", "assignees": [{"login": "hubot"}], "updatedAt": days_ago(4)},
     ]
     with patched(table):
         rows = suite_watch.fetch_issues(repo, "rc14", 3, NOW)
@@ -407,7 +407,7 @@ def test_stale_flag_both_sides() -> None:
     expect("an issue newer than stale-days is not stale", by_number[1].stale is False)
     expect("an issue older than stale-days is stale", by_number[2].stale is True)
     expect("no assignee prints as a dash", by_number[1].assignee == "-")
-    expect("assignee logins are carried through", by_number[2].assignee == "derek")
+    expect("assignee logins are carried through", by_number[2].assignee == "hubot")
 
 
 def test_release_and_pin_in_context() -> None:

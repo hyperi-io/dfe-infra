@@ -71,13 +71,13 @@ def test_a_per_node_entry_is_left_alone():
     config = json.dumps(
         {
             "nodePathMap": [
-                {"node": "dfe-k8s-1", "paths": ["/mnt/fast"]},
+                {"node": "node-1", "paths": ["/mnt/fast"]},
                 {"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": ["/opt/local-path-provisioner"]},
             ]
         }
     )
     got = json.loads(local_path_dir.retarget(config, DISK))
-    assert got["nodePathMap"][0] == {"node": "dfe-k8s-1", "paths": ["/mnt/fast"]}
+    assert got["nodePathMap"][0] == {"node": "node-1", "paths": ["/mnt/fast"]}
     assert got["nodePathMap"][1]["paths"] == [DISK]
 
 
@@ -89,7 +89,7 @@ def test_keys_beside_the_node_map_survive():
 
 
 def test_a_config_with_no_default_entry_gains_one():
-    config = json.dumps({"nodePathMap": [{"node": "dfe-k8s-1", "paths": ["/mnt/fast"]}]})
+    config = json.dumps({"nodePathMap": [{"node": "node-1", "paths": ["/mnt/fast"]}]})
     got = json.loads(local_path_dir.retarget(config, DISK))
     assert {"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": [DISK]} in got["nodePathMap"]
 
@@ -99,7 +99,7 @@ def test_only_the_default_entry_is_rewritten_when_several_nodes_are_listed():
         {
             "nodePathMap": [
                 {"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": ["/opt/local-path-provisioner"]},
-                {"node": "dfe-k8s-2", "paths": ["/mnt/a", "/mnt/b"]},
+                {"node": "node-2", "paths": ["/mnt/a", "/mnt/b"]},
             ]
         }
     )

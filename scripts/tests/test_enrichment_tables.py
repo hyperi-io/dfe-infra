@@ -13,7 +13,7 @@ Delivering the file is only half of it. A VRL program calling
 `find_enrichment_table_records!(table: "timezones", ...)` against a table the
 config never declares fails to COMPILE -- `error[E111] enrichment tables not
 loaded` -- and the app exits 1, which is the CrashLoopBackOff the bundled
-filebeat pipeline hit on dfe-b. The engine cannot write the entry, because the
+filebeat pipeline hits on a deploy. The engine cannot write the entry, because the
 mount directory belongs to the chart, so dfe-common.enrichmentTablesConfig
 derives it and the ConfigMap appends it.
 

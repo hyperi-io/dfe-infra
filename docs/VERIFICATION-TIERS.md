@@ -29,10 +29,9 @@ is not proof; driving the product is (see [Driving the product](#driving)).
 ### T0 -- ITERATIVE (the daily inner loop)
 
 ONE persistent canonical deployment we NEVER tear down: the `scale`-profile
-deployment left running on the devex k8s cluster -- the one that survives the
+deployment left running on a standing k8s cluster -- the one that survives the
 slim -> single -> scale sweep -- with stable DNS and stable logins. This is the
-single canonical manual-verify location AND the canonical rig; dfe-b vs devex
-stops mattering once it stands.
+single canonical manual-verify location AND the canonical rig.
 
 - Fast check = the CORE data-path smoke (seconds): a handful of events down each
   path, rows confirmed in ClickHouse.

@@ -310,8 +310,8 @@ auth:
 # of these: it is minted under auth.adminSecretName above (#233).
 #
 # DEFAULT-OFF: empty seedAccounts => no Secret, no env, a vanilla deploy is
-# unaffected. This is a PRODUCT; devex is one deployment, so the default stays
-# inert.
+# unaffected. This is a PRODUCT, and any one deployment's logins are that
+# deployment's own, so the default stays inert.
 #
 # Real values NEVER live here (this chart ships publicly). Set them in the
 # gitignored .env / the deploy-repo overlay. Each seed account is

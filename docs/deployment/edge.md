@@ -146,14 +146,14 @@ render cases need no cluster.
 | Admin UIs off by default, kill switch beats a route flag | 1 | `scripts/test-route-exposure.sh` | render |
 | A public route with no auth is refused | 1 | `scripts/test-route-exposure.sh` | render |
 | The engine's public route: browser families, the opt-ins add theirs, never `/docs` | 1 | `scripts/test-route-exposure.sh` | render |
-| A browser family answers and a private one 404s | 1 | `dfe-ops edge-probe` | kind, Cluster B |
+| A browser family answers and a private one 404s | 1 | `dfe-ops edge-probe` | kind, on-prem |
 | Tier-3 keys are absent | 1 | render case | render |
-| TLS floor, HSTS, rate limit, CIDR filter | 1 | `dfe-ops edge-probe` | kind, Cluster B |
-| The receiver is private in `vpn` mode | 1 | `dfe-ops edge-probe` | kind, Cluster B |
+| TLS floor, HSTS, rate limit, CIDR filter | 1 | `dfe-ops edge-probe` | kind, on-prem |
+| The receiver is private in `vpn` mode | 1 | `dfe-ops edge-probe` | kind, on-prem |
 | The OTLP route is private on cloud | 1 | `dfe-ops edge-probe` | kind |
-| Edge OIDC login and group check | 1 | `dfe-ops idp` and the onboarding suite | Cluster B |
-| A client reaches the receiver only through the tunnel | 1 | dial in, post, then post direct and fail | Cluster B |
-| One appliance peer cannot reach another | 1 | the isolation regression | Cluster B |
+| Edge OIDC login and group check | 1 | `dfe-ops idp` and the onboarding suite | on-prem |
+| A client reaches the receiver only through the tunnel | 1 | dial in, post, then post direct and fail | on-prem |
+| One appliance peer cannot reach another | 1 | the isolation regression | on-prem |
 | The CIDR filter bites at the load balancer | 1 | `dfe-ops edge-probe` off-list | AWS |
 | `preserve_client_ip` and the frontend security group | 1 | describe the load balancer | AWS |
 | The public certificate is issued by DNS-01 | 1 | chain assert on the public name | AWS |

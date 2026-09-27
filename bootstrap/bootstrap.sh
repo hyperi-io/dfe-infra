@@ -363,7 +363,7 @@ export DFE_KAFKA_MODE
 # "none" deploys no external-dns, because its own default provider is aws and an
 # uncredentialled install crash-loops against Route 53 forever (#223).
 export DFE_DNS_PROVIDER="${DFE_DNS_PROVIDER:-none}"
-# devex/local enforces DFE onto its dedicated workers via a HARD nodeSelector
+# The local target enforces DFE onto its dedicated workers via a HARD nodeSelector
 # (argocd/values/local.yaml). Label the nodes by default there so the selector is
 # satisfiable; a shared/customer cluster labels its own nodes at provisioning.
 # Deliberately NARROWER than dfe_cloud_programs_loadbalancers: that one asks who
@@ -649,7 +649,7 @@ if [[ "${DFE_CLOUD}" == "aws" ]] && ! kubectl get storageclass "${DFE_STORAGE_CL
 fi
 
 echo "==> [1c/7] Node labels (dedicated-worker placement)"
-# When a HARD nodeSelector is in play (devex/local) the target nodes MUST carry the
+# When a HARD nodeSelector is in play (the local target) the nodes MUST carry the
 # dfe.hyperi.io/workload=dfe label or the data pods sit Pending forever. Label here
 # as Layer-0 node-prep. Opt-in via DFE_LABEL_WORKLOAD_NODES (default on for local).
 if [[ "${DFE_LABEL_WORKLOAD_NODES}" == "true" ]]; then
@@ -986,7 +986,7 @@ fi
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.
 # On fresh clusters: deploy plain Valkey manifest. On existing clusters: use existing.
-VALKEY_SVC="${DFE_VALKEY_SERVICE:-valkey}"  # default: 'valkey' (hyperi-infra pattern)
+VALKEY_SVC="${DFE_VALKEY_SERVICE:-valkey}"  # set to adopt an existing cache under another name
 echo "==> [5/7] Checking Valkey"
 if kubectl -n argocd get svc "${VALKEY_SVC}" > /dev/null 2>&1; then
   echo "  Valkey service '${VALKEY_SVC}' already exists — skipping install"
@@ -1004,7 +1004,7 @@ echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install)"
 # is the Phase 0d adopt-path refinement.)
 # Argo HARDENING (dfe-infra#4): back off the controller timers so a degraded app
 # can never monopolise the control plane (self-heal 5s->30s, reconciliation
-# 180s->300s) and bound the repo-server timeout. Mirrors the devex platform guard.
+# 180s->300s) and bound the repo-server timeout.
 if dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
   run helm upgrade --install argocd argo/argo-cd \
     --namespace argocd --create-namespace \

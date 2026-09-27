@@ -1,9 +1,9 @@
-# DFE clean cluster (Cluster B) overlay -- the install-from-bare target.
+# DFE clean cluster (dedicated on-prem) overlay -- the install-from-bare target.
 #
 # This is the SAMPLE overlay for a cluster where DFE owns every node (no shared
 # pets to fence off), exactly like a customer Rancher/EKS cluster. It is selected
 # by the cluster secret's dfe.hyperi.io/cloud value (= "local-dfe"). Contrast with
-# local.yaml (a shared cluster) which pins workloads to tainted dfe-k8s nodes; here
+# local.yaml (a shared cluster) which pins workloads to tainted DFE worker nodes; here
 # there is NOTHING to avoid, so nodeScheduling is EMPTY -- pods schedule anywhere.
 #
 # Nothing here is product code -- it is one deploy's values, like aws.yaml would

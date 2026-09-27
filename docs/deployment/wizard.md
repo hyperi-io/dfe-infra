@@ -75,8 +75,9 @@ The dial it writes is the schema's own shape: nothing invented, and every
 default copied from `deployment.example.yaml`. Estate-specific fields the
 template ships blank on purpose -- `k8s.repo_url`, `state.bucket`,
 `state.region`, `tags.owner`, `tags.cost-center` -- stay blank. Those are
-"hyperi-infra's thin caller injects them from OpenBao at deploy time, or an
-operator fills them by hand" fields, not the wizard's to invent, and
+"the operator's own tooling injects them from the deployment's secrets backend
+at deploy time, or an operator fills them by hand" fields, not the wizard's to
+invent, and
 `dfe-ops init` names them explicitly in its final output on an AWS target.
 
 ## Sizing, end to end

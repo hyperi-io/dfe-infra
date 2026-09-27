@@ -42,7 +42,7 @@ FIXTURES = SCRIPTS / "tests" / "fixtures" / "sizing"
 ONPREM_ANSWERS = {
     "name": "dfe-test",
     "target": "on-prem",
-    "existing_cluster_ref": "rke2-devex",
+    "existing_cluster_ref": "rke2-onprem",
     "existing_namespace": "dfe",
     "profile": "single",
     "ingest_gb_per_day": "",
@@ -119,7 +119,7 @@ def test_onprem_strimzi_answers_produce_a_dial_render_dial_accepts(tmp_path: Pat
     assert result.returncode == 0, result.stderr
     assert env_path.is_file()
     env_text = env_path.read_text(encoding="utf-8")
-    assert 'DFE_KUBE_CONTEXT="rke2-devex"' in env_text
+    assert 'DFE_KUBE_CONTEXT="rke2-onprem"' in env_text
     assert 'DFE_NAMESPACE="dfe"' in env_text
 
 

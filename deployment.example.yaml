@@ -8,8 +8,7 @@
 
 ## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. This is the
 ## CANONICAL SUPERSET: it spans every substrate (docker-vm + k8s) and every cloud,
-## and it is the persisted, wizard-populatable form of the DeployContext (the
-## LOCKED schema in docs/plans/2026-07-08-branch-preview-cycle.md). The chain is
+## and it is the persisted, wizard-populatable form of the DeployContext. The chain is
 ##
 ##     dial  ->  DeployContext  ->  deploy(context)  ->  running stack
 ##
@@ -28,9 +27,9 @@
 ##     dial just feeds it.
 ##
 ## SECRETS ARE REFERENCES, never values (a bao path + field, resolved at deploy).
-## ESTATE ENDPOINTS stay BLANK in this committed template -- hyperi-infra's thin
-## caller injects them from OpenBao at deploy time, or an operator fills them by
-## hand in the copied deployment.yaml. This file ships publicly, so it must never
+## ESTATE ENDPOINTS stay BLANK in this committed template -- the operator's own
+## tooling injects them from the deployment's secrets backend at deploy time, or
+## an operator fills them by hand in the copied deployment.yaml. This file ships publicly, so it must never
 ## carry a real domain, host, cluster address, or credential.
 ##
 ## Copy to deployment.yaml (gitignored) and populate.
@@ -57,7 +56,7 @@ metadata:
 
 ## WHERE it lands. Exactly one of existing | provision (steps.provision gates it).
 ## The committed default is `existing` -- deploy ONTO a cluster you already have
-## (preview, BYO-prod, devex). `provision` runs OpenTofu to create the cluster
+## (preview, BYO-prod, a shared dev cluster). `provision` runs OpenTofu to create the cluster
 ## first (marketplace / greenfield); see the AWS worked example under `cloud:`.
 target:
   existing:
@@ -679,7 +678,7 @@ steps:
 ## empty means the deployment's own <project>/<env> path with nothing above it.
 secrets:
   backend: openbao           # file | openbao | eso | aws-sm | gcp-sm | azure-kv
-  ref: kv/services           # base path; the value (which path) is estate context
+  ref: ""                    # base path; estate context, blank in the template
 
 ## OVERLAY -- optional private-context ref (fleet-scale ops, per-env config repo).
 ## Blank in the committed template; its value points at a private repo.
@@ -743,8 +742,8 @@ k8s:
 #   config_storage: s3
 #   # secrets.backend: aws-sm    # AWS Secrets Manager via ESO instead of OpenBao
 
-## ENDPOINTS -- estate-specific, BLANK in the committed template. Injected by
-## hyperi-infra's thin caller from OpenBao at deploy time, or set by hand. Left
+## ENDPOINTS -- estate-specific, BLANK in the committed template. Injected by the
+## operator's own tooling from the secrets backend at deploy time, or set by hand. Left
 ## empty, the in-cluster service DNS defaults in argocd/values/common.yaml apply.
 endpoints:
   clickhouse_host: ""        # DFE_CLICKHOUSE_HOST

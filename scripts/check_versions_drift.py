@@ -932,11 +932,6 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "a chart's own version and its dfe-common dependency version; neither pins anything upstream",
     ),
     (
-        "argocd/previews/EXAMPLE-*",
-        "*",
-        "worked example whose values are placeholders by design",
-    ),
-    (
         "helm/library/dfe-common/tests/lint-test/*",
         "*",
         "helm-lint fixture, not a deployed chart",

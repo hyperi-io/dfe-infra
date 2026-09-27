@@ -55,7 +55,7 @@ Requires a port-forward of the forgejo service to `localhost:13000`.
 `<path>` is the file path inside the repo, e.g. `values/<svc>-default-values.yaml`
 (positional, not a flag). Defaults worth knowing: `--url http://localhost:13000`,
 `--repo deploy`, `--secret-namespace forgejo`, `--secret dfe-forgejo-admin`. Pass
-`--kubeconfig .tmp/kubeconfig-dfe-b` so the credential read hits the DFE cluster.
+`--kubeconfig .tmp/dfe.kubeconfig` so the credential read hits the DFE cluster.
 
 `dfe-ops` also carries `deploy`, `teardown`, `verify`, `stack-deploy`,
 `kubeconfig`, `preflight`, and `cycle` for k8s create/amend/teardown -- see
@@ -63,7 +63,7 @@ docs/TESTING-CYCLE.md for the cycle.
 
 ## Where each login comes from
 
-    python3 scripts/dfe-ops creds --kubeconfig .tmp/kubeconfig-dfe-b
+    python3 scripts/dfe-ops creds --kubeconfig .tmp/dfe.kubeconfig
 
 Prints one fetch command per login the deploy carries -- `admin` and
 `breakglass` (both minted by an ESO Password generator, so neither is a shipped
@@ -86,7 +86,7 @@ and reconciles the account from that hash.
 
 ### First login: the summary on your own machine
 
-    python3 scripts/dfe-ops access-summary --kubeconfig .tmp/kubeconfig-dfe-b
+    python3 scripts/dfe-ops access-summary --kubeconfig .tmp/dfe.kubeconfig
 
 `stack-deploy`, `cycle` and `bootstrap/bootstrap.sh` all end here, so a deploy
 started any of the three ways writes `.tmp/<stack>-<mode>/access-summary.md` on
@@ -207,13 +207,13 @@ tag.
 2. Point the overlay at the new release. Port-forward forgejo to
    `localhost:13000` first, then:
 
-       python3 scripts/dfe-ops deploy-values get values/<app>-default-values.yaml --kubeconfig .tmp/kubeconfig-dfe-b
+       python3 scripts/dfe-ops deploy-values get values/<app>-default-values.yaml --kubeconfig .tmp/dfe.kubeconfig
 
    Edit the image tag/digest to the new release, then put it back. ArgoCD
    auto-syncs:
 
-       python3 scripts/dfe-ops deploy-values put values/<app>-default-values.yaml --file <local> --kubeconfig .tmp/kubeconfig-dfe-b
+       python3 scripts/dfe-ops deploy-values put values/<app>-default-values.yaml --file <local> --kubeconfig .tmp/dfe.kubeconfig
 
 3. Verify the rollout against the DFE cluster:
 
-       kubectl --kubeconfig .tmp/kubeconfig-dfe-b -n dfe-local rollout status deploy/<app>
+       kubectl --kubeconfig .tmp/dfe.kubeconfig -n dfe-local rollout status deploy/<app>

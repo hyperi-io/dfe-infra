@@ -53,8 +53,8 @@ carries those inputs is specified in
 - **IaC:** OpenTofu (canonical; Terraform is being retired - see
   hyperi-io/hyperi-developer#11). HCL under `terraform/` runs on either.
 - **GitOps:** ArgoCD ApplicationSets (matrix generator).
-- **Registry:** Harbor (self-hosted DFE artifact registry); ghcr for public
-  releases at the OSS cutover. JFrog is legacy - do not use it.
+- **Registry:** released images on GHCR (`ghcr.io/hyperi-io`); `DFE_REGISTRY`
+  points a deployment at its own mirror (Harbor, ECR, ACR, GAR).
 - **Ingress/auth:** Envoy Gateway + OIDC SecurityPolicy.
 - **Data:** ClickHouse, CNPG PostgreSQL, FerretDB; Strimzi Kafka (KRaft,
   SASL/SCRAM); OTel -> ClickHouse -> HyperDX.
