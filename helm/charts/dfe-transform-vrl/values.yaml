@@ -71,6 +71,10 @@ kafka:
   sourceTopic: ""        # set per deployment via ArgoCD values
   destTopic: ""          # set per deployment
   consumerGroup: ""      # defaults to dfe-transform-vrl
+  # Where a partition with no committed offset starts (librdkafka's earliest |
+  # latest): the group is born with its source, so under latest a partition
+  # that changes hands before its first commit skips every record it holds.
+  autoOffsetReset: earliest
 
 otel:
   endpoint: ""

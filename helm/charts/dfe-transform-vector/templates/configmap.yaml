@@ -6,7 +6,7 @@
 # Written to the path the image's CMD reads
 # (/etc/dfe-transform-vector/config.yaml -- dfe-transform-vector Dockerfile:60).
 #
-# The four keys below are the same four dfe-transform-vrl's ConfigMap sets, and
+# The four transport keys below are the same four dfe-transform-vrl's ConfigMap sets, and
 # deliberately so: the engine has ONE `transform` routing compiler and it treats
 # the two apps identically. Change one, change the other.
 apiVersion: v1
@@ -36,6 +36,10 @@ data:
     {{- /* On the bus the brokers, topics and credentials reach the app through
            the DFE_TRANSFORM_* env contract on the Deployment, which outranks
            this file, so only the transport itself is derived here. */}}
+    {{- /* A default, not a derivation: an overlay config.source.auto_offset_reset wins. */}}
+    {{- if and (eq $transport "bus") .Values.kafka.autoOffsetReset (not (hasKey (default dict (get $cfg "source")) "auto_offset_reset")) }}
+    {{- $_ := set $source "auto_offset_reset" .Values.kafka.autoOffsetReset }}
+    {{- end }}
     {{- $_ := set $cfg "source" (mergeOverwrite (default dict (get $cfg "source")) $source) }}
     {{- $_ := set $cfg "sink" (mergeOverwrite (default dict (get $cfg "sink")) $sink) }}
     {{- toYaml $cfg | nindent 4 }}
