@@ -125,6 +125,11 @@ spec:
               # commit policy and the default-admin-password check gate on (#233).
               - name: env
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              # The dfe-ui suite's e2e posture, which bootstrap writes on every
+              # cluster secret. Only dfe-engine reads it, and its chart refuses it
+              # outside a dev posture; a secret written before the key reads off.
+              - name: e2eServer
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/e2e_server" | default "false" }}'
               # The ingest door's address, for the same reason the gateway has
               # one. Only dfe-receiver reads it; the other charts ignore it.
               - name: exposure.public.loadBalancerIP

@@ -65,6 +65,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         domain=None,
         skip_e2e=False,
         dry_run=False,
+        e2e=False,
     )
 
 
