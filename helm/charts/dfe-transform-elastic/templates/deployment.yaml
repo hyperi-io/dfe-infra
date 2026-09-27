@@ -58,6 +58,10 @@ spec:
             # routing is the engine's, in the overlay this chart mounts.
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- with .Values.kafka.consumerProtocol }}
+            - name: KAFKA_CONSUMER_PROTOCOL
+              value: {{ . | quote }}
+            {{- end }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- if and .Values.kafka.securityProtocol .Values.kafka.saslSecretName }}
             # check_credentials runs before KafkaTransport::new, and only the

@@ -2,7 +2,8 @@
 #  Project:      dfe-infra
 #  File:         test_enrichment_tables.py
 #  Purpose:      Prove the tables dfe-transform-vrl mounts are also REGISTERED in
-#                the config it renders, so the VRL program compiles.
+#                the config it renders, so the VRL program compiles, and that
+#                dfe-transform-vector's land at the path its transform files name.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -42,6 +43,10 @@ MOUNTED = (
     "--set", "enrichmentTables[0].name=timezones.csv",
     "--set", "enrichmentTables[0].content=x",
 )
+
+# The path the bundled filebeat transform file names for its table
+# (dfe-transform-vector pipelines/filebeat/filebeat.yaml `enrichment_tables`).
+BUNDLED_VECTOR_TIMEZONES = "/etc/dfe-transform-vector/data/timezones.csv"
 
 # The same table declared by the engine's config blob, key column and all.
 DECLARED = (
@@ -124,6 +129,43 @@ def test_the_vector_chart_registers_nothing() -> None:
            "enrichment_tables" not in cfg, f"got {cfg.get('enrichment_tables')!r}")
 
 
+def vector_mounts(*args: str) -> dict[str, dict]:
+    """The transform container's volume mounts, keyed by volume name."""
+    deployment = next(d for d in render(VECTOR, *args) if d.get("kind") == "Deployment")
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    return {m["name"]: m for m in container["volumeMounts"]}
+
+
+def test_the_vector_tables_land_where_the_bundled_pipeline_reads_them() -> None:
+    """A transform file names its table by absolute path, so Vector exits 78 on
+    `No such file or directory` when the file lands anywhere else."""
+    mount = vector_mounts(*MOUNTED)["enrichment"]["mountPath"]
+    expect("the vector enrichment set mounts at the pipeline's data dir",
+           f"{mount}/timezones.csv" == BUNDLED_VECTOR_TIMEZONES,
+           f"mounted at {mount}, the pipeline reads {BUNDLED_VECTOR_TIMEZONES}")
+
+
+def test_no_vector_volume_mounts_inside_another() -> None:
+    """A volume mounted under another directory volume shadows it by mount order."""
+    mounts = [m for m in vector_mounts(*MOUNTED).values() if "subPath" not in m]
+    nested = [
+        (outer["mountPath"], inner["mountPath"])
+        for outer in mounts
+        for inner in mounts
+        if inner["mountPath"].startswith(outer["mountPath"].rstrip("/") + "/")
+    ]
+    expect("no vector volume sits inside another directory volume", not nested, f"got {nested}")
+
+
+def test_the_vector_config_file_still_reaches_the_cmd_path() -> None:
+    """The image CMD reads /etc/dfe-transform-vector/config.yaml."""
+    config_mount = vector_mounts(*MOUNTED)["config"]
+    expect("the config file mounts at the CMD path",
+           (config_mount["mountPath"], config_mount.get("subPath"))
+           == ("/etc/dfe-transform-vector/config.yaml", "config.yaml"),
+           f"got {config_mount}")
+
+
 def main() -> int:
     with standalone():
         test_a_mounted_table_is_registered()
@@ -131,6 +173,9 @@ def main() -> int:
         test_no_tables_adds_no_key()
         test_a_declared_table_is_left_alone()
         test_the_vector_chart_registers_nothing()
+        test_the_vector_tables_land_where_the_bundled_pipeline_reads_them()
+        test_no_vector_volume_mounts_inside_another()
+        test_the_vector_config_file_still_reaches_the_cmd_path()
         return summary()
 
 

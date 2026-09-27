@@ -109,11 +109,13 @@ transformFiles: []
 # which outranks the config file, so the app reads what the chart actually mounted.
 transformFilesDir: ""
 
-# Lookup tables the transforms read, as a list of {name, content}. Vector declares
-# its own enrichment_tables in the config it assembles, so the engine writes those
-# paths under the mount below.
+# Lookup tables the transforms read, as a list of {name, content}. A transform file
+# declares its own top-level enrichment_tables by absolute path, and the bundled
+# filebeat pipeline names /etc/dfe-transform-vector/data/timezones.csv
+# (dfe-transform-vector pipelines/filebeat/filebeat.yaml), the path dfe-docker
+# mounts too. So the set mounts there rather than at the per-instance default.
 enrichmentTables: []
-enrichmentTablesDir: ""
+enrichmentTablesDir: /etc/dfe-transform-vector/data
 
 # OTel service.name for this instance. Empty falls back to the app name, which
 # leaves two instances of one app indistinguishable in the otel tables.
