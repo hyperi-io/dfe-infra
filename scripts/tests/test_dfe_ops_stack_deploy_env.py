@@ -325,7 +325,8 @@ def test_a_store_less_tier_deploys_with_no_secrets_inputs(tmp_path: Path, monkey
     for mode in ("single", "slim"):
         rc, env = _outsider_deploy(tmp_path, monkeypatch, mode)
         assert rc == 0, mode
-        assert env is not None and env["DFE_SECRETS_BACKEND"] == "none", mode
+        assert env is not None, mode
+        assert env["DFE_SECRETS_BACKEND"] == "none", mode
 
 
 def test_a_store_needing_tier_still_refuses_without_a_store(tmp_path: Path, monkeypatch) -> None:
@@ -353,7 +354,8 @@ def test_an_openbao_input_keeps_the_openbao_default(tmp_path: Path, monkeypatch)
         DFE_VAULT_ROLE_ID="role-placeholder",
     )
     assert rc == 0
-    assert env is not None and env["DFE_SECRETS_BACKEND"] == "openbao"
+    assert env is not None
+    assert env["DFE_SECRETS_BACKEND"] == "openbao"
 
 
 def test_ca_persistence_is_a_store_consumer(tmp_path: Path, monkeypatch) -> None:

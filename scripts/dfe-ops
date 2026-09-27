@@ -1195,7 +1195,7 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
             file=sys.stderr,
         )
 
-    for app, name in targets:
+    for _app, name in targets:
         out = subprocess.run(
             [*kube, "-n", namespace, "get", "deploy", name, "-o", "jsonpath={.status.readyReplicas}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",

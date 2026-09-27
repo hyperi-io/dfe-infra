@@ -220,8 +220,8 @@ def test_every_appset_names_the_pull_secret_only_when_one_was_created() -> None:
     )
     for appset, name in PULL_APPSETS:
         block = values_block(appset, name)
-        for label, annotations, want in cases:
-            got = evaluate_block(block, annotations).get("imagePullSecrets")
+        for label, facts, want in cases:
+            got = evaluate_block(block, facts).get("imagePullSecrets")
             expect(f"{appset} {label}: imagePullSecrets is {want}", got == want, f"got {got}")
 
 
