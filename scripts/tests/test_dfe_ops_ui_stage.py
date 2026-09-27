@@ -39,8 +39,10 @@ BUDGET_VARS = ("E2E_TEST_TIMEOUT_MS", "E2E_EXPECT_TIMEOUT_MS", "E2E_NAV_TIMEOUT_
 
 
 def _parse(*extra: str) -> argparse.Namespace:
+    # The onboarding root step drives a real browser, so these runs start at the suite.
     return dfeops.build_parser().parse_args(
-        ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--ui-url", "https://dfe.example", *extra]
+        ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--ui-url", "https://dfe.example",
+         "--skip-onboarding", *extra]
     )
 
 
@@ -58,7 +60,8 @@ def _suite_run(monkeypatch, args: argparse.Namespace) -> tuple[list[str], dict[s
 
     monkeypatch.setattr(dfeops, "_forward", lambda *_a, **_k: None)
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *_a, **_k: True)
-    monkeypatch.setattr(dfeops, "_rotate_break_glass", lambda *_a, **_k: "rotated-for-the-run")
+    monkeypatch.setattr(dfeops, "_resolves", lambda *_a, **_k: True)
+    monkeypatch.setattr(dfeops, "e2e_routes_mounted", lambda *_a, **_k: True)
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)
     for name in BUDGET_VARS:
         monkeypatch.delenv(name, raising=False)
@@ -128,6 +131,16 @@ def test_an_empty_grep_invert_runs_everything(monkeypatch) -> None:
     cmd, _env = _suite_run(monkeypatch, _parse("--grep-invert", ""))
 
     assert "--grep-invert" not in cmd
+
+
+def test_the_suite_gets_a_password_for_the_forced_change(monkeypatch) -> None:
+    # The seeders issue the admin its password, so every spec's login changes it first.
+    monkeypatch.delenv(dfeops.NEW_ADMIN_PASSWORD_VAR, raising=False)
+    env = _suite_env(monkeypatch, _parse())
+
+    assert env["E2E_ADMIN_PASSWORD"] == dfeops.E2E_SEED_PASSWORD
+    assert len(env["E2E_ADMIN_NEW_PASSWORD"]) >= 12
+    assert env["E2E_ADMIN_NEW_PASSWORD"] != dfeops.E2E_SEED_PASSWORD
 
 
 def test_a_non_numeric_budget_is_refused_at_parse_time(capsys) -> None:

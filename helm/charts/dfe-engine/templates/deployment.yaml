@@ -256,8 +256,16 @@ spec:
             # dfe.hyperi.io/env label carries, so the two cannot drift.
             # Generic, not a dev shortcut: a customer's env: production still
             # gets the PR flow, which is the point.
+            # The e2e posture runs the engine as `test`, the one posture its
+            # seed scripts accept.
             - name: DFE_ENV
-              value: {{ .Values.env | quote }}
+              value: {{ ternary "test" .Values.env (eq (include "dfe-engine.e2eServer" .) "true") | quote }}
+            {{- if include "dfe-engine.e2eServer" . }}
+            # Mounts the unauthenticated /api/e2e seed routes the dfe-ui suite
+            # drives (e2eServer).
+            - name: DFE_E2E_SERVER
+              value: "true"
+            {{- end }}
             # Injected by the deployer, never detected: the engine defaults
             # deployment.target to "unknown" and refuses every scaling dial
             # there with 409 scaling_unsupported.

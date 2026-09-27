@@ -30,7 +30,8 @@ commit. What it adds is only what a kind cluster lacks:
 
 On Linux both addresses are reachable from the host. Docker Desktop cannot route
 to a container network, so there the services are reached with port-forwards,
-which `dfe-ops acceptance` and `dfe-ops ui` open themselves.
+which `dfe-ops acceptance` opens itself. `dfe-ops ui` drives the console through
+its gateway hostname, so it needs that name to resolve from the host.
 
 Credentials come from `--env-file`, exactly as for `stack-deploy`: the registry
 pull secret (DFE_PULL_SECRET_*), the chart-repo read credential (DFE_REPO_TOKEN

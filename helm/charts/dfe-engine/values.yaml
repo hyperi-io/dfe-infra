@@ -10,6 +10,13 @@ cloud: local
 tenantIsolation:
   enabled: true
 
+# The dfe-ui Playwright suite's posture: the engine runs as DFE_ENV=test with its
+# unauthenticated /api/e2e routes mounted, whose seed scripts wipe and reseed every
+# account and app instance. For a throwaway deployment under test, never one anyone
+# keeps. The render fails unless `env` is a dev posture. The appset passes the cluster
+# secret's dfe.hyperi.io/e2e_server annotation, which `dfe-ops stack-deploy --e2e` sets.
+e2eServer: false
+
 image:
   repository: ""     # set from global.registry
   tag: ""
