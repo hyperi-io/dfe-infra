@@ -145,8 +145,9 @@ def run(args: argparse.Namespace) -> int:
 
     shots = Path(args.shots_dir)
     with sync_playwright() as play:
-        launch_args = [f"--host-resolver-rules=MAP {host} {ip}" for host, ip in args.resolve]
-        browser = play.chromium.launch(channel=args.channel, headless=not args.headed, args=launch_args)
+        browser = play.chromium.launch(
+            channel=args.channel, headless=not args.headed, args=onboarding.resolver_args(args.resolve)
+        )
         context = browser.new_context(viewport={"width": 1440, "height": 900}, ignore_https_errors=args.insecure)
         driver = onboarding.Driver(context.new_page(), args.ui_url, shots)
         current = cases.Run(
