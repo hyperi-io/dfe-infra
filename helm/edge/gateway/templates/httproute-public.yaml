@@ -59,4 +59,8 @@ spec:
           group: ""
           kind: Service
           weight: 1
+      {{- with $r.requestTimeout }}
+      timeouts:
+        request: {{ . | quote }}
+      {{- end }}
 {{- end }}

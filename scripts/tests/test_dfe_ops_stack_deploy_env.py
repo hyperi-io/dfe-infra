@@ -218,6 +218,46 @@ def test_an_unset_or_empty_backend_reads_as_openbao() -> None:
         assert "DFE_SECRETS_REGION" not in required, env
 
 
+def test_only_the_cluster_broker_reads_its_credential_from_the_store() -> None:
+    """The single broker's credential comes from an in-cluster generator, so the
+    store holds nothing it needs."""
+    assert dfeops._broker_credential_from_store("scale") is True
+    assert dfeops._broker_credential_from_store("single") is False
+    assert dfeops._broker_credential_from_store("slim") is False
+    assert dfeops._broker_credential_from_store("mesh") is False
+
+
+def _deploy_without_a_secret_id(tmp_path: Path, monkeypatch, mode: str) -> tuple[int, bool]:
+    """(stack-deploy's exit code, whether bootstrap ran) with a store address and no SecretID."""
+    ran: dict[str, bool] = {"bootstrap": False}
+
+    def fake_bootstrap(cmd: list[str], *, env: dict | None = None) -> int:
+        ran["bootstrap"] = True
+        return 0
+
+    monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_bootstrap_required", lambda _env: ())
+    monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
+    monkeypatch.setenv("DFE_VAULT_ADDR", "https://store.example.invalid:8200")
+    monkeypatch.delenv("DFE_VAULT_SECRET_ID", raising=False)
+    args = _no_terraform(
+        tmp_path, access_out=str(tmp_path / "access.md"), check_only=False, mode=mode
+    )
+    return dfeops.cmd_stack_deploy(args), ran["bootstrap"]
+
+
+def test_a_single_broker_deploy_needs_no_secret_id(tmp_path: Path, monkeypatch) -> None:
+    """Refusing it sent a store-less kind or on-prem deploy of the single tier away
+    for a credential nothing in that tier reads."""
+    assert _deploy_without_a_secret_id(tmp_path, monkeypatch, "single") == (0, True)
+
+
+def test_a_cluster_broker_deploy_still_needs_the_secret_id(tmp_path: Path, monkeypatch) -> None:
+    assert _deploy_without_a_secret_id(tmp_path, monkeypatch, "scale") == (1, False)
+
+
 def test_the_backend_split_matches_the_bridge_it_drives() -> None:
     """dfe-ops and bridge.py gate the same deploy, so a disagreement is either a
     false refusal or a miss that surfaces later and worse."""

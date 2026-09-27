@@ -1293,8 +1293,14 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             if not address:
                 print(f"{host} does not resolve here and the gateway has no address to map it to", file=sys.stderr)
                 return 1
-            resolve = [f"{host}:{address}"]
-            print(f"  {host} does not resolve here: mapping it to the gateway at {address}", file=sys.stderr)
+            # The console frames HyperDX on a hostname of its own, so every route
+            # host under the console's domain is mapped, not the console alone.
+            mapped = _route_hosts(kube, host)
+            resolve = [f"{name}:{address}" for name in mapped]
+            print(
+                f"  {host} does not resolve here: mapping {', '.join(mapped)} to the gateway at {address}",
+                file=sys.stderr,
+            )
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
@@ -1723,6 +1729,40 @@ def _profile_clickhouse_target(mode: str | None) -> str:
     return f"svc/{host.split('.')[0]}" if host else "svc/dfe-clickhouse"
 
 
+def _broker_credential_from_store(mode: str) -> bool:
+    """Whether a profile's broker takes its client credential from the secrets store.
+
+    The same condition kafka-user-credential.yaml renders on, read from the chart
+    defaults, then common.yaml, then the profile overlay. The single broker's
+    credential comes from an in-cluster generator (kafka-single-user.yaml).
+
+    Args:
+        mode: One of MODES.
+
+    Returns:
+        True only for a profile whose broker credential the store must hold.
+    """
+    from ruamel.yaml import YAML
+
+    yaml = YAML(typ="safe")
+    kafka_mode, provider, from_store = "disabled", "strimzi", True
+    files = [
+        HELM_CHARTS / "kafka" / "values.yaml",
+        ARGO_VALUES / "common.yaml",
+        REPO_ROOT / profiles.PROFILES[mode].argocd_values,
+    ]
+    for path in files:
+        doc = yaml.load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(doc, dict):
+            continue
+        kafka = doc.get("kafka") or {}
+        kafka_mode = kafka.get("mode", kafka_mode)
+        provider = kafka.get("provider", provider)
+        password = (doc.get("user") or {}).get("password") or {}
+        from_store = password.get("fromSecretsStore", from_store)
+    return kafka_mode == "cluster" and provider == "strimzi" and bool(from_store)
+
+
 def _gateway_address(kube: list[str]) -> str:
     """The address the deployment's Gateway is programmed on, or empty."""
     rc, doc, _ = _kubectl_json([*kube, "get", "gateway", "-A"])
@@ -1733,6 +1773,28 @@ def _gateway_address(kube: list[str]) -> str:
             if address.get("value"):
                 return str(address["value"])
     return ""
+
+
+def _route_hosts(kube: list[str], console: str) -> list[str]:
+    """The console host, then every other HTTPRoute hostname under its domain.
+
+    Args:
+        kube: kubectl argv prefix.
+        console: The console's hostname; its parent domain bounds the set.
+
+    Returns:
+        Hostnames, the console first, wildcards left out.
+    """
+    domain = console.partition(".")[2]
+    hosts = [console]
+    rc, doc, _ = _kubectl_json([*kube, "get", "httproute", "-A"])
+    if rc != 0 or not domain:
+        return hosts
+    for item in doc.get("items") or []:
+        for name in (item.get("spec") or {}).get("hostnames") or []:
+            if name.endswith(f".{domain}") and not name.startswith("*") and name not in hosts:
+                hosts.append(name)
+    return hosts
 
 
 def _resolves(host: str) -> bool:
@@ -2943,11 +3005,13 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  Dry run:    {'yes (no cluster changes)' if args.dry_run else 'no'}", file=sys.stderr)
     print("", file=sys.stderr)
 
-    # A bus profile takes the Kafka user's password from the secrets store, and
-    # on the OpenBao path ESO reaches the store only with the AppRole SecretID:
-    # without it the whole data plane sits in CreateContainerConfigError after a
-    # 25-minute readiness wait.
-    if profiles.has_kafka(args.mode) and env.get("DFE_VAULT_ADDR") and not env.get("DFE_VAULT_SECRET_ID"):
+    # Only the cluster broker reads its Kafka credential from the store, which ESO
+    # reaches on OpenBao only with the AppRole SecretID; the single broker makes its own.
+    if (
+        _broker_credential_from_store(args.mode)
+        and env.get("DFE_VAULT_ADDR")
+        and not env.get("DFE_VAULT_SECRET_ID")
+    ):
         print(
             f"  [FAIL] --mode {args.mode} runs a broker whose credential comes from the "
             f"secrets store at {env['DFE_VAULT_ADDR']}, and DFE_VAULT_SECRET_ID (the ESO "

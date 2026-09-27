@@ -432,9 +432,8 @@ def run(args: argparse.Namespace) -> int:
         # walk past the login this suite exists to exercise.
         # A gateway hostname this machine cannot resolve is mapped inside the
         # browser, so the run reaches the deployment the way a user does.
-        launch_args = [f"--host-resolver-rules=MAP {host} {ip}" for host, ip in args.resolve]
         browser = play.chromium.launch(
-            channel=args.channel, headless=not args.headed, args=launch_args
+            channel=args.channel, headless=not args.headed, args=resolver_args(args.resolve)
         )
 
         def fresh_context():
@@ -541,6 +540,17 @@ def _apply_resolve_map(pairs: list[tuple[str, str]]) -> None:
         return original(mapping.get(host, host), port, *rest, **kwargs)
 
     socket.getaddrinfo = resolve
+
+
+def resolver_args(pairs: list[tuple[str, str]]) -> list[str]:
+    """The browser's launch arguments for a host map, as ONE resolver-rules flag.
+
+    Chromium keeps only the last --host-resolver-rules it is given, so one flag
+    per pair left every host but the last one unresolved.
+    """
+    if not pairs:
+        return []
+    return ["--host-resolver-rules=" + ", ".join(f"MAP {host} {ip}" for host, ip in pairs)]
 
 
 def _host_ip(value: str) -> tuple[str, str]:

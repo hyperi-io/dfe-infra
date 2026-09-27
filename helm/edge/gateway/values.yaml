@@ -381,6 +381,10 @@ routes:
     # /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
     # origin (the docker proxy draws the same line).
     pathPrefix: /api/v1
+    # Whole-request budget at the gateway. A source create or deploy commits and
+    # pushes the deploy repo and syncs routing before it answers, which runs past
+    # Envoy's 15s default on a small cluster; empty leaves the proxy's default.
+    requestTimeout: 120s
     # Whose public listener and certificate this route answers on -- dfe-ui's,
     # because the browser calls the engine at its own origin. The listener, the
     # Certificate and the public-TLS policy all skip a route naming one.

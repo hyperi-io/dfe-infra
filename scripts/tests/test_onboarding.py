@@ -333,6 +333,42 @@ class TestWhereTheAdminPasswordComesFrom:
             ops.admin_credential("vm", settings={})
 
 
+class TestTheBrowsersHostMap:
+    """Chromium keeps only the last --host-resolver-rules, so the map is one flag."""
+
+    def test_every_mapped_host_rides_in_one_flag(self):
+        args = onboarding_run.resolver_args(
+            [("dfe.example.test", "192.0.2.10"), ("hyperdx.example.test", "192.0.2.10")]
+        )
+        assert args == [
+            "--host-resolver-rules=MAP dfe.example.test 192.0.2.10, "
+            "MAP hyperdx.example.test 192.0.2.10"
+        ]
+
+    def test_no_map_adds_no_flag(self):
+        assert onboarding_run.resolver_args([]) == []
+
+    def test_every_route_host_under_the_consoles_domain_is_mapped(self, monkeypatch):
+        """The console frames HyperDX on its own hostname, which must resolve too."""
+        routes = {
+            "items": [
+                {"spec": {"hostnames": ["dfe.single.example.test"]}},
+                {"spec": {"hostnames": ["hyperdx.single.example.test"]}},
+                {"spec": {"hostnames": ["*.single.example.test"]}},
+                {"spec": {"hostnames": ["other.example.org"]}},
+            ]
+        }
+        monkeypatch.setattr(ops, "_kubectl_json", lambda _argv: (0, routes, ""))
+        assert ops._route_hosts(["kubectl"], "dfe.single.example.test") == [
+            "dfe.single.example.test",
+            "hyperdx.single.example.test",
+        ]
+
+    def test_an_unreadable_route_list_still_maps_the_console(self, monkeypatch):
+        monkeypatch.setattr(ops, "_kubectl_json", lambda _argv: (1, {}, "forbidden"))
+        assert ops._route_hosts(["kubectl"], "dfe.single.example.test") == ["dfe.single.example.test"]
+
+
 class TestSuiteOrder:
     def test_all_runs_onboarding_first(self):
         assert ops.suite_steps("all")[0] == ops.ONBOARDING_SUITE

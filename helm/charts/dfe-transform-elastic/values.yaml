@@ -52,9 +52,9 @@ kafka:
 otel:
   endpoint: ""
 
-# The app's scalo config, rendered VERBATIM into a ConfigMap. An OPAQUE
-# passthrough: dfe-engine is the config authority and publishes it as the
-# per-instance overlay, so the chart never interprets the per-app keys.
+# The app's scalo config, rendered into a ConfigMap. dfe-engine is the config
+# authority and publishes it as the per-instance overlay; the chart adds only
+# source.brokers on the bus, from kafka.bootstrapServers (templates/configmap.yaml).
 # Kafka credentials stay OUT of here and arrive as env from a Secret, which the
 # app reads separately through scalo's KafkaConfig::from_env.
 config: {}
