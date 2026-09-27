@@ -189,6 +189,24 @@ def idle_when(app: str) -> tuple[str, ...]:
     return tuple(_key(apps[app] or {}, "idle_when") or ())
 
 
+def multiplicity(app: str) -> str:
+    """How many deployments an app runs: `single`, or `per_config` (one per source).
+
+    Args:
+        app: An app name from the manifest.
+
+    Returns:
+        The declared multiplicity, or `single` when the app declares none.
+
+    Raises:
+        CompositionError: The app is not in the manifest.
+    """
+    apps = _apps()
+    if app not in apps:
+        raise CompositionError(f"{app!r} is not an app in {MANIFEST.name}")
+    return str((apps[app] or {}).get("multiplicity") or "single")
+
+
 def deployment_name(app: str) -> str:
     """The Kubernetes object name a single-multiplicity app renders under.
 

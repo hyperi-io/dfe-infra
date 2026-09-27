@@ -1,4 +1,4 @@
-# Rendered by bootstrap.sh to create imagePullSecret for JFrog registry.
+# Rendered by bootstrap.sh to create an imagePullSecret for a private registry.
 # DFE_REGISTRY_AUTH must be pre-computed as base64(user:token) by bootstrap.sh.
 apiVersion: v1
 kind: Secret

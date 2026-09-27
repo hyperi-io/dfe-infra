@@ -277,6 +277,17 @@ spec:
             # sending each image to Docker Hub.
             - name: global.registry
               value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
+          # `values` (a YAML string) rather than a structured block, same reason
+          # layer2-apps.yaml gives: a conditional cannot live in a field this
+          # file's own tests parse as plain YAML before any Go templating runs.
+          values: |
+            {{- $pullSecret := "ghcr-pull-secret" }}
+            {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+            {{- if $pullSecret }}
+            # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
+            imagePullSecrets:
+              - {{ $pullSecret | quote }}
+            {{- end }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ if .namespace }}{{ .namespace }}{{ else }}{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}{{ end }}'

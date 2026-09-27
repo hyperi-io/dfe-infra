@@ -286,12 +286,21 @@ BOOTSTRAP_REQUIRED = (
 # split bootstrap.sh and bridge.py already make. DFE_VAULT_ADDR and
 # DFE_VAULT_ROLE_ID are openbao-only: the aws root emits neither and sets
 # DFE_SECRETS_BACKEND=aws-sm, where ESO authenticates through EKS Pod Identity
-# and takes DFE_SECRETS_REGION in their place.
+# and takes DFE_SECRETS_REGION in their place. `none` creates no store and takes
+# neither.
 BOOTSTRAP_REQUIRED_OPENBAO = ("DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID")
 BOOTSTRAP_REQUIRED_AWS_SM = ("DFE_SECRETS_REGION",)
+STORE_BACKENDS = ("openbao", "aws-sm", "none")
+# Any one of these says the operator meant OpenBao, so an unset backend keeps it.
+OPENBAO_INPUTS = (*BOOTSTRAP_REQUIRED_OPENBAO, "DFE_VAULT_SECRET_ID")
+# The ClusterSecretStore bootstrap.sh step [4/7] creates, and the name every
+# chart's store reference defaults to.
+STORE_NAME = "dfe-secret-store"
+# bootstrap.sh sets kafka.mode external for exactly these providers.
+MANAGED_KAFKA_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
 
 
-def _bootstrap_required(env: dict[str, str]) -> tuple[str, ...]:
+def _bootstrap_required(env: Mapping[str, str]) -> tuple[str, ...]:
     """Everything bootstrap.sh cannot run without, for this deployment's backend.
 
     An empty value reads as openbao, matching bootstrap.sh's own
@@ -299,8 +308,11 @@ def _bootstrap_required(env: dict[str, str]) -> tuple[str, ...]:
     read a present-but-empty value as aws-sm and drop both checks.
     """
     backend = env.get("DFE_SECRETS_BACKEND") or "openbao"
-    extra = BOOTSTRAP_REQUIRED_OPENBAO if backend == "openbao" else BOOTSTRAP_REQUIRED_AWS_SM
-    return BOOTSTRAP_REQUIRED + extra
+    if backend == "openbao":
+        return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_OPENBAO
+    if backend == "aws-sm":
+        return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_AWS_SM
+    return BOOTSTRAP_REQUIRED
 
 # A representative set of app charts is rendered alongside the mode's substrate
 # charts, so an app-side profile break is caught before deploy.
@@ -1116,9 +1128,39 @@ def _health_component(url: str, name: str) -> dict | None:
     return None
 
 
+def _idle_targets(
+    apps: tuple[str, ...], deployed: set[str]
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """The Deployments the idle check must find Ready, and the apps it lets be absent.
+
+    A per_config app runs one Deployment per source that uses it, and the engine
+    undeploys an instance no source uses, so on a fresh deploy it has none.
+
+    Args:
+        apps: The profile's default apps.
+        deployed: Every Deployment name in the app namespace.
+
+    Returns:
+        ((app, Deployment) pairs to check, per_config apps with no instance).
+    """
+    targets: list[tuple[str, str]] = []
+    absent: list[str] = []
+    for app in apps:
+        base = composition.deployment_name(app)
+        if composition.multiplicity(app) != "per_config":
+            targets.append((app, base))
+            continue
+        instances = sorted(n for n in deployed if n == base or n.startswith(f"{base}-"))
+        targets += [(app, name) for name in instances]
+        if not instances:
+            absent.append(app)
+    return targets, absent
+
+
 def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int:
     """Every app the profile deploys by default is Ready, and one with nothing
-    to do says so coherently.
+    to do says so coherently. A per_config app with no instance is expected:
+    the engine deploys one per source that uses it (_idle_targets).
 
     A deployed-but-unconfigured app is the normal state of a fresh profile --
     the archiver has no destination until an operator names one -- so the
@@ -1140,8 +1182,20 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
     print(f"  idle check: {profile} deploys {', '.join(apps)}", file=sys.stderr)
     failures: list[str] = []
 
-    for app in apps:
-        name = composition.deployment_name(app)
+    listed = subprocess.run(
+        [*kube, "-n", namespace, "get", "deploy", "-o", "jsonpath={.items[*].metadata.name}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if listed.returncode != 0:
+        failures.append(f"cannot list Deployments in {namespace}: {_last_line(listed.stderr)}")
+    targets, absent = _idle_targets(apps, set((listed.stdout or "").split()))
+    for app in absent:
+        print(
+            f"  {composition.deployment_name(app)}: absent -- per_config, and no source uses it yet",
+            file=sys.stderr,
+        )
+
+    for _app, name in targets:
         out = subprocess.run(
             [*kube, "-n", namespace, "get", "deploy", name, "-o", "jsonpath={.status.readyReplicas}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -1152,10 +1206,9 @@ def _idle_check(kube: list[str], namespace: str, profile: str, port: int) -> int
             continue
         print(f"  {name}: {ready} ready", file=sys.stderr)
 
-    for app in apps:
+    for app, name in targets:
         if not composition.idle_when(app):
             continue
-        name = composition.deployment_name(app)
         stop = threading.Event()
         threading.Thread(
             target=_forward,
@@ -1729,38 +1782,157 @@ def _profile_clickhouse_target(mode: str | None) -> str:
     return f"svc/{host.split('.')[0]}" if host else "svc/dfe-clickhouse"
 
 
-def _broker_credential_from_store(mode: str) -> bool:
-    """Whether a profile's broker takes its client credential from the secrets store.
+def _merge_values(base: dict, overlay: dict) -> dict:
+    """Helm's values merge: a map merges key by key, anything else replaces."""
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge_values(base[key], value)
+        else:
+            base[key] = value
+    return base
 
-    The same condition kafka-user-credential.yaml renders on, read from the chart
-    defaults, then common.yaml, then the profile overlay. The single broker's
-    credential comes from an in-cluster generator (kafka-single-user.yaml).
+
+def _chart_values(chart: Path, mode: str, cloud: str = "") -> dict:
+    """One chart's values as the appsets layer them: defaults, common, cloud, profile.
 
     Args:
+        chart: The chart directory.
         mode: One of MODES.
+        cloud: The argocd/values/<cloud>.yaml overlay, skipped when empty.
 
     Returns:
-        True only for a profile whose broker credential the store must hold.
+        The merged values.
     """
     from ruamel.yaml import YAML
 
     yaml = YAML(typ="safe")
-    kafka_mode, provider, from_store = "disabled", "strimzi", True
-    files = [
-        HELM_CHARTS / "kafka" / "values.yaml",
-        ARGO_VALUES / "common.yaml",
-        REPO_ROOT / profiles.PROFILES[mode].argocd_values,
-    ]
+    files = [chart / "values.yaml", ARGO_VALUES / "common.yaml"]
+    if cloud:
+        files.append(ARGO_VALUES / f"{cloud}.yaml")
+    files.append(REPO_ROOT / profiles.PROFILES[mode].argocd_values)
+    merged: dict = {}
     for path in files:
-        doc = yaml.load(path.read_text(encoding="utf-8")) or {}
-        if not isinstance(doc, dict):
+        if not path.is_file():
             continue
-        kafka = doc.get("kafka") or {}
-        kafka_mode = kafka.get("mode", kafka_mode)
-        provider = kafka.get("provider", provider)
-        password = (doc.get("user") or {}).get("password") or {}
-        from_store = password.get("fromSecretsStore", from_store)
-    return kafka_mode == "cluster" and provider == "strimzi" and bool(from_store)
+        doc = yaml.load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(doc, dict):
+            _merge_values(merged, doc)
+    return merged
+
+
+def _broker_credential_from_store(mode: str, cloud: str = "") -> bool:
+    """Whether a profile's broker takes its client credential from the secrets store.
+
+    The same condition kafka-user-credential.yaml renders on. The single broker's
+    credential comes from an in-cluster generator (kafka-single-user.yaml).
+
+    Args:
+        mode: One of MODES.
+        cloud: The cloud overlay to layer, skipped when empty.
+
+    Returns:
+        True only for a profile whose broker credential the store must hold.
+    """
+    values = _chart_values(HELM_CHARTS / "kafka", mode, cloud)
+    kafka = values.get("kafka") or {}
+    password = (values.get("user") or {}).get("password") or {}
+    return (
+        kafka.get("mode", "disabled") == "cluster"
+        and kafka.get("provider", "strimzi") == "strimzi"
+        and bool(password.get("fromSecretsStore", True))
+    )
+
+
+def _storage_bulk(model: str) -> str:
+    """Where a `<family>-<bulk>` storage model keeps its bulk copy, empty for local."""
+    return model.rsplit("-", 1)[-1] if model and model != "local" else ""
+
+
+def _store_consumers(mode: str, env: Mapping[str, str]) -> list[str]:
+    """What this deployment reads from dfe-secret-store.
+
+    Each entry is the render condition of one chart template that references the
+    store, read over the values the appsets layer plus the facts bootstrap.sh
+    carries onto the cluster secret. A deploy-repo overlay can add a consumer,
+    an external ClickHouse say, and that repo is not readable before the deploy.
+
+    Args:
+        mode: One of MODES.
+        env: The assembled deploy environment.
+
+    Returns:
+        One line per consumer, empty when nothing reads the store.
+    """
+    cloud = env.get("DFE_CLOUD", "")
+    uses: list[str] = []
+
+    kafka_values = _chart_values(HELM_CHARTS / "kafka", mode, cloud)
+    kafka = kafka_values.get("kafka") or {}
+    kafka_mode = kafka.get("mode", "disabled")
+    if env.get("DFE_KAFKA_PROVIDER") in MANAGED_KAFKA_PROVIDERS:
+        kafka_mode = "external"
+    user_auth = (kafka_values.get("user") or {}).get("password") or {}
+    if (
+        kafka_mode == "cluster"
+        and kafka.get("provider", "strimzi") == "strimzi"
+        and user_auth.get("fromSecretsStore", True)
+    ):
+        uses.append("the cluster broker's client credential (kafka-user-credential.yaml)")
+    auth = (kafka.get("external") or {}).get("auth") or {}
+    if kafka_mode == "external" and auth.get("type") != "msk_iam":
+        uses.append("the external broker's credential (kafka externalsecret.yaml)")
+    if _storage_bulk(str(kafka.get("storageModel") or "local")) == "object":
+        uses.append("the broker's object-store credential (kafka externalsecret-object-store.yaml)")
+
+    clickhouse = _chart_values(HELM_CHARTS / "clickhouse-cluster", mode, cloud).get("clickhouse") or {}
+    object_store = clickhouse.get("objectStore") or {}
+    endpoint = env.get("DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT") or object_store.get("endpoint")
+    model = str(clickhouse.get("storageModel") or "auto")
+    if model == "auto":
+        model = "cached-object" if endpoint and clickhouse.get("mode") != "external" else "local"
+    if clickhouse.get("mode") == "external":
+        uses.append("the external ClickHouse credential (clickhouse-cluster externalsecret.yaml)")
+    elif _storage_bulk(model) == "object" and not object_store.get("usePodIdentity"):
+        uses.append("the ClickHouse object-store credential (externalsecret-object-store.yaml)")
+
+    gateway = _chart_values(REPO_ROOT / "helm" / "edge" / "gateway", mode, cloud)
+    oidc = gateway.get("oidc") or {}
+    if oidc.get("enabled") and oidc.get("secretStoreName") == STORE_NAME:
+        uses.append("the gateway's OIDC client secret (externalsecret-oidc.yaml)")
+    persist = ((gateway.get("tls") or {}).get("internalCA") or {}).get("persist") or {}
+    if (persist.get("enabled") or env.get("DFE_CA_PERSIST") == "true") and not env.get(
+        "DFE_CERTMANAGER_SECRET_ID"
+    ):
+        uses.append("the internal CA root it persists across rebuilds (DFE_CA_PERSIST)")
+
+    ui = _chart_values(HELM_CHARTS / "dfe-ui", mode, cloud).get("config") or {}
+    if ui.get("nextauthSecretName") and ui.get("secretStoreName") == STORE_NAME:
+        uses.append("the console's NextAuth secret (externalsecret-nextauth.yaml)")
+    return uses
+
+
+def _resolve_store_backend(env: Mapping[str, str], mode: str) -> tuple[str, list[str]]:
+    """The secrets backend bootstrap.sh gets, and what reads the store.
+
+    A declared backend wins, and any OpenBao input keeps the openbao default, so
+    every deployment that ran before resolves exactly as it did. Only a
+    deployment with neither, and nothing that reads the store, resolves to none.
+
+    Args:
+        env: The assembled deploy environment.
+        mode: One of MODES.
+
+    Returns:
+        (backend, the store's consumers from _store_consumers). The backend is
+        one of STORE_BACKENDS, or empty for a declared value that is none of them.
+    """
+    uses = _store_consumers(mode, env)
+    declared = env.get("DFE_SECRETS_BACKEND")
+    if declared:
+        return next((known for known in STORE_BACKENDS if known == declared), ""), uses
+    if any(env.get(key) for key in OPENBAO_INPUTS):
+        return "openbao", uses
+    return ("openbao" if uses else "none"), uses
 
 
 def _gateway_address(kube: list[str]) -> str:
@@ -2910,10 +3082,37 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     # git ref Argo tracks is not a version.
     env["DFE_STACK_VERSION"] = args.stack
 
+    backend, consumers = _resolve_store_backend(env, args.mode)
+    if not backend:
+        print(
+            f"ERROR: DFE_SECRETS_BACKEND must be one of {', '.join(STORE_BACKENDS)}",
+            file=sys.stderr,
+        )
+        return 1
+    env["DFE_SECRETS_BACKEND"] = backend
+    if backend == "none" and consumers:
+        print(
+            f"ERROR: --mode {args.mode} reads the secrets store, so it cannot deploy with "
+            "DFE_SECRETS_BACKEND=none. What reads it:",
+            file=sys.stderr,
+        )
+        for use in consumers:
+            print(f"  - {use}", file=sys.stderr)
+        print(
+            "Set DFE_SECRETS_BACKEND=openbao (DFE_VAULT_ADDR, DFE_VAULT_ROLE_ID, "
+            "DFE_VAULT_SECRET_ID) or aws-sm (DFE_SECRETS_REGION).",
+            file=sys.stderr,
+        )
+        return 1
+
     # Fail early on incomplete env -- clearer than a mid-bootstrap abort.
     missing = [v for v in _bootstrap_required(env) if not env.get(v)]
     if missing:
         print(f"ERROR: missing required deploy env: {', '.join(missing)}", file=sys.stderr)
+        if backend == "openbao" and consumers and not any(env.get(k) for k in OPENBAO_INPUTS):
+            print(f"--mode {args.mode} needs a secrets store. What reads it:", file=sys.stderr)
+            for use in consumers:
+                print(f"  - {use}", file=sys.stderr)
         print(
             "Supply them via --from-terraform <dir> or --env-file <file> "
             "(see bootstrap/local.env.example).",
@@ -2943,6 +3142,8 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  Namespace:  {env.get('DFE_NAMESPACE')}", file=sys.stderr)
     print(f"  Cloud/env:  {env.get('DFE_CLOUD')}/{env.get('DFE_ENV')}", file=sys.stderr)
     print(f"  Git ref:    {env.get('DFE_TARGET_REVISION')}", file=sys.stderr)
+    store_note = " (no ClusterSecretStore: nothing this mode deploys reads one)" if backend == "none" else ""
+    print(f"  Secrets:    {backend}{store_note}", file=sys.stderr)
     print(
         f"  Retention:  {env.get('DFE_CLICKHOUSE_DEFAULT_TTL_DAYS') or '90'} day(s), "
         "every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)",

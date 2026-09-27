@@ -263,7 +263,7 @@ def test_the_backend_split_matches_the_bridge_it_drives() -> None:
     sys.path.insert(0, str(REPO_ROOT / "bootstrap"))
     import bridge
 
-    for backend in ("openbao", "aws-sm"):
+    for backend in dfeops.STORE_BACKENDS:
         ours = set(dfeops._bootstrap_required({"DFE_SECRETS_BACKEND": backend}))
         theirs = bridge._required_vars({"DFE_SECRETS_BACKEND": backend})
         assert ours & {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID", "DFE_SECRETS_REGION"} == theirs & {
@@ -271,3 +271,116 @@ def test_the_backend_split_matches_the_bridge_it_drives() -> None:
             "DFE_VAULT_ROLE_ID",
             "DFE_SECRETS_REGION",
         }, backend
+
+
+def test_the_none_backend_demands_no_store_input() -> None:
+    required = set(dfeops._bootstrap_required({"DFE_SECRETS_BACKEND": "none"}))
+    assert not required & {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID", "DFE_SECRETS_REGION"}
+
+
+# Everything bootstrap.sh requires beyond the secrets store, as an outsider's
+# kind deploy supplies it: placeholder values only (RFC 2606), this repo ships publicly.
+_OUTSIDER_ENV = {
+    "DFE_ENV": "local",
+    "DFE_CLOUD": "local-dfe",
+    "DFE_REGION": "local",
+    "DFE_DOMAIN": "dfe.example.test",
+    "DFE_REPO_URL": "https://git.example.invalid/dfe-infra.git",
+    "DFE_TARGET_REVISION": "main",
+    "DFE_STORAGE_CLASS": "local-path",
+    "DFE_NAMESPACE": "dfe-local",
+    "DFE_CLICKHOUSE_HOST": "clickhouse.clickhouse.svc.cluster.local",
+    "DFE_OTEL_ENDPOINT": "otel-collector-gateway.otel.svc.cluster.local:4317",
+    "DFE_WORKLOAD_IDENTITY_ANNOTATIONS": "{}",
+}
+
+
+def _outsider_deploy(
+    tmp_path: Path, monkeypatch, mode: str, **extra: str
+) -> tuple[int, dict[str, str] | None]:
+    """(stack-deploy's exit code, the env bootstrap.sh got, or None when it never ran)."""
+    seen: dict[str, dict[str, str]] = {}
+
+    def fake_bootstrap(cmd: list[str], *, env: dict | None = None) -> int:
+        seen["env"] = dict(env or {})
+        return 0
+
+    monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
+    monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
+    for key in [k for k in dfeops.os.environ if k.startswith("DFE_")]:
+        monkeypatch.delenv(key)
+    for key, value in {**_OUTSIDER_ENV, **extra}.items():
+        monkeypatch.setenv(key, value)
+    args = _no_terraform(
+        tmp_path, access_out=str(tmp_path / "access.md"), check_only=False, mode=mode
+    )
+    return dfeops.cmd_stack_deploy(args), seen.get("env")
+
+
+def test_a_store_less_tier_deploys_with_no_secrets_inputs(tmp_path: Path, monkeypatch) -> None:
+    """A kind run of single passed only with made-up OpenBao values, for a store
+    whose ClusterSecretStore sat InvalidProviderConfig and that nothing read."""
+    for mode in ("single", "slim"):
+        rc, env = _outsider_deploy(tmp_path, monkeypatch, mode)
+        assert rc == 0, mode
+        assert env is not None, mode
+        assert env["DFE_SECRETS_BACKEND"] == "none", mode
+
+
+def test_a_store_needing_tier_still_refuses_without_a_store(tmp_path: Path, monkeypatch) -> None:
+    """The cluster broker's credential comes from the store, so scale keeps the
+    openbao default and its demand for an address and an AppRole."""
+    assert _outsider_deploy(tmp_path, monkeypatch, "scale") == (1, None)
+
+
+def test_an_unknown_backend_is_refused(tmp_path: Path, monkeypatch) -> None:
+    rc, env = _outsider_deploy(tmp_path, monkeypatch, "single", DFE_SECRETS_BACKEND="vault")
+    assert (rc, env) == (1, None)
+
+
+def test_an_explicit_none_is_refused_where_the_store_is_read(tmp_path: Path, monkeypatch) -> None:
+    rc, env = _outsider_deploy(tmp_path, monkeypatch, "scale", DFE_SECRETS_BACKEND="none")
+    assert (rc, env) == (1, None)
+
+
+def test_an_openbao_input_keeps_the_openbao_default(tmp_path: Path, monkeypatch) -> None:
+    """Every deployment that ran before named an OpenBao address, and still gets openbao."""
+    half = _outsider_deploy(
+        tmp_path, monkeypatch, "single", DFE_VAULT_ADDR="https://store.example.invalid:8200"
+    )
+    assert half == (1, None)
+    rc, env = _outsider_deploy(
+        tmp_path,
+        monkeypatch,
+        "single",
+        DFE_VAULT_ADDR="https://store.example.invalid:8200",
+        DFE_VAULT_ROLE_ID="role-placeholder",
+    )
+    assert rc == 0
+    assert env is not None
+    assert env["DFE_SECRETS_BACKEND"] == "openbao"
+
+
+def test_ca_persistence_is_a_store_consumer(tmp_path: Path, monkeypatch) -> None:
+    """The persisted root is an ExternalSecret against the store, which none never creates."""
+    rc, env = _outsider_deploy(
+        tmp_path, monkeypatch, "single", DFE_SECRETS_BACKEND="none", DFE_CA_PERSIST="true"
+    )
+    assert (rc, env) == (1, None)
+
+
+def test_the_store_consumers_follow_the_charts() -> None:
+    """Read from each store-referencing template's own render condition, per tier."""
+    on_prem = {"DFE_CLOUD": "local-dfe"}
+    for mode in ("slim", "single", "mesh"):
+        assert dfeops._store_consumers(mode, on_prem) == [], mode
+    scale = dfeops._store_consumers("scale", on_prem)
+    assert any("cluster broker" in use for use in scale), scale
+    # A managed broker takes its credential from the store unless it signs with IAM.
+    managed = dfeops._store_consumers("single", {**on_prem, "DFE_KAFKA_PROVIDER": "confluent-cloud"})
+    assert any("external broker" in use for use in managed), managed
+    # aws.yaml turns the gateway's OIDC on, and its client secret lives in the store.
+    aws = dfeops._store_consumers("single", {"DFE_CLOUD": "aws"})
+    assert any("OIDC" in use for use in aws), aws
