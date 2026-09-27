@@ -1923,12 +1923,13 @@ def _resolve_store_backend(env: Mapping[str, str], mode: str) -> tuple[str, list
         mode: One of MODES.
 
     Returns:
-        (backend, the store's consumers from _store_consumers).
+        (backend, the store's consumers from _store_consumers). The backend is
+        one of STORE_BACKENDS, or empty for a declared value that is none of them.
     """
     uses = _store_consumers(mode, env)
     declared = env.get("DFE_SECRETS_BACKEND")
     if declared:
-        return declared, uses
+        return next((known for known in STORE_BACKENDS if known == declared), ""), uses
     if any(env.get(key) for key in OPENBAO_INPUTS):
         return "openbao", uses
     return ("openbao" if uses else "none"), uses
@@ -3082,10 +3083,9 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     env["DFE_STACK_VERSION"] = args.stack
 
     backend, consumers = _resolve_store_backend(env, args.mode)
-    if backend not in STORE_BACKENDS:
+    if not backend:
         print(
-            f"ERROR: DFE_SECRETS_BACKEND must be one of {', '.join(STORE_BACKENDS)} "
-            f"(got {backend!r})",
+            f"ERROR: DFE_SECRETS_BACKEND must be one of {', '.join(STORE_BACKENDS)}",
             file=sys.stderr,
         )
         return 1

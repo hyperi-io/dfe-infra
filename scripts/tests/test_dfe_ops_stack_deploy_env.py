@@ -335,6 +335,11 @@ def test_a_store_needing_tier_still_refuses_without_a_store(tmp_path: Path, monk
     assert _outsider_deploy(tmp_path, monkeypatch, "scale") == (1, None)
 
 
+def test_an_unknown_backend_is_refused(tmp_path: Path, monkeypatch) -> None:
+    rc, env = _outsider_deploy(tmp_path, monkeypatch, "single", DFE_SECRETS_BACKEND="vault")
+    assert (rc, env) == (1, None)
+
+
 def test_an_explicit_none_is_refused_where_the_store_is_read(tmp_path: Path, monkeypatch) -> None:
     rc, env = _outsider_deploy(tmp_path, monkeypatch, "scale", DFE_SECRETS_BACKEND="none")
     assert (rc, env) == (1, None)
