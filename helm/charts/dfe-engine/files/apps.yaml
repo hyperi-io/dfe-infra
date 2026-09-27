@@ -239,7 +239,10 @@ apps:
       - config.routing.dlq
       - config.file_sink
       - config.raw_capture
-      - config.server.bind_address
+      # Whole: the HTTP listener reads its IP filter, rate limit, auth mode, TLS
+      # and body limits once (src/server/http/mod.rs serve), and only the bearer
+      # tokens reload, so a token edit reports a restart it does not need.
+      - config.server
       - config.grpc
       - config.otlp
       - config.lumberjack
