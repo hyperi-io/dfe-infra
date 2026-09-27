@@ -85,7 +85,7 @@ def _required_vars(env_vars: dict[str, str]) -> set[str]:
     emits them, and sets DFE_SECRETS_BACKEND=aws-sm instead, where ESO
     authenticates through EKS Pod Identity and needs neither. aws-sm takes
     DFE_SECRETS_REGION in their place -- ESO has no store address to resolve
-    without it.
+    without it. none creates no store and takes none of the three.
     """
     required = {
         "DFE_ENV",
@@ -108,9 +108,10 @@ def _required_vars(env_vars: dict[str, str]) -> set[str]:
     # An empty value defaults to openbao the same way bootstrap.sh's
     # ${DFE_SECRETS_BACKEND:-openbao} does; `.get(..., "openbao")` alone would
     # read a present-but-empty output as aws-sm and drop both checks.
-    if (env_vars.get("DFE_SECRETS_BACKEND") or "openbao") == "openbao":
+    backend = env_vars.get("DFE_SECRETS_BACKEND") or "openbao"
+    if backend == "openbao":
         required |= {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}
-    else:
+    elif backend == "aws-sm":
         required |= {"DFE_SECRETS_REGION"}
     return required
 

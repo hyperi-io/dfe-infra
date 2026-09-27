@@ -42,6 +42,17 @@ spec:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
             - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+          # `values` (a YAML string) rather than a structured block, same reason
+          # layer2-apps.yaml gives: a conditional cannot live in a field this
+          # file's own tests parse as plain YAML before any Go templating runs.
+          values: |
+            {{- $pullSecret := "ghcr-pull-secret" }}
+            {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+            {{- if $pullSecret }}
+            # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
+            imagePullSecrets:
+              - {{ $pullSecret | quote }}
+            {{- end }}
       destination:
         server: '{{ .server }}'
         namespace: forgejo

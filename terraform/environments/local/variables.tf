@@ -47,7 +47,7 @@ variable "target_revision" {
 }
 
 variable "registry_host" {
-  description = "Container registry hostname (JFrog)"
+  description = "Private container registry hostname"
   type        = string
   default     = ""
 }

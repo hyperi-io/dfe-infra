@@ -60,16 +60,25 @@
 #   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
 #   DFE_VAULT_ROLE_ID        ESO AppRole role_id  (DFE_SECRETS_BACKEND=openbao)
 #   DFE_WORKLOAD_IDENTITY_ANNOTATIONS  JSON map of service → cloud identity annotations
-#   DFE_REGISTRY_HOST        JFrog registry hostname
-#   DFE_REGISTRY_USER        JFrog service account username
-#   DFE_REGISTRY_TOKEN       JFrog API token
 #
 # Optional:
+#   DFE_REGISTRY_HOST        private registry hostname, for the dfe-regcred pull secret
+#   DFE_REGISTRY_USER        private registry username
+#   DFE_REGISTRY_TOKEN       private registry token
+#   DFE_PULL_SECRET_TOKEN    token for the ghcr-pull-secret every pod then names.
+#                            Unset, pods name no pull secret and pull anonymously,
+#                            which is all a public registry needs.
+#                            DFE_PULL_SECRET_SERVER (default ghcr.io) and
+#                            DFE_PULL_SECRET_USER (default token) go with it.
 #   DFE_SECRETS_BACKEND      which body the ESO ClusterSecretStore gets: openbao
 #                            (default, needs DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID
-#                            and an AppRole SecretID) or aws-sm (needs none of
+#                            and an AppRole SecretID), aws-sm (needs none of
 #                            them -- external-secrets authenticates as the pod
-#                            it runs in, through EKS Pod Identity).
+#                            it runs in, through EKS Pod Identity), or none (no
+#                            store at all, for a profile nothing in which reads
+#                            one -- dfe-ops stack-deploy checks that and picks
+#                            none itself when no backend and no OpenBao input
+#                            is given).
 #   DFE_SIZING_DIR           where resolve_sizing.py's --out pointed, which is
 #                            the directory `sizing/` hangs off. Defaults to
 #                            terraform/environments/<cloud> where that exists,
@@ -284,12 +293,17 @@ dfe_cloud_programs_loadbalancers() {
 # deployment that names no backend behaves exactly as it did.
 export DFE_SECRETS_BACKEND="${DFE_SECRETS_BACKEND:-openbao}"
 case "${DFE_SECRETS_BACKEND}" in
-  openbao|aws-sm) ;;
+  openbao|aws-sm|none) ;;
   *)
-    echo "ERROR: DFE_SECRETS_BACKEND must be openbao or aws-sm (got '${DFE_SECRETS_BACKEND}')" >&2
+    echo "ERROR: DFE_SECRETS_BACKEND must be openbao, aws-sm or none (got '${DFE_SECRETS_BACKEND}')" >&2
     exit 1
     ;;
 esac
+# The persisted root is an ExternalSecret against the store, which none never creates.
+if [[ "${DFE_SECRETS_BACKEND}" == "none" && "${DFE_CA_PERSIST:-}" == "true" ]]; then
+  echo "ERROR: DFE_CA_PERSIST=true needs a secrets store, and DFE_SECRETS_BACKEND=none creates none" >&2
+  exit 1
+fi
 # The store lives in the deployment's own region unless it is told otherwise.
 export DFE_SECRETS_REGION="${DFE_SECRETS_REGION:-${DFE_REGION:-}}"
 # The store prepends this to every remoteRef, and ESO adds no separator of its
@@ -312,7 +326,7 @@ required_vars=(
 )
 if [[ "${DFE_SECRETS_BACKEND}" == "openbao" ]]; then
   required_vars+=(DFE_VAULT_ADDR DFE_VAULT_ROLE_ID)
-else
+elif [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
   required_vars+=(DFE_SECRETS_REGION)
 fi
 # DFE_KAFKA_BOOTSTRAP is OPTIONAL: the slim and mesh profiles are gRPC (kafka
@@ -514,7 +528,9 @@ if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}" && -z "${DFE_KARPENTER_POOLS}" ]]; t
 fi
 # A single quote inside the JSON would close the YAML scalar early, so double it
 # -- YAML's own escape for a quote inside a single-quoted scalar.
+# shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion
 DFE_KARPENTER_POOLS_YAML="${DFE_KARPENTER_POOLS//\'/\'\'}"
+# shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
 export DFE_KARPENTER_POOLS_ANNOTATION="${DFE_KARPENTER_POOLS:+dfe.hyperi.io/karpenter_pools: '${DFE_KARPENTER_POOLS_YAML}'}"
 
 echo "==> [0a/7] On-prem node-capacity preflight"
@@ -546,6 +562,9 @@ if [[ -n "${DFE_REGISTRY_HOST:-}" ]] && [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
   export DFE_REGISTRY_AUTH
   DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
 fi
+# The pull secret every pod names, empty when step [4b/7] creates none, so the
+# appsets that read it back never name a secret that does not exist.
+export DFE_IMAGE_PULL_SECRET="${DFE_PULL_SECRET_TOKEN:+ghcr-pull-secret}"
 
 # Deploy repo (dfe-engine writes config, Argo watches). PROVIDER-AGNOSTIC seam:
 # external git (GitHub ~85% / GitLab ~10%) is PRIMARY; the in-cluster Forgejo
@@ -738,7 +757,10 @@ if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
 else
   ESO_STORE_TEMPLATE="${TEMPLATES_DIR}/eso-cluster-secret-store.yaml.tpl"
 fi
-if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+if [[ "${DFE_SECRETS_BACKEND}" == "none" ]]; then
+  echo "  SKIPPED (DFE_SECRETS_BACKEND=none): no ClusterSecretStore, so an ExternalSecret that"
+  echo "  names dfe-secret-store stays unresolved. dfe-ops stack-deploy refuses a mode that has one."
+elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
   if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
     echo "[DRY-RUN] envsubst ${ESO_STORE_TEMPLATE##*/} | kubectl apply -f -"
     echo "[DRY-RUN]   region=${DFE_SECRETS_REGION} prefix=${DFE_SECRETS_PREFIX_PATH:-<none>} auth=pod identity"
@@ -790,8 +812,8 @@ echo "==> [4a/7] Internal CA root: restore from the secret store before cert-man
 if [[ -z "${DFE_CA_PERSIST:-}" ]]; then
   # What decides it is whether the store can authenticate at all: on aws-sm the
   # pod's own identity is the credential, on openbao nothing works without the
-  # AppRole SecretID and there is nowhere to hold the root.
-  if [[ "${DFE_SECRETS_BACKEND}" != "openbao" || -n "${DFE_VAULT_SECRET_ID:-}" ]]; then
+  # AppRole SecretID, and none has no store to hold the root in.
+  if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]] || [[ "${DFE_SECRETS_BACKEND}" == "openbao" && -n "${DFE_VAULT_SECRET_ID:-}" ]]; then
     DFE_CA_PERSIST="true"
   else
     DFE_CA_PERSIST="false"
@@ -801,8 +823,13 @@ if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
   echo "  Vault/OpenBao issuer mode seeded -- the estate PKI owns the root, nothing to persist"
 elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
   echo "  SKIPPED (DFE_CA_PERSIST=${DFE_CA_PERSIST}): this deploy mints a fresh root and every"
-  echo "  client must trust it again after a rebuild. Set DFE_VAULT_SECRET_ID so the deployment"
-  echo "  has a working secret store, or DFE_CA_PERSIST=true to force it."
+  echo "  client must trust it again after a rebuild."
+  if [[ "${DFE_SECRETS_BACKEND}" == "none" ]]; then
+    echo "  Keeping it across rebuilds needs a secrets store (DFE_SECRETS_BACKEND openbao or aws-sm)."
+  else
+    echo "  Set DFE_VAULT_SECRET_ID so the deployment has a working secret store, or"
+    echo "  DFE_CA_PERSIST=true to force it."
+  fi
 elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
   echo "[DRY-RUN] helm template envoy-gateway-config -f common.yaml -f ${DFE_CLOUD}.yaml -f profile-${DFE_PROFILE}.yaml --set domain=${DFE_DOMAIN} --set tls.internalCA.persist.enabled=true -s templates/internal-ca-persist.yaml | kubectl apply -f -"
 else
@@ -856,14 +883,14 @@ echo "==> [4b/7] Creating imagePullSecrets"
 # on the node.
 for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
-  # JFrog regcred (if registry credentials provided)
+  # Private registry regcred (if registry credentials provided)
   if [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
     TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
   fi
   # Private registry pull secret (GHCR, ECR, GCR, etc.)
   # Set DFE_PULL_SECRET_SERVER, DFE_PULL_SECRET_USER, DFE_PULL_SECRET_TOKEN in env.
   if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
-    kubectl -n "$ns" create secret docker-registry ghcr-pull-secret \
+    kubectl -n "$ns" create secret docker-registry "${DFE_IMAGE_PULL_SECRET}" \
       --docker-server="${DFE_PULL_SECRET_SERVER:-ghcr.io}" \
       --docker-username="${DFE_PULL_SECRET_USER:-token}" \
       --docker-password="${DFE_PULL_SECRET_TOKEN}" \
@@ -871,11 +898,11 @@ for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   fi
 done
 if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
-  echo "  Pull secret created/updated in every DFE namespace"
+  echo "  Pull secret ${DFE_IMAGE_PULL_SECRET} created/updated in every DFE namespace, and every DFE pod names it"
 else
-  echo "  WARNING: DFE_PULL_SECRET_TOKEN is unset, so ghcr-pull-secret was NOT created."
-  echo "           Every app image from a private registry fails with ImagePullBackOff and"
-  echo "           FailedToRetrieveImagePullSecret. Set DFE_PULL_SECRET_TOKEN and re-run."
+  echo "  No pull secret (DFE_PULL_SECRET_TOKEN unset): pods name none and pull ${DFE_REGISTRY}"
+  echo "  anonymously, which is all a public registry needs. Only a PRIVATE registry needs"
+  echo "  DFE_PULL_SECRET_TOKEN, and a pod there fails with ImagePullBackOff without it."
 fi
 
 # [4c/7] Deploy-repo credentials -- two paths by provider mode.

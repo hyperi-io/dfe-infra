@@ -12,10 +12,6 @@ global:
 domain: dfe.example.com
 storageClass: local-path
 
-# Pull secret for GHCR private images (created by bootstrap.sh)
-imagePullSecrets:
-  - ghcr-pull-secret
-
 postgresql:
   host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
 

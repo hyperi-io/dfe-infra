@@ -19,11 +19,6 @@ storageClass: local-path
 # DFE owns the whole cluster -> generic nodes, no pinning/tolerations.
 nodeScheduling: {}
 
-# Pull secret for GHCR private images (created by bootstrap.sh from
-# DFE_PULL_SECRET_* env). If DFE ships public images this can be dropped.
-imagePullSecrets:
-  - ghcr-pull-secret
-
 postgresql:
   host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
 

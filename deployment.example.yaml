@@ -674,10 +674,14 @@ steps:
 ## backend also reaches bootstrap.sh as DFE_SECRETS_BACKEND: on openbao it
 ## requires DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID and seeds an AppRole SecretID, on
 ## aws-sm it requires neither and the store authenticates by the pod's own
-## identity. ref is the path prefix every reference hangs off -- optional, and
-## empty means the deployment's own <project>/<env> path with nothing above it.
+## identity, and on none it creates no store at all. Nothing the slim, single or
+## mesh profile deploys reads a store, so those take none -- or leave backend
+## blank and give no OpenBao value, and dfe-ops stack-deploy picks none itself.
+## scale reads its broker credential from the store and is refused on none.
+## ref is the path prefix every reference hangs off -- optional, and empty means
+## the deployment's own <project>/<env> path with nothing above it.
 secrets:
-  backend: openbao           # file | openbao | eso | aws-sm | gcp-sm | azure-kv
+  backend: openbao           # openbao | aws-sm | none (bootstrap.sh accepts these three)
   ref: ""                    # base path; estate context, blank in the template
 
 ## OVERLAY -- optional private-context ref (fleet-scale ops, per-env config repo).
@@ -718,7 +722,7 @@ k8s:
   region: local              # DFE_REGION
   domain: ""                 # DFE_DOMAIN -- estate, blank in template
   storage_class: local-path  # DFE_STORAGE_CLASS -- local-path | gp3 | standard-rwo | managed-csi
-  repo_url: ""               # DFE_REPO_URL -- this repo's URL (dfe-infra); private until GA, so DFE_REPO_TOKEN is required, estate
+  repo_url: ""               # DFE_REPO_URL -- the dfe-infra chart repo Argo reads, with DFE_REPO_TOKEN only if your copy is private
   target_revision: main      # DFE_TARGET_REVISION -- the ref under deployment (versionSet ref)
   workload_identity_annotations: "{}"  # DFE_WORKLOAD_IDENTITY_ANNOTATIONS -- IRSA / WI, cloud
   ## Cloud-swap knobs. Blank = the cluster/chart default (local-path, ClusterIP).

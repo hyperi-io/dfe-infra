@@ -200,6 +200,13 @@ spec:
                   {{- end }}
                 {{- end }}
               {{- end }}
+              {{- $pullSecret := "ghcr-pull-secret" }}
+              {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+              {{- if $pullSecret }}
+              # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
+              imagePullSecrets:
+                - {{ $pullSecret | quote }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

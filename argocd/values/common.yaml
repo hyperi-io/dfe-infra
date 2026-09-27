@@ -42,8 +42,9 @@ operatorNamespaces:
   strimzi: strimzi
   cnpg: cnpg-system
 
-# Image pull secrets — list of K8s secret names for private registries.
-# Override in cloud-specific values. Bootstrap creates these secrets.
+# Image pull secrets -- none by default, so a public-image pod pulls anonymously.
+# When bootstrap.sh creates one (DFE_PULL_SECRET_TOKEN), it records the name on
+# the cluster secret and every appset hands it to the charts from there.
 imagePullSecrets: []
 
 # Node scheduling — empty by default (no constraints).
