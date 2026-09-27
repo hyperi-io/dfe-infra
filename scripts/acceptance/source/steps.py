@@ -56,19 +56,20 @@ RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 # --- console helpers ---------------------------------------------------------
 
 
-def select_option(page, combobox_index: int, text: str) -> None:
-    """Pick *text* from the nth Ant Design select on the page."""
-    page.get_by_role("combobox").nth(combobox_index).click(timeout=STEP_TIMEOUT_MS)
+def select_by_id(page, selector: str, text: str) -> None:
+    """Pick *text* from the Ant Design select whose input the form ids as *selector*.
+
+    By id rather than position: the source form force-renders every tab, so the
+    page's combobox order counts controls the operator cannot see.
+    """
+    page.locator(selector).click(timeout=STEP_TIMEOUT_MS)
     _pick_open_option(page, text)
 
 
-def select_labelled(page, label: str, text: str) -> None:
-    """Pick *text* from the Ant Design select the form labels *label*.
-
-    By label rather than by position: the source form force-renders every tab,
-    so the page's combobox order counts controls the operator cannot see.
-    """
-    page.get_by_label(label, exact=True).click(timeout=STEP_TIMEOUT_MS)
+def search_select(page, selector: str, text: str) -> None:
+    """Type *text* into a searchable select first, so a long virtual list renders it."""
+    page.locator(selector).click(timeout=STEP_TIMEOUT_MS)
+    page.keyboard.insert_text(text)
     _pick_open_option(page, text)
 
 

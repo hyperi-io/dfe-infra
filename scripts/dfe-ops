@@ -1293,8 +1293,14 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             if not address:
                 print(f"{host} does not resolve here and the gateway has no address to map it to", file=sys.stderr)
                 return 1
-            resolve = [f"{host}:{address}"]
-            print(f"  {host} does not resolve here: mapping it to the gateway at {address}", file=sys.stderr)
+            # The console frames HyperDX on a hostname of its own, so every route
+            # host under the console's domain is mapped, not the console alone.
+            mapped = _route_hosts(kube, host)
+            resolve = [f"{name}:{address}" for name in mapped]
+            print(
+                f"  {host} does not resolve here: mapping {', '.join(mapped)} to the gateway at {address}",
+                file=sys.stderr,
+            )
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
@@ -1733,6 +1739,28 @@ def _gateway_address(kube: list[str]) -> str:
             if address.get("value"):
                 return str(address["value"])
     return ""
+
+
+def _route_hosts(kube: list[str], console: str) -> list[str]:
+    """The console host, then every other HTTPRoute hostname under its domain.
+
+    Args:
+        kube: kubectl argv prefix.
+        console: The console's hostname; its parent domain bounds the set.
+
+    Returns:
+        Hostnames, the console first, wildcards left out.
+    """
+    domain = console.partition(".")[2]
+    hosts = [console]
+    rc, doc, _ = _kubectl_json([*kube, "get", "httproute", "-A"])
+    if rc != 0 or not domain:
+        return hosts
+    for item in doc.get("items") or []:
+        for name in (item.get("spec") or {}).get("hostnames") or []:
+            if name.endswith(f".{domain}") and not name.startswith("*") and name not in hosts:
+                hosts.append(name)
+    return hosts
 
 
 def _resolves(host: str) -> bool:

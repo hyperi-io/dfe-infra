@@ -441,6 +441,15 @@ class TestTheFilebeatCaseCreate:
             "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform"
         ]
 
+    def test_the_schema_is_picked_on_the_table_settings_tab(self):
+        """The console renamed the tab from Meta Schema, and the header moved under its defaults."""
+        driver, _, _ = self._create()
+
+        assert "tab:Table Settings" in driver.page.visited
+        assert "tab:Meta Schema" not in driver.page.visited
+        assert "locator:#schema_meta_schema" in driver.page.visited
+        assert "locator:#schema_meta_schema_version" in driver.page.visited
+
     def test_the_transform_goes_on_through_the_console_when_the_tab_is_there(self):
         driver, engine, case = self._create()
 
@@ -456,7 +465,7 @@ class TestTheFilebeatCaseCreate:
         assert ("PUT", f"/sources/{case.name}") in engine.calls
 
     def test_a_console_without_the_engine_picker_falls_back_the_same_way(self):
-        driver, engine, case = self._create(missing=("label:Transform Engine",))
+        driver, engine, case = self._create(missing=("locator:#transform_engine",))
 
         assert driver.status("attach-transform") == "api-fallback"
         assert ("PUT", f"/sources/{case.name}") in engine.calls
