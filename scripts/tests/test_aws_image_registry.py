@@ -52,7 +52,7 @@ BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 
 REGISTRY = "registry.example.com/dfe"
-PULL_SECRET = "ghcr-pull-secret"
+PULL_NAME = "ghcr-pull-secret"
 ANNOTATION = "dfe.hyperi.io/registry"
 PULL_ANNOTATION = "dfe.hyperi.io/image_pull_secret"
 
@@ -75,11 +75,11 @@ CLOUDS = ("aws.yaml", "azure.yaml", "gcp.yaml", "local.yaml", "local-dfe.yaml")
 
 
 def render(
-    chart: str, registry: str, cloud: str = "aws.yaml", pull_secret: str = ""
+    chart: str, registry: str, cloud: str = "aws.yaml", pull_name: str = ""
 ) -> list[dict]:
     """Every object one chart renders on a cloud cascade the appsets layer.
 
-    pull_secret stands in for what the appsets' values block hands the chart
+    pull_name stands in for what the appsets' values block hands the chart
     when the cluster secret records one.
     """
     cmd = [
@@ -89,8 +89,8 @@ def render(
     ]
     if registry:
         cmd += ["--set", f"global.registry={registry}"]
-    if pull_secret:
-        cmd += ["--set", f"imagePullSecrets[0]={pull_secret}"]
+    if pull_name:
+        cmd += ["--set", f"imagePullSecrets[0]={pull_name}"]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode != 0:
         raise SystemExit(f"helm template {chart} failed:\n{out.stderr}")
@@ -143,7 +143,7 @@ def test_the_cascade_alone_names_no_registry() -> None:
                     )
 
 
-def pull_secrets(spec: dict) -> list[str]:
+def pull_refs(spec: dict) -> list[str]:
     return [entry.get("name") for entry in spec.get("imagePullSecrets") or []]
 
 
@@ -154,21 +154,21 @@ def test_no_cloud_overlay_names_a_pull_secret_bootstrap_may_not_create() -> None
             for spec in pod_specs(render(chart, REGISTRY, cloud)):
                 expect(
                     f"{cloud} {chart}: a pod names no pull secret without the appset's",
-                    pull_secrets(spec) == [],
-                    f"imagePullSecrets was {pull_secrets(spec)}",
+                    pull_refs(spec) == [],
+                    f"imagePullSecrets was {pull_refs(spec)}",
                 )
 
 
 def test_every_pod_carries_the_pull_secret_bootstrap_created() -> None:
     """With the appset handing the name on, every dfe-* pod names it."""
     for chart in CHARTS:
-        for spec in pod_specs(render(chart, REGISTRY, pull_secret=PULL_SECRET)):
+        for spec in pod_specs(render(chart, REGISTRY, pull_name=PULL_NAME)):
             if not dfe_images(spec):
                 continue
             expect(
-                f"{chart} pod names {PULL_SECRET}",
-                PULL_SECRET in pull_secrets(spec),
-                f"imagePullSecrets was {pull_secrets(spec)}",
+                f"{chart} pod names {PULL_NAME}",
+                PULL_NAME in pull_refs(spec),
+                f"imagePullSecrets was {pull_refs(spec)}",
             )
 
 
@@ -214,9 +214,9 @@ def test_every_appset_names_the_pull_secret_only_when_one_was_created() -> None:
     written before the fact existed keeps the name the cloud overlays used to set."""
     base = {ANNOTATION: REGISTRY}
     cases = (
-        ("recorded", {**base, PULL_ANNOTATION: PULL_SECRET}, [PULL_SECRET]),
+        ("recorded", {**base, PULL_ANNOTATION: PULL_NAME}, [PULL_NAME]),
         ("recorded empty", {**base, PULL_ANNOTATION: ""}, None),
-        ("an older cluster secret", base, [PULL_SECRET]),
+        ("an older cluster secret", base, [PULL_NAME]),
     )
     for appset, name in PULL_APPSETS:
         block = values_block(appset, name)
@@ -230,13 +230,13 @@ def test_bootstrap_records_the_pull_secret_only_when_it_creates_one() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
     line = re.search(r"^export DFE_IMAGE_PULL_SECRET=.*$", script, re.M)
     expect("bootstrap.sh derives DFE_IMAGE_PULL_SECRET", line is not None)
-    for token, want in (("placeholder-token", PULL_SECRET), ("", "")):
+    for given, want in (("placeholder", PULL_NAME), ("", "")):
         out = subprocess.run(
-            ["env", f"DFE_PULL_SECRET_TOKEN={token}", "bash", "-c",
+            ["env", f"DFE_PULL_SECRET_TOKEN={given}", "bash", "-c",
              f'{line.group(0) if line else ""}\nprintf %s "$DFE_IMAGE_PULL_SECRET"'],
             capture_output=True, text=True, check=False,
         )
-        expect(f"token {'set' if token else 'unset'} records {want!r}", out.stdout == want,
+        expect(f"{'set' if given else 'unset'} records {want!r}", out.stdout == want,
                f"got {out.stdout!r}")
     template = CLUSTER_SECRET.read_text(encoding="utf-8")
     expect(f"cluster-secret.yaml.tpl writes {PULL_ANNOTATION}",

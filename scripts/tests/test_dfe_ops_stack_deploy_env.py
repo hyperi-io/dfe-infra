@@ -263,7 +263,7 @@ def test_the_backend_split_matches_the_bridge_it_drives() -> None:
     sys.path.insert(0, str(REPO_ROOT / "bootstrap"))
     import bridge
 
-    for backend in dfeops.SECRETS_BACKENDS:
+    for backend in dfeops.STORE_BACKENDS:
         ours = set(dfeops._bootstrap_required({"DFE_SECRETS_BACKEND": backend}))
         theirs = bridge._required_vars({"DFE_SECRETS_BACKEND": backend})
         assert ours & {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID", "DFE_SECRETS_REGION"} == theirs & {
@@ -370,12 +370,12 @@ def test_the_store_consumers_follow_the_charts() -> None:
     """Read from each store-referencing template's own render condition, per tier."""
     on_prem = {"DFE_CLOUD": "local-dfe"}
     for mode in ("slim", "single", "mesh"):
-        assert dfeops._secret_store_uses(mode, on_prem) == [], mode
-    scale = dfeops._secret_store_uses("scale", on_prem)
+        assert dfeops._store_consumers(mode, on_prem) == [], mode
+    scale = dfeops._store_consumers("scale", on_prem)
     assert any("cluster broker" in use for use in scale), scale
     # A managed broker takes its credential from the store unless it signs with IAM.
-    managed = dfeops._secret_store_uses("single", {**on_prem, "DFE_KAFKA_PROVIDER": "confluent-cloud"})
+    managed = dfeops._store_consumers("single", {**on_prem, "DFE_KAFKA_PROVIDER": "confluent-cloud"})
     assert any("external broker" in use for use in managed), managed
     # aws.yaml turns the gateway's OIDC on, and its client secret lives in the store.
-    aws = dfeops._secret_store_uses("single", {"DFE_CLOUD": "aws"})
+    aws = dfeops._store_consumers("single", {"DFE_CLOUD": "aws"})
     assert any("OIDC" in use for use in aws), aws

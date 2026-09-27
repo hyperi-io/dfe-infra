@@ -290,12 +290,12 @@ BOOTSTRAP_REQUIRED = (
 # neither.
 BOOTSTRAP_REQUIRED_OPENBAO = ("DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID")
 BOOTSTRAP_REQUIRED_AWS_SM = ("DFE_SECRETS_REGION",)
-SECRETS_BACKENDS = ("openbao", "aws-sm", "none")
+STORE_BACKENDS = ("openbao", "aws-sm", "none")
 # Any one of these says the operator meant OpenBao, so an unset backend keeps it.
 OPENBAO_INPUTS = (*BOOTSTRAP_REQUIRED_OPENBAO, "DFE_VAULT_SECRET_ID")
 # The ClusterSecretStore bootstrap.sh step [4/7] creates, and the name every
 # chart's store reference defaults to.
-SECRET_STORE = "dfe-secret-store"
+STORE_NAME = "dfe-secret-store"
 # bootstrap.sh sets kafka.mode external for exactly these providers.
 MANAGED_KAFKA_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
 
@@ -1848,7 +1848,7 @@ def _storage_bulk(model: str) -> str:
     return model.rsplit("-", 1)[-1] if model and model != "local" else ""
 
 
-def _secret_store_uses(mode: str, env: Mapping[str, str]) -> list[str]:
+def _store_consumers(mode: str, env: Mapping[str, str]) -> list[str]:
     """What this deployment reads from dfe-secret-store.
 
     Each entry is the render condition of one chart template that references the
@@ -1871,11 +1871,11 @@ def _secret_store_uses(mode: str, env: Mapping[str, str]) -> list[str]:
     kafka_mode = kafka.get("mode", "disabled")
     if env.get("DFE_KAFKA_PROVIDER") in MANAGED_KAFKA_PROVIDERS:
         kafka_mode = "external"
-    password = (kafka_values.get("user") or {}).get("password") or {}
+    user_auth = (kafka_values.get("user") or {}).get("password") or {}
     if (
         kafka_mode == "cluster"
         and kafka.get("provider", "strimzi") == "strimzi"
-        and password.get("fromSecretsStore", True)
+        and user_auth.get("fromSecretsStore", True)
     ):
         uses.append("the cluster broker's client credential (kafka-user-credential.yaml)")
     auth = (kafka.get("external") or {}).get("auth") or {}
@@ -1897,7 +1897,7 @@ def _secret_store_uses(mode: str, env: Mapping[str, str]) -> list[str]:
 
     gateway = _chart_values(REPO_ROOT / "helm" / "edge" / "gateway", mode, cloud)
     oidc = gateway.get("oidc") or {}
-    if oidc.get("enabled") and oidc.get("secretStoreName") == SECRET_STORE:
+    if oidc.get("enabled") and oidc.get("secretStoreName") == STORE_NAME:
         uses.append("the gateway's OIDC client secret (externalsecret-oidc.yaml)")
     persist = ((gateway.get("tls") or {}).get("internalCA") or {}).get("persist") or {}
     if (persist.get("enabled") or env.get("DFE_CA_PERSIST") == "true") and not env.get(
@@ -1906,12 +1906,12 @@ def _secret_store_uses(mode: str, env: Mapping[str, str]) -> list[str]:
         uses.append("the internal CA root it persists across rebuilds (DFE_CA_PERSIST)")
 
     ui = _chart_values(HELM_CHARTS / "dfe-ui", mode, cloud).get("config") or {}
-    if ui.get("nextauthSecretName") and ui.get("secretStoreName") == SECRET_STORE:
+    if ui.get("nextauthSecretName") and ui.get("secretStoreName") == STORE_NAME:
         uses.append("the console's NextAuth secret (externalsecret-nextauth.yaml)")
     return uses
 
 
-def _resolve_secrets_backend(env: Mapping[str, str], mode: str) -> tuple[str, list[str]]:
+def _resolve_store_backend(env: Mapping[str, str], mode: str) -> tuple[str, list[str]]:
     """The secrets backend bootstrap.sh gets, and what reads the store.
 
     A declared backend wins, and any OpenBao input keeps the openbao default, so
@@ -1923,9 +1923,9 @@ def _resolve_secrets_backend(env: Mapping[str, str], mode: str) -> tuple[str, li
         mode: One of MODES.
 
     Returns:
-        (backend, the store's consumers from _secret_store_uses).
+        (backend, the store's consumers from _store_consumers).
     """
-    uses = _secret_store_uses(mode, env)
+    uses = _store_consumers(mode, env)
     declared = env.get("DFE_SECRETS_BACKEND")
     if declared:
         return declared, uses
@@ -3081,22 +3081,22 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     # git ref Argo tracks is not a version.
     env["DFE_STACK_VERSION"] = args.stack
 
-    backend, store_uses = _resolve_secrets_backend(env, args.mode)
-    if backend not in SECRETS_BACKENDS:
+    backend, consumers = _resolve_store_backend(env, args.mode)
+    if backend not in STORE_BACKENDS:
         print(
-            f"ERROR: DFE_SECRETS_BACKEND must be one of {', '.join(SECRETS_BACKENDS)} "
+            f"ERROR: DFE_SECRETS_BACKEND must be one of {', '.join(STORE_BACKENDS)} "
             f"(got {backend!r})",
             file=sys.stderr,
         )
         return 1
     env["DFE_SECRETS_BACKEND"] = backend
-    if backend == "none" and store_uses:
+    if backend == "none" and consumers:
         print(
             f"ERROR: --mode {args.mode} reads the secrets store, so it cannot deploy with "
             "DFE_SECRETS_BACKEND=none. What reads it:",
             file=sys.stderr,
         )
-        for use in store_uses:
+        for use in consumers:
             print(f"  - {use}", file=sys.stderr)
         print(
             "Set DFE_SECRETS_BACKEND=openbao (DFE_VAULT_ADDR, DFE_VAULT_ROLE_ID, "
@@ -3109,9 +3109,9 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     missing = [v for v in _bootstrap_required(env) if not env.get(v)]
     if missing:
         print(f"ERROR: missing required deploy env: {', '.join(missing)}", file=sys.stderr)
-        if backend == "openbao" and store_uses and not any(env.get(k) for k in OPENBAO_INPUTS):
+        if backend == "openbao" and consumers and not any(env.get(k) for k in OPENBAO_INPUTS):
             print(f"--mode {args.mode} needs a secrets store. What reads it:", file=sys.stderr)
-            for use in store_uses:
+            for use in consumers:
                 print(f"  - {use}", file=sys.stderr)
         print(
             "Supply them via --from-terraform <dir> or --env-file <file> "
@@ -3142,8 +3142,8 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  Namespace:  {env.get('DFE_NAMESPACE')}", file=sys.stderr)
     print(f"  Cloud/env:  {env.get('DFE_CLOUD')}/{env.get('DFE_ENV')}", file=sys.stderr)
     print(f"  Git ref:    {env.get('DFE_TARGET_REVISION')}", file=sys.stderr)
-    secrets_note = " (no ClusterSecretStore: nothing this mode deploys reads one)" if backend == "none" else ""
-    print(f"  Secrets:    {backend}{secrets_note}", file=sys.stderr)
+    store_note = " (no ClusterSecretStore: nothing this mode deploys reads one)" if backend == "none" else ""
+    print(f"  Secrets:    {backend}{store_note}", file=sys.stderr)
     print(
         f"  Retention:  {env.get('DFE_CLICKHOUSE_DEFAULT_TTL_DAYS') or '90'} day(s), "
         "every time-series table (DFE_CLICKHOUSE_DEFAULT_TTL_DAYS; 0 = none)",
