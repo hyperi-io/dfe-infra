@@ -155,7 +155,7 @@ def test_no_cloud_overlay_names_a_pull_secret_bootstrap_may_not_create() -> None
                 expect(
                     f"{cloud} {chart}: a pod names no pull secret without the appset's",
                     pull_refs(spec) == [],
-                    f"imagePullSecrets was {pull_refs(spec)}",
+                    "the pod names a pull secret nothing created",
                 )
 
 
@@ -168,7 +168,7 @@ def test_every_pod_carries_the_pull_secret_bootstrap_created() -> None:
             expect(
                 f"{chart} pod names {PULL_NAME}",
                 PULL_NAME in pull_refs(spec),
-                f"imagePullSecrets was {pull_refs(spec)}",
+                f"the pod does not name {PULL_NAME}",
             )
 
 
@@ -222,7 +222,8 @@ def test_every_appset_names_the_pull_secret_only_when_one_was_created() -> None:
         block = values_block(appset, name)
         for label, facts, want in cases:
             got = evaluate_block(block, facts).get("imagePullSecrets")
-            expect(f"{appset} {label}: imagePullSecrets is {want}", got == want, f"got {got}")
+            expect(f"{appset} {label}: imagePullSecrets is {want}", got == want,
+                   "the block rendered a different list")
 
 
 def test_bootstrap_records_the_pull_secret_only_when_it_creates_one() -> None:
