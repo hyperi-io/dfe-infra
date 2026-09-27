@@ -381,6 +381,12 @@ routes:
     # /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
     # origin (the docker proxy draws the same line).
     pathPrefix: /api/v1
+    # How long the gateway waits for the engine to answer, on this route and its
+    # public twin. An engine write commits to the deploy repo and reconciles the
+    # apps inside the request -- a source create is three pushes -- and the
+    # gateway's own 15s default cut one off after the write had landed. Empty
+    # leaves the gateway default.
+    requestTimeout: 60s
     # Whose public listener and certificate this route answers on -- dfe-ui's,
     # because the browser calls the engine at its own origin. The listener, the
     # Certificate and the public-TLS policy all skip a route naming one.

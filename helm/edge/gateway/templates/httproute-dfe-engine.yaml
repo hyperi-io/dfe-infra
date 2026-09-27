@@ -39,6 +39,10 @@ spec:
         - path:
             type: PathPrefix
             value: /.well-known
+      {{- with .Values.routes.dfeEngine.requestTimeout }}
+      timeouts:
+        request: {{ . }}
+      {{- end }}
       backendRefs:
         - name: {{ .Values.routes.dfeEngine.backendService }}
           port: {{ .Values.routes.dfeEngine.backendPort }}

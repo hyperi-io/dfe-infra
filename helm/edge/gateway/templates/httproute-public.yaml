@@ -53,6 +53,10 @@ spec:
               - name: Strict-Transport-Security
                 value: "max-age=31536000; includeSubDomains"
       {{- end }}
+      {{- with $r.requestTimeout }}
+      timeouts:
+        request: {{ . }}
+      {{- end }}
       backendRefs:
         - name: {{ $r.backendService }}
           port: {{ $r.backendPort }}
