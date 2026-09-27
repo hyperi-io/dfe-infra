@@ -45,6 +45,11 @@ kafka:
   # credentials that its security_protocol would never send.
   securityProtocol: ""
   saslMechanism: SCRAM-SHA-512
+  # The consumer-group protocol, rendered as KAFKA_CONSUMER_PROTOCOL. `classic`
+  # keeps every DFE consumer on one protocol: a broker cannot upgrade a classic
+  # group holding a cooperative-sticky member to KIP-848, and refuses the
+  # newcomer with a fatal GroupIdNotFound. Empty leaves scalo's default.
+  consumerProtocol: classic
 
 otel:
   endpoint: ""
