@@ -113,6 +113,12 @@ serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
 
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
+
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
 # Two triggers render and the HPA takes the higher: the native cpu scaler (no
 # component in the path, so a metric outage cannot take scaling with it) and the

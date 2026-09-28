@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_keda_pressure_defaults.py
-#  Purpose:      Prove every app chart renders the ScalingPressure trigger by
-#                default, at a shim address derived from the release namespace.
+#  Purpose:      Prove every app chart whose app sets the gauge renders the
+#                ScalingPressure trigger by default, at a shim address derived
+#                from the release namespace.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -36,17 +37,23 @@ VALUES = REPO_ROOT / "argocd" / "values"
 
 # Every app chart whose ScaledObject carries the pressure trigger. dfe-fetcher is
 # absent on purpose: it sets keda.enabled false and renders no ScaledObject.
+# dfe-transform-vector is CPU_ONLY_CHARTS below.
 PRESSURE_CHARTS = [
     "dfe-archiver",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-elastic",
-    "dfe-transform-vector",
     "dfe-transform-vrl",
     # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
     # uncomment when they ship.
     # "dfe-transform-splack",
     # "dfe-transform-wasm",
+]
+
+# App charts that ship the cpu trigger alone, because the app sets no
+# scaling_pressure gauge for the pressure trigger to read.
+CPU_ONLY_CHARTS = [
+    "dfe-transform-vector",
 ]
 
 
@@ -81,6 +88,13 @@ def test_every_app_chart_ships_the_pressure_trigger() -> None:
             kinds == ["cpu", "metrics-api"],
             f"got {kinds}",
         )
+
+
+def test_a_chart_whose_app_sets_no_gauge_ships_cpu_alone() -> None:
+    for chart in CPU_ONLY_CHARTS:
+        rendered = triggers(render(chart), f"{chart}-scaler")
+        kinds = sorted(t.get("type") for t in rendered)
+        expect(f"{chart} renders the cpu trigger alone", kinds == ["cpu"], f"got {kinds}")
 
 
 def test_the_shim_address_follows_the_release_namespace() -> None:
@@ -192,6 +206,7 @@ def test_the_umbrella_profile_carries_the_same_ceiling() -> None:
 def main() -> int:
     with standalone():
         test_every_app_chart_ships_the_pressure_trigger()
+        test_a_chart_whose_app_sets_no_gauge_ships_cpu_alone()
         test_the_shim_address_follows_the_release_namespace()
         test_an_explicit_shim_address_still_wins()
         test_pressure_can_still_be_turned_off()

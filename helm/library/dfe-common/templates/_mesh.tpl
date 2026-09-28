@@ -8,13 +8,18 @@ it landed on and the rest of the pool stays idle however many replicas KEDA
 adds. Putting a Gateway API listener in front of the pool moves the decision to
 the proxy, which balances per REQUEST across the pool's endpoints.
 
-Two objects, and no more:
+Three objects, and no more:
 
   Service <fullname>-mesh, in the gateway namespace, selecting the mesh
     Gateway's proxy pods. It is the NAME the senders dial; a Gateway's own
     Service carries a generated hash suffix, so nothing can render its address.
   GRPCRoute <fullname>-mesh, beside the pool, matching that name as the request
     authority and sending it to the pool's own Service.
+  BackendTrafficPolicy <fullname>-mesh, beside the route and targeting it: the
+    request timeout, the retries and the outlier ejection for this pool
+    (mesh.routePolicy). It is an Envoy Gateway resource, so a deployment on
+    another Gateway API implementation sets mesh.routePolicy.enabled false and
+    brings that implementation's equivalent.
 
 The route attaches to ONE wildcard listener on the shared mesh Gateway rather
 than a listener per pool. A listener per pool would put every pool's name in the
@@ -82,6 +87,47 @@ spec:
           kind: Service
           name: {{ include "dfe-common.fullname" . }}
           port: {{ $port }}
+{{- $policy := $mesh.routePolicy | default dict }}
+{{- if $policy.enabled }}
+{{- $retry := required "mesh.routePolicy.retry is required" $policy.retry }}
+{{- $outlier := required "mesh.routePolicy.outlier is required" $policy.outlier }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ $alias }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: {{ $alias }}
+  # Without it the route's policy replaces the mesh Gateway's, and the pool loses
+  # the balancing and keepalive that policy sets.
+  mergeType: StrategicMerge
+  timeout:
+    http:
+      requestTimeout: {{ required "mesh.routePolicy.requestTimeout is required" $policy.requestTimeout }}
+  retry:
+    numRetries: {{ required "mesh.routePolicy.retry.numRetries is required" $retry.numRetries }}
+    retryOn:
+      # Only the failures where no pod took the request: a retry after one did,
+      # unavailable included, delivers the batch twice.
+      triggers:
+        - connect-failure
+        - resource-exhausted
+    perRetry:
+      backOff:
+        baseInterval: {{ $retry.baseInterval }}
+        maxInterval: {{ $retry.maxInterval }}
+  healthCheck:
+    passive:
+      consecutive5XxErrors: {{ $outlier.consecutive5xxErrors }}
+      interval: {{ $outlier.interval }}
+      baseEjectionTime: {{ $outlier.baseEjectionTime }}
+      maxEjectionPercent: {{ $outlier.maxEjectionPercent }}
+{{- end }}
 {{- end -}}
 {{- end -}}
 

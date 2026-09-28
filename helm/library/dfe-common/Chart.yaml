@@ -2,6 +2,19 @@ apiVersion: v2
 name: dfe-common
 description: Shared Helm template helpers for all DFE charts. Provides commonLabels and fullname macros per spec Section 9.4.
 type: library
+# 0.15.0: add dfe-common.terminationGrace (45 s unless a chart sets
+#        terminationGracePeriodSeconds, so a stage releasing held source acks
+#        finishes its drain before SIGKILL), dfe-common.podNamespaceEnv
+#        (POD_NAMESPACE from the downward API) and
+#        dfe-common.serviceAccountFilesVolume/Mount (ca.crt and namespace at the
+#        service-account path with no token, for pods that mount none), with
+#        dfe-common.automountServiceAccountToken reading the
+#        serviceAccount.mountToken dial that turns the token back on.
+#        dfe-common.poolListener renders a third object, a BackendTrafficPolicy
+#        on each pool's GRPCRoute: request timeout, retries on connect-failure
+#        and resource-exhausted only, and passive outlier ejection
+#        (mesh.routePolicy). The extraEnv doc now matches its callers, which
+#        render the block first.
 # 0.14.0: add _waitfor.tpl (dfe-common.waitForEngine -- the init container that
 #        holds an app back until dfe-engine reports ready). dfe-engine is the
 #        only thing that applies schema and topics, and it gates /readyz on the
@@ -68,4 +81,4 @@ type: library
 # committed charts/dfe-common-<version>.tgz, so an edit does NOTHING until the
 # dependent chart re-runs `helm dependency update`. Bump this version, point the
 # chart's Chart.yaml at it, then re-vendor -- otherwise you get a silent no-op.
-version: 0.14.0
+version: 0.15.0

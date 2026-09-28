@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -36,6 +40,7 @@ spec:
       # engine, loader and receiver charts already guard.
       enableServiceLinks: false
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.waitForEngine" . | nindent 6 }}
@@ -61,6 +66,7 @@ spec:
             # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
             {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # dfe-transform-vector reads the DFE_TRANSFORM_* flat env contract
             # (src/config/loader.rs), never bare KAFKA_* names. Credentials arrive

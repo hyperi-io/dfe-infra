@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -24,6 +28,7 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       # Same class as dfe-engine and dfe-loader: k8s injects DFE_RECEIVER_PORT=
       # "tcp://IP:8080" from svc/dfe-receiver, into a pod that reads DFE_RECEIVER_*
       # as its own config (config/mod.rs ENV_PREFIX). DFE resolves by DNS and reads
@@ -55,6 +60,7 @@ spec:
             # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
             {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_RECEIVER_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # Same flat-env contract as the SASL block below (mod.rs:261, prefix
             # DFE_RECEIVER at :35). A bare KAFKA_BOOTSTRAP_SERVERS is read by
@@ -180,10 +186,11 @@ spec:
           emptyDir: {}
         {{- $spill := .Values.receiver.buffer.spillover }}
         {{- if $spill.enabled }}
-        # Node-local scratch, not a PVC: the spool is slack for an outage the
-        # pod is expected to outlive, and a record still held when the pod dies
-        # was never acknowledged as durable on this transport. sizeLimit is what
-        # stops one receiver filling the node's disk for everything else.
+        # Node-local scratch, not a PVC. With acknowledgements on (the default)
+        # the receiver builds no spool and answers a sender only once the record
+        # is delivered, so nothing on this volume is on the ack path. With them
+        # off a spooled record has already had its 2xx, and it dies with the pod.
+        # sizeLimit stops one receiver filling the node's disk for everything else.
         - name: spool
           emptyDir:
             sizeLimit: {{ $spill.sizeLimit }}

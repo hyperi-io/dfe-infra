@@ -62,10 +62,18 @@ mesh:
 # Scoped under `receiver:`, a key only the dfe-receiver chart carries -- this
 # file is merged into every chart, so a bare `buffer:` would reach all of them.
 receiver:
-  # THE SLACK IN THE WHOLE CHAIN. There is no broker here, so what the receiver
-  # holds is the only thing standing between a loader outage and the senders.
-  # The trade, plainly: an outage shorter than the buffer is invisible to
-  # senders, a longer one back-pressures them (503) until the loader returns.
+  # READ ONLY WITH ACKNOWLEDGEMENTS OFF. With them on (the default) the receiver
+  # builds no buffer or spool: it holds a sender's request until the loader
+  # confirms delivery, and once that hold expires the sender gets a 503 and
+  # retries from its own copy. A loader outage reaches senders after one hold,
+  # however large the figures below.
+  #
+  # With acknowledgements off this is the slack in the whole chain. There is no
+  # broker here, so what the receiver holds is the only thing standing between
+  # a loader outage and the senders. The trade, plainly: an outage shorter than
+  # the buffer is invisible to senders, a longer one back-pressures them (503)
+  # until the loader returns, and a record held here has already had its 2xx,
+  # so it dies with the pod.
   #
   # 3 GiB of the pod's 4Gi limit, stated rather than left to the app's
   # auto-detect, which would take 85% (3.4 GiB) and leave too little for the
@@ -73,8 +81,8 @@ receiver:
   # Back-pressure starts at 80% of it, so 2.4 GiB.
   #
   # Then 20 GiB of node-local spool per replica. Worked example for the shape of
-  # it: two replicas holding 23 GiB each, taking 10 MiB/s each, ride out about
-  # 39 minutes of loader outage before a sender sees a 503.
+  # it, acknowledgements off: two replicas holding 23 GiB each, taking 10 MiB/s
+  # each, ride out about 39 minutes of loader outage before a sender sees a 503.
   buffer:
     memoryLimit: 3221225472
     spillover:
