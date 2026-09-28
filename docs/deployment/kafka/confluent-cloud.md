@@ -22,18 +22,7 @@ Read the opinionated baseline in [README.md](README.md) first. Confluent Cloud
 is the most managed of the three clouds: it exposes very few broker knobs and
 expresses the rest per topic.
 
-**On the AWS path, tofu builds this for you.** Setting `kafka.provider:
-confluent-cloud` in the deployment dial makes `terraform/environments/aws`
-call the maintained, contract-tested `terraform/modules/managed-kafka/confluent-cloud`
-module instead of hand-rolling the snippet below -- see
-[aws.md](../aws.md#kafka-and-clickhouse) and that module's
-`CONTRACT.md`. That module defaults to the **Freight** tier (private
-networking, no public endpoint, autoscales on eCKUs) rather than the
-`standard` tier this page's own worked example uses, and Confluent caps a
-topic's `max.message.bytes` at 8 MiB on every tier -- under the 16 MiB DFE's
-canonical size chain otherwise carries. The example below is for a
-deployment standing Confluent Cloud up by some other means and pointing DFE
-at it with `kafka.mode=external`.
+**On the AWS path, tofu builds this for you.** Setting `kafka.provider: confluent-cloud` in the deployment dial makes `terraform/environments/aws` call the maintained, contract-tested `terraform/modules/managed-kafka/confluent-cloud` module instead of hand-rolling the snippet below -- see [aws.md](../aws.md#kafka-and-clickhouse) and that module's `CONTRACT.md`. That module defaults to the **Freight** tier (private networking, no public endpoint, autoscales on eCKUs) rather than the `standard` tier this page's own worked example uses. Confluent caps a topic's `max.message.bytes` by cluster type: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, and 20 MB on Freight. So Freight and Enterprise carry DFE's 16 MiB size chain and Basic and Standard do not. The example below is for a deployment standing Confluent Cloud up by some other means and pointing DFE at it with `kafka.mode=external`.
 
 ## What Confluent Cloud lets you set vs manages
 
@@ -53,7 +42,7 @@ narrow allowed range.
 | `log.retention.bytes` (unset) | PER TOPIC as `retention.bytes` (leave unset for time-only). |
 | `log.segment.bytes=512 MiB` | LOCKED -- not exposed (Confluent manages segments). |
 | `cleanup.policy=delete` | Settable per topic (default `delete`). |
-| `message.max.bytes` (default) | PER TOPIC as `max.message.bytes` (default 1 MiB -- keep aligned with the scalo client budgets). |
+| `message.max.bytes` (default) | PER TOPIC as `max.message.bytes` (default 2,097,164; at most 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, 20 MB on Freight -- keep aligned with the scalo client budgets). |
 
 Net: on Confluent Cloud the DFE opinion reduces to a per-topic config of
 `min.insync.replicas=2`, `partitions=12`, `retention.ms=259200000`,
@@ -180,6 +169,7 @@ that pair is what DFE's `confluent-cloud` provider sends as PLAIN over TLS.
   the user/password carrier (the mechanism itself is PLAIN, derived from the
   provider, not from `auth.type`).
 - Client config: `dfe kafka client-config --provider confluent-cloud`.
+- Topic size: set the dfe-engine chart's `kafka.messageMaxBytes` to the `max.message.bytes` your topics carry, within your cluster type's ceiling. Unset, the engine creates each source's topics at its own default size, which a cluster capped below it refuses. On the AWS path tofu sets it for you through `DFE_KAFKA_MESSAGE_MAX_BYTES`.
 
 Note: Confluent Cloud auto-provisions a billable Flink compute pool on cluster
 create (scalo `ProviderCapabilities.has_billable_side_resources`). If you tear a

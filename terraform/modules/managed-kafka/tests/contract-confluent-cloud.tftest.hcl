@@ -146,8 +146,8 @@ variables {
   num_partitions   = 12
   log_retention_ms = 259200000
 
-  // 8 MiB is Confluent's own ceiling for a topic's max.message.bytes. The check
-  // block in the body warns above it; these runs stay inside it.
+  // 8 MiB is inside every tier's ceiling for a topic's max.message.bytes. The
+  // size-ceiling runs at the end of this file move it.
   message_max_bytes = 8388608
 
   // Six distinct interfaces, which is Confluent's floor for an access point.
@@ -423,4 +423,43 @@ run "confluent_cloud_basic_public_proof" {
     condition     = output.auth_type == "plain"
     error_message = "auth_type is plain on every Confluent tier"
   }
+}
+
+// The chain's 16 MiB is inside Freight's 20 MiB ceiling, so the default tier
+// carries it to every topic with no warning at plan.
+run "confluent_cloud_freight_carries_16_mib" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  variables {
+    message_max_bytes = 16777216
+  }
+
+  assert {
+    condition     = alltrue([for t in values(confluent_kafka_topic.landing) : t.config["max.message.bytes"] == "16777216"])
+    error_message = "every landing topic must carry the size it was given"
+  }
+}
+
+// Basic caps a topic at 8 MiB, so the same size is flagged by name at plan.
+run "confluent_cloud_basic_warns_above_8_mib" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  variables {
+    tier              = "basic"
+    connectivity      = "public"
+    region            = "us-west-2"
+    message_max_bytes = 16777216
+  }
+
+  expect_failures = [
+    check.message_size_within_confluent_ceiling,
+  ]
 }

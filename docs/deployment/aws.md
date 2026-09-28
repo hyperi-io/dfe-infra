@@ -256,29 +256,7 @@ priced on this scale in [edge.md](edge.md).
 
 ### Managed and SaaS Kafka bodies
 
-- `confluent-cloud` and `redpanda-cloud` module bodies exist under
-  `terraform/modules/managed-kafka/`, contract-tested like `msk/`, and the
-  AWS root now calls whichever one `kafka.provider` names -- all five
-  tokens validate on both the resolver and the tofu root (`strimzi`,
-  `redpanda`, `msk`, `confluent-cloud`, `redpanda-cloud`), each body behind
-  its own `count`. Neither SaaS body sizes, versions or scales itself from a
-  shape the resolver picks, but both take the same tuning `msk` does
-  (`num_partitions`, `log_retention_ms`,
-  `message_max_bytes`, `landing_topics`, since neither runs a bootstrap Job of
-  its own to pre-create topics); `redpanda-cloud` additionally takes the
-  shared SCRAM password and the ephemeral-lifecycle `allow_deletion` flag.
-  Only `name`, `env` and `network` are true of every body regardless of
-  provider. The vendor API credential is a provider environment variable,
-  never a tfvar: `CONFLUENT_CLOUD_API_KEY` / `CONFLUENT_CLOUD_API_SECRET`
-  for Confluent, `REDPANDA_CLIENT_ID` / `REDPANDA_CLIENT_SECRET` for
-  Redpanda Cloud -- export both before `tofu plan`, since the `redpanda`
-  provider checks for its pair at configure time regardless of which
-  `kafka.provider` is selected. Confluent's default tier (Freight) is a
-  Private Network Interface, not PrivateLink, and caps `max.message.bytes`
-  at 8 MiB, under the chain's 16 MiB. Redpanda Cloud's only creatable
-  tier is Serverless, over a PrivateLink-style endpoint, and its SCRAM
-  password reuses MSK's own seed. Hand-written Terraform for both still lives
-  in `docs/deployment/kafka/confluent-cloud.md` and `redpanda-cloud.md`.
+- `confluent-cloud` and `redpanda-cloud` module bodies exist under `terraform/modules/managed-kafka/`, contract-tested like `msk/`, and the AWS root now calls whichever one `kafka.provider` names -- all five tokens validate on both the resolver and the tofu root (`strimzi`, `redpanda`, `msk`, `confluent-cloud`, `redpanda-cloud`), each body behind its own `count`. Neither SaaS body sizes, versions or scales itself from a shape the resolver picks, but both take the same tuning `msk` does (`num_partitions`, `log_retention_ms`, `message_max_bytes`, `landing_topics`, since neither runs a bootstrap Job of its own to pre-create topics); `redpanda-cloud` additionally takes the shared SCRAM password and the ephemeral-lifecycle `allow_deletion` flag. Only `name`, `env` and `network` are true of every body regardless of provider. The vendor API credential is a provider environment variable, never a tfvar: `CONFLUENT_CLOUD_API_KEY` / `CONFLUENT_CLOUD_API_SECRET` for Confluent, `REDPANDA_CLIENT_ID` / `REDPANDA_CLIENT_SECRET` for Redpanda Cloud -- export both before `tofu plan`, since the `redpanda` provider checks for its pair at configure time regardless of which `kafka.provider` is selected. Confluent's default tier (Freight) is a Private Network Interface, not PrivateLink, and caps a topic's `max.message.bytes` at 20 MB, so it carries the chain's 16 MiB; Basic and Standard cap it at 8,388,608. The root's `DFE_KAFKA_MESSAGE_MAX_BYTES` output hands the same size to dfe-engine, so the topics the engine creates match the landing topics. Redpanda Cloud's only creatable tier is Serverless, over a PrivateLink-style endpoint, and its SCRAM password reuses MSK's own seed. Hand-written Terraform for both still lives in `docs/deployment/kafka/confluent-cloud.md` and `redpanda-cloud.md`.
 - `strimzi` runs in the cluster exactly as it does anywhere else. Its broker
   autoscaling is a KEDA `ScaledObject` on the `KafkaNodePool` `/scale`
   subresource, triggered on consumer lag by default, with scale-in off until

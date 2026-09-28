@@ -171,7 +171,7 @@ variable "log_retention_ms" {
 }
 
 variable "message_max_bytes" {
-  description = "The largest record the topics accept, and the same number the scalo producer and consumer carry. Applied per topic as max.message.bytes, because Confluent Cloud holds the broker-wide setting. Confluent caps this at 8 MiB and the check block in main.tf says so at plan. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
+  description = "The largest record the topics accept, and the same number the scalo producer and consumer carry. Applied per topic as max.message.bytes, because Confluent Cloud holds the broker-wide setting. Confluent caps it per cluster type -- 8,388,608 on basic, 20,971,520 on enterprise and freight -- and the check block in main.tf says so at plan. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
   type        = number
 
   validation {
