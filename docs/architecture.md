@@ -100,12 +100,7 @@ What that leaves this repo:
   topic set, Alter raises a partition count, and Delete is what deleting a source
   needs to take that source's `_land`/`_load` pair with it. Every cluster
   operation is withheld.
-- **The ordering.** dfe-engine syncs at Argo wave 5, the otel collector at 6 and
-  every other app at 7, and each app pod runs a `wait-for-engine` init container
-  (`dfe-common.waitForEngine`) that polls the engine Service's `/readyz`. Ready
-  means the last schema pass converged, so an app cannot start against an absent
-  table -- which is the failure that reads as data loss and is really start
-  ordering.
+- **The ordering.** dfe-engine syncs at Argo wave 5, the otel collector at 6 and every other app at 7, and each app pod runs a `wait-for-engine` init container (`dfe-common.waitForEngine`) that polls the engine Service's `/readyz`. Ready means the last schema pass converged, so an app cannot start against an absent table -- which is the failure that reads as data loss and is really start ordering. The hunt runner ships in the engine's own chart and syncs in its wave, so the same init container is all that holds it until its coordination tables exist.
 
 `bootstrap/smoke-test-integration.sh` asserts the engine's own `schema`
 readiness check (CORE 0) before it looks at any pipeline. The per-object record

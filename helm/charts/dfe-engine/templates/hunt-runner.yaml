@@ -89,11 +89,18 @@ spec:
       # be applied to every pod in the class.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- if $gitSync }}
-      # The FIRST sync, bounded. The sidecar retries forever, so on its own a bad
-      # credential leaves the link absent and the runner Running with zero hunts
-      # (dfe-infra#212); failing here surfaces it as a pod that never starts.
+      {{- /* The helper renders the initContainers key itself, so git-sync-init
+             joins its list, or opens one when the wait is switched off. */}}
+      {{- $waitForEngine := include "dfe-common.waitForEngine" . }}
+      {{- if $waitForEngine }}
+      {{- $waitForEngine | nindent 6 }}
+      {{- else if $gitSync }}
       initContainers:
+      {{- end }}
+      {{- if $gitSync }}
+        # The FIRST sync, bounded. The sidecar retries forever, so on its own a bad
+        # credential leaves the link absent and the runner Running with zero hunts
+        # (dfe-infra#212); failing here surfaces it as a pod that never starts.
         - name: git-sync-init
           image: {{ $gsImage | quote }}
           imagePullPolicy: {{ $gs.image.pullPolicy }}

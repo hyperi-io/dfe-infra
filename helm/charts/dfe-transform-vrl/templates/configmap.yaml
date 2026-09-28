@@ -1,8 +1,10 @@
 # The app's scalo config file, rendered from the .Values.config blob (dfe-engine
 # helm/models.py Layer B) with the TRANSPORT derived here. The engine is the
 # config authority for what this instance transforms; which transport carries
-# the records is a deployment fact, so a broker list or a loader address in the
-# engine's overlay would be wrong for every other deployment of the product.
+# the records is a deployment fact, so a broker list in the engine's overlay
+# would be wrong for every other deployment of the product. The loader address
+# is the exception: the engine compiles it per deployment, so the chart's is only
+# the default an overlay value beats.
 # Written to the path the image's CMD reads (/etc/dfe-transform-vrl/config.yaml
 # -- dfe-transform-vrl Dockerfile:43).
 #
@@ -28,12 +30,19 @@ data:
     {{- $sink := dict "transport" $transport }}
     {{- if eq $transport "direct" }}
     {{- /* Accept records on this stage's Push listener and push the transformed
-           ones to the loader's. `endpoint` is a URI (scalo GrpcConfig), NOT the
-           host:port the receiver's own loader.address takes -- do not copy that
-           spelling. sink.topic is NOT dropped: on direct it is the routing key
-           the loader picks its table by, as the topic name was on the bus. */}}
+           ones to the loader's. `endpoint` is a URI (scalo GrpcConfig).
+           sink.topic is NOT dropped: on direct it is the routing key the loader
+           picks its table by, as the topic name was on the bus. */}}
     {{- $_ := set $source "listen" (printf "0.0.0.0:%s" (include "dfe-common.pushPort" .)) }}
-    {{- $_ := set $sink "endpoint" .Values.loaderGrpcAddress }}
+    {{- /* A Service balances per connection and gRPC holds one, so on mesh the
+           default is the loader pool's alias. An overlay endpoint wins. */}}
+    {{- if not (hasKey (default dict (get $cfg "sink")) "endpoint") }}
+    {{- $loaderHost := printf "%s-loader.%s.svc.cluster.local" .Values.project .Release.Namespace }}
+    {{- if (include "dfe-common.meshEnabled" .) }}
+    {{- $loaderHost = printf "%s-loader-mesh.%s.svc.cluster.local" .Values.project .Values.mesh.gateway.namespace }}
+    {{- end }}
+    {{- $_ := set $sink "endpoint" (printf "http://%s:%v" $loaderHost .Values.loaderPort) }}
+    {{- end }}
     {{- end }}
     {{- /* On the bus the brokers, topics and credentials reach the app through
            the DFE_TRANSFORM_* env contract on the Deployment, which outranks

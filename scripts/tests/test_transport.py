@@ -194,7 +194,8 @@ def test_the_transform_config_names_the_transport() -> None:
                f"got {direct['source']!r}")
         expect(f"{chart} binds the push port", direct["source"]["listen"] == "0.0.0.0:6000",
                f"got {direct['source']!r}")
-        expect(f"{chart} dials the loader", direct["sink"]["endpoint"] == "http://dfe-loader:6000",
+        expect(f"{chart} dials the loader",
+               direct["sink"]["endpoint"] == "http://dfe-loader.default.svc.cluster.local:6000",
                f"got {direct['sink']!r}")
 
 
