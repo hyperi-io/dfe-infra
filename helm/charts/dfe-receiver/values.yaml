@@ -167,6 +167,10 @@ receiver:
       # max_usage_percent of whatever filesystem it was given.
       sizeLimit: 10Gi
 
+  # The loader's Push port on the direct transport: dfe-loader service.grpcPort and
+  # apps.yaml dfe-loader.endpoints.push, held equal by scripts/tests/test_receiver_loader.py.
+  loaderPort: 6000
+
 kafka:
   # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
   # values: it drops every kafka env + secret ref and routes the default
