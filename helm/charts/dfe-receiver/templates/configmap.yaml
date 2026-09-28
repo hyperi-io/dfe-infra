@@ -38,4 +38,25 @@ data:
     {{- $_ := set $cfg "grpc" (mergeOverwrite (default dict (get $cfg "grpc")) (dict "enabled" true "bind_address" (printf "0.0.0.0:%v" .port))) }}
     {{- end }}
     {{- end }}
+    {{- /* loader.transport defaults to kafka and has no flat-env key (config/mod.rs
+           LoaderConfig), so on direct it is set here and wins, or the receiver
+           refuses to start with no brokers; the loader address and the default
+           destination are defaults an overlay value beats. */}}
+    {{- if eq (include "dfe-common.transport" .) "direct" }}
+    {{- $loaderHost := printf "%s-loader.%s.svc.cluster.local" .Values.project .Release.Namespace }}
+    {{- if (include "dfe-common.meshEnabled" .) }}
+    {{- $loaderHost = printf "%s-loader-mesh.%s.svc.cluster.local" .Values.project .Values.mesh.gateway.namespace }}
+    {{- end }}
+    {{- $loader := default dict (get $cfg "loader") }}
+    {{- if not (hasKey $loader "grpc_endpoint") }}
+    {{- $_ := set $loader "grpc_endpoint" (printf "http://%s:%v" $loaderHost .Values.receiver.loaderPort) }}
+    {{- end }}
+    {{- $_ := set $loader "transport" "grpc" }}
+    {{- $_ := set $cfg "loader" $loader }}
+    {{- $destinations := default dict (get $cfg "destinations") }}
+    {{- if not (hasKey $destinations "default") }}
+    {{- $_ := set $destinations "default" "loader" }}
+    {{- end }}
+    {{- $_ := set $cfg "destinations" $destinations }}
+    {{- end }}
     {{- toYaml $cfg | nindent 4 }}
