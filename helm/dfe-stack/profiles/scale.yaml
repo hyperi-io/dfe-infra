@@ -23,7 +23,6 @@ x-scale-shared:
   kafka: &scaleKafka
     mode: cluster
     bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
-    provider: strimzi
   # Source: argocd/values/profile-scale.yaml `keda:`.
   keda: &scaleKeda
     enabled: true

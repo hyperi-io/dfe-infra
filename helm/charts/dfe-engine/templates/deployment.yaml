@@ -306,12 +306,10 @@ spec:
               value: {{ int64 . | quote }}
             {{- end }}
             {{- if .Values.kafka.saslSecretName }}
-            # The profiles point every app at the broker's internal plain
-            # listener, so the protocol and the mechanism are set the way the
-            # data-plane charts set them (the provider contract would derive
-            # SASL_SSL and fail the handshake -- dfe-engine#332).
+            # The same kafka.securityProtocol dial every data-plane chart reads,
+            # defaulting to the in-cluster brokers' plain listener.
             - name: DFE_KAFKA_SECURITY_PROTOCOL
-              value: "SASL_PLAINTEXT"
+              value: {{ .Values.kafka.securityProtocol | default "SASL_PLAINTEXT" | quote }}
             - name: DFE_KAFKA_SASL_MECHANISM
               valueFrom:
                 secretKeyRef:

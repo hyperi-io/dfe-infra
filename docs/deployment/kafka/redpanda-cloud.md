@@ -155,8 +155,7 @@ self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
   (the seed brokers, not the HTTP `cluster_api_url` -- that URL is the admin/REST
   plane the Terraform provider uses; the client bootstrap is the Kafka SASL
   endpoint from the cluster's connectivity details).
-- `KAFKA_PROVIDER=redpanda-cloud` / `DFE_KAFKA_PROVIDER=redpanda-cloud`
-  -> scalo derives `SASL_SSL` + `SCRAM-SHA-512` (never hand-set).
+- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from -- Redpanda Cloud serves SCRAM-SHA-512 over TLS only. On the aws root you set none of the mode, the endpoint or this by hand: `DFE_KAFKA_PROVIDER=redpanda-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
 - Credentials: the `redpanda_user` name (username) + password go in the
   Vault-backed external secret; `kafka.external.auth.type=scram`.
 - Client config: `dfe kafka client-config --provider redpanda-cloud`.

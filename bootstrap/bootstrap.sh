@@ -123,6 +123,10 @@
 #   DFE_KAFKA_BROKER_HOSTS   derived, not set by the caller: every broker's bare
 #                            host (no port), comma separated, from
 #                            DFE_KAFKA_BOOTSTRAP. Empty on every provider but msk.
+#   DFE_KAFKA_SECURITY_PROTOCOL  derived, not set by the caller: SASL_SSL on msk,
+#                            confluent-cloud and redpanda-cloud, which serve TLS
+#                            only. Empty on an in-cluster broker, whose charts
+#                            keep common.yaml's kafka.securityProtocol.
 #   DFE_TELEMETRY_SINK       otel (default) | cloudwatch, from the cloud root's
 #                            telemetry dial. On DFE_CLOUD=aws with otel, renders
 #                            the fetcher's AWS telemetry pre-config (below);
@@ -383,6 +387,13 @@ case "${DFE_KAFKA_PROVIDER}" in
   msk|confluent-cloud|redpanda-cloud) DFE_KAFKA_MODE="external" ;;
 esac
 export DFE_KAFKA_MODE
+# Every managed provider serves SASL over TLS only, so this is derived rather
+# than read from the caller, and empty keeps common.yaml's protocol.
+DFE_KAFKA_SECURITY_PROTOCOL=""
+if [[ "${DFE_KAFKA_MODE}" == "external" ]]; then
+  DFE_KAFKA_SECURITY_PROTOCOL="SASL_SSL"
+fi
+export DFE_KAFKA_SECURITY_PROTOCOL
 # external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
 # "none" deploys no external-dns, because its own default provider is aws and an
 # uncredentialled install crash-loops against Route 53 forever (#223).
