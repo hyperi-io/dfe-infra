@@ -157,18 +157,6 @@ def test_the_engine_sidecar_workloads_carry_the_digest_too() -> None:
         )
 
 
-def test_the_schema_job_runs_the_pinned_engine_image() -> None:
-    """dfe-schema is the engine image under another entry point, not its own app."""
-    stack = current_stack()
-    want = f"{REGISTRY}/dfe-engine:{stack['apps']['dfe-engine']}@{stack['digests']['dfe-engine']}"
-    rendered = images(render("dfe-schema", f"global.registry={REGISTRY}"))
-    expect(
-        "the dfe-schema Job renders the pinned engine digest",
-        rendered and all(i == want for i in rendered),
-        f"wanted {want}, got {rendered}",
-    )
-
-
 def test_the_hyperdx_dashboards_init_container_carries_the_digest() -> None:
     """A second copy of the engine pin, in a chart named after another app.
 
@@ -201,15 +189,23 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
             "initContainers"
         )
         or []
-        if c["name"].startswith(CONTENT_PREFIX)
+        # The emit entries -- each app's contract and the catalogue its image
+        # prints -- are the ones that run an app's own pin.
+        if c["name"].startswith(CONTENT_PREFIX) and c["name"].endswith(("-contract", "-catalogue"))
     }
+    contracts = [name for name in entries if name.endswith("-contract")]
     expect(
         "the chart mounts a contract for every app that carries a settings surface",
-        len(entries) == 6,
+        len(contracts) == 7,
+        f"{sorted(contracts)}",
+    )
+    expect(
+        "and the source catalogue the elastic image prints",
+        f"{CONTENT_PREFIX}dfe-transform-elastic-catalogue" in entries,
         f"{sorted(entries)}",
     )
     for name, image in sorted(entries.items()):
-        app = name[len(CONTENT_PREFIX) :].removesuffix("-contract")
+        app = name[len(CONTENT_PREFIX) :].removesuffix("-contract").removesuffix("-catalogue")
         want = f"{REGISTRY}/{app}:{apps[app]}@{digests[app]}"
         expect(
             f"{name} runs {app}'s own tag@sha256 from the SSoT",
@@ -219,14 +215,16 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
 
 
 def test_a_chart_with_no_digest_renders_what_it_always_did() -> None:
-    """The helper is optional: an unpublished app has no digest to carry.
+    """The helper is optional: a chart carrying no digest still renders its tag.
 
+    The digest is emptied explicitly rather than borrowed from an app that has
+    not shipped one, which stops holding the day that app is published.
     Rendered with no `global:` block at all, which is what bare `helm lint` and
     a chart-only template do -- the nil-guard case.
     """
     app = "dfe-transform-elastic"
     tag = current_stack()["apps"][app]
-    rendered = images(render(app))
+    rendered = images(render(app, "image.digest="))
     expect(
         "no digest and no global block still renders a plain repo:tag",
         rendered == [f"{app}:{tag}"],

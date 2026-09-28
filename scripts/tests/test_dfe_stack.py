@@ -134,16 +134,23 @@ def _as_python(pattern: str) -> str:
     return re.sub(r"\(\?<([A-Za-z]+)>", r"(?P<\1>", pattern)
 
 
+def _manager_region(manager: dict, text: str) -> str:
+    """The slice of versions.yaml the manager's first matchString narrows to."""
+    import re
+
+    if manager.get("matchStringsStrategy") != "recursive":
+        return text
+    narrowed = re.search(_as_python(manager["matchStrings"][0]), text)
+    expect("the scoping pattern narrows to a region", narrowed is not None, "no match")
+    return narrowed.group("currentStack") if narrowed else ""
+
+
 def _manager_matches(manager: dict, text: str) -> dict[str, str]:
     """Run the manager's matchStrings the way `recursive` applies them."""
     import re
 
-    region = text
-    if manager.get("matchStringsStrategy") == "recursive":
-        narrowed = re.search(_as_python(manager["matchStrings"][0]), text)
-        expect("the scoping pattern narrows to a region", narrowed is not None, "no match")
-        region = narrowed.group("currentStack") if narrowed else ""
     inner = _as_python(manager["matchStrings"][-1])
+    region = _manager_region(manager, text)
     return {m.group("depName"): m.group("currentValue") for m in re.finditer(inner, region)}
 
 
@@ -181,23 +188,51 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
 
 
 def test_the_manager_reaches_one_stack_block_only() -> None:
-    """Every stack carries a complete copy of the pin set under the same
-    annotations, so an unscoped manager would rewrite the frozen record of what
-    shipped (#183). Renovate proposes against the stack under development."""
+    """The frozen blocks repeat most of the pin set under the same annotations, so
+    an unscoped manager would rewrite the record of what shipped (#183). Renovate
+    proposes against the stack under development.
+
+    Counted by depName this invariant is untestable: a dep-keyed dict collapses
+    the repeats, so the same names come back whether the manager reads one block
+    or every one of them. Count the annotation LINES the pattern reaches instead,
+    and bind the region to the block `current` names.
+
+    A block is NOT required to repeat its predecessor's pins. rc.14 opened the
+    AWS deploy path and the toolbox image family, neither of which any earlier
+    stack carried, so their annotations sit in one block -- and the next cut to
+    open a capability will do the same again.
+    """
     import re
 
     manager, text = _renovate_manager()
     if not manager:
         return
-    matched = _manager_matches(manager, text)
-    for dep, value in sorted(matched.items()):
-        copies = len(re.findall(rf"depName={re.escape(dep)}\b", text))
-        expect(
-            f"{dep} is annotated in {copies} block(s) and proposed once",
-            copies > 1 and len([v for v in [value] if v]) == 1,
-            f"matched -> {value!r}",
-        )
-    expect("the scoped manager still finds the pins", len(matched) >= 5, f"{sorted(matched)}")
+    region = _manager_region(manager, text)
+    inner = _as_python(manager["matchStrings"][-1])
+    reached = len(re.findall(inner, region))
+    everywhere = len(re.findall(inner, text))
+    annotated_here = len(re.findall(r"^\s*#\s*renovate:", region, re.MULTILINE))
+    current = re.search(r'^current:\s*"([^"]+)"', text, re.MULTILINE)
+    header = f"\n  {current.group(1) if current else ''}:\n"
+
+    expect(
+        "the region is the body of the block `current` names",
+        bool(current)
+        and text.endswith(region)
+        and text[: len(text) - len(region)].endswith(header),
+        f"region opens {region[:40]!r}, expected to follow {header!r}",
+    )
+    expect(
+        "the frozen blocks are outside it",
+        reached < everywhere,
+        f"reached {reached} annotated pins of {everywhere} in the file",
+    )
+    expect(
+        "and no annotation inside it is walked past",
+        reached == annotated_here,
+        f"reached {reached} of {annotated_here} annotations in the block",
+    )
+    expect("the scoped manager still finds the pins", reached >= 5, f"reached {reached}")
 
 
 def test_the_current_stack_is_the_last_block_in_the_file() -> None:

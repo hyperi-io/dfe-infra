@@ -13,10 +13,32 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-fetcher (drift-checked).
-  digest: "sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
+  digest: "sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
+
+# dfe-engine applies every ClickHouse object and every bootstrap Kafka topic at
+# its own startup and gates /readyz on the result, so an init container waits on
+# the engine Service before this pod starts (dfe-common.waitForEngine). Started
+# first, this app finds no table and no topic.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty -> this release's own namespace.
+  namespace: ""
+  port: 8000
+  # On expiry the init container exits non-zero and the pod sits in
+  # Init:CrashLoopBackOff rather than starting against an absent schema.
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 kafka:
   # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
@@ -64,8 +86,8 @@ persistence:
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created
-# topic -- the kafka chart's kafka.dlqTopics list. Change the topic only
-# together with that list, or the app dead-letters into a topic nothing created.
+# topic -- the dfe-schemas topic set dfe-engine creates. Change the topic only
+# together with that set, or the app dead-letters into a topic nothing created.
 dlq:
   topic: dfe_fetcher_dlq
   mode: kafka_only

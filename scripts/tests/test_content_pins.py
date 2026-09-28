@@ -31,6 +31,9 @@ Seven things are checked:
 6. Nothing carries the content through .Values or a ConfigMap.
 7. An `emit` entry cannot wedge the engine's pod: the app writes its own
    contract, and an image that carries none reports the absence and exits 0.
+8. An `emit` catalogue entry runs the pinned image's `emit-catalogue`, lands
+   the catalogue only when the app printed all of it, and exits 0 on an image
+   that predates the subcommand -- run through the rendered script itself.
 
     python3 scripts/tests/test_content_pins.py
 
@@ -39,6 +42,8 @@ Needs `helm` on PATH. No test runner, matching the other checks here.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -89,6 +94,32 @@ LIVE_ENTRIES = {
 # A deployment that materialises nothing, which is what every tier rendered
 # before the vehicle existed.
 NO_ENTRIES = {"content": {"entries": []}}
+
+# The catalogue printed by the transform's own pinned image.
+CATALOGUE_REF = f"{REGISTRY}/dfe-transform-elastic:v1.1.4@sha256:" + "2" * 64
+EMIT_CATALOGUE = {
+    "content": {
+        "entries": [
+            {
+                "name": "dfe-transform-elastic-catalogue",
+                "kind": "emit",
+                "role": "catalogue",
+                "app": "dfe-transform-elastic",
+                "ref": CATALOGUE_REF,
+            }
+        ]
+    }
+}
+
+# Stand-ins for the app binary the rendered script calls, one per outcome.
+# Exit 2 is what an image built before the subcommand answers.
+APP_WITHOUT_SUBCOMMAND = "#!/bin/sh\necho \"error: unrecognized subcommand '$1'\" >&2\nexit 2\n"
+APP_THAT_DIES_MIDWAY = "#!/bin/sh\nprintf 'sources:\\n  cisco_ios:\\n'\nexit 1\n"
+APP_WITH_SUBCOMMAND = (
+    "#!/bin/sh\n"
+    '[ "$1" = emit-catalogue ] || exit 64\n'
+    "printf 'sources:\\n  cisco_ios:\\n    package: cisco_ios\\n'\n"
+)
 
 
 def render(values: dict | None = None, *profile: str, sets: tuple[str, ...] = ()) -> dict:
@@ -309,13 +340,22 @@ def test_the_catalogue_env_follows_the_catalogue_entry() -> None:
         "DFE_SOURCE_CATALOGUE_FILE" not in env,
         f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
     )
-    for label, values in (("no entries at all", NO_ENTRIES), ("the chart's own entries", None)):
-        env = env_of(container(render(values), "engine"))
-        expect(
-            f"and unset with {label}",
-            "DFE_SOURCE_CATALOGUE_FILE" not in env,
-            f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
-        )
+    env = env_of(container(render(NO_ENTRIES), "engine"))
+    expect(
+        "and unset with no entries at all",
+        "DFE_SOURCE_CATALOGUE_FILE" not in env,
+        f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
+    )
+
+    # The chart's own entries carry a live catalogue (the elastic image's
+    # emit-catalogue), so this is the one case that DOES set the env.
+    chart = chart_values()["content"]
+    env = env_of(container(render(None), "engine"))
+    expect(
+        "and set with the chart's own entries",
+        env.get("DFE_SOURCE_CATALOGUE_FILE") == f"{chart['mountPath']}/catalogue/{chart['catalogueFile']}",
+        f"{env.get('DFE_SOURCE_CATALOGUE_FILE')}",
+    )
 
 
 def test_content_is_not_profile_dependent() -> None:
@@ -391,6 +431,91 @@ def test_no_content_travels_through_values_or_a_configmap() -> None:
         "no content ConfigMap is rendered",
         not any("content" in n for n in names),
         f"{names}",
+    )
+
+
+def run_catalogue_script(app_body: str) -> tuple[int, str, dict[str, str]]:
+    """Run the rendered catalogue init script with this stand-in on PATH.
+
+    The chart is rendered with the content mount moved into a scratch directory,
+    so the script writes exactly where it would in the pod, relative to its root.
+    Returns (exit code, combined output, every file left in the catalogue root).
+    """
+    shell = ["busybox", "sh"] if shutil.which("busybox") else ["/bin/sh"]
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        mount = base / "content"
+        doc = render(EMIT_CATALOGUE, sets=(f"content.mountPath={mount}",))
+        script = container(doc, "content-dfe-transform-elastic-catalogue")["command"][2]
+        bindir = base / "bin"
+        bindir.mkdir()
+        app = bindir / "dfe-transform-elastic"
+        app.write_text(app_body, encoding="utf-8", newline="\n")
+        app.chmod(0o755)
+        done = subprocess.run(
+            [*shell, "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env={"PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"},
+            check=False,
+            timeout=60,
+        )
+        root = mount / "catalogue"
+        written = {p.name: p.read_text(encoding="utf-8") for p in root.iterdir()} if root.is_dir() else {}
+    return done.returncode, done.stdout + done.stderr, written
+
+
+def test_an_emit_catalogue_entry_runs_the_pinned_image_and_never_wedges_the_pod() -> None:
+    """The catalogue comes out of the image the deployment already pulls.
+
+    The app's repository may be private, so a download needs a credential the
+    pod does not carry. An image built before the subcommand answers exit 2,
+    and that must leave the engine starting with no catalogue, not stuck in Init.
+    """
+    doc = render(EMIT_CATALOGUE)
+    init = container(doc, "content-dfe-transform-elastic-catalogue")
+    script = (init.get("command") or ["", "", ""])[2]
+    catalogue = "/etc/dfe-engine/content/catalogue/sources.yaml"
+    expect("the entry renders its own init container", bool(init), f"{pod(doc).get('initContainers')}")
+    expect("it runs the PINNED app image, digest and all", init.get("image") == CATALOGUE_REF, f"{init.get('image')}")
+    expect(
+        "it asks the app for its catalogue",
+        "dfe-transform-elastic emit-catalogue >" in script,
+        script,
+    )
+    expect("into the file the engine reads", f'dst="{catalogue}"' in script, script)
+    expect(
+        "and the engine is pointed at that same file",
+        env_of(container(doc, "engine")).get("DFE_SOURCE_CATALOGUE_FILE") == catalogue,
+        f"{env_of(container(doc, 'engine')).get('DFE_SOURCE_CATALOGUE_FILE')}",
+    )
+    expect(
+        "it is not the contract branch, which would call config-schema",
+        "config-schema" not in script,
+        script,
+    )
+
+    rc, output, written = run_catalogue_script(APP_WITHOUT_SUBCOMMAND)
+    expect("an image without the subcommand still exits 0", rc == 0, f"rc={rc} {output}")
+    expect("and says it emitted nothing", "emitted no catalogue" in output, output)
+    expect("and leaves no file behind, partial or otherwise", written == {}, f"{sorted(written)}")
+
+    rc, output, written = run_catalogue_script(APP_THAT_DIES_MIDWAY)
+    expect("an app that dies mid-print still exits 0", rc == 0, f"rc={rc} {output}")
+    expect(
+        "and its half-written catalogue never lands where the engine reads",
+        written == {},
+        f"{sorted(written)}",
+    )
+
+    rc, output, written = run_catalogue_script(APP_WITH_SUBCOMMAND)
+    expect("an image with the subcommand exits 0", rc == 0, f"rc={rc} {output}")
+    expect(
+        "and lands exactly what the app printed, under the catalogue filename",
+        written == {"sources.yaml": "sources:\n  cisco_ios:\n    package: cisco_ios\n"},
+        f"{written}",
     )
 
 

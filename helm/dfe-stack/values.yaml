@@ -158,12 +158,6 @@ kafka:
 kafbat:
   enabled: false
 
-dfe-schema:
-  enabled: true
-  clickhouse: *dfeClickhouseEndpoint
-  resources: *dfeSlimResources
-  telemetry: *dfeTelemetry
-
 otel-collector:
   enabled: true
   # Where the DFE apps run -- the install namespace (see the header note).

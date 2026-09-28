@@ -67,7 +67,9 @@ spec:
       num.recovery.threads.per.data.dir: {{ $p.numRecoveryThreadsPerDataDir }}
       {{- end }}
       {{- if eq (include "dfe-kafka.storageBulk" .) "object" }}
-      # The broker-wide switch; the landing topic carries the per-topic half.
+      # The broker-wide switch. The per-topic half (remote.storage.enable on the
+      # landing topic) is a topic config, so it rides the dfe-schemas topic set
+      # dfe-engine applies -- this chart creates no topic.
       remote.log.storage.system.enable: "true"
       {{- end }}
     {{- with (include "dfe-kafka.tieredStorage" .) }}

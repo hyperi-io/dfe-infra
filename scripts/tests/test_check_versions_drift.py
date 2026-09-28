@@ -289,6 +289,57 @@ def test_a_contract_entry_ref_is_visible_to_the_sweep() -> None:
         drift.CHECKS = original
 
 
+def test_fix_moves_both_entries_one_app_backs() -> None:
+    """The elastic image backs two entries, its contract and its catalogue.
+
+    Each is its own copy of the same app pin, so a bump that reached only the
+    first would leave the catalogue emitted by a release the deployment no
+    longer runs.
+    """
+    versions = dict(drift.load_versions())
+    digest = "sha256:" + "8" * 64
+    versions["apps.dfe-transform-elastic"] = "v1.9.99"
+    versions["digests.dfe-transform-elastic"] = digest
+
+    writes, _, refused = drift.plan_fix(versions)
+    expect("propagation refuses nothing on a plain app bump", refused == [], f"{refused}")
+    values = writes.get(Path("helm/charts/dfe-engine/values.yaml"), "")
+    new_ref = f'ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.9.99@{digest}"'
+    expect(
+        "the contract and the catalogue entry both carry the new tag@sha256",
+        values.count(new_ref) == 2,
+        f"{[line for line in values.splitlines() if 'dfe-transform-elastic:' in line]}",
+    )
+    catalogue = values.split("name: dfe-transform-elastic-catalogue", 1)[-1].split("\n\n", 1)[0]
+    expect("one of them is the catalogue entry", new_ref in catalogue, catalogue)
+
+
+def test_the_catalogue_entry_ref_is_visible_to_the_sweep() -> None:
+    """A second ref for an app already checked must not hide behind the first.
+
+    Each check claims its first match only, so without its own anchored check the
+    catalogue ref would be a pin nobody reads.
+    """
+    original = drift.CHECKS
+    try:
+        drift.CHECKS = [c for c in original if "catalogue entry" not in c.label]
+        unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p and "content ref" in p]
+        text = drift.read_source(Path("helm/charts/dfe-engine/values.yaml"))
+        line = text[: text.index("name: dfe-transform-elastic-catalogue")].count("\n") + 1
+        expect(
+            "the unchecked catalogue ref surfaces, and only that one",
+            len(unswept) == 1 and "dfe-engine/values.yaml" in unswept[0],
+            f"got {unswept}",
+        )
+        expect(
+            "at the catalogue entry, not the contract entry above it",
+            bool(unswept) and f"values.yaml:{line + 4} " in unswept[0],
+            f"entry at line {line}, got {unswept}",
+        )
+    finally:
+        drift.CHECKS = original
+
+
 def test_fix_refuses_rather_than_guessing() -> None:
     """A pattern that stopped matching means the file changed shape.
 
@@ -473,12 +524,16 @@ def test_unknown_stack_is_fatal() -> None:
 def test_pending_keys_are_noted_once_each_not_once_per_mirror() -> None:
     """rc.13 pins none of the rc.14-only keys, so each is NOTED -- once, however
     many mirrors point at it, or the wall of notes trains the reader to skip
-    them."""
+    them.
+
+    The run's exit code is not part of the subject. Every mirror in the tree
+    holds the value of the CURRENT stack, so auditing an older one reports the
+    whole cut as drift -- that is the audit working, and this check is about
+    the notes beside it."""
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(io.StringIO()):
-        rc = drift.main(["--stack", "2.2.0-rc.13"])
+        drift.main(["--stack", "2.2.0-rc.13"])
     out = captured.getvalue()
-    expect("rc.13 still passes", rc == 0, f"got rc={rc}")
     # hashicorp-aws has a CHECKS entry per terraform dir -- eight of them.
     aws_provider_notes = [ln for ln in out.splitlines() if "providers.hashicorp-aws" in ln]
     expect("the aws provider pin is noted exactly once",

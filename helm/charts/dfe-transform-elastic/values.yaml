@@ -11,6 +11,9 @@ cloud: local
 image:
   repository: ""
   tag: ""
+  # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
+  # digests.dfe-transform-elastic (drift-checked).
+  digest: "sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
   pullPolicy: IfNotPresent
 
 replicaCount: 1

@@ -278,9 +278,9 @@ def test_clickhouse_cached_object_pod_identity_reaches_single_mode() -> None:
 
 def test_clickhouse_renders_its_own_service_account() -> None:
     """Fix: the AWS Pod Identity association used to bind the release
-    namespace's default account, so the dfe-schema Job -- which also runs as
-    default in that namespace -- inherited the object-store role's S3 write
-    and delete rights. The chart now renders a dedicated ServiceAccount and
+    namespace's default account, so every other pod in that namespace
+    inherited the object-store role's S3 write and delete rights. The chart
+    now renders a dedicated ServiceAccount and
     points both the CR and the StatefulSet at it, cluster mode and single
     alike (terraform/modules/kubernetes-cluster/aws/object-store.tf's
     clickhouse_object_store_service_account default must keep matching this
@@ -619,12 +619,12 @@ def test_kafka_local_adds_nothing() -> None:
     expect("local Kafka declares no tieredStorage", "tieredStorage" not in kafka["spec"]["kafka"])
     expect("local Kafka leaves the remote-log switch off",
            "remote.log.storage.system.enable" not in kafka["spec"]["kafka"]["config"])
-    topics = [d for d in render("kafka") if d.get("kind") == "KafkaTopic"]
-    expect("no topic asks for remote storage",
-           all("remote.storage.enable" not in (t["spec"].get("config") or {}) for t in topics))
 
 
 def test_kafka_tiered_object_renders_the_plugin_and_the_switches() -> None:
+    """The BROKER half only. The per-topic remote.storage.enable is a topic
+    config, and this chart creates no topic -- dfe-engine applies the dfe-schemas
+    topic set on every tier."""
     docs = render("kafka", *KAFKA_TIERED_SETS)
     spec = one(docs, "Kafka")["spec"]["kafka"]
     expect("tiered storage is Strimzi's custom type", spec["tieredStorage"]["type"] == "custom")
@@ -632,13 +632,9 @@ def test_kafka_tiered_object_renders_the_plugin_and_the_switches() -> None:
            spec["tieredStorage"]["remoteStorageManager"]["className"].endswith("RemoteStorageManager"))
     expect("the broker-wide switch is on",
            spec["config"]["remote.log.storage.system.enable"] == "true")
-    landing = [d for d in docs if d.get("kind") == "KafkaTopic" and d["spec"]["topicName"].endswith("_land")]
-    expect("the landing topic opts in per-topic",
-           all(t["spec"]["config"]["remote.storage.enable"] == "true" for t in landing),
-           f"got {[t['spec'].get('config') for t in landing]}")
-    dlq = [d for d in docs if d.get("kind") == "KafkaTopic" and "dlq" in d["spec"]["topicName"]]
-    expect("the DLQ topics do not tier",
-           all("remote.storage.enable" not in t["spec"]["config"] for t in dlq))
+    expect("and the chart renders no KafkaTopic to carry the per-topic half",
+           [d for d in docs if d.get("kind") == "KafkaTopic"] == [],
+           f"got {[d['metadata']['name'] for d in docs if d.get('kind') == 'KafkaTopic']}")
 
 
 def test_kafka_tiered_object_keeps_credentials_out_of_git() -> None:

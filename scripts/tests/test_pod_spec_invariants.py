@@ -16,9 +16,9 @@
    setting and parses it as an int (`settings.py`), so the pod dies at startup.
    The dfe-engine chart's comment calls it live-proven across v1.10.4/5/6, and
    the hunt-runner's says the first fix "claimed to kill the whole CLASS while
-   being applied to one Deployment in a chart that ships three". A sixth pod --
-   the dfe-schema Job -- was still missing it in 2026-09. The class was right
-   every time; its membership was written out by hand every time.
+   being applied to one Deployment in a chart that ships three". A sixth pod was
+   still missing it in 2026-09. The class was right every time; its membership
+   was written out by hand every time.
 
 2. **No Job's pod carries labels that match a Service's selector.**
    A Service selects a pod when the pod's labels are a superset of the

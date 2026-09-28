@@ -113,7 +113,7 @@ def test_clickhouse_object_store_binds_the_account_the_chart_creates() -> None:
            f"chart {chart_account!r} vs tofu {pinned['service_account']!r}")
     expect("and the chart creates it at all",
            values["clickhouse"]["serviceAccount"]["create"] is True, values["clickhouse"]["serviceAccount"])
-    expect("the account is not the release namespace's default, which dfe-schema also runs as",
+    expect("the account is not the release namespace's default, which every other pod there shares",
            chart_account != "default", chart_account)
 
 

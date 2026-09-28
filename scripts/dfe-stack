@@ -1061,7 +1061,7 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     print(f"  versions.yaml apps.{name}")
     print(f"  helm/charts/{name}/Chart.yaml appVersion")
     # An app can be mirrored beyond its own chart -- the engine pin also drives
-    # the dfe-schema chart and the hyperdx dashboards tag.
+    # the hyperdx dashboards tag.
     print("  next: check_versions_drift.py --fix, for any other mirror of this pin")
     return 0
 

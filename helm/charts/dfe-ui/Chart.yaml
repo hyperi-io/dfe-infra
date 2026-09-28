@@ -3,10 +3,10 @@ name: dfe-ui
 description: DFE Next.js UI — HyperDX integration and RBAC-aware dashboard
 type: application
 version: 0.1.1
-appVersion: "v1.6.3"   # == versions.yaml apps.dfe-ui (drift-checked)
+appVersion: "v1.7.5"   # == versions.yaml apps.dfe-ui (drift-checked)
 dependencies:
   - name: dfe-common
     # 0.1.2: prometheusAnnotations honours .Values.metricsPort -- dfe-ui scrapes on
     # 3000 (Next has one listener), not the stack's 9090.
-    version: "0.13.0"
+    version: "0.14.0"
     repository: "file://../../library/dfe-common"

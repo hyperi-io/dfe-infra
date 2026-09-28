@@ -36,9 +36,9 @@ ENGINE_OVERLAY = (
 )
 
 
-def _config(*sets: str) -> dict:
+def _config(*sets: str, overlay: tuple[str, ...] = ENGINE_OVERLAY) -> dict:
     cmd = ["helm", "template", "dfe-transform-elastic", str(CHART)]
-    for value in (*ENGINE_OVERLAY, *sets):
+    for value in (*overlay, *sets):
         cmd += ["--set", value]
     out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=False)
     assert out.returncode == 0, out.stderr
@@ -68,6 +68,12 @@ def test_a_broker_list_the_overlay_names_wins() -> None:
         "config.source.brokers[0]=chosen.example.test:9092",
     )
     assert config["source"]["brokers"] == ["chosen.example.test:9092"]
+
+
+def test_an_idle_instance_gets_no_source_block() -> None:
+    """A source holding only brokers fails the app's parse; no source block idles."""
+    config = _config("kafka.bootstrapServers=a.example.test:9092", overlay=())
+    assert "source" not in (config or {})
 
 
 def test_the_direct_transport_gets_no_brokers() -> None:
