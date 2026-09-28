@@ -33,10 +33,10 @@ setup() {
     sp_section=$(sed -n '/kind: SecurityPolicy/,/^---/p' "${BATS_TMPDIR}/rendered.yaml")
 
     # SecurityPolicy must use targetRefs (to HTTPRoute), never backendRef
-    [[ "${sp_section}" =~ "targetRefs" ]]
-    [[ ! "${sp_section}" =~ "backendRef" ]]
+    [[ "${sp_section}" == *"targetRefs"* ]]
+    [[ ! "${sp_section}" == *"backendRef"* ]]
     # It references the HTTPRoute by name, which is expected
-    [[ "${sp_section}" =~ "kind: HTTPRoute" ]]
+    [[ "${sp_section}" == *"kind: HTTPRoute"* ]]
 }
 
 @test "OIDC config comes entirely from Helm values, not runtime API" {
@@ -49,24 +49,35 @@ setup() {
         --set 'oidc.providers[0].clientId=test-client-123' \
         --set 'oidc.providers[0].clientSecretName=test-secret'
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "https://issuer.example.com" ]]
-    [[ "$output" =~ "test-client-123" ]]
-    [[ "$output" =~ "test-secret" ]]
+    [[ "$output" == *"https://issuer.example.com"* ]]
+    [[ "$output" == *"test-client-123"* ]]
+    [[ "$output" == *"test-secret"* ]]
 }
 
 # --- Invariant 2: Secrets are ESO/Terraform managed ---
 
 @test "dfe-engine OIDC secrets reference K8s Secrets, not dfe-engine endpoints" {
+    # Scoped to the engine pod, the one holding the credential: the hunt runner's
+    # readiness wait polls the engine too, and that is start order, not a secret source.
     run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
+        --show-only templates/deployment.yaml \
         --set global.registry=ghcr.io/test \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
         --set 'oidc.providers[0].secretName=dfe-oidc-google' \
         --set 'oidc.providers[0].envMappings.DFE_OIDC_GOOGLE_CLIENT_ID=client-id'
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "secretKeyRef" ]]
-    [[ ! "$output" =~ "http://dfe-engine" ]]
-    [[ ! "$output" =~ "https://dfe-engine" ]]
+
+    # The pod carries other secretKeyRefs, so the provider's own entry is the one read.
+    local entry
+    entry=$(printf '%s\n' "$output" | grep -A4 -e '- name: DFE_OIDC_GOOGLE_CLIENT_ID')
+    [[ "${entry}" == *"secretKeyRef:"* ]]
+    [[ "${entry}" == *"name: dfe-oidc-google"* ]]
+    [[ "${entry}" == *"key: client-id"* ]]
+    [[ ! "${entry}" == *"value:"* ]]
+
+    [[ ! "$output" == *"http://dfe-engine"* ]]
+    [[ ! "$output" == *"https://dfe-engine"* ]]
 }
 
 # --- Invariant 3: Header names are static in Envoy config ---
@@ -78,8 +89,8 @@ setup() {
         --set jwtAuthn.enabled=true \
         --set jwtAuthn.issuer=https://accounts.google.com
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "header_name: X-Oidc-Subject" ]]
-    [[ "$output" =~ "header_name: X-Oidc-Groups" ]]
+    [[ "$output" == *"header_name: X-Oidc-Subject"* ]]
+    [[ "$output" == *"header_name: X-Oidc-Groups"* ]]
 }
 
 # --- Invariant 4: Simple auth mode works with zero OIDC config ---
@@ -108,6 +119,6 @@ setup() {
         --set 'oidc.providers[0].clientId=dfe-app' \
         --set 'oidc.providers[0].clientSecretName=dfe-oidc-keycloak'
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "dfe-oidc-custom-keycloak" ]]
-    [[ "$output" =~ "keycloak.corp.example.com" ]]
+    [[ "$output" == *"dfe-oidc-custom-keycloak"* ]]
+    [[ "$output" == *"keycloak.corp.example.com"* ]]
 }
