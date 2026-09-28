@@ -96,6 +96,10 @@ Subcommands:
                PASS, FAIL or SKIP with one line of evidence and the verb exits
                non-zero on any FAIL. Sends no credential, because a credential
                would prove something an outside caller does not have.
+  admin-probe  Every admin UI the gateway lists (the dfe-admin-links ConfigMap)
+               loads through the gateway: GET follows redirects and FAILs on a
+               loop, a 5xx or no answer, while a login handed to an IdP passes.
+               The readiness gate runs it once every pod is Ready.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,
@@ -249,7 +253,7 @@ import envfile  # noqa: E402
 import profiles  # noqa: E402
 import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
-from dfe_ops_edge_probe import add_edge_probe_subparser  # noqa: E402
+from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_kind import add_kind_subparser  # noqa: E402
 from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
@@ -2855,13 +2859,25 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     else:
         warn("no LoadBalancer provider detected -- bootstrap installs MetalLB on-prem; on a cloud target the cloud LB controller must exist")
 
-    # 5. Adopt-or-install preview (mirrors bootstrap's dfe_should_install).
+    # 5. Adopt-or-install preview (mirrors bootstrap's dfe_should_install, and
+    # for Argo the argocd_release.py call that runs ahead of it).
+    import argocd_release
+
     rc, crd_json, err = _kubectl_json(base, "get", "crd")
     crd_names = {c.get("metadata", {}).get("name", "") for c in crd_json.get("items", [])} if rc == 0 else set()
     if rc != 0:
         warn(f"cannot list CRDs ({err}) -- adopt-or-install preview skipped")
     else:
         for name, crd, deploy_hint in _ADOPT_OR_INSTALL:
+            if name == "argocd":
+                ours, why = argocd_release.read(
+                    file_env.get("DFE_VALKEY_SERVICE") or argocd_release.DEFAULT_CACHE_SERVICE,
+                    args.kubeconfig or "",
+                    context,
+                )
+                if ours:
+                    ok(f"argocd: {why} -> bootstrap UPGRADES it in place to the pinned chart")
+                    continue
             has_crd = crd in crd_names
             has_deploy = any(deploy_hint in d for d in deploy_names)
             if has_crd and has_deploy:
@@ -3869,6 +3885,10 @@ def build_parser() -> argparse.ArgumentParser:
     # edge-probe -- what an unauthenticated caller outside the cluster reaches,
     # which no render assertion can answer. Registered from dfe_ops_edge_probe.
     add_edge_probe_subparser(sub)
+
+    # admin-probe -- every admin UI the gateway lists loads through it. The
+    # readiness gate runs it; registered from dfe_ops_edge_probe.
+    add_admin_probe_subparser(sub)
 
     # init -- the prompt-driven deployment-dial wizard. Registered from
     # dfe_ops_init.

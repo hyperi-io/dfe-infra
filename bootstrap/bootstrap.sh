@@ -1062,24 +1062,37 @@ else
   run kubectl -n argocd rollout status deployment/valkey --timeout=120s
 fi
 
-echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install)"
-# If the destination already runs Argo (its Application CRD + a server deploy are
-# present) we ADOPT it -- our AppProjects/ApplicationSets below register into the
-# existing Argo. Otherwise install DFE-owned Argo. (Full isolation -- a dedicated
-# dfe-system Argo scoped to dfe-* namespaces so it never couples to a host Argo --
-# is the Phase 0d adopt-path refinement.)
+echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install, upgrade our own)"
+# The release this step installed is UPGRADED in place on every run, so the chart
+# pin and the flags below reach a live cluster; argocd_release.py recognises it by
+# the cache wiring set here. Any other running Argo (its Application CRD + a
+# server deploy) is ADOPTED and never reconfigured -- our AppProjects and
+# ApplicationSets below register into it. Otherwise install DFE-owned Argo. (Full
+# isolation -- a dedicated dfe-system Argo scoped to dfe-* namespaces so it never
+# couples to a host Argo -- is the Phase 0d adopt-path refinement.)
 # Argo HARDENING (dfe-infra#4): back off the controller timers so a degraded app
 # can never monopolise the control plane (self-heal 5s->30s, reconciliation
 # 180s->300s) and bound the repo-server timeout.
 # server.insecure: the gateway terminates TLS and forwards plain HTTP, which a
 # TLS-serving argocd-server answers with a redirect back to the same URL.
-if dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
+# global.domain: argocd-cm's url, on the label the gateway publishes Argo under
+# (hostnames.argocd in argocd/values/common.yaml).
+if python3 "${SCRIPT_DIR}/argocd_release.py" --cache-service "${VALKEY_SVC}"; then
+  echo "  [argocd] this bootstrap's own release -> UPGRADE in place to chart ${ARGOCD_VERSION}"
+  argocd_apply=true
+elif dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
+  argocd_apply=true
+else
+  argocd_apply=false
+fi
+if [[ "${argocd_apply}" == "true" ]]; then
   run helm upgrade --install argocd argo/argo-cd \
     --namespace argocd --create-namespace \
     --version "${ARGOCD_VERSION}" \
     --set redis.enabled=false \
     --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
     --set "externalRedis.port=6379" \
+    --set-string "global.domain=argocd.${DFE_DOMAIN}" \
     --set-string 'configs.params.server\.insecure=true' \
     --set-string 'configs.params.reposerver\.disable\.git\.modules=true' \
     --set-string 'configs.cm.timeout\.reconciliation=300s' \

@@ -32,6 +32,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from _expect import expect, standalone, summary
@@ -41,11 +45,25 @@ GATE = REPO_ROOT / "bootstrap" / "smoke-test-readiness.sh"
 DESTROY = REPO_ROOT / "bootstrap" / "destroy.sh"
 
 # Answers kubectl's four read shapes off FAKE_KUBECTL_FIXTURE; an absent key is
-# an empty result, which is what a cluster with none of that kind returns.
+# an empty result, which is what a cluster with none of that kind returns. The
+# admin-links ConfigMap is the exception: absent, it is NotFound, as kubectl says.
 FAKE_KUBECTL = """#!/usr/bin/env python3
 import json, os, sys
 
 args = sys.argv[1:]
+if "configmap" in args or "gateway" in args:
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    if "gateway" in args:
+        print(json.dumps({"items": [
+            {"metadata": {"name": "dfe-gateway"}, "status": {"addresses": [{"value": a}]}}
+            for a in fixture.get("gateways", [])
+        ]}))
+        sys.exit(0)
+    if "admin_links" not in fixture:
+        print('Error from server (NotFound): configmaps "dfe-admin-links" not found', file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({"data": {"admin_links.json": json.dumps(fixture["admin_links"])}}))
+    sys.exit(0)
 if "annotate" in args:
     with open(os.environ["FAKE_KUBECTL_LOG"], "a", encoding="utf-8") as log:
         log.write(" ".join(args) + "\\n")
@@ -111,6 +129,7 @@ def run_gate(
         # burn the timeout before reaching the same verdict.
         env["READINESS_TIMEOUT"] = "0"
         env["READINESS_INTERVAL"] = "1"
+        env["READINESS_ADMIN_UI_WAIT"] = "0"
         env.update(env_overrides)
         result = subprocess.run(
             ["bash", str(GATE)],
@@ -443,6 +462,85 @@ def test_the_credential_check_needs_the_namespace() -> None:
     expect(
         "no namespace skips the credential check",
         out.returncode == 0 and "no DFE_NS" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+@contextmanager
+def admin_ui_server(routes: dict[str, tuple[int, str]]) -> Iterator[int]:
+    """A plain-HTTP stand-in for the gateway on a port the kernel picks.
+
+    `routes` maps a path to (status, Location), and may be filled in once the
+    port is known.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            status, location = routes.get(self.path, (404, ""))
+            self.send_response(status)
+            if location:
+                self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_args: object) -> None:
+            """The gate's own output is what the tests read."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def healthy_with_admin_ui(port: int) -> dict:
+    """A converged deploy whose gateway, at 127.0.0.1, lists one admin UI on `port`."""
+    return {
+        **HEALTHY,
+        "setup_status": "False",
+        "admin_links": [{"name": "Argo CD", "url": f"http://argocd.dfe.test:{port}"}],
+        "gateways": ["127.0.0.1"],
+    }
+
+
+def test_an_admin_ui_that_redirects_to_itself_fails_the_gate() -> None:
+    """How the Argo CD redirect loop shipped: every pod Ready, the UI unreachable."""
+    routes: dict[str, tuple[int, str]] = {}
+    with admin_ui_server(routes) as port:
+        routes["/"] = (307, f"http://argocd.dfe.test:{port}/")
+        out = run_gate(healthy_with_admin_ui(port), DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "a looping admin UI fails a gate every other check passed",
+        out.returncode != 0
+        and "[FAIL] admin ui Argo CD: redirect loop" in out.stdout
+        and "an admin UI does not load through the gateway" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_an_admin_ui_that_loads_passes_the_gate() -> None:
+    routes: dict[str, tuple[int, str]] = {"/": (200, "")}
+    with admin_ui_server(routes) as port:
+        out = run_gate(healthy_with_admin_ui(port), DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "a loading admin UI passes, and says so",
+        out.returncode == 0 and "[PASS] admin ui Argo CD" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_a_gateway_listing_no_admin_ui_skips_the_check() -> None:
+    """dfe-docker, or a gateway that predates dfe-admin-links, has nothing to probe."""
+    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "no dfe-admin-links is a named skip, not a failure",
+        out.returncode == 0 and "no dfe-admin-links ConfigMap in dfe-local" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
 

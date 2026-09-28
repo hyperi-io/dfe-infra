@@ -79,6 +79,8 @@ A probe that could not RUN at all -- an RBAC denial on `kubectl exec`, a wrong
 to say whether the shipped password is in use, so it FAILS outside a dev posture
 and warns inside one.
 
+It then runs `dfe-ops admin-probe`, which fetches every admin UI in the `dfe-admin-links` ConfigMap through the gateway address under its own hostname, following redirects. A redirect loop, a 5xx or no answer FAILS in any posture: a Ready pod behind a looping route is still a UI nobody can open. A redirect off the deployment's domain is a login handed to an IdP and passes. No ConfigMap, no Gateway address, or a gateway this machine cannot reach is a named SKIP, and a failing UI is re-probed for `READINESS_ADMIN_UI_WAIT` seconds (default 120) before it fails the gate.
+
 `dfe-ops creds` prints where each minted credential is fetched from, reading both
 Secret names off the live engine Deployment.
 
@@ -116,6 +118,7 @@ The product rule: assume a vanilla Rancher/RKE2 cluster and BRING what the
 stack needs. "Vanilla" means the things bootstrap CANNOT create for itself --
 everything else (cert-manager, ESO, Argo CD, MetalLB, local-path storage) is
 detect-or-install: an existing operator is adopted, an absent one installed.
+The Argo CD bootstrap installed is the exception: a re-run upgrades it in place to the pinned chart and flags, and preflight previews that as UPGRADES.
 
 What the cluster must supply:
 

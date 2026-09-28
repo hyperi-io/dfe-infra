@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
 import socket
 import sys
 import threading
@@ -118,6 +119,7 @@ class StubGateway:
         self.port = 0
         self.routes: dict[tuple[str, str], int] = {}
         self.headers: dict[str, str] = {}
+        self.locations: dict[tuple[str, str], str] = {}
         self.burst = 0
         self.seen: list[tuple[str, str]] = []
 
@@ -125,7 +127,10 @@ class StubGateway:
         self.seen.append((host, path))
         if self.burst and self.seen.count((host, path)) > self.burst:
             return 429, dict(self.headers)
-        return self.routes.get((host, path), 404), dict(self.headers)
+        headers = dict(self.headers)
+        if (host, path) in self.locations:
+            headers["Location"] = self.locations[(host, path)]
+        return self.routes.get((host, path), 404), headers
 
 
 class _StubHandler(BaseHTTPRequestHandler):
@@ -1116,3 +1121,318 @@ def test_the_parser_takes_no_credential(capsys: pytest.CaptureFixture) -> None:
         parser.parse_args(["edge-probe", "--help"])
 
     assert "--dial" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# admin-probe -- every admin UI the gateway lists loads through it
+# ---------------------------------------------------------------------------
+
+ARGO_HOST = "argocd.example.test"
+ARGO = probe.AdminLink(name="Argo CD", url=f"https://{ARGO_HOST}")
+KAFBAT = probe.AdminLink(name="Kafbat", url="https://kafbat.example.test")
+
+
+def _redirect(stub: StubGateway, host: str, path: str, location: str, status: int = 302) -> None:
+    stub.routes[(host, path)] = status
+    stub.locations[(host, path)] = location
+
+
+def test_an_admin_ui_answering_200_loads(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway.routes[(ARGO_HOST, "/")] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.PASS, check
+    assert check.evidence == f"https://{ARGO_HOST}/ answered 200"
+
+
+def test_a_redirect_back_to_the_same_url_is_a_loop(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A TLS-serving argocd-server behind a gateway that forwards plain HTTP."""
+    _redirect(gateway, ARGO_HOST, "/", f"https://{ARGO_HOST}/", status=307)
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert check.evidence == f"redirect loop: https://{ARGO_HOST}/ -> https://{ARGO_HOST}/"
+    assert gateway.seen == [(ARGO_HOST, "/")]
+
+
+def test_a_loop_through_a_second_page_is_a_loop(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _redirect(gateway, ARGO_HOST, "/", "/applications")
+    _redirect(gateway, ARGO_HOST, "/applications", "/")
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert "redirect loop" in check.evidence
+    assert f"https://{ARGO_HOST}/applications" in check.evidence
+
+
+def test_a_5xx_fails(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway.routes[(ARGO_HOST, "/")] = 502
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert check.evidence.endswith("answered 502")
+
+
+def test_a_5xx_behind_a_redirect_fails(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+    _redirect(gateway, ARGO_HOST, "/", "/login")
+    gateway.routes[(ARGO_HOST, "/login")] = 503
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert check.evidence == f"https://{ARGO_HOST}/ -> https://{ARGO_HOST}/login answered 503"
+
+
+def test_a_login_handed_to_an_idp_loads_and_the_idp_is_not_dialled(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _redirect(gateway, ARGO_HOST, "/", "https://id.example.com/authorize?client_id=dfe")
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.PASS, check
+    assert "hands the login to id.example.com (302)" in check.evidence
+    assert [host for host, _ in gateway.seen] == [ARGO_HOST]
+
+
+def test_a_login_page_on_the_deployments_own_domain_is_followed(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _redirect(gateway, "kafbat.example.test", "/", "/login")
+    gateway.routes[("kafbat.example.test", "/login")] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(KAFBAT, "127.0.0.1")
+    assert check.verdict == probe.PASS, check
+    assert check.evidence == (
+        "https://kafbat.example.test/ -> https://kafbat.example.test/login answered 200"
+    )
+
+
+def test_an_idp_on_the_deployments_own_domain_is_dialled_through_the_gateway(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _redirect(gateway, ARGO_HOST, "/", "https://dex.example.test/auth?state=x")
+    gateway.routes[("dex.example.test", "/auth?state=x")] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.PASS, check
+    assert ("dex.example.test", "/auth?state=x") in gateway.seen
+
+
+def test_a_redirect_chain_past_the_limit_fails(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for step in range(6):
+        _redirect(gateway, ARGO_HOST, "/" if step == 0 else f"/{step}", f"/{step + 1}")
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1", max_redirects=3)
+    assert check.verdict == probe.FAIL, check
+    assert check.evidence.startswith("more than 3 redirects")
+    assert len(gateway.seen) == 4
+
+
+def test_a_redirect_with_nowhere_to_go_fails(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway.routes[(ARGO_HOST, "/")] = 302
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert "no Location" in check.evidence
+
+
+def test_a_login_wall_is_the_ui_answering(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway.routes[(ARGO_HOST, "/")] = 401
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    assert probe.check_admin_link(ARGO, "127.0.0.1").verdict == probe.PASS
+
+
+def test_an_admin_ui_that_answers_nothing_fails(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
+) -> None:
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert "answered nothing through 127.0.0.1" in check.evidence
+
+
+def test_a_redirect_to_a_port_that_cannot_exist_fails(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _redirect(gateway, ARGO_HOST, "/", f"https://{ARGO_HOST}:99999/")
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert "names no usable port" in check.evidence
+
+
+def test_a_single_label_domain_is_still_a_domain(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gateway.routes[("argocd.corp", "/")] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(probe.AdminLink("Argo CD", "https://argocd.corp"), "127.0.0.1")
+    assert check.verdict == probe.PASS, check
+
+
+def test_an_undomained_link_skips_without_dialling(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    for url in ("https://argocd.", "https://argocd"):
+        check = probe.check_admin_link(probe.AdminLink("Argo CD", url), "127.0.0.1")
+        assert check.verdict == probe.SKIP, check
+        assert "no domain" in check.evidence
+
+
+# --- the list, read off the cluster ------------------------------------------
+def _configmap(*links: probe.AdminLink) -> dict:
+    """dfe-admin-links as the gateway chart renders it."""
+    entries = [
+        {"name": link.name, "purpose": "p", "url": link.url, "probe_url": "http://svc.ns.svc:80"}
+        for link in links
+    ]
+    return {"data": {probe.ADMIN_LINKS_KEY: json.dumps(entries)}}
+
+
+def _cluster(
+    monkeypatch: pytest.MonkeyPatch, configmap: dict | None, gateways: list[dict] | None = None
+) -> None:
+    """A cluster carrying `configmap` (None: absent) and Gateways holding `gateways`."""
+
+    def kubectl_json(kube: list[str], *argv: str) -> tuple[dict, str]:
+        if "configmap" in argv:
+            if configmap is None:
+                return {}, 'Error from server (NotFound): configmaps "dfe-admin-links" not found'
+            return configmap, ""
+        if "gateway" in argv:
+            return {"items": gateways or []}, ""
+        pytest.fail(f"unexpected kubectl {argv}")
+
+    monkeypatch.setattr(probe, "_kubectl_json", kubectl_json)
+
+
+def _gateway(name: str, address: str) -> dict:
+    return {"metadata": {"name": name}, "status": {"addresses": [{"value": address}]}}
+
+
+GATEWAYS = [_gateway("dfe-gateway", "127.0.0.1")]
+
+
+def test_the_rendered_list_parses() -> None:
+    text = _configmap(ARGO, KAFBAT)["data"][probe.ADMIN_LINKS_KEY]
+    assert probe.parse_admin_links(text) == [ARGO, KAFBAT]
+
+
+@pytest.mark.parametrize("text", ["{}", "not json", '[{"name": "Argo CD"}]'])
+def test_a_list_it_cannot_read_is_refused_by_name(text: str) -> None:
+    with pytest.raises(probe.EdgeProbeError, match=probe.ADMIN_LINKS_KEY):
+        probe.parse_admin_links(text)
+
+
+def test_no_configmap_is_one_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    _cluster(monkeypatch, None, GATEWAYS)
+    (check,) = probe.admin_ui_checks([], "dfe-local")
+    assert check.verdict == probe.SKIP
+    assert "no dfe-admin-links ConfigMap in dfe-local" in check.evidence
+
+
+def test_an_empty_list_is_one_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    _cluster(monkeypatch, _configmap(), GATEWAYS)
+    (check,) = probe.admin_ui_checks([], "dfe-local")
+    assert check.verdict == probe.SKIP
+
+
+def test_a_configmap_it_cannot_read_is_an_error_not_a_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(probe, "_kubectl_json", lambda kube, *argv: ({}, "Forbidden"))
+    with pytest.raises(probe.EdgeProbeError, match="cannot read dfe-local/dfe-admin-links"):
+        probe.admin_ui_checks([], "dfe-local")
+
+
+def test_no_gateway_address_skips_every_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+    _cluster(monkeypatch, _configmap(ARGO, KAFBAT), [])
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    checks = probe.admin_ui_checks([], "dfe-local")
+    assert [c.verdict for c in checks] == [probe.SKIP, probe.SKIP]
+    assert all("no Gateway holds an address" in c.evidence for c in checks)
+
+
+def test_a_gateway_this_machine_cannot_reach_skips_every_ui(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO, KAFBAT), GATEWAYS)
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    checks = probe.admin_ui_checks([], "dfe-local")
+    assert [c.verdict for c in checks] == [probe.SKIP, probe.SKIP]
+    assert "does not answer from this machine" in checks[0].evidence
+
+
+def test_each_listed_ui_gets_its_own_verdict(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+    _cluster(monkeypatch, _configmap(ARGO, KAFBAT), GATEWAYS)
+    _redirect(gateway, ARGO_HOST, "/", f"https://{ARGO_HOST}/", status=307)
+    gateway.routes[("kafbat.example.test", "/")] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    checks = probe.admin_ui_checks([], "dfe-local")
+    assert [(c.name, c.verdict) for c in checks] == [
+        ("admin ui Argo CD", probe.FAIL),
+        ("admin ui Kafbat", probe.PASS),
+    ]
+    assert probe.exit_code(checks) == 1
+
+
+def test_the_deployments_own_gateway_is_dialled_before_any_other(monkeypatch: pytest.MonkeyPatch) -> None:
+    _cluster(monkeypatch, None, [_gateway("someone-elses", "192.0.2.1"), _gateway("dfe-gateway", "192.0.2.2")])
+    assert probe.gateway_address([]) == "192.0.2.2"
+    _cluster(monkeypatch, None, [_gateway("someone-elses", "192.0.2.1")])
+    assert probe.gateway_address([]) == "192.0.2.1"
+
+
+# --- the verb ----------------------------------------------------------------
+def _admin_args(**overrides: object) -> argparse.Namespace:
+    values = {"namespace": "dfe-local", "kubeconfig": "", "context": "", "gateway": "dfe-gateway",
+              "target": "", "wait": 0.0}
+    return argparse.Namespace(**{**values, **overrides})
+
+
+def test_a_failing_ui_fails_the_verb(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS)
+    _redirect(gateway, ARGO_HOST, "/", f"https://{ARGO_HOST}/", status=307)
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    assert probe.cmd_admin_probe(_admin_args()) == 1
+    err = capsys.readouterr().err
+    assert "[FAIL] admin ui Argo CD: redirect loop" in err
+    assert "=== admin-probe: 0 passed, 1 failed, 0 skipped ===" in err
+
+
+def test_the_wait_re_probes_until_the_ui_loads(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    passes = iter([
+        [probe.Check("admin ui Argo CD", probe.FAIL, "redirect loop")],
+        [probe.Check("admin ui Argo CD", probe.PASS, "answered 200")],
+    ])
+    monkeypatch.setattr(probe, "admin_ui_checks", lambda *args: next(passes))
+    monkeypatch.setattr(probe.time, "sleep", lambda seconds: None)
+    assert probe.cmd_admin_probe(_admin_args(wait=60.0)) == 0
+    err = capsys.readouterr().err
+    assert "admin ui Argo CD not loading yet" in err
+    assert "[PASS] admin ui Argo CD" in err
+
+
+def test_a_list_it_cannot_read_fails_the_verb(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(probe, "_kubectl_json", lambda kube, *argv: ({}, "Forbidden"))
+    assert probe.cmd_admin_probe(_admin_args()) == 1
+    assert "dfe-ops admin-probe: cannot read" in capsys.readouterr().err
+
+
+def test_the_subparser_registers_the_verb_as_admin_probe() -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command")
+    probe.add_admin_probe_subparser(sub)
+    args = parser.parse_args(["admin-probe", "--namespace", "dfe-prod", "--wait", "120"])
+    assert args.func is probe.cmd_admin_probe
+    assert (args.namespace, args.wait, args.gateway) == ("dfe-prod", 120.0, "dfe-gateway")
