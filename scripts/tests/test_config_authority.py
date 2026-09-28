@@ -121,13 +121,13 @@ def test_a_deployment_that_names_its_own_destination_still_wins() -> None:
         )
 
 
-STATIC_KEY_ENV = {
+ARCHIVER_S3_REFS = {
     "S3_ACCESS_KEY_ID": "access_key_id",
     "S3_SECRET_ACCESS_KEY": "secret_access_key",
 }
 
 
-def secret_refs(docs: list[dict]) -> dict[str, dict]:
+def env_refs(docs: list[dict]) -> dict[str, dict]:
     container = docs[0]["spec"]["template"]["spec"]["containers"][0]
     return {
         e["name"]: e["valueFrom"]["secretKeyRef"]
@@ -138,15 +138,15 @@ def secret_refs(docs: list[dict]) -> dict[str, dict]:
 
 def test_the_archiver_reads_static_keys_from_its_s3_secret() -> None:
     """An optional ref: an absent Secret leaves the SDK's credential chain alone."""
-    refs = secret_refs(render("dfe-archiver", "templates/deployment.yaml"))
-    for name, key in sorted(STATIC_KEY_ENV.items()):
+    refs = env_refs(render("dfe-archiver", "templates/deployment.yaml"))
+    for name, field in sorted(ARCHIVER_S3_REFS.items()):
         ref = refs.get(name, {})
         expect(
-            f"{name} comes from dfe-archiver-s3/{key}, optional",
+            f"{name} comes from dfe-archiver-s3/{field}, optional",
             ref.get("name") == "dfe-archiver-s3"
-            and ref.get("key") == key
+            and ref.get("key") == field
             and ref.get("optional") is True,
-            f"got {ref!r}",
+            "missing, pointed elsewhere, or not optional",
         )
 
 
@@ -166,11 +166,9 @@ def test_an_empty_s3_secret_name_renders_no_static_keys() -> None:
     )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed:\n{out.stderr}")
-    refs = secret_refs([d for d in yaml.safe_load_all(out.stdout) if d])
-    for name in sorted(STATIC_KEY_ENV):
-        expect(
-            f"an empty s3.secretName renders no {name}", name not in refs, f"got {refs.get(name)!r}"
-        )
+    refs = env_refs([d for d in yaml.safe_load_all(out.stdout) if d])
+    for name in sorted(ARCHIVER_S3_REFS):
+        expect(f"an empty s3.secretName renders no {name}", name not in refs, "still rendered")
 
 
 def main() -> int:
