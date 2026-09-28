@@ -98,7 +98,8 @@ Subcommands:
                would prove something an outside caller does not have.
   admin-probe  Every admin UI the gateway lists (the dfe-admin-links ConfigMap)
                loads through the gateway: GET follows redirects and FAILs on a
-               loop, a 5xx or no answer, while a login handed to an IdP passes.
+               loop, a 5xx, a 4xx other than 401/403/404 or no answer, while a
+               login handed to an IdP passes.
                The readiness gate runs it once every pod is Ready.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived

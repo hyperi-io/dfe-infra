@@ -79,7 +79,7 @@ A probe that could not RUN at all -- an RBAC denial on `kubectl exec`, a wrong
 to say whether the shipped password is in use, so it FAILS outside a dev posture
 and warns inside one.
 
-It then runs `dfe-ops admin-probe`, which fetches every admin UI in the `dfe-admin-links` ConfigMap through the gateway address under its own hostname, following redirects. A redirect loop, a 5xx or no answer FAILS in any posture: a Ready pod behind a looping route is still a UI nobody can open. A redirect off the deployment's domain is a login handed to an IdP and passes. No ConfigMap, no Gateway address, or a gateway this machine cannot reach is a named SKIP, and a failing UI is re-probed for `READINESS_ADMIN_UI_WAIT` seconds (default 120) before it fails the gate.
+It then runs `dfe-ops admin-probe`, which fetches every admin UI in the `dfe-admin-links` ConfigMap through the gateway address under its own hostname, following redirects. A redirect loop, a 5xx or no answer FAILS in any posture: a Ready pod behind a looping route is still a UI nobody can open. So does a 4xx other than 401, 403 or 404 at the end of the chain, such as an IdP answering 400 to a redirect URI it has not registered. A redirect off the deployment's domain is a login handed to an IdP and passes. No ConfigMap, no Gateway address, or a gateway this machine cannot reach is a named SKIP, and a failing UI is re-probed for `READINESS_ADMIN_UI_WAIT` seconds (default 120) before it fails the gate.
 
 `dfe-ops creds` prints where each minted credential is fetched from, reading both
 Secret names off the live engine Deployment.

@@ -1249,6 +1249,45 @@ def test_a_login_wall_is_the_ui_answering(gateway: StubGateway, monkeypatch: pyt
     assert probe.check_admin_link(ARGO, "127.0.0.1").verdict == probe.PASS
 
 
+def test_an_idp_refusing_the_login_it_was_handed_fails(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dex answers 400 to a redirect URI it has not registered; the UI cannot be logged into."""
+    _redirect(gateway, ARGO_HOST, "/", "https://dex.example.test/auth?redirect_uri=x")
+    gateway.routes[("dex.example.test", "/auth?redirect_uri=x")] = 400
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == probe.FAIL, check
+    assert check.evidence == (
+        f"https://{ARGO_HOST}/ -> https://dex.example.test/auth?redirect_uri=x answered 400"
+        " -- the request was refused"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "verdict"),
+    [
+        (400, probe.FAIL),
+        (405, probe.FAIL),
+        (410, probe.FAIL),
+        (422, probe.FAIL),
+        (429, probe.FAIL),
+        (401, probe.PASS),
+        (403, probe.PASS),
+        (404, probe.PASS),
+        (200, probe.PASS),
+    ],
+)
+def test_only_an_auth_answer_or_an_absent_page_is_a_4xx_that_loads(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, status: int, verdict: str
+) -> None:
+    _redirect(gateway, ARGO_HOST, "/", "/login")
+    gateway.routes[(ARGO_HOST, "/login")] = status
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_admin_link(ARGO, "127.0.0.1")
+    assert check.verdict == verdict, check
+
+
 def test_an_admin_ui_that_answers_nothing_fails(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
 ) -> None:

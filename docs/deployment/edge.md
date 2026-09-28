@@ -144,7 +144,7 @@ render cases need no cluster.
 |---|---|---|---|
 | The module off renders no door | 1 | render case | render |
 | Admin UIs off by default, kill switch beats a route flag | 1 | `scripts/test-route-exposure.sh` | render |
-| Every admin UI the gateway lists loads: no redirect loop, no 5xx | 1 | `dfe-ops admin-probe`, run by the readiness gate | kind, on-prem |
+| Every admin UI the gateway lists loads: no redirect loop, no 5xx, no 4xx but 401/403/404 | 1 | `dfe-ops admin-probe`, run by the readiness gate | kind, on-prem |
 | A public route with no auth is refused | 1 | `scripts/test-route-exposure.sh` | render |
 | The engine's public route: browser families, the opt-ins add theirs, never `/docs` | 1 | `scripts/test-route-exposure.sh` | render |
 | A browser family answers and a private one 404s | 1 | `dfe-ops edge-probe` | kind, on-prem |
