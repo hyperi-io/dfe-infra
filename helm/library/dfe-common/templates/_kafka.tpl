@@ -96,20 +96,20 @@ true
 dfe-common.kafkaProviderEnv -- renders the KAFKA_PROVIDER env entry when
 .Values.kafka.provider is set (empty = unset, the no-provider behaviour).
 
-WHAT READS IT (verified 2026-09-15 against the vendored scalo-rs): scalo's
-KafkaConfig::from_env reads the PROVIDER suffix (transport/kafka/config.rs:1538)
-and KafkaTransport::new applies it (transport/kafka/mod.rs:225), where
+WHAT READS IT (scalo-rs 2.13.0): KafkaConfig::from_env reads the PROVIDER suffix
+(transport/kafka/config.rs:1938, falling back to the bare KAFKA_ name at :1880),
+and KafkaTransport::new applies it (transport/kafka/mod.rs:696), where
 apply_provider derives security_protocol + sasl_mechanism from the table above
-and OVERWRITES whatever the caller set. Of the six Rust consumers only
-dfe-transform-elastic builds its config through from_env (src/service.rs:438);
-receiver, loader, fetcher, transform-vrl and transform-vector hand-build theirs
-and never set provider, so for those five this var is rendered and not consulted
--- tracked in dfe-infra#190.
+and OVERWRITES whatever the caller set. Of the DFE apps only
+dfe-transform-elastic builds its config through from_env (src/service.rs:894);
+archiver, receiver, loader, fetcher, transform-vrl and transform-vector hand-build
+theirs and never read the variable. None of those seven app charts includes this
+helper: each names its protocol from kafka.securityProtocol, and a provider key
+would override that in the one app that reads both.
 
-Two consequences while that is true. A chart must not put a `-no-tls` key here:
-scalo's parse rejects it and the transport refuses to construct. And a canonical
-key here is a claim about the broker that scalo will act on the day the app is
-wired, so it has to match the listener the deployment actually dials.
+A chart must not put a `-no-tls` key here: scalo's parse rejects it and the
+transport refuses to construct. And a canonical key here is a claim about the
+broker that scalo acts on, so it has to match the listener the deployment dials.
 
 Usage:
   env:

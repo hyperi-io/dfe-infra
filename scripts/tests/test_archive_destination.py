@@ -25,8 +25,6 @@ nothing -- into archive every topic the broker holds.
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path
@@ -138,8 +136,10 @@ def test_the_sasl_credential_rides_its_secret() -> None:
                       ("KAFKA_SASL_PASSWORD", "password"),
                       ("KAFKA_SASL_MECHANISM", "sasl.mechanism")):
         ref = env.get(name, {}).get("valueFrom", {}).get("secretKeyRef", {})
+        # The detail names the env entry only, so no Secret coordinate reaches a CI log.
         expect(f"{name} comes from the kafka user secret",
-               ref.get("name") == "dfe-kafka-user" and ref.get("key") == key, f"got {ref!r}")
+               ref.get("name") == "dfe-kafka-user" and ref.get("key") == key,
+               f"{name} is missing, or reads another Secret or key")
 
 
 def test_the_chart_sends_no_discovery_pattern() -> None:

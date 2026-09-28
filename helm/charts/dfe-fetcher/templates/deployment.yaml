@@ -82,7 +82,13 @@ spec:
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_FETCHER_") | nindent 12 }}
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if contains "SSL" (upper .Values.kafka.securityProtocol) }}
+            # A TLS listener only: the app sets kafka.tls.enabled from this in both
+            # directions (config/mod.rs:932), so a plaintext value would switch off
+            # TLS the overlay turned on.
+            - name: DFE_FETCHER_KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
             # SASL credential by env, not in the config blob: the engine-authored
             # YAML carries a MASKED password, and env is applied after the

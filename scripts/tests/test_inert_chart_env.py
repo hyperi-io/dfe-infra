@@ -16,10 +16,10 @@ here reads the rendered manifest and asserts what is NOT in it.
 **#181 and #66 -- the elastic chart's topic and group dials.** They were offered
 in values.yaml as operator dials, rendered env vars, and did nothing: scalo's
 `KafkaConfig::from_env` builds its bare fallback from the CANONICAL name alone
-(scalo-rs transport/kafka/config.rs:1501), so `KAFKA_GROUP_ID` lands and
+(scalo-rs 2.13.0 transport/kafka/config.rs:1880), so `KAFKA_GROUP_ID` lands and
 `KAFKA_CONSUMER_GROUP` does not, and the two topic names are not KafkaConfig
 fields at all. `KAFKA_BOOTSTRAP_SERVERS` IS read, so it stays -- this is the one
-app chart where a bare name is the right one (src/service.rs:438).
+app chart where a bare name is the right one (src/service.rs:894).
 
 **#271 -- the Vector binary cache.** dfe-transform-vector#66 removed
 `vector.cache_dir` when resolve(), cache_path() and seed_cache() were found to
@@ -34,8 +34,6 @@ manifest declares and needs no hand-kept list.
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
-
-from __future__ import annotations
 
 import subprocess
 from pathlib import Path
