@@ -422,7 +422,7 @@ kafka:
         repository: nginxinc/nginx-unprivileged
         tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
         # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
-        digest: "sha256:2ddec616f1cb58bcac057aa388f28cb81e35137641ef4226d321714499329bd1"
+        digest: "sha256:26b0bf6fbf07297983cb341998d79c831508787de26627dd2a112321b9c3a4af"
         pullPolicy: IfNotPresent
       # A static file server in front of one upstream, read by a handful of
       # admins -- this is not a data path.
