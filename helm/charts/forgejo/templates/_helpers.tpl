@@ -50,3 +50,15 @@ Admin credentials come from the bootstrap-created secret (admin.secretName).
   value: "true"
 {{- end }}
 {{- end -}}
+
+{{/*
+The Argo CD push hook's URL, and the https one a deploy repo set up before
+argocd-server ran insecure still carries.
+*/}}
+{{- define "forgejo.argoWebhookUrl" -}}
+{{- printf "http://%s%s" .Values.webhook.argocdHost .Values.webhook.path -}}
+{{- end -}}
+
+{{- define "forgejo.legacyArgoWebhookUrl" -}}
+{{- printf "https://%s%s" .Values.webhook.argocdHost .Values.webhook.path -}}
+{{- end -}}

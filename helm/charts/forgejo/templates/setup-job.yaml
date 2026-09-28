@@ -195,9 +195,9 @@ spec:
             # Plain HTTP inside the cluster: every delivery is HMAC-signed with
             # WEBHOOK_SECRET, which Argo CD verifies before it acts on one.
             - name: WEBHOOK_URL
-              value: {{ printf "http://%s%s" .Values.webhook.argocdHost .Values.webhook.path | quote }}
+              value: {{ include "forgejo.argoWebhookUrl" . | quote }}
             - name: LEGACY_WEBHOOK_URL
-              value: {{ printf "https://%s%s" .Values.webhook.argocdHost .Values.webhook.path | quote }}
+              value: {{ include "forgejo.legacyArgoWebhookUrl" . | quote }}
             # optional: an adopted Argo CD nobody minted a secret for leaves this
             # empty, and the Job says the hook was not registered rather than
             # failing the sync.

@@ -4,6 +4,12 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- if .Values.webhook.enabled }}
+  annotations:
+    # A hook URL change puts this app OutOfSync, so Argo runs the sync whose
+    # PostSync Job re-registers the hook; a hook alone never triggers one.
+    dfe.hyperi.io/argo-webhook-url: {{ include "forgejo.argoWebhookUrl" . | quote }}
+  {{- end }}
 spec:
   # HARDCODED 1 -- Forgejo is single-writer (leveldb queue + SQLite on ONE RWO
   # PVC): a 2nd replica cannot lock /data/data/queues/common and CrashLoopBackOffs,

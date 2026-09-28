@@ -139,6 +139,16 @@ def test_the_hook_it_replaces_is_the_same_endpoint_over_https() -> None:
     assert (legacy.hostname, legacy.path) == (current.hostname, current.path)
 
 
+def test_the_hook_url_is_a_tracked_field_so_a_change_reruns_the_job() -> None:
+    """The Job is a PostSync hook, which Argo runs only on a sync an OutOfSync app starts."""
+    (deployment,) = [
+        d for d in helm_template("t", chart_dir("forgejo"))
+        if d.get("kind") == "Deployment"
+    ]
+    annotations = deployment["metadata"].get("annotations") or {}
+    assert annotations.get("dfe.hyperi.io/argo-webhook-url") == forgejo_setup_env()["WEBHOOK_URL"]
+
+
 def test_a_disabled_hook_removes_nothing() -> None:
     docs = helm_template(
         "t", chart_dir("forgejo"), "--show-only", "templates/setup-job.yaml",
