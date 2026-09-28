@@ -188,10 +188,6 @@ forgejo:
 dfe-engine:
   enabled: true
   clickhouse: *dfeClickhouseEndpoint
-  postgresql:
-    # cnpg-cluster's Cluster CR is `dfe-pg`; CNPG serves it at <name>-rw and
-    # mints the app Secret dfe-pg-app the chart already defaults to.
-    host: dfe-pg-rw
   # No ArgoCD and no deploy repo in the trial; the engine runs store-backed
   # without publishing overlays. The product path re-enables this.
   gitops:

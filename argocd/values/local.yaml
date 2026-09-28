@@ -12,9 +12,6 @@ global:
 domain: dfe.example.com
 storageClass: local-path
 
-postgresql:
-  host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
-
 # Target the dedicated DFE worker nodes.
 # Matches label + tolerates taint applied during node provisioning.
 nodeScheduling:

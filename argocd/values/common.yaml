@@ -165,11 +165,6 @@ clickhouse:
   passwordSecretName: clickhouse-admin-password
   passwordSecretKey: password
 
-postgresql:
-  host: ""  # Set per-environment: cnpg-cluster-rw.{namespace}.svc.cluster.local
-  port: 5432
-  database: dfe
-
 # External secret backend (OpenBao / Vault / cloud KMS), per deployment. Set means
 # the deployment has one, and network-policies derives the engine's egress to it
 # from that (helm/charts/network-policies/values.yaml externalEgress).

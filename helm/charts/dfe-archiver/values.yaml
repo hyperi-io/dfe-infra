@@ -99,6 +99,8 @@ spool:
 s3:
   endpoint: ""
   bucket: ""
+  # Secret holding static keys (access_key_id, secret_access_key) for a store
+  # with no workload identity. Absent Secret is fine; empty drops the refs.
   secretName: dfe-archiver-s3
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
