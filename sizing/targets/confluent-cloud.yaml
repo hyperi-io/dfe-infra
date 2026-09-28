@@ -22,7 +22,7 @@
 
 message_max_bytes:
   state: managed
-  reason: "CONTRACT.md: Confluent caps a topic's max.message.bytes at 8 MiB, under the 16 MiB the rest of the size chain carries end to end -- the collector splits any event above that cap before it reaches the topic, and confluent-cloud/main.tf's own check block says so at plan."
+  reason: "CONTRACT.md: Confluent caps a topic's max.message.bytes by cluster type -- 20 MB on Freight (the module's default) and Enterprise, which carries the chain's 16 MiB, and 8,388,608 on Basic -- and confluent-cloud/main.tf's check block, keyed on tier, flags a size above the ceiling at plan."
 
 broker_shape:
   state: blocked

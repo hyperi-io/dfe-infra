@@ -247,7 +247,4 @@ credential DFE runs as. The manager account holds `CloudClusterAdmin` and is
 tofu's alone; the DFE account holds the on-prem grant set and nothing more.
 Confluent's principal is the service account's `sa-` ID, not its display name.
 
-**Confluent caps a topic's `max.message.bytes` at 8 MiB**, under the 16 MiB the
-rest of the size chain carries. The body applies what it is given rather than
-clamping it -- a setting quietly halved here is worse than one the vendor
-rejects out loud -- and a `check` block says so at plan.
+**Confluent caps a topic's `max.message.bytes` by cluster type**: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated (docs.confluent.io/cloud/current/topics/manage.html), and 20 MB on Freight in the cluster-type limits table (docs.confluent.io/cloud/current/clusters/cluster-types.html). So `freight` and `enterprise` carry the chain's 16 MiB and `basic` does not, and a topic that sets nothing takes Confluent's default of 2,097,164. The body applies what it is given rather than clamping it -- a setting quietly halved here is worse than one the vendor rejects out loud -- and a `check` block keyed on `tier` warns at plan.

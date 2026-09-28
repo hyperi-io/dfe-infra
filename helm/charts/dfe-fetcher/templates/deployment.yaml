@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- if not (and .Values.keda .Values.keda.enabled) }}
   # PINNED at 1, deliberately not dfe-common.replicas: a fetcher is a producer
@@ -41,6 +45,9 @@ spec:
       enableServiceLinks: false
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
@@ -73,6 +80,7 @@ spec:
             # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
             {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_FETCHER_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             # An instance whose credentials are vault:/env: references in its own
             # stanza has no such Secret, so the refs are optional; a deployment
             # that provisions one still gets it injected.
@@ -160,6 +168,7 @@ spec:
                 optional: true
           {{- end }}
           volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
             - name: config
               mountPath: /etc/dfe
               readOnly: true
@@ -168,8 +177,8 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
-            # The cursor store's directory (cursor.file_path defaults to
-            # /var/lib/dfe-fetcher/cursors.json), unwritable on the read-only
+            # The cursor store's directory (cursor.directory, one
+            # <key>.cursor.json per connection), unwritable on the read-only
             # rootfs without a volume.
             - name: cursor
               mountPath: /var/lib/dfe-fetcher
@@ -194,6 +203,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config

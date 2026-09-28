@@ -8,5 +8,5 @@ dependencies:
   - name: dfe-common
     # 0.1.2: prometheusAnnotations honours .Values.metricsPort -- dfe-ui scrapes on
     # 3000 (Next has one listener), not the stack's 9090.
-    version: "0.14.0"
+    version: "0.15.0"
     repository: "file://../../library/dfe-common"

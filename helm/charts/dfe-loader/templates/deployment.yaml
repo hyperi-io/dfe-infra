@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -24,6 +28,9 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       # k8s injects a legacy Docker-link env var per Service in the namespace, and
       # this chart now ADDS svc/dfe-loader -> DFE_LOADER_PORT="tcp://IP:6000". The
       # loader layers `Env::prefixed("DFE_LOADER_")` over its config (config/loader.rs),
@@ -58,6 +65,7 @@ spec:
             # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
             {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_LOADER_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if eq (include "dfe-common.transport" .) "direct" }}
             # Direct transport (slim, mesh): receiver -> loader gRPC on the
             # service grpcPort; the DLQ's kafka backend is gone with the broker.
@@ -150,6 +158,7 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: dfe-loader
           volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
             - name: config
               mountPath: /etc/dfe
               readOnly: true
@@ -192,6 +201,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
