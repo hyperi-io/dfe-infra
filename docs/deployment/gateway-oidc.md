@@ -111,7 +111,7 @@ repo pins (`versions.yaml`, `envoy-gateway`):
 
 The Argo CD bootstrap installs signs in through the provider the gateway already fronts it with. bootstrap reads the gateway's `dfe-oidc-argocd-admin` SecurityPolicy, and `bootstrap/argocd_login.py` turns it into Argo's `oidc.config`: the same issuer and client id, and `clientSecret: $<secret>:client-secret`, a reference to the Secret that policy reads. The value never leaves that Secret. Dex is turned off.
 
-`argocd-rbac-cm` maps `dfe-admins` to `role:admin` and `dfe-infra-viewers` to `role:readonly`, the engine's own names (dfe-engine `docs/control-plane/rbac-vocabulary.md`). Any other group signs in and sees nothing.
+`argocd-rbac-cm` maps `dfe-admins` and `dfe-infra` to `role:admin` and `dfe-infra-viewers` to `role:readonly`, the engine's own names (dfe-engine `docs/control-plane/rbac-vocabulary.md`). `dfe-infra` is Argo's admin because its engine role, `infra_admin`, already carries `argo:*`. Any other group signs in and sees nothing.
 
 - **No policy, no SSO.** With no provider, or `exposure.infraUisExternal: false`, the gateway renders no policy for the route, and Argo keeps its local `admin`. The access summary says which one a deployment got.
 - **Read at bootstrap time.** On a first bootstrap the gateway syncs after Argo is installed, so the login is read again once the readiness gate passes. A provider added later reaches Argo on the next bootstrap run.

@@ -25,6 +25,7 @@ Needs `helm` on PATH for the chart renders.
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -215,14 +216,46 @@ def test_no_other_copy_claims_to_be_part_of_argo() -> None:
 
 
 # --- the values bootstrap layers on ------------------------------------------
-def test_the_admin_group_is_argo_admin_and_the_viewer_group_read_only() -> None:
-    lines = argocd_login.policy_csv().splitlines()
-    assert lines == ["g, dfe-admins, role:admin", "g, dfe-infra-viewers, role:readonly"]
+def test_both_argo_carrying_groups_are_argo_admin_and_the_viewer_group_read_only() -> None:
+    """dfe-infra's engine role, infra_admin, carries argo:*, so it is Argo's admin too."""
+    assert argocd_login.policy_csv().splitlines() == [
+        "g, dfe-admins, role:admin",
+        "g, dfe-infra, role:admin",
+        "g, dfe-infra-viewers, role:readonly",
+    ]
 
 
 def test_the_mapped_groups_are_ones_the_fixture_idp_serves() -> None:
     groups = {g["name"] for g in tomllib.loads(USERS_FIXTURE.read_text(encoding="utf-8"))["groups"]}
-    assert {argocd_login.ADMIN_GROUP, argocd_login.VIEWER_GROUP} <= groups
+    mapped = {argocd_login.ADMIN_GROUP, argocd_login.INFRA_GROUP, argocd_login.VIEWER_GROUP}
+    assert mapped <= groups
+
+
+@pytest.mark.skipif(shutil.which("argocd") is None, reason="needs the argocd CLI on PATH")
+@pytest.mark.parametrize(
+    ("group", "action", "resource", "target", "allowed"),
+    [
+        ("dfe-admins", "update", "clusters", "*", True),
+        ("dfe-infra", "update", "clusters", "*", True),
+        ("dfe-infra", "sync", "applications", "default/app", True),
+        ("dfe-infra-viewers", "get", "applications", "default/app", True),
+        ("dfe-infra-viewers", "sync", "applications", "default/app", False),
+        ("dfe-infra-viewers", "update", "clusters", "*", False),
+        ("dfe-viewers", "get", "applications", "default/app", False),
+    ],
+)
+def test_argos_own_rbac_engine_grants_what_the_mapping_says(
+    tmp_path: Path, group: str, action: str, resource: str, target: str, allowed: bool
+) -> None:
+    """Evaluated by `argocd admin settings rbac can`, against Argo's built-in roles."""
+    policy = tmp_path / "policy.csv"
+    policy.write_text(argocd_login.policy_csv(), encoding="utf-8")
+    out = subprocess.run(
+        ["argocd", "admin", "settings", "rbac", "can", group, action, resource, target,
+         "--policy-file", str(policy)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    assert out.stdout.strip() == ("Yes" if allowed else "No"), out.stderr
 
 
 def test_a_provider_turns_dex_off_and_sets_oidc_config() -> None:
@@ -245,7 +278,7 @@ def test_the_summary_names_the_provider_and_the_roles() -> None:
     cm = {"data": argocd_login.helm_values(config)["configs"]["cm"]}
     text = argocd_login.summary(cm)
     assert f"https://dex.{DOMAIN}" in text
-    assert "`dfe-admins` gets `role:admin`" in text
+    assert "`dfe-admins` and `dfe-infra` get `role:admin`" in text
     assert "`dfe-infra-viewers` gets `role:readonly`" in text
 
 

@@ -50,11 +50,17 @@ GATEWAY_NAMESPACE = "envoy-gateway-system"
 EDGE_TLS = "dfe-wildcard-tls"
 # Scopes the gateway chart requests when a provider names none.
 DEFAULT_SCOPES = ["openid", "email", "profile", "groups"]
-# dfe-engine's vocabulary (docs/control-plane/rbac-vocabulary.md): the admin group
-# it seeds, and the canonical infrastructure read-only group.
+# dfe-engine's vocabulary (docs/control-plane/rbac-vocabulary.md): the two groups it
+# seeds whose roles carry Argo (admin `*`, infra_admin `argo:*`), and the canonical
+# infrastructure read-only group.
 ADMIN_GROUP = "dfe-admins"
+INFRA_GROUP = "dfe-infra"
 VIEWER_GROUP = "dfe-infra-viewers"
-GROUP_ROLES = ((ADMIN_GROUP, "role:admin"), (VIEWER_GROUP, "role:readonly"))
+GROUP_ROLES = (
+    (ADMIN_GROUP, "role:admin"),
+    (INFRA_GROUP, "role:admin"),
+    (VIEWER_GROUP, "role:readonly"),
+)
 
 
 def policy_csv() -> str:
@@ -151,9 +157,10 @@ def summary(cm: dict | None, error: str = "") -> str:
             "- Argo CD has no OIDC provider, so it keeps its local `admin` login. Its password\n"
             "  is the `Argo CD initial admin` entry in the credentials block above.\n"
         )
+    admins = " and ".join(f"`{group}`" for group, role in GROUP_ROLES if role == "role:admin")
     return (
         f"- Argo CD signs in through {issuer}, the provider the gateway fronts it with.\n"
-        f"  `{ADMIN_GROUP}` gets `role:admin` and `{VIEWER_GROUP}` gets `role:readonly`;\n"
+        f"  {admins} get `role:admin` and `{VIEWER_GROUP}` gets `role:readonly`;\n"
         "  any other group signs in and sees nothing. The IdP client must allow the\n"
         "  redirect URI `<Argo CD URL>/auth/callback`. The local `admin` stays as recovery.\n"
     )
@@ -222,9 +229,7 @@ def cmd_values(args: argparse.Namespace) -> int:
     config, why = oidc_config(policy, args.domain, edge_ca)
     if error:
         why = f"{error}; {why}"
-    # codeql[py/clear-text-logging-sensitive-data] names a Secret, never prints its value
     print(f"  [argocd] {why}", file=sys.stderr)
-    # codeql[py/clear-text-logging-sensitive-data] a $<secret>:<key> reference, not the value
     print(json.dumps(helm_values(config), indent=2, sort_keys=True))
     return 0
 
