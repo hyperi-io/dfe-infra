@@ -80,9 +80,10 @@ in the `dfe-ops stack-deploy` pre-flight.
 Some SSoT values legitimately have mirrors -- `versions.yaml` feeds appset pins,
 `Chart.yaml` appVersions and bare `version:` keys, and Renovate can only edit
 the SSoT. `renovate-propagate.yml` closes that: it triggers on Renovate's own
-branch push, runs `check_versions_drift.py --fix` to write every mirror,
-re-resolves the digests and pushes back, so the PR arrives green rather than
-red-with-homework.
+branch push, re-resolves the digests, runs `check_versions_drift.py --fix` to
+write every mirror, gates on the drift check and pushes back only when it
+passes, so the PR arrives green rather than red-with-homework. Renovate ignores
+the propagator's commits (`gitIgnoredAuthors`), so it still rebases the branch.
 
 Prefer deriving over mirroring. The otel collector held a second copy of the
 ClickHouse endpoint and crashlooped on the profile it was not written for; the
