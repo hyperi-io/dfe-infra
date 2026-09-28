@@ -96,7 +96,7 @@ IN_CLUSTER = "in-cluster"
 # Every annotation layer2-apps' values block reads, as bootstrap.sh writes it --
 # always present, empty where the fact does not apply. The endpoint is an RFC
 # 2606 placeholder: this repo ships publicly.
-CLUSTER_SECRETS = {
+CLUSTER_ANNOTATIONS = {
     MANAGED: {
         "dfe.hyperi.io/kafka_mode": "external",
         "dfe.hyperi.io/kafka_bootstrap": "b-1.example.invalid:9096,b-2.example.invalid:9096",
@@ -314,7 +314,7 @@ def appset_values(scenario: str) -> str:
     """
     doc = yaml.safe_load(LAYER2_APPS.read_text(encoding="utf-8"))
     block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
-    secret = yaml.safe_dump({"metadata": {"annotations": CLUSTER_SECRETS[scenario]}})
+    annotations = yaml.safe_dump({"metadata": {"annotations": CLUSTER_ANNOTATIONS[scenario]}})
     with tempfile.TemporaryDirectory() as tmp:
         chart = Path(tmp) / "appset"
         (chart / "templates").mkdir(parents=True)
@@ -333,9 +333,9 @@ def appset_values(scenario: str) -> str:
             encoding="utf-8",
             newline="\n",
         )
-        (Path(tmp) / "secret.yaml").write_text(secret, encoding="utf-8", newline="\n")
+        (Path(tmp) / "annotations.yaml").write_text(annotations, encoding="utf-8", newline="\n")
         out = subprocess.run(
-            ["helm", "template", "appset", str(chart), "-f", str(Path(tmp) / "secret.yaml")],
+            ["helm", "template", "appset", str(chart), "-f", str(Path(tmp) / "annotations.yaml")],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -357,7 +357,7 @@ def render(app: str, scenario: str, *sets: str) -> tuple[dict, ...]:
     for s in (*SCENARIOS[scenario], *sets):
         cmd += ["--set", s]
     with tempfile.TemporaryDirectory() as tmp:
-        if scenario in CLUSTER_SECRETS:
+        if scenario in CLUSTER_ANNOTATIONS:
             # Argo layers an appset's inline values over every values file.
             overlay = Path(tmp) / "appset.yaml"
             overlay.write_text(appset_values(scenario), encoding="utf-8", newline="\n")
