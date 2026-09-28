@@ -55,15 +55,6 @@ kafka:
   # It suits only a supplied broker with no authentication.
   provider: ""
 
-# API credentials are injected via External Secrets Operator
-# ESO creates dfe-fetcher-api-creds from vault/cloud secret store. The refs are
-# optional in the deployment: an instance whose credentials are vault:/env:
-# references inside its own stanza has no such Secret.
-apiCredentials:
-  secretName: dfe-fetcher-api-creds
-  apiKeyKey: api-key
-  apiSecretKey: api-secret
-
 # Credentials for the upstream this instance polls. The source's fetcher stanza
 # names them as `env:NAME` references (dfe-fetcher src/config/resolve.rs), so
 # the Secret's KEYS are the variable names the stanza asks for and no value ever

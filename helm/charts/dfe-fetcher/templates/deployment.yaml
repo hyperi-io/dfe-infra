@@ -81,21 +81,6 @@ spec:
             {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_FETCHER_") | nindent 12 }}
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
-            # An instance whose credentials are vault:/env: references in its own
-            # stanza has no such Secret, so the refs are optional; a deployment
-            # that provisions one still gets it injected.
-            - name: DFE_FETCHER_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.apiCredentials.secretName }}
-                  key: {{ .Values.apiCredentials.apiKeyKey }}
-                  optional: true
-            - name: DFE_FETCHER_API_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.apiCredentials.secretName }}
-                  key: {{ .Values.apiCredentials.apiSecretKey }}
-                  optional: true
             {{- if (include "dfe-common.transportIsBus" .) }}
             {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- if .Values.kafka.saslSecretName }}

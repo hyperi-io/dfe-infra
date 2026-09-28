@@ -54,12 +54,13 @@ spec:
               protocol: TCP
             {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
           env:
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_ELASTIC_") | nindent 12 }}
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # BARE names on purpose, and the one app chart where that is right:
             # this app builds its transport through scalo's KafkaConfig::from_env
-            # (dfe-transform-elastic src/service.rs:438), which falls back to
-            # `KAFKA_<CANONICAL>` (scalo-rs transport/kafka/config.rs:1501). The
+            # (dfe-transform-elastic src/service.rs:894), which falls back to
+            # `KAFKA_<CANONICAL>` (scalo-rs transport/kafka/config.rs:1880). The
             # receiver and loader charts prefix theirs because those two hand-build
             # their config and never call from_env. Only CANONICAL names land, so
             # the topic and group dials were deleted as inert (dfe-infra#181) --
