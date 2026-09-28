@@ -8,4 +8,4 @@
 # extension with a wheel per interpreter and platform, and this suite runs from
 # an operator's own machine as well as a runner. Pin the hashes here once the
 # onboarding lane runs in CI on a fixed interpreter.
-playwright==1.62.0
+playwright==1.63.0
