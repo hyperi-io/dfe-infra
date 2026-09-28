@@ -147,6 +147,18 @@ def test_infra_routes_take_the_same_provider_block() -> None:
            f"got {differ}")
 
 
+def test_the_client_secret_lands_under_the_one_key_envoy_gateway_reads() -> None:
+    """clientSecretKey renamed the key, and Envoy Gateway reads only client-secret."""
+    docs = render(GATEWAY, *PRIVATE_CA_PROVIDER, "oidc.providers[0].clientSecretKey=secret")
+    keys = sorted({
+        item["secretKey"]
+        for es in of_kind(docs, "ExternalSecret")
+        for item in es["spec"]["data"]
+    })
+    expect("every OIDC ExternalSecret writes key client-secret", keys == ["client-secret"],
+           f"got {keys}")
+
+
 def test_no_dead_oidc_switch_survives() -> None:
     """auth.oidcEnabled was declared by the engine chart and read by nothing."""
     hits = [
@@ -217,6 +229,7 @@ def main() -> int:
         test_private_ca_provider_skips_discovery()
         test_private_ca_provider_keeps_the_token_exchange_in_cluster()
         test_infra_routes_take_the_same_provider_block()
+        test_the_client_secret_lands_under_the_one_key_envoy_gateway_reads()
         test_no_dead_oidc_switch_survives()
         test_gateway_egress_names_the_listener_port()
         test_gateway_egress_selects_the_proxy_pods()
