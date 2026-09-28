@@ -219,6 +219,11 @@ jobs:
       - name: Gateway OIDC and gateway egress render the working shape
         run: python3 scripts/tests/test_gateway_oidc.py
 
+      # docs/deployment/edge.md cites this as the proof of the exposure cascade,
+      # the kill switch and the render guards; it renders only, no cluster.
+      - name: Gateway route exposure cascade and render guards
+        run: bash scripts/test-route-exposure.sh
+
       # versions.yaml pinning tag@sha256 is worth nothing if the chart renders a
       # bare tag, and a bare tag is mutable.
       - name: Rendered images carry the pinned digest
