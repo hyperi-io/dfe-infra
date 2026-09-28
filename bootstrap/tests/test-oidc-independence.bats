@@ -57,14 +57,25 @@ setup() {
 # --- Invariant 2: Secrets are ESO/Terraform managed ---
 
 @test "dfe-engine OIDC secrets reference K8s Secrets, not dfe-engine endpoints" {
+    # Scoped to the engine pod, the one holding the credential: the hunt runner's
+    # readiness wait polls the engine too, and that is start order, not a secret source.
     run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
+        --show-only templates/deployment.yaml \
         --set global.registry=ghcr.io/test \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
         --set 'oidc.providers[0].secretName=dfe-oidc-google' \
         --set 'oidc.providers[0].envMappings.DFE_OIDC_GOOGLE_CLIENT_ID=client-id'
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "secretKeyRef" ]]
+
+    # The pod carries other secretKeyRefs, so the provider's own entry is the one read.
+    local entry
+    entry=$(printf '%s\n' "$output" | grep -A4 -e '- name: DFE_OIDC_GOOGLE_CLIENT_ID')
+    [[ "${entry}" =~ "secretKeyRef:" ]]
+    [[ "${entry}" =~ "name: dfe-oidc-google" ]]
+    [[ "${entry}" =~ "key: client-id" ]]
+    [[ ! "${entry}" =~ "value:" ]]
+
     [[ ! "$output" =~ "http://dfe-engine" ]]
     [[ ! "$output" =~ "https://dfe-engine" ]]
 }

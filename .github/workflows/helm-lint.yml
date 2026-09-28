@@ -49,6 +49,10 @@ on:
 permissions:
   contents: read
 
+# One Helm for every job here, so the bats renders are the charts the lint job lints.
+env:
+  HELM_VERSION: "4.2.3"
+
 jobs:
   lint:
     name: helm lint + yaml validate
@@ -170,7 +174,7 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: "4.2.3"
+          version: ${{ env.HELM_VERSION }}
 
       # Every file under scripts/tests runs here, including the ones no step
       # above names; the named steps stay for the failure paths they document.
@@ -312,6 +316,35 @@ jobs:
             python3 -c 'import sys, yaml; list(yaml.safe_load_all(open(sys.argv[1])))' "$f"
             echo "OK: $f"
           done < <(find argocd -name '*.yaml' -type f -print0)
+
+  # A job of its own, so a lint failure cannot hide these results. The trigger
+  # paths above cover every file bootstrap/tests reads.
+  bats:
+    name: bootstrap bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Pinned by commit; the runner image's own bats is whatever version it ships.
+      - name: Checkout bats-core
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bats-core/bats-core
+          ref: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5 # v1.14.0
+          path: .bats-core
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # The bootstrap templates render through envsubst, so a runner without it
+      # fails here by name rather than as a dozen test failures.
+      - name: Run bootstrap/tests
+        run: |
+          command -v envsubst
+          .bats-core/bin/bats --formatter tap bootstrap/tests/
 
   # Whether the drift guard below can reach dfe-deploy at all. It is a job of
   # its own because a job-level `if:` cannot read the secrets context, and the
