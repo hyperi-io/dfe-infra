@@ -128,21 +128,44 @@ def _renovate_manager() -> tuple[dict, str]:
 
 
 def _as_python(pattern: str) -> str:
-    """Renovate/RE2 spell named groups (?<n>...); python re wants (?P<n>...)."""
+    """Spell a Renovate pattern for python re without changing what it matches.
+
+    Renovate/RE2 spell named groups (?<n>...); python re wants (?P<n>...). A
+    trailing `$` is end of input to RE2 and to a RegExp without the m flag, but
+    python's also matches before a final newline, so it becomes \\Z.
+    """
     import re
 
-    return re.sub(r"\(\?<([A-Za-z]+)>", r"(?P<\1>", pattern)
+    named = re.sub(r"\(\?<([A-Za-z]+)>", r"(?P<\1>", pattern)
+    return re.sub(r"(?<!\\)\$$", r"\\Z", named)
+
+
+def _manager_regions(manager: dict, text: str) -> list[str]:
+    """Every region `recursive` hands the manager's last matchString.
+
+    Renovate passes each level the WHOLE match of the level before it, never a
+    named group (processRecursive in lib/modules/manager/custom/regex/
+    strategies.ts), so a group narrows nothing.
+    """
+    import re
+
+    regions = [text]
+    if manager.get("matchStringsStrategy") != "recursive":
+        return regions
+    for pattern in manager["matchStrings"][:-1]:
+        compiled = re.compile(_as_python(pattern))
+        narrowed: list[str] = []
+        for region in regions:
+            narrowed.extend(m.group(0) for m in compiled.finditer(region))
+        regions = narrowed
+    return regions
 
 
 def _manager_region(manager: dict, text: str) -> str:
-    """The slice of versions.yaml the manager's first matchString narrows to."""
-    import re
-
-    if manager.get("matchStringsStrategy") != "recursive":
-        return text
-    narrowed = re.search(_as_python(manager["matchStrings"][0]), text)
-    expect("the scoping pattern narrows to a region", narrowed is not None, "no match")
-    return narrowed.group("currentStack") if narrowed else ""
+    """The one slice of versions.yaml the manager's scoping selects."""
+    regions = _manager_regions(manager, text)
+    expect("the scoping pattern selects exactly one region", len(regions) == 1, f"{len(regions)} regions")
+    return regions[0] if len(regions) == 1 else ""
 
 
 def _manager_matches(manager: dict, text: str) -> dict[str, str]:
@@ -216,11 +239,9 @@ def test_the_manager_reaches_one_stack_block_only() -> None:
     header = f"\n  {current.group(1) if current else ''}:\n"
 
     expect(
-        "the region is the body of the block `current` names",
-        bool(current)
-        and text.endswith(region)
-        and text[: len(text) - len(region)].endswith(header),
-        f"region opens {region[:40]!r}, expected to follow {header!r}",
+        "the region is the block `current` names, from its header to the end of the file",
+        bool(current) and region.startswith(header) and text.endswith(region),
+        f"region opens {region[:40]!r}, expected to open {header!r}",
     )
     expect(
         "the frozen blocks are outside it",
