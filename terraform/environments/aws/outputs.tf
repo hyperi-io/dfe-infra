@@ -139,19 +139,6 @@ output "DFE_DNS_PROVIDER" {
   value       = "aws"
 }
 
-output "DFE_REGISTRY_HOST" {
-  value = var.registry_host
-}
-
-output "DFE_REGISTRY_USER" {
-  value = var.registry_user
-}
-
-output "DFE_REGISTRY_TOKEN" {
-  value     = var.registry_token
-  sensitive = true
-}
-
 // ---------------------------------------------------------------------------
 // Operator-facing
 // ---------------------------------------------------------------------------

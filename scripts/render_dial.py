@@ -134,11 +134,6 @@ def _env_updates(dial: dict[str, object]) -> dict[str, str]:
         value = _scalar(dial, path)
         if value is not None:
             updates[env_key] = value
-    # DFE_REGISTRY_HOST is the pull-secret host -- the host part of the registry
-    # (the full registry+path is the --registry flag on the derived command).
-    registry = _scalar(dial, ("registry",))
-    if registry:
-        updates["DFE_REGISTRY_HOST"] = registry.split("/", 1)[0]
     return updates
 
 
@@ -1170,7 +1165,6 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
             "addresses allowed to reach the Kubernetes API, or set public to false"
         )
 
-    registry = _text(dial, ("registry",))
     kafka = _kafka(dial)
     return cloud, {
         "provision": {
@@ -1204,11 +1198,6 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         },
         "repo_url": _required(dial, ("k8s", "repo_url")),
         "target_revision": _required(dial, ("k8s", "target_revision")),
-        # The pull-secret host only. A registry credential is a secret, so it
-        # reaches tofu from the deployer's environment and never from the dial.
-        "registry_host": registry.split("/", 1)[0] if registry else "",
-        "registry_user": "",
-        "registry_token": "",
         "state": {
             "bucket": _required(dial, ("state", "bucket")),
             "key": _required(dial, ("state", "key")),

@@ -392,12 +392,10 @@ def test_an_unknown_telemetry_sink_is_refused() -> None:
         render(replace=("sink: cloudwatch", "sink: splunk"))
 
 
-def test_only_the_pull_secret_host_reaches_tofu() -> None:
-    """A registry credential is a secret, so it never travels through the dial."""
-    variables = render()
-    assert variables["registry_host"] == "ghcr.io"
-    assert variables["registry_user"] == ""
-    assert variables["registry_token"] == ""
+def test_no_pull_secret_input_reaches_tofu() -> None:
+    """The pull secret's inputs go from the deployer's environment straight to
+    bootstrap.sh, so a registry credential never lands in tofu state."""
+    assert [key for key in render() if key.startswith("registry")] == []
 
 
 def test_the_dials_kubernetes_version_wins_when_it_clears_the_platform_floor() -> None:

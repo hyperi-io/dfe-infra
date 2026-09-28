@@ -62,14 +62,12 @@
 #   DFE_WORKLOAD_IDENTITY_ANNOTATIONS  JSON map of service → cloud identity annotations
 #
 # Optional:
-#   DFE_REGISTRY_HOST        private registry hostname, for the dfe-regcred pull secret
-#   DFE_REGISTRY_USER        private registry username
-#   DFE_REGISTRY_TOKEN       private registry token
 #   DFE_PULL_SECRET_TOKEN    token for the ghcr-pull-secret every pod then names.
 #                            Unset, pods name no pull secret and pull anonymously,
 #                            which is all a public registry needs.
-#                            DFE_PULL_SECRET_SERVER (default ghcr.io) and
-#                            DFE_PULL_SECRET_USER (default token) go with it.
+#                            DFE_PULL_SECRET_SERVER (default: the host part of
+#                            DFE_REGISTRY) and DFE_PULL_SECRET_USER (default
+#                            token) go with it.
 #   DFE_SECRETS_BACKEND      which body the ESO ClusterSecretStore gets: openbao
 #                            (default, needs DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID
 #                            and an AppRole SecretID), aws-sm (needs none of
@@ -468,8 +466,6 @@ if [[ -z "${DFE_DOMAIN:-}" && -n "${DFE_BASE_DOMAIN:-}" ]]; then
   export DFE_DOMAIN="${DFE_PROFILE}.${DFE_BASE_DOMAIN}"
   echo "Domain derived from DFE_BASE_DOMAIN: ${DFE_DOMAIN}"
 fi
-# Registry vars are optional — skip regcred if not set
-# DFE_REGISTRY_HOST DFE_REGISTRY_USER DFE_REGISTRY_TOKEN
 missing=()
 for var in "${required_vars[@]}"; do
   [[ -z "${!var:-}" ]] && missing+=("$var")
@@ -582,14 +578,12 @@ else
   echo "  DFE_CLOUD=${DFE_CLOUD} creates its own nodes -- nothing to check, skipping"
 fi
 
-# Compute base64 auth for registry (only if registry vars are set)
-if [[ -n "${DFE_REGISTRY_HOST:-}" ]] && [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
-  export DFE_REGISTRY_AUTH
-  DFE_REGISTRY_AUTH=$(printf '%s:%s' "${DFE_REGISTRY_USER}" "${DFE_REGISTRY_TOKEN}" | base64)
-fi
 # The pull secret every pod names, empty when step [4b/7] creates none, so the
 # appsets that read it back never name a secret that does not exist.
 export DFE_IMAGE_PULL_SECRET="${DFE_PULL_SECRET_TOKEN:+ghcr-pull-secret}"
+# The credential is for the registry the dfe-* images come from, so its server
+# defaults to DFE_REGISTRY's host rather than to one fixed registry.
+DFE_PULL_SECRET_SERVER="${DFE_PULL_SECRET_SERVER:-${DFE_REGISTRY%%/*}}"
 
 # Deploy repo (dfe-engine writes config, Argo watches). PROVIDER-AGNOSTIC seam:
 # external git (GitHub ~85% / GitLab ~10%) is PRIMARY; the in-cluster Forgejo
@@ -912,22 +906,18 @@ echo "==> [4b/7] Creating imagePullSecrets"
 # on the node.
 for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
-  # Private registry regcred (if registry credentials provided)
-  if [[ -n "${DFE_REGISTRY_USER:-}" ]]; then
-    TARGET_NAMESPACE="$ns" envsubst < "${TEMPLATES_DIR}/regcred.yaml.tpl" | run kubectl apply -f -
-  fi
   # Private registry pull secret (GHCR, ECR, GCR, etc.)
-  # Set DFE_PULL_SECRET_SERVER, DFE_PULL_SECRET_USER, DFE_PULL_SECRET_TOKEN in env.
+  # Set DFE_PULL_SECRET_TOKEN, and DFE_PULL_SECRET_SERVER / _USER where the defaults miss.
   if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
     kubectl -n "$ns" create secret docker-registry "${DFE_IMAGE_PULL_SECRET}" \
-      --docker-server="${DFE_PULL_SECRET_SERVER:-ghcr.io}" \
+      --docker-server="${DFE_PULL_SECRET_SERVER}" \
       --docker-username="${DFE_PULL_SECRET_USER:-token}" \
       --docker-password="${DFE_PULL_SECRET_TOKEN}" \
       --dry-run=client -o yaml | run kubectl apply -f -
   fi
 done
 if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
-  echo "  Pull secret ${DFE_IMAGE_PULL_SECRET} created/updated in every DFE namespace, and every DFE pod names it"
+  echo "  Pull secret ${DFE_IMAGE_PULL_SECRET} for ${DFE_PULL_SECRET_SERVER} created/updated in every DFE namespace, and every DFE pod names it"
 else
   echo "  No pull secret (DFE_PULL_SECRET_TOKEN unset): pods name none and pull ${DFE_REGISTRY}"
   echo "  anonymously, which is all a public registry needs. Only a PRIVATE registry needs"
