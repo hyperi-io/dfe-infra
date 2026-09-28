@@ -18,6 +18,12 @@
   ],
   "packageRules": [
     {
+      "description": "The toolbox kubectl stays in the middle minor of platform.kubernetes (1.34-1.36), so it is within kubectl's one-minor skew of both ends. Move this pattern when that window moves.",
+      "matchFileNames": ["versions.yaml"],
+      "matchDepNames": ["kubernetes/kubernetes"],
+      "allowedVersions": "/^v1\\.35\\./"
+    },
+    {
       "description": "Stop Renovate editing the MIRRORS of an SSoT pin. These images are pinned in both versions.yaml and a chart; letting the helm-values manager edit the chart copy would fight the propagator and produce a PR that moves one mirror of a key that has up to three. versions.yaml is the only place these are proposed now. Deliberately package-scoped rather than a blanket helm-values disable: curlimages/curl in the forgejo chart has NO SSoT key, and losing Renovate on it would leave it genuinely unwatched.",
       "matchManagers": ["helm-values", "helmv3"],
       "matchPackageNames": [
