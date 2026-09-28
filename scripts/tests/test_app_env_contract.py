@@ -24,7 +24,8 @@ fails HERE, which makes it a decision rather than a silent drift.
 Rows cover only what the chart is responsible for. dfe-fetcher takes its broker
 list from the config file the chart writes, not from env, so that is asserted on
 the file. The archiver's S3 names belong to test_config_authority.py and an
-unnamed secretKeyRef to test_inert_chart_env.py.
+unnamed secretKeyRef to test_inert_chart_env.py. dfe-ui runs no scalo, so its OTLP
+endpoint and exporter are asserted on their own, with the egress that endpoint needs.
 
 Every render layers argocd/values/common.yaml, the file every app Application
 reads first, so the names asserted are the ones a deployment actually gets.
@@ -37,6 +38,7 @@ Runs standalone or under pytest. Needs `helm` on PATH.
 import functools
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 import yaml
@@ -219,10 +221,10 @@ RETIRED = (
 
 
 @functools.cache
-def render(app: str, scenario: str) -> tuple[dict, ...]:
-    """The app's chart under common.yaml and one scenario's sets."""
+def render(app: str, scenario: str, *sets: str) -> tuple[dict, ...]:
+    """The app's chart under common.yaml, one scenario's sets, then any extra sets."""
     cmd = ["helm", "template", app, str(chart_dir(app)), "-f", str(COMMON_VALUES)]
-    for s in SCENARIOS[scenario]:
+    for s in (*SCENARIOS[scenario], *sets):
         cmd += ["--set", s]
     out = subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
@@ -232,9 +234,9 @@ def render(app: str, scenario: str) -> tuple[dict, ...]:
     return tuple(d for d in yaml.safe_load_all(out.stdout) if d)
 
 
-def env_entries(app: str, scenario: str) -> list[dict]:
+def env_entries(app: str, scenario: str, *sets: str) -> list[dict]:
     """Every env entry on the app's containers; init containers reach no app."""
-    deployments = [d for d in render(app, scenario) if d.get("kind") == "Deployment"]
+    deployments = [d for d in render(app, scenario, *sets) if d.get("kind") == "Deployment"]
     if not deployments:
         raise SystemExit(f"{app} [{scenario}] rendered no Deployment")
     pod = deployments[0]["spec"]["template"]["spec"]
@@ -335,6 +337,79 @@ def test_the_scalo_apps_push_otlp_to_the_grpc_port() -> None:
             f"{app} leaves scalo on its gRPC exporter",
             "OTEL_EXPORTER_OTLP_PROTOCOL" not in env,
             f"got {env.get('OTEL_EXPORTER_OTLP_PROTOCOL')!r}",
+        )
+
+
+def test_the_ui_pushes_otlp_to_the_http_port() -> None:
+    """dfe-ui exports over HTTP only, which the collector serves on 4318 and not on 4317.
+
+    dfe-ui pins @vercel/otel 2.1.3 (apps/dfe-core-ui/package.json), whose only trace
+    exporters are http/protobuf and http/json, posted to {endpoint}/v1/traces. A
+    deployer endpoint on the gRPC port moves to the HTTP port; any other is kept as given.
+    """
+    derived = "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
+    cases = (
+        ("the derived collector", (), derived),
+        (
+            "a deployer's gRPC port",
+            ("telemetry.hyperdxEndpoint=otlp.example.com:4317",),
+            "http://otlp.example.com:4318",
+        ),
+        (
+            "a deployer's own port",
+            ("otel.endpoint=https://otlp.example.com",),
+            "https://otlp.example.com",
+        ),
+    )
+    for label, sets, wanted in cases:
+        env = {e["name"]: e.get("value", "") for e in env_entries("dfe-ui", BUS, *sets)}
+        endpoint = env.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+        expect(
+            f"dfe-ui pushes OTLP to the HTTP port [{label}]",
+            endpoint == wanted,
+            f"got {endpoint!r}",
+        )
+        expect(
+            f"dfe-ui selects the http/protobuf exporter [{label}]",
+            env.get("OTEL_EXPORTER_OTLP_PROTOCOL") == "http/protobuf",
+            f"got {env.get('OTEL_EXPORTER_OTLP_PROTOCOL')!r}",
+        )
+
+
+def test_the_ui_can_reach_the_otlp_port_it_is_handed() -> None:
+    """The baseline egress is default-deny, so a collector port it leaves shut loses
+    every export at connect."""
+    env = {e["name"]: e.get("value", "") for e in env_entries("dfe-ui", BUS)}
+    endpoint = urllib.parse.urlsplit(env.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""))
+    labels = (endpoint.hostname or "").split(".")
+    in_cluster = len(labels) > 2 and labels[2] == "svc"
+    expect("dfe-ui is handed an in-cluster collector", in_cluster, f"got {endpoint.geturl()!r}")
+    if not in_cluster:
+        return
+    namespace = labels[1]
+    values = chart_dir("network-policies") / "values.yaml"
+    app_namespaces = set(yaml.safe_load(values.read_text(encoding="utf-8"))["dfeNamespaces"])
+    policies = [
+        d
+        for d in render("network-policies", BUS)
+        if d.get("kind") == "NetworkPolicy"
+        and d["metadata"]["name"] == "allow-baseline-egress"
+        and d["metadata"]["namespace"] in app_namespaces
+    ]
+    expect("the app namespaces' baseline egress renders", bool(policies), "none rendered")
+    for policy in policies:
+        opened = set()
+        for rule in policy["spec"]["egress"]:
+            peers = [
+                (to.get("namespaceSelector") or {}).get("matchLabels") or {}
+                for to in rule.get("to") or []
+            ]
+            if any(p.get("kubernetes.io/metadata.name") == namespace for p in peers):
+                opened |= {p["port"] for p in rule.get("ports") or []}
+        expect(
+            f"{policy['metadata']['namespace']} egress opens the collector port dfe-ui is handed",
+            endpoint.port in opened,
+            f"{namespace} opens {sorted(opened)}, dfe-ui is handed {endpoint.port}",
         )
 
 

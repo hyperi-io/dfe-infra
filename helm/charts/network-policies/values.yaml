@@ -75,6 +75,9 @@ kedaShimPort: 8080
 # looks like a slow endpoint rather than a blocked one.
 otelNamespace: otel
 otelPort: 4317
+# The collector's OTLP/HTTP port, for the apps that push OTLP over HTTP
+# (dfe-ui and dfe-hyperdx).
+otelHttpPort: 4318
 
 # EKS Pod Identity agent. A host-network DaemonSet, not a Service, so it sits
 # outside the namespace model every other baseline rule uses -- every pod that

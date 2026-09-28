@@ -82,8 +82,11 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- with (include "dfe-common.otelEndpoint" .) }}
+            # @vercel/otel exports OTLP over HTTP only, so the collector's gRPC port 4317 becomes its HTTP port 4318.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
-              value: {{ . | quote }}
+              value: {{ regexReplaceAll ":4317$" . ":4318" | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-ui
