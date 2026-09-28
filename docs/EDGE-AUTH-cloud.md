@@ -15,7 +15,8 @@ HyperDX, Forgejo, the links page and
 Cruise Control all stay off the public NLB until an operator's overlay opts
 one back on. The chart's own render guard (`envoy-gateway-config.validateUi`)
 fails the render if a deploy flips the switch back on for an internet-facing
-Service with `oidc.enabled` false and `ui.allowed_cidrs` empty -- so
+Service with no edge OIDC provider (`oidc.enabled` and an `oidc.providers`
+entry) and `ui.allowed_cidrs` empty -- so
 re-exposing an admin UI on a public load balancer is always a deliberate
 choice with either OIDC or a CIDR fence behind it, never a one-line flip
 that quietly ships with no edge auth.

@@ -223,8 +223,9 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
        values.yaml); it says nothing about ui.public_domain, so this fires
        whether or not any UI is ALSO published on its own public hostname. */ -}}
 {{- if and .ctx.Values.envoyGateway.service.internetFacing .ctx.Values.exposure.infraUisExternal -}}
-{{- if and (not .ctx.Values.oidc.enabled) (not $ui.allowed_cidrs) -}}
-{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with oidc.enabled false and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, hyperdx, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
+{{- /* oidc.enabled with no provider renders no edge policy at all. */ -}}
+{{- if and (not (and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers)) (not $ui.allowed_cidrs) -}}
+{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, hyperdx, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
 {{- end -}}
 {{- end -}}
 

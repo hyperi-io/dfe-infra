@@ -51,7 +51,7 @@ exposure:
 # oidc.providers entry (this only sets the switch, not a provider) before that
 # route's edgePolicy has anything to authenticate against -- and the gateway's
 # render guard refuses the internet-facing + kill-switch-on combination unless
-# either this is true or ui.allowed_cidrs is set.
+# either this is true with a provider, or ui.allowed_cidrs is set.
 #
 # IT STAYS HERE rather than moving to edge-aws.yaml because two charts outside
 # the edge module read the same switch: kafbat degrades OAUTH2 to its

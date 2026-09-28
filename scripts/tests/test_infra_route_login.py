@@ -2,7 +2,8 @@
 #  Project:      dfe-infra
 #  File:         test_infra_route_login.py
 #  Purpose:      Prove no infra UI without a login of its own is served bare,
-#                the git route exists only where Forgejo does, and the Cruise
+#                an internet-facing infra class needs a real OIDC provider, the
+#                git route exists only where Forgejo does, and the Cruise
 #                Control label comes from the canonical hostnames map.
 #  Language:     Python
 #
@@ -44,29 +45,42 @@ ON_PREM = (
     "--set", "domain=dfe.example.com",
 )
 
+# The same cascade on AWS, where the Service is internet-facing: aws.yaml turns
+# oidc.enabled on with no provider, and edge-aws.yaml turns the infra class off.
+AWS = (
+    "--namespace", "envoy-gateway-system",
+    "-f", str(VALUES / "common.yaml"),
+    "-f", str(VALUES / "aws.yaml"),
+    "-f", str(VALUES / "edge-aws.yaml"),
+    "-f", str(VALUES / "profile-scale.yaml"),
+    "--set", "appNamespace=dfe",
+    "--set", "domain=dfe.example.com",
+)
+
 PROVIDER = [{"name": "acme", "issuerUrl": "https://id.example.com", "clientId": "dfe"}]
 OIDC = ("--set", "oidc.enabled=true", "--set-json", f"oidc.providers={json.dumps(PROVIDER)}")
 
 LOGIN_LESS = {"links", "cruise-control"}
 OWN_LOGIN = {"argocd", "hyperdx", "kafbat"}
+INFRA = {"argocd", "hyperdx", "kafbat", "forgejo", "links", "cruise-control"}
 BUNDLED_LABEL = "dfe.hyperi.io/bundled-deploy-repo"
 
 
-def helm(*args: str) -> subprocess.CompletedProcess[str]:
+def helm(*args: str, cascade: tuple[str, ...] = ON_PREM) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["helm", "template", "envoy-gateway-config", str(GATEWAY), *ON_PREM, *args],
+        ["helm", "template", "envoy-gateway-config", str(GATEWAY), *cascade, *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
 
 
-def render(*args: str) -> list[dict]:
-    out = helm(*args)
+def render(*args: str, cascade: tuple[str, ...] = ON_PREM) -> list[dict]:
+    out = helm(*args, cascade=cascade)
     assert out.returncode == 0, out.stderr
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
-def refusal(*args: str) -> str:
-    out = helm(*args)
+def refusal(*args: str, cascade: tuple[str, ...] = ON_PREM) -> str:
+    out = helm(*args, cascade=cascade)
     assert out.returncode != 0, "the render was expected to refuse and succeeded"
     return out.stderr
 
@@ -75,8 +89,8 @@ def names(docs: list[dict], kind: str) -> set[str]:
     return {d["metadata"]["name"] for d in docs if d.get("kind") == kind}
 
 
-def routes(*args: str) -> set[str]:
-    return names(render(*args), "HTTPRoute")
+def routes(*args: str, cascade: tuple[str, ...] = ON_PREM) -> set[str]:
+    return names(render(*args, cascade=cascade), "HTTPRoute")
 
 
 def chart_values() -> dict:
@@ -166,6 +180,38 @@ def test_a_quoted_own_login_is_refused_by_name() -> None:
 def test_a_public_flag_on_a_withheld_route_is_refused_by_name() -> None:
     err = refusal("--set", "ui.public_domain=example.com", "--set", "ui.public.links=true")
     assert "routes.links has no login of its own" in err, err
+
+
+# --- an internet-facing infra class needs a real provider --------------------
+def test_the_aws_defaults_are_the_switch_without_a_provider() -> None:
+    """Pins the shape the next two cases rely on, so a changed overlay fails here."""
+    aws = yaml.safe_load((VALUES / "aws.yaml").read_text(encoding="utf-8"))
+    edge = yaml.safe_load((VALUES / "edge-aws.yaml").read_text(encoding="utf-8"))
+    assert aws["oidc"]["enabled"] is True
+    assert "providers" not in aws["oidc"], aws["oidc"]
+    assert edge["envoyGateway"]["service"]["internetFacing"] is True
+    assert edge["exposure"]["infraUisExternal"] is False
+
+
+def test_the_aws_defaults_render_with_no_infra_route() -> None:
+    served = routes(cascade=AWS)
+    assert not INFRA & served, sorted(served)
+    assert {"dfe-ui", "dfe-engine"} <= served, sorted(served)
+
+
+def test_oidc_switched_on_with_no_provider_does_not_satisfy_the_guard() -> None:
+    """The switch alone renders no edge policy, so the admin UIs would sit bare."""
+    err = refusal("--set", "exposure.infraUisExternal=true", cascade=AWS)
+    assert "envoyGateway.service.internetFacing is true" in err, err
+    assert "no edge OIDC provider" in err, err
+
+
+def test_a_provider_satisfies_the_guard_and_fronts_every_policy_route() -> None:
+    docs = render("--set", "exposure.infraUisExternal=true", *OIDC, cascade=AWS)
+    assert {"argocd", "links", "cruise-control"} <= names(docs, "HTTPRoute")
+    policies = names(docs, "SecurityPolicy")
+    assert {"dfe-oidc-argocd-admin", "dfe-oidc-links-admin",
+            "dfe-oidc-cruise-control-admin"} <= policies, sorted(policies)
 
 
 # --- the git route exists only where Forgejo does ----------------------------
