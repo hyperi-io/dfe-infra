@@ -295,6 +295,16 @@ spec:
             # (settings.py: DFE_KAFKA_*; the provider derives the mechanism).
             - name: DFE_KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- with .Values.kafka.messageMaxBytes }}
+            {{- if le (int64 .) 0 }}
+            {{- fail (printf "kafka.messageMaxBytes must be a positive whole number of bytes, got %v" .) }}
+            {{- end }}
+            # Every topic the engine creates takes this max.message.bytes; unset
+            # leaves the engine's own default. int64 because a bare float64
+            # renders in scientific notation.
+            - name: DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES
+              value: {{ int64 . | quote }}
+            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
             # The profiles point every app at the broker's internal plain
             # listener, so the protocol and the mechanism are set the way the

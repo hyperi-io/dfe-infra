@@ -44,6 +44,8 @@ CHARTS = REPO_ROOT / "helm" / "charts"
 VALUES = REPO_ROOT / "argocd" / "values"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
+AWS_ROOT = REPO_ROOT / "terraform" / "environments" / "aws"
 
 # The valueFiles order every layer2 appset uses, before any overlay.
 BASE_CASCADE = [VALUES / "common.yaml", VALUES / "aws.yaml", VALUES / "profile-scale.yaml"]
@@ -184,6 +186,69 @@ def test_every_appset_reads_the_mode_back() -> None:
         body = (APPSETS / name).read_text(encoding="utf-8")
         expect(f"{name} reads the broker endpoint too",
                'dfe.hyperi.io/kafka_bootstrap"' in body, f"not found in {name}")
+
+
+MESSAGE_SIZE_ENV = "DFE_KAFKA_MESSAGE_MAX_BYTES"
+MESSAGE_SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
+
+
+def test_the_root_hands_on_the_size_each_managed_body_was_given() -> None:
+    """The engine's topics must match the landing topics, so the output reads the
+    same variable the root passes the selected body, never a second copy."""
+    main_tf = (AWS_ROOT / "main.tf").read_text(encoding="utf-8")
+    outputs = (AWS_ROOT / "outputs.tf").read_text(encoding="utf-8")
+    block = re.search(rf'output "{MESSAGE_SIZE_ENV}" \{{\n(.*?)\n\}}', outputs, re.S)
+    expect(f"the aws root emits {MESSAGE_SIZE_ENV}", block is not None, "no such output")
+    body = block.group(1) if block else ""
+    for module, source in (
+        ("kafka", "var.kafka.msk.message_max_bytes"),
+        ("confluent", "var.kafka.message_max_bytes"),
+        ("redpanda", "var.kafka.message_max_bytes"),
+    ):
+        module_block = re.search(rf'module "{module}" \{{\n(.*?)\n\}}', main_tf, re.S)
+        passed = module_block is not None and re.search(
+            rf"message_max_bytes\s*=\s*{re.escape(source)}\n", module_block.group(1)
+        )
+        expect(f"module {module} is given {source}", bool(passed), "the root passes something else")
+        expect(f"and the output reads {source}", source in body, body)
+    expect("an in-cluster broker gets an empty value", re.search(r':\s*""\s*\)', body) is not None, body)
+
+
+def test_the_size_travels_bootstrap_to_the_engine_chart() -> None:
+    """Each hop spells the fact on its own, and a miss renders empty: the engine
+    then creates its topics at its own default, above a managed ceiling."""
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    expect(f"bootstrap.sh defaults {MESSAGE_SIZE_ENV} empty",
+           f'export {MESSAGE_SIZE_ENV}="${{{MESSAGE_SIZE_ENV}:-}}"' in script)
+    template = CLUSTER_SECRET.read_text(encoding="utf-8")
+    expect(f"the cluster secret carries {MESSAGE_SIZE_ANNOTATION}",
+           f'{MESSAGE_SIZE_ANNOTATION}: "${{{MESSAGE_SIZE_ENV}}}"' in template)
+    doc = yaml.safe_load((APPSETS / "layer2-apps.yaml").read_text(encoding="utf-8"))
+    values_block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+    expect("layer2-apps reads the annotation",
+           f'$kafkaMessageMaxBytes := index .metadata.annotations "{MESSAGE_SIZE_ANNOTATION}"'
+           in values_block, values_block)
+    expect("and lands it on kafka.messageMaxBytes under the managed block",
+           "messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}" in values_block
+           and values_block.count("kafka:") == 1, values_block)
+
+
+def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
+    """What the appset renders for a managed broker, as the engine chart reads it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        overlay = Path(tmp) / "managed.yaml"
+        overlay.write_text(MANAGED_OVERLAY + "  messageMaxBytes: '8388608'\n",
+                           encoding="utf-8", newline="\n")
+        docs = render("dfe-engine", values=[*BASE_CASCADE, overlay])
+    deployment = next(d for d in docs if d.get("kind") == "Deployment")
+    env = {e["name"]: e.get("value") for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+    expect("the engine creates its topics at the managed size",
+           env.get("DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES") == "8388608",
+           f"got {env.get('DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES')!r}")
+    in_cluster = next(d for d in render("dfe-engine") if d.get("kind") == "Deployment")
+    names = {e["name"] for e in in_cluster["spec"]["template"]["spec"]["containers"][0]["env"]}
+    expect("an in-cluster broker leaves the engine's default",
+           "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in names, "the variable was rendered")
 
 
 def main() -> int:
