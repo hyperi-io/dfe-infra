@@ -44,7 +44,8 @@ All component versions come from `versions.yaml` (the SSoT).
 
 CI (`.github/workflows/`) runs on every push/PR:
 
-- `tf-validate` -- `terraform validate` + module `*.tftest.hcl`, matrixed over terraform and opentofu.
+- `tf-validate` -- `tofu validate` over every module and environment root, plus module `*.tftest.hcl`.
+- `helm-lint` also runs every `bootstrap/tests/*.bats` file.
 - `helm-lint` -- `helm lint` over the charts in `helm/charts/` and the `helm/library/` charts.
 - `toolbox-build` -- builds the `dfe-toolbox` image family under `docker/` (only on changes there, or to `versions.yaml`).
 
