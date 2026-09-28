@@ -7,10 +7,13 @@ Each takes (dict "ctx" $ "key" "<routes values key>").
 routeEnabled -- does this route render? First match wins:
   1. class infra and exposure.infraUisExternal false -> "" (the kill switch is
      absolute for the class, so a route's own enabled:true does not beat it)
-  2. the backend is another chart's opt-in workload that the deployment is not
+  2. class infra, ownLogin false, and no edgeLogin    -> ""
+  3. the backend is another chart's opt-in workload that the deployment is not
      running                                         -> ""
-  3. enabled false                                   -> ""
-  4. otherwise                                       -> "true"
+  4. enabled false                                   -> ""
+  5. otherwise                                       -> "true"
+edgeLogin -- does the infra edge policy render in front of this route? Only then
+  is a backend with no login of its own safe to publish.
 cruiseControlUi -- is the kafka chart deploying the Cruise Control UI? The
   gateway cannot see another chart's render, so both read the same kafka.* keys
   from the deploy-config SSoT and agree by reading one set of values.
@@ -44,15 +47,27 @@ true
 {{- end -}}
 {{- end -}}
 
+{{- /* The same three facts security-policy-infra.yaml renders on, so a route
+       admitted here always has its policy. */ -}}
+{{- define "envoy-gateway-config.edgeLogin" -}}
+{{- $r := index .ctx.Values.routes .key -}}
+{{- if and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers $r.edgePolicy -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "envoy-gateway-config.routeEnabled" -}}
 {{- $r := index .ctx.Values.routes .key -}}
 {{- $class := $r.class | default "infra" -}}
 {{- if and (eq $class "infra") (not .ctx.Values.exposure.infraUisExternal) -}}
+{{- else if and (eq $class "infra") (not $r.ownLogin) (not (include "envoy-gateway-config.edgeLogin" .)) -}}
+{{- /* A backend with no login of its own is never published bare. */ -}}
 {{- else if and (eq .key "cruiseControl") (not (include "envoy-gateway-config.cruiseControlUi" (dict "ctx" .ctx))) -}}
-{{- /* The one route whose backend is a workload of another chart. Without this
-       a deployment with no rebalancer publishes a hostname whose Service never
-       exists, and the route reports BackendNotFound for the life of the
-       deployment. */ -}}
+{{- /* Without this a deployment with no rebalancer publishes a hostname whose
+       Service never exists, and the route reports BackendNotFound for the life
+       of the deployment. */ -}}
+{{- else if and (eq .key "forgejo") (not .ctx.Values.deployRepo.bundled) -}}
+{{- /* Forgejo is deployed only when the deploy repo is the bundled one. */ -}}
 {{- else if $r.enabled -}}
 true
 {{- end -}}
@@ -209,7 +224,7 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
        whether or not any UI is ALSO published on its own public hostname. */ -}}
 {{- if and .ctx.Values.envoyGateway.service.internetFacing .ctx.Values.exposure.infraUisExternal -}}
 {{- if and (not .ctx.Values.oidc.enabled) (not $ui.allowed_cidrs) -}}
-{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with oidc.enabled false and ui.allowed_cidrs empty -- every admin UI (argocd, kafbat, hyperdx, forgejo, links, cruise-control) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
+{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with oidc.enabled false and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, hyperdx, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
 {{- end -}}
 {{- end -}}
 
@@ -231,6 +246,15 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- end -}}
 {{- if not (kindIs "bool" $ui.tls.hsts) -}}
 {{- fail (printf "ui.tls.hsts is %v (a %s), not a bool -- see the ui.public.* refusal above" $ui.tls.hsts (kindOf $ui.tls.hsts)) -}}
+{{- end -}}
+{{- /* A quoted "false" is truthy, so it would publish a login-less backend bare. */ -}}
+{{- range $key, $r := .ctx.Values.routes -}}
+{{- if and (hasKey $r "ownLogin") (not (kindIs "bool" $r.ownLogin)) -}}
+{{- fail (printf "routes.%s.ownLogin is %v (a %s), not a bool -- see the ui.public.* refusal above" $key $r.ownLogin (kindOf $r.ownLogin)) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (kindIs "bool" .ctx.Values.deployRepo.bundled) -}}
+{{- fail (printf "deployRepo.bundled is %v (a %s), not a bool -- see the ui.public.* refusal above" .ctx.Values.deployRepo.bundled (kindOf .ctx.Values.deployRepo.bundled)) -}}
 {{- end -}}
 
 {{- /* A WAF terminates TLS above Envoy, so the public certificate moves to the
@@ -256,6 +280,20 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- with $ui.public -}}{{- $wantsCruiseControl = .cruise_control -}}{{- end -}}
 {{- if and $wantsCruiseControl (not (include "envoy-gateway-config.cruiseControlUi" (dict "ctx" .ctx))) -}}
 {{- fail "ui.public.cruise_control is true and the kafka chart is not deploying that UI -- it needs kafka.provider strimzi, kafka.mode cluster, kafka.rebalancing.enabled and kafka.rebalancing.ui.enabled, all of which come from the same deploy-config values both charts read. Set them, or leave this flag false" -}}
+{{- end -}}
+
+{{- /* routeEnabled withholds a login-less route with no edge login, and a public
+       flag on it would otherwise be dropped without a word. */ -}}
+{{- if and $ui.public_domain .ctx.Values.exposure.infraUisExternal -}}
+{{- range $name, $public := $ui.public -}}
+{{- $key := include "envoy-gateway-config.uiRouteKey" (dict "name" $name) -}}
+{{- if and $public $key -}}
+{{- $r := index $.ctx.Values.routes $key -}}
+{{- if and (eq ($r.class | default "infra") "infra") $r.enabled (not $r.ownLogin) (not (include "envoy-gateway-config.edgeLogin" (dict "ctx" $.ctx "key" $key))) -}}
+{{- fail (printf "ui.public.%s is true and routes.%s has no login of its own, so it renders only behind the edge login -- set oidc.enabled with an oidc.providers entry and keep routes.%s.edgePolicy true, or leave this flag false" $name $key $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- /* Envoy infers the client IP from X-Forwarded-For. With no trusted proxy

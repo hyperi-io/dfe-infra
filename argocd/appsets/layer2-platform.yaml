@@ -171,6 +171,10 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
               - name: cloud
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
+              # envoy-gateway-config renders its git route only where
+              # layer2-deploy-repo.yaml deploys Forgejo, on this same label.
+              - name: deployRepo.bundled
+                value: '{{ eq (index .metadata.labels "dfe.hyperi.io/bundled-deploy-repo") "true" }}'
               # The toolbox pod's own dial facts (deployment.yaml's
               # toolbox.pod.*, carried onto the cluster secret by bootstrap.sh
               # the same way retention.defaultTtlDays is in layer2-apps.yaml).

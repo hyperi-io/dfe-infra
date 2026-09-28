@@ -137,6 +137,10 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
               - name: cloud
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
+              # The label layer2-deploy-repo.yaml deploys Forgejo on, so the git
+              # route exists exactly when its backend does.
+              - name: deployRepo.bundled
+                value: '{{ eq (index .metadata.labels "dfe.hyperi.io/bundled-deploy-repo") "true" }}'
             # `values` (a YAML string) rather than a structured block, same
             # reason layer1-addons.yaml gives: a conditional cannot live in a
             # field this file's own tests parse as plain YAML before any Go
