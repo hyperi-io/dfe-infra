@@ -358,6 +358,25 @@ def test_the_fetcher_reads_its_brokers_from_the_file_the_chart_writes() -> None:
     )
 
 
+def test_no_values_file_offers_a_postgresql_dial() -> None:
+    """No template reads .Values.postgresql, so a key by that name is a dial that moves nothing.
+
+    The engine keeps its state in ClickHouse and its config in the gitops repo, and
+    cnpg-cluster writes its Cluster from keys of its own.
+    """
+    files = [
+        *sorted((REPO_ROOT / "helm").rglob("values.yaml")),
+        *sorted((REPO_ROOT / "argocd" / "values").rglob("*.yaml")),
+    ]
+    offenders = []
+    for path in files:
+        docs = yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if any(isinstance(doc, dict) and "postgresql" in doc for doc in docs):
+            offenders.append(str(path.relative_to(REPO_ROOT)))
+    expect("the values files were found", len(files) > 1, f"got {len(files)}")
+    expect("no values file declares a postgresql dial", not offenders, f"got {offenders}")
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):
