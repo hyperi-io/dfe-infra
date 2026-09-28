@@ -2250,5 +2250,6 @@ stacks:
       # The optional OIDC modules ship with no lock file, so the constraint is
       # the only ceiling a customer's `tofu init` has to resolve against.
       okta-okta: "~> 6.0"            # terraform/modules/tf-oidc-okta
+      hashicorp-google: "~> 7.0"     # terraform/modules/tf-oidc-google
       hashicorp-azuread: "~> 3.0"    # terraform/modules/tf-oidc-entra
 
