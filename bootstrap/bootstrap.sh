@@ -1071,6 +1071,8 @@ echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install)"
 # Argo HARDENING (dfe-infra#4): back off the controller timers so a degraded app
 # can never monopolise the control plane (self-heal 5s->30s, reconciliation
 # 180s->300s) and bound the repo-server timeout.
+# server.insecure: the gateway terminates TLS and forwards plain HTTP, which a
+# TLS-serving argocd-server answers with a redirect back to the same URL.
 if dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
   run helm upgrade --install argocd argo/argo-cd \
     --namespace argocd --create-namespace \
@@ -1078,6 +1080,7 @@ if dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
     --set redis.enabled=false \
     --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
     --set "externalRedis.port=6379" \
+    --set-string 'configs.params.server\.insecure=true' \
     --set-string 'configs.params.reposerver\.disable\.git\.modules=true' \
     --set-string 'configs.cm.timeout\.reconciliation=300s' \
     --set-string 'configs.params.controller\.self\.heal\.timeout\.seconds=30' \

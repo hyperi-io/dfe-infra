@@ -44,8 +44,8 @@ Admin credentials come from the bootstrap-created secret (admin.secretName).
 # process. Scoped to the one host it must reach, not opened to `private`.
 - name: GITEA__webhook__ALLOWED_HOST_LIST
   value: {{ .Values.webhook.argocdHost | quote }}
-# argocd-server terminates TLS with its own self-signed certificate, which no
-# trust store in this cluster carries. The hop is in-cluster to a named Service.
+# A TLS-serving argocd-server (adopted, or not yet reinstalled insecure) answers
+# the plain HTTP hook with a redirect to its self-signed https listener.
 - name: GITEA__webhook__SKIP_TLS_VERIFY
   value: "true"
 {{- end }}

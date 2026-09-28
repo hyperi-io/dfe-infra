@@ -464,9 +464,11 @@ routes:
     # test harness's, /docs and /redoc are the Swagger surface, and /livez and
     # /readyz are the kubelet's.
 
-  # Argo CD. common.yaml disables its bundled Dex because the edge owns its
-  # OIDC, so the group check belongs here and Argo's own RBAC maps the same
-  # groups to Argo roles (argocd.rbac.policy).
+  # Argo CD. Envoy forwards plain HTTP, so this is argocd-server's plain HTTP
+  # port and bootstrap.sh installs Argo with server.insecure. An ADOPTED Argo
+  # needs server.insecure in its argocd-cmd-params-cm, or a BackendTLSPolicy on
+  # this Service trusting argocd-server's certificate: a TLS-serving server
+  # redirects plain HTTP to the same URL, which loops through the gateway.
   argocd:
     class: infra
     enabled: true
@@ -477,7 +479,7 @@ routes:
     hostname: ""
     backendService: argocd-server
     backendNamespace: argocd
-    backendPort: 443
+    backendPort: 80
     adminLink:
       name: Argo CD
       purpose: GitOps sync state of every application this deployment runs
