@@ -312,25 +312,6 @@ variable "target_revision" {
   type        = string
 }
 
-variable "registry_host" {
-  description = "Container registry hostname. Empty skips the pull secret."
-  type        = string
-  default     = ""
-}
-
-variable "registry_user" {
-  description = "Container registry username."
-  type        = string
-  default     = ""
-}
-
-variable "registry_token" {
-  description = "Container registry token."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 // ---------------------------------------------------------------------------
 // State and tags
 // ---------------------------------------------------------------------------

@@ -245,6 +245,54 @@ def test_bootstrap_records_the_pull_secret_only_when_it_creates_one() -> None:
            "the annotation is not written from DFE_IMAGE_PULL_SECRET")
 
 
+def test_every_pull_secret_bootstrap_creates_is_the_one_the_charts_name() -> None:
+    """The appsets name only DFE_IMAGE_PULL_SECRET, so a pull secret bootstrap
+    creates under any other name reaches no pod."""
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    created = re.findall(r"create secret docker-registry\s+(\S+)", script)
+    expect("bootstrap.sh creates a docker-registry secret", created != [], "none found")
+    for name in created:
+        expect(f"the docker-registry secret {name} is DFE_IMAGE_PULL_SECRET",
+               name == '"${DFE_IMAGE_PULL_SECRET}"',
+               "a pull secret no appset hands to a chart")
+    rendered = [path.name for path in (BOOTSTRAP.parent / "templates").iterdir()
+                if "kubernetes.io/dockerconfigjson" in path.read_text(encoding="utf-8")]
+    expect("no bootstrap template renders a pull secret of its own", rendered == [],
+           f"{rendered} create a pull secret outside the one the appsets name")
+    expect("bootstrap.sh writes no pull secret inline",
+           "kubernetes.io/dockerconfigjson" not in script,
+           "an inline pull secret outside the one the appsets name")
+
+
+def test_the_pull_secret_server_defaults_to_the_registry_host() -> None:
+    """The credential must be for the registry the dfe-* images come from, or a
+    private registry pulls anonymously and fails with ImagePullBackOff."""
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    line = re.search(r"^DFE_PULL_SECRET_SERVER=.*$", script, re.M)
+    expect("bootstrap.sh derives DFE_PULL_SECRET_SERVER", line is not None)
+    cases = (
+        ("ghcr.io/hyperi-io", None, "ghcr.io"),
+        ("registry.example.com:5000/dfe/images", None, "registry.example.com:5000"),
+        ("registry.example.com", None, "registry.example.com"),
+        ("registry.example.com/dfe", "", "registry.example.com"),
+        ("registry.example.com/dfe", "mirror.example.com", "mirror.example.com"),
+    )
+    for registry, server, want in cases:
+        env = ["env", "-u", "DFE_PULL_SECRET_SERVER", f"DFE_REGISTRY={registry}"]
+        if server is not None:
+            env.append(f"DFE_PULL_SECRET_SERVER={server}")
+        out = subprocess.run(
+            [*env, "bash", "-c",
+             f'{line.group(0) if line else ""}\nprintf %s "$DFE_PULL_SECRET_SERVER"'],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        )
+        expect(f"registry {registry!r}, server {server!r} -> {want!r}", out.stdout == want,
+               f"got {out.stdout!r}")
+    expect("the pull secret is created for DFE_PULL_SECRET_SERVER",
+           '--docker-server="${DFE_PULL_SECRET_SERVER}"' in script,
+           "the created secret does not use the derived server")
+
+
 def test_bootstrap_refuses_an_empty_registry() -> None:
     """Silence here is the whole failure: an unset registry deploys and only
     shows up as a pull denial against the wrong host."""

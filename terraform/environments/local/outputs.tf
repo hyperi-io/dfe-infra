@@ -68,16 +68,3 @@ output "DFE_VAULT_SECRET_ID" {
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
   value = jsonencode(module.iam.workload_identity_annotations)
 }
-
-output "DFE_REGISTRY_HOST" {
-  value = var.registry_host
-}
-
-output "DFE_REGISTRY_USER" {
-  value = var.registry_user
-}
-
-output "DFE_REGISTRY_TOKEN" {
-  value     = var.registry_token
-  sensitive = true
-}

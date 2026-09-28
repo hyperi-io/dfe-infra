@@ -45,22 +45,3 @@ variable "target_revision" {
   type        = string
   default     = "main"
 }
-
-variable "registry_host" {
-  description = "Private container registry hostname"
-  type        = string
-  default     = ""
-}
-
-variable "registry_user" {
-  description = "Container registry username"
-  type        = string
-  default     = ""
-}
-
-variable "registry_token" {
-  description = "Container registry token (sensitive)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
