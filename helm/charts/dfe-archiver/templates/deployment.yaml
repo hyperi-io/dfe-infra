@@ -31,6 +31,8 @@ spec:
       enableServiceLinks: false
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
       {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.waitForEngine" . | nindent 6 }}
@@ -168,6 +170,7 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: dfe-archiver
           volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
             - name: config
               mountPath: /etc/dfe
               readOnly: true
@@ -205,6 +208,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
