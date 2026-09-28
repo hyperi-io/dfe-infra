@@ -602,42 +602,42 @@ edges:
     to: dfe-loader
     kind: cargo-dep
     type: potential
-    evidence: "dfe-loader/Cargo.toml:35"
+    evidence: "dfe-loader/Cargo.toml:36"
   - from: scalo-rs
     to: dfe-receiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-receiver/Cargo.toml:25"
-    note: "A second range for the test-support feature sits at Cargo.toml:180 and must move with it."
+    evidence: "dfe-receiver/Cargo.toml:26"
+    note: "A second range for the test-support feature sits at Cargo.toml:200 and must move with it."
   - from: scalo-rs
     to: dfe-fetcher
     kind: cargo-dep
     type: potential
-    evidence: "dfe-fetcher/Cargo.toml:35"
+    evidence: "dfe-fetcher/Cargo.toml:42"
   - from: scalo-rs
     to: dfe-archiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-archiver/Cargo.toml:45"
+    evidence: "dfe-archiver/Cargo.toml:49"
     note: "Workspace root; the three crates inherit it via workspace = true."
   - from: scalo-rs
     to: dfe-transform-vrl
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vrl/Cargo.toml:69"
+    evidence: "dfe-transform-vrl/Cargo.toml:67"
     note: "A second range for the dev dependency sits at Cargo.toml:176."
   - from: scalo-rs
     to: dfe-transform-vector
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vector/Cargo.toml:44"
-    note: "A second range for the dev dependency sits at Cargo.toml:109."
+    evidence: "dfe-transform-vector/Cargo.toml:61"
+    note: "A second range for the dev dependency sits at Cargo.toml:137."
   - from: scalo-rs
     to: dfe-transform-elastic
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-elastic/Cargo.toml:124"
-    note: "Alpha. Its floor is lower than the other six, so it can resolve an older scalo."
+    evidence: "dfe-transform-elastic/Cargo.toml:150"
+    note: "The range sits in the workspace dependencies, and the service package inherits it."
 
   # --- scalo-rs: the generated Dockerfile ----------------------------------
   # The Rust members do not hand-write a Dockerfile: scalo generates it, and
@@ -687,7 +687,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:37"
+    evidence: "dfe-engine/pyproject.toml:39"
     note: "The range has no upper bound, so it admits a future major without complaint."
   - from: scalo-py
     to: dfe-engine
@@ -714,7 +714,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:42"
+    evidence: "dfe-engine/pyproject.toml:46"
     note: "Package data replaced the git submodule. The range has no upper bound."
   - from: dfe-schemas
     to: dfe-infra
@@ -736,7 +736,7 @@ edges:
     kind: python-dep-undeclared
     type: potential
     evidence: "dfe-engine/src/dfe_engine/sampling/service.py:200"
-    note: "Also imported at service.py:236 and sampling/kafka_reader.py:134. pyproject.toml:109 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
+    note: "Also imported at service.py:236 and sampling/kafka_reader.py:134. pyproject.toml:116 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
 
   # --- dfe-engine ----------------------------------------------------------
 
@@ -827,7 +827,6 @@ edges:
     kind: image-pin
     type: lockstep
     evidence: "dfe-infra/helm/charts/dfe-transform-elastic/Chart.yaml:6"
-    note: "Placeholder pin, no digest, excluded from every rendered manifest until it first publishes."
   - from: dfe-ui
     to: dfe-infra
     kind: image-pin
