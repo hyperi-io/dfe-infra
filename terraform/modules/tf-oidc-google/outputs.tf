@@ -1,12 +1,3 @@
-output "client_id" {
-  value = google_iap_client.dfe.client_id
-}
-
-output "client_secret" {
-  value     = google_iap_client.dfe.secret
-  sensitive = true
-}
-
 output "service_account_email" {
   value = google_service_account.dfe_groups.email
 }

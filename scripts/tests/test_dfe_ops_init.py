@@ -36,6 +36,7 @@ SCRIPTS = REPO_ROOT / "scripts"
 
 sys.path.insert(0, str(SCRIPTS))
 import dfe_ops_init as wiz  # noqa: E402
+import propagate_stack_pin as propagate  # noqa: E402
 
 FIXTURES = SCRIPTS / "tests" / "fixtures" / "sizing"
 
@@ -416,6 +417,59 @@ def test_clickhouse_storage_model_reaches_what_resolve_sizing_parses(tmp_path: P
     dial = wiz.resolve_sizing.read_dial(dial_path)
 
     assert dial.storage_model == "local"
+
+
+# ---------------------------------------------------------------------------
+# version.pin -- versions.yaml's `current` pointer, never a literal left behind
+# when the stack moves.
+# ---------------------------------------------------------------------------
+
+
+def _pinned(text: str) -> str | None:
+    """The stack a dial pins, read the way render_dial.py derives `--stack` from it."""
+    return wiz.render_dial._scalar(wiz.yaml_subset.parse(text), ("version", "pin"))
+
+
+def test_the_dial_pins_the_current_stack() -> None:
+    answers = wiz.run_wizard(wiz.WizardIO(answers=dict(ONPREM_ANSWERS)))
+    current = propagate.current_stack(propagate.VERSIONS_FILE.read_text(encoding="utf-8"))
+    assert _pinned(wiz.build_dial_text(answers)) == current
+
+
+def test_the_pin_moves_with_the_current_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A literal that happens to equal today's `current` still fails here."""
+    versions = tmp_path / "versions.yaml"
+    versions.write_text('current: "9.9.9"\nstacks:\n  9.9.9:\n    maturity: rc\n', encoding="utf-8")
+    monkeypatch.setattr(wiz.render_dial, "VERSIONS_FILE", versions)
+    assert _pinned(wiz.build_dial_text(wiz.Answers())) == "9.9.9"
+
+
+@pytest.mark.parametrize(
+    "versions_text",
+    [None, "stacks:\n  9.9.9:\n    maturity: rc\n"],
+    ids=["no-versions-file", "no-current-pointer"],
+)
+def test_no_stack_to_pin_refuses_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    versions_text: str | None,
+) -> None:
+    versions = tmp_path / "versions.yaml"
+    if versions_text is not None:
+        versions.write_text(versions_text, encoding="utf-8")
+    monkeypatch.setattr(wiz.render_dial, "VERSIONS_FILE", versions)
+    out = tmp_path / "deployment.yaml"
+    answers_file = tmp_path / "answers.env"
+    answers_file.write_text(_answers_as_file(ONPREM_ANSWERS), encoding="utf-8")
+
+    rc = wiz.cmd_init(_args(out=str(out), answers=str(answers_file)))
+
+    assert rc == 2
+    assert not out.exists()
+    assert "versions.yaml" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

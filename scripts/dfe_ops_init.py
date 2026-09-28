@@ -30,6 +30,8 @@ resolve_sizing.py's own private validators (``render_dial._az_count``,
 ``render_dial._telemetry``, ``resolve_sizing._dial_number``,
 ``resolve_sizing._read_overrides``, ...) rather than re-implementing their
 rules -- the renderer is the one source of truth for what a dial field means.
+The one exception is ``version.pin``: it is versions.yaml's ``current`` pointer,
+the value the template's own pin is drift-checked against.
 
 Interactive mode prints each question with its default in brackets; Enter
 takes the default. A refused answer re-prompts with the validator's own
@@ -592,6 +594,19 @@ def _bool(value: bool) -> str:
     return "true" if value else "false"
 
 
+def current_stack() -> str:
+    """The stack a new dial pins: versions.yaml's `current`, as `dfe-stack current` reads it."""
+    path = render_dial.VERSIONS_FILE
+    try:
+        tree = yaml_subset.parse(path.read_text(encoding="utf-8", errors="replace"), source=str(path))
+    except (OSError, yaml_subset.YamlSubsetError) as err:
+        raise InitError(f"cannot read the stack to pin from {path}: {err}") from err
+    stack = render_dial._scalar(tree, ("current",))
+    if stack is None:
+        raise InitError(f"{path} has no `current:` pointer, so there is no stack to pin")
+    return stack
+
+
 def _kafka_block(a: Answers) -> str:
     if a.kafka_provider not in render_dial.MANAGED_KAFKA_PROVIDERS:
         return f"kafka:\n  provider: {a.kafka_provider}\n  controller_pool: {a.controller_pool}\n"
@@ -851,7 +866,7 @@ def build_dial_text(a: Answers) -> str:
             f"  lifecycle: {a.lifecycle}\n\n",
             "registry: ghcr.io/hyperi-io\n\n",
             "version:\n",
-            "  pin: 2.2.0-rc.13\n\n",
+            f"  pin: {current_stack()}\n\n",
             f"profile: {a.profile}\n\n",
             "steps:\n",
             f'  provision: "{_bool(is_aws)}"\n',
@@ -994,11 +1009,10 @@ def cmd_init(args: argparse.Namespace) -> int:
     io = WizardIO(answers=answers_dict)
     try:
         a = run_wizard(io)
+        dial_text = build_dial_text(a)
     except InitError as error:
         print(f"dfe-ops init: {error}", file=sys.stderr)
         return 2
-
-    dial_text = build_dial_text(a)
 
     if args.dry_run:
         print(dial_text, end="")
