@@ -132,6 +132,22 @@ spec:
               # The push hook that tells Argo CD to refresh, instead of waiting
               # out its 300 s poll. Idempotent by URL: a hook already pointing
               # there is left alone rather than duplicated on every resync.
+              #
+              # A deploy repo set up while argocd-server served TLS carries a
+              # hook at the https URL, which an insecure argocd-server drops, so
+              # a hook at exactly that URL is removed; no other hook is touched.
+              if [ -n "${LEGACY_WEBHOOK_URL}" ]; then
+                for id in $(curl -s -u "$AUTH" "$REPO_API/hooks" | tr ',{}' '\n\n\n' \
+                  | awk -F: -v url="\"url\":\"${LEGACY_WEBHOOK_URL}\"" \
+                      '$1 == "\"id\"" { id = $2 } $0 == url && !seen[id]++ { print id }'); do
+                  code=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+                    -X DELETE "$REPO_API/hooks/${id}")
+                  case "${code}" in
+                    204|404) echo "removed the Argo webhook at ${LEGACY_WEBHOOK_URL} (hook ${id})" ;;
+                    *) echo "FAILED to remove Argo webhook ${id} at ${LEGACY_WEBHOOK_URL} (HTTP ${code})"; exit 1 ;;
+                  esac
+                done
+              fi
               if [ -z "${WEBHOOK_URL}" ]; then
                 echo "no Argo webhook URL configured -- pushes wait for the poll"
               elif [ -z "${WEBHOOK_SECRET}" ]; then
@@ -176,8 +192,12 @@ spec:
                   name: {{ .Values.admin.secretName }}
                   key: password
             {{- if .Values.webhook.enabled }}
+            # Plain HTTP inside the cluster: every delivery is HMAC-signed with
+            # WEBHOOK_SECRET, which Argo CD verifies before it acts on one.
             - name: WEBHOOK_URL
-              value: {{ printf "https://%s%s" .Values.webhook.argocdHost .Values.webhook.path | quote }}
+              value: {{ include "forgejo.argoWebhookUrl" . | quote }}
+            - name: LEGACY_WEBHOOK_URL
+              value: {{ include "forgejo.legacyArgoWebhookUrl" . | quote }}
             # optional: an adopted Argo CD nobody minted a secret for leaves this
             # empty, and the Job says the hook was not registered rather than
             # failing the sync.
@@ -189,6 +209,8 @@ spec:
                   optional: true
             {{- else }}
             - name: WEBHOOK_URL
+              value: ""
+            - name: LEGACY_WEBHOOK_URL
               value: ""
             - name: WEBHOOK_SECRET
               value: ""
