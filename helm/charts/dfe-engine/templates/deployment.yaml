@@ -271,6 +271,14 @@ spec:
             # there with 409 scaling_unsupported.
             - name: DFE_DEPLOYMENT_TARGET
               value: "kubernetes"
+            # Rendered by the gateway chart beside the engine, and optional, so an
+            # engine with no gateway starts with no admin links rather than not at all.
+            - name: DFE_ADMIN_LINKS
+              valueFrom:
+                configMapKeyRef:
+                  name: dfe-admin-links
+                  key: admin_links.json
+                  optional: true
             # What this deployment can carry a source's records on, from the one
             # deployment-wide kafka.mode the profile sets. Without it the engine
             # defaults to bus and accepts sources on a transport the brokerless

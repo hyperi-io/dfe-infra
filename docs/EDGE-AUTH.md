@@ -223,6 +223,10 @@ from the same GitOps values that deploy the services, so the sync that
 moves a URL re-renders the page. Admins-only at the edge; on an undomained
 rig it falls back to the port-forward layout.
 
+## Admin links
+
+The gateway publishes the admin UIs it renders as ConfigMap `dfe-admin-links` (key `admin_links.json`) in the app namespace, and the engine reads it as `DFE_ADMIN_LINKS`. The list comes from the same exposure cascade as the routes, so an infra route that does not render is not listed, and each entry carries the route's own hostname and its backend Service as the probe. Every infra route that renders must carry `adminLink` with a `name` and a one-line `purpose`, and one without fails the render by name. The engine reads the variable only at startup, so a list created after the engine started lands on its next restart.
+
 ## Status
 
 The gateway install path is settled (`argocd/bootstrap/envoy-gateway-app.yaml`
