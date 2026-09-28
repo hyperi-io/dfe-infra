@@ -222,7 +222,9 @@ def cmd_values(args: argparse.Namespace) -> int:
     config, why = oidc_config(policy, args.domain, edge_ca)
     if error:
         why = f"{error}; {why}"
+    # codeql[py/clear-text-logging-sensitive-data] names a Secret, never prints its value
     print(f"  [argocd] {why}", file=sys.stderr)
+    # codeql[py/clear-text-logging-sensitive-data] a $<secret>:<key> reference, not the value
     print(json.dumps(helm_values(config), indent=2, sort_keys=True))
     return 0
 
