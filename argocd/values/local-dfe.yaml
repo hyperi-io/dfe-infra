@@ -19,9 +19,6 @@ storageClass: local-path
 # DFE owns the whole cluster -> generic nodes, no pinning/tolerations.
 nodeScheduling: {}
 
-postgresql:
-  host: "cnpg-cluster-rw.cnpg.svc.cluster.local"
-
 envoyGateway:
   service:
     type: LoadBalancer

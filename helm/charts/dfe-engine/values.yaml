@@ -204,12 +204,6 @@ clickhouse:
 retention:
   defaultTtlDays: 90
 
-postgresql:
-  host: ""
-  port: 5432
-  database: dfe
-  secretName: dfe-pg-app
-
 otel:
   endpoint: ""
 

@@ -125,6 +125,22 @@ spec:
             - name: S3_BUCKET
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.s3.secretName }}
+            # Static keys for a store with no workload identity (MinIO, on-prem
+            # S3). Optional, so without the Secret the SDK's own chain still runs.
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: access_key_id
+                  optional: true
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: secret_access_key
+                  optional: true
+            {{- end }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
