@@ -1,0 +1,27 @@
+{{- /* The engine's DFE_ADMIN_LINKS: every infra route that routeEnabled renders,
+       placed in the engine's namespace because a configMapKeyRef reads no other. */}}
+{{- $links := list }}
+{{- range $key, $r := .Values.routes }}
+{{- if and (eq ($r.class | default "infra") "infra") (include "envoy-gateway-config.routeEnabled" (dict "ctx" $ "key" $key)) }}
+{{- $label := $r.adminLink | default dict }}
+{{- if not (and $label.name $label.purpose) }}
+{{- fail (printf "routes.%s renders and carries no adminLink.name and adminLink.purpose -- the engine lists every infra route this chart serves under both, so set them on the route" $key) }}
+{{- end }}
+{{- $host := include "envoy-gateway-config.routeHost" (dict "ctx" $ "key" $key) }}
+{{- $ns := include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
+{{- $links = append $links (dict
+      "name" $label.name
+      "purpose" $label.purpose
+      "url" (printf "https://%s.%s" $host $.Values.domain)
+      "probe_url" (printf "http://%s.%s.svc:%d" $r.backendService $ns (int $r.backendPort))) }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dfe-admin-links
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" . "key" "dfeEngine") }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  admin_links.json: {{ $links | toJson | quote }}

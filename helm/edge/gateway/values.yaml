@@ -368,6 +368,9 @@ ui:
 #                   check (oidc.adminGroups). See the exemptions inline.
 #   ownLogin     -- infra class only: the backend asks for a login itself. false
 #                   (or absent) renders the route only behind the edge policy.
+#   adminLink    -- infra class only: the name and one-line purpose the engine
+#                   lists the route under (templates/admin-links.yaml). Required
+#                   on every infra route that renders.
 routes:
   dfeUi:
     class: product
@@ -475,6 +478,9 @@ routes:
     backendService: argocd-server
     backendNamespace: argocd
     backendPort: 443
+    adminLink:
+      name: Argo CD
+      purpose: GitOps sync state of every application this deployment runs
 
   # HyperDX. Class infra, so the kill switch covers it, but NO edge policy: it
   # is served inside a dfe-ui iframe and an interactive OIDC redirect cannot
@@ -492,6 +498,9 @@ routes:
     backendService: dfe-hyperdx
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
+    adminLink:
+      name: HyperDX
+      purpose: Search and dashboards over DFE data and the stack's own telemetry
 
   # Forgejo (in-cluster deploy-repo FALLBACK git host). Only deployed when no
   # external git is supplied (see layer2-deploy-repo appset), so the route
@@ -509,6 +518,9 @@ routes:
     backendService: dfe-forgejo
     backendNamespace: forgejo
     backendPort: 3000
+    adminLink:
+      name: Forgejo
+      purpose: The bundled deploy repo every configuration change is committed to
 
   # Kafbat (Kafka UI). Class infra, so the kill switch covers it, but NO edge
   # policy: it runs its own OIDC against the same provider (the integrated-app
@@ -525,6 +537,9 @@ routes:
     backendService: dfe-kafbat
     backendNamespace: kafka
     backendPort: 8080
+    adminLink:
+      name: Kafbat
+      purpose: Kafka topics, consumer groups and their lag
 
   # The Cruise Control UI (kafka chart, ns strimzi). A static page with NO auth
   # of its own -- it reads the rebalancer's REST API through a proxy inside its
@@ -544,6 +559,9 @@ routes:
     backendService: dfe-kafka-cruise-control-ui
     backendNamespace: strimzi
     backendPort: 8080
+    adminLink:
+      name: Cruise Control
+      purpose: Kafka partition balance and rebalance proposals
 
   # Deployment links page (bundled chart, ns links). The page has NO auth of
   # its own, so it renders only behind the edge policy.
@@ -558,6 +576,9 @@ routes:
     backendService: dfe-links
     backendNamespace: links
     backendPort: 8080
+    adminLink:
+      name: Deployment links
+      purpose: Every web surface this deployment exposes, with a reachability check
 
   # dfe-receiver data ingest -- the path dfe-receiver's exposure.mode:
   # internal depends on, so flip the two together. Off by default because the
