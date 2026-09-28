@@ -209,9 +209,25 @@ run_check() {
   grep -c . "$ISSUES_FILE"
 }
 
+# Hard-refresh every Application holding a ComparisonError. Argo caches the error
+# until its comparison expires, so one raised while a backing repo was still
+# starting would otherwise hold the app for that whole window after the repo is up.
+refresh_comparison_errors() {
+  local ns name types
+  while read -r ns name types; do
+    case " $types " in
+      *" ComparisonError "*)
+        kubectl -n "$ns" annotate application "$name" \
+          argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+        ;;
+    esac
+  done < <(kubectl get applications.argoproj.io -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{" "}{.status.conditions[*].type}{"\n"}{end}' 2>/dev/null)
+}
+
 echo "=== DFE deploy readiness gate (waiting up to ${TIMEOUT}s for convergence) ==="
 SECONDS=0
 while :; do
+  refresh_comparison_errors
   n="$(run_check)"
   if [ "$n" -eq 0 ]; then
     # Ready is not the same as safe: a healthy stack on the shipped admin

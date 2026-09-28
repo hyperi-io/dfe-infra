@@ -46,6 +46,10 @@ FAKE_KUBECTL = """#!/usr/bin/env python3
 import json, os, sys
 
 args = sys.argv[1:]
+if "annotate" in args:
+    with open(os.environ["FAKE_KUBECTL_LOG"], "a", encoding="utf-8") as log:
+        log.write(" ".join(args) + "\\n")
+    sys.exit(0)
 if "exec" in args:
     fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
     if "exec_error" in fixture:
@@ -56,7 +60,9 @@ if "exec" in args:
         sys.exit(1)
     print(answer)
     sys.exit(0)
-if "pods" in args:
+if "applications.argoproj.io" in args:
+    key = "applications"
+elif "pods" in args:
     key = "pods"
 elif "deployment,statefulset" in args:
     key = "ns_workloads"
@@ -76,9 +82,15 @@ for line in fixture.get(key) or []:
 
 
 def run_gate(
-    fixture: dict, cwd: str | None = None, **env_overrides: str
+    fixture: dict,
+    cwd: str | None = None,
+    annotations: list[str] | None = None,
+    **env_overrides: str,
 ) -> subprocess.CompletedProcess:
-    """The gate against a fixed cluster reading, with no wait between polls."""
+    """The gate against a fixed cluster reading, with no wait between polls.
+
+    Every `kubectl annotate` the gate issues is appended to `annotations`.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         bindir = Path(tmp)
         kubectl = bindir / "kubectl"
@@ -86,18 +98,21 @@ def run_gate(
         kubectl.chmod(0o755)
         fixture_file = bindir / "fixture.json"
         fixture_file.write_text(json.dumps(fixture), encoding="utf-8", newline="\n")
+        log_file = bindir / "annotate.log"
+        log_file.touch()
 
         env = dict(os.environ)
         env.pop("DFE_NS", None)
         env.pop("DFE_ENV", None)
         env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
         env["FAKE_KUBECTL_FIXTURE"] = str(fixture_file)
+        env["FAKE_KUBECTL_LOG"] = str(log_file)
         # One pass: a fixed reading never converges, so a poll loop would only
         # burn the timeout before reaching the same verdict.
         env["READINESS_TIMEOUT"] = "0"
         env["READINESS_INTERVAL"] = "1"
         env.update(env_overrides)
-        return subprocess.run(
+        result = subprocess.run(
             ["bash", str(GATE)],
             capture_output=True,
             text=True,
@@ -107,6 +122,44 @@ def run_gate(
             cwd=cwd,
             check=False,
         )
+        if annotations is not None:
+            annotations.extend(log_file.read_text(encoding="utf-8").splitlines())
+        return result
+
+
+def test_an_application_holding_a_comparison_error_is_hard_refreshed() -> None:
+    """Argo caches the error to its comparison expiry, well after the repo is back."""
+    annotations: list[str] = []
+    run_gate(
+        {
+            "applications": [
+                "argocd dfe-engine-default ComparisonError",
+                "argocd dfe-loader-default SyncError ComparisonError",
+                "argocd dfe-ui-default",
+                "argocd dfe-receiver-default OrphanedResourceWarning",
+            ],
+        },
+        annotations=annotations,
+    )
+    refreshed = sorted(
+        next(word for word in line.split() if word.startswith("dfe-")) for line in annotations
+    )
+    expect(
+        "only the two apps holding a ComparisonError are refreshed, and hard",
+        refreshed == ["dfe-engine-default", "dfe-loader-default"]
+        and all("argocd.argoproj.io/refresh=hard" in line for line in annotations),
+        f"{annotations}",
+    )
+
+
+def test_no_application_means_no_refresh() -> None:
+    annotations: list[str] = []
+    run_gate({"pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"]}, annotations=annotations)
+    expect(
+        "nothing is annotated on a cluster with no Applications",
+        annotations == [],
+        f"{annotations}",
+    )
 
 
 def test_a_file_matching_the_namespace_glob_does_not_blind_the_gate() -> None:
