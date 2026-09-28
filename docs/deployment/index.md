@@ -13,10 +13,7 @@ flowchart TB
     L1 --> L2[Layer 2 - dfe-* apps<br/>base charts + deploy-repo overlays]
 ```
 
-- **Bootstrap** (`bootstrap/bootstrap.sh`): probes each dependency - adopt
-  a healthy existing controller, install a DFE-owned copy otherwise. DFE's
-  Argo lives in `dfe-system`, scoped to `dfe-*` namespaces so it coexists
-  with any host Argo.
+- **Bootstrap** (`bootstrap/bootstrap.sh`): probes each dependency - adopt a healthy existing controller, install a DFE-owned copy otherwise. The Argo CD it installed (release `argocd` in namespace `argocd`) is upgraded in place on every re-run, so a chart pin or an install flag reaches a live cluster; an adopted Argo is never reconfigured.
 - **Layer 1** (`argocd/appsets/layer2-data.yaml` + `layer1-addons.yaml`):
   backing services from base charts + the deploy repo's `infra/` overlay.
 - **Layer 2** (`argocd/appsets/layer2-apps.yaml`): one Application per

@@ -32,10 +32,13 @@
 #         READINESS_WATCH_NS  -- space-separated namespace globs the gate judges
 #                                (default: the namespaces destroy.sh removes,
 #                                which is what this deploy creates).
+#         READINESS_ADMIN_UI_WAIT (default 120s) -- how long an admin UI that
+#                                loops or 5xxs through the gateway is re-probed.
 set -uo pipefail
 [ -n "${1:-}" ] && export KUBECONFIG="$1"
 DFE_NS="${DFE_NS:-}"
 TIMEOUT="${READINESS_TIMEOUT:-900}"
+ADMIN_UI_WAIT="${READINESS_ADMIN_UI_WAIT:-120}"
 INTERVAL="${READINESS_INTERVAL:-15}"
 THRESH="${READINESS_RESTART_THRESHOLD:-10}"
 CHURN_MINUTES="${READINESS_CHURN_MINUTES:-15}"
@@ -139,6 +142,23 @@ with urllib.request.urlopen("http://localhost:8000/api/v1/auth/setup-status", ti
   esac
 }
 
+# Every admin UI the gateway lists loads through it: a redirect loop or a 5xx is
+# a UI nobody can open, however Ready its pod is. `dfe-ops admin-probe` owns the
+# verdicts and skips, with a reason, where there is nothing it can dial.
+check_admin_uis() {
+  local repo_root
+  if [ -z "$DFE_NS" ]; then
+    echo "  [skip] admin UI check: no DFE_NS, so no dfe-admin-links to read"
+    return 0
+  fi
+  repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+  if ! python3 "${repo_root}/scripts/dfe-ops" admin-probe \
+      --namespace "$DFE_NS" --wait "$ADMIN_UI_WAIT" 2>&1; then
+    echo "=== READINESS GATE FAILED: an admin UI does not load through the gateway"
+    return 1
+  fi
+}
+
 # The edge issuer mode and, in self-signed mode, whether the root was restored or
 # newly minted (#238). Informational: a fresh root is a working deploy, so it
 # never fails the gate. `dfe-ops ca --status` owns the wording.
@@ -233,6 +253,7 @@ while :; do
     # Ready is not the same as safe: a healthy stack on the shipped admin
     # password is open, so the credential verdict decides the exit code too.
     check_default_credentials || exit 1
+    check_admin_uis || exit 1
     report_issuer_mode
     echo "=== READINESS GATE PASSED: every pod Ready, every workload at desired ==="
     exit 0

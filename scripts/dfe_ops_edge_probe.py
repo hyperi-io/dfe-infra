@@ -6,9 +6,10 @@
 #                opens: the TLS floor, HSTS, the rate limit, the CIDR filter,
 #                the receiver, the otel route, every admin UI route, the product
 #                login and the engine API path families that sit on the product's
-#                own hostname. Split into its own module the way
-#                dfe_ops_bastion.py is, and imported into dfe-ops's
-#                build_parser() the same way.
+#                own hostname. Also `dfe-ops admin-probe`, which proves every
+#                admin UI the gateway lists loads through it. Split into its own
+#                module the way dfe_ops_bastion.py is, and imported into
+#                dfe-ops's build_parser() the same way.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -33,6 +34,14 @@ Host header and the SNI, so the deployment answers as it would for a browser.
 Each check reports PASS, FAIL or SKIP with one evidence line, and the verb exits
 non-zero when any check FAILs. A SKIP is not a failure: it is a check whose
 precondition this deployment does not meet, and it names which one.
+
+    dfe-ops admin-probe [--namespace dfe-local] [--target <gateway address>] [--wait 0]
+
+The same boundary, pointed at the admin UIs instead: it reads the list the
+gateway renders (the engine's dfe-admin-links ConfigMap) and GETs each one
+through the gateway address, following redirects. A redirect loop, a 5xx or no
+answer FAILs; a redirect off the deployment's domain is a login handed to an IdP
+and passes. The readiness gate runs it once every pod is Ready.
 """
 
 from __future__ import annotations
@@ -40,13 +49,18 @@ from __future__ import annotations
 import argparse
 import http.client
 import ipaddress
+import json
 import socket
 import ssl
+import subprocess
 import sys
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import SplitResult, urljoin, urlsplit
 
+from kubectl_cli import run_kubectl
 from render_dial import _EDGE_ALIASES
 from yaml_subset import YamlSubsetError, at, split_list
 from yaml_subset import parse as parse_yaml_subset
@@ -65,6 +79,7 @@ SKIP = "SKIP"
 DEFAULT_TIMEOUT = 8.0
 
 HTTPS_PORT = 443
+HTTP_PORT = 80
 
 # The receiver's own exposed listeners (helm/charts/dfe-receiver/values.yaml):
 # http carries JSON ingest and OTLP/HTTP, grpc carries OTLP/gRPC. The pushgrpc
@@ -898,22 +913,189 @@ def run_checks(settings: EdgeSettings, *, target: str = "") -> list[Check]:
     ]
 
 
-# --- the verb ----------------------------------------------------------------
+# --- the admin UIs, through the gateway --------------------------------------
+# helm/edge/gateway/templates/admin-links.yaml renders the list, one entry per
+# infra route the gateway serves, into the engine's namespace.
+
+ADMIN_LINKS_CONFIGMAP = "dfe-admin-links"
+ADMIN_LINKS_KEY = "admin_links.json"
+DEFAULT_GATEWAY = "dfe-gateway"
+DEFAULT_ADMIN_NAMESPACE = "dfe-local"
+# A browser gives up at about 20; a UI that needs more than this is broken anyway.
+MAX_REDIRECTS = 10
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+ADMIN_PROBE_INTERVAL = 10.0
+KUBECTL_TIMEOUT = 60.0
 
 
-def cmd_edge_probe(args: argparse.Namespace) -> int:
+@dataclass(frozen=True)
+class AdminLink:
+    """One admin UI the gateway serves: its display name and browser URL."""
+
+    name: str
+    url: str
+
+
+def parse_admin_links(text: str) -> list[AdminLink]:
+    """The entries of the ConfigMap's one data key, refusing a shape it cannot read."""
     try:
-        settings = read_dial(Path(args.dial))
-    except EdgeProbeError as error:
-        print(f"dfe-ops edge-probe: {error}", file=sys.stderr)
-        return 1
+        entries = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise EdgeProbeError(f"{ADMIN_LINKS_KEY} is not JSON: {error}") from error
+    if not isinstance(entries, list):
+        raise EdgeProbeError(f"{ADMIN_LINKS_KEY} is not a list: {text[:80]!r}")
+    links = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name") or not entry.get("url"):
+            raise EdgeProbeError(f"{ADMIN_LINKS_KEY} carries an entry with no name or url: {entry!r}")
+        links.append(AdminLink(name=str(entry["name"]), url=str(entry["url"])))
+    return links
 
-    checks = run_checks(settings, target=args.target)
+
+def _hop(parts: SplitResult, port: int) -> str:
+    """One URL in the form a loop is recognised by: host lowercased, default port dropped."""
+    host = (parts.hostname or "").lower()
+    default = HTTPS_PORT if parts.scheme == "https" else HTTP_PORT
+    shown = f":{port}" if port != default else ""
+    query = f"?{parts.query}" if parts.query else ""
+    return f"{parts.scheme}://{host}{shown}{parts.path or '/'}{query}"
+
+
+def _on_domain(host: str, domain: str) -> bool:
+    """Whether a redirect target is one of this deployment's own names."""
+    return host == domain or host.endswith(f".{domain}")
+
+
+def check_admin_link(link: AdminLink, address: str, max_redirects: int = MAX_REDIRECTS) -> Check:
+    """One admin UI loads through the gateway: no redirect loop, no 5xx, an answer.
+
+    Every hop on the deployment's own domain is dialled at the gateway address
+    with its name on the SNI and the Host header, the way a browser reaches it.
+    A redirect off that domain is a login handed to an IdP, which is the UI
+    working, so the walk ends there.
+    """
+    name = f"admin ui {link.name}"
+    domain = (urlsplit(link.url).hostname or "").lower().partition(".")[2].rstrip(".")
+    if not domain:
+        return Check(name, SKIP, f"{link.url} carries no domain -- this deployment publishes no name")
+    url, hops = link.url, []
+    for _ in range(max_redirects + 1):
+        parts = urlsplit(url)
+        tls = parts.scheme == "https"
+        try:
+            port = parts.port or (HTTPS_PORT if tls else HTTP_PORT)
+        except ValueError:
+            return Check(name, FAIL, f"{' -> '.join([*hops, url])} names no usable port")
+        here = _hop(parts, port)
+        if here in hops:
+            loop = " -> ".join([*hops[hops.index(here):], here])
+            return Check(name, FAIL, f"redirect loop: {loop}")
+        hops.append(here)
+        path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        answer = _reach(Request(
+            host=parts.hostname or "", address=address, port=port, path=path, tls=tls,
+        ))
+        trail = " -> ".join(hops)
+        if not answer.reached:
+            return Check(name, FAIL, f"{trail} answered nothing through {address}: {answer.error}")
+        if answer.status is not None and answer.status >= 500:
+            return Check(name, FAIL, f"{trail} answered {answer.status}")
+        if answer.status not in REDIRECT_STATUSES:
+            return Check(name, PASS, f"{trail} answered {answer.status}")
+        location = answer.headers.get("location", "")
+        if not location:
+            return Check(name, FAIL, f"{trail} answered {answer.status} with no Location")
+        url = urljoin(url, location)
+        target = (urlsplit(url).hostname or "").lower()
+        if not _on_domain(target, domain):
+            return Check(name, PASS, f"{trail} hands the login to {target} ({answer.status})")
+    return Check(name, FAIL, f"more than {max_redirects} redirects: {' -> '.join(hops)}")
+
+
+def _kubectl_json(kube: list[str], *argv: str) -> tuple[dict, str]:
+    """(parsed object, error) for one read-only kubectl call."""
+    try:
+        done = run_kubectl([*kube, *argv, "-o", "json"], timeout=KUBECTL_TIMEOUT)
+    except FileNotFoundError:
+        return {}, "kubectl is not on PATH"
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {}, str(error)
+    if done.returncode != 0:
+        lines = done.stderr.strip().splitlines()
+        return {}, lines[-1] if lines else f"kubectl exited {done.returncode}"
+    try:
+        parsed = json.loads(done.stdout)
+    except json.JSONDecodeError as error:
+        return {}, f"kubectl printed no JSON: {error}"
+    return (parsed, "") if isinstance(parsed, dict) else ({}, "kubectl printed no object")
+
+
+def read_admin_links(kube: list[str], namespace: str) -> list[AdminLink] | None:
+    """The admin UIs the gateway lists in `namespace`, or None when it lists none there."""
+    doc, error = _kubectl_json(kube, "-n", namespace, "get", "configmap", ADMIN_LINKS_CONFIGMAP)
+    if "NotFound" in error:
+        return None
+    if error:
+        raise EdgeProbeError(f"cannot read {namespace}/{ADMIN_LINKS_CONFIGMAP}: {error}")
+    text = (doc.get("data") or {}).get(ADMIN_LINKS_KEY)
+    if text is None:
+        raise EdgeProbeError(f"{namespace}/{ADMIN_LINKS_CONFIGMAP} carries no {ADMIN_LINKS_KEY}")
+    return parse_admin_links(text)
+
+
+def gateway_address(kube: list[str], name: str = DEFAULT_GATEWAY) -> str:
+    """The address Gateway `name` is programmed on, else any Gateway's, else empty."""
+    doc, _error = _kubectl_json(kube, "get", "gateway", "-A")
+    addressed = [
+        ((item.get("metadata") or {}).get("name"), str(address["value"]))
+        for item in doc.get("items") or []
+        for address in (item.get("status") or {}).get("addresses") or []
+        if address.get("value")
+    ]
+    named = [value for gateway, value in addressed if gateway == name]
+    return (named or [value for _, value in addressed] or [""])[0]
+
+
+def admin_ui_checks(
+    kube: list[str], namespace: str, target: str = "", gateway: str = DEFAULT_GATEWAY
+) -> list[Check]:
+    """One check per admin UI the gateway lists, or one SKIP naming why none can run."""
+    links = read_admin_links(kube, namespace)
+    if links is None:
+        return [Check("admin uis", SKIP, f"no {ADMIN_LINKS_CONFIGMAP} ConfigMap in {namespace}")]
+    if not links:
+        return [Check("admin uis", SKIP, f"{ADMIN_LINKS_CONFIGMAP} lists no admin UI")]
+    address = target or gateway_address(kube, gateway)
+    if not address:
+        return [
+            Check(f"admin ui {link.name}", SKIP, "no Gateway holds an address to dial")
+            for link in links
+        ]
+    first = urlsplit(links[0].url)
+    port = first.port or (HTTPS_PORT if first.scheme == "https" else HTTP_PORT)
+    door = _reach(Request(host="", address=address, port=port, path="", tls=False))
+    if not door.reached:
+        return [
+            Check(
+                f"admin ui {link.name}", SKIP,
+                f"the gateway at {address}:{port} does not answer from this machine "
+                f"({door.error}) -- probe from a host that reaches it",
+            )
+            for link in links
+        ]
+    return [check_admin_link(link, address) for link in links]
+
+
+# --- the verbs ---------------------------------------------------------------
+
+
+def report(verb: str, checks: list[Check]) -> int:
+    """Print one line per check and the tally, and return the verb's exit code."""
     for check in checks:
         print(f"  [{check.verdict}] {check.name}: {check.evidence}", file=sys.stderr)
     counts = tally(checks)
     print(
-        f"=== edge-probe: {counts[PASS]} passed, {counts[FAIL]} failed, "
+        f"=== {verb}: {counts[PASS]} passed, {counts[FAIL]} failed, "
         f"{counts[SKIP]} skipped ===",
         file=sys.stderr,
     )
@@ -926,6 +1108,37 @@ def cmd_edge_probe(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     return exit_code(checks)
+
+
+def cmd_edge_probe(args: argparse.Namespace) -> int:
+    try:
+        settings = read_dial(Path(args.dial))
+    except EdgeProbeError as error:
+        print(f"dfe-ops edge-probe: {error}", file=sys.stderr)
+        return 1
+    return report("edge-probe", run_checks(settings, target=args.target))
+
+
+def cmd_admin_probe(args: argparse.Namespace) -> int:
+    kube = ["--kubeconfig", args.kubeconfig] if args.kubeconfig else []
+    if args.context:
+        kube += ["--context", args.context]
+    deadline = time.monotonic() + max(args.wait, 0)
+    while True:
+        try:
+            checks = admin_ui_checks(kube, args.namespace, args.target, args.gateway)
+        except EdgeProbeError as error:
+            print(f"dfe-ops admin-probe: {error}", file=sys.stderr)
+            return 1
+        failing = [check.name for check in checks if check.verdict == FAIL]
+        if not failing or time.monotonic() >= deadline:
+            return report("admin-probe", checks)
+        print(
+            f"  ...{', '.join(failing)} not loading yet; re-probing in "
+            f"{ADMIN_PROBE_INTERVAL:.0f}s",
+            file=sys.stderr,
+        )
+        time.sleep(ADMIN_PROBE_INTERVAL)
 
 
 # --- parser ------------------------------------------------------------------
@@ -953,4 +1166,43 @@ def add_edge_probe_subparser(sub: argparse._SubParsersAction) -> None:
     probe.set_defaults(func=cmd_edge_probe)
 
 
-__all__ = ["EdgeProbeError", "add_edge_probe_subparser", "cmd_edge_probe"]
+def add_admin_probe_subparser(sub: argparse._SubParsersAction) -> None:
+    """Register `dfe-ops admin-probe`."""
+    probe = sub.add_parser(
+        "admin-probe",
+        help="prove every admin UI the gateway lists loads through it: no redirect loop, no 5xx",
+        description="Reads the dfe-admin-links ConfigMap and GETs each admin UI through the "
+                    "gateway address with its own name on the SNI and Host header, following "
+                    "redirects. A loop, a 5xx or no answer fails; a redirect off the "
+                    "deployment's domain is a login handed to an IdP and passes. Sends no "
+                    "credential. Exits non-zero if any check fails.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    probe.add_argument(
+        "--namespace", default=DEFAULT_ADMIN_NAMESPACE,
+        help="the engine's namespace, where the gateway writes dfe-admin-links",
+    )
+    probe.add_argument("--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own")
+    probe.add_argument("--context", default="", help="kubeconfig context to read; empty is its current one")
+    probe.add_argument(
+        "--gateway", default=DEFAULT_GATEWAY,
+        help="the Gateway whose address is dialled; any Gateway's when it holds none",
+    )
+    probe.add_argument(
+        "--target", default="", metavar="ADDRESS",
+        help="dial this address instead of the one the Gateway reports",
+    )
+    probe.add_argument(
+        "--wait", type=float, default=0.0, metavar="SECONDS",
+        help="re-probe a failing UI until this many seconds have passed",
+    )
+    probe.set_defaults(func=cmd_admin_probe)
+
+
+__all__ = [
+    "EdgeProbeError",
+    "add_admin_probe_subparser",
+    "add_edge_probe_subparser",
+    "cmd_admin_probe",
+    "cmd_edge_probe",
+]
