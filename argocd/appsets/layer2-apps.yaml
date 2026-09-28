@@ -155,6 +155,7 @@ spec:
             values: |
               {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
+              {{- $kafkaSecurityProtocol := index .metadata.annotations "dfe.hyperi.io/kafka_security_protocol" }}
               {{- $kafkaMessageMaxBytes := index .metadata.annotations "dfe.hyperi.io/kafka_message_max_bytes" }}
               {{- if $kafkaMode }}
               # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
@@ -167,6 +168,11 @@ spec:
                 mode: {{ $kafkaMode | quote }}
                 {{- if and (eq $kafkaMode "external") $kafkaBootstrap }}
                 bootstrapServers: {{ $kafkaBootstrap | quote }}
+                {{- end }}
+                {{- if and (eq $kafkaMode "external") $kafkaSecurityProtocol }}
+                # A managed broker serves TLS only, so its protocol replaces
+                # common.yaml's in-cluster plain listener for every app.
+                securityProtocol: {{ $kafkaSecurityProtocol | quote }}
                 {{- end }}
                 {{- if $kafkaMessageMaxBytes }}
                 # The message size the managed broker was built with, so the

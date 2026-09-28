@@ -55,6 +55,9 @@ kafka:
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
+  # The listener's wire protocol, the dial every app chart reads. Empty takes
+  # SASL_PLAINTEXT, the in-cluster brokers' plain listener.
+  securityProtocol: ""
   provider: ""
   # The max.message.bytes every topic the engine creates takes, in bytes -- the
   # kafka chart's own key for the same number. A managed broker sets it from the

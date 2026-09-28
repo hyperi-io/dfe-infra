@@ -147,12 +147,7 @@ the engine holds `kafka.storageModel`, `kafka.tieredObject.*` and
 
 1. Stand up the cluster with the guide's Terraform snippet (the right auth for
    the platform, plus whatever DFE defaults that platform lets you set).
-2. Point DFE at it: `kafka.mode=external`, `kafka.external.bootstrap=<endpoint>`,
-   and set the provider identity so scalo derives the correct
-   `security_protocol` + `sasl_mechanism` (never hand-set). The chart env var is
-   `KAFKA_PROVIDER` (helper `dfe-common.kafkaProviderEnv`); the engine-side name
-   is `DFE_KAFKA_PROVIDER`. Values: `msk`, `msk_iam`, `confluent-cloud`,
-   `redpanda-cloud`.
+2. Point DFE at it: `kafka.mode=external`, `kafka.external.bootstrap=<endpoint>` and `kafka.securityProtocol=SASL_SSL`, because every managed cloud here serves TLS only. Every app chart and dfe-engine read the wire protocol from that one dial, never from a provider key. On the bootstrap path you set none of the three by hand: `DFE_KAFKA_PROVIDER` of `msk`, `confluent-cloud` or `redpanda-cloud` puts them on the Argo cluster secret, and the layer 2 appsets hand them to the charts.
 3. Get the client config for that provider from the CLI:
    `dfe kafka client-config --provider <msk|msk_iam|confluent-cloud|redpanda-cloud>`.
    It emits the derived transport settings from the canonical provider table

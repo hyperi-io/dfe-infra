@@ -20,7 +20,8 @@ The facts are already on the cluster secret, so the fix is the appsets reading
 them back. Three things are checked here: the profile default is untouched for
 an in-cluster broker, the annotation-driven overlay reaches every chart that
 resolves a broker, and bootstrap.sh sets the annotation for exactly the three
-managed providers.
+managed providers. The protocol travels the same way: all three serve TLS only,
+so bootstrap.sh derives SASL_SSL for them and the cluster secret carries it.
 
     python3 scripts/tests/test_managed_kafka_mode.py
 
@@ -30,6 +31,7 @@ Needs `helm` on PATH. No test runner, matching the other checks here.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -171,6 +173,59 @@ def test_bootstrap_sets_external_for_exactly_the_managed_providers() -> None:
     for provider in IN_CLUSTER_PROVIDERS:
         expect(f"{provider} keeps the profile's own mode", provider not in named,
                f"named in: {sorted(named)}")
+
+
+PROTOCOL_ENV = "DFE_KAFKA_SECURITY_PROTOCOL"
+PROTOCOL_ANNOTATION = "dfe.hyperi.io/kafka_security_protocol"
+
+
+def derived(provider: str) -> tuple[str, str] | None:
+    """bootstrap.sh's own mode and protocol derivation, run for one provider.
+
+    Executes the script's text from the mode's reset to the protocol's export,
+    so a changed case arm or condition is what gets tested. None when either
+    end is missing.
+    """
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    start = script.find('DFE_KAFKA_MODE=""')
+    end = script.find(f"export {PROTOCOL_ENV}\n")
+    bash = shutil.which("bash")
+    if start < 0 or end < start or bash is None:
+        return None
+    snippet = script[start:end] + f'printf "%s|%s" "$DFE_KAFKA_MODE" "${{{PROTOCOL_ENV}:-}}"\n'
+    out = subprocess.run(
+        [bash, "-c", snippet],
+        env={"DFE_KAFKA_PROVIDER": provider},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"bootstrap.sh's derivation failed for {provider!r}:\n{out.stderr}")
+    mode, _, protocol = out.stdout.partition("|")
+    return mode, protocol
+
+
+def test_bootstrap_derives_tls_for_exactly_the_managed_providers() -> None:
+    """Every managed provider serves TLS only, and common.yaml names the in-cluster
+    brokers' plain listener -- so a managed deploy left on it cannot connect."""
+    for provider in MANAGED_PROVIDERS:
+        got = derived(provider)
+        expect(f"bootstrap.sh derives external + SASL_SSL for {provider}",
+               got == ("external", "SASL_SSL"), f"got {got!r}")
+    for provider in (*IN_CLUSTER_PROVIDERS, ""):
+        got = derived(provider)
+        expect(f"{provider or 'no provider'} derives no protocol, so common.yaml's stands",
+               got == ("", ""), f"got {got!r}")
+
+
+def test_the_cluster_secret_carries_the_protocol() -> None:
+    template = CLUSTER_SECRET.read_text(encoding="utf-8")
+    expect(f"the cluster secret carries {PROTOCOL_ANNOTATION}",
+           f'{PROTOCOL_ANNOTATION}: "${{{PROTOCOL_ENV}}}"' in template,
+           "annotation missing from the cluster-secret template")
 
 
 def test_every_appset_reads_the_mode_back() -> None:

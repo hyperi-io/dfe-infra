@@ -37,6 +37,12 @@ reads first, so the names asserted are the ones a deployment actually gets. The
 scale scenario adds profile-scale.yaml over it, the one profile that names a
 Kafka provider.
 
+The managed and in-cluster scenarios execute layer2-apps' own values block for
+a cluster secret as bootstrap.sh annotates it, layered over aws.yaml and the
+scale profile the way Argo layers it. That block is the only thing that tells a
+chart its broker is managed, so the protocol is asserted on the path that
+carries it.
+
     python3 scripts/tests/test_app_env_contract.py
 
 Runs standalone or under pytest. Needs `helm` on PATH.
@@ -45,6 +51,7 @@ Runs standalone or under pytest. Needs `helm` on PATH.
 import functools
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 from pathlib import Path
 
@@ -55,7 +62,9 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
+AWS_VALUES = REPO_ROOT / "argocd" / "values" / "aws.yaml"
 SCALE_VALUES = REPO_ROOT / "argocd" / "values" / "profile-scale.yaml"
+LAYER2_APPS = REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml"
 
 APPS = (
     "dfe-archiver",
@@ -78,6 +87,31 @@ DIALLED = "dialled"
 # that turned its own TLS on beneath common.yaml's plaintext listener.
 SCALE = "scale"
 OVERLAY_TLS = "overlay-tls"
+
+# Two more, each rendered through layer2-apps' values block: a managed broker's
+# cluster secret, and an in-cluster one.
+MANAGED = "managed"
+IN_CLUSTER = "in-cluster"
+
+# Every annotation layer2-apps' values block reads, as bootstrap.sh writes it --
+# always present, empty where the fact does not apply. The endpoint is an RFC
+# 2606 placeholder: this repo ships publicly.
+CLUSTER_SECRETS = {
+    MANAGED: {
+        "dfe.hyperi.io/kafka_mode": "external",
+        "dfe.hyperi.io/kafka_bootstrap": "b-1.example.invalid:9096,b-2.example.invalid:9096",
+        "dfe.hyperi.io/kafka_security_protocol": "SASL_SSL",
+        "dfe.hyperi.io/kafka_message_max_bytes": "16777216",
+        "dfe.hyperi.io/image_pull_secret": "",
+    },
+    IN_CLUSTER: {
+        "dfe.hyperi.io/kafka_mode": "",
+        "dfe.hyperi.io/kafka_bootstrap": "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092",
+        "dfe.hyperi.io/kafka_security_protocol": "",
+        "dfe.hyperi.io/kafka_message_max_bytes": "",
+        "dfe.hyperi.io/image_pull_secret": "",
+    },
+}
 
 # The dials behind every DIALLED row, set together on the bus.
 DIALS = (
@@ -102,10 +136,16 @@ SCENARIOS = {
         "config.source.tls.enabled=true",
         "config.sink.tls.enabled=true",
     ),
+    MANAGED: (),
+    IN_CLUSTER: (),
 }
 
 # Values files layered over common.yaml, per scenario.
-PROFILE_VALUES = {SCALE: (SCALE_VALUES,)}
+PROFILE_VALUES = {
+    SCALE: (SCALE_VALUES,),
+    MANAGED: (AWS_VALUES, SCALE_VALUES),
+    IN_CLUSTER: (AWS_VALUES, SCALE_VALUES),
+}
 
 # The two transforms read their TLS switch from the file alone, per side, where
 # the protocol is decided: dfe-transform-vrl src/kafka/mod.rs:163 and
@@ -249,6 +289,10 @@ PROTOCOL_ENV = {
     app: name for app, _, name, _ in CONTRACT if name.endswith("KAFKA_SECURITY_PROTOCOL")
 }
 
+# dfe-engine carries no data, but on the bus it dials the same broker to create
+# each source's topics (dfe-engine src/dfe_engine/settings.py:1945).
+ENGINE_PROTOCOL = {"dfe-engine": "DFE_KAFKA_SECURITY_PROTOCOL"}
+
 # Names a chart rendered once and no app reads. A regression here is invisible in a
 # cluster, so it is asserted rather than left to review. dfe-transform-elastic is
 # absent from the first two sets because from_env reads both names there.
@@ -262,6 +306,49 @@ RETIRED = (
 
 
 @functools.cache
+def appset_values(scenario: str) -> str:
+    """layer2-apps' `values` block, executed for the scenario's cluster secret.
+
+    Helm runs the same text/template and sprig library the ApplicationSet
+    controller renders goTemplate with, so the block is executed, not read.
+    """
+    doc = yaml.safe_load(LAYER2_APPS.read_text(encoding="utf-8"))
+    block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+    secret = yaml.safe_dump({"metadata": {"annotations": CLUSTER_SECRETS[scenario]}})
+    with tempfile.TemporaryDirectory() as tmp:
+        chart = Path(tmp) / "appset"
+        (chart / "templates").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text(
+            "apiVersion: v2\nname: appset\nversion: 0.0.0\n", encoding="utf-8", newline="\n"
+        )
+        # The block reads .metadata.annotations, so .Values is its dot.
+        (chart / "templates" / "_block.tpl").write_text(
+            '{{- define "block" -}}{{- with .Values }}\n' + block + "\n{{- end }}{{- end -}}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        (chart / "templates" / "out.yaml").write_text(
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: appset\ndata:\n"
+            '  values.yaml: |\n{{ include "block" . | trim | indent 4 }}\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        (Path(tmp) / "secret.yaml").write_text(secret, encoding="utf-8", newline="\n")
+        out = subprocess.run(
+            ["helm", "template", "appset", str(chart), "-f", str(Path(tmp) / "secret.yaml")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    if out.returncode != 0:
+        raise SystemExit(f"layer2-apps' values block failed [{scenario}]:\n{out.stderr}")
+    configmap = next(d for d in yaml.safe_load_all(out.stdout) if d)
+    return configmap["data"]["values.yaml"] or ""
+
+
+@functools.cache
 def render(app: str, scenario: str, *sets: str) -> tuple[dict, ...]:
     """The chart under common.yaml, the scenario's profile file and sets, then extra sets."""
     cmd = ["helm", "template", app, str(chart_dir(app)), "-f", str(COMMON_VALUES)]
@@ -269,9 +356,15 @@ def render(app: str, scenario: str, *sets: str) -> tuple[dict, ...]:
         cmd += ["-f", str(values)]
     for s in (*SCENARIOS[scenario], *sets):
         cmd += ["--set", s]
-    out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        if scenario in CLUSTER_SECRETS:
+            # Argo layers an appset's inline values over every values file.
+            overlay = Path(tmp) / "appset.yaml"
+            overlay.write_text(appset_values(scenario), encoding="utf-8", newline="\n")
+            cmd += ["-f", str(overlay)]
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {app} [{scenario}]:\n{out.stderr}")
     return tuple(d for d in yaml.safe_load_all(out.stdout) if d)
@@ -379,6 +472,53 @@ def test_a_plaintext_listener_switches_no_tls_off() -> None:
         for side in ("source", "sink"):
             enabled = ((written.get(side) or {}).get("tls") or {}).get("enabled")
             expect(f"{app} keeps the overlay's {side}.tls", enabled is True, f"got {enabled!r}")
+
+
+def test_a_managed_broker_turns_tls_on_in_every_app() -> None:
+    """Every managed provider serves TLS only, and nothing else on a managed
+    deploy's path moves common.yaml's plain listener off the apps."""
+    block = yaml.safe_load(appset_values(MANAGED)) or {}
+    got = (block.get("kafka") or {}).get("securityProtocol")
+    expect(
+        "layer2-apps lands the cluster secret's protocol on kafka.securityProtocol",
+        got == "SASL_SSL",
+        f"got {got!r}",
+    )
+    for app, name in sorted({**PROTOCOL_ENV, **ENGINE_PROTOCOL}.items()):
+        got = env_values(app, MANAGED).get(name)
+        expect(f"{app} renders {name}=SASL_SSL [{MANAGED}]", got == "SASL_SSL", f"got {got!r}")
+    for app, name in sorted(TLS_IN_FILE.items()):
+        written = config_file(app, MANAGED, name)
+        for side in ("source", "sink"):
+            enabled = ((written.get(side) or {}).get("tls") or {}).get("enabled")
+            expect(f"{app} turns {side}.tls on [{MANAGED}]", enabled is True, f"got {enabled!r}")
+
+
+def test_an_in_cluster_broker_keeps_the_plain_listener() -> None:
+    """bootstrap.sh leaves the managed annotations empty for strimzi and redpanda,
+    so the block writes no kafka key and common.yaml's dial stands."""
+    block = yaml.safe_load(appset_values(IN_CLUSTER)) or {}
+    expect(
+        "layer2-apps writes no kafka key for an in-cluster broker",
+        "kafka" not in block,
+        f"got {block.get('kafka')!r}",
+    )
+    dial = yaml.safe_load(COMMON_VALUES.read_text(encoding="utf-8"))["kafka"]["securityProtocol"]
+    for app, name in sorted({**PROTOCOL_ENV, **ENGINE_PROTOCOL}.items()):
+        got = env_values(app, IN_CLUSTER).get(name)
+        expect(
+            f"{app} renders {name} as {dial} or not at all [{IN_CLUSTER}]",
+            got in (None, dial),
+            f"got {got!r}",
+        )
+    for app, name in sorted(TLS_IN_FILE.items()):
+        written = config_file(app, IN_CLUSTER, name)
+        for side in ("source", "sink"):
+            expect(
+                f"{app} writes no {side}.tls [{IN_CLUSTER}]",
+                "tls" not in (written.get(side) or {}),
+                f"got {(written.get(side) or {}).get('tls')!r}",
+            )
 
 
 def test_no_provider_key_overrides_the_protocol_dial() -> None:

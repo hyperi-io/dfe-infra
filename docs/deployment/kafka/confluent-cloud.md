@@ -161,9 +161,7 @@ that pair is what DFE's `confluent-cloud` provider sends as PLAIN over TLS.
   `PLAIN` and puts the mechanism in the credential Secret beside the API key, so
   that Secret carries the same `username` / `password` / `sasl.mechanism` shape
   a DFE-owned broker's does.
-- `KAFKA_PROVIDER=confluent-cloud` / `DFE_KAFKA_PROVIDER=confluent-cloud`
-  -> scalo derives the same pair (never hand-set). The floor check refuses
-  PLAIN on any non-TLS transport.
+- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. PLAIN never crosses a cleartext transport. On the aws root you set none of the mode, the endpoint or this by hand: `DFE_KAFKA_PROVIDER=confluent-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
 - Credentials: put the Kafka API key (username) + secret (password) in the
   Vault-backed external secret; `kafka.external.auth.type=scram` still works as
   the user/password carrier (the mechanism itself is PLAIN, derived from the

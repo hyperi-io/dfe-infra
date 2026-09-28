@@ -266,14 +266,10 @@ group's ports.
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap endpoint>`.
-- Provider identity so scalo derives the transport (never hand-set):
-  - Provisioned: `KAFKA_PROVIDER=msk` / `DFE_KAFKA_PROVIDER=msk`
-    -> `SASL_SSL` + `SCRAM-SHA-512`. Credentials via the Vault-backed external
-    secret (`kafka.external.auth.type=scram`).
-  - Serverless: `KAFKA_PROVIDER=msk_iam` / `DFE_KAFKA_PROVIDER=msk_iam`
-    -> `SASL_SSL` + `OAUTHBEARER`. Set `kafka.external.auth.type=msk_iam` -- NO
-    static secret is rendered; the consumer ServiceAccounts carry the IAM role
-    via IRSA / workload identity.
+- `kafka.securityProtocol=SASL_SSL`: the SCRAM listener on 9096 is TLS only, and every app chart and dfe-engine read their protocol from this one dial. On the aws root you set none of this by hand: `DFE_KAFKA_PROVIDER=msk` reaches bootstrap, which puts the mode, the endpoint and `SASL_SSL` on the Argo cluster secret for the layer 2 appsets to hand on.
+- `kafka.external.provider`, the identity the chart derives the SASL mechanism from:
+  - Provisioned: `msk` -> `SASL_SSL` + `SCRAM-SHA-512`. Credentials via the Vault-backed external secret (`kafka.external.auth.type=scram`).
+  - Serverless: `msk_iam` -> `SASL_SSL` + `OAUTHBEARER`. Set `kafka.external.auth.type=msk_iam` -- NO static secret is rendered.
 - Client config: `dfe kafka client-config --provider msk` (or `msk_iam`) emits
   the derived settings from the canonical provider table.
 

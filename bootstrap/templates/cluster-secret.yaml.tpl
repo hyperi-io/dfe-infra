@@ -93,6 +93,9 @@ metadata:
     # blank otherwise so the profile overlay's own kafka.mode is left alone --
     # the appset parameter reading this is emitted only when it is non-empty.
     dfe.hyperi.io/kafka_mode: "${DFE_KAFKA_MODE}"
+    # SASL_SSL on a managed broker, which serves TLS only, and blank otherwise
+    # so the charts keep common.yaml's kafka.securityProtocol.
+    dfe.hyperi.io/kafka_security_protocol: "${DFE_KAFKA_SECURITY_PROTOCOL}"
     # Bare broker hosts (no port), for the otel-collector chart's MSK
     # open_monitoring scrape. Empty on every provider but msk.
     dfe.hyperi.io/kafka_broker_hosts: "${DFE_KAFKA_BROKER_HOSTS}"
