@@ -315,6 +315,8 @@ if [ "$posted" -gt 0 ]; then
   done
 fi
 echo "  marker ${MARK} per-node counts:"
+# check() discards its command's output, so the counts are printed by a call of their own.
+marker_on_all_nodes "$MARK" || true
 check "fixture events posted to receiver land in ${CH_DATA_TABLE} on EVERY ClickHouse node" \
   "test $sent -gt 0 && test $posted -eq $sent && marker_on_all_nodes '$MARK'"
 
@@ -410,6 +412,7 @@ KSH
     # is asserted where the credential CAN read it (a single-tier broker with no
     # authorizer, and redpanda, which runs this user as a superuser) and
     # explicitly NOT asserted under Strimzi's authorizer.
+    # shellcheck disable=SC2016  # $P is expanded by the pod's shell, where kafka_cli defines it.
     if printf '%s' "$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config $P --describe --topic dfe_loader_dlq')" | grep -q 'retention.ms='; then
       check "DLQ retention is longer than the data-topic default" \
         "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"

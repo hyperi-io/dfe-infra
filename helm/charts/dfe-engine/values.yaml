@@ -500,5 +500,27 @@ huntRunner:
       cpu: 500m
       memory: 512Mi
 
+# The hunt-runner pod's init container, read by name by dfe-common.waitForEngine.
+# The engine pod itself does not wait. The runner exits without the coordination
+# tables the engine's schema phase creates, and it syncs in the engine's own wave,
+# so this is the only thing holding it back. port == service.port.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty -> this release's own namespace.
+  namespace: ""
+  port: 8000
+  # On expiry the init container exits non-zero and the pod sits in
+  # Init:CrashLoopBackOff rather than starting against an absent schema.
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

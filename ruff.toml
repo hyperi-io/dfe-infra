@@ -47,10 +47,10 @@ ignore = [
 ]
 
 [lint.isort]
-# _expect and _charts are the shared test helpers sitting beside the tests that
-# import them, so they belong in the first-party group rather than beside PyPI
-# packages.
-known-first-party = ["_charts", "_expect"]
+# _expect, _charts and _smoke are the shared test helpers sitting beside the
+# tests that import them, so they belong in the first-party group rather than
+# beside PyPI packages.
+known-first-party = ["_charts", "_expect", "_smoke"]
 
 [lint.per-file-ignores]
 # Test helpers load the script under test by path, which needs the import

@@ -13,7 +13,7 @@ The runner reads hunt and rule YAML off disk (dfe_engine.hunt_runner.spec_loader
 on every reload tick), so a directory nothing fills means no hunt has ever run
 (dfe-infra#212). A template that renders is not evidence of that: the values are.
 
-Six things are checked:
+Seven things are checked:
 
 1. The sidecar reaches the SAME repo, branch and credential as the engine, off
    `gitops.*`. A second copy of any of the three could point somewhere else.
@@ -28,6 +28,10 @@ Six things are checked:
    deploy repo -- the pre-#212 shape, so the switch is a real off.
 6. No deploy repo (gitops.enabled=false) means no sidecar: there is nothing to
    sync and the credential Secret does not exist.
+7. The pod waits for the engine to report ready before the runner starts. The
+   runner exits without the coordination tables the engine's schema phase
+   creates, and it shares the engine's sync wave, so the wait is the only thing
+   holding it back. git-sync-init joins the same initContainers list.
 
     python3 scripts/tests/test_hunt_runner_gitsync.py
 
@@ -85,6 +89,10 @@ def container(doc: dict, name: str) -> dict:
         if c["name"] == name:
             return c
     return {}
+
+
+def init_names(doc: dict) -> list[str]:
+    return [c["name"] for c in pod(doc).get("initContainers") or []]
 
 
 def env_of(c: dict) -> dict:
@@ -324,9 +332,9 @@ def test_disabled_restores_the_single_container_pod() -> None:
     names = [c["name"] for c in pod(doc)["containers"]]
     expect("only the runner remains", names == ["hunt-runner"], f"{names}")
     expect(
-        "and no init container either",
-        not pod(doc).get("initContainers"),
-        f"{pod(doc).get('initContainers')}",
+        "and no git-sync init container either",
+        init_names(doc) == ["wait-for-engine"],
+        f"{init_names(doc)}",
     )
     expect(
         "no deploy-repo volume is declared",
@@ -353,8 +361,40 @@ def test_no_deploy_repo_means_no_sidecar() -> None:
     expect("the sidecar is not rendered", names == ["hunt-runner"], f"{names}")
     expect(
         "nor the init container that would wedge the pod on it",
-        not pod(doc).get("initContainers"),
-        f"{pod(doc).get('initContainers')}",
+        init_names(doc) == ["wait-for-engine"],
+        f"{init_names(doc)}",
+    )
+
+
+def test_the_runner_waits_for_the_engine() -> None:
+    """A fresh deploy restarted the runner on SchemaNotAppliedError until the schema landed."""
+    values = chart_values()
+    doc = render()
+    expect(
+        "the engine wait runs first, then the first sync",
+        init_names(doc) == ["wait-for-engine", "git-sync-init"],
+        f"{init_names(doc)}",
+    )
+    script = (container(doc, "wait-for-engine").get("command") or [""])[-1]
+    # render() names no namespace, so the release's is helm's `default`.
+    want = f"http://dfe-engine.default.svc.cluster.local:{values['service']['port']}/readyz"
+    expect("it polls the engine Service's /readyz", f'URL="{want}"' in script, script)
+    expect(
+        "on the engine chart's own Service port",
+        values["waitForEngine"]["port"] == values["service"]["port"],
+        f"{values['waitForEngine']['port']} vs {values['service']['port']}",
+    )
+    off = render("waitForEngine.enabled=false")
+    expect(
+        "switched off, only the first sync is left",
+        init_names(off) == ["git-sync-init"],
+        f"{init_names(off)}",
+    )
+    bare = render("waitForEngine.enabled=false", "huntRunner.gitSync.enabled=false")
+    expect(
+        "and with neither, the pod has no initContainers key",
+        "initContainers" not in pod(bare),
+        f"{pod(bare).get('initContainers')}",
     )
 
 

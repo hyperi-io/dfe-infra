@@ -33,7 +33,10 @@ import subprocess
 def run_kubectl(
     args: list[str], *, timeout: float | None = None, check: bool = False
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``kubectl <args>``, capturing stdout/stderr as text.
+    """Run ``kubectl <args>``, capturing stdout/stderr as UTF-8 text.
+
+    Decoding is pinned rather than left to the locale, and an undecodable byte
+    becomes U+FFFD instead of raising.
 
     Args:
         args: The full argv after ``kubectl`` -- the caller assembles
@@ -59,6 +62,8 @@ def run_kubectl(
         ["kubectl", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=check,
         timeout=timeout,
     )
