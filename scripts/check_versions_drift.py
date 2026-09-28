@@ -549,11 +549,6 @@ _PROVIDER_MIRRORS = [
     # the module is the whole of the pin -- there is no lock file behind it.
     ("providers.okta-okta", "okta", ["terraform/modules/tf-oidc-okta/main.tf"]),
     (
-        "providers.hashicorp-google",
-        "google",
-        ["terraform/modules/tf-oidc-google/main.tf"],
-    ),
-    (
         "providers.hashicorp-azuread",
         "azuread",
         ["terraform/modules/tf-oidc-entra/main.tf"],
