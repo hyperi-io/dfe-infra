@@ -155,6 +155,8 @@ Every web UI with a login renders by default, through a five-step cascade, first
 4. `routes.<name>.enabled: false` means not rendered.
 5. Otherwise rendered.
 
+A public flag on a route with no login of its own (`ui.public.links: true`) and no edge OIDC fails the render by name rather than serving the route behind a CIDR-only policy. Under Argo CD that leaves the gateway Application in ComparisonError until the flag is removed or a provider is configured.
+
 **`exposure.infraUisExternal` is the one flip that takes every ops surface
 off the edge**, and it is ABSOLUTE for the class: a route's own
 `enabled: true` does not beat it, so a lock-down cannot be picked apart one

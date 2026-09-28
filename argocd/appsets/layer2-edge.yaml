@@ -104,9 +104,9 @@ spec:
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               # The module's own tier table for this flavour, layered AFTER the
               # cloud overlay so an edge key beats the cloud file it moved out
-              # of. `local` and `rancher` are one flavour, not two: the on-prem
+              # of. `local`, `local-dfe` and `rancher` are one flavour: the on-prem
               # tier table is the same table whichever distro carries it.
-              - '../../../argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
+              - '../../../argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "local-dfe") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               # infra/common.yaml is the deployer's own common.yaml -- shared
               # facts declared once and read by every appset; infra/<app>.yaml
@@ -230,7 +230,7 @@ spec:
               # same place: one tier table serves both doors, and the tunnel's
               # own keys (exposure.serviceType, externalTrafficPolicy, pki.mode)
               # are in it.
-              - '../../../argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
+              - '../../../argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "local-dfe") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               # The deployer's own common.yaml, below the instance file, which
               # stays the last word.

@@ -65,6 +65,7 @@ x-dfe-shared:
     argocd: argocd
     git: git
     kafbat: kafbat
+    cruiseControl: cruise-control
     links: links
     otel: otel
   # Source: argocd/values/profile-slim.yaml `resources:` -- minimum viable +

@@ -387,7 +387,7 @@ _EDGE_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
 
 # The flavour each k8s.cloud fact selects, matching the expression
 # argocd/appsets/layer2-edge.yaml uses to pick argocd/values/edge-<flavour>.yaml.
-_CLOUD_FLAVOUR: dict[str, str] = {"local": "onprem", "rancher": "onprem"}
+_CLOUD_FLAVOUR: dict[str, str] = {"local": "onprem", "local-dfe": "onprem", "rancher": "onprem"}
 
 EDGE_FLAVOURS = ("aws", "gcp", "azure", "onprem")
 # The gateway's own public-TLS floor; unquoted 1.2 parses as a float and is
