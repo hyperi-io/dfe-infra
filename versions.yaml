@@ -2189,7 +2189,7 @@ stacks:
       # A GIT REF, not a version: dfe-docker cuts no per-stack tag, so the
       # immutable record of what ran a stack is the commit. `dfe-stack cut`
       # re-resolves it from dfe-docker main.
-      dfe-docker: "0a43c6c377d3e25a3810fdf0ea996f8a777b8c5c"
+      dfe-docker: "941f48961c41d2ada25f722442c6929493a8adc7"
       dfe-hyperdx: "v0.2.7"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d (an engine token still pending a password change is refused, members read their own team, the restore surface is gated, and the node base is pinned by digest; upstream 2.36.0); deployment tag pin lives in the deploy repo values
 
     # Stage toolbox: the dfe-toolbox ops shell image family (docker/dfe-toolbox/),
