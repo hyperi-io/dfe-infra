@@ -6,6 +6,8 @@
 # applies its DFE_TRANSFORM_ELASTIC_* env only after that; a file without the
 # key stops the pod before any env can supply it. The broker list is a
 # deployment fact, so it comes from kafka.bootstrapServers, never the engine.
+# Only a source the overlay names gets it: a lone brokers key fails the parse
+# (missing field name) that an absent source block passes as idle.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,8 +17,8 @@ metadata:
 data:
   config.yaml: |
     {{- $cfg := deepCopy (.Values.config | default dict) }}
-    {{- if (include "dfe-common.transportIsBus" .) }}
     {{- $source := default dict (get $cfg "source") }}
+    {{- if and (include "dfe-common.transportIsBus" .) (get $source "name") }}
     {{- if not (get $source "brokers") }}
     {{- $brokers := list }}
     {{- range splitList "," (.Values.kafka.bootstrapServers | default "") }}

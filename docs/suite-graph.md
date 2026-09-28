@@ -199,17 +199,16 @@ flowchart LR
 
 ### dfe-engine
 
-Its image tag sits in three places in this repo (its own chart, the dfe-schema
-chart that runs an engine entry point, and the hyperdx chart's init container),
-and the drift check holds all three. dfe-ui vendors the engine's API spec and
-generates its scopes file from an engine module.
+Its image tag sits in two places in this repo (its own chart and the hyperdx
+chart's init container), and the drift check holds both. dfe-ui vendors the
+engine's API spec and generates its scopes file from an engine module.
 
 <!-- suite-graph:begin producer:dfe-engine -->
 ```mermaid
 flowchart LR
   dfe_engine["dfe-engine"]:::producer
   dfe_infra["dfe-infra"]:::suite
-  dfe_engine ==>|image-pin, lockstep x3| dfe_infra
+  dfe_engine ==>|image-pin, lockstep x2| dfe_infra
   dfe_ui["dfe-ui"]:::suite
   dfe_engine -->|generated-file, potential| dfe_ui
   dfe_engine -->|vendored-file, potential| dfe_ui

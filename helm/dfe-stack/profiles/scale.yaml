@@ -106,10 +106,6 @@ dfe-hyperdx:
     host: "dfe-clickhouse-clickhouse-headless"
   resources: *scaleResources
 
-dfe-schema:
-  clickhouse:
-    host: "dfe-clickhouse-clickhouse-headless"
-
 otel-collector:
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"

@@ -3,8 +3,8 @@ name: kafka
 description: DFE Kafka substrate -- mode (disabled/single/cluster/external) x provider (strimzi/redpanda)
 type: application
 version: 0.2.0
-appVersion: "4.2.0"
+appVersion: "4.3.1"
 dependencies:
   - name: dfe-common
-    version: "0.13.0"
+    version: "0.14.0"
     repository: "file://../../library/dfe-common"

@@ -207,8 +207,9 @@ spec:
       name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
       namespace: argocd
       annotations:
-        # Wave 7, the wave layer2-apps put every app on: after dfe-schema has
-        # created the tables and after the otel collector it exports to.
+        # Wave 7, the wave layer2-apps puts every app but the engine on: after
+        # dfe-engine (5) has created the tables and topics, and after the otel
+        # collector (6) it exports to.
         argocd.argoproj.io/sync-wave: "7"
     spec:
       project: dfe-apps

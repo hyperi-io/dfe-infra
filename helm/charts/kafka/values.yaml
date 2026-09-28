@@ -32,7 +32,7 @@ kafka:
   # (opt-in, BSL -- see docs/REDPANDA-LIMITATIONS.md; requires redpanda.acceptLicense).
   provider: strimzi
   name: dfe-kafka
-  version: "4.2.0"
+  version: "4.3.1"
   # cluster node count. Defaults to 3; set higher for more brokers.
   # (single mode forces 1.)
   replicas: 3
@@ -41,32 +41,15 @@ kafka:
     enabled: true
     maxSkew: 1
     topologyKey: kubernetes.io/hostname
-  # The main data path's landing topic, created up-front so a BARE deploy can
-  # come up: dfe-loader auto-discovers *_land topics and treats "none found" as
-  # FATAL, so with no topic it crashloops until someone publishes -- which nothing
-  # can do through a loader that is down. See kafka-bootstrap-topics.yaml for the
-  # full reasoning + the name's derivation (receiver default_source + topic_suffix).
-  # Turn off only for a deploy that provisions its topics some other way.
-  # Partitions are NOT set here: the landing topic and the broker's
-  # num.partitions are one derived number (kafka.sizing below), so the two can
-  # never contradict each other the way a pair of literals did.
-  defaultTopic:
-    create: true
-    name: main_land
-    # Clamped to kafka.replicas at render -- asking for more replicas than brokers
-    # leaves the topic un-Ready forever. The single tier has one broker and hard-
-    # codes 1.
-    replicationFactor: 3
-  # The per-source landing topics, beyond the default one above. The receiver
-  # names each `{source}{suffix}`, and with broker auto-create OFF at the
-  # cluster tier nothing else creates them -- a source defined after deploy has
-  # no topic at all until its name reaches this list. EMPTY by default: the
-  # chart knows how to name a source's topic, never which sources a deployment
-  # has, so the deploy repo writes them here. Each entry is a map; `partitions`
-  # is optional and overrides the derivation for that one source, which is
-  # dfe-infra#148's per-source value. `transform` is optional and overrides
-  # kafka.autoscaling.transformKind for that one source's KEDA trigger, when
-  # its landing topic is read by a transform kind other than the default:
+  # Which sources this deployment carries, for the KEDA triggers only -- the
+  # autoscaler needs the topic NAME to read a consumer group's lag, and it can
+  # neither invent the list nor create anything. The topics themselves are
+  # declared in dfe-schemas and created by dfe-engine at its own startup; nothing
+  # in this chart creates a topic. Each entry is a map; `partitions` is optional
+  # and sizes that one source's trigger ceiling, which is dfe-infra#148's
+  # per-source value. `transform` is optional and overrides
+  # kafka.autoscaling.transformKind for that one source's trigger, when its
+  # landing topic is read by a transform kind other than the default:
   #   sources:
   #     - name: okta
   #     - name: m365
@@ -76,49 +59,14 @@ kafka:
   landingTopics:
     sources: []
     suffix: _land
-  # The DFE DLQ standard: one dead-letter topic per fleet app plus one shared
-  # topic for the transform family, pre-created like the landing topic above.
-  # The fleet's containers run a read-only rootfs, so the file DLQ backend is a
-  # no-op (EROFS) and kafka is every app's DLQ backend -- and a DLQ write
-  # happens AT failure time, the one moment nothing can be creating topics.
-  # Names are product policy; app charts point their DLQ at these by default.
-  # Override per deployment only alongside the matching app-chart dlq.topic.
-  # Broker auto-create is OFF at the cluster tier (kafka.profile.scale), so the
-  # pre-created topics below are the only ones a scale deploy starts with.
-  dlqTopics:
-    create: true
-    # Poison messages are low-volume and read by a human, not a consumer group.
-    partitions: 1
-    # Clamped to kafka.replicas at render, like defaultTopic.
-    replicationFactor: 3
-    # Extra per-topic broker config, merged OVER the derived retention.ms and
-    # max.message.bytes. Empty by default -- DLQ retention is
-    # kafka.retention.dlqRetentionH, so it cannot drift from the derivation.
-    config: {}
-    names:
-      - dfe_receiver_dlq
-      - dfe_loader_dlq
-      - dfe_archiver_dlq
-      - dfe_fetcher_dlq
-      - dfe_transform_dlq
-  # The single tier's bootstrap-topics Job (the cluster tier uses CRs and runs
-  # no pod of its own).
-  topicJob:
-    resources:
-      requests:
-        cpu: 50m
-        memory: 128Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
   # Redpanda provider opts (BSL gate). Deployed via the Redpanda OPERATOR
   # (Redpanda + User CRDs), the same operator+thin-CR model as Strimzi.
   redpanda:
     acceptLicense: false
     image:
       repository: docker.redpanda.com/redpandadata/redpanda
-      # Broker tag the operator chart 26.1.11 pairs with (see versions.yaml).
-      tag: "v26.1.17"
+      # Broker tag the operator chart 26.2.3 pairs with (see versions.yaml).
+      tag: "v26.2.2"
     auth:
       # Bootstrap superuser the operator creates + manages (its admin identity
       # for reconciling the User CR). Operator generates its password Secret.
@@ -186,12 +134,12 @@ kafka:
         # match exactly or the pod is handed no AWS credential at all.
         serviceAccount: dfe-kafka-bootstrap
         # Pod failures before the Job gives up and the Application reports
-        # degraded -- five is the sibling single-tier Job's figure.
+        # degraded.
         backoffLimit: 5
         # How long the finished Job survives, in seconds; its pod log is the only
-        # record of which ACLs and topics were written, so it outlives the sync.
+        # record of which ACLs were written, so it outlives the sync.
         ttlSecondsAfterFinished: 600
-        # A short-lived CLI pod, sized like the single tier's topic Job.
+        # A short-lived CLI pod.
         resources:
           requests:
             cpu: 50m
@@ -225,7 +173,7 @@ kafka:
   # Strimzi operator version this deployment runs -- MUST match versions.yaml
   # strimzi-kafka-operator. spec.kafka.tieredStorage landed in 0.38.0, so a lower
   # pin fails the render rather than emitting config the operator drops silently.
-  operatorVersion: "0.51.0"
+  operatorVersion: "1.2.0"
   # Plugin binding for storageModel: tiered-object. Strimzi supports type=custom
   # ONLY: it ships no RemoteStorageManager, so the broker image must carry a
   # plugin on classPath.
@@ -318,10 +266,6 @@ kafka:
     # archiver keeps up; raise this rather than inflating the downtime figure,
     # so the report can still say which half the retention was bought for.
     archiverLagH: 0
-    # DLQ retention in hours. A poisoned message is the record an operator must
-    # still find days later, and it exists nowhere else once its source offset
-    # is committed.
-    dlqRetentionH: 168
     # Fraction of the broker PVC the log may occupy. The remaining 15% is the
     # index, snapshot and in-flight segment space that a full disk takes out.
     usableFraction: 0.85
@@ -370,8 +314,8 @@ kafka:
   # here, and Redpanda ignores the property outright regardless) -- but a
   # customer's cluster may run a different broker default, which would then
   # recompress every topic that does not say otherwise. So it ships per TOPIC
-  # instead, on every topic this chart creates: see the compression.type
-  # entries in dfe-kafka.bootstrapTopics (_helpers.tpl);
+  # instead: dfe-engine creates every topic, and sets compression.type=producer
+  # on each from its kafka.topic_compression_type setting;
   # unclean.leader.election.enable=false (the 4.x
   # default, and read-only on MSK Express); log.segment.bytes 512 MiB (it
   # DOUBLES the mmap count against vm.max_map_count at this shape -- the 1 GiB
@@ -478,7 +422,7 @@ kafka:
         repository: nginxinc/nginx-unprivileged
         tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
         # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
-        digest: "sha256:aa8c9087d36d93e9d650c5365f883b421e8214aedbad24ade52b844c583358f1"
+        digest: "sha256:2ddec616f1cb58bcac057aa388f28cb81e35137641ef4226d321714499329bd1"
         pullPolicy: IfNotPresent
       # A static file server in front of one upstream, read by a handful of
       # admins -- this is not a data path.

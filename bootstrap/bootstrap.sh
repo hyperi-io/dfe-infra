@@ -479,6 +479,31 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# The dfe-ui Playwright suite's e2e posture (dfe-ops stack-deploy --e2e): the
+# engine runs as DFE_ENV=test with its unauthenticated /api/e2e seed routes, which
+# wipe and reseed every account. Written on every cluster secret, false included,
+# so a redeploy without it turns the routes off rather than inheriting them.
+export DFE_E2E_SERVER="${DFE_E2E_SERVER:-false}"
+case "${DFE_E2E_SERVER}" in
+  true)
+    # The engine's own dev-posture list (dfe-engine settings.is_dev_posture).
+    case "${DFE_ENV}" in
+      dev|development|local|test|ci) ;;
+      *)
+        echo "ERROR: DFE_E2E_SERVER=true needs a dev posture, and DFE_ENV is '${DFE_ENV}'." >&2
+        echo "       The e2e seed routes wipe every account, so they never go on a deployment anyone keeps." >&2
+        exit 1
+        ;;
+    esac
+    echo "E2E posture: ON -- the engine runs as DFE_ENV=test with its /api/e2e seed routes"
+    ;;
+  false) ;;
+  *)
+    echo "ERROR: DFE_E2E_SERVER must be true or false (got '${DFE_E2E_SERVER}')" >&2
+    exit 1
+    ;;
+esac
+
 # Every appset layers argocd/values/<cloud>.yaml over common.yaml, so a cloud
 # with no overlay deploys chart defaults and says nothing (dfe-infra#130).
 DFE_CLOUD_VALUES="${REPO_ROOT}/argocd/values/${DFE_CLOUD}.yaml"
@@ -598,10 +623,14 @@ run helm repo update
 echo "==> [1/7] Applying ArgoCD namespace + cluster secret"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
   echo "[DRY-RUN] kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"
-  echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/cluster-secret.yaml.tpl | kubectl apply -f -"
+  echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/cluster-secret.yaml.tpl | kubectl annotate --local -f - dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER} --overwrite -o yaml | kubectl apply -f -"
 else
   kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-  envsubst < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" | kubectl apply -f -
+  # The e2e posture rides on the rendered secret, under the key the layer2-apps
+  # appset hands dfe-engine as e2eServer.
+  envsubst < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" \
+    | kubectl annotate --local -f - "dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER}" --overwrite -o yaml \
+    | kubectl apply -f -
 fi
 
 echo "==> [1b/7] StorageClass (detect-or-install)"
@@ -943,6 +972,16 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
     --from-literal=secret="${ARGO_WEBHOOK_SECRET}" \
     --dry-run=client -o yaml | kubectl apply -f -
   echo "  Argo push webhook secret minted (forgejo ns)"
+
+  # Argo's read credential for the same repo, registered before [7/7] applies the
+  # ApplicationSets: an Application that first syncs without it caches the error.
+  kubectl -n argocd create secret generic repo-deploy \
+    --from-literal=type=git \
+    --from-literal=url="${DFE_CONFIG_REPO_URL}" \
+    --from-literal=username="${FORGEJO_ADMIN_USER}" \
+    --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
+    --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+  echo "  Argo repo cred registered for ${DFE_CONFIG_REPO_URL}"
 elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   # EXTERNAL git (GitHub/GitLab/self-hosted): register the Argo READ credential so
   # Argo can pull the deploy repo -- EITHER HTTPS+token (DFE_CONFIG_REPO_USER +
@@ -1151,20 +1190,6 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   echo "  [ok] chart repo readable"
 fi
 
-# Argo CD repo credential for the bundled in-cluster Forgejo deploy repo, so Argo
-# can pull it. Uses the Forgejo admin creds. External git repo creds are handled
-# in [4c/7] above; this block is the FALLBACK (bundled) path only.
-if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
-  FORGEJO_PW=$(kubectl -n forgejo get secret dfe-forgejo-admin -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
-  if [[ -n "${FORGEJO_PW}" ]]; then
-    kubectl -n argocd create secret generic repo-deploy \
-      --from-literal=type=git \
-      --from-literal=url="${DFE_CONFIG_REPO_URL}" \
-      --from-literal=username="${FORGEJO_ADMIN_USER}" \
-      --from-literal=password="${FORGEJO_PW}" \
-      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
-  fi
-fi
 # NOTE: the deploy-repo app-of-apps is retired. The engine no longer authors Argo
 # Application/AppProject manifests -- the dfe-layer2-apps ApplicationSet fans out
 # one Application per deploy-repo values file (git-files generator). The deploy

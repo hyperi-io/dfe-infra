@@ -369,19 +369,16 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: alpha
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
     classification_source: in-repo
-    default_in_pass: false
+    default_in_pass: true
     artefacts:
       - kind: container
         registry: ghcr
         public: false
-        published: false
-    # Its versions.yaml pin is a placeholder, not a release tag, and it
-    # carries no digest, so the renderer excludes it from every manifest.
 
   # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
   # uncomment their versions.yaml pins and add them here when they ship. See
@@ -765,14 +762,8 @@ edges:
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-schema/values.yaml:14"
-    note: "The dfe-schema chart runs an entry point of the ENGINE image, so it is a second copy of the engine tag and moves with it."
-  - from: dfe-engine
-    to: dfe-infra
-    kind: image-pin
-    type: lockstep
     evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:122"
-    note: "A third copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
+    note: "A second copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
 
   # --- dfe-infra -----------------------------------------------------------
 

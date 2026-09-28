@@ -18,9 +18,9 @@
 // (default dfe-clickhouse), never the release namespace's default account.
 // EKS Pod Identity grants credentials to any pod matching the association's
 // namespace and service account name, with no regard for which workload that
-// happens to be -- when the association named "default" here, the dfe-schema
-// Job, which also runs as "default" in the same namespace, silently inherited
-// this role's S3 write and delete rights alongside ClickHouse itself.
+// happens to be -- when the association named "default" here, every other pod
+// running as "default" in the same namespace silently inherited this role's S3
+// write and delete rights alongside ClickHouse itself.
 
 // The account id qualifies the name because S3's namespace is global and
 // var.name is the dial's own metadata.name -- which deployment.example.yaml

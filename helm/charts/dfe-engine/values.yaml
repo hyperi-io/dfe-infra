@@ -10,12 +10,19 @@ cloud: local
 tenantIsolation:
   enabled: true
 
+# The dfe-ui Playwright suite's posture: the engine runs as DFE_ENV=test with its
+# unauthenticated /api/e2e routes mounted, whose seed scripts wipe and reseed every
+# account and app instance. For a throwaway deployment under test, never one anyone
+# keeps. The render fails unless `env` is a dev posture. The appset passes the cluster
+# secret's dfe.hyperi.io/e2e_server annotation, which `dfe-ops stack-deploy --e2e` sets.
+e2eServer: false
+
 image:
   repository: ""     # set from global.registry
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:464d1853700fa8fc433f8587083432f793afc506a0c5110e4a25012ca0da65e4"
+  digest: "sha256:1a68bd0c0581f298a48cb96ebf5a21814bea24966c92778daac6d4d4596de248"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -38,7 +45,7 @@ profile: ""
 # names it. Helm cannot read a sibling chart's appVersion, so this is a second
 # copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
 # stops the two diverging.
-uiVersion: "v1.6.3"
+uiVersion: "v1.7.5"
 
 # The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
 # and dfe-common.transport reads a missing map as the bus default. On the bus
@@ -69,7 +76,9 @@ service:
 #   kind   the vehicle -- `image` copies files out of a pinned app image the
 #          deployment already has pull rights to; `asset` downloads a release
 #          asset over the engine image's python; `emit` runs the pinned app image
-#          so the app writes its own contract, which no image carries as a file
+#          so the app writes its own contract (role `contract`) or its own source
+#          catalogue (role `catalogue`), neither of which the image carries as a
+#          file
 #   ref    the pinned image (tag@sha256) for `image` and `emit`, the asset URL for
 #          `asset`
 #   role   where the files land, and so what reads them: `library` puts them under
@@ -83,10 +92,9 @@ service:
 #          asset, `to` is relative to the role's root. Absent for `emit`, where
 #          the app decides what it writes.
 #
-# The contract entries carry a second copy of the versions.yaml apps + digests
-# pins, so check_versions_drift.py reads both halves of each ref and --fix moves
-# them with the SSoT. A deployment mirroring images elsewhere overrides the ref.
-# dfe-transform-elastic gets an entry when it publishes an image.
+# The emit entries carry a second copy of the versions.yaml apps + digests pins,
+# so check_versions_drift.py reads both halves of each ref and --fix moves them
+# with the SSoT. A deployment mirroring images elsewhere overrides the ref.
 #
 # The two LIBRARY pins are still empty, and the pins in versions.yaml say why:
 # neither transform release carries its files as an asset, and neither Dockerfile
@@ -116,32 +124,47 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.35@sha256:c4a772973472173eb29be80792d7eeec3312dfe5aad989df067fbe90feb6e00a"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.41@sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.36@sha256:bd61a2a033c0fad1e01e5e9d4958236698fc2169ab064c1050f0e622d326cecb"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.45@sha256:26e3e438cafa1b3b3305299ce07d6040abbb829b123575f13e26ccb5463fd9a2"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.22@sha256:d9fb174704dc2e98f6850afdb8d9d5d35db16761f7d96c9d0ffe2b54e1bdda33"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.27@sha256:1ccaa927a5a2398c3448b04ed8c6a608484218a4238ed3980fda365d7463f698"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.22@sha256:1d5624c31728c93f8b41e17d1efea9b9c2b6b93d4208e1819e951f797bebce57"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.31@sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.23@sha256:6f4bc907b237fbb02a146e7a6b3fefd68b263360e2b7b0ed1213584b5b3b26f7"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.29@sha256:75d97417d09456fabc0931202cbcb7a13e015b1eae46ccde67b920e8a2514a2c"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.39@sha256:a9a88be66bda166169c5088be804e0e4240fa4a2ed2a844ab9787b08db5010fa"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.44@sha256:f0e3ccfe6c4dac66e5256da1272c4c0dcfee97ef1b1dc2388fe9e1a4e299d465"
+    - name: dfe-transform-elastic-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
+    # The source catalogue the settings API offers, printed by the pinned image
+    # itself (`dfe-transform-elastic emit-catalogue`, dfe-transform-elastic#92)
+    # so the deployment needs no access to the app's repository. An image that
+    # predates the subcommand writes nothing, and the engine's catalogue API
+    # then reports the file missing rather than the pod failing to start.
+    - name: dfe-transform-elastic-catalogue
+      kind: emit
+      role: catalogue
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
 
 config:
   mountPath: /config

@@ -151,16 +151,7 @@ cuts no per-stack tag, so the entry is a commit rather than a version, and
 an old stack's docker path, check dfe-docker out at that stack's recorded ref;
 for the current stack, main is the ref.
 
-`content:` also pins the authored files an app ships and the engine serves -
-the reference transform pipelines, and the source catalogue a transform ships.
-The engine chart's `content.entries` turns each pin into one init container
-that fills `/etc/dfe-engine/content` from the pinned app image or the release
-asset, and the engine reads that directory through `DFE_LIBRARY_SEED_DIR` and
-`DFE_SOURCE_CATALOGUE_FILE`. The files never travel through a value or a
-ConfigMap: the elastic catalogue alone is 344 KB, and either form
-re-serialises it into etcd on every Argo sync. `entries` is empty while no
-release carries its files as an asset and no Dockerfile copies them into the
-image; each app that ships its files makes its entry live.
+The engine also serves authored files an app ships - the reference transform pipelines, each app's config contract, and the source catalogue a transform ships. The engine chart's `content.entries` turns each into one init container that fills `/etc/dfe-engine/content` from the pinned app image, and the engine reads that directory through `DFE_LIBRARY_SEED_DIR`, `DFE_APP_CONTRACT_DIR` and `DFE_SOURCE_CATALOGUE_FILE`. The elastic catalogue comes out of the `dfe-transform-elastic` image itself: its init container runs `dfe-transform-elastic emit-catalogue` into `catalogue/sources.yaml`, so it moves with `apps.dfe-transform-elastic` and needs no access to the app's repository. An image that predates the subcommand writes nothing and exits 0, and the engine then answers catalogue requests with "source catalogue not found" rather than failing to start. The files never travel through a value or a ConfigMap: the elastic catalogue alone is 344 KB, and either form re-serialises it into etcd on every Argo sync.
 
 ## Version check
 

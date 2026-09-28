@@ -68,7 +68,7 @@ PULL_APPSETS = (
 
 # One first-party chart per layer 2 appset, so a chart left without the
 # parameter shows up as its own failure rather than hiding behind a sibling.
-CHARTS = ("dfe-ui", "dfe-schema", "dfe-toolbox")
+CHARTS = ("dfe-ui", "otel-collector", "dfe-toolbox")
 
 # Every cloud values file an appset layers on common.yaml.
 CLOUDS = ("aws.yaml", "azure.yaml", "gcp.yaml", "local.yaml", "local-dfe.yaml")

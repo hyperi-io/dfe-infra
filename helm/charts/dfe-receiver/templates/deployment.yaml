@@ -30,6 +30,7 @@ spec:
       # none of these -- switch them off before the collision finds us.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
         - name: receiver
           image: {{ include "dfe-common.image" . | quote }}
@@ -128,8 +129,8 @@ spec:
             {{- else }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
-            # pre-created by the kafka chart (kafka.dlqTopics); names are the
-            # receiver's flat-env contract (mod.rs DLQ_TOPIC/DLQ_MODE).
+            # created by dfe-engine from the dfe-schemas topic set; names are
+            # the receiver's flat-env contract (mod.rs DLQ_TOPIC/DLQ_MODE).
             - name: DFE_RECEIVER_DLQ_TOPIC
               value: {{ .Values.dlq.topic | quote }}
             - name: DFE_RECEIVER_DLQ_MODE

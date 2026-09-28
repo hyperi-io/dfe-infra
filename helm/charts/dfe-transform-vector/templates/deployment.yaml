@@ -38,6 +38,7 @@ spec:
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
         - name: transform
           image: {{ include "dfe-common.image" . | quote }}

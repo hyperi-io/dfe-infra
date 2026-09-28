@@ -44,7 +44,6 @@ CH_APPS = {
     "dfe-hunt-runner",
     "dfe-keda-shim",
     "dfe-hyperdx",
-    "dfe-schema",
 }
 KAFKA_APPS = {
     "dfe-receiver",
@@ -122,8 +121,8 @@ def test_clickhouse_external_on() -> None:
     expect("external CH grants only the CH ports", ports_of(policies) == CH_PORTS,
            f"got {sorted(ports_of(policies))}")
     expect(
-        "external CH reaches the schema Job's namespace",
-        namespaces_of(policies) == {"dfe-local", "clickhouse"},
+        "external CH opens the app namespace and no other",
+        namespaces_of(policies) == {"dfe-local"},
         f"got {sorted(namespaces_of(policies))}",
     )
 

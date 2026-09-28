@@ -647,27 +647,39 @@ _CONTRACT_ENTRIES = [
     "dfe-fetcher",
     "dfe-transform-vrl",
     "dfe-transform-vector",
+    "dfe-transform-elastic",
 ]
 
 
-def contract_ref_pattern(app: str, half: str) -> str:
-    """One half of a content entry's `ref`, anchored on the entry's own app.
+# The source catalogue is emitted by an app image as well, so it is one more
+# copy of that app's pin -- a second entry for an app already in the list above.
+_CATALOGUE_ENTRIES = ["dfe-transform-elastic"]
 
-    All six refs sit in one file, so a bare `ref:` anchor would hand the first
-    entry's value to every check.
+
+def content_ref_pattern(role: str, app: str, half: str) -> str:
+    """One half of a content entry's `ref`, anchored on the entry's role and app.
+
+    Every ref sits in one file, so a bare `ref:` anchor would hand the first
+    entry's value to every check. The role is part of the anchor because one app
+    can back two entries -- its contract and its catalogue -- and a check claims
+    its FIRST match only.
     """
-    head = r"app: " + re.escape(app) + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+    head = (
+        r"role: " + re.escape(role) + r"\n\s*app: " + re.escape(app)
+        + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+    )
     return head + (r"([^\"@]+)@" if half == "tag" else r"[^\"@]+@([^\"]+)\"")
 
 
 CHECKS += [
     Check(
-        f"{app} contract entry image {half}",
+        f"{app} {role} entry image {half}",
         f"{'apps' if half == 'tag' else 'digests'}.{app}",
         Path("helm/charts/dfe-engine/values.yaml"),
-        contract_ref_pattern(app, half),
+        content_ref_pattern(role, app, half),
     )
-    for app in _CONTRACT_ENTRIES
+    for role, apps in (("contract", _CONTRACT_ENTRIES), ("catalogue", _CATALOGUE_ENTRIES))
+    for app in apps
     for half in ("tag", "digest")
 ]
 
@@ -707,21 +719,6 @@ CHECKS += [
         "digests.dfe-hyperdx",
         Path("helm/charts/hyperdx/values.yaml"),
         r'repository:\s*ghcr\.io/hyperi-io/dfe-hyperdx[^\n]*\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
-    ),
-    # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
-    # points, not an artefact of its own -- so the chart name does not match the
-    # pin and it cannot ride _APP_CHARTS.
-    Check(
-        "dfe-schema chart appVersion",
-        "apps.dfe-engine",
-        Path("helm/charts/dfe-schema/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
-    Check(
-        "dfe-schema image digest",
-        "digests.dfe-engine",
-        Path("helm/charts/dfe-schema/values.yaml"),
-        r'digest:\s*"([^"]+)"',
     ),
     # The engine reports the deployment's dfe-ui version on
     # GET /api/v1/system/deployment. Helm cannot read a sibling chart's

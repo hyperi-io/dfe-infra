@@ -506,8 +506,8 @@ apps:
       - config.source.topics
     # It ships a catalogue of compiled-in transforms and selects one by name.
     variant_path: config.source.name
-    # The catalogue reaches a deployment as a release asset from that repo
-    # (dfe-transform-elastic#18), mounted where DFE_SOURCE_CATALOGUE_FILE says.
+    # The catalogue reaches a deployment from the app's own image, which prints
+    # it with `emit-catalogue`, mounted where DFE_SOURCE_CATALOGUE_FILE says.
     catalogue:
       file: sources.yaml
       entries_key: sources

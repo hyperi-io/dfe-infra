@@ -154,13 +154,6 @@ rather than log.retention.hours.
 {{- end }}
 
 {{/*
-dfe-kafka.dlqRetentionMs -- the same, for a DLQ topic.
-*/}}
-{{- define "dfe-kafka.dlqRetentionMs" -}}
-{{- mul (int .Values.kafka.retention.dlqRetentionH) 3600000 -}}
-{{- end }}
-
-{{/*
 dfe-kafka.retentionBytes -- the per-partition size bound, in bytes.
 
   floor(pvcBytes x usableFraction / partitionsPerBroker)
@@ -262,77 +255,4 @@ the mismatch only surfaces as an auth failure against the broker.
 {{- fail (printf "kafka: external.auth.type=msk_iam renders no credential Secret, so external.provider must be msk_iam or left empty (got %q)." $provider) -}}
 {{- end -}}
 {{- end -}}
-{{- end }}
-
-{{/*
-dfe-kafka.bootstrapTopics -- the ONE list of topics a deploy guarantees exist
-before the apps start: the default landing topic plus the per-app DLQ topics.
-
-ONE definition because two templates create them -- the Strimzi KafkaTopic CRs
-(cluster tier) and the broker-CLI Job (single tier). If those ever iterate
-different lists, one tier silently ships without a topic the apps are
-configured to write to, and the failure surfaces as produce errors at the
-worst possible moment (a DLQ write IS the failure path).
-
-Emits a JSON array of {name, partitions, replicationFactor, config};
-consumers parse with fromJsonArray. replicationFactor is UNCLAMPED here --
-each tier applies its own broker arithmetic (cluster: min(rf, replicas);
-single: hard-coded 1).
-
-Usage:
-  {{- $topics := include "dfe-kafka.bootstrapTopics" . | fromJsonArray }}
-*/}}
-{{- define "dfe-kafka.bootstrapTopics" -}}
-{{- $out := list -}}
-{{/* max.message.bytes is the topic end of the size chain -- a topic left at the
-     broker default rejects the very event the broker was raised to accept.
-     compression.type=producer is set per topic, not just at the broker,
-     so a customer cluster with a different broker default can never make
-     the broker recompress what the producer already compressed. Redpanda
-     ignores the property, so this is a no-op there rather than a break. */}}
-{{- $landingConfig := dict
-      "max.message.bytes" (include "dfe-kafka.messageMaxBytes" .)
-      "retention.ms" (include "dfe-kafka.retentionMs" .)
-      "compression.type" "producer" -}}
-{{/* Tiered storage is per-topic as well as per-broker: without
-     remote.storage.enable the brokers hold the plugin and move nothing. Only
-     the landing topic gets it -- a DLQ is small and read by a human. */}}
-{{- if eq (include "dfe-kafka.storageBulk" .) "object" -}}
-{{- $landingConfig = merge (dict "remote.storage.enable" "true") $landingConfig -}}
-{{- end -}}
-{{- if .Values.kafka.defaultTopic.create -}}
-{{- $out = append $out (dict
-      "name" .Values.kafka.defaultTopic.name
-      "partitions" (int (include "dfe-kafka.partitions" .))
-      "replicationFactor" (int .Values.kafka.defaultTopic.replicationFactor)
-      "config" $landingConfig) -}}
-{{- end -}}
-{{/* The per-source landing topics. Skipped when a source resolves to the
-     default topic's own name, so listing the default source is not an error. */}}
-{{- range .Values.kafka.landingTopics.sources -}}
-{{- $topic := printf "%s%s" .name $.Values.kafka.landingTopics.suffix -}}
-{{- if not (and $.Values.kafka.defaultTopic.create (eq $topic $.Values.kafka.defaultTopic.name)) -}}
-{{- $out = append $out (dict
-      "name" $topic
-      "partitions" (int (.partitions | default (include "dfe-kafka.partitions" $)))
-      "replicationFactor" (int $.Values.kafka.defaultTopic.replicationFactor)
-      "config" $landingConfig) -}}
-{{- end -}}
-{{- end -}}
-{{- if .Values.kafka.dlqTopics.create -}}
-{{/* compression.type=producer here too -- an explicit kafka.dlqTopics.config
-     entry still wins, since it is the destination in this merge. */}}
-{{- $dlqConfig := merge (deepCopy (.Values.kafka.dlqTopics.config | default (dict))) (dict
-      "max.message.bytes" (include "dfe-kafka.messageMaxBytes" .)
-      "retention.ms" (include "dfe-kafka.dlqRetentionMs" .)
-      "compression.type" "producer") -}}
-{{- range .Values.kafka.dlqTopics.names -}}
-{{- $out = append $out (dict
-      "name" .
-      "partitions" (int $.Values.kafka.dlqTopics.partitions)
-      "replicationFactor" (int $.Values.kafka.dlqTopics.replicationFactor)
-      "config" $dlqConfig) -}}
-{{- end -}}
-{{- end -}}
-{{- toJson $out -}}
 {{- end }}
