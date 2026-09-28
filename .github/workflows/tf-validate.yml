@@ -13,6 +13,10 @@ on:
       - 'terraform/**'
       - '.github/workflows/tf-validate.yml'
 
+# Nothing in this workflow writes through the token.
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: validate + test (tofu)
