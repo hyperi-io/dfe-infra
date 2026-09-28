@@ -83,7 +83,12 @@ spec:
             # nothing, leaving the broker list on its localhost:9092 default.
             - name: DFE_LOADER_KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if contains "SSL" (upper .Values.kafka.securityProtocol) }}
+            # A TLS listener only: the app turns kafka.tls on from an SSL value
+            # and ignores any other (loader.rs:247).
+            - name: DFE_LOADER_KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
             # The SASL credential MUST arrive by env, not in the config blob: the
             # engine's model_dump masks the pydantic SecretStr, so the authored

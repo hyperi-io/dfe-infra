@@ -23,12 +23,19 @@ fails HERE, which makes it a decision rather than a silent drift.
 
 Rows cover only what the chart is responsible for. dfe-fetcher takes its broker
 list from the config file the chart writes, not from env, so that is asserted on
-the file. The archiver's S3 names belong to test_config_authority.py and an
-unnamed secretKeyRef to test_inert_chart_env.py. dfe-ui runs no scalo, so its OTLP
+the file, as is the TLS switch of the two transforms, which have no env name for
+it. The archiver's S3 names belong to test_config_authority.py and an unnamed
+secretKeyRef to test_inert_chart_env.py. dfe-ui runs no scalo, so its OTLP
 endpoint and exporter are asserted on their own, with the egress that endpoint needs.
 
+The Kafka wire protocol follows one dial, `kafka.securityProtocol`. A TLS
+listener turns TLS on in every app; a plaintext one renders nothing to the apps
+whose reader would switch TLS off with it, so an overlay's own TLS stands.
+
 Every render layers argocd/values/common.yaml, the file every app Application
-reads first, so the names asserted are the ones a deployment actually gets.
+reads first, so the names asserted are the ones a deployment actually gets. The
+scale scenario adds profile-scale.yaml over it, the one profile that names a
+Kafka provider.
 
     python3 scripts/tests/test_app_env_contract.py
 
@@ -48,6 +55,7 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
+SCALE_VALUES = REPO_ROOT / "argocd" / "values" / "profile-scale.yaml"
 
 APPS = (
     "dfe-archiver",
@@ -66,6 +74,11 @@ DIRECT = "direct"
 ALWAYS = "always"
 DIALLED = "dialled"
 
+# Two renders no CONTRACT row is asserted under: the scale tier, and an overlay
+# that turned its own TLS on beneath common.yaml's plaintext listener.
+SCALE = "scale"
+OVERLAY_TLS = "overlay-tls"
+
 # The dials behind every DIALLED row, set together on the bus.
 DIALS = (
     "versionCheck.enabled=false",
@@ -76,13 +89,35 @@ DIALS = (
     "transformFiles[0].content=.",
     "kafka.sourceTopic=example_land",
     "kafka.destTopic=example_load",
+    "kafka.securityProtocol=SASL_SSL",
 )
 
 SCENARIOS = {
     BUS: (),
     DIRECT: ("kafka.mode=disabled",),
     DIALLED: DIALS,
+    SCALE: (),
+    OVERLAY_TLS: (
+        "config.kafka.tls.enabled=true",
+        "config.source.tls.enabled=true",
+        "config.sink.tls.enabled=true",
+    ),
 }
+
+# Values files layered over common.yaml, per scenario.
+PROFILE_VALUES = {SCALE: (SCALE_VALUES,)}
+
+# The two transforms read their TLS switch from the file alone, per side, where
+# the protocol is decided: dfe-transform-vrl src/kafka/mod.rs:163 and
+# dfe-transform-vector src/config/generate.rs:506 (source) and :552 (sink).
+TLS_IN_FILE = {
+    "dfe-transform-vector": "config.yaml",
+    "dfe-transform-vrl": "config.yaml",
+}
+
+# The apps whose reader sets TLS from an env value in BOTH directions, plus the
+# file-based pair, so a plaintext value rendered to any of them switches TLS off.
+TLS_BOTH_WAYS = ("dfe-fetcher", "dfe-receiver", *TLS_IN_FILE)
 
 # The scalo cascade keys under version_check (scalo-rs 2.13 src/version_check/mod.rs:186).
 VERSION_CHECK_KEYS = ("ENABLED", "SEND_INSTANCE_ID", "API_URL", "INSTANCE_ID")
@@ -138,12 +173,15 @@ APP_ROWS = (
     ("dfe-fetcher", BUS, "DFE_FETCHER_DLQ_TOPIC", "crates/fetcher/src/config/mod.rs:981"),
     ("dfe-fetcher", BUS, "DFE_FETCHER_DLQ_MODE", "crates/fetcher/src/config/mod.rs:985"),
     ("dfe-fetcher", DIRECT, "DFE_FETCHER_DLQ_ENABLED", "crates/fetcher/src/config/mod.rs:975"),
+    ("dfe-fetcher", DIALLED, "DFE_FETCHER_KAFKA_SECURITY_PROTOCOL",
+     "crates/fetcher/src/config/mod.rs:932"),
     # DFE_LOADER_*: flat names applied at src/config/loader.rs:423; TRANSPORT and the
     # `__` names reach their fields through the figment layer at :365.
     ("dfe-loader", BUS, "DFE_LOADER_KAFKA_BROKERS", "src/config/loader.rs:223"),
     ("dfe-loader", BUS, "DFE_LOADER_KAFKA_SASL_USERNAME", "src/config/loader.rs:239"),
     ("dfe-loader", BUS, "DFE_LOADER_KAFKA_SASL_PASSWORD", "src/config/loader.rs:243"),
     ("dfe-loader", BUS, "DFE_LOADER_DLQ_TOPIC", "src/config/loader.rs:273"),
+    ("dfe-loader", DIALLED, "DFE_LOADER_KAFKA_SECURITY_PROTOCOL", "src/config/loader.rs:247"),
     ("dfe-loader", DIRECT, "DFE_LOADER_TRANSPORT", "src/config/loader.rs:61"),
     ("dfe-loader", DIRECT, "DFE_LOADER_GRPC__LISTEN", "src/config/kafka.rs:96"),
     ("dfe-loader", ALWAYS, "DFE_LOADER_DLQ_MODE", "src/config/loader.rs:276"),
@@ -160,6 +198,7 @@ APP_ROWS = (
     ("dfe-receiver", BUS, "DFE_RECEIVER_DLQ_TOPIC", "src/config/mod.rs:647"),
     ("dfe-receiver", BUS, "DFE_RECEIVER_DLQ_MODE", "src/config/mod.rs:650"),
     ("dfe-receiver", DIRECT, "DFE_RECEIVER_DLQ_ENABLED", "src/config/mod.rs:644"),
+    ("dfe-receiver", DIALLED, "DFE_RECEIVER_KAFKA_SECURITY_PROTOCOL", "src/config/mod.rs:623"),
     ("dfe-receiver", ALWAYS, "DFE_RECEIVER_BIND_ADDRESS", "src/config/mod.rs:584"),
     # Bare KAFKA_*, the fallback scalo's from_env builds at config.rs:1880, called
     # from src/service.rs:894.
@@ -205,16 +244,18 @@ APP_ROWS = (
 
 CONTRACT = (*APP_ROWS, *VERSION_CHECK, *SCALO_OTEL)
 
+# Each env-reading app's own name for the wire protocol, from the rows above.
+PROTOCOL_ENV = {
+    app: name for app, _, name, _ in CONTRACT if name.endswith("KAFKA_SECURITY_PROTOCOL")
+}
+
 # Names a chart rendered once and no app reads. A regression here is invisible in a
 # cluster, so it is asserted rather than left to review. dfe-transform-elastic is
-# absent from the first set because from_env reads KAFKA_BOOTSTRAP_SERVERS there.
+# absent from the first two sets because from_env reads both names there.
+_NOT_FROM_ENV = tuple(app for app in APPS if app != "dfe-transform-elastic")
 RETIRED = (
-    ("dfe-archiver", "KAFKA_BOOTSTRAP_SERVERS"),
-    ("dfe-fetcher", "KAFKA_BOOTSTRAP_SERVERS"),
-    ("dfe-loader", "KAFKA_BOOTSTRAP_SERVERS"),
-    ("dfe-receiver", "KAFKA_BOOTSTRAP_SERVERS"),
-    ("dfe-transform-vector", "KAFKA_BOOTSTRAP_SERVERS"),
-    ("dfe-transform-vrl", "KAFKA_BOOTSTRAP_SERVERS"),
+    *((app, "KAFKA_BOOTSTRAP_SERVERS") for app in _NOT_FROM_ENV),
+    *((app, "KAFKA_PROVIDER") for app in _NOT_FROM_ENV),
     ("dfe-fetcher", "DFE_FETCHER_API_KEY"),
     ("dfe-fetcher", "DFE_FETCHER_API_SECRET"),
 )
@@ -222,8 +263,10 @@ RETIRED = (
 
 @functools.cache
 def render(app: str, scenario: str, *sets: str) -> tuple[dict, ...]:
-    """The app's chart under common.yaml, one scenario's sets, then any extra sets."""
+    """The chart under common.yaml, the scenario's profile file and sets, then extra sets."""
     cmd = ["helm", "template", app, str(chart_dir(app)), "-f", str(COMMON_VALUES)]
+    for values in PROFILE_VALUES.get(scenario, ()):
+        cmd += ["-f", str(values)]
     for s in (*SCENARIOS[scenario], *sets):
         cmd += ["--set", s]
     out = subprocess.run(
@@ -245,6 +288,19 @@ def env_entries(app: str, scenario: str, *sets: str) -> list[dict]:
 
 def env_names(app: str, scenario: str) -> set[str]:
     return {e["name"] for e in env_entries(app, scenario)}
+
+
+def env_values(app: str, scenario: str, *sets: str) -> dict[str, str]:
+    """Each literal env value by name; a reference renders as empty."""
+    return {e["name"]: e.get("value", "") for e in env_entries(app, scenario, *sets)}
+
+
+def config_file(app: str, scenario: str, name: str) -> dict:
+    """The app's config file as the chart writes it into its ConfigMap."""
+    for doc in render(app, scenario):
+        if doc.get("kind") == "ConfigMap" and name in (doc.get("data") or {}):
+            return yaml.safe_load(doc["data"][name]) or {}
+    raise SystemExit(f"{app} [{scenario}] writes no {name}")
 
 
 def names_read(*when: str) -> dict[str, dict[str, str]]:
@@ -293,6 +349,65 @@ def test_no_app_renders_a_name_nothing_reads() -> None:
             expect(f"{app} renders no retired name [{scenario}]", not back, f"got {back}")
 
 
+def test_a_tls_listener_turns_tls_on_in_every_app() -> None:
+    """One dial names the listener, so an app it does not reach dials TLS in the clear."""
+    covered = set(PROTOCOL_ENV) | set(TLS_IN_FILE)
+    expect("every app takes its protocol from the dial", covered == set(APPS), f"got {sorted(covered)}")
+    for app, name in sorted(PROTOCOL_ENV.items()):
+        got = env_values(app, DIALLED).get(name)
+        expect(f"{app} renders {name}=SASL_SSL", got == "SASL_SSL", f"got {got!r}")
+    for app, name in sorted(TLS_IN_FILE.items()):
+        written = config_file(app, DIALLED, name)
+        for side in ("source", "sink"):
+            enabled = ((written.get(side) or {}).get("tls") or {}).get("enabled")
+            expect(f"{app} turns {side}.tls on", enabled is True, f"got {enabled!r}")
+
+
+def test_a_plaintext_listener_switches_no_tls_off() -> None:
+    """common.yaml names a plaintext listener, and an overlay's own TLS outlives it.
+
+    These readers take a plaintext value as tls.enabled false, so the dial reaches
+    them only when it names TLS.
+    """
+    for app in TLS_BOTH_WAYS:
+        name = PROTOCOL_ENV.get(app)
+        if name is not None:
+            expect(f"{app} renders no {name} for a plaintext listener",
+                   name not in env_names(app, OVERLAY_TLS), "it would switch TLS off")
+    for app, name in sorted(TLS_IN_FILE.items()):
+        written = config_file(app, OVERLAY_TLS, name)
+        for side in ("source", "sink"):
+            enabled = ((written.get(side) or {}).get("tls") or {}).get("enabled")
+            expect(f"{app} keeps the overlay's {side}.tls", enabled is True, f"got {enabled!r}")
+
+
+def test_no_provider_key_overrides_the_protocol_dial() -> None:
+    """The scale tier names provider strimzi, which scalo maps to SASL_SSL.
+
+    dfe-transform-elastic applies a provider over its protocol when it builds the
+    transport (scalo-rs 2.13.0 src/transport/kafka/mod.rs:696), and that tier's
+    broker serves 9092 without TLS (helm/charts/kafka/templates/kafka.yaml).
+    """
+    scale = yaml.safe_load(SCALE_VALUES.read_text(encoding="utf-8"))
+    expect("the scale tier still names a provider", bool(scale["kafka"].get("provider")),
+           "no provider, so this render proves nothing")
+    dial = yaml.safe_load(COMMON_VALUES.read_text(encoding="utf-8"))["kafka"]["securityProtocol"]
+    env = env_values("dfe-transform-elastic", SCALE)
+    expect("elastic gets no KAFKA_PROVIDER on the scale tier", "KAFKA_PROVIDER" not in env,
+           f"got {env.get('KAFKA_PROVIDER')!r}")
+    expect("and takes the dial's protocol", env.get("KAFKA_SECURITY_PROTOCOL") == dial,
+           f"got {env.get('KAFKA_SECURITY_PROTOCOL')!r}")
+
+
+def test_no_app_chart_offers_a_provider_dial() -> None:
+    """A dial left in values.yaml is still an offer, even with no template reading it."""
+    for app in APPS:
+        values = yaml.safe_load((chart_dir(app) / "values.yaml").read_text(encoding="utf-8"))
+        kafka = values.get("kafka") or {}
+        expect(f"{app} offers no kafka.provider", "provider" not in kafka,
+               f"got {kafka.get('provider')!r}")
+
+
 def test_every_kafka_credential_comes_from_the_declared_secret() -> None:
     """A template naming another Secret mounts nothing the deployment provisioned.
 
@@ -326,7 +441,7 @@ def test_the_scalo_apps_push_otlp_to_the_grpc_port() -> None:
     both exporters to gRPC, which the collector serves on 4317 and not on 4318.
     """
     for app in APPS:
-        env = {e["name"]: e.get("value", "") for e in env_entries(app, BUS)}
+        env = env_values(app, BUS)
         endpoint = env.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
         expect(
             f"{app} pushes OTLP to the gRPC port",
@@ -362,7 +477,7 @@ def test_the_ui_pushes_otlp_to_the_http_port() -> None:
         ),
     )
     for label, sets, wanted in cases:
-        env = {e["name"]: e.get("value", "") for e in env_entries("dfe-ui", BUS, *sets)}
+        env = env_values("dfe-ui", BUS, *sets)
         endpoint = env.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
         expect(
             f"dfe-ui pushes OTLP to the HTTP port [{label}]",
@@ -379,7 +494,7 @@ def test_the_ui_pushes_otlp_to_the_http_port() -> None:
 def test_the_ui_can_reach_the_otlp_port_it_is_handed() -> None:
     """The baseline egress is default-deny, so a collector port it leaves shut loses
     every export at connect."""
-    env = {e["name"]: e.get("value", "") for e in env_entries("dfe-ui", BUS)}
+    env = env_values("dfe-ui", BUS)
     endpoint = urllib.parse.urlsplit(env.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""))
     labels = (endpoint.hostname or "").split(".")
     in_cluster = len(labels) > 2 and labels[2] == "svc"

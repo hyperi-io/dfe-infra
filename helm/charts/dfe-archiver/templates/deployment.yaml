@@ -70,10 +70,9 @@ spec:
             # the broker list on its localhost:9092 default.
             - name: KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- with .Values.kafka.securityProtocol }}
-            # This app derives nothing from the provider, so a SASL listener has
-            # to be named here or it dials the broker in the clear.
+            # The app defaults to PLAINTEXT, so a SASL listener has to be named
+            # here or it dials the broker in the clear.
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ . | quote }}
             {{- end }}

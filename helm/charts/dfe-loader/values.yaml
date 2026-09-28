@@ -43,14 +43,10 @@ kafka:
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
-  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
-  # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
-  # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
-  # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
-  # DFE Kafka credential contract (dfe-engine#98). plaintext is not 'the others
-  # without TLS': no TLS and no SASL, so no credential is sent. It suits only a
-  # supplied broker with no authentication.
-  provider: ""
+  # Wire protocol for the broker's listener (PLAINTEXT | SASL_PLAINTEXT | SSL |
+  # SASL_SSL), set beside bootstrapServers. Only an SSL value is rendered: it
+  # turns the app's TLS on, and anything else leaves the app's own setting.
+  securityProtocol: ""
 
 clickhouse:
   host: ""

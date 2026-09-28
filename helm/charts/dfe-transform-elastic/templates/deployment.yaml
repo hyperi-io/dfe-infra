@@ -71,13 +71,10 @@ spec:
             - name: KAFKA_CONSUMER_PROTOCOL
               value: {{ . | quote }}
             {{- end }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
             {{- if and .Values.kafka.securityProtocol .Values.kafka.saslSecretName }}
-            # check_credentials runs before KafkaTransport::new, and only the
-            # latter calls apply_provider, so KAFKA_PROVIDER alone leaves
-            # security_protocol at plaintext and the app refuses to start with
-            # credentials it believes would never be sent. Both are set here
-            # until scalo derives them earlier.
+            # No KAFKA_PROVIDER beside these: KafkaTransport::new derives the
+            # protocol from a provider and overwrites this one, so a provider
+            # key that disagrees with the listener would win.
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ .Values.kafka.securityProtocol | quote }}
             - name: KAFKA_SASL_MECHANISM
