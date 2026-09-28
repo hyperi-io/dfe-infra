@@ -254,8 +254,10 @@ def test_the_summary_says_argo_keeps_its_local_admin_with_no_provider() -> None:
 
 
 def test_the_summary_reads_a_yaml_oidc_config_too() -> None:
-    cm = {"data": {"oidc.config": "name: Okta\nissuer: https://corp.okta.com\n"}}
-    assert "https://corp.okta.com" in argocd_login.summary(cm)
+    raw = "name: Okta\nissuer: https://corp.okta.com\n"
+    assert argocd_login.configured_issuer(raw) == "https://corp.okta.com"
+    text = argocd_login.summary({"data": {"oidc.config": raw}})
+    assert text.startswith("- Argo CD signs in through https://corp.okta.com, ")
 
 
 # --- bootstrap.sh, run against a fake cluster -----------------------------------

@@ -43,11 +43,11 @@ NAMESPACE = "argocd"
 # dfe-oidc-<routeName>-admin, and routes.argocd.routeName is argocd.
 POLICY = "dfe-oidc-argocd-admin"
 POLICY_RESOURCE = "securitypolicies.gateway.envoyproxy.io"
-# Envoy Gateway reads an OIDC client secret from this key and no other.
-SECRET_KEY = "client-secret"
+# The key Envoy Gateway reads an OIDC client credential from, and no other.
+CLIENT_KEY = "client-secret"
 # The wildcard listener's certificate (templates/gateway.yaml), in gateway.namespace.
 GATEWAY_NAMESPACE = "envoy-gateway-system"
-EDGE_CERT_SECRET = "dfe-wildcard-tls"
+EDGE_TLS = "dfe-wildcard-tls"
 # Scopes the gateway chart requests when a provider names none.
 DEFAULT_SCOPES = ["openid", "email", "profile", "groups"]
 # dfe-engine's vocabulary (docs/control-plane/rbac-vocabulary.md): the admin group
@@ -87,15 +87,16 @@ def oidc_config(policy: dict | None, domain: str, edge_ca: str) -> tuple[dict | 
     oidc = spec.get("oidc") or {}
     issuer = (oidc.get("provider") or {}).get("issuer", "")
     client_id = oidc.get("clientID", "")
-    secret = oidc.get("clientSecret") or {}
-    secret_name = secret.get("name", "")
-    secret_ns = secret.get("namespace") or (policy.get("metadata") or {}).get("namespace", "")
-    if not (issuer and client_id and secret_name):
-        return None, f"{POLICY} carries no issuer, client id and client secret, {local}"
-    if secret_ns != NAMESPACE:
+    # A reference to the Secret holding the client credential, never the value.
+    ref = oidc.get("clientSecret") or {}
+    ref_name = ref.get("name", "")
+    ref_namespace = ref.get("namespace") or (policy.get("metadata") or {}).get("namespace", "")
+    if not (issuer and client_id and ref_name):
+        return None, f"{POLICY} names no issuer, client id and credential Secret, {local}"
+    if ref_namespace != NAMESPACE:
         return None, (
-            f"{POLICY} reads its client secret from namespace {secret_ns}, and Argo resolves a "
-            f"secret reference only in {NAMESPACE}, {local}"
+            f"{POLICY} reads its client credential from namespace {ref_namespace}, and Argo "
+            f"resolves a Secret reference only in {NAMESPACE}, {local}"
         )
     # The login provider is also one of the policy's JWT issuers, under its own name.
     issuers = (spec.get("jwt") or {}).get("providers") or []
@@ -104,7 +105,7 @@ def oidc_config(policy: dict | None, domain: str, edge_ca: str) -> tuple[dict | 
         "name": names[0] if names else "SSO",
         "issuer": issuer,
         "clientID": client_id,
-        "clientSecret": f"${secret_name}:{SECRET_KEY}",
+        "clientSecret": f"${ref_name}:{CLIENT_KEY}",
         "requestedScopes": oidc.get("scopes") or DEFAULT_SCOPES,
     }
     # rootCA REPLACES Argo's system trust, so it is set only for an issuer the
@@ -195,7 +196,7 @@ def read_edge_ca(kube: list[str]) -> str:
     """The CA of the gateway's wildcard certificate, PEM; empty when absent."""
     ca_field = "jsonpath={.data.ca\\.crt}"
     rc, out, _ = _kubectl(
-        ["-n", GATEWAY_NAMESPACE, "get", "secret", EDGE_CERT_SECRET, "-o", ca_field], kube
+        ["-n", GATEWAY_NAMESPACE, "get", "secret", EDGE_TLS, "-o", ca_field], kube
     )
     if rc != 0 or not out.strip():
         return ""
