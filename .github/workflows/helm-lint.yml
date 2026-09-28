@@ -346,6 +346,9 @@ jobs:
           command -v envsubst
           .bats-core/bin/bats --formatter tap bootstrap/tests/
 
+      - name: Shellcheck bootstrap/tests
+        run: shellcheck -S warning -s bash bootstrap/tests/*.bats
+
   # Whether the drift guard below can reach dfe-deploy at all. It is a job of
   # its own because a job-level `if:` cannot read the secrets context, and the
   # guard has to be able to come out SKIPPED: a job that checked nothing while
