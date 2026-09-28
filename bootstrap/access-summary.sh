@@ -132,6 +132,13 @@ creds_block() {
     || printf 'Run `python3 scripts/dfe-ops creds` for the fetch commands.\n'
 }
 
+# Which login Argo CD offers: the deployment's IdP, or only its local admin.
+argocd_block() {
+  # shellcheck disable=SC2016
+  python3 "${REPO_ROOT}/bootstrap/argocd_login.py" summary 2>/dev/null \
+    || printf -- '- Argo CD login: run `python3 bootstrap/argocd_login.py summary` to see it.\n'
+}
+
 # Which CA signed the edge, and whether the root survives a rebuild (#238).
 ca_block() {
   # shellcheck disable=SC2016
@@ -173,6 +180,8 @@ Secret or \`.env\` key and never delete it, because the engine reasserts that va
 on every boot. The break-glass plaintext MAY be deleted once you have recorded it
 offline: the engine hashed it into the deploy repo on first boot and reconciles
 the account from that hash.
+
+$(argocd_block)
 
 ## Trusting the DFE certificate
 

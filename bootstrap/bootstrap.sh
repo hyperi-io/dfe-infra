@@ -1077,15 +1077,12 @@ echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install, upgrade our own)"
 # TLS-serving argocd-server answers with a redirect back to the same URL.
 # global.domain: argocd-cm's url, on the label the gateway publishes Argo under
 # (hostnames.argocd in argocd/values/common.yaml).
-if python3 "${SCRIPT_DIR}/argocd_release.py" --cache-service "${VALKEY_SVC}"; then
-  echo "  [argocd] this bootstrap's own release -> UPGRADE in place to chart ${ARGOCD_VERSION}"
-  argocd_apply=true
-elif dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
-  argocd_apply=true
-else
-  argocd_apply=false
-fi
-if [[ "${argocd_apply}" == "true" ]]; then
+# Argo's own login (--values - on stdin): the OIDC provider the gateway fronts Argo
+# with, Dex off, and DFE's groups mapped to Argo roles -- see bootstrap/argocd_login.py.
+dfe_argocd_login_values() {
+  python3 "${SCRIPT_DIR}/argocd_login.py" values --domain "${DFE_DOMAIN}"
+}
+dfe_argocd_upgrade() {
   run helm upgrade --install argocd argo/argo-cd \
     --namespace argocd --create-namespace \
     --version "${ARGOCD_VERSION}" \
@@ -1099,7 +1096,20 @@ if [[ "${argocd_apply}" == "true" ]]; then
     --set-string 'configs.params.controller\.self\.heal\.timeout\.seconds=30' \
     --set-string 'configs.params.controller\.repo\.server\.timeout\.seconds=60' \
     --set-string 'configs.params.controller\.diff\.server\.side=true' \
-    --wait --timeout 10m
+    --values - \
+    --wait --timeout 10m <<<"${ARGOCD_LOGIN_VALUES}"
+}
+if python3 "${SCRIPT_DIR}/argocd_release.py" --cache-service "${VALKEY_SVC}"; then
+  echo "  [argocd] this bootstrap's own release -> UPGRADE in place to chart ${ARGOCD_VERSION}"
+  argocd_apply=true
+elif dfe_should_install argocd applications.argoproj.io argocd argocd-server; then
+  argocd_apply=true
+else
+  argocd_apply=false
+fi
+if [[ "${argocd_apply}" == "true" ]]; then
+  ARGOCD_LOGIN_VALUES="$(dfe_argocd_login_values)"
+  dfe_argocd_upgrade
 else
   echo "  Using existing ArgoCD; registering DFE AppProjects + ApplicationSets into it."
 fi
@@ -1264,6 +1274,26 @@ if [ "${POST_READINESS}" = "true" ]; then
   fi
 else
   echo "  POST readiness gate NOT RUN -- deploy health NOT verified."
+fi
+
+# The gateway's policy on the argocd route exists only once Argo has synced the
+# gateway, which on a first bootstrap is after [6/7]. The readiness gate has now
+# seen every Application converge, so the login is read again against it.
+if [[ "${argocd_apply}" == "true" && "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  echo ""
+  echo "==> Argo CD login against the converged gateway"
+  if [[ "${POST_READINESS}" != "true" ]]; then
+    echo "  [argocd] readiness gate not run -- the login stays as read at [6/7], and a provider"
+    echo "           the gateway syncs later reaches Argo on the next bootstrap run"
+  else
+    argocd_login_now="$(dfe_argocd_login_values)"
+    if [[ "${argocd_login_now}" == "${ARGOCD_LOGIN_VALUES}" ]]; then
+      echo "  [argocd] login unchanged since [6/7]"
+    else
+      ARGOCD_LOGIN_VALUES="${argocd_login_now}"
+      dfe_argocd_upgrade
+    fi
+  fi
 fi
 
 echo ""
