@@ -176,7 +176,7 @@ reading the keys it owns.
 |---|---|---|---|---|
 | dfe-ui (+ HyperDX iframe) | `dfe.{domain}` | product | yes | local login by default; OIDC when a provider is configured |
 | dfe-engine browser paths | `dfe.{domain}/api` interactive | product | yes | OIDC when configured; machine paths API-key/JWT, never redirected |
-| Argo CD | `argocd.{domain}` | infra | yes | edge OIDC + group check; Argo's own RBAC maps the same groups to Argo roles |
+| Argo CD | `argocd.{domain}` | infra | yes | edge OIDC + group check; Argo signs in through the same provider, `dfe-admins` and `dfe-infra` -> admin, `dfe-infra-viewers` -> read-only ([gateway-oidc.md](deployment/gateway-oidc.md#argo-cds-own-login)) |
 | Links page | `links.{domain}` | infra | only behind edge OIDC | edge OIDC + group check; no auth of its own |
 | Cruise Control UI | `cruise-control.{domain}` | infra | only behind edge OIDC, Kafka cluster tier | edge OIDC + group check; no auth of its own |
 | Forgejo (bundled fallback) | `git.{domain}` | infra | only where bundled | edge OIDC + group check |

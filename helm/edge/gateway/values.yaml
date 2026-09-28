@@ -657,8 +657,7 @@ oidc:
   #   - name: google-workspace
   #     issuerUrl: https://accounts.google.com
   #     clientId: "123456.apps.googleusercontent.com"
-  #     clientSecretName: dfe-oidc-google
-  #     clientSecretKey: client-secret
+  #     clientSecretName: dfe-oidc-google   # the Secret's key is always client-secret
   #     scopes: [openid, email, profile, groups]
   #     jwksUrl: https://www.googleapis.com/oauth2/v3/certs
   #

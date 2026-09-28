@@ -39,9 +39,10 @@ precondition this deployment does not meet, and it names which one.
 
 The same boundary, pointed at the admin UIs instead: it reads the list the
 gateway renders (the engine's dfe-admin-links ConfigMap) and GETs each one
-through the gateway address, following redirects. A redirect loop, a 5xx or no
-answer FAILs; a redirect off the deployment's domain is a login handed to an IdP
-and passes. The readiness gate runs it once every pod is Ready.
+through the gateway address, following redirects. A redirect loop, a 5xx, a 4xx
+other than 401/403/404, or no answer FAILs; a redirect off the deployment's domain
+is a login handed to an IdP and passes. The readiness gate runs it once every pod
+is Ready.
 """
 
 from __future__ import annotations
@@ -924,6 +925,10 @@ DEFAULT_ADMIN_NAMESPACE = "dfe-local"
 # A browser gives up at about 20; a UI that needs more than this is broken anyway.
 MAX_REDIRECTS = 10
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+# The 4xx a working UI ends on: a login it asks for, one it refuses, or a root
+# page it does not serve. Any other 4xx is the request refused -- an IdP
+# rejecting the login it was handed, an unregistered redirect URI.
+ADMIN_UI_4XX_PASS = frozenset({401, 403, 404})
 ADMIN_PROBE_INTERVAL = 10.0
 KUBECTL_TIMEOUT = 60.0
 
@@ -967,7 +972,7 @@ def _on_domain(host: str, domain: str) -> bool:
 
 
 def check_admin_link(link: AdminLink, address: str, max_redirects: int = MAX_REDIRECTS) -> Check:
-    """One admin UI loads through the gateway: no redirect loop, no 5xx, an answer.
+    """One admin UI loads through the gateway: no redirect loop, no 5xx, no refused 4xx.
 
     Every hop on the deployment's own domain is dialled at the gateway address
     with its name on the SNI and the Host header, the way a browser reaches it.
@@ -1000,6 +1005,9 @@ def check_admin_link(link: AdminLink, address: str, max_redirects: int = MAX_RED
             return Check(name, FAIL, f"{trail} answered nothing through {address}: {answer.error}")
         if answer.status is not None and answer.status >= 500:
             return Check(name, FAIL, f"{trail} answered {answer.status}")
+        status = answer.status or 0
+        if 400 <= status < 500 and status not in ADMIN_UI_4XX_PASS:
+            return Check(name, FAIL, f"{trail} answered {status} -- the request was refused")
         if answer.status not in REDIRECT_STATUSES:
             return Check(name, PASS, f"{trail} answered {answer.status}")
         location = answer.headers.get("location", "")
@@ -1170,12 +1178,13 @@ def add_admin_probe_subparser(sub: argparse._SubParsersAction) -> None:
     """Register `dfe-ops admin-probe`."""
     probe = sub.add_parser(
         "admin-probe",
-        help="prove every admin UI the gateway lists loads through it: no redirect loop, no 5xx",
+        help="prove every admin UI the gateway lists loads through it: no redirect loop, "
+             "no 5xx, no refused 4xx",
         description="Reads the dfe-admin-links ConfigMap and GETs each admin UI through the "
                     "gateway address with its own name on the SNI and Host header, following "
-                    "redirects. A loop, a 5xx or no answer fails; a redirect off the "
-                    "deployment's domain is a login handed to an IdP and passes. Sends no "
-                    "credential. Exits non-zero if any check fails.",
+                    "redirects. A loop, a 5xx, a 4xx other than 401/403/404 or no answer "
+                    "fails; a redirect off the deployment's domain is a login handed to an IdP "
+                    "and passes. Sends no credential. Exits non-zero if any check fails.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     probe.add_argument(

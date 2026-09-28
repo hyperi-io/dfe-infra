@@ -33,7 +33,7 @@ spec:
       name: {{ $r.routeName }}
   oidc:
     provider:
-      issuer: {{ $login.issuerUrl }}
+      {{- include "envoy-gateway-config.oidcProvider" (dict "provider" $login) | nindent 6 }}
     clientID: {{ $login.clientId }}
     clientSecret:
       name: {{ $login.clientSecretName | default (printf "dfe-oidc-%s" $login.name) }}
