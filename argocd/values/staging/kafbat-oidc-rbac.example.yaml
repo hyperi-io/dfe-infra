@@ -2,8 +2,9 @@
 #
 # The kafbat chart (helm/charts/kafbat) already ships the full auth build - local
 # break-glass LOGIN_FORM recovery PLUS native kafbat OIDC (OAUTH2) with an RBAC
-# role map. It is dormant by default (oidc.enabled=false, rbac subjects empty) so
-# a bare cluster still boots. This overlay ENABLES it and fills the subjects.
+# role map. It is dormant by default (oidc.enabled=false, admin subjects dfe-admins
+# and dfe-infra, ro and rw empty) so a bare cluster still boots. This overlay
+# ENABLES it and fills the subjects.
 #
 # It lives under argocd/values/staging/ so ArgoCD does NOT read it (the appset
 # cascade only reads common.yaml + <cloud>.yaml + profile-<tier>.yaml). Applying =
