@@ -108,7 +108,7 @@ def test_every_named_value_of_every_enum_reads_through(path: tuple[str, ...]) ->
 
 @pytest.mark.parametrize(("cloud", "flavour"), [("aws", "aws"), ("gcp", "gcp"),
                                                 ("azure", "azure"), ("local", "onprem"),
-                                                ("rancher", "onprem")])
+                                                ("local-dfe", "onprem"), ("rancher", "onprem")])
 def test_the_flavour_defaults_to_the_one_the_cloud_fact_selects(cloud: str, flavour: str) -> None:
     """The appset derives it the same way, so a dial that states none still reports it."""
     assert render_dial._edge_flavour(dial(f"k8s:\n  cloud: {cloud}\n")) == flavour

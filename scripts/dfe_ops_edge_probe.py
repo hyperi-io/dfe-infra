@@ -73,8 +73,7 @@ RECEIVER_INGEST_PORTS = (8080, 8443)
 
 # The admin UIs the edge module offers a public hostname, in the order
 # render_dial.py's ADMIN_UIS reports them, against the subdomain label each one
-# answers on (argocd/values/common.yaml `hostnames:`, except cruise-control,
-# which the gateway chart names on the route itself until that map carries it).
+# answers on (argocd/values/common.yaml `hostnames:`).
 ADMIN_UI_HOSTNAMES = {
     "kafbat": "kafbat",
     "cruise_control": "cruise-control",

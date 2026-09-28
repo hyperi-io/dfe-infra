@@ -57,8 +57,9 @@ exposure:
   # Cruise Control all stay off the public load balancer until an operator's own
   # overlay opts one back on. dfe-ui is unaffected -- it is class product, and
   # the kill switch never reaches it. Turning a route back on also needs
-  # oidc.enabled (aws.yaml) or ui.allowed_cidrs, which the chart's render guard
-  # requires whenever the Service is internet-facing and this switch is on.
+  # oidc.enabled (aws.yaml) with an oidc.providers entry, or ui.allowed_cidrs,
+  # which the chart's render guard requires whenever the Service is
+  # internet-facing and this switch is on.
   infraUisExternal: false
   # TIER 1 -- culvert must render NO LoadBalancer either, or the tunnel's own
   # bytes hit the per-GB-processed NLB the receiver's `vpn` default exists to

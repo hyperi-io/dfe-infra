@@ -131,12 +131,19 @@ assert_render_succeeds() {
 echo "=== route exposure cascade ==="
 
 echo ""
-echo "case 1 -- all defaults: every UI route renders, ingest stays off"
+echo "case 1 -- all defaults: every UI with a login renders; links, forgejo and ingest stay off"
 R="$(render_names HTTPRoute)"
-for r in dfe-ui dfe-engine argocd hyperdx forgejo kafbat links otel; do
+for r in dfe-ui dfe-engine argocd hyperdx kafbat otel; do
   assert_has "default" "${r}" "${R}"
 done
-assert_absent "default" "receiver" "${R}"
+# links has no login of its own and edge OIDC is off; Forgejo is not deployed.
+for r in links forgejo receiver; do
+  assert_absent "default" "${r}" "${R}"
+done
+R="$(render_names HTTPRoute "${OIDC[@]}" --set deployRepo.bundled=true)"
+for r in links forgejo; do
+  assert_has "default-with-login-and-forgejo" "${r}" "${R}"
+done
 
 echo ""
 echo "case 2 -- kill switch off: infra class gone, product and ingest stay"
@@ -157,7 +164,7 @@ echo ""
 echo "case 4 -- per-route opt-out removes only that route"
 R="$(render_names HTTPRoute --set routes.kafbat.enabled=false)"
 assert_absent "per-route" "kafbat" "${R}"
-for r in argocd links dfe-ui; do
+for r in argocd hyperdx dfe-ui; do
   assert_has "per-route" "${r}" "${R}"
 done
 
@@ -170,7 +177,7 @@ assert_has "product" "argocd" "${R}"
 
 echo ""
 echo "case 6 -- edge RBAC covers the infra routes that take a policy"
-R="$(render_names SecurityPolicy "${OIDC[@]}")"
+R="$(render_names SecurityPolicy "${OIDC[@]}" --set deployRepo.bundled=true)"
 # The name carries no provider: there is ONE policy per route, because two
 # SecurityPolicies naming the same HTTPRoute silently leave only the oldest live.
 for p in dfe-oidc-argocd-admin dfe-oidc-forgejo-admin dfe-oidc-links-admin; do
@@ -183,15 +190,16 @@ done
 
 echo ""
 echo "case 7 -- kill switch also withdraws the infra edge policies"
-R="$(render_names SecurityPolicy "${OIDC[@]}" --set exposure.infraUisExternal=false)"
+R="$(render_names SecurityPolicy "${OIDC[@]}" --set deployRepo.bundled=true --set exposure.infraUisExternal=false)"
 for p in dfe-oidc-argocd-admin dfe-oidc-forgejo-admin dfe-oidc-links-admin; do
   assert_absent "killswitch-policy" "${p}" "${R}"
 done
 
 echo ""
 echo "case 8 -- every internal route pins to the https listener; only the redirect route pins http"
+# The edge login and the bundled deploy repo, so every internal route renders.
 FULL="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-system \
-  "${BASE_VALUES[@]}" --set appNamespace=dfe-local 2>/dev/null)"
+  "${BASE_VALUES[@]}" --set appNamespace=dfe-local "${OIDC[@]}" --set deployRepo.bundled=true 2>/dev/null)"
 HTTPS_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: https$')"
 HTTP_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: http$')"
 if [ "${HTTPS_PINS}" -eq 8 ]; then
@@ -215,9 +223,11 @@ assert_render_refused "internet-facing-guard" "envoyGateway.service.internetFaci
   --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true
 
 echo ""
-echo "case 10 -- the same combination renders once OIDC is enabled"
-assert_render_succeeds "internet-facing-oidc" \
+echo "case 10 -- the same combination renders once an OIDC provider is configured, not on the switch alone"
+assert_render_refused "internet-facing-oidc-no-provider" "no edge OIDC provider" \
   --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true --set oidc.enabled=true
+assert_render_succeeds "internet-facing-oidc" \
+  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true "${OIDC[@]}"
 
 echo ""
 echo "case 11 -- or once an allow-list fences the load balancer instead"
@@ -441,6 +451,8 @@ spec:
           group: ""
           kind: Service
           weight: 1
+      timeouts:
+        request: "120s"
 EOF
 assert_same "internal-engine-route" "${INTERNAL_ENGINE}" \
   "$(aws_render --show-only templates/httproute-dfe-engine.yaml \

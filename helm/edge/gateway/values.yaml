@@ -223,6 +223,12 @@ kafka:
     ui:
       enabled: true
 
+# Whether the bundled Forgejo is the deploy repo, from the cluster label
+# dfe.hyperi.io/bundled-deploy-repo that also gates its ApplicationSet. The
+# forgejo route renders only when it is true.
+deployRepo:
+  bundled: false
+
 # Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
 # the dfe-receiver chart (exposure.mode, its ingest door) because a deployment's
 # cloud overlay feeds both -- one block describes what a deployment exposes, and
@@ -340,11 +346,14 @@ ui:
 #
 # Cascade, in order, first match wins:
 #   1. class infra and exposure.infraUisExternal: false  -> not rendered
-#   2. the backend is another chart's opt-in workload and that chart is not
-#      deploying it (cruiseControl, from the kafka.* keys above)
+#   2. class infra, ownLogin false, and the edge policy is not in front of it
+#      (oidc.enabled, an oidc.providers entry and edgePolicy true)
 #                                                        -> not rendered
-#   3. routes.<name>.enabled: false                      -> not rendered
-#   4. otherwise                                         -> rendered
+#   3. the backend is another chart's opt-in workload and that chart is not
+#      deploying it (cruiseControl from the kafka.* keys, forgejo from
+#      deployRepo.bundled, both above)                   -> not rendered
+#   4. routes.<name>.enabled: false                      -> not rendered
+#   5. otherwise                                         -> rendered
 #
 # Per-route fields:
 #   class        -- product | infra | ingest (above)
@@ -357,6 +366,8 @@ ui:
 #                   subdomain label. `hostname` overrides it for this deployment.
 #   edgePolicy   -- infra class only: front this route with the OIDC + group
 #                   check (oidc.adminGroups). See the exemptions inline.
+#   ownLogin     -- infra class only: the backend asks for a login itself. false
+#                   (or absent) renders the route only behind the edge policy.
 routes:
   dfeUi:
     class: product
@@ -457,6 +468,7 @@ routes:
     class: infra
     enabled: true
     edgePolicy: true
+    ownLogin: true
     routeName: argocd
     hostnameKey: argocd
     hostname: ""
@@ -473,6 +485,7 @@ routes:
     class: infra
     enabled: true
     edgePolicy: false
+    ownLogin: true
     routeName: hyperdx
     hostnameKey: hyperdx
     hostname: ""
@@ -481,14 +494,15 @@ routes:
     backendPort: 8080
 
   # Forgejo (in-cluster deploy-repo FALLBACK git host). Only deployed when no
-  # external git is supplied (see layer2-deploy-repo appset). The edge policy
-  # gates the browser UI; it also blocks git-over-HTTP from OUTSIDE the cluster,
-  # which nothing in the product needs -- Argo and the engine reach it on its
-  # Service DNS.
+  # external git is supplied (see layer2-deploy-repo appset), so the route
+  # renders only with deployRepo.bundled. The edge policy gates the browser UI;
+  # it also blocks git-over-HTTP from OUTSIDE the cluster, which nothing in the
+  # product needs -- Argo and the engine reach it on its Service DNS.
   forgejo:
     class: infra
     enabled: true
     edgePolicy: true
+    ownLogin: true
     routeName: forgejo
     hostnameKey: git
     hostname: ""
@@ -504,6 +518,7 @@ routes:
     class: infra
     enabled: true
     edgePolicy: false
+    ownLogin: true
     routeName: kafbat
     hostnameKey: kafbat
     hostname: ""
@@ -513,18 +528,17 @@ routes:
 
   # The Cruise Control UI (kafka chart, ns strimzi). A static page with NO auth
   # of its own -- it reads the rebalancer's REST API through a proxy inside its
-  # own pod -- so the edge policy is the only thing in front of it. Renders only
-  # where the kafka chart renders the Service: provider strimzi, kafka.mode
-  # cluster, and both rebalancing switches on.
+  # own pod -- so it renders only behind the edge policy, and only where the
+  # kafka chart renders the Service: provider strimzi, kafka.mode cluster, and
+  # both rebalancing switches on.
   cruiseControl:
     class: infra
     enabled: true
     edgePolicy: true
+    ownLogin: false
     routeName: cruise-control
     hostnameKey: cruiseControl
-    # The canonical hostnames map carries no cruise-control entry yet, so the
-    # label is named here until argocd/values/common.yaml has one.
-    hostname: cruise-control
+    hostname: ""
     # <kafka.name>-cruise-control-ui, in the namespace layer2-data places the
     # kafka chart in.
     backendService: dfe-kafka-cruise-control-ui
@@ -532,11 +546,12 @@ routes:
     backendPort: 8080
 
   # Deployment links page (bundled chart, ns links). The page has NO auth of
-  # its own, so the edge policy is the only thing in front of it.
+  # its own, so it renders only behind the edge policy.
   links:
     class: infra
     enabled: true
     edgePolicy: true
+    ownLogin: false
     routeName: links
     hostnameKey: links
     hostname: ""

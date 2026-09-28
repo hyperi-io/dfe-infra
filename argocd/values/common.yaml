@@ -26,6 +26,7 @@ hostnames:
   argocd: argocd
   git: git            # deploy-repo git host (bundled Forgejo or external)
   kafbat: kafbat
+  cruiseControl: cruise-control  # Kafka rebalancer UI, kafka.mode cluster only
   links: links
   otel: otel          # platform OTLP ingest
   receiver: receiver  # data ingest, used only by exposure.mode: internal

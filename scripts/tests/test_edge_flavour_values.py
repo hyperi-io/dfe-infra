@@ -231,9 +231,10 @@ def test_both_edge_applications_layer_the_flavour_overlay() -> None:
 
 ASSIGN = '{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}'
 BRANCH = re.compile(
-    r'\{\{ if or \(eq \$c "([^"]+)"\) \(eq \$c "([^"]+)"\) \}\}'
+    r'\{\{ if or ((?:\(eq \$c "[^"]+"\) ?)+)\}\}'
     r'([^{]*)\{\{ else \}\}\{\{ \$c \}\}\{\{ end \}\}'
 )
+MAPPED_CLOUD = re.compile(r'\(eq \$c "([^"]+)"\)')
 
 
 def resolve(expression: str, cloud: str) -> str:
@@ -245,16 +246,16 @@ def resolve(expression: str, cloud: str) -> str:
     body = expression.replace(ASSIGN, "")
     branch = BRANCH.search(body)
     assert branch, body
-    first, second, mapped = branch.groups()
-    chosen = mapped if cloud in (first, second) else cloud
+    clauses, mapped = branch.groups()
+    chosen = mapped if cloud in MAPPED_CLOUD.findall(clauses) else cloud
     return body[: branch.start()] + chosen + body[branch.end():]
 
 
 @pytest.mark.parametrize(("cloud", "flavour"),
                          [("aws", "aws"), ("gcp", "gcp"), ("azure", "azure"),
-                          ("local", "onprem"), ("rancher", "onprem")])
+                          ("local", "onprem"), ("local-dfe", "onprem"), ("rancher", "onprem")])
 def test_the_cloud_fact_selects_the_flavour_file(cloud: str, flavour: str) -> None:
-    """local and rancher are one flavour; every other cloud names its own."""
+    """local, local-dfe and rancher are one flavour; every other cloud names its own."""
     appsets = [
         d for d in yaml.safe_load_all(APPSET.read_text(encoding="utf-8"))
         if d and d.get("kind") == "ApplicationSet"

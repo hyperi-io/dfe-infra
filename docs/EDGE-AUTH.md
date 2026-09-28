@@ -4,8 +4,9 @@ Internet-facing exposure on a cloud deploy (CIDR, rate limit, WAF, DNS):
 [EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).
 
 How a DFE deployment's web surfaces get outside the cluster, and who is
-allowed through. The model: every web UI is exposed through the Envoy
-Gateway by default, and access is controlled by OIDC. There is **no
+allowed through. The model: every web UI with a login of its own is exposed
+through the Envoy Gateway by default, one without renders only behind edge
+OIDC, and access is controlled by OIDC. There is **no
 bundled issuer** -- dfe-engine is the identity authority. It holds the
 local account store and maps every identity to roles and org_ids, and
 federated login rides **external OIDC providers configured at the Envoy
@@ -143,13 +144,18 @@ decides what switch can turn it off.
 | Class | Routes | What can disable it |
 |---|---|---|
 | `product` | dfe-ui, dfe-engine | its own `enabled` -- nothing else |
-| `infra` | Argo CD, HyperDX, Forgejo, Kafbat, links | `exposure.infraUisExternal: false` first, then its own `enabled` |
+| `infra` | Argo CD, HyperDX, Forgejo, Kafbat, links, Cruise Control | `exposure.infraUisExternal: false` first, then no login in front of it, then its backend not deployed, then its own `enabled` |
 | `ingest` | otel, receiver | its own `enabled`; no UI switch reaches it |
 
-Every web UI renders by default, through a three-line cascade, first match
-wins: class `infra` plus `exposure.infraUisExternal: false` means not
-rendered, then `routes.<name>.enabled: false` means not rendered, otherwise
-rendered.
+Every web UI with a login renders by default, through a five-step cascade, first match wins:
+
+1. Class `infra` plus `exposure.infraUisExternal: false` means not rendered.
+2. Class `infra` with `ownLogin: false` (links, Cruise Control) means not rendered unless the edge policy is in front of it: `oidc.enabled`, an `oidc.providers` entry and `edgePolicy: true`.
+3. A backend another chart has not deployed means not rendered: Cruise Control off the Kafka cluster tier, Forgejo unless `deployRepo.bundled` (the `dfe.hyperi.io/bundled-deploy-repo` cluster label).
+4. `routes.<name>.enabled: false` means not rendered.
+5. Otherwise rendered.
+
+A public flag on a route with no login of its own (`ui.public.links: true`) and no edge OIDC fails the render by name rather than serving the route behind a CIDR-only policy. Under Argo CD that leaves the gateway Application in ComparisonError until the flag is removed or a provider is configured.
 
 **`exposure.infraUisExternal` is the one flip that takes every ops surface
 off the edge**, and it is ABSOLUTE for the class: a route's own
@@ -171,8 +177,9 @@ reading the keys it owns.
 | dfe-ui (+ HyperDX iframe) | `dfe.{domain}` | product | yes | local login by default; OIDC when a provider is configured |
 | dfe-engine browser paths | `dfe.{domain}/api` interactive | product | yes | OIDC when configured; machine paths API-key/JWT, never redirected |
 | Argo CD | `argocd.{domain}` | infra | yes | edge OIDC + group check; Argo's own RBAC maps the same groups to Argo roles |
-| Links page | `links.{domain}` | infra | yes | edge OIDC + group check -- the page has no auth of its own |
-| Forgejo (bundled fallback) | `git.{domain}` | infra | yes | edge OIDC + group check |
+| Links page | `links.{domain}` | infra | only behind edge OIDC | edge OIDC + group check; no auth of its own |
+| Cruise Control UI | `cruise-control.{domain}` | infra | only behind edge OIDC, Kafka cluster tier | edge OIDC + group check; no auth of its own |
+| Forgejo (bundled fallback) | `git.{domain}` | infra | only where bundled | edge OIDC + group check |
 | Kafbat | `kafbat.{domain}` | infra | yes | its own OIDC (integrated-app pattern) -- group check is app-side |
 | HyperDX | `hyperdx.{domain}` | infra | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
 | otel OTLP ingest | `otel.{domain}` | ingest | yes | none -- machine senders hold no browser session |
