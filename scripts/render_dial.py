@@ -573,9 +573,7 @@ def _edge_enums(dial: dict[str, object]) -> dict[str, str]:
     return out
 
 
-def _edge_refusals(
-    dial: dict[str, object], flags: dict[str, bool], enums: dict[str, str]
-) -> None:
+def _edge_refusals(dial: dict[str, object], flags: dict[str, bool]) -> None:
     """The combinations the module does not offer, refused by name.
 
     A dial that asks for one of these is asking for something no chart renders,
@@ -1315,6 +1313,21 @@ def main() -> int:
     if args.tofu:
         return _render_tofu(dial, args.out)
 
+    # Every refusal runs before the env file is touched: a later step reads
+    # whatever file is there, so a refused dial must leave none behind.
+    try:
+        conflicts = _edge_alias_conflicts(dial)
+        if conflicts:
+            raise DialError("; ".join(conflicts))
+        deprecated = _edge_deprecations(dial)
+        edge_flags = _edge_flags(dial)
+        edge_enums = _edge_enums(dial)
+        _edge_refusals(dial, edge_flags)
+        controller_pool = _controller_pool(dial)
+    except DialError as error:
+        print(f"render_dial: {error}", file=sys.stderr)
+        return 1
+
     args.out = args.out or ENV_FILE
     # Seed the env file from the committed example on first render, so every
     # DFE_* key + its guidance is present before the dial merges over it.
@@ -1339,18 +1352,6 @@ def main() -> int:
         )
     else:
         print("render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr)
-
-    try:
-        conflicts = _edge_alias_conflicts(dial)
-        if conflicts:
-            raise DialError("; ".join(conflicts))
-        deprecated = _edge_deprecations(dial)
-        edge_flags = _edge_flags(dial)
-        edge_enums = _edge_enums(dial)
-        _edge_refusals(dial, edge_flags, edge_enums)
-    except DialError as error:
-        print(f"render_dial: {error}", file=sys.stderr)
-        return 1
 
     for line in deprecated:
         print(f"render_dial: deprecated -- {line}", file=sys.stderr)
@@ -1410,12 +1411,6 @@ def main() -> int:
         " repo's values overlay",
         file=sys.stderr,
     )
-
-    try:
-        controller_pool = _controller_pool(dial)
-    except DialError as error:
-        print(f"render_dial: {error}", file=sys.stderr)
-        return 1
 
     print(
         f"KRaft metadata quorum (kafka.controller_pool): {controller_pool}",
