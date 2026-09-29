@@ -179,7 +179,7 @@ $(otel_ingress_block)
 \`\`\`
 
 Off unless the deployment sets \`otel.ingress.enabled\` in its deploy repo's
-\`infra/common.yaml\`; the stack's own telemetry never needs it.
+\`infra/common.yaml\`. The stack's own telemetry never needs it.
 
 ## How to log in + get credentials
 

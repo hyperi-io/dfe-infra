@@ -125,19 +125,20 @@ def collector_config(docs: Iterable[dict]) -> dict:
     return yaml.safe_load(maps[0]["data"]["gateway-config.yaml"])
 
 
+def gateway_object(docs: Iterable[dict], kind: str) -> dict:
+    """The collector gateway's one object of this kind (the daemonset has its own)."""
+    found = [d for d in of_kind(docs, kind) if d["metadata"]["name"].endswith("-gateway")]
+    if len(found) != 1:
+        raise SystemExit(f"the collector rendered {len(found)} gateway {kind}s")
+    return found[0]
+
+
 def gateway_pod(docs: Iterable[dict]) -> dict:
-    """The collector gateway Deployment's pod spec."""
-    deployments = [d for d in of_kind(docs, "Deployment") if d["metadata"]["name"].endswith("-gateway")]
-    if len(deployments) != 1:
-        raise SystemExit(f"the collector rendered {len(deployments)} gateway Deployments")
-    return deployments[0]["spec"]["template"]["spec"]
+    return gateway_object(docs, "Deployment")["spec"]["template"]["spec"]
 
 
 def gateway_service(docs: Iterable[dict]) -> dict:
-    services = [d for d in of_kind(docs, "Service") if d["metadata"]["name"].endswith("-gateway")]
-    if len(services) != 1:
-        raise SystemExit(f"the collector rendered {len(services)} gateway Services")
-    return services[0]
+    return gateway_object(docs, "Service")
 
 
 def service_ports(docs: Iterable[dict]) -> dict[str, dict]:
@@ -163,15 +164,14 @@ def test_no_tracked_cascade_publishes_the_otel_route() -> None:
                 expect(f"the gateway renders [{cloud} {profile}]", False, out.stderr.strip())
                 continue
             served = routes(d for d in yaml.safe_load_all(out.stdout) if d)
-            expect(f"no otel route [{cloud} {profile}]", ROUTE not in served, f"got {sorted(served)}")
+            detail = f"got {sorted(served)}"
+            expect(f"no otel route [{cloud} {profile}]", ROUTE not in served, detail)
 
 
 def test_off_the_collector_carries_no_ingress_plumbing() -> None:
     for profile in PROFILES:
-        docs = tuple(
-            d for d in yaml.safe_load_all(helm(COLLECTOR, *cascade(COLLECTOR, "local", profile)).stdout)
-            if d
-        )
+        out = helm(COLLECTOR, *cascade(COLLECTOR, "local", profile))
+        docs = tuple(d for d in yaml.safe_load_all(out.stdout) if d)
         config = collector_config(docs)
         expect(f"no token extension [{profile}]", EXTENSION not in (config.get("extensions") or {}),
                f"got {sorted(config.get('extensions') or {})}")
@@ -189,7 +189,8 @@ def test_off_the_collector_carries_no_ingress_plumbing() -> None:
 def test_the_in_cluster_receiver_is_the_same_on_or_off() -> None:
     """Every DFE app, KEDA and HyperDX push to 4317/4318 with no token, on or off."""
     off, on = render(COLLECTOR), render(COLLECTOR, *ON)
-    otlp_off, otlp_on = collector_config(off)["receivers"]["otlp"], collector_config(on)["receivers"]["otlp"]
+    otlp_off = collector_config(off)["receivers"]["otlp"]
+    otlp_on = collector_config(on)["receivers"]["otlp"]
     expect("the otlp receiver is identical with the switch on", otlp_off == otlp_on,
            f"off {otlp_off} / on {otlp_on}")
     protocols = otlp_on.get("protocols") or {}
@@ -272,11 +273,11 @@ def test_on_the_ingress_receiver_admits_only_a_bearer_token() -> None:
 
 def test_on_the_token_comes_from_the_secret_store_into_the_file_the_receiver_reads() -> None:
     docs = render(COLLECTOR, *ON)
-    secrets = of_kind(docs, "ExternalSecret")
-    expect("one ExternalSecret renders", len(secrets) == 1, f"got {len(secrets)}")
-    if len(secrets) != 1:
+    pulls = of_kind(docs, "ExternalSecret")
+    expect("one ExternalSecret renders", len(pulls) == 1, f"got {len(pulls)}")
+    if len(pulls) != 1:
         return
-    spec = secrets[0]["spec"]
+    spec = pulls[0]["spec"]
     expect("it reads the deployment's ClusterSecretStore",
            spec["secretStoreRef"] == {"name": "dfe-secret-store", "kind": "ClusterSecretStore"},
            f"got {spec['secretStoreRef']}")
@@ -286,12 +287,14 @@ def test_on_the_token_comes_from_the_secret_store_into_the_file_the_receiver_rea
            f"got {spec['data']}")
     target = spec["target"]["name"]
     pod = gateway_pod(docs)
-    volumes = [v for v in pod.get("volumes") or [] if (v.get("secret") or {}).get("secretName") == target]
+    volumes = [
+        v["name"] for v in pod.get("volumes") or []
+        if (v.get("secret") or {}).get("secretName") == target
+    ]
     expect("the gateway pod mounts that Secret", len(volumes) == 1, f"got {pod.get('volumes')}")
     if len(volumes) != 1:
         return
-    mounts = [m for m in pod["containers"][0].get("volumeMounts") or []
-              if m["name"] == volumes[0]["name"]]
+    mounts = [m for m in pod["containers"][0].get("volumeMounts") or [] if m["name"] == volumes[0]]
     filename = PurePosixPath(collector_config(docs)["extensions"][EXTENSION]["filename"])
     expect("read-only, at the directory the extension reads its token file from",
            len(mounts) == 1 and mounts[0].get("readOnly") is True
@@ -316,18 +319,19 @@ def test_a_quoted_switch_is_refused_in_both_charts() -> None:
     for chart in (GATEWAY, COLLECTOR):
         for value in ("false", "true"):
             error = refusal(chart, "--set-string", f"otel.ingress.enabled={value}")
-            expect(f"{chart} refuses a quoted {value}", NOT_A_BOOL in error and "not a bool" in error,
-                   f"got {error or 'a render'}")
+            refused = NOT_A_BOOL in error and "not a bool" in error
+            expect(f"{chart} refuses a quoted {value}", refused, f"got {error or 'a render'}")
 
 
 # --- one key, both charts --------------------------------------------------------
 def test_one_switch_reaches_both_charts() -> None:
     common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
     ingress = (common.get("otel") or {}).get("ingress") or {}
-    expect("common.yaml declares the switch, off", ingress.get("enabled") is False, f"got {ingress}")
+    path = (ingress.get("auth") or {}).get("remoteKey")
+    detail = f"got {ingress}"
+    expect("common.yaml declares the switch, off", ingress.get("enabled") is False, detail)
     expect("and the shared port and token path",
-           isinstance(ingress.get("port"), int) and (ingress.get("auth") or {}).get("remoteKey") == "",
-           f"got {ingress}")
+           isinstance(ingress.get("port"), int) and path == "", detail)
     for chart in (GATEWAY, COLLECTOR):
         values = yaml.safe_load((chart_dir(chart) / "values.yaml").read_text(encoding="utf-8"))
         own = (values.get("otel") or {}).get("ingress") or {}
@@ -338,7 +342,10 @@ def test_one_switch_reaches_both_charts() -> None:
 
 def test_every_appset_rendering_either_chart_layers_the_deployers_common_yaml() -> None:
     """The deploy repo turns it on once, in infra/common.yaml, and both charts see it."""
-    wanted = {GATEWAY: ("layer2-edge.yaml", "layer2-platform.yaml"), COLLECTOR: ("layer2-data.yaml",)}
+    wanted = {
+        GATEWAY: ("layer2-edge.yaml", "layer2-platform.yaml"),
+        COLLECTOR: ("layer2-data.yaml",),
+    }
     for app, files in wanted.items():
         for filename in files:
             found = False
@@ -367,9 +374,8 @@ def test_every_appset_rendering_either_chart_layers_the_deployers_common_yaml() 
 def _load_dfe_ops():
     """Import dfe-ops as a module -- it has no .py extension, so no import finds it."""
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
-    spec = importlib.util.spec_from_loader(
-        "dfe_ops", importlib.machinery.SourceFileLoader("dfe_ops", str(REPO_ROOT / "scripts" / "dfe-ops"))
-    )
+    loader = importlib.machinery.SourceFileLoader("dfe_ops", str(REPO_ROOT / "scripts" / "dfe-ops"))
+    spec = importlib.util.spec_from_loader("dfe_ops", loader)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

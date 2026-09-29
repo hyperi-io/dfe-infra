@@ -2348,11 +2348,12 @@ def cmd_ca(args: argparse.Namespace) -> int:
 
 
 # --- otel-ingress subcommand (is OTLP reachable from outside the cluster) -----
-# The route and token Secret the gateway and collector charts render while
-# otel.ingress.enabled is on. Names are flags; these are the chart defaults.
+# The route and the Secret holding the bearer token, as the gateway and collector
+# charts render them while otel.ingress.enabled is on. Names are flags; these are
+# the chart defaults.
 _OTEL_INGRESS_NS = "otel"
 _OTEL_INGRESS_ROUTE = "otel"
-_OTEL_INGRESS_SECRET = "dfe-otel-ingress-token"
+_OTEL_INGRESS_AUTH_OBJECT = "dfe-otel-ingress-token"
 
 
 def _route_unserved(route: dict) -> str:
@@ -2376,11 +2377,14 @@ def _route_unserved(route: dict) -> str:
     return ""
 
 
-def otel_ingress_lines(kube: list[str], namespace: str, route_name: str, secret: str) -> list[str]:
+def otel_ingress_lines(
+    kube: list[str], namespace: str, route_name: str, auth_object: str
+) -> list[str]:
     """The OTLP ingress report the readiness gate and the access summary print.
 
     Read off the cluster, not the values: a deployment turns the switch on in its
-    own deploy repo, so the live route is the only honest answer.
+    own deploy repo, so the live route is the only honest answer. `auth_object`
+    is the NAME of the Secret holding the bearer token, and its value is never read.
     """
     ref = f"HTTPRoute {namespace}/{route_name}"
     rc, route, err = _kubectl_json([*kube, "-n", namespace, "get", "httproute", route_name])
@@ -2401,14 +2405,14 @@ def otel_ingress_lines(kube: list[str], namespace: str, route_name: str, secret:
             f"OTLP ingress: exposed at {where} -- OTLP/HTTP on /v1/traces, /v1/metrics and "
             "/v1/logs, and every request needs Authorization: Bearer <token>"
         )
-    if _secret_exists(kube, namespace, secret):
-        token = f"  token: Secret {namespace}/{secret}, key token"
+    if _secret_exists(kube, namespace, auth_object):
+        where_held = f"  token: Secret {namespace}/{auth_object}, key token"
     else:
-        token = (
-            f"  token: Secret {namespace}/{secret} is NOT on this cluster -- the collector "
-            "gateway pod cannot start until the secret store supplies it"
+        where_held = (
+            f"  token: Secret {namespace}/{auth_object} is NOT on this cluster -- the "
+            "collector gateway pod cannot start until the secret store supplies it"
         )
-    return [head, token]
+    return [head, where_held]
 
 
 def cmd_otel_ingress(args: argparse.Namespace) -> int:
@@ -2418,7 +2422,7 @@ def cmd_otel_ingress(args: argparse.Namespace) -> int:
         kube += ["--kubeconfig", args.kubeconfig]
     if args.context:
         kube += ["--context", args.context]
-    print("\n".join(otel_ingress_lines(kube, args.namespace, args.route, args.secret)))
+    print("\n".join(otel_ingress_lines(kube, args.namespace, args.route, args.auth_object)))
     return 0
 
 
@@ -4010,8 +4014,8 @@ def build_parser() -> argparse.ArgumentParser:
     oi.add_argument("--namespace", default=_OTEL_INGRESS_NS,
                     help="the collector's namespace, which holds the route and the token Secret")
     oi.add_argument("--route", default=_OTEL_INGRESS_ROUTE, help="the otel HTTPRoute (routes.otel.routeName)")
-    oi.add_argument("--secret", default=_OTEL_INGRESS_SECRET,
-                    help="the token Secret (otel.ingress.auth.secretName)")
+    oi.add_argument("--auth-object", default=_OTEL_INGRESS_AUTH_OBJECT,
+                    help="the Secret holding the bearer token (otel.ingress.auth.secretName)")
     oi.set_defaults(func=cmd_otel_ingress)
 
     # pin -- resolve a version's registry digest and (with --write) set the

@@ -246,7 +246,7 @@ otel:
     # The collector's authenticated OTLP/HTTP port, which the route targets.
     port: 4319
     auth:
-      # Where the secret store holds the token; on with this empty refuses.
+      # Where the secret store holds the token. On with this empty refuses.
       remoteKey: ""
 
 # Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
@@ -380,7 +380,7 @@ ui:
 #   class        -- product | infra | ingest (above)
 #   enabled      -- per-route opt-out. Every UI defaults true (D5: externally
 #                   reachable by default). The receiver defaults false because
-#                   it pairs with dfe-receiver's exposure.mode; otel stays true
+#                   it pairs with dfe-receiver's exposure.mode. otel stays true
 #                   and waits on otel.ingress.enabled instead (rule 3).
 #   routeName    -- the HTTPRoute's metadata.name, and what a SecurityPolicy
 #                   targetRef names. Defined here once, not in the template.

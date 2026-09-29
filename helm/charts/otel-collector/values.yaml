@@ -252,9 +252,9 @@ exporters:
 
 # OTLP ingest from OUTSIDE the cluster, through the gateway's otel route. Off,
 # nothing here renders. On, a second OTLP/HTTP receiver listens on `port`, admits
-# only a bearer token, and feeds the same pipelines; 4317/4318 stay exactly as
-# they are for senders inside the cluster. Defaulted here so the chart renders
-# standalone; a real deploy takes the switch from argocd/values/common.yaml or
+# only a bearer token, and feeds the same pipelines, while 4317/4318 stay exactly
+# as they are for senders inside the cluster. Defaulted here so the chart renders
+# standalone. A real deploy takes the switch from argocd/values/common.yaml or
 # the deploy repo's infra/common.yaml, which the gateway chart reads too.
 otel:
   ingress:

@@ -19,7 +19,7 @@ cruiseControlUi -- is the kafka chart deploying the Cruise Control UI? The
   from the deploy-config SSoT and agree by reading one set of values.
 otelIngress  -- is the otel-collector chart serving its bearer-token OTLP
   receiver? Same reason: both charts read otel.ingress.enabled.
-validateOtelIngress -- the switch's render guards; templates/validate.yaml runs them.
+validateOtelIngress -- the switch's render guards, which templates/validate.yaml runs.
 routeHost    -- subdomain label, from the route's hostname or hostnames[hostnameKey].
 routeNs      -- namespace of the route and of any SecurityPolicy targeting it.
 infraPolicyRoutes -- JSON array of the keys that render AND take the infra edge
