@@ -26,6 +26,7 @@ import importlib.machinery
 import importlib.util
 import os
 import stat
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -57,15 +58,24 @@ sys.addaudithook(_on_audit)
 
 
 @contextlib.contextmanager
+def open_umask() -> Iterator[None]:
+    """A umask that narrows nothing, so a file gets exactly the mode its writer asked for."""
+    previous = os.umask(0)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
+@contextlib.contextmanager
 def watching() -> Iterator[list[tuple[int, int]]]:
     """Record every chmod's view of its file, under a umask that narrows nothing."""
     global _seen
     _seen = []
-    previous = os.umask(0)
     try:
-        yield _seen
+        with open_umask():
+            yield _seen
     finally:
-        os.umask(previous)
         _seen = None
 
 
@@ -173,3 +183,42 @@ def test_a_fetched_node_kubeconfig_is_never_wider_than_0600(
     text = out.read_text(encoding="utf-8")
     assert "server: https://node.example:6443" in text
     assert "FAKE-CLUSTER-ADMIN-KEY" in text
+
+
+EXAMPLE_DIAL = SCRIPTS.parent / "deployment.example.yaml"
+
+
+def _render_env(tmp_path: Path, out: Path) -> subprocess.CompletedProcess:
+    """render_dial.py's env render of the committed example dial, under a umask of 0."""
+    dial = tmp_path / "deployment.yaml"
+    dial.write_text(EXAMPLE_DIAL.read_text(encoding="utf-8"), encoding="utf-8")
+    argv = [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial), "--out", str(out)]
+    with open_umask():
+        return subprocess.run(
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        )
+
+
+def test_the_env_file_render_dial_seeds_is_never_wider_than_0600(tmp_path: Path) -> None:
+    """The seeded env file is the one an operator types the estate's secrets into."""
+    out = tmp_path / "bootstrap.env"
+
+    result = _render_env(tmp_path, out)
+
+    assert result.returncode == 0, result.stderr
+    assert "seeded" in result.stderr
+    assert mode_of(out) == 0o600, oct(mode_of(out))
+
+
+def test_a_render_narrows_an_existing_env_file_before_rewriting_it(tmp_path: Path) -> None:
+    """The merge rewrites every line of the file, the secrets filled into it included."""
+    out = tmp_path / "bootstrap.env"
+    out.write_text(f'DFE_EXAMPLE_TOKEN="{SECRET}"\n', encoding="utf-8")
+    out.chmod(0o644)
+
+    result = _render_env(tmp_path, out)
+
+    assert result.returncode == 0, result.stderr
+    assert "merged" in result.stderr
+    assert mode_of(out) == 0o600, oct(mode_of(out))
+    assert f'DFE_EXAMPLE_TOKEN="{SECRET}"' in out.read_text(encoding="utf-8")
