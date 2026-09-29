@@ -33,8 +33,8 @@ every DFE_* key + its comments are present), then the dial's non-empty values
 are merged in place over it. Estate ENDPOINTS and SECRETS stay blank in the
 committed template -- the operator's own tooling injects them from the
 deployment's secrets backend at deploy time, or an operator fills the copied
-``.env`` by hand. This renderer
-never reads or writes a secret.
+``.env`` by hand. This renderer never sets a secret, but every rewrite carries
+the ones filled in, so the file is written at mode 0600 every time.
 
 Dependency-free (no PyYAML) and stdlib only, matching the dfe-ops rule -- the
 dial's k8s slice is scalar / nested-map only, so scripts/yaml_subset.py reads it.
@@ -46,10 +46,10 @@ import argparse
 import ipaddress
 import json
 import re
-import shutil
 import sys
 from pathlib import Path
 
+import private_file
 from yaml_subset import YamlSubsetError, at, split_list
 from yaml_subset import parse as _parse_yaml_subset
 
@@ -143,7 +143,8 @@ def _merge_env(env_path: Path, updates: dict[str, str]) -> None:
     Every OTHER line -- the example's blanks, comments, untouched settings --
     survives verbatim, so the estate secrets/endpoints stay present-but-blank for
     the operator (or the thin caller) to fill. A mapped key is replaced in place;
-    a genuinely new key is appended under a labelled header.
+    a genuinely new key is appended under a labelled header. The file carries
+    whatever secrets the operator filled in, so the rewrite lands at 0600.
     """
     remaining = dict(updates)
     out: list[str] = []
@@ -161,8 +162,7 @@ def _merge_env(env_path: Path, updates: dict[str, str]) -> None:
         out.append("## Set by render_dial.py from deployment.yaml -- do not edit by hand.")
         out.extend(f'{key}="{value}"' for key, value in remaining.items())
 
-    with env_path.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(out) + "\n")
+    private_file.write_private(env_path, "\n".join(out) + "\n")
 
 
 def _derived_command(dial: dict[str, object], env_path: Path) -> str:
@@ -1338,8 +1338,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ENV_TEMPLATE, args.out)
+        private_file.write_private(args.out, ENV_TEMPLATE.read_text(encoding="utf-8"))
         print(f"render_dial: seeded {args.out} from {ENV_TEMPLATE.name}", file=sys.stderr)
 
     updates = _env_updates(dial)
