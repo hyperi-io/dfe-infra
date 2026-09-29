@@ -425,10 +425,9 @@ apps:
     hot_reload: false
     consumes:
       config: config.yaml
-    # Seeded idle on every tier that runs a transform, the same as
-    # dfe-transform-elastic. `idle_when` below is what makes that safe: the app
-    # stands up empty and waits, so a tier carries a transform ready for its
-    # first source rather than none until one is written.
+    # A per_config transform instance exists while a source binds it, and not
+    # otherwise: the engine removes any instance no active, deployed source
+    # binds, so a tier listed here runs none until its first source does.
     default_in: [single, scale, docker-single]
     # On the bus a transform with no topics has nothing to consume, so it starts,
     # stays Ready and holds no consumer group. The direct form's listener IS the
@@ -521,10 +520,9 @@ apps:
     transports: [bus]
     # endpoints:
     #   push: {port: 6000}          # dfe-transform-elastic#19
-    # Seeded idle on every tier that runs a transform. It carries `idle_when`
-    # and the matching `work_state` predicate, so it starts, stays Ready, holds
-    # no consumer group and waits -- one instance per tier until the engine
-    # writes a source, which is what `multiplicity: per_config` then multiplies.
+    # A per_config transform instance exists while a source binds it, and not
+    # otherwise: the engine removes any instance no active, deployed source
+    # binds, so a tier listed here runs none until its first source does.
     default_in: [single, scale, docker-single]
     # Nothing here reloads. The config is read once at startup and handed to the
     # batch loop by reference, so every value needs a restart -- the batch size
