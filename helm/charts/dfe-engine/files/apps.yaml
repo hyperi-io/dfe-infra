@@ -351,6 +351,14 @@ apps:
     # rest of the stanza binds a connection, a topic or the concurrency
     # semaphore, all established once at startup (its config.example.yaml).
     hot_reload: true
+    # Whole blocks: a reload re-reads a source's filter and interval but adds no
+    # source, re-resolves no credential and rebuilds no output (dfe-fetcher#134),
+    # so a filter-only edit reports a restart it does not need.
+    restart_paths:
+      - config.sources
+      - config.output
+      - config.extractors
+      - config.ingest
     consumes:
       config: fetcher.yaml
     # instance_id keys the cursor store, so it has to be stable per source: a
