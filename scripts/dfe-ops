@@ -54,6 +54,10 @@ Subcommands:
                developer box trusts a self-signed deploy once instead of after
                every rebuild. --install does the non-root half; --status is the
                issuer-mode report the readiness gate and access summary carry.
+  otel-ingress Whether OTLP ingest is reachable from outside the cluster: the
+               otel route's hostname and state, and the Secret holding the
+               bearer token every sender presents. The readiness gate and the
+               access summary print it.
   teardown     Tear the deployment down (wraps bootstrap/destroy.sh); optionally
                also destroy terraform state.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
@@ -1953,6 +1957,11 @@ def _store_consumers(mode: str, env: Mapping[str, str]) -> list[str]:
     ui = _chart_values(HELM_CHARTS / "dfe-ui", mode, cloud).get("config") or {}
     if ui.get("nextauthSecretName") and ui.get("secretStoreName") == STORE_NAME:
         uses.append("the console's NextAuth secret (externalsecret-nextauth.yaml)")
+
+    collector = _chart_values(HELM_CHARTS / "otel-collector", mode, cloud)
+    ingress = (collector.get("otel") or {}).get("ingress") or {}
+    if ingress.get("enabled") and (ingress.get("auth") or {}).get("secretStoreName") == STORE_NAME:
+        uses.append("the OTLP ingress bearer token (externalsecret-ingress-token.yaml)")
     return uses
 
 
@@ -2335,6 +2344,81 @@ def cmd_ca(args: argparse.Namespace) -> int:
     print(f"\n# Save the block above as {out_path}, then:")
     print("\n".join(_ca_install_lines(str(out_path), args.name)))
     print("\n# Or let dfe-ops do the non-root half: dfe-ops ca --install")
+    return 0
+
+
+# --- otel-ingress subcommand (is OTLP reachable from outside the cluster) -----
+# The route and token Secret the gateway and collector charts render while
+# otel.ingress.enabled is on. Names are flags; these are the chart defaults.
+_OTEL_INGRESS_NS = "otel"
+_OTEL_INGRESS_ROUTE = "otel"
+_OTEL_INGRESS_SECRET = "dfe-otel-ingress-token"
+
+
+def _route_unserved(route: dict) -> str:
+    """Why the gateway is not serving an HTTPRoute, or empty when it is.
+
+    Accepted and ResolvedRefs must both be True on every parent, the same reading
+    bootstrap/access-summary.sh gives each endpoint row.
+    """
+    parents = (route.get("status") or {}).get("parents") or []
+    if not parents:
+        return "no gateway status"
+    for kind in ("Accepted", "ResolvedRefs"):
+        conditions = [
+            c for p in parents for c in p.get("conditions") or [] if c.get("type") == kind
+        ]
+        if not conditions:
+            return f"no {kind} condition"
+        failed = next((c for c in conditions if c.get("status") != "True"), None)
+        if failed:
+            return f"{kind} {failed.get('status')}: {failed.get('reason') or 'no reason'}"
+    return ""
+
+
+def otel_ingress_lines(kube: list[str], namespace: str, route_name: str, secret: str) -> list[str]:
+    """The OTLP ingress report the readiness gate and the access summary print.
+
+    Read off the cluster, not the values: a deployment turns the switch on in its
+    own deploy repo, so the live route is the only honest answer.
+    """
+    ref = f"HTTPRoute {namespace}/{route_name}"
+    rc, route, err = _kubectl_json([*kube, "-n", namespace, "get", "httproute", route_name])
+    if rc != 0:
+        if "NotFound" in err:
+            return [
+                f"OTLP ingress: not exposed -- no {ref}, so only senders inside the cluster "
+                "reach the collector (otel.ingress.enabled is off)"
+            ]
+        return [f"OTLP ingress: unknown -- could not read {ref}: {err or f'kubectl exit {rc}'}"]
+    hosts = (route.get("spec") or {}).get("hostnames") or []
+    where = ", ".join(f"https://{host}" for host in hosts) or "no hostname"
+    why = _route_unserved(route)
+    if why:
+        head = f"OTLP ingress: {ref} for {where} is not served yet ({why})"
+    else:
+        head = (
+            f"OTLP ingress: exposed at {where} -- OTLP/HTTP on /v1/traces, /v1/metrics and "
+            "/v1/logs, and every request needs Authorization: Bearer <token>"
+        )
+    if _secret_exists(kube, namespace, secret):
+        token = f"  token: Secret {namespace}/{secret}, key token"
+    else:
+        token = (
+            f"  token: Secret {namespace}/{secret} is NOT on this cluster -- the collector "
+            "gateway pod cannot start until the secret store supplies it"
+        )
+    return [head, token]
+
+
+def cmd_otel_ingress(args: argparse.Namespace) -> int:
+    """Say whether OTLP ingest is reachable from outside the cluster, and where."""
+    kube = ["kubectl"]
+    if args.kubeconfig:
+        kube += ["--kubeconfig", args.kubeconfig]
+    if args.context:
+        kube += ["--context", args.context]
+    print("\n".join(otel_ingress_lines(kube, args.namespace, args.route, args.secret)))
     return 0
 
 
@@ -3911,6 +3995,24 @@ def build_parser() -> argparse.ArgumentParser:
     ca.add_argument("--status", action="store_true",
                     help="one-block issuer-mode report (what the readiness gate and access summary print)")
     ca.set_defaults(func=cmd_ca)
+
+    oi = sub.add_parser(
+        "otel-ingress",
+        help="say whether OTLP ingest is reachable from outside the cluster, and where",
+        description="Reads the otel HTTPRoute and the token Secret the gateway and "
+                    "collector charts render while otel.ingress.enabled is on. The "
+                    "readiness gate and the access summary print the same lines.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    oi.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"),
+                    help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
+    oi.add_argument("--context", default=None, help="kubeconfig context")
+    oi.add_argument("--namespace", default=_OTEL_INGRESS_NS,
+                    help="the collector's namespace, which holds the route and the token Secret")
+    oi.add_argument("--route", default=_OTEL_INGRESS_ROUTE, help="the otel HTTPRoute (routes.otel.routeName)")
+    oi.add_argument("--secret", default=_OTEL_INGRESS_SECRET,
+                    help="the token Secret (otel.ingress.auth.secretName)")
+    oi.set_defaults(func=cmd_otel_ingress)
 
     # pin -- resolve a version's registry digest and (with --write) set the
     # current stack's digests: in versions.yaml. Registered from resolve_pins.

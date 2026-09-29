@@ -139,6 +139,13 @@ argocd_block() {
     || printf -- '- Argo CD login: run `python3 bootstrap/argocd_login.py summary` to see it.\n'
 }
 
+# Whether OTLP ingest is reachable from outside the cluster, and the token it needs (#236).
+otel_ingress_block() {
+  # shellcheck disable=SC2016
+  python3 "${REPO_ROOT}/scripts/dfe-ops" otel-ingress 2>/dev/null \
+    || printf 'Run `python3 scripts/dfe-ops otel-ingress` to see whether OTLP is exposed.\n'
+}
+
 # Which CA signed the edge, and whether the root survives a rebuild (#238).
 ca_block() {
   # shellcheck disable=SC2016
@@ -164,6 +171,15 @@ $(endpoint_rows)
 
 An "internal" UI is not exposed; reach it with
 \`kubectl -n <ns> port-forward svc/<service> <localport>:<port>\`.
+
+## OTLP ingress
+
+\`\`\`
+$(otel_ingress_block)
+\`\`\`
+
+Off unless the deployment sets \`otel.ingress.enabled\` in its deploy repo's
+\`infra/common.yaml\`; the stack's own telemetry never needs it.
 
 ## How to log in + get credentials
 

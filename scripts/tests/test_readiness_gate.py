@@ -46,11 +46,22 @@ DESTROY = REPO_ROOT / "bootstrap" / "destroy.sh"
 
 # Answers kubectl's four read shapes off FAKE_KUBECTL_FIXTURE; an absent key is
 # an empty result, which is what a cluster with none of that kind returns. The
-# admin-links ConfigMap is the exception: absent, it is NotFound, as kubectl says.
+# admin-links ConfigMap and the otel HTTPRoute are the exceptions: absent, each
+# is NotFound, as kubectl says.
 FAKE_KUBECTL = """#!/usr/bin/env python3
 import json, os, sys
 
 args = sys.argv[1:]
+if "httproute" in args:
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    if fixture.get("otel_route") is None:
+        print('Error from server (NotFound): httproutes.gateway.networking.k8s.io "otel" not found', file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(fixture["otel_route"]))
+    sys.exit(0)
+if "secret" in args and "name" in args:
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    sys.exit(0 if args[args.index("secret") + 1] in fixture.get("secrets", []) else 1)
 if "configmap" in args or "gateway" in args:
     fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
     if "gateway" in args:
@@ -541,6 +552,55 @@ def test_a_gateway_listing_no_admin_ui_skips_the_check() -> None:
     expect(
         "no dfe-admin-links is a named skip, not a failure",
         out.returncode == 0 and "no dfe-admin-links ConfigMap in dfe-local" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+# The otel HTTPRoute as the gateway chart renders it once otel.ingress.enabled is
+# on, with the status a gateway that programmed it writes.
+OTEL_ROUTE = {
+    "spec": {"hostnames": ["otel.dfe.test"]},
+    "status": {"parents": [{"conditions": [
+        {"type": "Accepted", "status": "True", "reason": "Accepted"},
+        {"type": "ResolvedRefs", "status": "True", "reason": "ResolvedRefs"},
+    ]}]},
+}
+
+
+def test_the_gate_says_otel_ingress_is_not_exposed_by_default() -> None:
+    """A deploy that never turned it on carries no otel route, and the gate says so."""
+    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "no otel route reads not exposed",
+        out.returncode == 0 and "[info] OTLP ingress: not exposed" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_the_gate_says_where_otel_ingress_answers_and_that_it_needs_the_token() -> None:
+    out = run_gate(
+        {**HEALTHY, "setup_status": "False", "otel_route": OTEL_ROUTE,
+         "secrets": ["dfe-otel-ingress-token"]},
+        DFE_NS="dfe-local", DFE_ENV="local",
+    )
+    expect(
+        "the exposed hostname and the bearer requirement are printed",
+        out.returncode == 0
+        and "[info] OTLP ingress: exposed at https://otel.dfe.test" in out.stdout
+        and "Authorization: Bearer" in out.stdout
+        and "Secret otel/dfe-otel-ingress-token, key token" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_the_gate_says_when_the_ingress_token_is_missing() -> None:
+    out = run_gate(
+        {**HEALTHY, "setup_status": "False", "otel_route": OTEL_ROUTE},
+        DFE_NS="dfe-local", DFE_ENV="local",
+    )
+    expect(
+        "an absent token Secret is named",
+        "dfe-otel-ingress-token is NOT on this cluster" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
 
