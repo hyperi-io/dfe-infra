@@ -36,7 +36,12 @@ kafka:
   # cluster node count. Defaults to 3; set higher for more brokers.
   # (single mode forces 1.)
   replicas: 3
-  # Spread brokers across k8s workers (best-effort; never blocks scheduling).
+  # Strimzi only: spread the brokers across nodes, and separately the dedicated
+  # controllers when controllerPool is on. It is enforced (DoNotSchedule): a
+  # broker stays Pending rather than land on a node holding more brokers than
+  # the emptiest eligible node. A one-node cluster is one domain, so every broker
+  # still schedules there. Nodes the pod does not tolerate still count as
+  # domains, because nodeTaintsPolicy defaults to Ignore.
   podSpread:
     enabled: true
     maxSkew: 1
