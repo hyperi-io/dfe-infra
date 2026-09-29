@@ -752,8 +752,10 @@ def build_dial_text(a: Answers) -> str:
         '        peer_cidr: ""\n'
         "        reach: [22, 443]\n"
         "    otel:\n"
-        "      public: false\n"
-        "      auth: required\n"
+        "      enabled: false\n"
+        "      port: 4319\n"
+        "      auth:\n"
+        '        remoteKey: ""\n'
         "  aws:\n"
         "    load_balancer_controller: true\n"
         f'    public_zone: "{a.public_zone if is_aws else ""}"\n'

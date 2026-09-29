@@ -106,6 +106,11 @@ PRODUCT_LABEL = "dfe"
 RECEIVER_LABEL = "receiver"
 OTEL_LABEL = "otel"
 
+# A real OTLP/HTTP path. The collector checks the bearer token before it routes
+# or checks the method, so a GET with no token answers 401 when the door is shut
+# to strangers and anything else when it is not.
+OTEL_PROBE_PATH = "/v1/logs"
+
 # dfe-ui serves its sign-in page here (scripts/acceptance/onboarding/run.py
 # drives the same path), so this is the one route that must answer.
 LOGIN_PATH = "/login"
@@ -167,7 +172,10 @@ class EdgeSettings:
     admin_uis_external: bool = False
     admin_uis_public: dict[str, bool] = field(default_factory=dict)
     receiver_mode: str = ""
-    otel_public: bool = False
+    otel_enabled: bool = False
+    # k8s.domain -- the internal wildcard the otel route answers on, which is not
+    # the public zone edge.product.domain names.
+    cluster_domain: str = ""
     engine_with_product: bool = True
     engine_cli_families_public: bool = False
     engine_scim_public: bool = False
@@ -237,7 +245,8 @@ def parse_edge(tree: dict[str, object]) -> EdgeSettings:
             ui: _flag(tree, ("edge", "admin_uis", "public", ui), False) for ui in ADMIN_UIS
         },
         receiver_mode=_scalar(tree, ("edge", "ingest", "receiver", "mode")) or "",
-        otel_public=_flag(tree, ("edge", "ingest", "otel", "public"), False),
+        otel_enabled=_flag(tree, ("edge", "ingest", "otel", "enabled"), False),
+        cluster_domain=_scalar(tree, ("k8s", "domain")) or "",
         engine_with_product=_flag(tree, ("edge", "engine_api", "with_product"), True),
         engine_cli_families_public=_flag(
             tree, ("edge", "engine_api", "cli_families_public"), False
@@ -442,7 +451,7 @@ def check_names() -> tuple[str, ...]:
         "rate limit",
         "cidr filter",
         "receiver private",
-        "otel private",
+        "otel ingress",
         *(f"admin ui {ui}" for ui in ADMIN_UIS),
         "ui login",
         *(name for name, _ in ENGINE_PATHS),
@@ -799,23 +808,46 @@ def check_route_absent(name: str, host: str, address: str, why: str) -> Check:
     return Check(name, FAIL, f"{host} answered {answer.status} while {why}")
 
 
-def check_otel_private(settings: EdgeSettings, address: str) -> Check:
-    """The platform OTLP route is not a public door on a cloud flavour."""
-    name = "otel private"
-    if settings.flavour == "onprem":
-        return Check(name, SKIP, "edge.flavour is onprem -- the otel door sits on the LAN")
-    if settings.otel_public:
+def check_otel_ingress(settings: EdgeSettings, address: str) -> Check:
+    """The platform OTLP door is what edge.ingest.otel.enabled says, on every flavour.
+
+    Off, otel.<cluster domain> carries no route. On, the collector's receiver
+    behind it refuses this probe's request, which carries no token, with 401.
+    """
+    name = "otel ingress"
+    if not settings.cluster_domain:
         return Check(
             name, SKIP,
-            "edge.ingest.otel.public is true -- a route that answers is the deployment's choice",
+            "k8s.domain is empty -- the dial names no cluster domain, so there is no "
+            "otel name to dial",
         )
-    if not settings.domain:
-        return Check(name, SKIP, "edge.product.domain is empty -- no otel name is published")
-    return check_route_absent(
-        name,
-        published_host(OTEL_LABEL, settings.domain),
-        address,
-        "edge.ingest.otel.public is false",
+    host = published_host(OTEL_LABEL, settings.cluster_domain)
+    if not settings.otel_enabled:
+        return check_route_absent(name, host, address, "edge.ingest.otel.enabled is false")
+    answer = _reach(Request(host=host, address=address, path=OTEL_PROBE_PATH))
+    where = f"{host}{OTEL_PROBE_PATH}"
+    if not answer.reached:
+        return Check(
+            name, FAIL,
+            f"{where} on {address} answered nothing while edge.ingest.otel.enabled is true: "
+            f"{answer.error}",
+        )
+    if answer.status == 401:
+        return Check(
+            name, PASS,
+            f"{where} answered 401 to a request with no token -- the door is open and asks "
+            "for the bearer token",
+        )
+    if answer.status == 404:
+        return Check(
+            name, FAIL,
+            f"{where} answered 404 while edge.ingest.otel.enabled is true -- no route is "
+            "programmed for it",
+        )
+    return Check(
+        name, FAIL,
+        f"{where} answered {answer.status} to a request with no token -- only 401 shows "
+        "the collector checked for one",
     )
 
 
@@ -904,7 +936,7 @@ def run_checks(settings: EdgeSettings, *, target: str = "") -> list[Check]:
         check_rate_limit(settings, host, address),
         check_cidr_filter(settings, host, address),
         check_receiver_private(settings, address),
-        check_otel_private(settings, address),
+        check_otel_ingress(settings, address),
         *(check_admin_ui(settings, ui, address) for ui in ADMIN_UIS),
         check_login(settings, host, address),
         *(
