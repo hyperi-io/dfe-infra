@@ -244,6 +244,7 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #                   gate and the pre-flight capacity check both judge.
 #   composition  -- which apps a profile deploys by default, from apps.yaml.
 #   envfile      -- every tool parses an operator's env file the same way.
+#   private_file -- every credential file lands 0600 before its first byte.
 #   profiles     -- the deploy MODES and what follows from one (broker, substrate
 #                   charts, capacity floor); the bootstrap smoke tests read the
 #                   same table through a generated shell fragment.
@@ -256,6 +257,7 @@ import access_summary as access_summary_file  # noqa: E402
 import capacity  # noqa: E402
 import composition  # noqa: E402
 import envfile  # noqa: E402
+import private_file  # noqa: E402
 import profiles  # noqa: E402
 import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
@@ -403,9 +405,7 @@ def cmd_kubeconfig(args: argparse.Namespace) -> int:
 
     kubeconfig = _rewrite_server(raw, server)
 
-    with open(args.out, "w", encoding="utf-8") as fh:
-        fh.write(kubeconfig)
-    os.chmod(args.out, 0o600)
+    private_file.write_private(Path(args.out), kubeconfig)
 
     print(f"wrote {args.out} (server {server})")
     return 0
