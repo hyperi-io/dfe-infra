@@ -22,8 +22,6 @@ string itself -- the duplication this replaced was the same `if eq .Values
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +54,10 @@ PUSH_STAGES = [
     "dfe-transform-vector",
     "dfe-transform-elastic",
 ]
+
+# A push stage whose Service also carries its metrics listener, which dfe-engine
+# reads the stage's metric manifest from, so that Service renders on the bus too.
+METRICS_ON_SERVICE = {"dfe-archiver": ("metrics", 9090)}
 
 # A grep for the branch the helper replaced. A chart comparing the mode itself
 # is a second copy of the derivation, whatever it happens to conclude.
@@ -145,22 +147,24 @@ def test_the_engine_follows_the_profile() -> None:
                f"got {env.get('DFE_TRANSPORT_BUS_PRESENT')!r}")
 
 
+def service_ports(chart: str, *args: str) -> list[list[tuple[str, int]]]:
+    """Each Service the chart renders, as its (name, port) pairs."""
+    services = []
+    for doc in docs(render(CHARTS / chart, chart, *args)):
+        if doc.get("kind") == "Service":
+            services.append([(p["name"], p["port"]) for p in doc["spec"]["ports"]])
+    return services
+
+
 def test_the_push_service_renders_on_direct_only() -> None:
     for chart in PUSH_STAGES:
-        bus = [
-            d for d in docs(render(CHARTS / chart, chart))
-            if d.get("kind") == "Service"
-        ]
-        expect(f"{chart} has no Service on the bus", bus == [], f"got {len(bus)}")
-        direct = [
-            d for d in docs(render(CHARTS / chart, chart, "--set", "kafka.mode=disabled"))
-            if d.get("kind") == "Service"
-        ]
-        expect(f"{chart} has one Service on direct", len(direct) == 1, f"got {len(direct)}")
-        if direct:
-            ports = direct[0]["spec"]["ports"]
-            expect(f"{chart} serves push on 6000",
-                   [(p["name"], p["port"]) for p in ports] == [("push", 6000)], f"got {ports!r}")
+        held = [METRICS_ON_SERVICE[chart]] if chart in METRICS_ON_SERVICE else []
+        bus = service_ports(chart)
+        expect(f"{chart} serves no push on the bus", bus == ([held] if held else []),
+               f"got {bus!r}")
+        direct = service_ports(chart, "--set", "kafka.mode=disabled")
+        expect(f"{chart} has one Service on direct, serving push on 6000",
+               direct == [[*held, ("push", 6000)]], f"got {direct!r}")
 
 
 def test_the_transform_config_names_the_transport() -> None:

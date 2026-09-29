@@ -1,7 +1,8 @@
 # Internal Service for the direct-gRPC ingest path (receiver -> loader), the
 # transport used when Kafka is not in the deploy (the leaner dev/test + docker
-# profiles). Without this the receiver has no stable name to dial: the loader is
-# a Deployment, so pod IPs churn on every roll.
+# profiles), and for the metrics listener on every transport. Without this the
+# receiver and dfe-engine have no stable name to dial: the loader is a
+# Deployment, so pod IPs churn on every roll.
 #
 # ClusterIP only -- the loader is east-west only and never faces a client. It
 # terminates the pipeline into ClickHouse; the receiver is the airlock that owns
@@ -22,5 +23,10 @@ spec:
       # Cleartext HTTP/2, as dfe-common.pushService declares for every other
       # stage: a proxy fronting the loader pool dials HTTP/1.1 without it.
       appProtocol: kubernetes.io/h2c
+    # scalo's metrics listener, where dfe-engine reads the loader's metric manifest.
+    - port: 9090
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}

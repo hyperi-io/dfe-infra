@@ -58,6 +58,12 @@ spec:
               containerPort: {{ .port }}
               protocol: {{ .protocol | default "TCP" }}
             {{- end }}
+            # scalo's metrics server (0.0.0.0:9090 unless metrics.address moves it).
+            # Outside listeners, which an engine overlay replaces whole and which
+            # decides what is exposed.
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           env:
             # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
             {{- include "dfe-common.extraEnv" . | nindent 12 }}

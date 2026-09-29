@@ -174,6 +174,12 @@ content:
       app: dfe-transform-elastic
       ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
 
+# Where the engine reads each app's live metric manifest, {service} being the app's
+# name. Each app chart publishes its metrics port on a Service of that name in this
+# namespace; an app in another namespace needs the full Service address here. Empty
+# reads none.
+metricsManifestUrl: "http://{service}:9090/metrics/manifest"
+
 config:
   mountPath: /config
   # The engine's runtime store lives here: local accounts, orgs, wizard
