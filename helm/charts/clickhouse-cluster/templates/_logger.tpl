@@ -19,7 +19,9 @@ start, or one that drops the bound.
 Called from validate.yaml so it fires in every mode. The level list is the
 operator CRD's enum, which ClickHouse itself also accepts; a level outside it is
 a CR the API server refuses in cluster mode and a crashloop in single mode. A
-count below 1 is refused because the archive count is what bounds the disk.
+count below 1 is refused because the archive count is what bounds the disk. A
+systemLogTTLDays value that is not whole days is refused because `int` would
+read it as 0, which is no TTL at all.
 */}}
 {{- define "dfe-clickhouse.validateLogger" -}}
 {{- $levels := list "test" "trace" "debug" "information" "notice" "warning" "error" "critical" "fatal" -}}
@@ -32,4 +34,27 @@ count below 1 is refused because the archive count is what bounds the disk.
 {{- fail (printf "%s.count must be 1 or more, not %v -- the archive count is the disk bound" $name $log.count) -}}
 {{- end -}}
 {{- end -}}
+{{- range $table, $days := .Values.clickhouse.systemLogTTLDays -}}
+{{- if not (regexMatch "^[0-9]+$" (toString $days)) -}}
+{{- fail (printf "clickhouse.systemLogTTLDays.%s must be whole days, 0 or more, not %v" $table $days) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+dfe-clickhouse.systemLogTTL -- a TTL for each system log table named in
+clickhouse.systemLogTTLDays, as server config, both modes.
+
+The server appends a table's `ttl` key to the engine it creates that table with
+(ClickHouse server settings, "system log tables":
+https://clickhouse.com/docs/operations/server-configuration-parameters/settings).
+A table set to 0 renders nothing and keeps what its base config gives it.
+*/}}
+{{- define "dfe-clickhouse.systemLogTTL" -}}
+{{- range $table, $days := .Values.clickhouse.systemLogTTLDays }}
+{{- if gt (int $days) 0 }}
+{{ $table }}:
+  ttl: event_date + INTERVAL {{ int $days }} DAY DELETE
+{{- end }}
+{{- end }}
 {{- end }}

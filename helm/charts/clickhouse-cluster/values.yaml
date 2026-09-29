@@ -315,6 +315,21 @@ clickhouse:
     level: information
     size: 50M
     count: 3
+  # Days each of the server's own system log tables keeps, in both modes. These
+  # five are the ones the operator switches on, and the image switches on in
+  # single mode too; neither gives them a TTL, so they grow for as long as the
+  # server runs. The TTL keys on event_date, which every one of them carries.
+  # 0 leaves that table with no TTL. Any other system log named here is switched
+  # on by naming it. The server applies a change at its next start by renaming
+  # the old table to <table>_0 and creating a new one; the _0 copy keeps its rows
+  # and its old TTL, if it had one, and is safe to drop. Sizing and the upgrade
+  # step: docs/deployment/clickhouse.md.
+  systemLogTTLDays:
+    asynchronous_metric_log: 7
+    metric_log: 7
+    part_log: 7
+    query_log: 30
+    text_log: 7
   users:
     # The one credential the deploy layer owns, named `default` on every target.
     # Only `default` can take its password from a Secret
