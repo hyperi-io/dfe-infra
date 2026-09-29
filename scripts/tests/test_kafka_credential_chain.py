@@ -27,17 +27,23 @@ or a mechanism derives from it instead of carrying a literal.
 credential shape the DFE-owned tiers produce, so a Confluent Cloud target is
 expressible: SASL_SSL with PLAIN, the one sanctioned exception to SCRAM-SHA-512.
 
+**#446 -- a managed broker's credential in the app namespace.** On MSK,
+Confluent Cloud and Redpanda Cloud the credential reached no namespace an app
+reads from: layer2-data never named the provider, so the chart rendered a
+password-only secret in its own namespace, keyed on a store path nothing seeds.
+These tests render the appset's own values block for each broker and carry it
+through the kafka chart, the way Argo does.
+
     python3 scripts/tests/test_kafka_credential_chain.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
 import importlib.machinery
 import importlib.util
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -51,6 +57,8 @@ LIBRARY_HARNESS = REPO_ROOT / "helm" / "library" / "dfe-common" / "tests" / "lin
 STACK = REPO_ROOT / "helm" / "dfe-stack"
 PROFILES = STACK / "profiles"
 KAFKA_TPL = REPO_ROOT / "helm" / "library" / "dfe-common" / "templates" / "_kafka.tpl"
+LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
+ARGO_VALUES = REPO_ROOT / "argocd" / "values"
 
 _loader = importlib.machinery.SourceFileLoader(
     "deploy_matrix", str(REPO_ROOT / "scripts" / "deploy_matrix.py")
@@ -59,6 +67,9 @@ _spec = importlib.util.spec_from_loader("deploy_matrix", _loader)
 deploy_matrix = importlib.util.module_from_spec(_spec)
 sys.modules["deploy_matrix"] = deploy_matrix
 _loader.exec_module(deploy_matrix)
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import render_dial  # noqa: E402
 
 # The DFE Kafka credential contract (dfe-engine#98) as this file expects to find
 # it rendered: provider identity -> (security.protocol, sasl.mechanism).
@@ -82,18 +93,26 @@ WITH_REGISTRY = {"confluent-cloud", "redpanda", "redpanda-no-tls", "redpanda-clo
 SECRET_CONSUMERS = ("dfe-receiver", "dfe-loader", "kafbat", "dfe-engine")
 
 
-def _helm(chart: Path, *sets: str, values: Path | None, show: str = "") -> subprocess.CompletedProcess[str]:
+def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+    )
+
+
+def _helm(
+    chart: Path, *sets: str, values: tuple[Path, ...], show: str = ""
+) -> subprocess.CompletedProcess[str]:
     cmd = ["helm", "template", chart.name, str(chart)]
-    if values is not None:
-        cmd += ["-f", str(values)]
+    for path in values:
+        cmd += ["-f", str(path)]
     if show:
         cmd += ["--show-only", show]
     for s in sets:
         cmd += ["--set", s]
-    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return _run(cmd)
 
 
-def render(chart: Path, *sets: str, values: Path | None = None, show: str = "") -> list[dict]:
+def render(chart: Path, *sets: str, values: tuple[Path, ...] = (), show: str = "") -> list[dict]:
     """Rendered docs. Raises with helm's own message when the chart refuses."""
     out = _helm(chart, *sets, values=values, show=show)
     if out.returncode != 0:
@@ -101,7 +120,7 @@ def render(chart: Path, *sets: str, values: Path | None = None, show: str = "") 
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
-def render_error(chart: Path, *sets: str, values: Path | None = None) -> str:
+def render_error(chart: Path, *sets: str, values: tuple[Path, ...] = ()) -> str:
     """helm's stderr when the chart refuses to render, or "" when it rendered."""
     out = _helm(chart, *sets, values=values)
     return out.stderr if out.returncode != 0 else ""
@@ -111,12 +130,7 @@ def build_deps(chart: Path) -> None:
     """Vendor a chart's dependencies once, where they are not committed."""
     if (chart / "charts").is_dir():
         return
-    out = subprocess.run(
-        ["helm", "dependency", "build", str(chart)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    out = _run(["helm", "dependency", "build", str(chart)])
     if out.returncode != 0:
         raise SystemExit(f"helm dependency build failed for {chart.name}:\n{out.stderr}")
 
@@ -128,7 +142,7 @@ def build_harness_deps() -> None:
 def stack(profile: str) -> list[dict]:
     """The umbrella rendered with one profile overlay."""
     build_deps(STACK)
-    return render(STACK, values=PROFILES / profile)
+    return render(STACK, values=(PROFILES / profile,))
 
 
 def derived(provider: str) -> dict[str, str]:
@@ -431,6 +445,256 @@ def test_iam_stays_quarantined_at_the_external_seam() -> None:
         "kafka.external.auth.type=msk_iam",
     )
     expect("and the reverse mismatch refuses too", "msk_iam" in err, f"got {err!r}")
+
+
+# --- #446: a managed broker's credential in the app namespace ---------------
+
+# What bootstrap.sh writes on the Argo cluster secret, per broker. The hosts are
+# placeholders (RFC 2606): this repo ships publicly.
+CLUSTER = {
+    "dfe.hyperi.io/dfe_namespace": "dfe-aws",
+    "dfe.hyperi.io/env": "test",
+    "dfe.hyperi.io/cloud": "aws",
+}
+BROKERS = {
+    "strimzi": {"dfe.hyperi.io/kafka_provider": "strimzi"},
+    "msk": {
+        "dfe.hyperi.io/kafka_provider": "msk",
+        "dfe.hyperi.io/kafka_mode": "external",
+        "dfe.hyperi.io/kafka_bootstrap": "b-1.example.invalid:9096,b-2.example.invalid:9096",
+        "dfe.hyperi.io/kafka_bootstrap_iam": "b-1.example.invalid:9098,b-2.example.invalid:9098",
+    },
+    "confluent-cloud": {
+        "dfe.hyperi.io/kafka_provider": "confluent-cloud",
+        "dfe.hyperi.io/kafka_mode": "external",
+        "dfe.hyperi.io/kafka_bootstrap": "pkc-1.example.invalid:9092",
+    },
+    "redpanda-cloud": {
+        "dfe.hyperi.io/kafka_provider": "redpanda-cloud",
+        "dfe.hyperi.io/kafka_mode": "external",
+        "dfe.hyperi.io/kafka_bootstrap": "seed-1.example.invalid:9092",
+    },
+}
+MANAGED = ("msk", "confluent-cloud", "redpanda-cloud")
+
+# Where apps read dfe-kafka-user: the app namespace, plus otel for the
+# collector's kafka_metrics receiver (common.yaml's extraAppNamespaces).
+APP_NAMESPACES = {"dfe-aws", "otel"}
+
+
+def appset_values(broker: str) -> dict:
+    """layer2-data's `values:` block, rendered against one broker's cluster secret.
+
+    helm evaluates it with the text/template engine and sprig functions Argo's
+    goTemplate uses, and the block reads nothing but `.metadata.annotations`.
+    """
+    doc = yaml.safe_load(LAYER2_DATA.read_text(encoding="utf-8"))
+    block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+    cluster = {"cluster": {"metadata": {"annotations": {**CLUSTER, **BROKERS[broker]}}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        chart = Path(tmp) / "appset-values"
+        (chart / "templates").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text(
+            "apiVersion: v2\nname: appset-values\nversion: 0.0.0\n", encoding="utf-8", newline="\n"
+        )
+        template = "{{- with .Values.cluster }}\n" + block + "\n{{- end }}\n"
+        (chart / "templates" / "values.yaml").write_text(template, encoding="utf-8", newline="\n")
+        facts = Path(tmp) / "cluster.yaml"
+        facts.write_text(yaml.safe_dump(cluster), encoding="utf-8", newline="\n")
+        docs = render(chart, values=(facts,))
+    return docs[0] if docs else {}
+
+
+def layer2_kafka(broker: str, *sets: str) -> list[dict]:
+    """The kafka chart as the layer2-data Application renders it for one broker.
+
+    valueFiles, then the appset's values block, then its parameters: Argo's own
+    precedence, which `-f` in order followed by `--set` reproduces.
+    """
+    facts = {**CLUSTER, **BROKERS[broker]}
+    with tempfile.TemporaryDirectory() as tmp:
+        overlay = Path(tmp) / "appset.yaml"
+        overlay.write_text(yaml.safe_dump(appset_values(broker)), encoding="utf-8", newline="\n")
+        cascade = (
+            ARGO_VALUES / "common.yaml",
+            ARGO_VALUES / "aws.yaml",
+            ARGO_VALUES / "profile-scale.yaml",
+            overlay,
+        )
+        return render(
+            KAFKA,
+            f"appNamespace={facts['dfe.hyperi.io/dfe_namespace']}",
+            f"env={facts['dfe.hyperi.io/env']}",
+            f"cloud={facts['dfe.hyperi.io/cloud']}",
+            f"kafka.provider={facts['dfe.hyperi.io/kafka_provider']}",
+            *sets,
+            values=cascade,
+        )
+
+
+def app_credential(docs: list[dict]) -> dict:
+    """The one ClusterExternalSecret writing dfe-kafka-user, or {} if not exactly one."""
+    found = [
+        d for d in docs
+        if d.get("kind") == "ClusterExternalSecret"
+        and d["spec"]["externalSecretSpec"]["target"]["name"] == "dfe-kafka-user"
+    ]
+    return found[0] if len(found) == 1 else {}
+
+
+def template_data(doc: dict) -> dict:
+    """The keys a ClusterExternalSecret templates into its target Secret, {} for no doc."""
+    if not doc:
+        return {}
+    return doc["spec"]["externalSecretSpec"]["target"]["template"]["data"]
+
+
+def namespaces(doc: dict) -> set[str]:
+    selectors = doc.get("spec", {}).get("namespaceSelectors", [])
+    return {s["matchLabels"]["kubernetes.io/metadata.name"] for s in selectors}
+
+
+def store_reads(docs: list[dict]) -> set[tuple[str, str]]:
+    """Every (store key, property) an ExternalSecret or ClusterExternalSecret reads."""
+    reads: set[tuple[str, str]] = set()
+    for doc in docs:
+        if doc.get("kind") == "ExternalSecret":
+            spec = doc["spec"]
+        elif doc.get("kind") == "ClusterExternalSecret":
+            spec = doc["spec"]["externalSecretSpec"]
+        else:
+            continue
+        reads |= {(d["remoteRef"]["key"], d["remoteRef"]["property"]) for d in spec.get("data", [])}
+    return reads
+
+
+def test_the_appset_names_a_managed_provider_to_the_chart() -> None:
+    """The fact was on the cluster secret; nothing handed it to kafka.external."""
+    for broker in MANAGED:
+        got = appset_values(broker).get("kafka", {}).get("external", {}).get("provider")
+        expect(f"{broker}: the appset sets kafka.external.provider", got == broker, f"got {got!r}")
+    got = appset_values("strimzi")
+    expect(
+        "an in-cluster broker gets no kafka block from the appset",
+        "kafka" not in got,
+        f"got {got}",
+    )
+
+
+def test_a_managed_broker_projects_its_credential_into_the_app_namespaces() -> None:
+    """Every app chart and the otel gateway name dfe-kafka-user in a non-optional secretKeyRef."""
+    for broker in MANAGED:
+        docs = layer2_kafka(broker)
+        doc = app_credential(docs)
+        expect(
+            f"{broker}: one ClusterExternalSecret writes dfe-kafka-user",
+            bool(doc),
+            "none rendered",
+        )
+        expect(
+            f"{broker}: into the app namespace and otel",
+            namespaces(doc) == APP_NAMESPACES,
+            f"got {sorted(namespaces(doc))}",
+        )
+        written = written_keys(docs, "dfe-kafka-user")
+        expect(
+            f"{broker}: with every key the apps read",
+            written == {"username", "password", "sasl.mechanism"},
+            f"got {sorted(written)}",
+        )
+        # The detail names the expectation, never a value read out of an ExternalSecret spec.
+        want = CONTRACT_TABLE[broker][1]
+        expect(
+            f"{broker}: on the mechanism the provider table derives",
+            template_data(doc).get("sasl.mechanism") == want,
+            f"want {want!r}",
+        )
+
+
+def test_a_managed_broker_reads_only_the_path_the_deploy_layer_seeds() -> None:
+    """ESO reads <store prefix> + key, and tofu writes <ref>/<project>/<env>/<seed>.
+
+    The store prefix is the ref alone (secrets/aws-sm store_config, asserted in
+    that module's tftest), so every key read here must be <project>/<env>/<seed>:
+    anything else is an ExternalSecret that never syncs.
+    """
+    for broker in MANAGED:
+        seed = next(name for name in render_dial._seeds(broker) if name.startswith("kafka/"))
+        keys = {key for key, _ in store_reads(layer2_kafka(broker))}
+        expect(
+            f"{broker}: the chart reads dfe/test/{seed} and nothing else",
+            keys == {f"dfe/test/{seed}"},
+            f"got {sorted(keys)}",
+        )
+
+
+def test_only_confluent_cloud_reads_its_username_from_the_store() -> None:
+    """Confluent's API key IS the username; a SCRAM principal is a fixed name."""
+    reads = {prop for _, prop in store_reads([app_credential(layer2_kafka("confluent-cloud"))])}
+    expect(
+        "confluent-cloud reads username and password",
+        reads == {"username", "password"},
+        f"got {sorted(reads)}",
+    )
+    for broker in ("msk", "redpanda-cloud"):
+        doc = app_credential(layer2_kafka(broker))
+        reads = {prop for _, prop in store_reads([doc])}
+        expect(f"{broker} reads only the password", reads == {"password"}, f"got {sorted(reads)}")
+        expect(
+            f"{broker} authenticates as dfe-kafka-user",
+            template_data(doc).get("username") == "dfe-kafka-user",
+            "the templated username differs",
+        )
+
+
+def test_msk_authenticates_as_the_principal_its_acls_name() -> None:
+    """The bootstrap Job writes ACLs for msk.scramUsername; the apps must log in as it."""
+    doc = app_credential(layer2_kafka("msk", "kafka.external.msk.scramUsername=dfe-cloud"))
+    expect(
+        "the projected username follows kafka.external.msk.scramUsername",
+        template_data(doc).get("username") == "dfe-cloud",
+        "the templated username is not dfe-cloud",
+    )
+
+
+def test_the_in_cluster_credential_is_unchanged() -> None:
+    """The Strimzi path already worked; this pins it exactly."""
+    doc = app_credential(layer2_kafka("strimzi"))
+    expected = {
+        "externalSecretName": "dfe-kafka-user",
+        "refreshTime": "1h",
+        "namespaceSelectors": [
+            {"matchLabels": {"kubernetes.io/metadata.name": "dfe-aws"}},
+            {"matchLabels": {"kubernetes.io/metadata.name": "otel"}},
+        ],
+        "externalSecretSpec": {
+            "refreshInterval": "1h",
+            "secretStoreRef": {"name": "dfe-secret-store", "kind": "ClusterSecretStore"},
+            "target": {
+                "name": "dfe-kafka-user",
+                "creationPolicy": "Owner",
+                "template": {
+                    "engineVersion": "v2",
+                    "data": {
+                        "username": "dfe-kafka-user",
+                        "password": "{{ .password }}",
+                        "sasl.mechanism": "SCRAM-SHA-512",
+                    },
+                },
+            },
+            "data": [
+                {
+                    "secretKey": "password",
+                    "remoteRef": {"key": "dfe/test/kafka/strimzi", "property": "password"},
+                },
+            ],
+        },
+    }
+    expect(
+        "the Strimzi credential renders exactly as it did",
+        doc.get("spec") == expected,
+        f"got {doc.get('spec')}",
+    )
 
 
 def main() -> int:

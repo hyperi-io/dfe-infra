@@ -53,7 +53,7 @@ body refuses seeds that name one with no password supplied.
 
 | Output | Type | Meaning |
 |--------|------|---------|
-| `store_config` | `object` | Everything a ClusterSecretStore needs and nothing a caller has to interpret: `provider`, `service`, `region`, `auth`, `prefix`. Each body fills the fields its provider block reads. |
+| `store_config` | `object` | Everything a ClusterSecretStore needs and nothing a caller has to interpret: `provider`, `service`, `region`, `auth`, `prefix`. Each body fills the fields its provider block reads. `prefix` is the `prefix` input alone, never the full path: every chart's remoteRef key already starts with `<project>/<env>`. |
 | `eso_role_arn` | `string` | The identity ESO assumes. Empty for a backend that authenticates some other way. |
 
 ## Rules every body follows

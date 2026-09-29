@@ -156,6 +156,7 @@ spec:
               {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
               {{- $bootstrapIam := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap_iam" }}
+              {{- $kafkaProvider := index .metadata.annotations "dfe.hyperi.io/kafka_provider" }}
               {{- $managed := and $kafkaMode (eq $kafkaMode "external") }}
               {{- if or $kafkaMode $bootstrapIam }}
               # kafka.mode, the broker endpoint and the MSK bootstrap Job's own
@@ -177,8 +178,14 @@ spec:
                 # managed endpoint replaces it rather than sitting beside it.
                 bootstrapServers: {{ $kafkaBootstrap | quote }}
                 {{- end }}
-                {{- if or $bootstrapIam (and $managed $kafkaBootstrap) }}
+                {{- if or $bootstrapIam (and $managed (or $kafkaBootstrap $kafkaProvider)) }}
                 external:
+                  {{- if and $managed $kafkaProvider }}
+                  # Names the managed broker to the kafka chart, which then
+                  # projects its seeded credential into the app namespaces
+                  # with the mechanism the provider table derives.
+                  provider: {{ $kafkaProvider | quote }}
+                  {{- end }}
                   {{- if and $managed $kafkaBootstrap }}
                   bootstrap: {{ $kafkaBootstrap | quote }}
                   {{- end }}

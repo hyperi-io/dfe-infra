@@ -98,6 +98,49 @@ run "the_caller_sets_the_persistent_window" {
   }
 }
 
+// ESO reads <store prefix> + <remoteRef key>, and every chart key already
+// starts with <project>/<env>. So the store prefix is the ref alone, and the
+// secret this module creates is exactly the name that lookup forms.
+run "the_store_prefix_names_the_project_and_env_once" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    prefix = "org-secrets"
+  }
+
+  assert {
+    condition     = output.store_config.prefix == "org-secrets"
+    error_message = "store_config.prefix must be the ref alone -- the chart keys carry <project>/<env> themselves, so the full path here names them twice"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.seed["kafka/msk"].name == "${output.store_config.prefix}/dfe/test/kafka/msk"
+    error_message = "the secret must be named <store prefix>/<project>/<env>/<seed>, the key ESO looks up for the chart's dfe/test/kafka/msk"
+  }
+}
+
+run "an_empty_ref_leaves_the_chart_keys_absolute" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition     = output.store_config.prefix == ""
+    error_message = "with no ref the store prefix is empty, so bootstrap renders none"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.seed["kafka/msk"].name == "dfe/test/kafka/msk"
+    error_message = "with no ref the secret is named exactly as the chart key"
+  }
+}
+
 run "an_out_of_range_window_is_refused" {
   command = plan
 

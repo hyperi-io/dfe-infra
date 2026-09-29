@@ -133,7 +133,7 @@ no broker at all.
 
 The SCRAM password is generated here, once, and written to two places: the
 secret MSK or redpanda-cloud authenticates against, and the deployment's own
-store entry (`kafka/<provider>` under `DFE_SECRETS_PREFIX`) ESO projects into
+store entry (`<project>/<env>/kafka/<provider>` under `DFE_SECRETS_PREFIX`) ESO projects into
 the cluster. Never rotated by a re-apply -- the brokers keep the password they
 were created with. Confluent Cloud has no SCRAM mechanism on any tier -- SASL
 PLAIN over TLS with an API key as the username -- so no password reaches it;
