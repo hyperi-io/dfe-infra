@@ -48,8 +48,9 @@ STRIMZI_VERSION = "1.2.0"
 
 # Custom-resource labels Strimzi does NOT copy onto the pods it builds -- the
 # default of STRIMZI_LABELS_EXCLUSION_PATTERN, operator-common/.../Labels.java:105-106,
-# which the chart leaves unset (values.yaml labelsExclusionPattern: "").
-EXCLUDED = re.compile(r"(^app.kubernetes.io/(?!part-of).*|^kustomize.toolkit.fluxcd.io.*)")
+# which the chart leaves unset (values.yaml labelsExclusionPattern: ""). Upstream
+# leaves the dots unescaped; escaping them changes nothing for a real label key.
+EXCLUDED = re.compile(r"(^app\.kubernetes\.io/(?!part-of).*|^kustomize\.toolkit\.fluxcd\.io.*)")
 
 
 def copied(cr_labels: dict[str, str]) -> dict[str, str]:
