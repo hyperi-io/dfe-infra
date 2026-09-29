@@ -183,6 +183,11 @@
 #   config calls for without the engine knowing which app it is. The platform
 #   topic convention is {source}_land in, {source}_load out.
 #
+# display_name
+#   The name a console shows a person for the app, where it differs from the
+#   app's id. Absent means the id is shown. It changes the label only: the id
+#   stays the name of the chart, the Service, the routes and the telemetry.
+#
 # kinds
 #   What KIND of thing an artefact in the versioned library is. The library CRUD
 #   is generic over these, so supporting a new authored language is an edit here
@@ -595,6 +600,7 @@ apps:
   # The observability console dfe-ui embeds in an iframe. Deployed wherever the
   # UI is, because the UI's observe pages are blank without it.
   hyperdx:
+    display_name: Search
     multiplicity: single
     scale_deployed: false
     transports: []

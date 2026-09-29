@@ -523,7 +523,7 @@ routes:
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
     adminLink:
-      name: HyperDX
+      name: Search
       purpose: Search and dashboards over DFE data and the stack's own telemetry
 
   # Forgejo (in-cluster deploy-repo FALLBACK git host). Only deployed when no
