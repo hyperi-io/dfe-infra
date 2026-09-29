@@ -65,13 +65,17 @@ spec:
       {{- end }}
       {{- end }}
       {{- if .Values.kafka.podSpread.enabled }}
+      {{- /* Counts broker pods only -- strimzi.io/cluster alone also takes the
+      entity operator and Cruise Control (label source:
+      scripts/tests/test_kafka_pool_spread.py). */}}
       topologySpreadConstraints:
         - maxSkew: {{ .Values.kafka.podSpread.maxSkew }}
           topologyKey: {{ .Values.kafka.podSpread.topologyKey }}
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               strimzi.io/cluster: {{ .Values.kafka.name }}
+              strimzi.io/broker-role: "true"
   {{- end }}
   {{- end }}
 {{- end }}
