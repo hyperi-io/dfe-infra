@@ -111,12 +111,12 @@ repo pins (`versions.yaml`, `envoy-gateway`):
 
 The Argo CD bootstrap installs signs in through the provider the gateway already fronts it with. bootstrap reads the gateway's `dfe-oidc-argocd-admin` SecurityPolicy, and `bootstrap/argocd_login.py` turns it into Argo's `oidc.config`: the same issuer and client id, and `clientSecret: $<secret>:client-secret`, a reference to the Secret that policy reads. The value never leaves that Secret. Dex is turned off.
 
-`argocd-rbac-cm` maps `dfe-admins` and `dfe-infra` to `role:admin` and `dfe-infra-viewers` to `role:readonly`, the engine's own names (dfe-engine `docs/control-plane/rbac-vocabulary.md`). `dfe-infra` is Argo's admin because its engine role, `infra_admin`, already carries `argo:*`. Any other group signs in and sees nothing.
+`argocd-rbac-cm` maps `dfe-admins` and `dfe-infra` to `role:admin` and `dfe-infra-viewers` to `role:readonly`, the engine's own names (dfe-engine `docs/control-plane/rbac-vocabulary.md`). `dfe-infra` is Argo's admin because its engine role, `infra_admin`, already carries `argo:*`. Any other group signs in and sees nothing. The admin pair is `adminGroups` in `argocd/values/common.yaml`, and `scripts/tests/test_argocd_login.py` fails when the two differ. A deployment that changes `adminGroups` in its own overlay does not change Argo's admins.
 
 - **No policy, no SSO.** With no provider, or `exposure.infraUisExternal: false`, the gateway renders no policy for the route, and Argo keeps its local `admin`. The access summary says which one a deployment got.
 - **Read at bootstrap time.** On a first bootstrap the gateway syncs after Argo is installed, so the login is read again once the readiness gate passes. A provider added later reaches Argo on the next bootstrap run.
 - **The IdP client allows `https://argocd.<domain>/auth/callback`**, beside the gateway's own `/oauth2/callback`.
-- **The edge still decides who reaches Argo.** A `dfe-infra-viewers` user needs that group in `oidc.adminGroups` as well, or the gateway refuses them first.
+- **The edge still decides who reaches Argo.** A `dfe-infra-viewers` user needs that group in `adminGroups` as well, or the gateway refuses them first. That list is also Kafbat's admin role, so a deployment admitting viewers at the edge names Kafbat's admins itself, in `rbac.roles.admin.subjects` of its deploy repo's `infra/kafbat.yaml`.
 - **A private-CA IdP on the deployment's own domain** is verified against the CA that signed the gateway's certificate, set as Argo's `rootCA`. A public IdP keeps the system roots. The issuer hostname must resolve inside the cluster, as below.
 - **An adopted Argo is never reconfigured.**
 

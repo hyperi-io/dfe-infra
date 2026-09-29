@@ -2,8 +2,9 @@
 #  Project:      dfe-infra
 #  File:         test_infra_edge_gate.py
 #  Purpose:      Prove the edge policy on every infra route admits the
-#                oidc.adminGroups claim and nothing else, and that no admin UI
-#                without a login of its own renders without that policy.
+#                adminGroups claim and nothing else, that the chart refuses to
+#                render with no admin group, and that no admin UI without a
+#                login of its own renders without that policy.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -12,10 +13,10 @@
 
 An infra route carrying edgePolicy gets one SecurityPolicy from
 security-policy-infra.yaml: an OIDC login, then an authorization block that
-denies by default and allows only a groups claim naming one of
-oidc.adminGroups. A route whose backend has no login of its own renders only
-behind that policy, and exposure.infraUisExternal: false takes the whole class
-off the edge.
+denies by default and allows only a groups claim naming one of adminGroups
+(argocd/values/common.yaml). A missing or empty adminGroups refuses to render. A
+route whose backend has no login of its own renders only behind that policy, and
+exposure.infraUisExternal: false takes the whole class off the edge.
 
 Each case renders the chart and reads the objects, so a template edit that
 widens the gate -- an Allow default, a second claim, a wildcard group, a route
@@ -79,6 +80,12 @@ def chart_values() -> dict:
     return yaml.safe_load((GATEWAY / "values.yaml").read_text(encoding="utf-8"))
 
 
+def common_admin_groups() -> list[str]:
+    """The deployment's admin groups, from the deploy-config SSoT every appset layers."""
+    common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
+    return common.get("adminGroups") or []
+
+
 def routes_of_class(route_class: str) -> dict[str, dict]:
     """Every route of one class in the chart's values, by values key."""
     return {
@@ -100,9 +107,9 @@ def edge_policy_names() -> list[str]:
 
 
 @functools.cache
-def render(*args: str) -> tuple[dict, ...]:
-    """The chart under CASCADE and these args. Exits with helm's message on a refusal."""
-    out = subprocess.run(
+def helm_template(*args: str) -> subprocess.CompletedProcess:
+    """helm template of the chart under CASCADE and these args, rendered or not."""
+    return subprocess.run(
         ["helm", "template", "envoy-gateway-config", str(GATEWAY), *CASCADE, *args],
         capture_output=True,
         text=True,
@@ -110,9 +117,20 @@ def render(*args: str) -> tuple[dict, ...]:
         errors="replace",
         check=False,
     )
+
+
+def render(*args: str) -> tuple[dict, ...]:
+    """The chart under CASCADE and these args. Exits with helm's message on a refusal."""
+    out = helm_template(*args)
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for the gateway chart:\n{out.stderr}")
     return tuple(d for d in yaml.safe_load_all(out.stdout) if d)
+
+
+def refusal(*args: str) -> str:
+    """helm's error when the chart refuses these values; empty when it renders."""
+    out = helm_template(*args)
+    return out.stderr.strip() if out.returncode != 0 else ""
 
 
 def of_kind(docs: Iterable[dict], kind: str) -> list[dict]:
@@ -235,8 +253,8 @@ def test_every_gated_route_denies_by_default() -> None:
 
 
 def test_every_rule_admits_the_admin_groups_claim_and_nothing_else() -> None:
-    groups = chart_values()["oidc"]["adminGroups"]
-    expect("the chart names admin groups", bool(groups), f"got {groups!r}")
+    groups = common_admin_groups()
+    expect("common.yaml names admin groups", bool(groups), f"got {groups!r}")
     policies = admin_policies()
     expect_every_route_gated(policies)
     for name, policy in sorted(policies.items()):
@@ -244,10 +262,32 @@ def test_every_rule_admits_the_admin_groups_claim_and_nothing_else() -> None:
 
 
 def test_a_changed_admin_groups_reaches_every_rule() -> None:
-    policies = admin_policies("--set-json", f"oidc.adminGroups={json.dumps(OTHER_GROUPS)}")
+    policies = admin_policies("--set-json", f"adminGroups={json.dumps(OTHER_GROUPS)}")
     expect_every_route_gated(policies)
     for name, policy in sorted(policies.items()):
         expect_admin_groups_only(name, policy, OTHER_GROUPS)
+
+
+# --- no admin group, no render --------------------------------------------------
+def test_no_admin_group_refuses_to_render() -> None:
+    """Checked with the edge login off as well: the list is refused, not the policy it feeds."""
+    shapes = {
+        "empty": ("--set-json", "adminGroups=[]"),
+        "removed": ("--set", "adminGroups=null"),
+        "not a list": ("--set", "adminGroups=dfe-admins"),
+    }
+    for login, base in (("edge login on", OIDC), ("edge login off", ())):
+        for shape, args in shapes.items():
+            error = refusal(*base, *args)
+            expect(f"adminGroups {shape} is refused [{login}]",
+                   "adminGroups is empty or missing" in error, f"got {error or 'a render'}")
+
+
+def test_the_retired_chart_key_is_refused() -> None:
+    """An overlay still setting oidc.adminGroups would otherwise be ignored without a word."""
+    error = refusal(*OIDC, "--set-json", f"oidc.adminGroups={json.dumps(OTHER_GROUPS)}")
+    expect("oidc.adminGroups is refused by name", "oidc.adminGroups is retired" in error,
+           f"got {error or 'a render'}")
 
 
 # --- no edge login, no login-less route ---------------------------------------

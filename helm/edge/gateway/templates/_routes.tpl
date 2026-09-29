@@ -214,6 +214,18 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- define "envoy-gateway-config.validateUi" -}}
 {{- $ui := .ctx.Values.ui -}}
 
+{{- /* Every edge policy admits exactly these groups, so none is refused rather
+       than rendered into a policy whose groups claim names no group. */ -}}
+{{- $groups := .ctx.Values.adminGroups -}}
+{{- if not (and (kindIs "slice" $groups) $groups) -}}
+{{- fail "adminGroups is empty or missing -- it names the OIDC groups the edge policy admits to every admin UI, and argocd/values/common.yaml sets it. Give it a list of group names; one deployment changes it in its deploy repo's infra/common.yaml" -}}
+{{- end -}}
+{{- /* An overlay still naming the retired key would otherwise be ignored without
+       a word, and the deployment would admit the default groups instead. */ -}}
+{{- if hasKey .ctx.Values.oidc "adminGroups" -}}
+{{- fail "oidc.adminGroups is retired -- the admin groups are the top-level adminGroups, which the gateway and Kafbat both read (argocd/values/common.yaml). Move the list there, in the deploy repo's infra/common.yaml" -}}
+{{- end -}}
+
 {{- /* Every admin UI on a public load balancer with no edge auth and no CIDR
        fence is the exact misconfiguration a cloud overlay can reintroduce by
        flipping exposure.infraUisExternal back on -- checked here, not only in

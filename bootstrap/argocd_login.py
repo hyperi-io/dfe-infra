@@ -52,7 +52,8 @@ EDGE_TLS = "dfe-wildcard-tls"
 DEFAULT_SCOPES = ["openid", "email", "profile", "groups"]
 # dfe-engine's vocabulary (docs/control-plane/rbac-vocabulary.md): the two groups it
 # seeds whose roles carry Argo (admin `*`, infra_admin `argo:*`), and the canonical
-# infrastructure read-only group.
+# infrastructure read-only group. The role:admin groups must equal adminGroups in
+# argocd/values/common.yaml; scripts/tests/test_argocd_login.py fails when they differ.
 ADMIN_GROUP = "dfe-admins"
 INFRA_GROUP = "dfe-infra"
 VIEWER_GROUP = "dfe-infra-viewers"

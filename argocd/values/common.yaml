@@ -32,6 +32,17 @@ hostnames:
   receiver: receiver  # data ingest, used only by exposure.mode: internal
   vpn: vpn            # edge-fleet tunnel door; culvert's server certificate CN
 
+# THE admin groups: the OIDC groups that administer this deployment's ops
+# surfaces. The gateway's edge policy admits exactly these to every infra route
+# it fronts, and Kafbat grants them its admin role unless an overlay names its
+# own. Argo CD keeps its own policy.csv (bootstrap/argocd_login.py), and
+# scripts/tests/test_argocd_login.py fails when its admins differ from these.
+# Canonical names: dfe-engine docs/control-plane/rbac-vocabulary.md. An empty
+# list refuses to render in both charts.
+adminGroups:
+  - dfe-admins
+  - dfe-infra
+
 # THE canonical operator-namespace map: network-policies allows data-namespace
 # ingress from these, and otel-collector scrapes their controllers' metrics.
 # A wrong name here fails SILENTLY -- a namespaceSelector naming a namespace that

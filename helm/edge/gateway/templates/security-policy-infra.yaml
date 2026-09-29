@@ -10,7 +10,7 @@
 ---
 # Edge RBAC for an infra-class route: OIDC login, then the groups claim -- read
 # from the access token this policy issued and re-validated against the
-# provider's JWKS -- must carry one of oidc.adminGroups. Authentication alone is
+# provider's JWKS -- must carry one of adminGroups. Authentication alone is
 # not enough, and defaultAction Deny means a token with no groups claim is
 # refused rather than admitted.
 #
@@ -70,7 +70,7 @@ spec:
               - name: groups
                 valueType: StringArray
                 values:
-                  {{- toYaml $.Values.oidc.adminGroups | nindent 18 }}
+                  {{- toYaml $.Values.adminGroups | nindent 18 }}
       {{- end }}
 {{- end }}
 {{- end }}
