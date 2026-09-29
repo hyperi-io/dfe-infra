@@ -93,12 +93,12 @@ so the engine holds `clickhouse.storageModel`, `clickhouse.objectStore.*` and
 
 Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL: 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not the ones already deployed. On a running deployment, an engine carrying dfe-engine#652 takes `PUT /api/v1/system/retention` from an admin and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
 
-The server's own system log tables are a separate knob, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart: 7 days for `metric_log`, `asynchronous_metric_log`, `text_log` and `part_log`, 30 for `query_log`, in both cluster and single mode. The server applies a changed value at its next start by renaming the old table to `<table>_0` and creating a new one. The `_0` copy keeps its rows, so on an upgrade from a chart without these TTLs, list and drop them on each server:
+The server's own system log tables are a separate knob, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart: 7 days for `metric_log`, `asynchronous_metric_log` and `part_log`, 30 for `query_log`, in both cluster and single mode. `clickhouse.systemLogsOff` switches `text_log` and `trace_log` off by removing their config sections: nothing in DFE reads either, and the server log already reaches `otel_logs`. A table already created stays and stops being written. The server applies a changed value at its next start by renaming the old table to `<table>_0` and creating a new one. The `_0` copy keeps its rows, so on an upgrade from a chart without these TTLs, list and drop them on each server:
 
 ```sql
 SELECT name, formatReadableSize(total_bytes) FROM system.tables
 WHERE database = 'system' AND match(name, '_log_[0-9]+$');
-DROP TABLE system.text_log_0;   -- one per name listed
+DROP TABLE system.query_log_0;   -- one per name listed
 ```
 
 The chart does not drop them: nothing in DFE writes to the `system` database. The `_0` tables stop growing the moment they are renamed.

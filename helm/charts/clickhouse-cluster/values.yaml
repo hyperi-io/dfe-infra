@@ -80,6 +80,19 @@ clickhouse:
         # before a single request is served, so the old 1Gi limit was an OOMKill
         # waiting on load rather than a bound on it.
         memory: 3Gi
+    # Replaces the operator's liveness probe (the CRD's containerTemplate.livenessProbe,
+    # v0.0.7), which opens 2181 and sends nothing, so Keeper logs a Warning on
+    # every probe. `ruok` is the four-letter command Keeper answers `imok` to while
+    # the server runs, and it logs the request at Debug. Timings are the
+    # operator's own. The keeper image carries busybox nc. Empty keeps the
+    # operator's TCP probe.
+    livenessProbe:
+      exec:
+        command: ["sh", "-c", "echo ruok | nc 127.0.0.1 2181 | grep -q imok"]
+      initialDelaySeconds: 60
+      periodSeconds: 5
+      timeoutSeconds: 10
+      failureThreshold: 10
     # Keeper's own log, written to the data PVC above. Same fields and bound as
     # clickhouse.serverLog; left unset, the operator keeps 50 trace-level files of
     # up to 1000M on it.
@@ -329,7 +342,15 @@ clickhouse:
     metric_log: 7
     part_log: 7
     query_log: 30
-    text_log: 7
+  # System log tables switched off outright, in both modes, by removing their
+  # config section. Nothing in DFE reads text_log (the server log already reaches
+  # otel_logs from stdout) or trace_log (on in single mode only, by the image's
+  # config.xml). A table already created stays with the rows it has, and its TTL
+  # still ages them out; it just stops being written. A table listed here cannot
+  # also carry a TTL above.
+  systemLogsOff:
+    - text_log
+    - trace_log
   users:
     # The one credential the deploy layer owns, named `default` on every target.
     # Only `default` can take its password from a Secret

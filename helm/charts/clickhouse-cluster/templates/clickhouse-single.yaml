@@ -85,8 +85,8 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/config.d/dfe-logger.yaml
               subPath: dfe-logger.yaml
-            {{- if (include "dfe-clickhouse.systemLogTTL" . | trim) }}
-            # config.d overlay: a TTL on the server's own system log tables.
+            {{- if (include "dfe-clickhouse.systemLogs" . | trim) }}
+            # config.d overlay: the server's own system log tables, TTLs and switches.
             - name: custom-config
               mountPath: /etc/clickhouse-server/config.d/dfe-system-logs.yaml
               subPath: dfe-system-logs.yaml
@@ -193,9 +193,10 @@ data:
   dfe-logger.yaml: |
     logger:
       {{- include "dfe-clickhouse.logger" .Values.clickhouse.serverLog | nindent 6 }}
-  {{- with (include "dfe-clickhouse.systemLogTTL" . | trim) }}
+  {{- with (include "dfe-clickhouse.systemLogs" . | trim) }}
   # Merged over the image's own system log sections, which keep their
-  # partitioning and flush settings and take a TTL from clickhouse.systemLogTTLDays.
+  # partitioning and flush settings, take a TTL from clickhouse.systemLogTTLDays,
+  # and lose the sections clickhouse.systemLogsOff names.
   dfe-system-logs.yaml: |
     {{- . | nindent 4 }}
   {{- end }}
