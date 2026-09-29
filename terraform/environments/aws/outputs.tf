@@ -63,7 +63,7 @@ output "DFE_KAFKA_BOOTSTRAP_IAM" {
 }
 
 output "DFE_KAFKA_CREDENTIAL_REF" {
-  description = "Where the broker's own copy of the SCRAM credential lives -- the secret MSK authenticates against, named rather than read. DFE's own copy is the kafka/<provider> entry under DFE_SECRETS_PREFIX, and both carry the same password."
+  description = "Where the broker's own copy of the SCRAM credential lives -- the secret MSK authenticates against, named rather than read. DFE's own copy is the <project>/<env>/kafka/<provider> entry under DFE_SECRETS_PREFIX, and both carry the same password."
   value       = local.managed_kafka.credential_ref
 }
 

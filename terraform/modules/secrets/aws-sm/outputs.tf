@@ -7,8 +7,10 @@ output "store_config" {
     service = "SecretsManager"
     region  = data.aws_region.current.region
     // Pod Identity means no key, no AppRole and no secretRef in the store.
-    auth   = "pod-identity"
-    prefix = local.path
+    auth = "pod-identity"
+    // The ref alone: every remoteRef key already starts with <project>/<env>,
+    // and ESO prepends this to it with no separator of its own.
+    prefix = var.prefix
   }
 }
 

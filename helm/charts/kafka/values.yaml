@@ -98,6 +98,11 @@ kafka:
     # topic auto-create is Dedicated-only, so topic provisioning goes through the
     # engine's topic-admin path rather than the broker.
     #
+    # Named alongside appNamespace (the layer2-data appset sets both from the
+    # cluster secret), the credential is read from <project>/<env>/kafka/<provider>
+    # and lands in the app namespaces as user.name, the same projection the
+    # in-cluster broker gets; auth.secretName below is then not rendered.
+    #
     # Empty keeps the pre-contract shape: the credential secret carries a
     # password only and nothing is derived.
     provider: ""
