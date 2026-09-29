@@ -342,14 +342,14 @@ clickhouse:
     metric_log: 7
     part_log: 7
     query_log: 30
+    # The HyperDX source over ClickHouse's own logs searches this table.
+    text_log: 7
   # System log tables switched off outright, in both modes, by removing their
-  # config section. Nothing in DFE reads text_log (the server log already reaches
-  # otel_logs from stdout) or trace_log (on in single mode only, by the image's
-  # config.xml). A table already created stays with the rows it has, and its TTL
-  # still ages them out; it just stops being written. A table listed here cannot
-  # also carry a TTL above.
+  # config section. Nothing in DFE reads trace_log, which only the image's
+  # config.xml switches on, so only single mode has it. A table already created
+  # stays with the rows it has; it just stops being written. A table listed here
+  # cannot also carry a TTL above.
   systemLogsOff:
-    - text_log
     - trace_log
   users:
     # The one credential the deploy layer owns, named `default` on every target.

@@ -55,9 +55,10 @@ SHIPPED_TTL_DAYS = {
     "metric_log": 7,
     "part_log": 7,
     "query_log": 30,
+    "text_log": 7,
 }
-# Switched off outright: nothing in DFE reads either, and trace_log is on in single mode only.
-SHIPPED_OFF = ("text_log", "trace_log")
+# Switched off outright: nothing in DFE reads it, and only single mode's image turns it on.
+SHIPPED_OFF = ("trace_log",)
 REMOVED = {"@remove": "remove"}
 _TTL =re.compile(r"^event_date \+ INTERVAL (\d+) DAY DELETE$")
 _SIZE = re.compile(r"^\s*(\d+)\s*([KM]?)\s*$")
@@ -292,7 +293,7 @@ def test_an_external_server_gets_no_server_config() -> None:
     )
 
 
-def test_text_log_and_trace_log_are_switched_off() -> None:
+def test_trace_log_is_switched_off() -> None:
     for where, sections in (
         ("the ClickHouseCluster", cr_sections(render(CLUSTER_CASCADE))),
         ("the single-mode server", single_sections(render(SINGLE_CASCADE))),
@@ -303,7 +304,7 @@ def test_text_log_and_trace_log_are_switched_off() -> None:
                 sections.get(table) == REMOVED,
                 f"got {sections.get(table)!r}",
             )
-    err = render_error("clickhouse.systemLogTTLDays.text_log=7")
+    err = render_error("clickhouse.systemLogTTLDays.trace_log=7")
     expect("a TTL on a table that is also switched off is refused", "drop one" in err, err[:200])
 
 
@@ -339,7 +340,7 @@ def main() -> int:
         test_every_system_log_table_carries_a_ttl()
         test_a_system_log_ttl_can_be_moved_or_dropped()
         test_an_external_server_gets_no_server_config()
-        test_text_log_and_trace_log_are_switched_off()
+        test_trace_log_is_switched_off()
         test_keeper_liveness_probe_asks_ruok_instead_of_a_bare_connect()
         test_a_ttl_that_is_not_whole_days_fails_the_render()
         return summary()
