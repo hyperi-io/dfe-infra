@@ -70,6 +70,7 @@ from pathlib import Path
 
 import capacity
 import envfile
+import private_file
 import profiles
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -365,15 +366,6 @@ def render_env_file(values: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_private(path: Path, text: str) -> None:
-    """Write *text* to *path*, readable by this user alone."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
-    os.chmod(path, 0o600)
-
-
 def stack_deploy_argv(
     args: argparse.Namespace,
     checkout: Path,
@@ -600,7 +592,7 @@ def _read_state(name: str) -> dict:
 
 
 def _write_state(name: str, state: dict) -> None:
-    write_private(state_dir(name) / "state.json", json.dumps(state, indent=2) + "\n")
+    private_file.write_private(state_dir(name) / "state.json", json.dumps(state, indent=2) + "\n")
 
 
 def cmd_kind_up(args: argparse.Namespace) -> int:
@@ -652,10 +644,13 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
             # something `down` can find and remove.
             _write_state(args.name, state)
             config = root / "kind-config.json"
-            write_private(
+            private_file.write_private(
                 config,
                 render_cluster_config(args.name, args.node_image, args.api_port, args.workers),
             )
+            # kind creates its kubeconfig 0600 but merges into an existing file at that
+            # file's mode, so a dead cluster's leftover would take the new credentials.
+            kubeconfig.unlink(missing_ok=True)
             env = dict(os.environ)
             env["KIND_EXPERIMENTAL_DOCKER_NETWORK"] = network
             rc = _stream(
@@ -688,7 +683,7 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
             done = _run(["kind", "get", "kubeconfig", "--name", args.name])
             if done.returncode != 0:
                 raise KindError(f"cannot read the kubeconfig of {args.name}: {done.stderr.strip()}")
-            write_private(kubeconfig, done.stdout)
+            private_file.write_private(kubeconfig, done.stdout)
 
         print("==> kind glue", file=sys.stderr)
         _approve_kubelet_serving(kubeconfig)
@@ -714,8 +709,8 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
         defaults, facts = plan_env(args, operator_env, template_env, gateway_ip, receiver_ip)
         defaults_file = root / "kind-defaults.env"
         facts_file = root / "kind-facts.env"
-        write_private(defaults_file, render_env_file(defaults))
-        write_private(facts_file, render_env_file(facts))
+        private_file.write_private(defaults_file, render_env_file(defaults))
+        private_file.write_private(facts_file, render_env_file(facts))
 
         state.update(
             {

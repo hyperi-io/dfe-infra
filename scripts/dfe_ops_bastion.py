@@ -75,6 +75,7 @@ import time
 from pathlib import Path
 
 import aws_cli
+import private_file
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DIAL = REPO_ROOT / "deployment.yaml"
@@ -998,11 +999,10 @@ def cmd_bastion_shell(args: argparse.Namespace) -> int:
 
 
 def _write_scratch_kubeconfig(*, local_port: int, server_host: str, cluster_name: str, region: str) -> Path:
-    """A per-session scratch kubeconfig, 0600 from creation (os.open, never a
+    """A per-session scratch kubeconfig, 0600 before its first byte (never a
     chmod after the fact -- that has a window). tls-server-name keeps
     certificate verification intact through the tunnel; insecure-skip-tls-verify
     is never written here, on purpose."""
-    SCRATCH_KUBECONFIG.parent.mkdir(parents=True, exist_ok=True)
     content = (
         "apiVersion: v1\n"
         "kind: Config\n"
@@ -1031,10 +1031,7 @@ def _write_scratch_kubeconfig(*, local_port: int, server_host: str, cluster_name
         "      - --region\n"
         f"      - {region}\n"
     )
-    fd = os.open(SCRATCH_KUBECONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(content)
-    return SCRATCH_KUBECONFIG
+    return private_file.write_private(SCRATCH_KUBECONFIG, content)
 
 
 def cmd_bastion_forward(args: argparse.Namespace) -> int:
