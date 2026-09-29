@@ -124,6 +124,23 @@ def test_onprem_strimzi_answers_produce_a_dial_render_dial_accepts(tmp_path: Pat
     assert 'DFE_NAMESPACE="dfe"' in env_text
 
 
+def test_the_wizards_otel_block_renders_off_with_no_deprecation(tmp_path: Path) -> None:
+    """The wizard writes the edge block the example ships, so neither may lag the other."""
+    for answers in (ONPREM_ANSWERS, AWS_MSK_ANSWERS):
+        text = wiz.build_dial_text(wiz.run_wizard(wiz.WizardIO(answers=dict(answers))))
+        dial_path = tmp_path / "deployment.yaml"
+        dial_path.write_text(text, encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial_path),
+             "--out", str(tmp_path / "bootstrap.env")],
+            capture_output=True, text=True,
+        )
+        target = answers["target"]
+        assert result.returncode == 0, (target, result.stderr)
+        assert "render_dial: deprecated" not in result.stderr, (target, result.stderr)
+        assert "(edge.ingest.otel.enabled): off" in result.stderr, (target, result.stderr)
+
+
 def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(tmp_path: Path) -> None:
     io = wiz.WizardIO(answers=dict(AWS_MSK_ANSWERS))
     answers = wiz.run_wizard(io)

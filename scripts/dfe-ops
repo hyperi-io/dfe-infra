@@ -95,11 +95,12 @@ Subcommands:
                reaches: the TLS floor and HSTS on the public listener, the rate
                limit answering 429, the CIDR filter refusing an off-list
                address, the receiver reachable only through the tunnel, the
-               otel route private on cloud, every admin UI route absent unless
-               opted in, and dfe-ui's login page answering. Each check prints
-               PASS, FAIL or SKIP with one line of evidence and the verb exits
-               non-zero on any FAIL. Sends no credential, because a credential
-               would prove something an outside caller does not have.
+               otel route absent while OTLP ingress is off and answering 401
+               to a tokenless request while it is on, every admin UI route
+               absent unless opted in, and dfe-ui's login page answering. Each
+               check prints PASS, FAIL or SKIP with one line of evidence and the
+               verb exits non-zero on any FAIL. Sends no credential, because a
+               credential would prove something an outside caller does not have.
   admin-probe  Every admin UI the gateway lists (the dfe-admin-links ConfigMap)
                loads through the gateway: GET follows redirects and FAILs on a
                loop, a 5xx, a 4xx other than 401/403/404 or no answer, while a
