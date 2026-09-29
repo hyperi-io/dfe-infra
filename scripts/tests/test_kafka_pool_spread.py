@@ -89,7 +89,7 @@ def pool_pod_labels(
 def component_pod_labels(cluster: str, kafka_labels: dict[str, str], kind: str) -> dict[str, str]:
     """Labels on an entity-operator or Cruise Control pod.
 
-    AbstractModel.java:115-124 calls Labels.generateDefaultLabels (Labels.java:
+    AbstractModel.java:113-123 calls Labels.generateDefaultLabels (Labels.java:
     492-506) with the component names from EntityOperator.java:115 and
     CruiseControl.java:167.
     """
