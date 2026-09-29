@@ -80,6 +80,11 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/users.d/dfe-users.xml
               subPath: dfe-users.xml
+            # config.d overlay: level and rotation for the server log, which
+            # lands in this container's writable layer on the node's disk.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-logger.yaml
+              subPath: dfe-logger.yaml
             {{- if eq (include "dfe-clickhouse.storageBulk" .) "block" }}
             # The cold tier, on the mount path the disk declaration names. Same
             # path the operator uses for an additional volume in cluster mode.
@@ -177,6 +182,11 @@ data:
         </default>
       </profiles>
     </clickhouse>
+  # Merged over the image's own <logger>, which keeps its file paths and takes
+  # the level and rotation from clickhouse.serverLog.
+  dfe-logger.yaml: |
+    logger:
+      {{- include "dfe-clickhouse.logger" .Values.clickhouse.serverLog | nindent 6 }}
   {{- with (include "dfe-clickhouse.storageConfiguration" .) }}
   dfe-storage.yaml: |
     {{- . | nindent 4 }}

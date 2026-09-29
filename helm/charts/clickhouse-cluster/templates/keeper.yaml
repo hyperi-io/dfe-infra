@@ -41,6 +41,10 @@ spec:
     {{- with (.Values.clickhouse.keeper.storage.storageClass | default .Values.storageClass) }}
     storageClassName: {{ . | quote }}
     {{- end }}
+  settings:
+    # Keeper's log shares the data PVC with the raft log and snapshots.
+    logger:
+      {{- include "dfe-clickhouse.logger" .Values.clickhouse.keeper.log | nindent 6 }}
   {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled .Values.clickhouse.keeper.serviceAccount.name }}
   podTemplate:
     {{- with .Values.clickhouse.keeper.serviceAccount.name }}

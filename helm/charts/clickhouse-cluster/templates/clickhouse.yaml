@@ -70,6 +70,10 @@ spec:
   keeperClusterRef:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
+    # Level and rotation for the server's log file and its stdout copy; see
+    # clickhouse.serverLog for what an unset logger costs.
+    logger:
+      {{- include "dfe-clickhouse.logger" .Values.clickhouse.serverLog | nindent 6 }}
     extraConfig:
       # Allow the SQL_ custom-settings prefix (server config) so DFE tenant
       # isolation enforces: the per-_org_id RESTRICTIVE row policy reads
