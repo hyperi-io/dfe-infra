@@ -14,7 +14,7 @@
 {{- $h := .Values.hostnames }}
 {{- $desc = $desc | default "Every web surface this deployment exposes, each on its own hostname. A grey/red dot means that target is not answering; an infra surface also goes dark when exposure.infraUisExternal is off." }}
 {{- $apps := list
-      (dict "name" "DFE UI (HyperDX embedded)" "url" (printf "https://%s.%s" $h.dfe $domain)
+      (dict "name" "DFE UI (Search embedded)" "url" (printf "https://%s.%s" $h.dfe $domain)
             "note" "the landing page")
       (dict "name" "Engine API (Swagger)" "url" (printf "https://%s.%s/docs" $h.dfe $domain)
             "note" (printf "API base https://%s.%s/api/v1" $h.dfe $domain)) }}
@@ -45,7 +45,7 @@
 {{- $fwd := printf "kubectl -n %s port-forward svc/" $appNs }}
 {{- $desc = $desc | default "Every web surface this deployment exposes. Links default to the standard kubectl port-forward layout; each note is the forward that serves its link, and a grey/red dot means that target is not answering." }}
 {{- $apps := list
-      (dict "name" "DFE UI (HyperDX embedded)" "url" "http://localhost:13001"
+      (dict "name" "DFE UI (Search embedded)" "url" "http://localhost:13001"
             "note" (printf "%s%s-ui 13001:3000" $fwd $p))
       (dict "name" "Engine API (Swagger)" "url" "http://localhost:18000/docs"
             "note" (printf "%s%s-engine 18000:8000" $fwd $p)) }}
