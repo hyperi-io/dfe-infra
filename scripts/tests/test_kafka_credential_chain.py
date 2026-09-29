@@ -602,11 +602,12 @@ def test_a_managed_broker_projects_its_credential_into_the_app_namespaces() -> N
             written == {"username", "password", "sasl.mechanism"},
             f"got {sorted(written)}",
         )
-        mechanism = template_data(doc).get("sasl.mechanism")
+        # The detail names the expectation, never a value read out of an ExternalSecret spec.
+        want = CONTRACT_TABLE[broker][1]
         expect(
             f"{broker}: on the mechanism the provider table derives",
-            mechanism == CONTRACT_TABLE[broker][1],
-            f"got {mechanism!r}",
+            template_data(doc).get("sasl.mechanism") == want,
+            f"want {want!r}",
         )
 
 
@@ -639,22 +640,20 @@ def test_only_confluent_cloud_reads_its_username_from_the_store() -> None:
         doc = app_credential(layer2_kafka(broker))
         reads = {prop for _, prop in store_reads([doc])}
         expect(f"{broker} reads only the password", reads == {"password"}, f"got {sorted(reads)}")
-        username = template_data(doc).get("username")
         expect(
             f"{broker} authenticates as dfe-kafka-user",
-            username == "dfe-kafka-user",
-            f"got {username!r}",
+            template_data(doc).get("username") == "dfe-kafka-user",
+            "the templated username differs",
         )
 
 
 def test_msk_authenticates_as_the_principal_its_acls_name() -> None:
     """The bootstrap Job writes ACLs for msk.scramUsername; the apps must log in as it."""
     doc = app_credential(layer2_kafka("msk", "kafka.external.msk.scramUsername=dfe-cloud"))
-    username = template_data(doc).get("username")
     expect(
         "the projected username follows kafka.external.msk.scramUsername",
-        username == "dfe-cloud",
-        f"got {username!r}",
+        template_data(doc).get("username") == "dfe-cloud",
+        "the templated username is not dfe-cloud",
     )
 
 
