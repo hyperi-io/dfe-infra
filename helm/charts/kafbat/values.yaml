@@ -107,6 +107,10 @@ oidc:
   clientSecretName: ""   # ESO-materialised Secret, key: client-secret
   rolesField: groups     # OIDC token claim carrying the user's groups
 
+# The deployment's admin groups, supplied by the deploy-config SSoT
+# (argocd/values/common.yaml) -- the same list the gateway's edge policy admits.
+adminGroups: []
+
 # Three stack-aligned RBAC roles. Subjects are the OIDC groups granted each role,
 # and a role with none grants nobody anything. Permissions are fixed per role in
 # templates/configmap.yaml.
@@ -118,8 +122,9 @@ rbac:
     rw:
       subjects: []     # OIDC groups granted read + operate
     admin:
-      # The edge gate's admin groups (gateway chart oidc.adminGroups) -- change both together.
-      subjects: [dfe-admins, dfe-infra]
+      # Empty takes adminGroups. Under OIDC with RBAC on, an admin role left
+      # with no group refuses to render.
+      subjects: []
 
 # Local break-glass admin -- the ONLY non-OIDC path, for IdP-down / bootstrap.
 # Credentials live in the secret store (ESO from Vault, or an ESO-generated

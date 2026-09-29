@@ -209,6 +209,11 @@ appNamespace: ""
 # entry for this deployment only.
 hostnames: {}
 
+# The OIDC groups the edge policy admits to every infra route carrying
+# edgePolicy, supplied by the deploy-config SSoT (argocd/values/common.yaml).
+# Empty refuses to render.
+adminGroups: []
+
 # Read-only here, and owned by the kafka chart: the Cruise Control UI is one of
 # that chart's workloads, so the route below can only render where that chart
 # renders the Service behind it. Same key names, so the ONE profile overlay
@@ -365,7 +370,7 @@ ui:
 #   hostnameKey  -- which entry of the canonical `hostnames` map supplies the
 #                   subdomain label. `hostname` overrides it for this deployment.
 #   edgePolicy   -- infra class only: front this route with the OIDC + group
-#                   check (oidc.adminGroups). See the exemptions inline.
+#                   check (adminGroups). See the exemptions inline.
 #   ownLogin     -- infra class only: the backend asks for a login itself. false
 #                   (or absent) renders the route only behind the edge policy.
 #   adminLink    -- infra class only: the name and one-line purpose the engine
@@ -638,11 +643,6 @@ oidc:
   targetRoutes:
     - name: dfe-engine
       hostname: dfe
-  # Groups whose members may reach an infra-class route carrying edgePolicy.
-  # The canonical names come from dfe-engine docs/control-plane/rbac-vocabulary.md.
-  adminGroups:
-    - dfe-admins
-    - dfe-infra
   # Which provider owns the interactive login on every fronted route. A
   # SecurityPolicy takes ONE oidc provider, and two policies naming the same
   # HTTPRoute conflict -- only the oldest applies -- so the choice is declared

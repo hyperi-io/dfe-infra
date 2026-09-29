@@ -117,8 +117,8 @@ dns:
 ## `exposure:` values verbatim. Everything else is the DIAL's own spelling and
 ## needs translating -- `product.public` is the chart's `ui.public.dfe_ui`,
 ## `admin_uis.public.*` is the rest of its `ui.public`, `admin_uis.external` is
-## `exposure.infraUisExternal`, and `admin_uis.oidc.admin_groups` is
-## `oidc.adminGroups`.
+## `exposure.infraUisExternal`, and `admin_uis.oidc.admin_groups` is the
+## top-level `adminGroups` of the deploy repo's `infra/common.yaml`.
 ##
 ## Every boolean below is unquoted, unlike the rest of this dial
 ## (render_dial.py's own convention writes true/false as quoted strings, see
@@ -235,7 +235,10 @@ edge:
     ## here because a provider is a list of maps this dial cannot express -- put
     ## the real entries in the deploy repo's own overlay under `oidc.providers`,
     ## and with none the chart renders NO SecurityPolicy at all. admin_groups is
-    ## the chart's `oidc.adminGroups`.
+    ## the top-level `adminGroups`, which the gateway and Kafbat both read: it
+    ## goes in the deploy repo's `infra/common.yaml`, and an empty list refuses
+    ## to render. Argo CD's own admins (bootstrap/argocd_login.py) do not follow
+    ## it.
     oidc:
       enabled: true
       providers: []

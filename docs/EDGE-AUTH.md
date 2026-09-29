@@ -189,7 +189,7 @@ The gate on an infra route is a deny-by-default Envoy `SecurityPolicy`
 carrying three blocks that only work together: `oidc` logs the user in and
 mints a per-route access-token cookie, `jwt` re-validates that cookie
 against the provider's JWKS, and `authorization` requires the `groups`
-claim to carry one of `oidc.adminGroups` (canonical names from dfe-engine
+claim to carry one of `adminGroups` (`argocd/values/common.yaml`; names from dfe-engine
 `docs/control-plane/rbac-vocabulary.md`; default `dfe-admins`,
 `dfe-infra`). Authentication alone is not enough, and a token with no
 groups claim is refused rather than admitted. Per-route cookie names stop a
