@@ -426,6 +426,11 @@ spec:
             - name: DFE_SOURCE_CATALOGUE_FILE
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.metricsManifestUrl }}
+            # Where a metrics refresh reads each app's live manifest; unset, none is read.
+            - name: DFE_SERVICES_METRICS_MANIFEST_URL
+              value: {{ . | quote }}
+            {{- end }}
             - name: DFE_SCHEMAS_DIR
               value: {{ .Values.config.mountPath }}/schemas
             - name: DFE_FIELDMAPS_DIR

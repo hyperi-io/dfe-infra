@@ -1,1 +1,29 @@
-{{- include "dfe-common.pushService" . }}
+# The archiver's own Service rather than dfe-common.pushService, which renders
+# only on the direct transport: the metrics listener is where dfe-engine reads
+# the archiver's metric manifest, so the Service exists on the bus as well. The
+# push port is the helper's, under the helper's own gate.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  # ClusterIP only: a pipeline stage is east-west and never faces a client.
+  type: ClusterIP
+  ports:
+    - port: 9090
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+    {{- if eq (include "dfe-common.transport" .) "direct" }}
+    - port: {{ include "dfe-common.pushPort" . }}
+      targetPort: push
+      protocol: TCP
+      name: push
+      # Cleartext HTTP/2, as dfe-common.pushService declares: a proxy fronting
+      # the pool dials HTTP/1.1 without it and every request resets.
+      appProtocol: kubernetes.io/h2c
+    {{- end }}
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
