@@ -34,8 +34,11 @@ clickhouse:
   # (single mode ignores this -- it is always 1 standalone pod.)
   replicas: 3
   shardsCount: 1
-  # Spread cluster pods evenly across k8s workers (best-effort: ScheduleAnyway,
-  # so it never blocks scheduling when workers < replicas).
+  # Spread each shard's replicas, and separately the keepers, across nodes. It is
+  # enforced (DoNotSchedule): a replica stays Pending rather than land on a node
+  # holding more of its shard than the emptiest eligible node. A one-node cluster
+  # is one domain, so every replica still schedules there. Nodes the pod does not
+  # tolerate still count as domains, because nodeTaintsPolicy defaults to Ignore.
   podSpread:
     enabled: true
     maxSkew: 1

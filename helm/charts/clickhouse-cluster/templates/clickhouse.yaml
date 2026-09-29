@@ -144,13 +144,19 @@ spec:
       {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
     {{- end }}
     {{- if .Values.clickhouse.podSpread.enabled }}
+    {{- /* Selects the labels the operator writes on server pods -- the chart's
+    own are on no pod -- and matchLabelKeys narrows each count to the pod's own
+    shard (label source: scripts/tests/test_clickhouse_replica_spread.py). */}}
     topologySpreadConstraints:
       - maxSkew: {{ .Values.clickhouse.podSpread.maxSkew }}
         topologyKey: {{ .Values.clickhouse.podSpread.topologyKey }}
-        whenUnsatisfiable: ScheduleAnyway
+        whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            {{- include "dfe-common.selectorLabels" . | nindent 12 }}
+            app: {{ printf "%s-clickhouse" .Values.clickhouse.name | quote }}
+            clickhouse.com/role: clickhouse-server
+        matchLabelKeys:
+          - clickhouse.com/shard-id
     {{- end }}
     {{- if $cacheOnInstanceStore }}
     volumes:

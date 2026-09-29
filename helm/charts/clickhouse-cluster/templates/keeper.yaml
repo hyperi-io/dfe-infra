@@ -57,13 +57,16 @@ spec:
     {{- end }}
     {{- end }}
     {{- if .Values.clickhouse.podSpread.enabled }}
+    {{- /* Selects the labels the operator writes on keeper pods, so only keepers
+    are counted (label source: scripts/tests/test_clickhouse_replica_spread.py). */}}
     topologySpreadConstraints:
       - maxSkew: {{ .Values.clickhouse.podSpread.maxSkew }}
         topologyKey: {{ .Values.clickhouse.podSpread.topologyKey }}
-        whenUnsatisfiable: ScheduleAnyway
+        whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            {{- include "dfe-common.selectorLabels" . | nindent 12 }}
+            app: {{ printf "%s-keeper" .Values.clickhouse.keeper.name | quote }}
+            clickhouse.com/role: clickhouse-keeper
     {{- end }}
   {{- end }}
 {{- end }}
