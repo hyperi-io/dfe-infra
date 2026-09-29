@@ -35,6 +35,7 @@ import yaml
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
+from _spread import Pod, assert_constraint_shape, counted, hostname_constraint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -110,10 +111,6 @@ def one(docs: tuple[dict, ...], kind: str) -> dict:
     return matches[0]
 
 
-# (pod name, labels, spread constraints) for one pod the operator would build.
-type Pod = tuple[str, dict[str, str], list[dict]]
-
-
 def pods_of(docs: tuple[dict, ...]) -> list[Pod]:
     """Every pod the operator would build from the rendered CRs.
 
@@ -159,10 +156,6 @@ def effective_selector(constraint: dict, incoming: dict[str, str]) -> dict[str, 
     return merged
 
 
-def counted(selector: dict[str, str], pods: list[Pod]) -> set[str]:
-    return {n for n, labels, _ in pods if all(labels.get(k) == v for k, v in selector.items())}
-
-
 def peers(pod: str, labels: dict[str, str], pods: list[Pod]) -> set[str]:
     """The pods one pod must be kept apart from: its own shard, or every keeper."""
     if pod.startswith("server"):
@@ -180,12 +173,9 @@ def check_spread(label: str, docs: tuple[dict, ...]) -> None:
                f"podTemplate sets {own}, so the operator adds constraints this test does not see")
     pods = pods_of(docs)
     for name, labels, constraints in pods:
-        hostname = [c for c in constraints if c.get("topologyKey") == "kubernetes.io/hostname"]
-        expect(f"{label}: {name} has one hostname spread constraint", len(hostname) == 1,
-               f"got {len(hostname)}")
-        if len(hostname) != 1:
+        c = hostname_constraint(label, name, constraints)
+        if c is None:
             continue
-        c = hostname[0]
         selector = effective_selector(c, labels)
         expect(f"{label}: {name} selector is matchLabels only", selector is not None,
                f"labelSelector {c.get('labelSelector')!r}")
@@ -194,11 +184,7 @@ def check_spread(label: str, docs: tuple[dict, ...]) -> None:
             want = peers(name, labels, pods)
             expect(f"{label}: {name} spread counts exactly its peers", got == want,
                    f"selector {selector} counts {sorted(got)}, peers are {sorted(want)}")
-        expect(f"{label}: {name} spread refuses a skewed placement",
-               c.get("whenUnsatisfiable") == "DoNotSchedule",
-               f"whenUnsatisfiable is {c.get('whenUnsatisfiable')!r}")
-        expect(f"{label}: {name} spread allows a skew of one", c.get("maxSkew") == 1,
-               f"maxSkew is {c.get('maxSkew')!r}")
+        assert_constraint_shape(label, name, c)
 
 
 def test_fixture_matches_the_pinned_operator() -> None:

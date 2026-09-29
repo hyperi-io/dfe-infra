@@ -36,6 +36,7 @@ import yaml
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
+from _spread import Pod, assert_constraint_shape, counted, hostname_constraint
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -129,10 +130,6 @@ def of_kind(docs: tuple[dict, ...], kind: str) -> list[dict]:
     return [d for d in docs if d.get("kind") == kind]
 
 
-# (pod name, labels, spread constraints) for one pod Strimzi would build.
-type Pod = tuple[str, dict[str, str], list[dict]]
-
-
 def pods_of(docs: tuple[dict, ...]) -> list[Pod]:
     """Every pod Strimzi would build from the rendered Kafka and KafkaNodePool CRs.
 
@@ -160,10 +157,6 @@ def pods_of(docs: tuple[dict, ...]) -> list[Pod]:
     return pods
 
 
-def counted(selector: dict[str, str], pods: list[Pod]) -> set[str]:
-    return {n for n, labels, _ in pods if all(labels.get(k) == v for k, v in selector.items())}
-
-
 def peers(labels: dict[str, str], pods: list[Pod]) -> set[str]:
     """The pods one pool pod must be kept apart from: every pod sharing its role.
 
@@ -181,12 +174,9 @@ def check_spread(label: str, docs: tuple[dict, ...]) -> None:
     expect(f"{label}: the render has pool pods to check", len(pool_pods) > 1,
            f"got {len(pool_pods)}")
     for name, labels, constraints in pool_pods:
-        hostname = [c for c in constraints if c.get("topologyKey") == "kubernetes.io/hostname"]
-        expect(f"{label}: {name} has one hostname spread constraint", len(hostname) == 1,
-               f"got {len(hostname)}")
-        if len(hostname) != 1:
+        c = hostname_constraint(label, name, constraints)
+        if c is None:
             continue
-        c = hostname[0]
         selector = c.get("labelSelector") or {}
         only_labels = set(selector) == {"matchLabels"} and not c.get("matchLabelKeys")
         expect(f"{label}: {name} selector is matchLabels only", only_labels,
@@ -197,11 +187,7 @@ def check_spread(label: str, docs: tuple[dict, ...]) -> None:
             expect(f"{label}: {name} spread counts exactly its peers", got == want,
                    f"selector {selector['matchLabels']} counts {sorted(got)}, "
                    f"peers are {sorted(want)}")
-        expect(f"{label}: {name} spread refuses a skewed placement",
-               c.get("whenUnsatisfiable") == "DoNotSchedule",
-               f"whenUnsatisfiable is {c.get('whenUnsatisfiable')!r}")
-        expect(f"{label}: {name} spread allows a skew of one", c.get("maxSkew") == 1,
-               f"maxSkew is {c.get('maxSkew')!r}")
+        assert_constraint_shape(label, name, c)
 
 
 def test_fixture_matches_the_pinned_strimzi() -> None:
