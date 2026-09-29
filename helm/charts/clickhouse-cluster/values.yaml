@@ -77,6 +77,13 @@ clickhouse:
         # before a single request is served, so the old 1Gi limit was an OOMKill
         # waiting on load rather than a bound on it.
         memory: 3Gi
+    # Keeper's own log, written to the data PVC above. Same fields and bound as
+    # clickhouse.serverLog; left unset, the operator keeps 50 trace-level files of
+    # up to 1000M on it.
+    log:
+      level: information
+      size: 50M
+      count: 3
     # Parallel to clickhouse.serviceAccount above. No Pod Identity association
     # ever targets Keeper -- it never touches S3 -- but it must not stay on the
     # namespace's default account either, or a future association or grant
@@ -290,6 +297,21 @@ clickhouse:
     # shipped default since 26.2, and 0 is refused at render time: the loader
     # would commit a Kafka offset on an ack it never earned.
     waitForAsyncInsert: 1
+  # The server's own log, in both modes. Left unset, cluster mode takes the
+  # operator's trace level with 50 files of 1000M on the data PVC, and prints the
+  # same trace to stdout, which the otel collector ships into otel_logs; single
+  # mode takes the image's trace level with 10 files of 1000M on the node's disk.
+  #   level  one of trace, debug, information, notice, warning, error, critical,
+  #          fatal (test is for ClickHouse's own test suite). information drops
+  #          trace and debug; warnings and errors also go to the separate err.log
+  #          whatever this says.
+  #   size   rotate at this size, for the log and the err.log alike.
+  #   count  archives kept per file, gzipped. The disk bound is
+  #          2 x (count + 1) x size: 400M per replica as shipped.
+  serverLog:
+    level: information
+    size: 50M
+    count: 3
   users:
     # The one credential the deploy layer owns, named `default` on every target.
     # Only `default` can take its password from a Secret
