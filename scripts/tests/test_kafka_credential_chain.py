@@ -543,9 +543,10 @@ def app_credential(docs: list[dict]) -> dict:
 
 
 def template_data(doc: dict) -> dict:
-    """The keys a ClusterExternalSecret templates into its target Secret."""
-    target = doc.get("spec", {}).get("externalSecretSpec", {}).get("target", {})
-    return target.get("template", {}).get("data", {})
+    """The keys a ClusterExternalSecret templates into its target Secret, {} for no doc."""
+    if not doc:
+        return {}
+    return doc["spec"]["externalSecretSpec"]["target"]["template"]["data"]
 
 
 def namespaces(doc: dict) -> set[str]:
