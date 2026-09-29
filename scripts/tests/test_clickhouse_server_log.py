@@ -57,7 +57,10 @@ SHIPPED_TTL_DAYS = {
     "query_log": 30,
     "text_log": 7,
 }
-_TTL = re.compile(r"^event_date \+ INTERVAL (\d+) DAY DELETE$")
+# Switched off outright: nothing in DFE reads it, and only single mode's image turns it on.
+SHIPPED_OFF = ("trace_log",)
+REMOVED = {"@remove": "remove"}
+_TTL =re.compile(r"^event_date \+ INTERVAL (\d+) DAY DELETE$")
 _SIZE = re.compile(r"^\s*(\d+)\s*([KM]?)\s*$")
 _UNIT = {"": 1, "K": 1024, "M": 1024**2}
 
@@ -218,14 +221,22 @@ def ttl_days(section: object) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def cr_sections(docs: list[dict]) -> dict:
+    return one(docs, "ClickHouseCluster")["spec"]["settings"].get("extraConfig") or {}
+
+
+def single_sections(docs: list[dict]) -> dict:
+    fragment = (one(docs, "ConfigMap").get("data") or {}).get("dfe-system-logs.yaml")
+    return (yaml.safe_load(fragment) or {}) if fragment else {}
+
+
 def cr_system_logs(docs: list[dict]) -> dict:
-    extra = one(docs, "ClickHouseCluster")["spec"]["settings"].get("extraConfig") or {}
+    extra = cr_sections(docs)
     return {table: ttl_days(extra.get(table)) for table in SHIPPED_TTL_DAYS}
 
 
 def single_system_logs(docs: list[dict]) -> dict:
-    fragment = (one(docs, "ConfigMap").get("data") or {}).get("dfe-system-logs.yaml")
-    sections = (yaml.safe_load(fragment) or {}) if fragment else {}
+    sections = single_sections(docs)
     return {table: ttl_days(sections.get(table)) for table in SHIPPED_TTL_DAYS}
 
 
@@ -250,23 +261,22 @@ def test_every_system_log_table_carries_a_ttl() -> None:
 
 
 def test_a_system_log_ttl_can_be_moved_or_dropped() -> None:
-    sets = ("clickhouse.systemLogTTLDays.query_log=90", "clickhouse.systemLogTTLDays.text_log=0")
+    sets = ("clickhouse.systemLogTTLDays.query_log=90", "clickhouse.systemLogTTLDays.part_log=0")
     for where, found in (
         ("the ClickHouseCluster", cr_system_logs(render(CLUSTER_CASCADE, *sets))),
         ("single mode", single_system_logs(render(SINGLE_CASCADE, *sets))),
     ):
         expect(f"a moved query_log TTL reaches {where}", found["query_log"] == 90)
-        expect(f"text_log=0 leaves {where} with no text_log TTL", found["text_log"] is None)
-        expect(f"the others stay put on {where}", found["part_log"] == SHIPPED_TTL_DAYS["part_log"])
-    added = render(CLUSTER_CASCADE, "clickhouse.systemLogTTLDays.trace_log=3")
-    extra = one(added, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
-    expect("a table added to the map gets its TTL", ttl_days(extra.get("trace_log")) == 3)
+        expect(f"part_log=0 leaves {where} with no part_log TTL", found["part_log"] is None)
+        expect(f"the others stay put on {where}", found["metric_log"] == SHIPPED_TTL_DAYS["metric_log"])
+    added = render(CLUSTER_CASCADE, "clickhouse.systemLogTTLDays.error_log=3")
+    expect("a table added to the map gets its TTL", ttl_days(cr_sections(added).get("error_log")) == 3)
     all_zero = [f"clickhouse.systemLogTTLDays.{table}=0" for table in SHIPPED_TTL_DAYS]
-    none_at_all = render(SINGLE_CASCADE, *all_zero)
+    none_at_all = render(SINGLE_CASCADE, *all_zero, "clickhouse.systemLogsOff=null")
     container = one(none_at_all, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]
     mounts = container["volumeMounts"]
     expect(
-        "every table at 0 renders no config.d file and no mount",
+        "no TTL and nothing off renders no config.d file and no mount",
         "dfe-system-logs.yaml" not in (one(none_at_all, "ConfigMap").get("data") or {})
         and not any(m.get("mountPath") == SINGLE_SYSTEM_LOGS_PATH for m in mounts),
     )
@@ -280,6 +290,37 @@ def test_an_external_server_gets_no_server_config() -> None:
         "external mode renders no ClickHouse server, Keeper or config.d overlay",
         not kinds & {"ClickHouseCluster", "KeeperCluster", "StatefulSet", "ConfigMap"},
         f"rendered {sorted(k for k in kinds if k)}",
+    )
+
+
+def test_trace_log_is_switched_off() -> None:
+    for where, sections in (
+        ("the ClickHouseCluster", cr_sections(render(CLUSTER_CASCADE))),
+        ("the single-mode server", single_sections(render(SINGLE_CASCADE))),
+    ):
+        for table in SHIPPED_OFF:
+            expect(
+                f"{where} removes the {table} section",
+                sections.get(table) == REMOVED,
+                f"got {sections.get(table)!r}",
+            )
+    err = render_error("clickhouse.systemLogTTLDays.trace_log=7")
+    expect("a TTL on a table that is also switched off is refused", "drop one" in err, err[:200])
+
+
+def test_keeper_liveness_probe_asks_ruok_instead_of_a_bare_connect() -> None:
+    keeper = one(render(CLUSTER_CASCADE), "KeeperCluster")
+    probe = keeper["spec"]["containerTemplate"].get("livenessProbe") or {}
+    command = " ".join((probe.get("exec") or {}).get("command") or [])
+    expect(
+        "the KeeperCluster's liveness probe sends ruok on 2181 and wants imok",
+        "ruok" in command and "2181" in command and "imok" in command,
+        f"got {probe!r}; the operator's TCP probe logs a Warning every 5 seconds",
+    )
+    emptied = one(render(CLUSTER_CASCADE, "clickhouse.keeper.livenessProbe=null"), "KeeperCluster")
+    expect(
+        "an emptied livenessProbe leaves the operator's own",
+        "livenessProbe" not in emptied["spec"]["containerTemplate"],
     )
 
 
@@ -299,6 +340,8 @@ def main() -> int:
         test_every_system_log_table_carries_a_ttl()
         test_a_system_log_ttl_can_be_moved_or_dropped()
         test_an_external_server_gets_no_server_config()
+        test_trace_log_is_switched_off()
+        test_keeper_liveness_probe_asks_ruok_instead_of_a_bare_connect()
         test_a_ttl_that_is_not_whole_days_fails_the_render()
         return summary()
 

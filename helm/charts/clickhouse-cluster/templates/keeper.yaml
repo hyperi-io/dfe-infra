@@ -33,6 +33,11 @@ spec:
       limits:
         cpu: {{ .Values.clickhouse.keeper.resources.limits.cpu }}
         memory: {{ .Values.clickhouse.keeper.resources.limits.memory }}
+    {{- with .Values.clickhouse.keeper.livenessProbe }}
+    # Replaces the operator's TCP probe whole; see clickhouse.keeper.livenessProbe.
+    livenessProbe:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   dataVolumeClaimSpec:
     accessModes: ["ReadWriteOnce"]
     resources:

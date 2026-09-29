@@ -100,9 +100,9 @@ spec:
       {{- with (include "dfe-clickhouse.serverProfile" .) }}
       {{- . | nindent 6 }}
       {{- end }}
-      {{- /* A TTL on each system log table the operator switches on; see
-      clickhouse.systemLogTTLDays. */ -}}
-      {{- with (include "dfe-clickhouse.systemLogTTL" . | trim) }}
+      {{- /* A TTL on each system log table the operator switches on, and the
+      ones switched off; see clickhouse.systemLogTTLDays and systemLogsOff. */ -}}
+      {{- with (include "dfe-clickhouse.systemLogs" . | trim) }}
       {{- . | nindent 6 }}
       {{- end }}
     # Async inserts for EVERY writer, via the default settings profile (the base

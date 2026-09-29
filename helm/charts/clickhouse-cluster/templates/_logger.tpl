@@ -38,23 +38,32 @@ read it as 0, which is no TTL at all.
 {{- if not (regexMatch "^[0-9]+$" (toString $days)) -}}
 {{- fail (printf "clickhouse.systemLogTTLDays.%s must be whole days, 0 or more, not %v" $table $days) -}}
 {{- end -}}
+{{- if and (gt (int $days) 0) (has $table $.Values.clickhouse.systemLogsOff) -}}
+{{- fail (printf "clickhouse.systemLogTTLDays.%s is set but clickhouse.systemLogsOff switches %s off; drop one" $table $table) -}}
+{{- end -}}
 {{- end -}}
 {{- end }}
 
 {{/*
-dfe-clickhouse.systemLogTTL -- a TTL for each system log table named in
-clickhouse.systemLogTTLDays, as server config, both modes.
+dfe-clickhouse.systemLogs -- the system log sections the chart sets, as server
+config, both modes: a TTL for each table in clickhouse.systemLogTTLDays, and a
+removal for each table in clickhouse.systemLogsOff.
 
-The server appends a table's `ttl` key to the engine it creates that table with
-(ClickHouse server settings, "system log tables":
-https://clickhouse.com/docs/operations/server-configuration-parameters/settings).
-A table set to 0 renders nothing and keeps what its base config gives it.
+The server appends a table's `ttl` key to the engine it creates that table with,
+and creates no table whose section is missing (ClickHouse server settings, "system
+log tables": https://clickhouse.com/docs/operations/server-configuration-parameters/settings).
+`"@remove": remove` deletes the section from the merged config. A table set to 0
+days renders nothing and keeps what its base config gives it.
 */}}
-{{- define "dfe-clickhouse.systemLogTTL" -}}
+{{- define "dfe-clickhouse.systemLogs" -}}
 {{- range $table, $days := .Values.clickhouse.systemLogTTLDays }}
 {{- if gt (int $days) 0 }}
 {{ $table }}:
   ttl: event_date + INTERVAL {{ int $days }} DAY DELETE
 {{- end }}
+{{- end }}
+{{- range .Values.clickhouse.systemLogsOff }}
+{{ . }}:
+  "@remove": remove
 {{- end }}
 {{- end }}
