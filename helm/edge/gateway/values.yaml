@@ -234,6 +234,21 @@ kafka:
 deployRepo:
   bundled: false
 
+# Read-only here, and owned by the otel-collector chart: the otel route below
+# fronts that chart's bearer-token OTLP receiver, which exists only while this
+# switch is on. Same keys as argocd/values/common.yaml, so the one overlay that
+# sets them (the deploy repo's infra/common.yaml) reaches both charts. The
+# defaults match the collector's, so a deployment that never mentions them
+# renders no otel route.
+otel:
+  ingress:
+    enabled: false
+    # The collector's authenticated OTLP/HTTP port, which the route targets.
+    port: 4319
+    auth:
+      # Where the secret store holds the token. On with this empty refuses.
+      remoteKey: ""
+
 # Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
 # the dfe-receiver chart (exposure.mode, its ingest door) because a deployment's
 # cloud overlay feeds both -- one block describes what a deployment exposes, and
@@ -356,15 +371,17 @@ ui:
 #                                                        -> not rendered
 #   3. the backend is another chart's opt-in workload and that chart is not
 #      deploying it (cruiseControl from the kafka.* keys, forgejo from
-#      deployRepo.bundled, both above)                   -> not rendered
+#      deployRepo.bundled, otel from otel.ingress.enabled, all above)
+#                                                        -> not rendered
 #   4. routes.<name>.enabled: false                      -> not rendered
 #   5. otherwise                                         -> rendered
 #
 # Per-route fields:
 #   class        -- product | infra | ingest (above)
 #   enabled      -- per-route opt-out. Every UI defaults true (D5: externally
-#                   reachable by default); the two ingest routes default false
-#                   because each pairs with a setting in another chart.
+#                   reachable by default). The receiver defaults false because
+#                   it pairs with dfe-receiver's exposure.mode. otel stays true
+#                   and waits on otel.ingress.enabled instead (rule 3).
 #   routeName    -- the HTTPRoute's metadata.name, and what a SecurityPolicy
 #                   targetRef names. Defined here once, not in the template.
 #   hostnameKey  -- which entry of the canonical `hostnames` map supplies the
@@ -602,9 +619,10 @@ routes:
     backendNamespace: ""
     backendPort: 8080
 
-  # Platform OTLP ingest: the ONE standard DNS door for telemetry from
-  # outside the cluster (edge agents, other estates). OTLP/HTTP; in-cluster
-  # senders keep the collector's service DNS.
+  # Platform OTLP/HTTP ingest: the one DNS door for telemetry from outside the
+  # cluster (edge agents, other estates). Renders only with otel.ingress.enabled,
+  # and its backend port is otel.ingress.port, the collector's bearer-token
+  # receiver. In-cluster senders keep the collector's Service DNS and 4317/4318.
   otel:
     class: ingest
     enabled: true
@@ -613,7 +631,6 @@ routes:
     hostname: ""
     backendService: dfe-otel-collector-gateway
     backendNamespace: otel
-    backendPort: 4318
 
 # OIDC — disabled by default (local auth is default).
 # Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.

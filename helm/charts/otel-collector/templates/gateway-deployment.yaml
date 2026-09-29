@@ -56,6 +56,11 @@ spec:
               containerPort: 4317
             - name: otlp-http
               containerPort: 4318
+            {{- if .Values.otel.ingress.enabled }}
+            # The bearer-token receiver the gateway's otel route targets.
+            - name: otlp-ingress
+              containerPort: {{ .Values.otel.ingress.port }}
+            {{- end }}
             - name: prometheus
               containerPort: {{ .Values.gateway.service.prometheusPort }}
             - name: health
@@ -82,9 +87,21 @@ spec:
               mountPath: /etc/otel
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.otel.ingress.enabled }}
+            - name: ingress-token
+              mountPath: {{ include "otel-collector.ingressTokenDir" . }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        {{- if .Values.otel.ingress.enabled }}
+        # Required, not optional: without the file the extension cannot start, so
+        # the pod waits for the Secret rather than crashlooping on a missing token.
+        - name: ingress-token
+          secret:
+            secretName: {{ .Values.otel.ingress.auth.secretName }}
+        {{- end }}

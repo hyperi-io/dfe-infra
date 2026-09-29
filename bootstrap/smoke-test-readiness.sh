@@ -174,6 +174,20 @@ report_issuer_mode() {
   printf '%s\n' "$report" | sed 's/^/  [info] /'
 }
 
+# Whether OTLP ingest is reachable from outside the cluster, and where (#236).
+# Informational: the charts decide exposure, and `dfe-ops otel-ingress` owns the
+# wording the access summary prints too.
+report_otel_ingress() {
+  local repo_root report
+  repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+  report="$(python3 "${repo_root}/scripts/dfe-ops" otel-ingress 2>/dev/null)"
+  if [ -z "$report" ]; then
+    echo "  [warn] OTLP ingress: dfe-ops otel-ingress could not read the cluster"
+    return 0
+  fi
+  printf '%s\n' "$report" | sed 's/^/  [info] /'
+}
+
 ISSUES_FILE="$(mktemp)"
 trap 'rm -f "$ISSUES_FILE"' EXIT
 
@@ -255,6 +269,7 @@ while :; do
     check_default_credentials || exit 1
     check_admin_uis || exit 1
     report_issuer_mode
+    report_otel_ingress
     echo "=== READINESS GATE PASSED: every pod Ready, every workload at desired ==="
     exit 0
   fi

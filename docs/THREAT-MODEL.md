@@ -28,6 +28,7 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 | dfe-engine | CLI and API | Reachable by operators, not by the public. The API is authenticated. |
 | dfe-loader, dfe-archiver, dfe-transform-* | Not exposed | Consume from the broker and write to a datastore. No listener an outsider can reach. |
 | ClickHouse, Kafka, the collector | Not exposed | Cluster-internal. dfe-docker's `docs/operating.md` covers the Compose bindings. |
+| The collector's OTLP ingress | **Off by default. When a deployment sets `otel.ingress.enabled`: reachable from outside the cluster, authenticated** | `otel.<domain>` on the gateway reaches a second OTLP/HTTP receiver that refuses any request without the bearer token from the deployment's secret store. The check is the collector's own (`bearertokenauth`), so it holds however that port is reached. Before the token is checked, the collector's HTTP server and the extension parse an outsider's request: on such a deployment, grade an advisory in either as reachable. The in-cluster receiver on 4317/4318 stays unauthenticated and no route publishes it. |
 
 ## What that means for a finding
 

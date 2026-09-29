@@ -1,0 +1,2 @@
+{{/* Renders nothing. It exists so the ingress guards run on every render. */}}
+{{- include "otel-collector.validateIngress" . -}}

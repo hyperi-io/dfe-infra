@@ -17,6 +17,9 @@ edgeLogin -- does the infra edge policy render in front of this route? Only then
 cruiseControlUi -- is the kafka chart deploying the Cruise Control UI? The
   gateway cannot see another chart's render, so both read the same kafka.* keys
   from the deploy-config SSoT and agree by reading one set of values.
+otelIngress  -- is the otel-collector chart serving its bearer-token OTLP
+  receiver? Same reason: both charts read otel.ingress.enabled.
+validateOtelIngress -- the switch's render guards, which templates/validate.yaml runs.
 routeHost    -- subdomain label, from the route's hostname or hostnames[hostnameKey].
 routeNs      -- namespace of the route and of any SecurityPolicy targeting it.
 infraPolicyRoutes -- JSON array of the keys that render AND take the infra edge
@@ -47,6 +50,25 @@ true
 {{- end -}}
 {{- end -}}
 
+{{- define "envoy-gateway-config.otelIngress" -}}
+{{- if .ctx.Values.otel.ingress.enabled -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- /* The collector serves no authenticated receiver without the token, so the
+       route that would front it is refused rather than rendered. The message is
+       the collector chart's own, word for word, so both refusals read the same. */ -}}
+{{- define "envoy-gateway-config.validateOtelIngress" -}}
+{{- $ingress := .ctx.Values.otel.ingress -}}
+{{- if not (kindIs "bool" $ingress.enabled) -}}
+{{- fail (printf "otel.ingress.enabled is %v (a %s), not a bool -- a quoted \"false\" is a non-empty string and truthy, so it would publish OTLP ingest. Write true or false unquoted" $ingress.enabled (kindOf $ingress.enabled)) -}}
+{{- end -}}
+{{- if and $ingress.enabled (not $ingress.auth.remoteKey) -}}
+{{- fail "otel.ingress.enabled is true and otel.ingress.auth.remoteKey is empty -- OTLP ingest from outside the cluster admits only a bearer token, and this key names where the deployment's secret store holds it. Store the token (property token) at a path such as <project>/<env>/otel/ingress and set otel.ingress.auth.remoteKey to it in the deploy repo's infra/common.yaml. There is no unauthenticated mode" -}}
+{{- end -}}
+{{- end -}}
+
 {{- /* The same three facts security-policy-infra.yaml renders on, so a route
        admitted here always has its policy. */ -}}
 {{- define "envoy-gateway-config.edgeLogin" -}}
@@ -68,6 +90,9 @@ true
        of the deployment. */ -}}
 {{- else if and (eq .key "forgejo") (not .ctx.Values.deployRepo.bundled) -}}
 {{- /* Forgejo is deployed only when the deploy repo is the bundled one. */ -}}
+{{- else if and (eq .key "otel") (not (include "envoy-gateway-config.otelIngress" (dict "ctx" .ctx))) -}}
+{{- /* Without the switch the collector has no authenticated receiver, and the
+       only port left to route to takes OTLP from anyone. */ -}}
 {{- else if $r.enabled -}}
 true
 {{- end -}}

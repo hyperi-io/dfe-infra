@@ -182,7 +182,7 @@ reading the keys it owns.
 | Forgejo (bundled fallback) | `git.{domain}` | infra | only where bundled | edge OIDC + group check |
 | Kafbat | `kafbat.{domain}` | infra | yes | its own OIDC (integrated-app pattern) -- group check is app-side |
 | HyperDX | `hyperdx.{domain}` | infra | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
-| otel OTLP ingest | `otel.{domain}` | ingest | yes | none -- machine senders hold no browser session |
+| otel OTLP ingest | `otel.{domain}` | ingest | no (`otel.ingress.enabled`) | bearer token, checked by the collector |
 | dfe-receiver ingest | `receiver.{domain}` | ingest | no | the receiver's own `server.auth` |
 
 The gate on an infra route is a deny-by-default Envoy `SecurityPolicy`

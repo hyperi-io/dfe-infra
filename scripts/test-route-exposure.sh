@@ -29,6 +29,8 @@ CHART="helm/edge/gateway"
 BASE_VALUES=(-f argocd/values/common.yaml -f argocd/values/local-dfe.yaml)
 OIDC=(--set oidc.enabled=true
       --set-json 'oidc.providers=[{"name":"acme","issuerUrl":"https://id.example.com","clientId":"dfe"}]')
+# The collector's bearer-token receiver on, which is what the otel route fronts.
+OTEL_ON=(--set otel.ingress.enabled=true --set otel.ingress.auth.remoteKey=dfe/local/otel/ingress)
 
 PASS=0
 FAIL=0
@@ -133,11 +135,12 @@ echo "=== route exposure cascade ==="
 echo ""
 echo "case 1 -- all defaults: every UI with a login renders; links, forgejo and ingest stay off"
 R="$(render_names HTTPRoute)"
-for r in dfe-ui dfe-engine argocd hyperdx kafbat otel; do
+for r in dfe-ui dfe-engine argocd hyperdx kafbat; do
   assert_has "default" "${r}" "${R}"
 done
-# links has no login of its own and edge OIDC is off; Forgejo is not deployed.
-for r in links forgejo receiver; do
+# links has no login of its own and edge OIDC is off; Forgejo is not deployed;
+# otel waits for otel.ingress.enabled.
+for r in links forgejo receiver otel; do
   assert_absent "default" "${r}" "${R}"
 done
 R="$(render_names HTTPRoute "${OIDC[@]}" --set deployRepo.bundled=true)"
@@ -147,7 +150,7 @@ done
 
 echo ""
 echo "case 2 -- kill switch off: infra class gone, product and ingest stay"
-R="$(render_names HTTPRoute --set exposure.infraUisExternal=false)"
+R="$(render_names HTTPRoute --set exposure.infraUisExternal=false "${OTEL_ON[@]}")"
 for r in argocd hyperdx forgejo kafbat links; do
   assert_absent "killswitch" "${r}" "${R}"
 done
@@ -197,9 +200,10 @@ done
 
 echo ""
 echo "case 8 -- every internal route pins to the https listener; only the redirect route pins http"
-# The edge login and the bundled deploy repo, so every internal route renders.
+# The edge login, the bundled deploy repo and OTLP ingress, so every internal route renders.
 FULL="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-system \
-  "${BASE_VALUES[@]}" --set appNamespace=dfe-local "${OIDC[@]}" --set deployRepo.bundled=true 2>/dev/null)"
+  "${BASE_VALUES[@]}" --set appNamespace=dfe-local "${OIDC[@]}" --set deployRepo.bundled=true \
+  "${OTEL_ON[@]}" 2>/dev/null)"
 HTTPS_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: https$')"
 HTTP_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: http$')"
 if [ "${HTTPS_PINS}" -eq 8 ]; then
@@ -258,10 +262,10 @@ R="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-sys
   -f argocd/values/common.yaml -f argocd/values/aws.yaml -f argocd/values/edge-aws.yaml \
   --set appNamespace=dfe-local --set domain=dfe.example.com 2>/dev/null \
   | awk '/^kind: /{k=$2} /^  name: /{if (k=="HTTPRoute") print $2}')"
-for r in argocd hyperdx forgejo kafbat links; do
+for r in argocd hyperdx forgejo kafbat links otel; do
   assert_absent "aws-overlay-default" "${r}" "${R}"
 done
-for r in dfe-ui dfe-engine otel; do
+for r in dfe-ui dfe-engine; do
   assert_has "aws-overlay-default" "${r}" "${R}"
 done
 
@@ -457,6 +461,20 @@ EOF
 assert_same "internal-engine-route" "${INTERNAL_ENGINE}" \
   "$(aws_render --show-only templates/httproute-dfe-engine.yaml \
      --set ui.engine_api.cli_families_public=true --set ui.engine_api.scim_public=true)"
+
+echo ""
+echo "=== OTLP ingest from outside the cluster ==="
+
+echo ""
+echo "case 25 -- the otel route renders only with otel.ingress.enabled, and never without a token"
+assert_has "otel-ingress-on" "otel" "$(render_names HTTPRoute "${OTEL_ON[@]}")"
+assert_has "otel-ingress-on-aws" "otel" "$(aws_names HTTPRoute "${OTEL_ON[@]}")"
+assert_absent "otel-ingress-route-opt-out" "otel" \
+  "$(render_names HTTPRoute "${OTEL_ON[@]}" --set routes.otel.enabled=false)"
+assert_render_refused "otel-ingress-no-token" "otel.ingress.auth.remoteKey is empty" \
+  --set otel.ingress.enabled=true
+assert_render_refused "otel-ingress-quoted-switch" "otel.ingress.enabled is false" \
+  --set-string otel.ingress.enabled=false
 
 echo ""
 echo "=== ${PASS} passed, ${FAIL} failed ==="
