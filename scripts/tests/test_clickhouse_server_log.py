@@ -272,6 +272,17 @@ def test_a_system_log_ttl_can_be_moved_or_dropped() -> None:
     )
 
 
+def test_an_external_server_gets_no_server_config() -> None:
+    external = ("clickhouse.mode=external", "clickhouse.external.host=ch.example.com")
+    docs = render(CLUSTER_CASCADE, *external)
+    kinds = {d.get("kind") for d in docs}
+    expect(
+        "external mode renders no ClickHouse server, Keeper or config.d overlay",
+        not kinds & {"ClickHouseCluster", "KeeperCluster", "StatefulSet", "ConfigMap"},
+        f"rendered {sorted(k for k in kinds if k)}",
+    )
+
+
 def test_a_ttl_that_is_not_whole_days_fails_the_render() -> None:
     for value in ("7.5", "-1", "week", '""'):
         err = render_error(f"clickhouse.systemLogTTLDays.query_log={value}")
@@ -287,6 +298,7 @@ def main() -> int:
         test_a_setting_the_server_would_reject_fails_the_render()
         test_every_system_log_table_carries_a_ttl()
         test_a_system_log_ttl_can_be_moved_or_dropped()
+        test_an_external_server_gets_no_server_config()
         test_a_ttl_that_is_not_whole_days_fails_the_render()
         return summary()
 

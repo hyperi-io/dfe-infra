@@ -101,6 +101,10 @@ WHERE database = 'system' AND match(name, '_log_[0-9]+$');
 DROP TABLE system.text_log_0;   -- one per name listed
 ```
 
+The chart does not drop them: nothing in DFE writes to the `system` database. The `_0` tables stop growing the moment they are renamed.
+
+Both knobs, and `clickhouse.serverLog`, are server config, so they apply only where this chart runs the ClickHouse server (`mode: single` or `cluster`). On ClickHouse Cloud or any other `mode: external` server the chart renders no server config and the provider owns it; `SHOW CREATE TABLE system.query_log` shows the TTL in force there. The dfe-docker compose stack configures its own ClickHouse outside this chart.
+
 ## Sizing the disk
 
 Nothing bounds the disk by size, so the volume has to hold the TTL window. Per replica:
