@@ -2,19 +2,21 @@
 #  Project:      dfe-infra
 #  File:         test_clickhouse_server_log.py
 #  Purpose:      Prove every ClickHouse and Keeper server the chart deploys
-#                ships a bounded log at a production level, and that a level
-#                the server would reject fails the render instead.
+#                ships a bounded log at a production level and a TTL on each
+#                of its system log tables, and that a setting the server would
+#                reject fails the render instead.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Assertions for clickhouse.serverLog and clickhouse.keeper.log.
+"""Assertions for clickhouse.serverLog, clickhouse.keeper.log and clickhouse.systemLogTTLDays.
 
 Left unset, the operator writes a trace-level log of 50 files x 1000M onto each
 server's data PVC and prints the same trace to stdout, where the otel collector
-picks it up. A deploy with no traffic filled its disk that way (dfe-infra#371).
-The render is the only place the bound can be checked before a cluster pays for
-it, so each server's logger is read back out of what the chart emits.
+picks it up, and it switches on five system log tables with no TTL. A deploy
+with no traffic filled its disk that way (dfe-infra#371). The render is the only
+place the bound can be checked before a cluster pays for it, so each server's
+logger and system log TTLs are read back out of what the chart emits.
 
     python3 scripts/tests/test_clickhouse_server_log.py
 
@@ -45,6 +47,17 @@ SHIPPED_LEVEL = "information"
 OPERATOR_DEFAULT = "the operator's applies: trace, 50 files of 1000M, on the data PVC"
 IMAGE_DEFAULT = "the image's config.xml applies: trace, 10 files of 1000M, on the node's disk"
 SINGLE_LOGGER_PATH = "/etc/clickhouse-server/config.d/dfe-logger.yaml"
+SINGLE_SYSTEM_LOGS_PATH = "/etc/clickhouse-server/config.d/dfe-system-logs.yaml"
+# The system log tables the pinned operator (0.0.7) switches on, from its
+# internal/controller/clickhouse/templates/log_tables.yaml.tmpl, and their shipped days.
+SHIPPED_TTL_DAYS = {
+    "asynchronous_metric_log": 7,
+    "metric_log": 7,
+    "part_log": 7,
+    "query_log": 30,
+    "text_log": 7,
+}
+_TTL = re.compile(r"^event_date \+ INTERVAL (\d+) DAY DELETE$")
 _SIZE = re.compile(r"^\s*(\d+)\s*([KM]?)\s*$")
 _UNIT = {"": 1, "K": 1024, "M": 1024**2}
 
@@ -198,6 +211,73 @@ def test_a_setting_the_server_would_reject_fails_the_render() -> None:
     expect("the shipped values pass", render_error() == "")
 
 
+def ttl_days(section: object) -> int | None:
+    """Days in a system log section's `event_date + INTERVAL <n> DAY DELETE`, else None."""
+    ttl = section.get("ttl") if isinstance(section, dict) else None
+    match = _TTL.match(str(ttl)) if ttl else None
+    return int(match.group(1)) if match else None
+
+
+def cr_system_logs(docs: list[dict]) -> dict:
+    extra = one(docs, "ClickHouseCluster")["spec"]["settings"].get("extraConfig") or {}
+    return {table: ttl_days(extra.get(table)) for table in SHIPPED_TTL_DAYS}
+
+
+def single_system_logs(docs: list[dict]) -> dict:
+    fragment = (one(docs, "ConfigMap").get("data") or {}).get("dfe-system-logs.yaml")
+    sections = (yaml.safe_load(fragment) or {}) if fragment else {}
+    return {table: ttl_days(sections.get(table)) for table in SHIPPED_TTL_DAYS}
+
+
+def test_every_system_log_table_carries_a_ttl() -> None:
+    single = render(SINGLE_CASCADE)
+    for where, found in (
+        ("the ClickHouseCluster", cr_system_logs(render(CLUSTER_CASCADE))),
+        ("the single-mode server", single_system_logs(single)),
+    ):
+        for table, days in SHIPPED_TTL_DAYS.items():
+            expect(
+                f"{where} keeps {table} for {days} days",
+                found[table] == days,
+                f"got {found[table]!r}; with no ttl the table grows for the life of the server",
+            )
+    mounts = one(single, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    expect(
+        "the single-mode server reads the system log TTLs from config.d",
+        any(m.get("mountPath") == SINGLE_SYSTEM_LOGS_PATH for m in mounts),
+        f"mounts: {[m.get('mountPath') for m in mounts]}",
+    )
+
+
+def test_a_system_log_ttl_can_be_moved_or_dropped() -> None:
+    sets = ("clickhouse.systemLogTTLDays.query_log=90", "clickhouse.systemLogTTLDays.text_log=0")
+    for where, found in (
+        ("the ClickHouseCluster", cr_system_logs(render(CLUSTER_CASCADE, *sets))),
+        ("single mode", single_system_logs(render(SINGLE_CASCADE, *sets))),
+    ):
+        expect(f"a moved query_log TTL reaches {where}", found["query_log"] == 90)
+        expect(f"text_log=0 leaves {where} with no text_log TTL", found["text_log"] is None)
+        expect(f"the others stay put on {where}", found["part_log"] == SHIPPED_TTL_DAYS["part_log"])
+    added = render(CLUSTER_CASCADE, "clickhouse.systemLogTTLDays.trace_log=3")
+    extra = one(added, "ClickHouseCluster")["spec"]["settings"]["extraConfig"]
+    expect("a table added to the map gets its TTL", ttl_days(extra.get("trace_log")) == 3)
+    all_zero = [f"clickhouse.systemLogTTLDays.{table}=0" for table in SHIPPED_TTL_DAYS]
+    none_at_all = render(SINGLE_CASCADE, *all_zero)
+    container = one(none_at_all, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]
+    mounts = container["volumeMounts"]
+    expect(
+        "every table at 0 renders no config.d file and no mount",
+        "dfe-system-logs.yaml" not in (one(none_at_all, "ConfigMap").get("data") or {})
+        and not any(m.get("mountPath") == SINGLE_SYSTEM_LOGS_PATH for m in mounts),
+    )
+
+
+def test_a_ttl_that_is_not_whole_days_fails_the_render() -> None:
+    for value in ("7.5", "-1", "week", '""'):
+        err = render_error(f"clickhouse.systemLogTTLDays.query_log={value}")
+        expect(f"systemLogTTLDays.query_log={value} is refused", "whole days" in err, err[:200])
+
+
 def main() -> int:
     with standalone():
         test_cluster_mode_bounds_the_server_log()
@@ -205,6 +285,9 @@ def main() -> int:
         test_single_mode_bounds_the_server_log()
         test_one_value_reaches_every_server_it_names()
         test_a_setting_the_server_would_reject_fails_the_render()
+        test_every_system_log_table_carries_a_ttl()
+        test_a_system_log_ttl_can_be_moved_or_dropped()
+        test_a_ttl_that_is_not_whole_days_fails_the_render()
         return summary()
 
 
