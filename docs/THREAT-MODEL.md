@@ -11,7 +11,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 # DFE exposure model
 
 **The vast majority of this stack has no internet-facing and no user-facing
-exposure.** Two components do; everything else consumes from the broker or is
+exposure.** Three components do; everything else consumes from the broker or is
 reached only from inside the deployment.
 
 Read this before assessing any security finding, advisory or scanner warning in
@@ -24,6 +24,7 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 |---|---|---|
 | **dfe-receiver** | **Internet / user facing** | The ingest edge. Takes arbitrary data from whoever can route to it. The primary attack surface. |
 | **dfe-ui** | **User facing** | Browser-facing Next.js app, behind auth in every deployment that has an issuer. |
+| **dfe-hyperdx** | **User facing, authenticated** | Search and dashboards embedded in dfe-ui. Verifies the engine's token on every request and queries ClickHouse as the one ClickHouse user the engine hands that session; admin surfaces are engine-only. A flaw here reaches what a signed-in user's identity can read. |
 | dfe-fetcher | Outbound only | Reaches external APIs, but **it initiates** every connection. Its ingest port is off by default. |
 | dfe-engine | CLI and API | Reachable by operators, not by the public. The API is authenticated. |
 | dfe-loader, dfe-archiver, dfe-transform-* | Not exposed | Consume from the broker and write to a datastore. No listener an outsider can reach. |
@@ -33,7 +34,7 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 
 Grade by reachability first, then severity:
 
-1. **Is the flawed code path reachable from dfe-receiver or dfe-ui?** If yes,
+1. **Is the flawed code path reachable from dfe-receiver, dfe-ui or dfe-hyperdx?** If yes,
    treat it seriously whatever the score, because the input is untrusted.
 2. **Is it only reachable from outbound traffic we initiate, or from an
    operator-authenticated path?** Then a mid-range score is usually a
