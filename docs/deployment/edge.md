@@ -100,6 +100,8 @@ HTTPS routes send a one-year HSTS header: public listeners on `edge.product.tls.
 
 An explicit `true` or `false` wins over the table. `edge.product.tls.hsts` does not follow it.
 
+`bootstrap.sh` sets `tls.internalCA.persist.enabled=true` only for its own pre-apply of the root restore; no appset sets it for Argo's gateway app. A deployment that persists its root (`DFE_CA_PERSIST=true`) must also set `tls.internalCA.persist.enabled: true`, and the store name, in its deploy repo's gateway overlay, or Argo renders the persist objects and the wildcard's HSTS off.
+
 `routes.<key>.hiddenPaths` answers a path with a 404 from the proxy; dfe-ui hides its unauthenticated `/metrics`. `/docs` and `/redoc` follow `api.docsEnabled` in `infra/common.yaml`, read by the engine, the gateway and the links page alike.
 
 ## GCP and Azure

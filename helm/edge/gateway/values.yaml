@@ -149,6 +149,9 @@ tls:
     # otherwise working. Turn it on where there IS a store. `dfe-ops ca --status`
     # says which of the two a deployment is in.
     # Vault issuer mode renders none of it -- the estate PKI owns the root.
+    # bootstrap.sh sets this true only for its own pre-apply, ahead of Argo; a
+    # deployment that persists its root must also set it (and secretStoreName)
+    # in the deploy repo's gateway overlay, or Argo renders it off.
     persist:
       enabled: false
       secretStoreName: dfe-secret-store
