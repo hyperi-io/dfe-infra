@@ -1,7 +1,7 @@
 {{- $ca := .Values.tls.internalCA -}}
 {{- $p := $ca.persist -}}
 {{- $key := $p.remoteKey | default (printf "%s/%s/pki/internal-ca" .Values.project .Values.env) -}}
-{{- if and $ca.enabled $p.enabled $p.secretStoreName (not .Values.tls.vault.server) }}
+{{- if include "envoy-gateway-config.internalRootPersisted" (dict "ctx" .) }}
 # Root PERSISTENCE for the self-signed internal CA (#238). Two halves against ONE
 # store path: the ExternalSecret RESTORES the root, the PushSecret SAVES it.
 # First bootstrap: nothing to restore, cert-manager mints, the push stores it.

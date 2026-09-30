@@ -222,7 +222,8 @@ def test_the_wildcard_default_follows_the_edge_issuer() -> None:
 
 
 def test_the_default_matches_the_root_persist_render() -> None:
-    """edgeHsts repeats internal-ca-persist.yaml's condition; this holds the two together."""
+    """Both internal-ca-persist.yaml and edgeHsts call envoy-gateway-config.internalRootPersisted;
+    this proves the rendered manifests still agree, not just the shared expression."""
     variants = (
         ("persist off", ()),
         ("persist on", PERSIST_ON),
