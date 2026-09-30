@@ -114,11 +114,13 @@ tls:
       - ECDHE-ECDSA-AES256-GCM-SHA384
       - ECDHE-RSA-AES256-GCM-SHA384
     # Strict-Transport-Security on every route of the wildcard listener, as
-    # ui.tls.hsts sets it on the public ones. A browser that trusts this
-    # listener's CA then refuses a certificate click-through for a year, so a
-    # deployment whose root changes on every rebuild persists the root
-    # (internalCA.persist) or turns this off.
-    hsts: true
+    # ui.tls.hsts sets it on the public ones. A browser holding it refuses a
+    # certificate click-through for a year. Empty derives it from the edge
+    # issuer: OFF where issuerName is internalCA.issuerName and
+    # internalCA.persist is off, because every rebuild re-mints that root and
+    # would lock the admin out of the console; ON for a persisted internal
+    # root, Vault/OpenBao PKI, ACME or any other issuer. true or false wins.
+    hsts: ""
 
   # Internal mesh CA (Track 3 keystone). A self-signed root mints an
   # ECDSA P-384 CA exposed as the `dfe-internal-ca` ClusterIssuer;

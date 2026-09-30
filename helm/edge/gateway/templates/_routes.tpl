@@ -31,6 +31,8 @@ engineDocs   -- does the engine serve /docs and /redoc? Takes (dict "ctx" $).
 responseHeaders -- a rule's `filters:` block for the response headers it sets,
   HSTS included when asked. Takes (dict "hsts" <bool> "set" <list of name/value>
   "indent" <n>).
+edgeHsts     -- does the wildcard listener send HSTS? tls.edge.hsts when it is a
+  bool, else derived from the edge issuer. Takes (dict "ctx" $).
 hiddenRule   -- the rule answering 404 on routes.<key>.hiddenPaths, or nothing.
   Takes (dict "ctx" $ "key" <route key> "indent" <n>).
 hiddenNamespaces -- JSON array of the namespaces that need the 404 filter.
@@ -104,6 +106,26 @@ true
 {{- end -}}
 {{- if $set -}}
 {{- include "envoy-gateway-config.responseHeaderFilter" $set | nindent (int .indent) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* Unset is off only on an internal CA root that is not persisted: every
+       rebuild re-mints it, and a browser holding HSTS for these names then
+       gets no click-through. $persisted is internal-ca-persist.yaml's own
+       render condition. */ -}}
+{{- define "envoy-gateway-config.edgeHsts" -}}
+{{- $tls := .ctx.Values.tls -}}
+{{- $set := dig "edge" "hsts" "" $tls -}}
+{{- if kindIs "bool" $set -}}
+{{- if $set -}}
+true
+{{- end -}}
+{{- else -}}
+{{- $ca := $tls.internalCA -}}
+{{- $persisted := and $ca.enabled $ca.persist.enabled $ca.persist.secretStoreName (not $tls.vault.server) -}}
+{{- if not (and (eq $tls.issuerName $ca.issuerName) (not $persisted)) -}}
+true
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -376,8 +398,10 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- if not (kindIs "bool" $ui.tls.hsts) -}}
 {{- fail (printf "ui.tls.hsts is %v (a %s), not a bool -- see the ui.public.* refusal above" $ui.tls.hsts (kindOf $ui.tls.hsts)) -}}
 {{- end -}}
-{{- if not (kindIs "bool" .ctx.Values.tls.edge.hsts) -}}
-{{- fail (printf "tls.edge.hsts is %v (a %s), not a bool -- see the ui.public.* refusal above" .ctx.Values.tls.edge.hsts (kindOf .ctx.Values.tls.edge.hsts)) -}}
+{{- /* Empty or null takes edgeHsts's derived default; any other non-bool is refused. */ -}}
+{{- $edgeHsts := dig "edge" "hsts" "" .ctx.Values.tls -}}
+{{- if not (or (kindIs "bool" $edgeHsts) (kindIs "invalid" $edgeHsts) (eq (toString $edgeHsts) "")) -}}
+{{- fail (printf "tls.edge.hsts is %v (a %s), not a bool or empty -- empty follows the edge issuer; see the ui.public.* refusal above" $edgeHsts (kindOf $edgeHsts)) -}}
 {{- end -}}
 {{- /* A quoted "false" is truthy, so it would publish a login-less backend bare. */ -}}
 {{- range $key, $r := .ctx.Values.routes -}}

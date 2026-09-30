@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_gateway_route_hardening.py
-#  Purpose:      Prove every HTTPS route the gateway serves sends HSTS, and that a
+#  Purpose:      Prove which HTTPS routes the gateway serves send HSTS, and that a
 #                hidden backend path answers 404 at the proxy on both faces.
 #  Language:     Python
 #
@@ -12,7 +12,9 @@
 HSTS was set on the public routes only, so every route on the wildcard listener
 -- dfe-ui and the engine included -- could be downgraded by a redirect. Two
 switches own it now: ui.tls.hsts for the public listeners, tls.edge.hsts for the
-wildcard one.
+wildcard one. Left empty, tls.edge.hsts is off only where the edge certificate
+chains to an internal CA root that is not persisted: every rebuild re-mints that
+root, and a browser holding HSTS for the names would get no click-through.
 
 dfe-ui answers /metrics unauthenticated on its app port for the in-cluster scrape,
 which reaches the pod directly, and its route matched every path, so the gateway
@@ -57,6 +59,32 @@ EVERYTHING = (
     "--set", "ui.public_domain=public.example.test",
     "--set", "ui.public.argocd=true",
     "--set", "ui.public.hyperdx=true",
+)
+
+# Every route on the wildcard listener, which tls.edge.hsts governs.
+INTERNAL_ROUTES = {"argocd", "cruise-control", "dfe-engine", "dfe-ui", "forgejo", "hyperdx",
+                   "kafbat", "links", "otel", "receiver"}
+
+# The edge wildcard issued by the chart's own internal CA (tls.internalCA.issuerName).
+INTERNAL_CA = ("--set", "tls.issuerName=dfe-internal-ca")
+PERSIST_ON = ("--set", "tls.internalCA.persist.enabled=true")
+VAULT = (
+    "--set", "tls.issuerName=dfe-estate-pki",
+    "--set", "tls.vault.server=https://vault.example.test:8200",
+    "--set", "tls.vault.path=pki_tls/sign/example",
+    "--set", "tls.vault.appRole.roleId=example-role",
+)
+
+# (label, extra args, whether the wildcard listener sends HSTS)
+EDGE_HSTS_CASES = (
+    ("internal CA, persist off", INTERNAL_CA, False),
+    ("internal CA, persist on", (*INTERNAL_CA, *PERSIST_ON), True),
+    ("Vault/OpenBao PKI issuer", VAULT, True),
+    ("ACME issuer", ("--set", "tls.acme.email=ops@example.test"), True),
+    ("explicit true, internal CA persist off", (*INTERNAL_CA, "--set", "tls.edge.hsts=true"), True),
+    ("explicit false, internal CA persist on",
+     (*INTERNAL_CA, *PERSIST_ON, "--set", "tls.edge.hsts=false"), False),
+    ("explicit false, Vault issuer", (*VAULT, "--set", "tls.edge.hsts=false"), False),
 )
 
 
@@ -174,6 +202,55 @@ def test_a_quoted_switch_is_refused() -> None:
     out = helm("--set", "domain=dfe.example.test", "--set-string", "tls.edge.hsts=true")
     expect("tls.edge.hsts as a string is refused by name",
            out.returncode != 0 and "tls.edge.hsts" in out.stderr, out.stderr[-300:])
+
+
+def test_the_wildcard_default_follows_the_edge_issuer() -> None:
+    """Off only where a rebuild re-mints the root a browser pinned HSTS against."""
+    for label, args, want in EDGE_HSTS_CASES:
+        found = routes(render(*EVERYTHING, *args))
+        internal = {name: r for name, r in found.items() if listener(r) == "https"}
+        expect(f"{label}: every wildcard route renders", set(internal) == INTERNAL_ROUTES,
+               f"got {sorted(internal)}")
+        for name, route in sorted(internal.items()):
+            sends = [HSTS in set_headers(r) for r in forwarding_rules(route)]
+            expect(f"{label}: {name} {'sends' if want else 'sends no'} {HSTS}",
+                   bool(sends) and all(s == want for s in sends), f"got {sends}")
+        for name, route in sorted(found.items()):
+            if listener(route).startswith("https-public-"):
+                expect(f"{label}: public {name} keeps ui.tls.hsts",
+                       all(HSTS in set_headers(r) for r in forwarding_rules(route)), "")
+
+
+def test_the_default_matches_the_root_persist_render() -> None:
+    """edgeHsts repeats internal-ca-persist.yaml's condition; this holds the two together."""
+    variants = (
+        ("persist off", ()),
+        ("persist on", PERSIST_ON),
+        ("persist on, no store", (*PERSIST_ON, "--set", "tls.internalCA.persist.secretStoreName=")),
+        ("persist on, internal CA off", (*PERSIST_ON, "--set", "tls.internalCA.enabled=false")),
+    )
+    seen = set()
+    for label, args in variants:
+        docs = render(*EVERYTHING, *INTERNAL_CA, *args)
+        persisted = any(d.get("kind") == "PushSecret" for d in docs)
+        seen.add(persisted)
+        sends = HSTS in set_headers(forwarding_rules(routes(docs)["dfe-ui"])[0])
+        expect(f"{label}: HSTS on the wildcard exactly when the root persists",
+               sends == persisted, f"persisted={persisted} sends={sends}")
+    expect("the variants cover a persisted and an unpersisted root", seen == {True, False},
+           f"got {seen}")
+
+
+def test_empty_or_null_takes_the_derived_default() -> None:
+    for how in (("--set", "tls.edge.hsts="), ("--set", "tls.edge.hsts=null")):
+        out = helm(*EVERYTHING, *INTERNAL_CA, *how)
+        expect(f"{' '.join(how)} renders", out.returncode == 0, out.stderr[-300:])
+        if out.returncode != 0:
+            continue
+        docs = [d for d in yaml.safe_load_all(out.stdout) if d]
+        dfe_ui = routes(docs)["dfe-ui"]
+        expect(f"{' '.join(how)}: an unpersisted internal root sends none",
+               all(HSTS not in set_headers(r) for r in forwarding_rules(dfe_ui)), "")
 
 
 def hidden_rules(route: dict) -> list[dict]:

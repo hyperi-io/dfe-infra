@@ -20,7 +20,7 @@ spec:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "links") }}.{{ .Values.domain }}"
   rules:
     -
-      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" .Values.tls.edge.hsts "indent" 6) }}
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" (include "envoy-gateway-config.edgeHsts" (dict "ctx" .)) "indent" 6) }}
       backendRefs:
         - name: {{ .Values.routes.links.backendService }}
           port: {{ .Values.routes.links.backendPort }}

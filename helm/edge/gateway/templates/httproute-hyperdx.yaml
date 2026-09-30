@@ -25,7 +25,7 @@ spec:
            fork takes allowed ancestors from env. */}}
     {{- $csp := dict "name" "Content-Security-Policy" "value" (printf "frame-ancestors 'self' https://%s.%s" (include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "dfeUi")) .Values.domain) }}
     -
-      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" .Values.tls.edge.hsts "set" (list $csp) "indent" 6) }}
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" (include "envoy-gateway-config.edgeHsts" (dict "ctx" .)) "set" (list $csp) "indent" 6) }}
       backendRefs:
         - name: {{ .Values.routes.hyperdx.backendService }}
           port: {{ .Values.routes.hyperdx.backendPort }}
