@@ -433,18 +433,60 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
-            {{- if .Values.api.forwardedAllowIps }}
-            # The peers whose X-Forwarded-Proto is believed. An OIDC redirect URI
-            # is built from that scheme, so an unset value sends the IdP an http
-            # callback and a hosted IdP refuses to register one.
+            {{- with (.Values.api.forwardedAllowIps | default (dig "podCIDR" "" (.Values.networkModel | default dict))) }}
+            # The proxy hops whose X-Forwarded-Proto and X-Forwarded-For are
+            # believed, defaulting to the pod range the gateway and dfe-ui run in.
+            # Unset, OIDC callbacks go out as http and every request audits as the
+            # gateway's address.
             - name: DFE_API_FORWARDED_ALLOW_IPS
-              value: {{ .Values.api.forwardedAllowIps | quote }}
+              value: {{ . | quote }}
             {{- end }}
             {{- with .Values.api.jwtExpireMinutes }}
             # How long an issued token stays valid. Unset leaves the engine's own
             # 60-minute default (settings.py: api.jwt_expire_minutes).
             - name: DFE_API_JWT_EXPIRE_MINUTES
               value: {{ . | quote }}
+            {{- end }}
+            {{- with (include "dfe-engine.optionalCount" (dict "key" "api.maxSessionMinutes" "value" .Values.api.maxSessionMinutes "min" 1)) }}
+            # A refresh never extends a token past this many minutes from its
+            # sign-in. Unset leaves the engine's own 720.
+            - name: DFE_API_MAX_SESSION_MINUTES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (include "dfe-engine.docsEnabled" .) }}
+            # Unset serves /docs and /redoc on a dev posture only; the gateway
+            # and the links page read the same key.
+            - name: DFE_API_DOCS_ENABLED
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.auth.proxyProvider }}
+            # The provider a gateway login is stamped with, and so the only one
+            # whose group links its asserted groups reach. Unset leaves `oidc`.
+            - name: DFE_AUTH_PROXY_PROVIDER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (include "dfe-engine.optionalCount" (dict "key" "auth.apiKeyDefaultTtlDays" "value" .Values.auth.apiKeyDefaultTtlDays "min" 0)) }}
+            # 0 is a key with no expiry, so the test is empty, not falsy.
+            - name: DFE_AUTH_API_KEY_DEFAULT_TTL_DAYS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.auth.loginThrottle }}
+            {{- with (include "dfe-engine.optionalBool" (dict "key" "auth.loginThrottle.enabled" "value" .enabled)) }}
+            - name: DFE_AUTH_LOGIN_THROTTLE_ENABLED
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (include "dfe-engine.optionalCount" (dict "key" "auth.loginThrottle.usernameFailures" "value" .usernameFailures "min" 1)) }}
+            - name: DFE_AUTH_LOGIN_THROTTLE_USERNAME_FAILURES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (include "dfe-engine.optionalCount" (dict "key" "auth.loginThrottle.clientFailures" "value" .clientFailures "min" 1)) }}
+            - name: DFE_AUTH_LOGIN_THROTTLE_CLIENT_FAILURES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (include "dfe-engine.optionalCount" (dict "key" "auth.loginThrottle.maxDelaySeconds" "value" .maxDelaySeconds "min" 1)) }}
+            - name: DFE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
             # the WRITABLE config mount. The default ./.secrets resolves to

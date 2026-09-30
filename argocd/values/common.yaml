@@ -59,7 +59,7 @@ operatorNamespaces:
 # the cluster secret and every appset hands it to the charts from there.
 imagePullSecrets: []
 
-# Node scheduling — empty by default (no constraints).
+# Node scheduling -- empty by default (no constraints).
 # Override in cloud-specific values to target dedicated DFE node pools.
 nodeScheduling: {}
 
@@ -113,6 +113,15 @@ otel:
       # Where the deployment's secret store holds the bearer token. There is no
       # unauthenticated mode: on with this empty, both charts refuse to render.
       remoteKey: ""
+
+# The engine's Swagger UI (/docs) and ReDoc (/redoc): "true", "false", or empty
+# to serve them on a dev posture only (dev, development, local, test, ci). Both
+# pages load their scripts from a public CDN into the engine's origin. Three
+# charts read this key -- the engine serves the pages, the gateway routes them,
+# the links page lists them -- so a deployment sets it in its deploy repo's
+# infra/common.yaml. /openapi.json is served either way.
+api:
+  docsEnabled: ""
 
 # Consumer-facing Kafka endpoint. Default = the single tier's own broker Service,
 # matching the clickhouse block below. The cluster tier's broker is operator-owned

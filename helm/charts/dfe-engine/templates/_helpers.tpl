@@ -35,10 +35,72 @@ dfe-engine.isDevPosture -- non-empty when `env` is one of the postures the
 engine treats as dev.
 
 The SAME list the engine's is_dev_posture uses (dfe-engine #300), which gates
-the refuse-on-default-password check and gitops auto-merge.
+the refuse-on-default-password check and gitops auto-merge, compared the way it
+compares: trimmed and lower-cased.
 */}}
 {{- define "dfe-engine.isDevPosture" -}}
-{{- if has .Values.env (list "dev" "development" "local" "test" "ci") }}true{{ end }}
+{{- if has (lower (trim (toString .Values.env))) (list "dev" "development" "local" "test" "ci") }}true{{ end }}
+{{- end -}}
+
+{{/*
+dfe-engine.docsEnabled -- api.docsEnabled as "true" or "false", or empty when
+unset, which leaves the engine to serve /docs and /redoc on a dev posture only.
+
+Anything else fails the render: the gateway and the links page read the same key
+(argocd/values/common.yaml), and a value the engine reads one way and they read
+another publishes a page that is not served, or serves one nobody routes.
+*/}}
+{{- define "dfe-engine.docsEnabled" -}}
+{{- $v := toString .Values.api.docsEnabled -}}
+{{- if has $v (list "true" "false") -}}
+{{ $v }}
+{{- else if not (has $v (list "" "<nil>")) -}}
+{{- fail (printf "api.docsEnabled is %q -- it takes true, false or empty (served on a dev posture only), because the engine, the gateway and the links page each read it and must agree" $v) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.optionalBool -- an optional engine switch as "true" or "false", or
+empty when unset. Takes (dict "key" <values path> "value" <value>).
+
+The engine reads any word but true, 1 and yes as false, so a typo would turn a
+protection off without a word; it fails the render instead.
+*/}}
+{{- define "dfe-engine.optionalBool" -}}
+{{- $v := toString .value -}}
+{{- if has $v (list "true" "false") -}}
+{{ $v }}
+{{- else if not (has $v (list "" "<nil>")) -}}
+{{- fail (printf "%s is %q -- it takes true, false or empty for the engine's default" .key $v) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.optionalCount -- an optional whole-number engine setting, or empty
+when unset. Takes (dict "key" <values path> "value" <value> "min" <floor>).
+
+A number from a values file arrives as a float64, which renders 1e+06 bare and
+the engine cannot parse; one under the engine's own floor stops the engine at
+startup, so both fail the render by name instead.
+*/}}
+{{- define "dfe-engine.optionalCount" -}}
+{{- $v := .value -}}
+{{- $s := toString $v -}}
+{{- if kindIs "float64" $v -}}
+{{- if ne $v (float64 (int64 $v)) -}}
+{{- fail (printf "%s is %v -- it takes a whole number" .key $v) -}}
+{{- end -}}
+{{- $s = toString (int64 $v) -}}
+{{- end -}}
+{{- if not (has $s (list "" "<nil>")) -}}
+{{- if not (regexMatch "^[0-9]+$" $s) -}}
+{{- fail (printf "%s is %q -- it takes a whole number" .key $s) -}}
+{{- end -}}
+{{- if lt (atoi $s) (int .min) -}}
+{{- fail (printf "%s is %s -- the engine refuses anything under %d" .key $s (int .min)) -}}
+{{- end -}}
+{{ $s }}
+{{- end -}}
 {{- end -}}
 
 {{/*

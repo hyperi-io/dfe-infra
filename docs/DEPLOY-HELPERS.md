@@ -142,7 +142,9 @@ tester IdP already uses, with a different name:
    actually emits, which is why `api.forwardedAllowIps` matters: the gateway
    terminates TLS and forwards plain http, so unless its peer address is
    believed the engine builds `http://` callbacks and a hosted IdP refuses to
-   register them.
+   register them. Left empty it takes `networkModel.podCIDR` from
+   `argocd/values/common.yaml`, which is right wherever that range is the one
+   the cluster's CNI actually hands out.
 
 Two things bite on a private-CA deployment. `authConfig.caBundleConfigMap` sets
 `SSL_CERT_FILE`, which REPLACES the trust store rather than adding to it -- the

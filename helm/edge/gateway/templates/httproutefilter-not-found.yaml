@@ -1,0 +1,19 @@
+{{- range $ns := include "envoy-gateway-config.hiddenNamespaces" (dict "ctx" .) | fromJsonArray }}
+---
+# The answer for a path a route hides (routes.<key>.hiddenPaths): a 404 from the
+# proxy, so the backend never serves it to anyone outside the cluster.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: HTTPRouteFilter
+metadata:
+  name: {{ include "envoy-gateway-config.notFoundFilter" $ }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  directResponse:
+    contentType: text/plain
+    statusCode: 404
+    body:
+      type: Inline
+      inline: "Not Found\n"
+{{- end }}
