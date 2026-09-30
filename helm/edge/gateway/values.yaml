@@ -113,6 +113,14 @@ tls:
     ciphers:
       - ECDHE-ECDSA-AES256-GCM-SHA384
       - ECDHE-RSA-AES256-GCM-SHA384
+    # Strict-Transport-Security on every route of the wildcard listener, as
+    # ui.tls.hsts sets it on the public ones. A browser holding it refuses a
+    # certificate click-through for a year. Empty derives it from the edge
+    # issuer: OFF where issuerName is internalCA.issuerName and
+    # internalCA.persist is off, because every rebuild re-mints that root and
+    # would lock the admin out of the console; ON for a persisted internal
+    # root, Vault/OpenBao PKI, ACME or any other issuer. true or false wins.
+    hsts: ""
 
   # Internal mesh CA (Track 3 keystone). A self-signed root mints an
   # ECDSA P-384 CA exposed as the `dfe-internal-ca` ClusterIssuer;
@@ -248,6 +256,13 @@ otel:
     auth:
       # Where the secret store holds the token. On with this empty refuses.
       remoteKey: ""
+
+# Read-only here, and owned by the dfe-engine chart: /docs and /redoc are routed
+# only where the engine serves them. Same key as argocd/values/common.yaml, so the
+# one overlay that sets it (the deploy repo's infra/common.yaml) reaches the
+# engine, this chart and the links page.
+api:
+  docsEnabled: ""
 
 # Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
 # the dfe-receiver chart (exposure.mode, its ingest door) because a deployment's
@@ -393,6 +408,9 @@ ui:
 #   adminLink    -- infra class only: the name and one-line purpose the engine
 #                   lists the route under (templates/admin-links.yaml). Required
 #                   on every infra route that renders.
+#   hiddenPaths  -- PathPrefix values the gateway answers 404 for on this route
+#                   and its public face, so the backend never serves them to
+#                   anyone outside the cluster.
 routes:
   dfeUi:
     class: product
@@ -404,6 +422,10 @@ routes:
     backendNamespace: ""      # set via ArgoCD values overlay
     backendPort: 3000
     pathPrefix: /
+    # dfe-ui answers its Prometheus scrape unauthenticated on the app port, and
+    # the collector scrapes the pod directly.
+    hiddenPaths:
+      - /metrics
 
   dfeEngine:
     class: product
@@ -632,9 +654,9 @@ routes:
     backendService: dfe-otel-collector-gateway
     backendNamespace: otel
 
-# OIDC — disabled by default (local auth is default).
+# OIDC -- disabled by default (local auth is default).
 # Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.
-# Provider addition/removal is a Helm values change + ArgoCD sync — NOT a
+# Provider addition/removal is a Helm values change + ArgoCD sync -- NOT a
 # dfe-engine API call. dfe-infra owns this config, dfe-engine only reads headers.
 oidc:
   enabled: false
@@ -704,7 +726,7 @@ oidc:
   #     # BackendTLSPolicy targeting the Service, not a CA on the policy.
   #     backendSettings: {}
 
-# jwt_authn filter — chains after OIDC to extract claims into headers.
+# jwt_authn filter -- chains after OIDC to extract claims into headers.
 # These headers are the contract between Envoy and dfe-engine.
 #
 # DEFAULT OFF, and it must stay off until the two limits below are answered.

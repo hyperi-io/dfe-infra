@@ -7,6 +7,13 @@
 {{- $defaults := list }}
 {{- /* Kafbat manages a broker, so a brokerless profile must not advertise it. */}}
 {{- $hasKafka := ne (dig "mode" "disabled" (.Values.kafka | default dict)) "disabled" }}
+{{- /* The engine's own rule for /docs, the one the gateway routes it by. */}}
+{{- $docsSetting := toString (dig "docsEnabled" "" (.Values.api | default dict)) }}
+{{- if not (has $docsSetting (list "true" "false" "" "<nil>")) }}
+{{- fail (printf "api.docsEnabled is %q -- it takes true, false or empty (served on a dev posture only), because the engine, the gateway and the links page each read it and must agree" $docsSetting) }}
+{{- end }}
+{{- $devPosture := has (lower (trim (toString .Values.env))) (list "dev" "development" "local" "test" "ci") }}
+{{- $hasDocs := or (eq $docsSetting "true") (and (has $docsSetting (list "" "<nil>")) $devPosture) }}
 {{- if .Values.page.includeDefaults }}
 {{- /* HyperDX is never listed separately: it is an iframe inside dfe-ui. */}}
 {{- if $domain }}
@@ -15,9 +22,11 @@
 {{- $desc = $desc | default "Every web surface this deployment exposes, each on its own hostname. A grey/red dot means that target is not answering; an infra surface also goes dark when exposure.infraUisExternal is off." }}
 {{- $apps := list
       (dict "name" "DFE UI (Search embedded)" "url" (printf "https://%s.%s" $h.dfe $domain)
-            "note" "the landing page")
-      (dict "name" "Engine API (Swagger)" "url" (printf "https://%s.%s/docs" $h.dfe $domain)
-            "note" (printf "API base https://%s.%s/api/v1" $h.dfe $domain)) }}
+            "note" "the landing page") }}
+{{- if $hasDocs }}
+{{- $apps = append $apps (dict "name" "Engine API (Swagger)" "url" (printf "https://%s.%s/docs" $h.dfe $domain)
+      "note" (printf "API base https://%s.%s/api/v1" $h.dfe $domain)) }}
+{{- end }}
 {{- with .Values.page.oidcProvider }}
 {{- $apps = append $apps (dict "name" (printf "Engine OIDC login (%s)" .)
       "url" (printf "https://%s.%s/api/v1/auth/oidc/%s/login" $h.dfe $domain .)
@@ -46,13 +55,15 @@
 {{- $desc = $desc | default "Every web surface this deployment exposes. Links default to the standard kubectl port-forward layout; each note is the forward that serves its link, and a grey/red dot means that target is not answering." }}
 {{- $apps := list
       (dict "name" "DFE UI (Search embedded)" "url" "http://localhost:13001"
-            "note" (printf "%s%s-ui 13001:3000" $fwd $p))
-      (dict "name" "Engine API (Swagger)" "url" "http://localhost:18000/docs"
-            "note" (printf "%s%s-engine 18000:8000" $fwd $p)) }}
+            "note" (printf "%s%s-ui 13001:3000" $fwd $p)) }}
+{{- if $hasDocs }}
+{{- $apps = append $apps (dict "name" "Engine API (Swagger)" "url" "http://localhost:18000/docs"
+      "note" (printf "%s%s-engine 18000:8000" $fwd $p)) }}
+{{- end }}
 {{- with .Values.page.oidcProvider }}
 {{- $apps = append $apps (dict "name" (printf "Engine OIDC login (%s)" .)
       "url" (printf "http://localhost:18000/api/v1/auth/oidc/%s/login" .)
-      "note" "same forward as the engine API") }}
+      "note" (printf "%s%s-engine 18000:8000" $fwd $p)) }}
 {{- end }}
 {{- $data := list
       (dict "name" "ClickHouse Play" "url" "http://localhost:18124/play"

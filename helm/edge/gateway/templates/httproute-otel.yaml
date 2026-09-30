@@ -22,10 +22,13 @@ spec:
   hostnames:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "otel") }}.{{ .Values.domain }}"
   rules:
-    - backendRefs:
+    -
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" (include "envoy-gateway-config.edgeHsts" (dict "ctx" .)) "indent" 6) }}
+      backendRefs:
         - name: {{ .Values.routes.otel.backendService }}
           port: {{ .Values.otel.ingress.port }}
           group: ""
           kind: Service
           weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "otel" "indent" 4) }}
 {{- end }}

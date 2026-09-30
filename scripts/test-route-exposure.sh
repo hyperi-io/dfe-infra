@@ -402,8 +402,9 @@ assert_absent "engine-ui-private" "dfe-ui-public" \
 
 echo ""
 echo "case 24 -- the internal engine route is the same object it was before the public one existed"
-# Byte-for-byte, because the internal route carries /docs, /redoc and
-# /openapi.json and a deployment's own tooling reaches them on the private name.
+# Byte-for-byte, because the internal route carries /openapi.json, and on this
+# render's dev posture /docs and /redoc, and a deployment's own tooling reaches
+# them on the private name.
 read -r -d '' INTERNAL_ENGINE <<'EOF'
 ---
 # Source: envoy-gateway-config/templates/httproute-dfe-engine.yaml
@@ -449,6 +450,12 @@ spec:
         - path:
             type: PathPrefix
             value: /.well-known
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: "max-age=31536000; includeSubDomains"
       backendRefs:
         - name: dfe-engine
           port: 8000
