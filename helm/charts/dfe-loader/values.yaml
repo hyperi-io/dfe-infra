@@ -62,6 +62,14 @@ clickhouse:
     port: 8443
     # The loader cannot skip verification, so false fails the render.
     verify: true
+    # Read for one thing: whether the in-cluster server has a CA and so serves
+    # TLS at all (clickhouse-cluster's rule). The appsets set internalCA.present
+    # from the edge label; an explicit issuerRef.name counts on its own, and an
+    # external server (clickhouse.mode external) needs neither.
+    issuerRef:
+      name: ""
+    internalCA:
+      present: false
     # The CA that signed the server certificate, from a Secret or a ConfigMap in
     # this namespace, under dataKey. Both empty trusts the system store alone.
     ca:

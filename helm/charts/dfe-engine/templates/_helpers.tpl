@@ -183,6 +183,10 @@ so a co-deployed fork needs no configuration at all.
 dfe-engine.clickhouseTls -- "true" when the engine and its sidecars dial
 ClickHouse over HTTPS, empty otherwise.
 
+clickhouse-cluster's own rule, so both ends agree: on when tls.enabled AND the
+server has a CA to sign with (an issuerRef, or the edge module's internal CA),
+or when the server is external and brings its own certificate.
+
 A clickhouse.secure or clickhouse.verify key fails the render: nothing reads
 either, so a values file setting one would dial plaintext without a word.
 */}}
@@ -192,7 +196,9 @@ either, so a values file setting one would dial plaintext without a word.
 {{- fail (printf "clickhouse.%s is not read -- set clickhouse.tls.%s, the one block clickhouse-cluster, dfe-loader and hyperdx read too" $old (ternary "enabled" "verify" (eq $old "secure"))) -}}
 {{- end -}}
 {{- end -}}
-{{- if eq (toString (dig "tls" "enabled" false .Values.clickhouse)) "true" -}}true{{- end -}}
+{{- $tls := .Values.clickhouse.tls | default dict -}}
+{{- $signed := or (eq (toString .Values.clickhouse.mode) "external") (dig "issuerRef" "name" "" $tls) (eq (toString (dig "internalCA" "present" false $tls)) "true") -}}
+{{- if and (eq (toString $tls.enabled) "true") $signed -}}true{{- end -}}
 {{- end -}}
 
 {{/*

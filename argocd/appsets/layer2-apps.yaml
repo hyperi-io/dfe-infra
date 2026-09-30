@@ -148,6 +148,12 @@ spec:
               # rendered with are one value. Only dfe-engine reads it.
               - name: profile
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+              # Whether dfe-internal-ca exists, from the edge label that decides
+              # whether the gateway minting it is deployed. The same parameter
+              # layer2-data.yaml hands clickhouse-cluster, so dfe-engine,
+              # dfe-loader and hyperdx dial the scheme the server serves.
+              - name: clickhouse.tls.internalCA.present
+                value: '{{ ne (index .metadata.labels "dfe.hyperi.io/edge" | default "true") "false" }}'
             # `values` (a YAML string) rather than a structured block, same
             # reason layer2-data.yaml gives: a conditional cannot live in a
             # field this file's own tests parse as plain YAML before any Go

@@ -32,7 +32,7 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 
 ## In-cluster transport
 
-A deployment that carries a CA runs its in-cluster hops over TLS with verification on. Every Kubernetes deployment carries one: bootstrap.sh detects or installs cert-manager, and the gateway chart's `dfe-internal-ca` ClusterIssuer signs by default. A self-contained deployment -- dfe-docker Compose, or the `helm/dfe-stack` trial with its edge off -- stays on plain HTTP: it has no CA to verify against.
+A deployment that carries a CA runs its in-cluster hops over TLS with verification on; one without stays on plain HTTP, because there is nothing to verify against. A Kubernetes deployment with the edge module on (bootstrap's default) carries one: bootstrap.sh detects or installs cert-manager, and the gateway chart's `dfe-internal-ca` ClusterIssuer signs. dfe-docker Compose, the `helm/dfe-stack` trial, and a cluster with the edge module off stay on HTTP unless an issuer is named in `clickhouse.tls.issuerRef`.
 
 | Hop | Transport |
 |---|---|
@@ -42,7 +42,7 @@ A deployment that carries a CA runs its in-cluster hops over TLS with verificati
 | OTel collector -> ClickHouse | Native 9000, plaintext. Backlog: moves to 9440 |
 | Smoke tests and `scripts/` -> ClickHouse | HTTP 8123, plaintext. Backlog |
 
-8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`) until the last two rows move. Kafka, PostgreSQL, FerretDB and Keeper are not covered yet. A Kubernetes deployment with the edge module off has no `dfe-internal-ca`: it names another issuer in `clickhouse.tls.issuerRef`, or sets `clickhouse.tls.enabled: false`. Issuer choice: [DEPLOY-TLS-TRUST.md](DEPLOY-TLS-TRUST.md).
+8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`) until the last two rows move. Kafka, PostgreSQL, FerretDB and Keeper are not covered yet. The server keypair (`dfe-clickhouse-tls`, with `tls.key`) is readable only from the clickhouse namespace: the apps get a CA-only copy, through a ClusterSecretStore that serves only the namespaces it copies into. Issuer choice: [DEPLOY-TLS-TRUST.md](DEPLOY-TLS-TRUST.md).
 
 ## What that means for a finding
 

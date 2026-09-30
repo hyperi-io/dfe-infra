@@ -1,10 +1,34 @@
 {{/*
 dfe-clickhouse.tlsEnabled -- "true" when this chart serves ClickHouse over TLS,
-empty otherwise. External mode deploys no server, so it never does.
+empty otherwise.
+
+On only when clickhouse.tls.enabled is set AND there is a CA to sign with: an
+explicit issuerRef, or the edge module's internal CA. A deployment with neither
+stays on HTTP rather than waiting on a Certificate nothing can issue. External
+mode deploys no server, so it never does. dfe-engine, dfe-loader and hyperdx
+apply the same rule to the same block, so both ends agree on the scheme.
 */}}
 {{- define "dfe-clickhouse.tlsEnabled" -}}
 {{- $tls := .Values.clickhouse.tls | default dict -}}
-{{- if and $tls.enabled (ne .Values.clickhouse.mode "external") -}}true{{- end -}}
+{{- $issuer := or (dig "issuerRef" "name" "" $tls) (eq (toString (dig "internalCA" "present" false $tls)) "true") -}}
+{{- if and (eq (toString $tls.enabled) "true") $issuer (ne .Values.clickhouse.mode "external") -}}true{{- end -}}
+{{- end }}
+
+{{/*
+dfe-clickhouse.tlsIssuer -- the issuer name the server certificate is requested
+from: the explicit one, else the internal CA.
+*/}}
+{{- define "dfe-clickhouse.tlsIssuer" -}}
+{{- $tls := .Values.clickhouse.tls -}}
+{{- dig "issuerRef" "name" "" $tls | default (dig "internalCA" "issuerName" "dfe-internal-ca" $tls) -}}
+{{- end }}
+
+{{/*
+dfe-clickhouse.tlsCaSecret -- the CA-only Secret in this namespace that the app
+namespaces copy from, so the Secret holding tls.key is read only from here.
+*/}}
+{{- define "dfe-clickhouse.tlsCaSecret" -}}
+{{- printf "%s-ca" .Values.clickhouse.tls.secretName -}}
 {{- end }}
 
 {{/*
@@ -35,22 +59,18 @@ under it, localhost for clients inside the pod, then clickhouse.tls.dnsNames.
 {{- end }}
 
 {{/*
-dfe-clickhouse.validateTls -- refuse a TLS setting that would leave the server
-without a certificate, or a switch this mode cannot honour.
+dfe-clickhouse.validateTls -- refuse a TLS setting this deployment cannot honour.
 */}}
 {{- define "dfe-clickhouse.validateTls" -}}
 {{- $tls := .Values.clickhouse.tls | default dict -}}
-{{- if and $tls.required (not $tls.enabled) -}}
-{{- fail "clickhouse.tls.required needs clickhouse.tls.enabled -- it closes the plaintext ports, leaving none" -}}
+{{- if and (eq (toString $tls.required) "true") (ne .Values.clickhouse.mode "external") (not (include "dfe-clickhouse.tlsEnabled" .)) -}}
+{{- fail "clickhouse.tls.required needs TLS on -- clickhouse.tls.enabled and a CA to sign with (clickhouse.tls.issuerRef, or the edge module's internal CA) -- or it closes the plaintext ports and leaves none" -}}
 {{- end -}}
 {{- if include "dfe-clickhouse.tlsEnabled" . -}}
-{{- if not (dig "issuerRef" "name" "" $tls) -}}
-{{- fail "clickhouse.tls.enabled needs clickhouse.tls.issuerRef.name -- the cert-manager issuer that signs the server certificate" -}}
-{{- end -}}
 {{- if not $tls.secretName -}}
 {{- fail "clickhouse.tls.enabled needs clickhouse.tls.secretName -- the Secret cert-manager writes the server keypair to" -}}
 {{- end -}}
-{{- if and $tls.required (eq .Values.clickhouse.mode "single") -}}
+{{- if and (eq (toString $tls.required) "true") (eq .Values.clickhouse.mode "single") -}}
 {{- fail "clickhouse.tls.required is cluster mode only -- the single-node server keeps 8123 for its own probes" -}}
 {{- end -}}
 {{- end -}}

@@ -21,7 +21,7 @@ spec:
     - {{ . | quote }}
     {{- end }}
   issuerRef:
-    name: {{ $tls.issuerRef.name }}
+    name: {{ include "dfe-clickhouse.tlsIssuer" . }}
     kind: {{ $tls.issuerRef.kind | default "ClusterIssuer" }}
     group: {{ $tls.issuerRef.group | default "cert-manager.io" }}
 {{- end }}

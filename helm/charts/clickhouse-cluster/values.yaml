@@ -117,8 +117,9 @@ clickhouse:
     secretName: dfe-clickhouse-external
     secretStoreName: dfe-secret-store
   # HTTPS on 8443 and native TLS on 9440, beside the plaintext 8123 and 9000.
-  # Off here, so a render with no issuer (the dfe-stack trial) stays on HTTP;
-  # argocd/values/common.yaml turns it on for every deployment bootstrap builds,
+  # Served only when enabled AND there is a CA to sign with: an issuerRef below,
+  # or the internal CA the edge module deploys. Off here, so a render with neither
+  # (the dfe-stack trial) stays on HTTP; argocd/values/common.yaml turns it on,
   # and the app charts read the same block to dial it. Cluster and single mode
   # only: an external server brings its own certificate.
   tls:
@@ -126,13 +127,20 @@ clickhouse:
     # true closes 8123 and 9000 (cluster mode only). The OTel collector and the
     # smoke tests still dial them.
     required: false
-    # The cert-manager issuer that signs the server certificate: the internal CA
-    # by default, or an estate PKI, AWS Private CA or corporate CA issuer. It
-    # must sign for the in-cluster names below, which public ACME cannot.
+    # An explicit cert-manager issuer -- an estate PKI, AWS Private CA or
+    # corporate CA -- which works whether or not the edge module is deployed.
+    # Empty signs with the internal CA. Either must sign for the in-cluster
+    # names below, which public ACME cannot.
     issuerRef:
       name: ""
       kind: ClusterIssuer
       group: cert-manager.io
+    # The edge module's internal CA ClusterIssuer. The appsets set `present` from
+    # the cluster's dfe.hyperi.io/edge label, the same one that decides whether
+    # the gateway chart, and so this issuer, is deployed.
+    internalCA:
+      issuerName: dfe-internal-ca
+      present: false
     # The server keypair Secret cert-manager writes here.
     secretName: dfe-clickhouse-tls
     privateKey:
@@ -141,7 +149,9 @@ clickhouse:
     # Names on top of the Service names clients dial, which the chart derives.
     dnsNames: []
     # The copy of the certificate's ca.crt each app namespace gets, and the data
-    # key it sits under. Empty secretName copies nothing.
+    # key it sits under. Empty secretName copies nothing. The copy is made from
+    # <secretName>-ca, a CA-only Secret in this namespace, so the keypair Secret
+    # is never readable from outside it.
     ca:
       secretName: dfe-clickhouse-ca
       dataKey: ca.crt

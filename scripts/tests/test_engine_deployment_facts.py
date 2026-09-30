@@ -305,7 +305,11 @@ def test_an_external_tls_clickhouse_is_expressible() -> None:
         "DFE_CLICKHOUSE_VERIFY" not in env,
         "there is no certificate to verify on 8123",
     )
-    tls = engine_env("--set", "clickhouse.tls.enabled=true", "--set", "clickhouse.tls.verify=false")
+    tls = engine_env(
+        "--set", "clickhouse.mode=external",
+        "--set", "clickhouse.tls.enabled=true",
+        "--set", "clickhouse.tls.verify=false",
+    )
     expect(
         "a TLS ClickHouse renders secure",
         tls.get("DFE_CLICKHOUSE_SECURE") == "true",

@@ -1,5 +1,7 @@
 {{- if and (ne .Values.clickhouse.mode "external") .Values.appNamespace }}
 {{- $caCopy := and (include "dfe-clickhouse.tlsEnabled" .) (dig "ca" "secretName" "" .Values.clickhouse.tls) }}
+{{- /* The namespaces the copies below land in, and the only ones the store serves. */}}
+{{- $consumers := prepend (.Values.extraCredentialNamespaces | default list) .Values.appNamespace | uniq }}
 # The admin credential, copied into the APP namespace.
 #
 # The server is started with CLICKHOUSE_USER set, so the official image stops
@@ -30,7 +32,8 @@ rules:
     resourceNames:
       - {{ .Values.clickhouse.users.admin.secretName | quote }}
       {{- if $caCopy }}
-      - {{ .Values.clickhouse.tls.secretName | quote }}
+      # The CA-only copy, never the keypair Secret beside it (tls-ca.yaml).
+      - {{ include "dfe-clickhouse.tlsCaSecret" . | quote }}
       {{- end }}
     verbs: ["get"]
 ---
@@ -56,6 +59,13 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
+  # A ClusterSecretStore serves every namespace unless told otherwise, so without
+  # this any namespace's ExternalSecret could read what the Role above names.
+  conditions:
+    - namespaces:
+        {{- range $consumers }}
+        - {{ . | quote }}
+        {{- end }}
   provider:
     kubernetes:
       remoteNamespace: {{ .Release.Namespace }}
@@ -82,9 +92,7 @@ spec:
   externalSecretName: {{ .Values.clickhouse.users.admin.secretName }}
   refreshTime: 1h
   namespaceSelectors:
-    - matchLabels:
-        kubernetes.io/metadata.name: {{ .Values.appNamespace | quote }}
-    {{- range .Values.extraCredentialNamespaces }}
+    {{- range $consumers }}
     - matchLabels:
         kubernetes.io/metadata.name: {{ . | quote }}
     {{- end }}
@@ -105,7 +113,7 @@ spec:
 {{- if $caCopy }}
 ---
 # The CA that signed the server certificate, copied into the APP namespace so a
-# client can verify 8443. Only ca.crt crosses; the keypair stays here.
+# client can verify 8443, from the CA-only Secret tls-ca.yaml writes.
 apiVersion: external-secrets.io/v1
 kind: ClusterExternalSecret
 metadata:
@@ -129,7 +137,7 @@ spec:
     data:
       - secretKey: {{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}
         remoteRef:
-          key: {{ .Values.clickhouse.tls.secretName }}
+          key: {{ include "dfe-clickhouse.tlsCaSecret" . }}
           property: ca.crt
 {{- end }}
 {{- end }}

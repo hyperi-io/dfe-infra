@@ -223,12 +223,12 @@ clickhouse:
   passwordSecretName: clickhouse-admin-password
   passwordSecretKey: password
   # HTTPS between the apps and ClickHouse. clickhouse-cluster serves it and
-  # dfe-engine, dfe-loader and hyperdx dial it, all from this one block. On here
-  # because every deployment this cascade builds carries cert-manager and the
-  # gateway chart's internal CA; each chart's own default is off, so the dfe-stack
-  # trial stays on HTTP. A deployment with the edge module off has no internal CA
-  # and names another issuer or turns this off. External mode: point port, verify
-  # and ca at the server being dialled.
+  # dfe-engine, dfe-loader and hyperdx dial it, all from this one block. Each
+  # applies the same rule: on when `enabled` AND there is a CA to sign with --
+  # an issuerRef, or the edge module's internal CA. No CA means HTTP, so a
+  # cluster with the edge module off and no issuerRef never waits on a
+  # Certificate. Each chart's own default is off, so the dfe-stack trial stays
+  # on HTTP. External mode: point port, verify and ca at the server dialled.
   tls:
     enabled: true
     # false keeps 8123 and 9000 open beside 8443 and 9440, for the OTel collector
@@ -239,13 +239,21 @@ clickhouse:
     # false only for a server whose certificate cannot be verified. dfe-loader
     # cannot skip verification and refuses to render with it.
     verify: true
-    # Signs the server certificate. An estate PKI, AWS Private CA or corporate CA
-    # issuer goes here in the deploy repo's infra/common.yaml; it has to sign for
-    # in-cluster Service names, which public ACME cannot.
+    # An explicit issuer: an estate PKI, AWS Private CA or corporate CA, set in
+    # the deploy repo's infra/common.yaml. It turns TLS on with or without the
+    # edge module, and has to sign for in-cluster Service names, which public
+    # ACME cannot. Empty signs with the internal CA.
     issuerRef:
-      name: dfe-internal-ca
+      name: ""
       kind: ClusterIssuer
       group: cert-manager.io
+    # The gateway chart's internal CA (helm/edge/gateway tls.internalCA). The
+    # data and apps appsets set `present` from the cluster's dfe.hyperi.io/edge
+    # label, the one that decides whether the gateway is deployed; true here is
+    # bootstrap's default of edge on, for a render outside Argo.
+    internalCA:
+      issuerName: dfe-internal-ca
+      present: true
     # Where a client reads the CA that signed the server certificate, in its own
     # namespace. clickhouse-cluster copies the certificate's ca.crt into this
     # Secret. A corporate CA bundle the deployment supplies goes in
