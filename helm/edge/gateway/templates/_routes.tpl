@@ -31,6 +31,9 @@ engineDocs   -- does the engine serve /docs and /redoc? Takes (dict "ctx" $).
 responseHeaders -- a rule's `filters:` block for the response headers it sets,
   HSTS included when asked. Takes (dict "hsts" <bool> "set" <list of name/value>
   "indent" <n>).
+internalRootPersisted -- does the internal CA root survive a rebuild?
+  internal-ca-persist.yaml's own render guard, and edgeHsts's derived
+  default when the switch is unset. Takes (dict "ctx" $).
 edgeHsts     -- does the wildcard listener send HSTS? tls.edge.hsts when it is a
   bool, else derived from the edge issuer. Takes (dict "ctx" $).
 hiddenRule   -- the rule answering 404 on routes.<key>.hiddenPaths, or nothing.
@@ -109,10 +112,18 @@ true
 {{- end -}}
 {{- end -}}
 
+{{- /* The one place the "root is persisted" condition is written down --
+       internal-ca-persist.yaml's render guard reuses it verbatim. */ -}}
+{{- define "envoy-gateway-config.internalRootPersisted" -}}
+{{- $ca := .ctx.Values.tls.internalCA -}}
+{{- if and $ca.enabled $ca.persist.enabled $ca.persist.secretStoreName (not .ctx.Values.tls.vault.server) -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- /* Unset is off only on an internal CA root that is not persisted: every
        rebuild re-mints it, and a browser holding HSTS for these names then
-       gets no click-through. $persisted is internal-ca-persist.yaml's own
-       render condition. */ -}}
+       gets no click-through. */ -}}
 {{- define "envoy-gateway-config.edgeHsts" -}}
 {{- $tls := .ctx.Values.tls -}}
 {{- $set := dig "edge" "hsts" "" $tls -}}
@@ -122,7 +133,7 @@ true
 {{- end -}}
 {{- else -}}
 {{- $ca := $tls.internalCA -}}
-{{- $persisted := and $ca.enabled $ca.persist.enabled $ca.persist.secretStoreName (not $tls.vault.server) -}}
+{{- $persisted := include "envoy-gateway-config.internalRootPersisted" . -}}
 {{- if not (and (eq $tls.issuerName $ca.issuerName) (not $persisted)) -}}
 true
 {{- end -}}
