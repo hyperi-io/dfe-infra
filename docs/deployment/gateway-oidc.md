@@ -13,13 +13,14 @@ an edge policy at all.
 
 There is no single on/off switch and deliberately no `auth.oidcEnabled`: the
 engine reads whatever provider YAML is under
-`<config.mountPath>/auth/oidc-providers`. Four values say four separate things.
+`<config.mountPath>/auth/oidc-providers`. Five values say five separate things.
 
 | chart | value | what it decides |
 |---|---|---|
 | dfe-engine | `authConfig.providersConfigMap` | which ConfigMap of provider definitions is seeded into the engine's auth directory |
 | dfe-engine | `oidc.enabled` + `oidc.providers` | which client credentials are mounted as env from which Secrets |
 | dfe-engine | `auth.trustProxyHeaders` | whether the engine believes `X-Oidc-*` on an inbound request |
+| dfe-engine | `auth.proxyProvider` | the provider a gateway login is stamped with; its `X-Oidc-Groups` link only to groups linked to that provider, so group files naming `dex` need `dex` here |
 | envoy-gateway-config | `oidc.enabled` + `oidc.providers` + `oidc.targetRoutes` | which routes get an OIDC SecurityPolicy, and against which IdP |
 
 `oidc.targetRoutes` names `dfe-engine`, and the engine's PUBLIC route follows it

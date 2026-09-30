@@ -19,20 +19,18 @@ spec:
   hostnames:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "hyperdx") }}.{{ .Values.domain }}"
   rules:
-    - filters:
-        # The fork ships frame-ancestors 'self', which blocks its ONE
-        # supported consumer -- the dfe-ui iframe on the deployment's UI
-        # hostname. The deployment overwrites it with that origin until the
-        # fork takes allowed ancestors from env.
-        - type: ResponseHeaderModifier
-          responseHeaderModifier:
-            set:
-              - name: Content-Security-Policy
-                value: "frame-ancestors 'self' https://{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "dfeUi") }}.{{ .Values.domain }}"
+    {{- /* The fork ships frame-ancestors 'self', which blocks its ONE
+           supported consumer -- the dfe-ui iframe on the deployment's UI
+           hostname. The deployment overwrites it with that origin until the
+           fork takes allowed ancestors from env. */}}
+    {{- $csp := dict "name" "Content-Security-Policy" "value" (printf "frame-ancestors 'self' https://%s.%s" (include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "dfeUi")) .Values.domain) }}
+    -
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" .Values.tls.edge.hsts "set" (list $csp) "indent" 6) }}
       backendRefs:
         - name: {{ .Values.routes.hyperdx.backendService }}
           port: {{ .Values.routes.hyperdx.backendPort }}
           group: ""
           kind: Service
           weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "hyperdx" "indent" 4) }}
 {{- end }}

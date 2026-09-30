@@ -325,6 +325,135 @@ def test_the_token_lifetime_is_a_dial() -> None:
     )
 
 
+# The engine's optional auth and session settings (dfe-infra#475): each values key
+# and the variable the engine reads it from.
+AUTH_DIALS = {
+    "api.maxSessionMinutes": "DFE_API_MAX_SESSION_MINUTES",
+    "api.docsEnabled": "DFE_API_DOCS_ENABLED",
+    "auth.proxyProvider": "DFE_AUTH_PROXY_PROVIDER",
+    "auth.apiKeyDefaultTtlDays": "DFE_AUTH_API_KEY_DEFAULT_TTL_DAYS",
+    "auth.loginThrottle.enabled": "DFE_AUTH_LOGIN_THROTTLE_ENABLED",
+    "auth.loginThrottle.usernameFailures": "DFE_AUTH_LOGIN_THROTTLE_USERNAME_FAILURES",
+    "auth.loginThrottle.clientFailures": "DFE_AUTH_LOGIN_THROTTLE_CLIENT_FAILURES",
+    "auth.loginThrottle.maxDelaySeconds": "DFE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS",
+}
+
+
+def refusal(*args: str) -> str:
+    """The render's stderr, or empty when it rendered."""
+    out = subprocess.run(
+        ["helm", "template", "dfe-engine", str(ENGINE_CHART), *args],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    return out.stderr if out.returncode != 0 else ""
+
+
+def test_an_unset_auth_dial_renders_no_variable() -> None:
+    """Absent, the engine takes its own default; an empty variable is not absent."""
+    for args in ((), ("-f", str(VALUES / "common.yaml"))):
+        env = engine_env(*args)
+        for key, name in AUTH_DIALS.items():
+            got = env.get(name)
+            expect(f"unset {key} renders no {name} {args}", name not in env, f"got {got!r}")
+
+
+def test_each_auth_dial_reaches_the_engine() -> None:
+    sets = {
+        "api.maxSessionMinutes": "240",
+        "api.docsEnabled": "false",
+        "auth.proxyProvider": "dex",
+        "auth.apiKeyDefaultTtlDays": "30",
+        "auth.loginThrottle.enabled": "false",
+        "auth.loginThrottle.usernameFailures": "3",
+        "auth.loginThrottle.clientFailures": "10",
+        "auth.loginThrottle.maxDelaySeconds": "600",
+    }
+    args = [arg for key, value in sets.items() for arg in ("--set", f"{key}={value}")]
+    env = engine_env(*args)
+    for key, value in sets.items():
+        name = AUTH_DIALS[key]
+        expect(f"{key}={value} renders {name}", env.get(name) == value, f"got {env.get(name)!r}")
+
+
+def test_a_zero_key_lifetime_is_rendered_not_dropped() -> None:
+    """0 is a key with no expiry, the one value a truthiness test would lose."""
+    name = AUTH_DIALS["auth.apiKeyDefaultTtlDays"]
+    got = engine_env("--set", "auth.apiKeyDefaultTtlDays=0").get(name)
+    expect("apiKeyDefaultTtlDays=0 reaches the engine as 0", got == "0", f"got {got!r}")
+
+
+def test_a_count_from_a_values_file_renders_whole() -> None:
+    """A values-file number is a float64, which renders 1e+06 bare."""
+    with tempfile.TemporaryDirectory(prefix="dfe-engine-auth-dials-") as tmp:
+        overlay = Path(tmp) / "dials.yaml"
+        overlay.write_text(
+            "api:\n  maxSessionMinutes: 1000000\n"
+            "auth:\n  loginThrottle:\n    maxDelaySeconds: 900\n    enabled: true\n",
+            encoding="utf-8", newline="\n",
+        )
+        env = engine_env("-f", str(overlay))
+    expect("maxSessionMinutes renders as whole minutes",
+           env.get("DFE_API_MAX_SESSION_MINUTES") == "1000000",
+           f"got {env.get('DFE_API_MAX_SESSION_MINUTES')!r}")
+    expect("maxDelaySeconds renders as whole seconds",
+           env.get("DFE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS") == "900",
+           f"got {env.get('DFE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS')!r}")
+    expect("a bare true renders true", env.get("DFE_AUTH_LOGIN_THROTTLE_ENABLED") == "true",
+           f"got {env.get('DFE_AUTH_LOGIN_THROTTLE_ENABLED')!r}")
+
+
+def test_a_value_the_engine_cannot_take_fails_the_render() -> None:
+    """The engine reads any word but true, 1 and yes as false, and stops at
+    startup on a count under its floor, so each is refused by name instead."""
+    cases = (
+        ("api.docsEnabled=yes", "api.docsEnabled"),
+        ("auth.loginThrottle.enabled=off", "auth.loginThrottle.enabled"),
+        ("auth.loginThrottle.usernameFailures=0", "auth.loginThrottle.usernameFailures"),
+        ("auth.loginThrottle.clientFailures=0", "auth.loginThrottle.clientFailures"),
+        ("auth.loginThrottle.maxDelaySeconds=0", "auth.loginThrottle.maxDelaySeconds"),
+        ("api.maxSessionMinutes=0", "api.maxSessionMinutes"),
+        ("api.maxSessionMinutes=1.5", "api.maxSessionMinutes"),
+        ("auth.apiKeyDefaultTtlDays=-1", "auth.apiKeyDefaultTtlDays"),
+        ("auth.apiKeyDefaultTtlDays=90d", "auth.apiKeyDefaultTtlDays"),
+    )
+    for value, key in cases:
+        err = refusal("--set", value)
+        expect(f"{value} is refused naming {key}", key in err, f"stderr={err[-300:]!r}")
+
+
+FORWARDED_ENV = "DFE_API_FORWARDED_ALLOW_IPS"
+
+
+def test_the_proxy_hops_default_to_the_deployments_pod_range() -> None:
+    """Behind the gateway every request arrives from a pod. Unlisted, the engine
+    builds http OIDC callbacks and audits the gateway's address for everyone."""
+    common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
+    pod_cidr = common["networkModel"]["podCIDR"]
+    expect("common.yaml declares a pod range", bool(pod_cidr), f"got {pod_cidr!r}")
+    cascade = ("-f", str(VALUES / "common.yaml"))
+    got = engine_env(*cascade).get(FORWARDED_ENV)
+    expect("the Argo cascade trusts that range", got == pod_cidr, f"got {got!r}")
+    moved = engine_env(*cascade, "--set", "networkModel.podCIDR=10.42.0.0/16")
+    expect("and follows it when a deployment moves it",
+           moved.get(FORWARDED_ENV) == "10.42.0.0/16", f"got {moved.get(FORWARDED_ENV)!r}")
+
+
+def test_a_named_hop_list_beats_the_pod_range() -> None:
+    hops = "10.42.7.0/24,10.42.8.0/24"
+    with tempfile.TemporaryDirectory(prefix="dfe-engine-hops-") as tmp:
+        overlay = Path(tmp) / "hops.yaml"
+        overlay.write_text(f'api:\n  forwardedAllowIps: "{hops}"\n', encoding="utf-8", newline="\n")
+        got = engine_env("-f", str(VALUES / "common.yaml"), "-f", str(overlay)).get(FORWARDED_ENV)
+    expect("api.forwardedAllowIps wins", got == hops, f"got {got!r}")
+
+
+def test_a_render_with_no_pod_range_keeps_the_engines_default() -> None:
+    """A standalone render knows no pod range, and the engine's loopback default
+    fails closed there."""
+    got = engine_env().get(FORWARDED_ENV)
+    expect("no pod range renders no hop list", got is None, f"got {got!r}")
+
+
 TOPIC_SIZE_ENV = "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"
 
 
@@ -398,6 +527,14 @@ def main() -> int:
         test_the_engine_gets_a_boot_budget()
         test_an_external_tls_clickhouse_is_expressible()
         test_the_token_lifetime_is_a_dial()
+        test_an_unset_auth_dial_renders_no_variable()
+        test_each_auth_dial_reaches_the_engine()
+        test_a_zero_key_lifetime_is_rendered_not_dropped()
+        test_a_count_from_a_values_file_renders_whole()
+        test_a_value_the_engine_cannot_take_fails_the_render()
+        test_the_proxy_hops_default_to_the_deployments_pod_range()
+        test_a_named_hop_list_beats_the_pod_range()
+        test_a_render_with_no_pod_range_keeps_the_engines_default()
         test_the_topic_size_reaches_the_engine_only_when_set()
         test_a_topic_size_that_is_not_bytes_fails_the_render()
         test_every_profile_still_renders_with_the_real_overlays()

@@ -27,6 +27,13 @@ infraPolicyRoutes -- JSON array of the keys that render AND take the infra edge
   disagree about which routes are covered. Read it with fromJsonArray.
 dnsMarker    -- the annotation external-dns is told to filter on. Takes no
   argument, because it is a constant this chart and layer1-addons.yaml share.
+engineDocs   -- does the engine serve /docs and /redoc? Takes (dict "ctx" $).
+responseHeaders -- a rule's `filters:` block for the response headers it sets,
+  HSTS included when asked. Takes (dict "hsts" <bool> "set" <list of name/value>
+  "indent" <n>).
+hiddenRule   -- the rule answering 404 on routes.<key>.hiddenPaths, or nothing.
+  Takes (dict "ctx" $ "key" <route key> "indent" <n>).
+hiddenNamespaces -- JSON array of the namespaces that need the 404 filter.
 */}}
 
 {{/*
@@ -67,6 +74,90 @@ true
 {{- if and $ingress.enabled (not $ingress.auth.remoteKey) -}}
 {{- fail "otel.ingress.enabled is true and otel.ingress.auth.remoteKey is empty -- OTLP ingest from outside the cluster admits only a bearer token, and this key names where the deployment's secret store holds it. Store the token (property token) at a path such as <project>/<env>/otel/ingress and set otel.ingress.auth.remoteKey to it in the deploy repo's infra/common.yaml. There is no unauthenticated mode" -}}
 {{- end -}}
+{{- end -}}
+
+{{- /* The engine's own rule (dfe-engine settings.py, api.docs_enabled and
+       is_dev_posture): true serves them, false does not, and unset serves them
+       on a dev posture only. The links chart and the engine chart apply the
+       same list, and scripts/tests/test_engine_docs_surface.py holds all three
+       to it. */ -}}
+{{- define "envoy-gateway-config.engineDocs" -}}
+{{- $v := toString (dig "docsEnabled" "" (.ctx.Values.api | default dict)) -}}
+{{- if eq $v "true" -}}
+true
+{{- else if has $v (list "" "<nil>") -}}
+{{- if has (lower (trim (toString .ctx.Values.env))) (list "dev" "development" "local" "test" "ci") -}}
+true
+{{- end -}}
+{{- else if ne $v "false" -}}
+{{- fail (printf "api.docsEnabled is %q -- it takes true, false or empty (served on a dev posture only), because the engine, the gateway and the links page each read it and must agree" $v) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The Gateway API takes one filter of each type per rule, so HSTS and a
+       route's own headers share one ResponseHeaderModifier. Renders its own
+       leading newline at .indent, so an empty result leaves no blank line. */ -}}
+{{- define "envoy-gateway-config.responseHeaders" -}}
+{{- $set := .set | default list -}}
+{{- if .hsts -}}
+{{- $set = append $set (dict "name" "Strict-Transport-Security" "value" "max-age=31536000; includeSubDomains") -}}
+{{- end -}}
+{{- if $set -}}
+{{- include "envoy-gateway-config.responseHeaderFilter" $set | nindent (int .indent) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.responseHeaderFilter" -}}
+filters:
+  - type: ResponseHeaderModifier
+    responseHeaderModifier:
+      set:
+        {{- range . }}
+        - name: {{ .name }}
+          value: {{ .value | quote }}
+        {{- end }}
+{{- end -}}
+
+{{- define "envoy-gateway-config.notFoundFilter" -}}
+{{ .Values.gateway.name }}-not-found
+{{- end -}}
+
+{{- /* A backend path the gateway must not publish answers 404 here, before the
+       backend sees it: the longer PathPrefix wins over the route's own. Takes
+       (dict "ctx" $ "key" <route key> "indent" <n>), and indents itself like
+       responseHeaders. */ -}}
+{{- define "envoy-gateway-config.hiddenRule" -}}
+{{- $r := index .ctx.Values.routes .key -}}
+{{- if $r.hiddenPaths -}}
+{{- include "envoy-gateway-config.hiddenRuleBody" (dict "paths" $r.hiddenPaths "filter" (include "envoy-gateway-config.notFoundFilter" .ctx)) | nindent (int .indent) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.hiddenRuleBody" -}}
+- matches:
+    {{- range .paths }}
+    - path:
+        type: PathPrefix
+        value: {{ . }}
+    {{- end }}
+  filters:
+    - type: ExtensionRef
+      extensionRef:
+        group: gateway.envoyproxy.io
+        kind: HTTPRouteFilter
+        name: {{ .filter }}
+{{- end -}}
+
+{{- /* An ExtensionRef resolves in the route's own namespace, so the filter is
+       rendered once in each namespace a hiding route lives in. */ -}}
+{{- define "envoy-gateway-config.hiddenNamespaces" -}}
+{{- $namespaces := list -}}
+{{- range $key, $r := .ctx.Values.routes -}}
+{{- if and $r.hiddenPaths (include "envoy-gateway-config.routeEnabled" (dict "ctx" $.ctx "key" $key)) -}}
+{{- $namespaces = append $namespaces (include "envoy-gateway-config.routeNs" (dict "ctx" $.ctx "key" $key)) -}}
+{{- end -}}
+{{- end -}}
+{{- $namespaces | uniq | sortAlpha | toJson -}}
 {{- end -}}
 
 {{- /* The same three facts security-policy-infra.yaml renders on, so a route
@@ -284,6 +375,9 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- end -}}
 {{- if not (kindIs "bool" $ui.tls.hsts) -}}
 {{- fail (printf "ui.tls.hsts is %v (a %s), not a bool -- see the ui.public.* refusal above" $ui.tls.hsts (kindOf $ui.tls.hsts)) -}}
+{{- end -}}
+{{- if not (kindIs "bool" .ctx.Values.tls.edge.hsts) -}}
+{{- fail (printf "tls.edge.hsts is %v (a %s), not a bool -- see the ui.public.* refusal above" .ctx.Values.tls.edge.hsts (kindOf .ctx.Values.tls.edge.hsts)) -}}
 {{- end -}}
 {{- /* A quoted "false" is truthy, so it would publish a login-less backend bare. */ -}}
 {{- range $key, $r := .ctx.Values.routes -}}

@@ -42,17 +42,10 @@ spec:
             value: {{ . }}
         {{- end }}
       {{- end }}
-      {{- if $.Values.ui.tls.hsts }}
-      # Told once over TLS, a browser refuses to try this name over plaintext
-      # again for the max-age, so a downgrade needs a certificate rather than a
-      # redirect.
-      filters:
-        - type: ResponseHeaderModifier
-          responseHeaderModifier:
-            set:
-              - name: Strict-Transport-Security
-                value: "max-age=31536000; includeSubDomains"
-      {{- end }}
+      {{- /* Told once over TLS, a browser refuses to try this name over
+             plaintext again for the max-age, so a downgrade needs a
+             certificate rather than a redirect. */}}
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" $.Values.ui.tls.hsts "indent" 6) }}
       backendRefs:
         - name: {{ $r.backendService }}
           port: {{ $r.backendPort }}
@@ -63,4 +56,5 @@ spec:
       timeouts:
         request: {{ . | quote }}
       {{- end }}
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" $ "key" $key "indent" 4) }}
 {{- end }}

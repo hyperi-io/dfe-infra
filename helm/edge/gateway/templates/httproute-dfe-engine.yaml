@@ -24,21 +24,24 @@ spec:
             type: PathPrefix
             value: {{ .Values.routes.dfeEngine.pathPrefix }}
         {{- /* Engine-owned root paths on the shared hostname: the Swagger
-             surface and /.well-known (JWKS + OIDC discovery, public so peers
-             and the edge jwt_authn verify DFE tokens). dfe-ui owns every
-             other root path. */}}
+             surface where the engine serves it, the spec, and /.well-known
+             (JWKS + OIDC discovery, public so peers and the edge jwt_authn
+             verify DFE tokens). dfe-ui owns every other root path. */}}
+        {{- if include "envoy-gateway-config.engineDocs" (dict "ctx" .) }}
         - path:
             type: PathPrefix
             value: /docs
         - path:
             type: PathPrefix
             value: /redoc
+        {{- end }}
         - path:
             type: PathPrefix
             value: /openapi.json
         - path:
             type: PathPrefix
             value: /.well-known
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" .Values.tls.edge.hsts "indent" 6) }}
       backendRefs:
         - name: {{ .Values.routes.dfeEngine.backendService }}
           port: {{ .Values.routes.dfeEngine.backendPort }}
@@ -49,4 +52,5 @@ spec:
       timeouts:
         request: {{ . | quote }}
       {{- end }}
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "dfeEngine" "indent" 4) }}
 {{- end }}

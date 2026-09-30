@@ -88,6 +88,12 @@ every router the engine adds. Five traps:
 - `/api/v1/tasks` carries the only SSE stream, and stays private until the
   console wants it.
 
+### Response hardening
+
+Every HTTPS route sends a one-year HSTS header: public listeners on `edge.product.tls.hsts`, the wildcard on the gateway chart's `tls.edge.hsts`. A root re-minted on every rebuild then locks out a browser that trusted the old one, so persist it (`tls.internalCA.persist`) or turn the header off.
+
+`routes.<key>.hiddenPaths` answers a path with a 404 from the proxy; dfe-ui hides its unauthenticated `/metrics`. `/docs` and `/redoc` follow `api.docsEnabled` in `infra/common.yaml`, read by the engine, the gateway and the links page alike.
+
 ## GCP and Azure
 
 Every row above holds, with these differences. Neither has a tofu root yet, so
@@ -179,6 +185,8 @@ render cases need no cluster.
 | A browser family answers and a private one 404s | 1 | `dfe-ops edge-probe` | kind, on-prem |
 | Tier-3 keys are absent | 1 | render case | render |
 | TLS floor, HSTS, rate limit, CIDR filter | 1 | `dfe-ops edge-probe` | kind, on-prem |
+| HSTS on every HTTPS route, each listener on its own switch; dfe-ui's `/metrics` a 404 on both faces | 1 | `scripts/tests/test_gateway_route_hardening.py` | render |
+| `/docs` and `/redoc` routed and listed only where the engine serves them | 1 | `scripts/tests/test_engine_docs_surface.py` | render |
 | The receiver is private in `vpn` mode | 1 | `dfe-ops edge-probe` | kind, on-prem |
 | OTLP ingress renders no route while off, and refuses to render on with no token | 1 | `scripts/tests/test_otel_ingress.py`, `scripts/test-route-exposure.sh` | render |
 | `otel.<domain>` answers 404 while off, and 401 to a tokenless request while on | 1 | `dfe-ops edge-probe` | kind, on-prem, AWS |

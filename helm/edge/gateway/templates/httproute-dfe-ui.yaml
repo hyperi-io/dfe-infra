@@ -23,10 +23,12 @@ spec:
         - path:
             type: PathPrefix
             value: {{ .Values.routes.dfeUi.pathPrefix }}
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" .Values.tls.edge.hsts "indent" 6) }}
       backendRefs:
         - name: {{ .Values.routes.dfeUi.backendService }}
           port: {{ .Values.routes.dfeUi.backendPort }}
           group: ""
           kind: Service
           weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "dfeUi" "indent" 4) }}
 {{- end }}

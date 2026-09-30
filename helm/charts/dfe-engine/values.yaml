@@ -284,6 +284,21 @@ auth:
   # A forged header is a full identity when this is wrong, so it stays false
   # until a deployment states otherwise.
   trustProxyHeaders: false
+  # The OIDC provider a gateway login (X-Oidc-*) is stamped with. Its asserted
+  # groups link only to groups linked to this provider, so group files that name
+  # another provider (dex, entra) need it here. Empty leaves the engine's `oidc`.
+  proxyProvider: ""
+  # Days an API key created without an expiry lasts; 0 creates one that never
+  # expires. Empty leaves the engine's 90.
+  apiKeyDefaultTtlDays: ""
+  # Back-off on failed password sign-ins, per username and per client address.
+  # The count lives in each engine pod and resets on restart. Each empty key
+  # leaves the engine's default: on, 5, 20, 900.
+  loginThrottle:
+    enabled: ""
+    usernameFailures: ""
+    clientFailures: ""
+    maxDelaySeconds: ""
 
   # THE admin credential. ESO's Password generator mints it ONCE
   # (refreshPolicy CreatedOnce) into this Secret, the engine reads it from there
@@ -346,7 +361,7 @@ seedAuth:
   # Set anywhere -> a render-time failure naming auth.adminPassword (#233).
   adminPassword: ""
 
-# OIDC provider credentials — mounted as env vars from K8s Secrets.
+# OIDC provider credentials -- mounted as env vars from K8s Secrets.
 # dfe-engine is the SSoT: it writes provider secrets to Vault and renders this
 # oidc config into the gitops repo; ESO materialises the K8s Secrets. Deploy is
 # local-auth-only; external OIDC is added later via dfe-engine + gitops.
@@ -372,16 +387,32 @@ oidc:
 # image's public roots first, so a private-CA deployment can still reach a
 # hosted IdP -- SSL_CERT_FILE replaces the trust store rather than adding to it.
 # Peer addresses or CIDRs whose X-Forwarded-Proto and X-Forwarded-For the engine
-# believes, or "*" for any peer. The cluster's pod CIDR is the usual value: the
-# TLS-terminating gateway is the peer, and the engine builds its OIDC redirect
-# URIs from the scheme this decides. Empty leaves the engine's loopback-only
-# default, which makes every callback URI http:// -- Okta and Entra refuse to
-# register those, so external OIDC cannot complete.
+# believes: list every proxy hop in front of it, the gateway and dfe-ui pods both.
+# The engine builds its OIDC redirect URIs from the scheme this decides, and
+# audits (and throttles sign-ins by) the right-most forwarded address no listed
+# hop added. Empty takes networkModel.podCIDR below. With both empty the engine
+# keeps its loopback-only default: every callback URI is http://, which Okta and
+# Entra refuse to register, and every request audits as the gateway's address.
+# Never "*": it audits the left-most forwarded address, which the caller wrote.
 api:
   forwardedAllowIps: ""
   # Minutes an issued API token stays valid. Empty leaves the engine's own
   # 60-minute default; a deployment that wants shorter sessions sets it here.
   jwtExpireMinutes: ""
+  # Longest a session lasts from its sign-in, in minutes; a refresh never extends
+  # a token past it. Empty leaves the engine's 720.
+  maxSessionMinutes: ""
+  # Swagger UI at /docs and ReDoc at /redoc: "true", "false", or empty to serve
+  # them on a dev posture only. Set it in the deploy repo's infra/common.yaml, not
+  # here: the gateway routes the two paths and the links page lists them from the
+  # same key. /openapi.json is served either way.
+  docsEnabled: ""
+
+# Read-only here, and owned by argocd/values/common.yaml: the range the CNI hands
+# pods, where the gateway and dfe-ui run. It is api.forwardedAllowIps's default, so
+# a deployment on another pod range changes it there, once, for every chart.
+networkModel:
+  podCIDR: ""
 
 authConfig:
   providersConfigMap: ""

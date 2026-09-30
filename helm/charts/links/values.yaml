@@ -53,6 +53,13 @@ hostnames: {}
 kafka:
   mode: disabled
 
+# Read-only here, and owned by the dfe-engine chart: the page lists the engine's
+# Swagger UI only where the engine serves it -- true, or unset on a dev posture
+# (`env` dev, development, local, test or ci). The profile cascade supplies it
+# from argocd/values/common.yaml, the same key the gateway routes /docs on.
+api:
+  docsEnabled: ""
+
 # The page content. The chart renders a DEFAULT page covering every standard
 # stack surface: gateway https URLs derived from `domain` + `hostnames` when
 # a domain is set, else the localhost port-forward layout (true on any

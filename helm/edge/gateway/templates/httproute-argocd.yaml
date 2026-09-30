@@ -21,10 +21,13 @@ spec:
   hostnames:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "argocd") }}.{{ .Values.domain }}"
   rules:
-    - backendRefs:
+    -
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" .Values.tls.edge.hsts "indent" 6) }}
+      backendRefs:
         - name: {{ .Values.routes.argocd.backendService }}
           port: {{ .Values.routes.argocd.backendPort }}
           group: ""
           kind: Service
           weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "argocd" "indent" 4) }}
 {{- end }}
