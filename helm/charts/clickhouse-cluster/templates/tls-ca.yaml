@@ -1,0 +1,81 @@
+{{- if and (include "dfe-clickhouse.tlsEnabled" .) (dig "ca" "secretName" "" .Values.clickhouse.tls) }}
+{{- $reader := printf "%s-reader" .Values.clickhouse.tls.secretName }}
+{{- $caOnly := include "dfe-clickhouse.tlsCaSecret" . }}
+# The only reader of the keypair Secret, which carries tls.key. A namespaced
+# SecretStore, so only an ExternalSecret in this namespace can use it; it copies
+# ca.crt into a CA-only Secret, and only that Secret is copied to the apps.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ .Values.clickhouse.tls.secretName | quote }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $reader }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $reader }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: {{ .Release.Namespace }}
+      server:
+        # A namespaced store names no namespace here; ESO reads this one's own.
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+      auth:
+        serviceAccount:
+          name: {{ $reader }}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $caOnly }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{ $reader }}
+    kind: SecretStore
+  target:
+    name: {{ $caOnly }}
+    creationPolicy: Owner
+  data:
+    - secretKey: ca.crt
+      remoteRef:
+        key: {{ .Values.clickhouse.tls.secretName }}
+        property: ca.crt
+{{- end }}

@@ -64,16 +64,9 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
-            # Same in-cluster ClickHouse the engine reads (plaintext HTTP :8123). The
-            # shim polls it READ-ONLY for the pressure gauge + the hunt due-count.
-            - name: DFE_CLICKHOUSE_HOST
-              value: {{ .Values.clickhouse.host | quote }}
-            - name: DFE_CLICKHOUSE_PORT
-              value: {{ .Values.clickhouse.port | quote }}
-            - name: DFE_CLICKHOUSE_DATA_DATABASE
-              value: {{ .Values.clickhouse.database | quote }}
-            - name: DFE_CLICKHOUSE_SECURE
-              value: "false"
+            # The ClickHouse the engine reads, over the same transport. The shim
+            # polls it READ-ONLY for the pressure gauge + the hunt due-count.
+            {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             - name: DFE_KEDA_SHIM_PORT
               value: {{ .Values.kedaShim.port | quote }}
@@ -89,6 +82,9 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            {{- with (include "dfe-engine.clickhouseCaMount" .) }}
+            {{- . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.kedaShim.resources | nindent 12 }}
           livenessProbe:
@@ -106,6 +102,9 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- with (include "dfe-engine.clickhouseCaVolume" .) }}
+        {{- . | nindent 8 }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

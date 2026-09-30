@@ -27,8 +27,22 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 | dfe-fetcher | Outbound only | Reaches external APIs, but **it initiates** every connection. Its ingest port is off by default. |
 | dfe-engine | CLI and API | Reachable by operators, not by the public. The API is authenticated. |
 | dfe-loader, dfe-archiver, dfe-transform-* | Not exposed | Consume from the broker and write to a datastore. On the direct transport, dfe-loader, dfe-archiver, dfe-transform-vrl and dfe-transform-vector each bind a plaintext, unauthenticated gRPC Push listener on a ClusterIP Service, port 6000 (`dfe-common.pushService`). dfe-transform-elastic's direct-transport listener is implemented but not wired in yet (dfe-transform-elastic#19). The namespace baseline NetworkPolicy (`dfe-ingress-policy`, `helm/charts/network-policies`) admits the gateway namespace and every DFE and otel namespace, so the listener is reachable only from pods in those namespaces, never from outside the cluster. |
-| ClickHouse, Kafka, the collector | Not exposed | Cluster-internal. dfe-docker's `docs/operating.md` covers the Compose bindings. |
+| ClickHouse, Kafka, the collector | Not exposed | Cluster-internal. On Kubernetes the apps reach ClickHouse over verified TLS (below). dfe-docker's `docs/operating.md` covers the Compose bindings. |
 | The collector's OTLP ingress | **Off by default. When a deployment sets `otel.ingress.enabled`: reachable from outside the cluster, authenticated** | `otel.<domain>` on the gateway reaches a second OTLP/HTTP receiver that refuses any request without the bearer token from the deployment's secret store. The check is the collector's own (`bearertokenauth`), so it holds however that port is reached. Before the token is checked, the collector's HTTP server and the extension parse an outsider's request: on such a deployment, grade an advisory in either as reachable. The in-cluster receiver on 4317/4318 stays unauthenticated and no route publishes it. |
+
+## In-cluster transport
+
+A deployment that carries a CA runs its in-cluster hops over TLS with verification on; one without stays on plain HTTP, because there is nothing to verify against. A Kubernetes deployment with the edge module on (bootstrap's default) carries one: bootstrap.sh detects or installs cert-manager, and the gateway chart's `dfe-internal-ca` ClusterIssuer signs. dfe-docker Compose, the `helm/dfe-stack` trial, and a cluster with the edge module off stay on HTTP unless an issuer is named in `clickhouse.tls.issuerRef`.
+
+| Hop | Transport |
+|---|---|
+| dfe-engine, its hunt runner and keda shim -> ClickHouse | HTTPS 8443, verified against the certificate's CA |
+| dfe-loader -> ClickHouse | HTTPS 8443, verified |
+| dfe-hyperdx -> ClickHouse | HTTPS on the connection the engine hands it, verified |
+| OTel collector -> ClickHouse | Native 9000, plaintext. Backlog: moves to 9440 |
+| Smoke tests and `scripts/` -> ClickHouse | HTTP 8123, plaintext. Backlog |
+
+8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`) until the last two rows move. Kafka, PostgreSQL, FerretDB and Keeper are not covered yet. The server keypair (`dfe-clickhouse-tls`, with `tls.key`) is readable only from the clickhouse namespace: the apps get a CA-only copy, through a ClusterSecretStore that serves only the namespaces it copies into. Issuer choice: [DEPLOY-TLS-TRUST.md](DEPLOY-TLS-TRUST.md).
 
 ## What that means for a finding
 

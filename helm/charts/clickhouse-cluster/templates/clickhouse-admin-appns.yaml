@@ -1,4 +1,7 @@
 {{- if and (ne .Values.clickhouse.mode "external") .Values.appNamespace }}
+{{- $caCopy := and (include "dfe-clickhouse.tlsEnabled" .) (dig "ca" "secretName" "" .Values.clickhouse.tls) }}
+{{- /* The namespaces the copies below land in, and the only ones the store serves. */}}
+{{- $consumers := prepend (.Values.extraCredentialNamespaces | default list) .Values.appNamespace | uniq }}
 # The admin credential, copied into the APP namespace.
 #
 # The server is started with CLICKHOUSE_USER set, so the official image stops
@@ -9,7 +12,7 @@
 # Same shape as the kafka chart's app-namespace copy: an in-cluster generated
 # value cannot be re-derived in a second namespace (the generator would mint a
 # different password), so ESO's kubernetes provider copies the one that exists,
-# through a ServiceAccount whose Role names the single Secret it may read.
+# through a ServiceAccount whose Role names the only Secrets it may read.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -26,7 +29,12 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: [{{ .Values.clickhouse.users.admin.secretName | quote }}]
+    resourceNames:
+      - {{ .Values.clickhouse.users.admin.secretName | quote }}
+      {{- if $caCopy }}
+      # The CA-only copy, never the keypair Secret beside it (tls-ca.yaml).
+      - {{ include "dfe-clickhouse.tlsCaSecret" . | quote }}
+      {{- end }}
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -51,6 +59,13 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
+  # A ClusterSecretStore serves every namespace unless told otherwise, so without
+  # this any namespace's ExternalSecret could read what the Role above names.
+  conditions:
+    - namespaces:
+        {{- range $consumers }}
+        - {{ . | quote }}
+        {{- end }}
   provider:
     kubernetes:
       remoteNamespace: {{ .Release.Namespace }}
@@ -77,9 +92,7 @@ spec:
   externalSecretName: {{ .Values.clickhouse.users.admin.secretName }}
   refreshTime: 1h
   namespaceSelectors:
-    - matchLabels:
-        kubernetes.io/metadata.name: {{ .Values.appNamespace | quote }}
-    {{- range .Values.extraCredentialNamespaces }}
+    {{- range $consumers }}
     - matchLabels:
         kubernetes.io/metadata.name: {{ . | quote }}
     {{- end }}
@@ -97,4 +110,34 @@ spec:
         remoteRef:
           key: {{ .Values.clickhouse.users.admin.secretName }}
           property: password
+{{- if $caCopy }}
+---
+# The CA that signed the server certificate, copied into the APP namespace so a
+# client can verify 8443, from the CA-only Secret tls-ca.yaml writes.
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: {{ .Values.clickhouse.tls.ca.secretName }}-appns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  externalSecretName: {{ .Values.clickhouse.tls.ca.secretName }}
+  refreshTime: 1h
+  namespaceSelectors:
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ .Values.appNamespace | quote }}
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: {{ .Values.clickhouse.users.admin.secretName }}-source-ns
+      kind: ClusterSecretStore
+    target:
+      name: {{ .Values.clickhouse.tls.ca.secretName }}
+      creationPolicy: Owner
+    data:
+      - secretKey: {{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}
+        remoteRef:
+          key: {{ include "dfe-clickhouse.tlsCaSecret" . }}
+          property: ca.crt
+{{- end }}
 {{- end }}

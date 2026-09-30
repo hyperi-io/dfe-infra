@@ -287,23 +287,38 @@ def test_the_engine_gets_a_boot_budget() -> None:
 
 def test_an_external_tls_clickhouse_is_expressible() -> None:
     """The chart hardcoded secure false, so a deployment whose ClickHouse speaks
-    TLS could not be rendered at all (#277)."""
+    TLS could not be rendered at all (#277). A render with no CA stays plaintext;
+    the Argo cascade's TLS is test_clickhouse_tls.py's."""
     env = engine_env()
     expect(
-        "the in-cluster default is still plaintext",
+        "a render with no CA is plaintext",
         env.get("DFE_CLICKHOUSE_SECURE") == "false",
         f"got {env.get('DFE_CLICKHOUSE_SECURE')!r}",
+    )
+    expect(
+        "on the plaintext port",
+        env.get("DFE_CLICKHOUSE_PORT") == "8123",
+        f"got {env.get('DFE_CLICKHOUSE_PORT')!r}",
     )
     expect(
         "and a plaintext connection renders no verify dial",
         "DFE_CLICKHOUSE_VERIFY" not in env,
         "there is no certificate to verify on 8123",
     )
-    tls = engine_env("--set", "clickhouse.secure=true", "--set", "clickhouse.verify=false")
+    tls = engine_env(
+        "--set", "clickhouse.mode=external",
+        "--set", "clickhouse.tls.enabled=true",
+        "--set", "clickhouse.tls.verify=false",
+    )
     expect(
         "a TLS ClickHouse renders secure",
         tls.get("DFE_CLICKHOUSE_SECURE") == "true",
         f"got {tls.get('DFE_CLICKHOUSE_SECURE')!r}",
+    )
+    expect(
+        "on the TLS port",
+        tls.get("DFE_CLICKHOUSE_PORT") == "8443",
+        f"got {tls.get('DFE_CLICKHOUSE_PORT')!r}",
     )
     expect(
         "and a self-signed one renders verify false rather than dropping it",

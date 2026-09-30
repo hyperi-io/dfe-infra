@@ -1,4 +1,5 @@
 {{- if eq .Values.clickhouse.mode "single" }}
+{{- $tls := include "dfe-clickhouse.tlsEnabled" . }}
 # Standalone single-node ClickHouse (no operator, no Keeper). For small/test.
 # Tables are MergeTree (non-replicated) -- the engine emits topology=single DDL.
 # Admin user/db created on first start via the official image's entrypoint env.
@@ -19,6 +20,11 @@ spec:
     - name: native
       port: 9000
       targetPort: native
+    {{- if $tls }}
+    - name: https
+      port: 8443
+      targetPort: https
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -51,6 +57,10 @@ spec:
               containerPort: 8123
             - name: native
               containerPort: 9000
+            {{- if $tls }}
+            - name: https
+              containerPort: 8443
+            {{- end }}
           env:
             - name: CLICKHOUSE_USER
               value: {{ .Values.clickhouse.users.admin.name | quote }}
@@ -104,6 +114,16 @@ spec:
               mountPath: /etc/clickhouse-server/config.d/dfe-storage.yaml
               subPath: dfe-storage.yaml
             {{- end }}
+            {{- if $tls }}
+            # config.d overlay: the HTTPS listener and the keypair it serves.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-tls.xml
+              subPath: dfe-tls.xml
+            # A directory, never a subPath, so a renewed Secret reaches the server.
+            - name: tls
+              mountPath: /etc/clickhouse-server/tls
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.clickhouse.resources | nindent 12 }}
           readinessProbe:
@@ -122,6 +142,18 @@ spec:
         - name: custom-config
           configMap:
             name: {{ .Values.clickhouse.name }}-custom-config
+        {{- if $tls }}
+        # 0440 under fsGroup 101: the server's own group reads the key, nobody else.
+        - name: tls
+          secret:
+            secretName: {{ .Values.clickhouse.tls.secretName }}
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        {{- end }}
   volumeClaimTemplates:
     # storageModel: tiered-block makes this the HOT tier -- it holds the only
     # copy of the parts that have not been demoted.
@@ -203,5 +235,19 @@ data:
   {{- with (include "dfe-clickhouse.storageConfiguration" .) }}
   dfe-storage.yaml: |
     {{- . | nindent 4 }}
+  {{- end }}
+  {{- if $tls }}
+  # Merged over the image's own <openSSL>, which keeps its protocol and
+  # verification defaults and takes the keypair from the mounted Secret.
+  dfe-tls.xml: |
+    <clickhouse>
+      <https_port>8443</https_port>
+      <openSSL>
+        <server>
+          <certificateFile>/etc/clickhouse-server/tls/tls.crt</certificateFile>
+          <privateKeyFile>/etc/clickhouse-server/tls/tls.key</privateKeyFile>
+        </server>
+      </openSSL>
+    </clickhouse>
   {{- end }}
 {{- end }}

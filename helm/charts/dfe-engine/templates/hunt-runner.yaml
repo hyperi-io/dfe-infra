@@ -134,16 +134,9 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
-            # Same in-cluster ClickHouse the engine uses (plaintext HTTP :8123). The
-            # runner coordinates leases/watermarks and runs hunt queries here.
-            - name: DFE_CLICKHOUSE_HOST
-              value: {{ .Values.clickhouse.host | quote }}
-            - name: DFE_CLICKHOUSE_PORT
-              value: {{ .Values.clickhouse.port | quote }}
-            - name: DFE_CLICKHOUSE_DATA_DATABASE
-              value: {{ .Values.clickhouse.database | quote }}
-            - name: DFE_CLICKHOUSE_SECURE
-              value: "false"
+            # The ClickHouse the engine uses, over the same transport. The runner
+            # coordinates leases/watermarks and runs hunt queries here.
+            {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             {{- if $gitSync }}
             # Through git-sync's link, which is swapped atomically, so a reload
@@ -182,6 +175,9 @@ spec:
               mountPath: {{ $gs.mountPath }}
               readOnly: true
             {{- end }}
+            {{- with (include "dfe-engine.clickhouseCaMount" .) }}
+            {{- . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.huntRunner.resources | nindent 12 }}
         {{- if $gitSync }}
@@ -219,6 +215,9 @@ spec:
         # git-sync's HOME, kept off the runner's scratch.
         - name: git-sync-home
           emptyDir: {}
+        {{- end }}
+        {{- with (include "dfe-engine.clickhouseCaVolume" .) }}
+        {{- . | nindent 8 }}
         {{- end }}
 {{- if .Values.huntRunner.autoscaling.enabled }}
 ---

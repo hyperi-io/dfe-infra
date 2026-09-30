@@ -48,6 +48,33 @@ clickhouse:
   user: ""
   passwordSecretName: ""
   passwordSecretKey: password
+  # HTTPS to ClickHouse. HyperDX dials the connection dfe-engine hands it, so the
+  # scheme and port follow the engine's; this chart only makes the CA trusted.
+  # argocd/values/common.yaml turns it on; off here keeps a render with no CA
+  # on plaintext.
+  tls:
+    enabled: false
+    # Read for one thing: whether the in-cluster server has a CA and so serves
+    # TLS at all (clickhouse-cluster's rule). The appsets set internalCA.present
+    # from the edge label; an explicit issuerRef.name counts on its own, and an
+    # external server (clickhouse.mode external) needs neither.
+    issuerRef:
+      name: ""
+    internalCA:
+      present: false
+    # The CA that signed the server certificate, from a Secret or a ConfigMap in
+    # this namespace, under dataKey, added to Node's trust with
+    # NODE_EXTRA_CA_CERTS. Both empty leaves Node's own roots alone.
+    ca:
+      secretName: ""
+      configMapName: ""
+      dataKey: ca.crt
+
+# Restart this workload when a Secret or ConfigMap it consumes changes. Node reads
+# NODE_EXTRA_CA_CERTS once at start, so without this a rotated ClickHouse CA
+# never reaches the running pod.
+reload:
+  enabled: true
 
 # Mongo-protocol metadata store: the bundled FerretDB 2.x (helm/charts/ferretdb,
 # DocumentDB PG backend) -- the fork's target. FerretDB 2.x auth is SCRAM-SHA-256
