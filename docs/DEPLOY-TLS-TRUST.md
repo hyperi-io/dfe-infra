@@ -87,3 +87,13 @@ Three things about the values that are easy to get wrong:
 
 Vault signs from the CSR's SANs, so the leaf carries an empty subject and a
 critical `subjectAltName`. That is correct, not a truncated certificate.
+
+## In-cluster ClickHouse
+
+A deployment that carries a CA runs its in-cluster hops over TLS with verification on; a self-contained one (dfe-docker Compose, the `helm/dfe-stack` trial) stays on plain HTTP. For ClickHouse that is one block, `clickhouse.tls` in `argocd/values/common.yaml`, which the server chart and every client chart read. Nothing is installed on a developer box: only pods verify this certificate.
+
+- `clickhouse.tls.issuerRef` names the cert-manager issuer, `dfe-internal-ca` by default. An estate PKI, AWS Private CA or corporate CA issuer goes in the deploy repo's `infra/common.yaml`. It has to sign for in-cluster Service names such as `dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local`, so public ACME cannot, and a Vault sign role has to allow those names and their `*.` form.
+- clickhouse-cluster issues `dfe-clickhouse-tls` and serves HTTPS on 8443 and native TLS on 9440 beside 8123 and 9000. A renewal lands in the same Secret, which both modes mount as a directory.
+- The certificate's `ca.crt` is copied into the app namespace as `dfe-clickhouse-ca`. dfe-engine reads it as `DFE_CLICKHOUSE_CA_CERT`, hyperdx as `NODE_EXTRA_CA_CERTS`, and dfe-loader through `SSL_CERT_FILE`, pointed at the image's own roots with the CA appended -- that variable replaces the trust store rather than adding to it.
+- An external ClickHouse sets `clickhouse.tls.port`, `verify` and `ca` for the server being dialled: `ca.configMapName` for a corporate CA bundle the deployment supplies, both `ca` names empty for a public certificate. dfe-loader cannot skip verification and turns TLS on only for port 8443 or 9440 or a `clickhouse.cloud` host, so its chart refuses anything else.
+- A Kubernetes deployment with the edge module off has no `dfe-internal-ca`: name another issuer, or set `clickhouse.tls.enabled: false`.

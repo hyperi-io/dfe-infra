@@ -15,6 +15,21 @@ co-deployed engine needs no configuration at all.
 {{- end -}}
 
 {{/*
+hyperdx.clickhouseCa -- "true" when a ClickHouse CA is mounted for Node to
+trust, empty otherwise.
+*/}}
+{{- define "hyperdx.clickhouseCa" -}}
+{{- $tls := .Values.clickhouse.tls | default dict -}}
+{{- if eq (toString $tls.enabled) "true" -}}
+{{- $ca := $tls.ca | default dict -}}
+{{- if and $ca.secretName $ca.configMapName -}}
+{{- fail "clickhouse.tls.ca takes a secretName or a configMapName, not both" -}}
+{{- end -}}
+{{- if or $ca.secretName $ca.configMapName -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 The dfe-engine image the dashboard init container runs.
 
 dfe-common.image reads .Values.component, which is "hyperdx" here, so the engine

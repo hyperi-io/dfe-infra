@@ -374,23 +374,7 @@ spec:
             # the startup bootstrap CREATEs the DFE data database (clickhouse.database).
             # The engine has NO PostgreSQL (YAML/git SSoT) -- the old
             # DFE_ENGINE_PG_* env was dead.
-            - name: DFE_CLICKHOUSE_HOST
-              value: {{ .Values.clickhouse.host | quote }}
-            - name: DFE_CLICKHOUSE_PORT
-              value: {{ .Values.clickhouse.port | quote }}
-            - name: DFE_CLICKHOUSE_DATA_DATABASE
-              value: {{ .Values.clickhouse.database | quote }}
-            # Default false because in-cluster CH is plaintext HTTP on :8123 and
-            # the engine's own default is secure, which would fail the handshake.
-            # An external TLS ClickHouse sets clickhouse.secure and moves the port.
-            - name: DFE_CLICKHOUSE_SECURE
-              value: {{ .Values.clickhouse.secure | quote }}
-            {{- if .Values.clickhouse.secure }}
-            # Rendered only under TLS, because a plaintext connection presents no
-            # certificate to verify. false is for a self-signed external server.
-            - name: DFE_CLICKHOUSE_VERIFY
-              value: {{ .Values.clickhouse.verify | quote }}
-            {{- end }}
+            {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
             # Default TTL for every time-series table; 0 = none; a source or a
             # dfe-schemas TTL overrides it.
             - name: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS
@@ -616,6 +600,9 @@ spec:
             - name: deploy-repo
               mountPath: {{ dir .Values.gitops.localPath }}
             {{- end }}
+            {{- with (include "dfe-engine.clickhouseCaMount" .) }}
+            {{- . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           # Probes hit the observability port (#106), not the API port -- the
@@ -683,4 +670,7 @@ spec:
         {{- if .Values.gitops.enabled }}
         - name: deploy-repo
           emptyDir: {}
+        {{- end }}
+        {{- with (include "dfe-engine.clickhouseCaVolume" .) }}
+        {{- . | nindent 8 }}
         {{- end }}

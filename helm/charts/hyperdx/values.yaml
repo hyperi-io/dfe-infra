@@ -48,6 +48,19 @@ clickhouse:
   user: ""
   passwordSecretName: ""
   passwordSecretKey: password
+  # HTTPS to ClickHouse. HyperDX dials the connection dfe-engine hands it, so the
+  # scheme and port follow the engine's; this chart only makes the CA trusted.
+  # argocd/values/common.yaml turns it on; off here keeps a render with no CA
+  # on plaintext.
+  tls:
+    enabled: false
+    # The CA that signed the server certificate, from a Secret or a ConfigMap in
+    # this namespace, under dataKey, added to Node's trust with
+    # NODE_EXTRA_CA_CERTS. Both empty leaves Node's own roots alone.
+    ca:
+      secretName: ""
+      configMapName: ""
+      dataKey: ca.crt
 
 # Mongo-protocol metadata store: the bundled FerretDB 2.x (helm/charts/ferretdb,
 # DocumentDB PG backend) -- the fork's target. FerretDB 2.x auth is SCRAM-SHA-256

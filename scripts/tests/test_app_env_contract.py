@@ -230,6 +230,9 @@ APP_ROWS = (
     ("dfe-loader", ALWAYS, "DFE_LOADER_CLICKHOUSE_USERNAME", "src/config/loader.rs:262"),
     ("dfe-loader", ALWAYS, "DFE_LOADER_CLICKHOUSE_PASSWORD", "src/config/loader.rs:265"),
     ("dfe-loader", ALWAYS, "DFE_LOADER_CLICKHOUSE__PROTOCOL", "src/config/loader.rs:148"),
+    # common.yaml's clickhouse.tls mounts the ClickHouse CA; the loader's ClickHouse and
+    # release-check clients load their roots through rustls-native-certs (Cargo.lock 0.8.4).
+    ("dfe-loader", ALWAYS, "SSL_CERT_FILE", "rustls-native-certs 0.8.4 src/lib.rs:200"),
     # DFE_RECEIVER_*, applied after the file at src/config/mod.rs:210.
     ("dfe-receiver", BUS, "DFE_RECEIVER_KAFKA_BROKERS", "src/config/mod.rs:613"),
     ("dfe-receiver", BUS, "DFE_RECEIVER_KAFKA_SASL_USER", "src/config/mod.rs:626"),

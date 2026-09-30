@@ -5,6 +5,7 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
+  {{- $clickhouseCa := include "hyperdx.clickhouseCa" . }}
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
@@ -90,6 +91,12 @@ spec:
                   name: {{ .Values.clickhouse.passwordSecretName }}
                   key: {{ .Values.clickhouse.passwordSecretKey | default "password" }}
             {{- end }}
+            {{- if $clickhouseCa }}
+            # Added to Node's bundled roots, not in place of them, for every
+            # process in the image: the ClickHouse client and proxy verify 8443.
+            - name: NODE_EXTRA_CA_CERTS
+              value: {{ printf "/etc/dfe/clickhouse-ca/%s" (.Values.clickhouse.tls.ca.dataKey | default "ca.crt") | quote }}
+            {{- end }}
             {{- if .Values.mongodb.passwordSecretName }}
             # Declared BEFORE MONGO_URI: kubelet $(VAR) expansion only reads
             # previously-declared env. Only referenced when the deploy actually
@@ -172,11 +179,18 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if .Values.dashboards.enabled }}
+          {{- if or .Values.dashboards.enabled $clickhouseCa }}
           volumeMounts:
+            {{- if .Values.dashboards.enabled }}
             - name: dashboards
               mountPath: {{ .Values.dashboards.mountPath | quote }}
               readOnly: true
+            {{- end }}
+            {{- if $clickhouseCa }}
+            - name: clickhouse-ca
+              mountPath: /etc/dfe/clickhouse-ca
+              readOnly: true
+            {{- end }}
           {{- end }}
           # scalo two-probe standard (scalo-rs docs/core-pillars/health.md):
           # /livez asks only "is the process deadlocked", /readyz owns traffic.
@@ -203,10 +217,27 @@ spec:
               path: /readyz
               port: api
             periodSeconds: 5
-      {{- if .Values.dashboards.enabled }}
+      {{- if or .Values.dashboards.enabled $clickhouseCa }}
       volumes:
+        {{- if .Values.dashboards.enabled }}
         # emptyDir, not a ConfigMap: the content comes from the engine image, so a
         # restart re-materialises it and there is no object to keep in step.
         - name: dashboards
           emptyDir: {}
+        {{- end }}
+        {{- if $clickhouseCa }}
+        {{- $ca := .Values.clickhouse.tls.ca }}
+        {{- $key := $ca.dataKey | default "ca.crt" }}
+        - name: clickhouse-ca
+          {{- if $ca.secretName }}
+          secret:
+            secretName: {{ $ca.secretName }}
+          {{- else }}
+          configMap:
+            name: {{ $ca.configMapName }}
+          {{- end }}
+            items:
+              - key: {{ $key }}
+                path: {{ $key }}
+        {{- end }}
       {{- end }}

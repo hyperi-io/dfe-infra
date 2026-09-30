@@ -116,6 +116,35 @@ clickhouse:
     user: default
     secretName: dfe-clickhouse-external
     secretStoreName: dfe-secret-store
+  # HTTPS on 8443 and native TLS on 9440, beside the plaintext 8123 and 9000.
+  # Off here, so a render with no issuer (the dfe-stack trial) stays on HTTP;
+  # argocd/values/common.yaml turns it on for every deployment bootstrap builds,
+  # and the app charts read the same block to dial it. Cluster and single mode
+  # only: an external server brings its own certificate.
+  tls:
+    enabled: false
+    # true closes 8123 and 9000 (cluster mode only). The OTel collector and the
+    # smoke tests still dial them.
+    required: false
+    # The cert-manager issuer that signs the server certificate: the internal CA
+    # by default, or an estate PKI, AWS Private CA or corporate CA issuer. It
+    # must sign for the in-cluster names below, which public ACME cannot.
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+      group: cert-manager.io
+    # The server keypair Secret cert-manager writes here.
+    secretName: dfe-clickhouse-tls
+    privateKey:
+      algorithm: ECDSA
+      size: 384
+    # Names on top of the Service names clients dial, which the chart derives.
+    dnsNames: []
+    # The copy of the certificate's ca.crt each app namespace gets, and the data
+    # key it sits under. Empty secretName copies nothing.
+    ca:
+      secretName: dfe-clickhouse-ca
+      dataKey: ca.crt
   # Storage model, decided at deploy and refused afterwards (the engine holds
   # clickhouse.storageModel as a protected var, and the deployment repo's
   # governance/policies/storage-layout.yaml governs it post-deploy).

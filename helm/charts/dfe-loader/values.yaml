@@ -50,8 +50,32 @@ kafka:
 
 clickhouse:
   host: ""
+  # The plaintext HTTP port, dialled only while tls.enabled is off.
   port: 8123
   database: dfe
+  # HTTPS to ClickHouse. argocd/values/common.yaml turns it on for every
+  # deployment it builds; off here keeps a render with no CA on plaintext. The
+  # loader takes TLS from the port (8443) and trusts only its system store, so a
+  # CA below is merged into a copy of that store and SSL_CERT_FILE names it.
+  tls:
+    enabled: false
+    port: 8443
+    # The loader cannot skip verification, so false fails the render.
+    verify: true
+    # The CA that signed the server certificate, from a Secret or a ConfigMap in
+    # this namespace, under dataKey. Both empty trusts the system store alone.
+    ca:
+      secretName: ""
+      configMapName: ""
+      dataKey: ca.crt
+    # The init container that writes the merged trust store.
+    bundleResources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 32Mi
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created

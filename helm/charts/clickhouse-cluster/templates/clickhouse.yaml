@@ -74,6 +74,15 @@ spec:
     # clickhouse.serverLog for what an unset logger costs.
     logger:
       {{- include "dfe-clickhouse.logger" .Values.clickhouse.serverLog | nindent 6 }}
+    {{- if include "dfe-clickhouse.tlsEnabled" . }}
+    # Adds 8443 and 9440 to every pod and the headless Service; required drops
+    # 8123 and 9000. The operator mounts the Secret as a directory.
+    tls:
+      enabled: true
+      required: {{ .Values.clickhouse.tls.required }}
+      serverCertSecret:
+        name: {{ .Values.clickhouse.tls.secretName }}
+    {{- end }}
     extraConfig:
       # Allow the SQL_ custom-settings prefix (server config) so DFE tenant
       # isolation enforces: the per-_org_id RESTRICTIVE row policy reads

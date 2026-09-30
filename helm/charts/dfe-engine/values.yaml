@@ -201,16 +201,27 @@ reload:
 
 clickhouse:
   host: ""
+  # The plaintext HTTP port, dialled only while tls.enabled is off.
   port: 8123
   database: dfe
-  # false for the in-cluster server, which is plaintext HTTP on 8123. An external
-  # TLS ClickHouse sets this true and moves `port` with it -- without the dial the
-  # chart could only express the in-cluster case (#277).
-  secure: false
-  # Whether the server certificate is verified. Read only when `secure` is on,
-  # because a plaintext connection presents no certificate; set false for a
-  # self-signed external server.
-  verify: true
+  # HTTPS to ClickHouse for the engine, the hunt runner and the keda shim alike.
+  # argocd/values/common.yaml turns it on for every deployment it builds and the
+  # clickhouse-cluster chart serves it from the same block; off here keeps a
+  # render with no CA (the dfe-stack trial) on plaintext. An external server sets
+  # the same keys to reach its own endpoint.
+  tls:
+    enabled: false
+    port: 8443
+    # false only for a server whose certificate cannot be verified. Rendered
+    # only with tls.enabled, because a plaintext port presents no certificate.
+    verify: true
+    # The CA that signed the server certificate, from a Secret or a ConfigMap in
+    # this namespace, under dataKey. Both empty trusts the image's system roots,
+    # which is right for a server with a public certificate.
+    ca:
+      secretName: ""
+      configMapName: ""
+      dataKey: ca.crt
 
 # Days every time-series table DFE deploys keeps rows, the OTel tables included.
 # 0 disables the default TTL.

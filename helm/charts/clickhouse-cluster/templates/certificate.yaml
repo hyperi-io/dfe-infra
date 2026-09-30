@@ -1,0 +1,27 @@
+{{- if include "dfe-clickhouse.tlsEnabled" . }}
+{{- $tls := .Values.clickhouse.tls }}
+# The keypair for 8443 and 9440. Both modes mount its Secret as a directory, never
+# a subPath, so a renewal reaches the running server.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $tls.secretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $tls.secretName }}
+  privateKey:
+    algorithm: {{ $tls.privateKey.algorithm }}
+    size: {{ $tls.privateKey.size }}
+  usages:
+    - digital signature
+    - server auth
+  dnsNames:
+    {{- range (include "dfe-clickhouse.tlsDnsNames" . | trim | splitList "\n") }}
+    - {{ . | quote }}
+    {{- end }}
+  issuerRef:
+    name: {{ $tls.issuerRef.name }}
+    kind: {{ $tls.issuerRef.kind | default "ClusterIssuer" }}
+    group: {{ $tls.issuerRef.group | default "cert-manager.io" }}
+{{- end }}
