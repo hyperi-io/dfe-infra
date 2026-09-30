@@ -18,6 +18,7 @@ Two files, and the group NAMES are the contract between them:
 
 - `bootstrap/fixtures/tester-idp-users.toml` -- the users and groups the IdP serves. `--users-file` on `deploy` points it at a different directory.
 - `bootstrap/fixtures/tester-idp-groups.toml` -- the engine's role, scope and org ids for each of those groups. `wire-engine` writes it to the `dfe-auth-groups` ConfigMap, which `authConfig.groupsConfigMap` seeds into the engine. `--groups-file` points it at a different map.
+- Each group file carries `source_provider`, the `--provider` name (default `dex`), and `source_id`, the claim value that links to it (the entry's `source_id`, else its name). From dfe-engine #669 on, the engine links a claim value to a group only through those two, never through the group's name, so a login through any other provider name gets none of these groups.
 
 The engine seeds its own four default groups only into an empty group store, so the map repeats them. Every user is a row in `tests/e2e-ui/specs/engine/oidc-rba.spec.ts`, and `scripts/tests/test_tester_idp.py` fails if the two files stop granting what that spec asserts.
 

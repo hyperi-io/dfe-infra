@@ -226,15 +226,22 @@ def validate_users_toml(users_toml: str) -> tuple[list[str], list[str]]:
 
 
 # --- render: the engine's group -> role files --------------------------------
-def render_engine_groups(groups_toml: str) -> dict[str, str]:
+def render_engine_groups(groups_toml: str, provider: str = DEFAULT_PROVIDER) -> dict[str, str]:
     """One engine group file per [[groups]] entry, keyed `<name>.yaml`.
 
-    The engine resolves a groups claim by NAME against these files, so a group
-    the IdP emits with no file here grants nothing. A malformed entry is refused
-    before anything reaches the cluster, with the same name and scope rules the
-    engine's group model applies. Each value is JSON, which the engine's YAML
-    loader reads unchanged.
+    The engine links a groups-claim value to a group only through the group's
+    `source_id`, and only for a login through the provider in its
+    `source_provider`; a group's own name links nothing. So each file carries
+    `source_provider` (the name `wire-engine` registers the IdP under) and
+    `source_id` (the entry's `source_id`, else its name, which is what this IdP
+    puts in the claim). A group the IdP emits with no file here grants nothing.
+
+    A malformed entry is refused before anything reaches the cluster, with the
+    same name and scope rules the engine's group model applies. Each value is
+    JSON, which the engine's YAML loader reads unchanged.
     """
+    if not provider:
+        raise ValueError("a provider name is required to link the groups")
     entries = tomllib.loads(groups_toml).get("groups", [])
     if not entries:
         raise ValueError("groups file declares no [[groups]]")
@@ -250,12 +257,17 @@ def render_engine_groups(groups_toml: str) -> dict[str, str]:
         org_scoped = isinstance(scope, str) and scope.startswith(_ORG_SCOPE_PREFIX)
         if scope != "system" and not (org_scoped and scope[len(_ORG_SCOPE_PREFIX):].strip()):
             raise ValueError(f"group {name!r}: scope must be 'system' or 'org:<id>', got {scope!r}")
+        source_id = entry.get("source_id", name)
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError(f"group {name!r}: source_id must be a non-empty string")
         body = {"description": entry.get("description", ""), "scope": scope}
         for field in ("roles", "org_ids"):
             values = entry.get(field, [])
             if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
                 raise ValueError(f"group {name!r}: {field} must be a list of names")
             body[field] = values
+        body["source_provider"] = provider
+        body["source_id"] = source_id
         files[key] = json.dumps(body, indent=2) + "\n"
     return files
 
@@ -812,7 +824,9 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
         print(f"ERROR: --groups-file {groups_file} not found", file=sys.stderr)
         return 2
     try:
-        group_files = render_engine_groups(groups_file.read_text(encoding="utf-8", errors="replace"))
+        group_files = render_engine_groups(
+            groups_file.read_text(encoding="utf-8", errors="replace"), args.provider
+        )
     except (ValueError, tomllib.TOMLDecodeError) as exc:
         print(f"ERROR: {groups_file} is not a usable group map: {exc}", file=sys.stderr)
         return 2
@@ -892,7 +906,6 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
     _apply(args, objects)
     print(f"\n=== wired {env['TESTER_IDP_ISSUER']} into namespace {args.namespace} ===", file=sys.stderr)
     print("  Set these on the consumer's chart values to pick them up:", file=sys.stderr)
-    print("    auth.oidcEnabled: true", file=sys.stderr)
     print("    oidc.enabled: true", file=sys.stderr)
     print(f"    oidc.providers[0].secretName: {args.secret_name}", file=sys.stderr)
     print(
