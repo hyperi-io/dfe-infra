@@ -1,4 +1,6 @@
 {{- if and (eq .Values.kafka.mode "single") .Values.appNamespace }}
+{{- /* The namespaces the copy below lands in, and the only ones the store serves. */}}
+{{- $consumers := concat (list .Values.appNamespace) (.Values.user.password.extraAppNamespaces | default list) | uniq }}
 # The single tier's SCRAM credential, copied into the APP namespace.
 #
 # clusterexternalsecret-appns.yaml covers the cluster tier by reading the store
@@ -57,6 +59,13 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
+  # A ClusterSecretStore serves every namespace unless told otherwise, so without
+  # this any namespace's ExternalSecret could read what the Role above names.
+  conditions:
+    - namespaces:
+        {{- range $consumers }}
+        - {{ . | quote }}
+        {{- end }}
   provider:
     kubernetes:
       remoteNamespace: {{ .Release.Namespace }}
@@ -83,7 +92,7 @@ spec:
   externalSecretName: {{ .Values.user.name }}
   refreshTime: 1h
   namespaceSelectors:
-    {{- range (concat (list .Values.appNamespace) .Values.user.password.extraAppNamespaces) }}
+    {{- range $consumers }}
     - matchLabels:
         kubernetes.io/metadata.name: {{ . | quote }}
     {{- end }}
