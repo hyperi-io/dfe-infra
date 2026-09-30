@@ -6,9 +6,14 @@
 # match the groups in tester-idp-users.toml, which is what the IdP puts in the
 # groups claim.
 #
-#   roles    -- engine role names (dfe-engine auth/resources/roles.yaml)
-#   scope    -- `system`, or `org:<id>` to bind the roles at that org only
-#   org_ids  -- org memberships the group confers
+# The engine links a claim value to a group only through the group's source_id,
+# never its name, so every rendered file carries source_id and source_provider
+# (the provider name wire-engine registers, default `dex`).
+#
+#   roles      -- engine role names (dfe-engine auth/resources/roles.yaml)
+#   scope      -- `system`, or `org:<id>` to bind the roles at that org only
+#   org_ids    -- org memberships the group confers
+#   source_id  -- the claim value that links to this group; defaults to the name
 #
 # The engine seeds its own four defaults only into an EMPTY group store, so
 # dfe-admins, dfe-analysts, dfe-viewers and dfe-infra are repeated here with

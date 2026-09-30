@@ -424,9 +424,10 @@ def spec_truth_table() -> dict[str, tuple[set[str], set[str]]]:
 def shipped_resolution() -> dict[str, tuple[set[str], set[str]]]:
     """user -> (roles, org ids) the shipped fixture pair grants.
 
-    Mirrors the engine's name-based claim resolution: a group's roles, its
-    org_ids, and the org its scope names. Direct groups only, because the
-    tester IdP emits no transitive membership.
+    Mirrors the engine's claim resolution: a claim value takes the group whose
+    source_id it is, for a login through that group's source_provider, and
+    grants its roles, its org_ids and the org its scope names. Direct groups
+    only, because the tester IdP emits no transitive membership.
     """
     directory = tomllib.loads(
         tester_idp.DEFAULT_USERS_FILE.read_text(encoding="utf-8").replace(
@@ -435,10 +436,14 @@ def shipped_resolution() -> dict[str, tuple[set[str], set[str]]]:
     )
     group_name = {g["gidnumber"]: g["name"] for g in directory["groups"]}
     engine = {
-        name.removesuffix(".yaml"): json.loads(body)
-        for name, body in tester_idp.render_engine_groups(
-            tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8")
-        ).items()
+        body["source_id"]: body
+        for body in map(
+            json.loads,
+            tester_idp.render_engine_groups(
+                tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8")
+            ).values(),
+        )
+        if body.get("source_provider") == tester_idp.DEFAULT_PROVIDER
     }
     out = {}
     for user in directory["users"]:
@@ -505,6 +510,7 @@ def test_an_unusable_group_map_is_refused() -> None:
         "a path in the name": '[[groups]]\n  name = "../g"\n',
         "roles that are not a list": '[[groups]]\n  name = "g"\n  roles = "admin"\n',
         "a duplicate": '[[groups]]\n  name = "g"\n[[groups]]\n  name = "g"\n',
+        "an empty source_id": '[[groups]]\n  name = "g"\n  source_id = " "\n',
         "no groups at all": "",
     }
     for label, text in cases.items():
@@ -522,9 +528,34 @@ def test_an_org_scoped_group_renders_the_engine_shape() -> None:
     )
     body = json.loads(files["g.yaml"])
     expect("keyed by the file name the engine reads", list(files) == ["g.yaml"], f"{list(files)}")
-    expect("carrying roles, scope and org_ids",
+    expect("carrying roles, scope, org_ids and the link",
            body == {"description": "", "scope": "org:acme", "roles": ["org_viewer"],
-                    "org_ids": ["acme"]}, f"{body}")
+                    "org_ids": ["acme"], "source_provider": "dex", "source_id": "g"}, f"{body}")
+
+
+def test_every_shipped_group_is_linked_for_the_provider() -> None:
+    """The engine links a claim value by source_id alone, so an unlinked file grants nothing."""
+    files = tester_idp.render_engine_groups(tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8"))
+    for key, text in sorted(files.items()):
+        body = json.loads(text)
+        expect(f"{key} names the provider", body.get("source_provider") == "dex", f"{body}")
+        expect(f"{key} links the name the IdP emits",
+               body.get("source_id") == key.removesuffix(".yaml"), f"{body}")
+
+
+def test_a_provider_and_a_source_id_override_reach_the_file() -> None:
+    """Another IdP sends ids, not names: the map says which, and wire-engine says whose."""
+    files = tester_idp.render_engine_groups(
+        '[[groups]]\n  name = "g"\n  source_id = "00000000-aaaa"\n', "entra"
+    )
+    body = json.loads(files["g.yaml"])
+    expect("the provider is the one given", body["source_provider"] == "entra", f"{body}")
+    expect("the id is the entry's own", body["source_id"] == "00000000-aaaa", f"{body}")
+    try:
+        tester_idp.render_engine_groups('[[groups]]\n  name = "g"\n', "")
+        expect("an empty provider is refused", False, "no error raised")
+    except ValueError:
+        expect("an empty provider is refused", True)
 
 
 def test_wire_engine_hands_the_group_map_over() -> None:
@@ -537,7 +568,8 @@ def test_wire_engine_hands_the_group_map_over() -> None:
         encoding="utf-8", newline="\n",
     )
     args = _ops().build_parser().parse_args(
-        ["idp", "wire-engine", "--secrets-file", str(tmp / "idp.env"), "--dry-run"]
+        ["idp", "wire-engine", "--secrets-file", str(tmp / "idp.env"), "--dry-run",
+         "--provider", "tester"]
     )
     saved_out = sys.stdout
     sys.stdout = captured = io.StringIO()
@@ -553,6 +585,14 @@ def test_wire_engine_hands_the_group_map_over() -> None:
     expect("carrying the org-scoped fixture group",
            json.loads(data.get("dfe-test-org-viewers.yaml", "{}")).get("scope") == "org:test_org",
            f"{sorted(data)}")
+    admins = json.loads(data.get("dfe-admins.yaml", "{}"))
+    expect("linked to the provider the engine registers",
+           (admins.get("source_provider"), admins.get("source_id")) == ("tester", "dfe-admins"),
+           f"{admins}")
+    providers = [o for o in objects if o["metadata"]["name"] == "dfe-oidc-providers"]
+    expect("under the same name as the provider file",
+           bool(providers) and list(providers[0]["data"]) == ["tester.yaml"],
+           f"{[list(o['data']) for o in providers]}")
     expect("and the client secret stays redacted", "clientsecretvalue" not in captured.getvalue())
 
 
