@@ -36,6 +36,8 @@ spec:
           kind: Password
           name: {{ .Values.documentdb.auth.secretName }}
 {{- if .Values.appNamespace }}
+{{- /* The namespace the copy below lands in, and the only one the store serves. */}}
+{{- $consumers := list .Values.appNamespace }}
 ---
 # The credential, copied into the APP namespace so hyperdx can authenticate.
 # Same shape as the clickhouse-cluster app-namespace copy: an in-cluster
@@ -83,6 +85,13 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
+  # A ClusterSecretStore serves every namespace unless told otherwise, so without
+  # this any namespace's ExternalSecret could read what the Role above names.
+  conditions:
+    - namespaces:
+        {{- range $consumers }}
+        - {{ . | quote }}
+        {{- end }}
   provider:
     kubernetes:
       remoteNamespace: {{ .Release.Namespace }}
@@ -109,8 +118,10 @@ spec:
   externalSecretName: {{ .Values.documentdb.auth.secretName }}
   refreshTime: 1h
   namespaceSelectors:
+    {{- range $consumers }}
     - matchLabels:
-        kubernetes.io/metadata.name: {{ .Values.appNamespace | quote }}
+        kubernetes.io/metadata.name: {{ . | quote }}
+    {{- end }}
   externalSecretSpec:
     refreshInterval: 1h
     secretStoreRef:
