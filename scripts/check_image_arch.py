@@ -31,12 +31,23 @@ The image classes checked:
   key-to-repository table `dfe-stack` renders the docker path from, plus the
   k8s-path images listed in K8S_ONLY below, which include the plain manifests
   bootstrap.sh applies.
+- Third-party images pinned tag@sha256 across `services:` and
+  `services-digests:` (DIGEST_PINNED), read by the digest a deploy pulls.
 - Images installed by a chart. Where the chart version IS the image tag
   (cert-manager, external-secrets, strimzi, the redpanda operator,
   envoy-gateway) no lookup is needed. Every other chart's appVersion is read
   with `helm show chart` only when --resolve-charts is given, because that
   needs helm and the chart repos. One chart can run several images.
+- Images a pinned chart runs at its OWN values' defaults, with no pin of ours to
+  tag them (CHART_DEFAULT_IMAGES): read from the chart archive at the pinned
+  version, a subchart from the copy the parent archive vendors, again only with
+  --resolve-charts.
+- Images one of our charts pins in its own values with no versions.yaml key
+  (CHART_VALUES_IMAGES), read from that file as committed.
 - Strimzi's Kafka broker image, whose tag joins the operator and Kafka pins.
+
+An image a chart names but no deploy pulls is not read. Those are listed, with
+the reason each is never pulled, in docs/deployment/aws-operations.md.
 
 The third-party images are public, so --third-party-only reads them with no
 credential at all. CI runs it that way on every pin change (helm-lint.yml) and
@@ -57,6 +68,7 @@ import importlib.machinery
 import importlib.util
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -76,6 +88,15 @@ K8S_ONLY = {
     "bootstrap.valkey": "valkey/valkey",
     # The image upstream's deploy/local-path-storage.yaml names at the pinned git tag.
     "bootstrap.local-path-provisioner": "docker.io/rancher/local-path-provisioner",
+}
+
+# Images pinned tag@sha256 with no chart version to derive them from: services key
+# (its digest under the same key in services-digests:) -> image repository.
+DIGEST_PINNED = {
+    # bootstrap/templates/local-path-helper-pod.yaml, written over upstream's untagged helper.
+    "busybox": "docker.io/library/busybox",
+    # The data-plane proxy both EnvoyProxy resources in helm/edge/gateway run.
+    "envoy-gateway-proxy": "docker.io/envoyproxy/envoy",
 }
 
 # Charts whose version IS the image tag, so no chart lookup is needed:
@@ -168,6 +189,26 @@ OPERATOR_VIA_CHART = {
     ),
 }
 
+# Images a chart above runs at its own values' defaults, which no pin of ours
+# tags: name -> (OPERATOR_VIA_CHART key, subchart directory under charts/ or "",
+# path to the image block in that chart's values, whether an unset tag falls back
+# to that chart's appVersion the way its template does). Read with
+# --resolve-charts.
+CHART_DEFAULT_IMAGES = {
+    # Runs whenever no OIDC provider fronts Argo CD (bootstrap/argocd_login.py).
+    "dex": ("argocd", "", ("dex", "image"), False),
+    # The frr-k8s subchart is on by default (frrk8s.enabled) and runs both.
+    "frr-k8s": ("metallb", "frr-k8s", ("frrk8s", "image"), True),
+    "frr": ("metallb", "frr-k8s", ("frrk8s", "frr", "image"), True),
+}
+
+# Images one of our charts pins in its own values with no versions.yaml key, so
+# Renovate's helm-values manager moves them: name -> (values file, path to the
+# full reference).
+CHART_VALUES_IMAGES = {
+    "forgejo setup Job curl": (Path("helm/charts/forgejo/values.yaml"), ("setup", "image")),
+}
+
 # Strimzi runs its brokers from this repository, tagged
 # <operators.strimzi-kafka-operator>-kafka-<services.kafka-version>.
 STRIMZI_KAFKA_IMAGE = "quay.io/strimzi/kafka"
@@ -209,6 +250,145 @@ def chart_app_version(chart_ref: str, repo_url: str | None, chart_version: str) 
         if line.startswith("appVersion:"):
             return line.split(":", 1)[1].strip().strip("'\"")
     raise RuntimeError(f"{chart_ref} {chart_version}: no appVersion in the chart")
+
+
+def pull_chart(chart_ref: str, repo_url: str | None, chart_version: str, into: Path) -> Path:
+    """Untar one chart version into an empty directory and return the chart's own.
+
+    Raises:
+        RuntimeError: helm is missing, the pull failed, or it left anything but
+            one chart directory behind.
+    """
+    cmd = ["helm", "pull", chart_ref, "--version", chart_version]
+    cmd += ["--untar", "--untardir", str(into)]
+    if repo_url:
+        cmd += ["--repo", repo_url]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        )
+    except OSError as exc:
+        raise RuntimeError(f"cannot run helm: {exc}") from exc
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"helm pull {chart_ref} failed")
+    charts = [path for path in into.iterdir() if path.is_dir()]
+    if len(charts) != 1:
+        raise RuntimeError(f"helm pull {chart_ref} left {len(charts)} directories, expected 1")
+    return charts[0]
+
+
+def _block(values: object, path: tuple[str, ...]) -> dict:
+    """The map at `path` in parsed values, or an empty one where any step is not a map."""
+    node = values
+    for step in path:
+        node = node.get(step) if isinstance(node, dict) else None
+    return node if isinstance(node, dict) else {}
+
+
+def _field(layers: list[dict], path: tuple[str, ...], name: str) -> str:
+    """The first non-empty string `name` takes in the image block across the layers."""
+    for layer in layers:
+        value = _block(layer, path).get(name)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def default_image_ref(layers: list[dict], path: tuple[str, ...], app_version: str | None) -> str:
+    """repository:tag for the image block at `path` in a chart's parsed values.
+
+    Args:
+        layers: Parsed values, highest precedence first -- a parent chart's block
+            for its subchart, then the subchart's own values.
+        path: Keys from the values root down to the block holding
+            `repository` and `tag`.
+        app_version: The chart's appVersion, which an unset tag falls back to,
+            or None where the chart's template has no such fallback.
+
+    Returns:
+        The image reference the chart renders.
+
+    Raises:
+        ValueError: No layer names a repository, or no tag is set and there is
+            no appVersion to fall back to.
+    """
+    where = ".".join(path)
+    repository = _field(layers, path, "repository")
+    if not repository:
+        raise ValueError(f"{where}.repository is not set")
+    tag = _field(layers, path, "tag") or app_version
+    if not tag:
+        raise ValueError(f"{where}.tag is not set and the chart has no appVersion fallback")
+    return f"{repository}:{tag}"
+
+
+def values_image_ref(values: dict, path: tuple[str, ...]) -> str:
+    """The full image reference at `path` in parsed values.
+
+    Raises:
+        ValueError: The value is missing, not a string, or carries no tag.
+    """
+    *parent, leaf = path
+    ref = _block(values, tuple(parent)).get(leaf)
+    if not isinstance(ref, str) or ":" not in ref.rsplit("/", 1)[-1]:
+        raise ValueError(f"{'.'.join(path)} is {ref!r}, not an image reference with a tag")
+    return ref
+
+
+def _parsed(path: Path) -> dict:
+    """A chart file read with the one nested-YAML reader the stack tooling shares."""
+    return dfe_stack.parse_simple_yaml(path.read_text(encoding="utf-8"))
+
+
+def chart_dir_refs(chart: Path, images: list[tuple[str, str, tuple[str, ...], bool]]) -> list[str]:
+    """The reference an untarred chart renders for each of its default images.
+
+    Args:
+        chart: The chart's directory, as `helm pull --untar` leaves it.
+        images: (name, subchart, values path, tag falls back to appVersion)
+            per image, as CHART_DEFAULT_IMAGES holds them.
+
+    Returns:
+        One image reference per entry of `images`, in order.
+
+    Raises:
+        RuntimeError: The chart vendors no such subchart, or its values do not
+            name the image an entry expects.
+    """
+    refs: list[str] = []
+    parent = _parsed(chart / "values.yaml")
+    for name, subchart, path, falls_back in images:
+        source = chart / "charts" / subchart if subchart else chart
+        if not source.is_dir():
+            raise RuntimeError(f"{name}: the chart vendors no {subchart} subchart")
+        layers = [parent]
+        if subchart:
+            layers = [_block(parent, (subchart,)), _parsed(source / "values.yaml")]
+        app_version = _parsed(source / "Chart.yaml").get("appVersion") if falls_back else None
+        fallback = app_version if isinstance(app_version, str) else None
+        try:
+            refs.append(default_image_ref(layers, path, fallback))
+        except ValueError as err:
+            raise RuntimeError(f"{name}: {err}") from err
+    return refs
+
+
+def chart_default_refs(
+    chart_ref: str,
+    repo_url: str | None,
+    chart_version: str,
+    images: list[tuple[str, str, tuple[str, ...], bool]],
+) -> list[str]:
+    """chart_dir_refs over a chart version pulled into a scratch directory.
+
+    The archive is read rather than `helm show values`, because a subchart's
+    values and appVersion ship inside the parent, at the version it vendors.
+
+    Raises:
+        RuntimeError: The pull failed, or chart_dir_refs did.
+    """
+    with tempfile.TemporaryDirectory(prefix="check-image-arch-") as scratch:
+        return chart_dir_refs(pull_chart(chart_ref, repo_url, chart_version, Path(scratch)), images)
 
 
 def _section(stack_map: object, name: str) -> dict[str, str]:
@@ -271,6 +451,23 @@ def image_refs(
         if tag:
             refs.append((path, f"{repo}:{tag}"))
 
+    digests = _section(stack_map, "services-digests")
+    for key, repo in sorted(DIGEST_PINNED.items()):
+        tag = pins.get(f"services.{key}")
+        if not tag:
+            continue
+        if not digests.get(key):
+            broken.append(f"services.{key}: tag {tag} pinned with no services-digests.{key}")
+            continue
+        refs.append((f"services.{key}", f"{repo}:{tag}@{digests[key]}"))
+
+    for name, (values_file, path) in sorted(CHART_VALUES_IMAGES.items()):
+        label = f"{values_file} ({name})"
+        try:
+            refs.append((label, values_image_ref(_parsed(REPO_ROOT / values_file), path)))
+        except (OSError, ValueError) as err:
+            broken.append(f"{label}: {err}")
+
     for key, (repos, prefix) in sorted(OPERATOR_TAG_IS_CHART.items()):
         label, chart_version = _chart_pin(pins, key)
         if chart_version:
@@ -290,6 +487,26 @@ def image_refs(
             broken.append(f"{label}: chart {chart_version} did not resolve ({err})")
             continue
         refs += [(label, f"{repo}:{prefixed(app_version, prefix)}") for repo in repos]
+
+    by_chart: dict[str, list[tuple[str, str, tuple[str, ...], bool]]] = {}
+    for name, (key, subchart, path, falls_back) in CHART_DEFAULT_IMAGES.items():
+        by_chart.setdefault(key, []).append((name, subchart, path, falls_back))
+    for key, images in sorted(by_chart.items()):
+        label, chart_version = _chart_pin(pins, key)
+        if not chart_version:
+            continue
+        names = ", ".join(name for name, *_ in images)
+        if not resolve_charts:
+            note = f"sets {names} in its own values; pass --resolve-charts"
+            skipped.append(f"{label}: chart {chart_version} {note}")
+            continue
+        chart_ref, repo_url, _repos, _prefix = OPERATOR_VIA_CHART[key]
+        try:
+            defaults = chart_default_refs(chart_ref, repo_url, chart_version, images)
+        except RuntimeError as err:
+            broken.append(f"{label}: chart {chart_version} images {names} did not resolve ({err})")
+            continue
+        refs += [(label, ref) for ref in defaults]
 
     operator = pins.get("operators.strimzi-kafka-operator")
     kafka = pins.get("services.kafka-version")

@@ -43,6 +43,9 @@ spec:
   provider:
     type: Kubernetes
     kubernetes:
+      envoyDeployment:
+        container:
+          image: {{ .Values.envoyGateway.proxy.image | quote }}
       envoyService:
         type: {{ $svc.type | default "LoadBalancer" }}
         {{- if or $svc.annotations $hostnames }}

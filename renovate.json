@@ -38,7 +38,9 @@
         "ghcr.io/kafbat/kafka-ui",
         "ghcr.io/ferretdb/ferretdb",
         "ghcr.io/ferretdb/postgres-documentdb",
-        "otel/opentelemetry-collector-contrib"
+        "otel/opentelemetry-collector-contrib",
+        "envoyproxy/envoy",
+        "docker.io/envoyproxy/envoy"
       ],
       "enabled": false
     },

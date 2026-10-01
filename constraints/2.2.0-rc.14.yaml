@@ -51,6 +51,15 @@ rules:
     reason: "redpanda-operator chart 26.2.3 is tested/paired with broker image v26.2.2. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
     source: "https://github.com/redpanda-data/redpanda-operator/releases"
 
+  envoy-gateway-proxy-pairing:
+    severity: "error"
+    when-key: "operators.envoy-gateway"
+    when-equals: "v1.9.1"
+    require-key: "services.envoy-gateway-proxy"
+    require-equals: "distroless-v1.39.1"
+    reason: "Envoy Gateway v1.9.1 compiles in docker.io/envoyproxy/envoy:distroless-v1.39.1 as its default proxy, and helm/edge/gateway pins that image explicitly, so the two must move as one. Error severity: a gateway bump leaves this when-equals guard dead, which fails --strict until the proxy pin and this rule are re-pointed together."
+    source: "https://github.com/envoyproxy/gateway/blob/v1.9.1/api/v1alpha1/shared_types.go"
+
   ferretdb2-requires-documentdb:
     severity: "error"
     when-key: "services.ferretdb"

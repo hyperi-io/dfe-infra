@@ -1117,6 +1117,37 @@ def test_strict_still_skips_a_warn_rule_whose_guard_is_not_met() -> None:
     expect("and the warn rule reads as n/a", "n/a" in out, out)
 
 
+def _committed_rule(rule_id: str) -> str:
+    """One rule from the current stack's constraints file, as constraints text."""
+    _, pins = stack.stack_pins(stack.load_root(), None)
+    text = (REPO_ROOT / pins["constraints"]).read_text(encoding="utf-8")
+    body = stack.parse_simple_yaml(text)["rules"][rule_id]
+    return f"  {rule_id}:\n" + "".join(f'    {key}: "{value}"\n' for key, value in body.items())
+
+
+def _gateway_pins(gateway: str, proxy: str) -> str:
+    return (
+        f'    operators:\n      envoy-gateway: "{gateway}"\n'
+        f'    services:\n      envoy-gateway-proxy: "{proxy}"\n'
+    )
+
+
+def test_a_gateway_bump_without_its_proxy_fails_strict() -> None:
+    """The proxy image is the gateway's compiled default made explicit, so the
+    two move as one: a gateway lift that leaves the proxy behind must not ship."""
+    rule = _committed_rule("envoy-gateway-proxy-pairing")
+    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.2", "distroless-v1.39.1"), strict=True)
+    expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
+    expect("because the pairing's guard went dead", "DEAD" in out, out)
+
+
+def test_a_proxy_bump_without_its_gateway_fails_strict() -> None:
+    rule = _committed_rule("envoy-gateway-proxy-pairing")
+    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.1", "distroless-v1.39.2"), strict=True)
+    expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
+    expect("naming the proxy pin it rejects", "FAIL" in out and "distroless-v1.39.2" in out, out)
+
+
 def test_the_committed_constraints_pass_strict() -> None:
     """The repo-level invariant: no committed rule is inert against its stack."""
     import argparse

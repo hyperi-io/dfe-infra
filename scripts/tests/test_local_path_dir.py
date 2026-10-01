@@ -130,6 +130,47 @@ def test_the_cli_reads_stdin_and_writes_the_document():
     assert json.loads(reply.stdout)["nodePathMap"][0]["paths"] == [DISK]
 
 
+# helperPod.yaml from the same manifest, which names busybox with no tag.
+UPSTREAM_HELPER_POD = """apiVersion: v1
+kind: Pod
+metadata:
+  name: helper-pod
+spec:
+  priorityClassName: system-node-critical
+  tolerations:
+    - key: node.kubernetes.io/disk-pressure
+      operator: Exists
+      effect: NoSchedule
+  containers:
+  - name: helper-pod
+    image: docker.io/library/busybox
+    imagePullPolicy: IfNotPresent"""
+
+HELPER_TEMPLATE = BOOTSTRAP / "templates" / "local-path-helper-pod.yaml"
+
+
+def test_the_helper_pod_template_is_upstreams_with_only_the_image_pinned():
+    """bootstrap.sh writes this over upstream's, so any other difference is a fork."""
+    lines = [
+        line for line in HELPER_TEMPLATE.read_text(encoding="utf-8").splitlines()
+        if not line.startswith("#")
+    ]
+    image = [i for i, line in enumerate(lines) if line.strip().startswith("image:")]
+    assert len(image) == 1
+    pinned = lines[image[0]].split("image:", 1)[1].strip()
+    assert pinned.startswith("docker.io/library/busybox:")
+    assert "@sha256:" in pinned
+    lines[image[0]] = "    image: docker.io/library/busybox"
+    assert "\n".join(lines) == UPSTREAM_HELPER_POD
+
+
+def test_bootstrap_writes_the_helper_template_into_the_configmap():
+    """A template nothing applies would leave upstream's untagged image running."""
+    script = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
+    assert '{"data": {"helperPod.yaml": sys.stdin.read()}}' in script
+    assert '<"${TEMPLATES_DIR}/local-path-helper-pod.yaml"' in script
+
+
 # --- standalone runner (mirrors the other tests in this dir) ------------------
 def main() -> int:
     failures = 0
