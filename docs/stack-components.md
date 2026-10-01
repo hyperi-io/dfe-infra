@@ -175,9 +175,8 @@ image. One number, same image ref both sides.
   app image tags via resolve --emit-values; EXTEND to class-B/D service versions).
 - The loop-closer (`check_versions_drift.py` / `dfe-stack verify --rendered`):
   assert each OUR-chart templated image tag == the SSoT logical version, so a
-  chart cannot drift from the manifest. Covers class A (already), class B (CH
-  server+keeper already; ADD kafka `kafka.version`), class D (ADD kafbat,
-  ferretdb once the gap below is closed).
+  chart cannot drift from the manifest. Covers class A, class B (CH
+  server+keeper, kafka `kafka.version`) and class D (kafbat, ferretdb).
 
 ## Known gaps this audit surfaced (track, do not silently ignore)
 
