@@ -207,6 +207,19 @@ def test_ref_digest_reads_the_digest_imagetools_reports(monkeypatch):
     assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
 
 
+def test_ref_raw_returns_what_imagetools_prints(monkeypatch):
+    raw = '{"schemaVersion": 2, "manifests": []}'
+    monkeypatch.setattr(registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=raw)))
+    assert registry_pins.ref_raw("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (raw, "")
+
+
+def test_is_absent_tells_a_missing_tag_from_a_failed_read():
+    assert registry_pins.is_absent("ERROR: ghcr.io/hyperi-io/x:v9: not found")
+    assert registry_pins.is_absent("manifest unknown")
+    assert not registry_pins.is_absent("cannot run docker buildx: [Errno 2] No such file")
+    assert not registry_pins.is_absent("unexpected status: 403 Forbidden")
+
+
 def test_tag_digest_prefers_imagetools_and_leaves_the_api_alone(monkeypatch):
     monkeypatch.setattr(
         registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX))

@@ -224,9 +224,9 @@ def read_published(ref: str) -> Published | None:
         registry_pins.RegistryError: When the registry could not be read, so an
             outage never reads as an absent tag and triggers a build.
     """
-    raw, err = registry_pins._imagetools(ref, "--raw")
+    raw, err = registry_pins.ref_raw(ref)
     if raw is None:
-        if registry_pins._ABSENT.search(err):
+        if registry_pins.is_absent(err):
             return None
         raise registry_pins.RegistryError(f"{ref}: {err}")
     try:
