@@ -30,7 +30,8 @@ Subcommands:
                  fragment (tag@digest per compose var). --stack X.Y.Z[-rc.N]
                  selects a version (default: `current`).
   images         Flat DFE-owned image list for air-gap mirroring: every image
-                 with a digest pin, whether its tag sits under apps: or content:.
+                 with a digest pin, whether its tag sits under apps:, content:
+                 or a family pin (the toolbox base image's toolbox.dfe-toolbox).
                  Third-party chart images are NOT listed -- stated, not silent.
   platforms      Read each DFE image's pinned index from the registry and print
                  its platforms; exit 1 unless every one carries linux/amd64 and
@@ -223,10 +224,19 @@ def versions_at(tag: str | None = None, stack: str | None = None) -> dict:
     return pins
 
 
+# `digests:` keys whose tag is a family pin under another name: digests key ->
+# (section, key). The toolbox base image ships under the toolbox family's tag.
+_FAMILY_TAGS = {"dfe-toolbox-base": ("toolbox", "dfe-toolbox")}
+
+
 def image_tag(v: dict, name: str) -> str:
-    """The tag a `digests:` key pins: under apps:, or under content: for an image
-    versioned with the content repos (the HyperDX fork). Empty when neither has it.
+    """The tag a `digests:` key pins: under apps:, under content: for an image
+    versioned with the content repos (the HyperDX fork), or the family pin
+    _FAMILY_TAGS names. Empty when none has it.
     """
+    if name in _FAMILY_TAGS:
+        section, key = _FAMILY_TAGS[name]
+        return v.get(section, {}).get(key, "")
     return v.get("apps", {}).get(name) or v.get("content", {}).get(name) or ""
 
 
@@ -280,7 +290,7 @@ def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
         else:
             findings.append(("ok", label, have))
     for name in untagged_digests(v):
-        findings.append(("ERROR", name, "digest pinned with no tag under apps: or content:"))
+        findings.append(("ERROR", name, "digest pinned with no tag under apps:, content: or a family pin"))
     return findings
 
 
@@ -536,7 +546,7 @@ def cmd_images(args: argparse.Namespace) -> int:
     untagged = untagged_digests(v)
     if untagged:
         print(
-            f"# WARNING: {len(untagged)} digest(s) with no tag under apps: or content:, "
+            f"# WARNING: {len(untagged)} digest(s) with no tag under apps:, content: or a family pin, "
             f"excluded: {', '.join(untagged)}",
             file=sys.stderr,
         )
@@ -758,7 +768,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     for name, digest in sorted(v.get("digests", {}).items()):
         tag = image_tag(v, name)
         if not tag:
-            print(f"ERROR {name}: digest pinned with no tag under apps: or content:")
+            print(f"ERROR {name}: digest pinned with no tag under apps:, content: or a family pin")
             bad += 1
             continue
         try:

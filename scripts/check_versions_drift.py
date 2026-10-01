@@ -797,6 +797,14 @@ CHECKS += [
         Path("helm/charts/dfe-toolbox/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # The immutable half: the chart's image is dfe-toolbox-base, not a
+    # _APP_CHARTS name, so _DIGEST_MIRRORS never picks it up.
+    Check(
+        "dfe-toolbox chart image digest",
+        "digests.dfe-toolbox-base",
+        Path("helm/charts/dfe-toolbox/values.yaml"),
+        r'digest:\s*"([^"]+)"',
+    ),
 ]
 
 

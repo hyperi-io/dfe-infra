@@ -349,6 +349,26 @@ jobs:
       - name: Shellcheck bootstrap/tests
         run: shellcheck -S warning -s bash bootstrap/tests/*.bats
 
+  # Third-party images are public, so the registry reads here need no secret.
+  # The private DFE images are dfe-stack release-gate's, which reads them with
+  # a GHCR credential; --third-party-only keeps them out of this job.
+  third-party-arch:
+    name: third-party images carry amd64 and arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # keda, clickhouse-operator and cloudnative-pg take their image tag from
+      # their chart's appVersion, which --resolve-charts reads with helm.
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Every pinned third-party image ships linux/amd64 and linux/arm64
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts
+
   # Whether the drift guard below can reach dfe-deploy at all. It is a job of
   # its own because a job-level `if:` cannot read the secrets context, and the
   # guard has to be able to come out SKIPPED: a job that checked nothing while
