@@ -4,9 +4,15 @@
 # the same nested-YAML reader scripts/check_versions_drift.py uses to check
 # them -- so this workflow can never push a version that pin does not say.
 #
-# The cloud images FROM the base image by the tag this run just pushed, so
-# `base` must land in the registry before aws/gcp/azure can build -- hence
-# the `needs:` chain rather than one job building all four.
+# The cloud images FROM the base image by tag, so `base` must be in the
+# registry before aws/gcp/azure can build -- hence the `needs:` chain rather
+# than one job building all four.
+#
+# An image is built only when its published index does not already carry the
+# hash of its current build inputs (scripts/toolbox_inputs.py). Rebuilding an
+# unchanged image would move its tag, and dfe-toolbox-base is pinned by digest
+# in versions.yaml and the dfe-toolbox chart. The skip is a step, not a job, so
+# a base job that skipped its build still succeeds and the cloud jobs run.
 name: Toolbox Build
 
 on:
@@ -16,6 +22,7 @@ on:
       - 'docker/dfe-toolbox/**'
       - 'versions.yaml'
       - '.github/workflows/toolbox-build.yml'
+      - 'scripts/toolbox_inputs.py'
   workflow_dispatch:
 
 # One build at a time: two concurrent runs could push different base digests
@@ -106,6 +113,13 @@ jobs:
     if: needs.resolve.outputs.pinned == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      # The cloud images build FROM base by tag, so its inputs are part of theirs.
+      inputs: ${{ steps.plan.outputs.inputs }}
+    env:
+      IMAGE: dfe-toolbox-base
+      CONTEXT: docker/dfe-toolbox/base
+      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -116,32 +130,59 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Build and push dfe-toolbox-base
+      # The build step takes only the flags this emits, so it builds nothing the hash did not see.
+      - name: Build or skip dfe-toolbox-base
+        id: plan
         run: |
-          docker buildx build \
+          python3 scripts/toolbox_inputs.py plan \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --context "${CONTEXT}" \
             --platform linux/amd64,linux/arm64 \
-            --file docker/dfe-toolbox/base/Dockerfile \
             --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
             --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
             --build-arg ARGOCD_VERSION="${{ needs.resolve.outputs.argocd_cli }}" \
             --build-arg TOFU_VERSION="${{ needs.resolve.outputs.tofu }}" \
             --build-arg YQ_VERSION="${{ needs.resolve.outputs.yq }}" \
             --build-arg CLICKHOUSE_VERSION="${{ needs.resolve.outputs.clickhouse_version }}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.plan.outputs.build == 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build and push dfe-toolbox-base
+        if: steps.plan.outputs.build == 'true'
+        env:
+          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
+        run: |
+          read -ra flags <<< "${PLANNED_FLAGS}"
+          docker buildx build "${flags[@]}" \
+            --file "${CONTEXT}/Dockerfile" \
             --provenance=true \
             --sbom=true \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-base:${{ needs.resolve.outputs.dfe_toolbox }}" \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-base:latest" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
             --push \
-            docker/dfe-toolbox/base
+            "${CONTEXT}"
+
+      - name: Read the inputs hash back from the pushed index
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          python3 scripts/toolbox_inputs.py verify \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --inputs "${{ steps.plan.outputs.inputs }}" \
+            --pinned-by "versions.yaml digests.dfe-toolbox-base" \
+            --pinned-by "helm/charts/dfe-toolbox/values.yaml image.digest"
 
   aws:
     name: Build + push dfe-toolbox-aws
     needs: [resolve, base]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      IMAGE: dfe-toolbox-aws
+      CONTEXT: docker/dfe-toolbox/aws
+      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -152,29 +193,54 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build or skip dfe-toolbox-aws
+        id: plan
+        run: |
+          python3 scripts/toolbox_inputs.py plan \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --context "${CONTEXT}" \
+            --platform linux/amd64,linux/arm64 \
+            --base-inputs "${{ needs.base.outputs.inputs }}" \
+            --build-arg BASE_TAG="${TAG}" \
+            --build-arg AWS_CLI_VERSION="${{ needs.resolve.outputs.aws_cli }}" \
+            --build-arg AWS_SSM_PLUGIN_VERSION="${{ needs.resolve.outputs.aws_session_manager_plugin }}" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
+        if: steps.plan.outputs.build == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Build and push dfe-toolbox-aws
+        if: steps.plan.outputs.build == 'true'
+        env:
+          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --file docker/dfe-toolbox/aws/Dockerfile \
-            --build-arg BASE_TAG="${{ needs.resolve.outputs.dfe_toolbox }}" \
-            --build-arg AWS_CLI_VERSION="${{ needs.resolve.outputs.aws_cli }}" \
-            --build-arg AWS_SSM_PLUGIN_VERSION="${{ needs.resolve.outputs.aws_session_manager_plugin }}" \
+          read -ra flags <<< "${PLANNED_FLAGS}"
+          docker buildx build "${flags[@]}" \
+            --file "${CONTEXT}/Dockerfile" \
             --provenance=true \
             --sbom=true \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-aws:${{ needs.resolve.outputs.dfe_toolbox }}" \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-aws:latest" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
             --push \
-            docker/dfe-toolbox/aws
+            "${CONTEXT}"
+
+      - name: Read the inputs hash back from the pushed index
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          python3 scripts/toolbox_inputs.py verify \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --inputs "${{ steps.plan.outputs.inputs }}"
 
   gcp:
     name: Build + push dfe-toolbox-gcp
     needs: [resolve, base]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      IMAGE: dfe-toolbox-gcp
+      CONTEXT: docker/dfe-toolbox/gcp
+      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -185,28 +251,53 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build or skip dfe-toolbox-gcp
+        id: plan
+        run: |
+          python3 scripts/toolbox_inputs.py plan \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --context "${CONTEXT}" \
+            --platform linux/amd64,linux/arm64 \
+            --base-inputs "${{ needs.base.outputs.inputs }}" \
+            --build-arg BASE_TAG="${TAG}" \
+            --build-arg GCLOUD_VERSION="${{ needs.resolve.outputs.gcloud }}" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
+        if: steps.plan.outputs.build == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Build and push dfe-toolbox-gcp
+        if: steps.plan.outputs.build == 'true'
+        env:
+          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --file docker/dfe-toolbox/gcp/Dockerfile \
-            --build-arg BASE_TAG="${{ needs.resolve.outputs.dfe_toolbox }}" \
-            --build-arg GCLOUD_VERSION="${{ needs.resolve.outputs.gcloud }}" \
+          read -ra flags <<< "${PLANNED_FLAGS}"
+          docker buildx build "${flags[@]}" \
+            --file "${CONTEXT}/Dockerfile" \
             --provenance=true \
             --sbom=true \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-gcp:${{ needs.resolve.outputs.dfe_toolbox }}" \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-gcp:latest" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
             --push \
-            docker/dfe-toolbox/gcp
+            "${CONTEXT}"
+
+      - name: Read the inputs hash back from the pushed index
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          python3 scripts/toolbox_inputs.py verify \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --inputs "${{ steps.plan.outputs.inputs }}"
 
   azure:
     name: Build + push dfe-toolbox-azure
     needs: [resolve, base]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      IMAGE: dfe-toolbox-azure
+      CONTEXT: docker/dfe-toolbox/azure
+      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -217,19 +308,40 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build or skip dfe-toolbox-azure
+        id: plan
+        run: |
+          python3 scripts/toolbox_inputs.py plan \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --context "${CONTEXT}" \
+            --platform linux/amd64,linux/arm64 \
+            --base-inputs "${{ needs.base.outputs.inputs }}" \
+            --build-arg BASE_TAG="${TAG}" \
+            --build-arg AZ_CLI_VERSION="${{ needs.resolve.outputs.az_cli }}" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
+        if: steps.plan.outputs.build == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Build and push dfe-toolbox-azure
+        if: steps.plan.outputs.build == 'true'
+        env:
+          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --file docker/dfe-toolbox/azure/Dockerfile \
-            --build-arg BASE_TAG="${{ needs.resolve.outputs.dfe_toolbox }}" \
-            --build-arg AZ_CLI_VERSION="${{ needs.resolve.outputs.az_cli }}" \
+          read -ra flags <<< "${PLANNED_FLAGS}"
+          docker buildx build "${flags[@]}" \
+            --file "${CONTEXT}/Dockerfile" \
             --provenance=true \
             --sbom=true \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-azure:${{ needs.resolve.outputs.dfe_toolbox }}" \
-            --tag "${IMAGE_PREFIX}/dfe-toolbox-azure:latest" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
             --push \
-            docker/dfe-toolbox/azure
+            "${CONTEXT}"
+
+      - name: Read the inputs hash back from the pushed index
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          python3 scripts/toolbox_inputs.py verify \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --inputs "${{ steps.plan.outputs.inputs }}"
