@@ -107,16 +107,60 @@ def test_the_committed_base_context_covers_every_file_docker_receives() -> None:
     expect("and the entrypoint it COPYs", "entrypoint.sh" in names, f"{names}")
 
 
-def test_decide_builds_unless_the_tag_already_carries_the_hash() -> None:
+def test_decide_reads_what_the_published_tag_carries() -> None:
     cases = {
-        "an absent tag builds": (None, ti.Reason.ABSENT),
-        "an unannotated tag builds": (ti.Published("sha256:1", None), ti.Reason.UNANNOTATED),
-        "a different hash builds": (ti.Published("sha256:1", HASH_B), ti.Reason.CHANGED),
-        "the same hash skips": (ti.Published("sha256:1", HASH_A), ti.Reason.MATCH),
+        "an absent tag": (None, ti.Reason.ABSENT),
+        "an unannotated tag": (ti.Published("sha256:1", None), ti.Reason.UNANNOTATED),
+        "a tag carrying another hash": (ti.Published("sha256:1", HASH_B), ti.Reason.CHANGED),
+        "a tag carrying this hash": (ti.Published("sha256:1", HASH_A), ti.Reason.MATCH),
     }
     for name, (published, want) in sorted(cases.items()):
         got = ti.decide(published, HASH_A)
-        expect(name, got is want, f"got {got}")
+        expect(f"{name} reads as {want}", got is want, f"got {got}")
+
+
+def test_an_absent_tag_builds_and_a_match_skips() -> None:
+    flags = ti.build_flags(ARGS, PLATFORMS, HASH_A)
+    built = ti.plan_outputs(ti.Reason.ABSENT, HASH_A, flags)
+    skipped = ti.plan_outputs(ti.Reason.MATCH, HASH_A, flags)
+    expect("an absent tag builds", built is not None and built["build"] == "true", f"{built}")
+    expect("a matching tag skips", skipped is not None and skipped["build"] == "false", f"{skipped}")
+    expect(
+        "both hand the build the hashed flags",
+        built is not None and built["flags"] == " ".join(flags),
+        f"{built}",
+    )
+
+
+def test_a_published_tag_with_changed_inputs_fails_the_plan() -> None:
+    """Building would move a published family tag, which never moves."""
+    flags = ti.build_flags(ARGS, PLATFORMS, HASH_A)
+    for reason in (ti.Reason.CHANGED, ti.Reason.UNANNOTATED):
+        expect(f"{reason} is a refusal", reason in ti.REFUSED)
+        expect(
+            f"{reason} emits no build output, so no later step can build",
+            ti.plan_outputs(reason, HASH_A, flags) is None,
+        )
+    expect("an absent tag is not refused", ti.Reason.ABSENT not in ti.REFUSED)
+    expect("a matching tag is not refused", ti.Reason.MATCH not in ti.REFUSED)
+
+
+def test_the_refusal_says_what_to_bump() -> None:
+    cases = {
+        "changed": ti.Published("sha256:d1", HASH_B),
+        "unannotated": ti.Published("sha256:d1", None),
+    }
+    for name, published in sorted(cases.items()):
+        reason = ti.decide(published, HASH_A)
+        line = ti.plan_line("r:t", reason, published)
+        expect(f"the {name} tag is an ::error::", line.startswith("::error::"), line)
+        expect(
+            f"the {name} tag names the published tag the inputs changed under",
+            "the inputs changed under the published tag r:t" in line,
+            line,
+        )
+        expect(f"the {name} tag says to bump the family pin", "toolbox.dfe-toolbox" in line, line)
+        expect(f"the {name} tag names the digest it keeps", "sha256:d1" in line, line)
 
 
 def test_only_the_index_annotation_counts() -> None:
@@ -178,8 +222,8 @@ def test_a_skip_is_a_notice_naming_the_digest() -> None:
     line = ti.plan_line("r:t", ti.Reason.MATCH, ti.Published("sha256:d1", HASH_A))
     expect("the skip is a ::notice::", line.startswith("::notice::"), line)
     expect("naming the digest the tag keeps", "sha256:d1" in line, line)
-    built = ti.plan_line("r:t", ti.Reason.CHANGED, ti.Published("sha256:d1", HASH_B))
-    expect("a rebuild is not reported as a skip", not built.startswith("::notice::"), built)
+    built = ti.plan_line("r:t", ti.Reason.ABSENT, None)
+    expect("a new tag is not reported as a skip", not built.startswith("::"), built)
 
 
 def test_verify_fails_unless_the_pushed_index_carries_the_hash() -> None:
@@ -194,20 +238,29 @@ def test_verify_fails_unless_the_pushed_index_carries_the_hash() -> None:
         expect(name, (error is not None) is fails, f"{error}")
 
 
+def _workflow() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+
 def _image_jobs() -> dict[str, dict]:
-    jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
-    return {name: job for name, job in jobs.items() if name != "resolve"}
+    return {
+        name: job for name, job in _workflow()["jobs"].items() if name not in ("resolve", "inputs")
+    }
 
 
 def _step(job: dict, step_id: str) -> dict:
     return next((s for s in job["steps"] if s.get("id") == step_id), {})
 
 
+# Every step that logs in, sets up buildx, builds or reads back carries this gate.
+GATE = "github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'"
+
+
 def test_every_image_job_builds_only_what_it_hashed() -> None:
     """A build arg added to the build step alone would never move the hash."""
     jobs = _image_jobs()
     expect("four images are built", sorted(jobs) == ["aws", "azure", "base", "gcp"], f"{jobs}")
-    gate = "steps.plan.outputs.build == 'true'"
+    gate = GATE
     for name, job in sorted(jobs.items()):
         plan = _step(job, "plan").get("run", "")
         expect(f"{name} plans with toolbox_inputs.py", "toolbox_inputs.py plan" in plan, plan)
@@ -243,12 +296,74 @@ def test_the_cloud_images_hash_the_base_image_inputs() -> None:
         expect(f"{name} still waits on base", "base" in jobs[name]["needs"])
 
 
-def test_only_the_digest_pinned_image_warns_when_its_tag_moves() -> None:
-    jobs = _image_jobs()
-    for name, job in sorted(jobs.items()):
-        read_back = next(s for s in job["steps"] if "toolbox_inputs.py verify" in s.get("run", ""))
-        pinned = "--pinned-by" in read_back["run"]
-        expect(f"{name} names its pins only if it has any", pinned is (name == "base"))
+def test_a_refusal_fails_the_job_before_any_login() -> None:
+    """The plan exits 1 on a refusal, so it has to run before the credential does."""
+    for name, job in sorted(_image_jobs().items()):
+        steps = job["steps"]
+        plan = next(i for i, s in enumerate(steps) if s.get("id") == "plan")
+        logins = [i for i, s in enumerate(steps) if "docker/login-action" in s.get("uses", "")]
+        expect(f"{name} logs in once", len(logins) == 1, f"{logins}")
+        expect(f"{name} plans before it logs in", all(plan < i for i in logins), f"{plan} {logins}")
+        for i in logins:
+            expect(f"{name} logs in only to build", steps[i].get("if") == GATE, f"{steps[i]}")
+        setups = [s for s in steps if "setup-buildx-action" in s.get("uses", "")]
+        expect(
+            f"{name} sets up buildx only to build",
+            len(setups) == 1 and setups[0].get("if") == GATE,
+            f"{setups}",
+        )
+
+
+def test_no_published_tag_is_overwritten_with_a_warning() -> None:
+    """A move under a published tag is a failure now, not a warning to re-pin."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    script = (REPO_ROOT / "scripts" / "toolbox_inputs.py").read_text(encoding="utf-8")
+    expect("the workflow names no pins to move", "--pinned-by" not in text)
+    expect("the script takes no --pinned-by", "--pinned-by" not in script)
+    expect("nothing warns that a tag moved", "::warning::" not in text + script)
+
+
+def test_a_pull_request_plans_every_image_and_pushes_nothing() -> None:
+    """Changed inputs without a family-tag bump fail on the pull request, anonymously."""
+    workflow = _workflow()
+    triggers = workflow.get("on") or workflow.get(True)
+    expect(
+        "pull requests run on the same paths as main",
+        triggers["pull_request"]["paths"] == triggers["push"]["paths"],
+        f"{triggers}",
+    )
+    expect(
+        "the workflow token reads only, unless a build job asks",
+        workflow["permissions"] == {"contents": "read"},
+        f"{workflow['permissions']}",
+    )
+    job = workflow["jobs"]["inputs"]
+    expect("the check runs on pull requests only", "github.event_name == 'pull_request'" in job["if"])
+    runs = [s.get("run", "") for s in job["steps"]]
+    plans = [r for r in runs if "toolbox_inputs.py plan" in r]
+    expect("it plans all four images", len(plans) == 4, f"{len(plans)}")
+    for image in ("base", "aws", "gcp", "azure"):
+        expect(f"including dfe-toolbox-{image}", any(f"dfe-toolbox-{image}:" in r for r in plans))
+    expect(
+        "each cloud plan hashes the base plan's inputs",
+        sum('--base-inputs "${{ steps.base.outputs.inputs }}"' in r for r in plans) == 3,
+    )
+    uses = [s.get("uses", "") for s in job["steps"]]
+    expect("it never logs in", not any("login-action" in u for u in uses), f"{uses}")
+    expect("it never sets up buildx", not any("setup-buildx" in u for u in uses), f"{uses}")
+    expect("it never builds or pushes", not any("buildx build" in r or "--push" in r for r in runs))
+    expect("it asks for no package scope", "permissions" not in job, f"{job.get('permissions')}")
+    for name, build_job in sorted(_image_jobs().items()):
+        expect(
+            f"{name} cannot run on a pull request",
+            "github.event_name != 'pull_request'" in build_job.get("if", ""),
+            f"{build_job.get('if')}",
+        )
+        expect(
+            f"{name} alone carries packages: write",
+            build_job.get("permissions", {}).get("packages") == "write",
+            f"{build_job.get('permissions')}",
+        )
 
 
 def main() -> int:

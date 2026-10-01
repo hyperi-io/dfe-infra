@@ -2170,9 +2170,9 @@ stacks:
       culvert: "sha256:a58a2ee3daeffc7cbb72deb1d58968441fa7507c9959395cf1824671aebbaf0b"
       # ghcr.io/hyperi-io/dfe-toolbox-base, tagged by the family pin
       # toolbox.dfe-toolbox (v1.0.0). Index digest (amd64 + arm64), built
-      # 2026-10-01, read via `docker buildx imagetools inspect`. The index
-      # carries its build-inputs hash, so Toolbox Build moves the tag only
-      # when an input changes (scripts/toolbox_inputs.py).
+      # 2026-10-01, read via `docker buildx imagetools inspect`. A published
+      # family tag never moves: Toolbox Build refuses changed inputs under it,
+      # so new inputs ship under a bumped toolbox.dfe-toolbox (scripts/toolbox_inputs.py).
       dfe-toolbox-base: "sha256:7374ea315c37179168d8d1e830d83ce6c3eccfbb1311a0f05c27d059f045dc58"
 
     # Digests for the third-party images a pin tags -- the immutable half of the

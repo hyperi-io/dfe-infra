@@ -1,39 +1,41 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         scripts/toolbox_inputs.py
-#  Purpose:      Build a dfe-toolbox image only when its published index does
-#                not already carry the hash of its build inputs, so a push that
-#                changes none of them leaves the tag and its digest pin alone.
+#  Purpose:      Build a dfe-toolbox image only under a family tag not yet
+#                published, skip one that already carries its inputs hash, and
+#                refuse to move a published tag.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Build-or-skip for the dfe-toolbox image family.
+"""Build, skip or refuse for the dfe-toolbox image family.
 
-dfe-toolbox-base is pinned by digest, in versions.yaml digests.dfe-toolbox-base
-and in the dfe-toolbox chart's image.digest. Rebuilding it on every push that
-touches versions.yaml moves its tag, so the pin goes stale the moment it lands,
-and the commit that updates the pin moves the tag again.
+A published family tag is immutable: an absent tag is built, a tag already
+carrying this build's inputs hash is skipped, and a tag carrying other inputs,
+or none, fails the plan until toolbox.dfe-toolbox in versions.yaml is bumped.
 
-So every image records the hash of its build inputs as an OCI index annotation,
-INPUTS_ANNOTATION, and is built only when the published tag does not carry that
-hash. The inputs are every build arg, the platform list, and the path and content
-of every file in the build context. The cloud images build FROM the base image by
-tag, so their inputs also include the base image's own inputs hash.
+Every image records that hash as an OCI index annotation, INPUTS_ANNOTATION.
+The inputs are every build arg, the platform list, and the path and content of
+every file in the build context. The cloud images build FROM the base image by
+tag, so their inputs also include the base image's own inputs hash. All four
+images share the family tag, so a change to any one image's inputs needs the
+bump, and the bump publishes all four under the new tag. `:latest` is pushed
+beside every new family tag as a moving pointer; nothing pins it.
 
-The decision reads what is PUBLISHED, never a git diff: a build that failed
-leaves the old annotation in place, so the next run builds again.
+The decision reads what is PUBLISHED, never a git diff. The workflow runs the
+plan on every pull request too, with no registry credential, so a change that
+needs the bump fails there rather than on main.
 
     plan    hash the inputs, read the published index, emit build=true|false
-            plus the docker flags that carry the hash
+            plus the docker flags that carry the hash; exit 1 on a refusal
     verify  read the pushed index back and fail unless it carries the hash
 
 Usage:
     python3 scripts/toolbox_inputs.py plan --ref REF --context DIR --platform LIST
                                            [--build-arg NAME=VALUE ...] [--base-inputs HEX]
                                            [--github-output PATH]
-    python3 scripts/toolbox_inputs.py verify --ref REF --inputs HEX [--pinned-by WHERE ...]
+    python3 scripts/toolbox_inputs.py verify --ref REF --inputs HEX
 
 Requires `docker` with the buildx plugin on PATH. Stdlib only.
 """
@@ -57,12 +59,16 @@ _BUILD_ARG = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=\S*")
 
 
 class Reason(StrEnum):
-    """Why an image is, or is not, built."""
+    """What the published tag says about building an image."""
 
     ABSENT = "absent"
     UNANNOTATED = "unannotated"
     CHANGED = "changed"
     MATCH = "match"
+
+
+# A published tag whose inputs differ, or are unrecorded, would have to move to build.
+REFUSED = frozenset({Reason.UNANNOTATED, Reason.CHANGED})
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +176,7 @@ def index_inputs(raw: str) -> str | None:
 
 
 def decide(published: Published | None, inputs: str) -> Reason:
-    """Whether to build, from what the tag carries now. Only MATCH skips the build."""
+    """What the tag carries now: ABSENT builds, MATCH skips, anything in REFUSED fails."""
     if published is None:
         return Reason.ABSENT
     if published.inputs is None:
@@ -178,6 +184,14 @@ def decide(published: Published | None, inputs: str) -> Reason:
     if published.inputs != inputs:
         return Reason.CHANGED
     return Reason.MATCH
+
+
+def plan_outputs(reason: Reason, inputs: str, flags: list[str]) -> dict[str, str] | None:
+    """The plan step's outputs for a decision, or None when the plan refuses to build."""
+    if reason in REFUSED:
+        return None
+    build = "false" if reason is Reason.MATCH else "true"
+    return {"inputs": inputs, "build": build, "flags": " ".join(flags)}
 
 
 def build_flags(build_args: list[str], platform_list: list[str], inputs: str) -> list[str]:
@@ -189,7 +203,7 @@ def build_flags(build_args: list[str], platform_list: list[str], inputs: str) ->
 
 
 def plan_line(ref: str, reason: Reason, published: Published | None) -> str:
-    """The log line for a decision. A skip is a ::notice:: so the run summary shows it."""
+    """The log line for a decision: a skip is a ::notice::, a refusal an ::error::."""
     if reason is Reason.MATCH and published is not None:
         return (
             f"::notice::{ref} already matches these inputs at {published.digest} -- "
@@ -197,11 +211,11 @@ def plan_line(ref: str, reason: Reason, published: Published | None) -> str:
         )
     if reason is Reason.ABSENT or published is None:
         return f"{ref} is not published -- building it"
-    if reason is Reason.UNANNOTATED:
-        return f"{ref} ({published.digest}) records no inputs hash -- rebuilding moves the tag"
+    recorded = f"built from inputs {published.inputs}" if published.inputs else "no inputs hash"
     return (
-        f"{ref} ({published.digest}) was built from inputs {published.inputs} -- "
-        f"rebuilding moves the tag"
+        f"::error::the inputs changed under the published tag {ref} ({published.digest}, "
+        f"{recorded}). A published family tag never moves: bump toolbox.dfe-toolbox in "
+        f"versions.yaml to publish a new family tag"
     )
 
 
@@ -250,7 +264,7 @@ def write_outputs(outputs: dict[str, str], github_output: str | None) -> None:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    """Hash the inputs, read the published tag and emit the decision."""
+    """Hash the inputs, read the published tag and emit the decision; 1 on a refusal."""
     context = Path(args.context)
     if not context.is_dir():
         print(f"::error::build context {context} is not a directory")
@@ -268,9 +282,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
     reason = decide(published, inputs)
     print(f"{args.ref}: inputs {inputs} over {len(files)} file(s), decision {reason}")
     print(plan_line(args.ref, reason, published))
-    flags = build_flags(args.build_arg, args.platform, inputs)
-    build = "false" if reason is Reason.MATCH else "true"
-    write_outputs({"inputs": inputs, "build": build, "flags": " ".join(flags)}, args.github_output)
+    outputs = plan_outputs(reason, inputs, build_flags(args.build_arg, args.platform, inputs))
+    if outputs is None:
+        return 1
+    write_outputs(outputs, args.github_output)
     return 0
 
 
@@ -286,13 +301,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print(f"::error::{error}")
         return 1
     print(f"{args.ref}: index {published.digest} carries {INPUTS_ANNOTATION}={published.inputs}")
-    if args.pinned_by:
-        print(
-            f"::warning::{args.ref} moved to {published.digest} -- set "
-            f"{' and '.join(args.pinned_by)} to that digest"
-        )
-    else:
-        print(f"::notice::{args.ref} moved to {published.digest}")
+    print(f"::notice::{args.ref} published at {published.digest}")
     return 0
 
 
@@ -302,7 +311,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    plan = sub.add_parser("plan", help="decide whether to build, and emit the build flags")
+    plan = sub.add_parser("plan", help="build, skip or refuse, and emit the build flags")
     plan.add_argument("--ref", required=True, help="the published tag, registry/name:tag")
     plan.add_argument("--context", required=True, help="the docker build context directory")
     plan.add_argument(
@@ -328,12 +337,6 @@ def _parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify", help="check the pushed index carries the inputs hash")
     verify.add_argument("--ref", required=True, help="the tag just pushed, registry/name:tag")
     verify.add_argument("--inputs", required=True, type=sha256_hex, help="the hash plan emitted")
-    verify.add_argument(
-        "--pinned-by",
-        action="append",
-        default=[],
-        help="where this image's digest is pinned; a move is then a ::warning:: (repeatable)",
-    )
     verify.set_defaults(func=cmd_verify)
     return parser
 
