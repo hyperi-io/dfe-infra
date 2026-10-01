@@ -46,7 +46,7 @@ image:
   tag: "v1.0.1"
   # stacks.<current>.digests.dfe-toolbox-base, drift-checked ("dfe-toolbox chart
   # image digest"); dfe-common.image renders tag@digest.
-  digest: "sha256:7374ea315c37179168d8d1e830d83ce6c3eccfbb1311a0f05c27d059f045dc58"
+  digest: "sha256:0e086e98c2ff74249cdb4b35f8ab3c4e0d4cbc5133eb367045d54c17dcdb9dc7"
   pullPolicy: IfNotPresent
 
 # The DFE namespaces the pod may read from when kubeApiAccess is true, and
