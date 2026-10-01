@@ -2,9 +2,10 @@
 #
 # The stack version is versions.yaml `current` (a CURATED manifest decision, not
 # commit-derived). On push to main this:
-#   1. GATES the stack: drift-check + compat-check --strict + release-gate, plus
-#      a live-registry digest verify when a read:packages PAT (GHCR_READ_TOKEN)
-#      is present (the default token can't read cross-repo org packages).
+#   1. GATES the stack: drift-check + compat-check --strict + release-gate + the
+#      third-party amd64/arm64 check, plus a live-registry digest verify when a
+#      read:packages PAT (GHCR_READ_TOKEN) is present (the default token can't
+#      read cross-repo org packages).
 #   2. reads `current`; if its tag already exists -> nothing to cut (idempotent,
 #      so editing pins WITHOUT bumping `current` just re-runs the gate).
 #   3. else cuts the `current` tag, then renders + signs + publishes the manifest
@@ -36,6 +37,11 @@ concurrency:
   group: stack-release
   cancel-in-progress: false
 
+# The same Helm helm-lint.yml pins, so the release gate resolves chart appVersions
+# exactly as the PR check did.
+env:
+  HELM_VERSION: "4.2.4"
+
 jobs:
   release:
     name: gate, tag `current`, publish + sign the manifest
@@ -51,6 +57,18 @@ jobs:
           python3 scripts/check_versions_drift.py
           python3 scripts/dfe-stack compat-check --strict
           python3 scripts/dfe-stack release-gate
+
+      # The chart-installed add-ons take their image tags from their chart's
+      # appVersion, which --resolve-charts reads with helm.
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # Third-party images are public, so this needs no credential; the DFE
+      # images are dfe-stack release-gate's, above.
+      - name: Gate -- every pinned third-party image ships linux/amd64 and linux/arm64
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts
 
       - name: Gate -- live-registry digest verify (cross-repo read:packages)
         env:

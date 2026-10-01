@@ -359,8 +359,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # keda, clickhouse-operator and cloudnative-pg take their image tag from
-      # their chart's appVersion, which --resolve-charts reads with helm.
+      # The chart-installed add-ons take their image tags from their chart's
+      # appVersion, which --resolve-charts reads with helm.
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
