@@ -22,7 +22,9 @@ digest.
 Everything here is decoupled from any pin FILE. The public surface is:
 
   ref_digest(ref)              -> (index digest, error) for a full image ref
+  ref_raw(ref)                 -> (raw index or manifest JSON, error) for a full image ref
   ref_platforms(ref)           -> (os/arch set, error) for a full image ref
+  is_absent(error)             -> whether a read error means the tag does not exist
   tag_digest(org, app, tag)    -> the digest a tag resolves to, or None if absent
   package_versions(org, app)   -> the raw GHCR version records (paginated)
   package_tags(org, app)       -> {tag: digest} for every tagged version
@@ -205,6 +207,16 @@ def _imagetools(ref: str, *flags: str) -> tuple[str | None, str]:
     return proc.stdout, ""
 
 
+def ref_raw(ref: str) -> tuple[str | None, str]:
+    """(raw index or manifest JSON, error) for a full image ref, read with `docker buildx imagetools`."""
+    return _imagetools(ref, "--raw")
+
+
+def is_absent(err: str) -> bool:
+    """Whether a registry read error means the tag does not exist, not that the read failed."""
+    return bool(_ABSENT.search(err))
+
+
 def ref_digest(ref: str) -> tuple[str | None, str]:
     """(digest, error) for a full image ref, read with `docker buildx imagetools`.
 
@@ -255,7 +267,7 @@ def ref_platforms(ref: str) -> tuple[set[str] | None, str]:
     platforms; a single-manifest image lists none, so its config is read for the
     one platform it was built for.
     """
-    raw, err = _imagetools(ref, "--raw")
+    raw, err = ref_raw(ref)
     if raw is None:
         return None, err
     try:
@@ -290,7 +302,7 @@ def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None
     try:
         return resolve_digest(org, app, tag)
     except RegistryError as api_exc:
-        if _ABSENT.search(err):
+        if is_absent(err):
             return None
         raise RegistryError(
             f"{registry}/{org}/{app}:{tag} did not resolve -- "
