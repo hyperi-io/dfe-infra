@@ -112,9 +112,221 @@ def test_every_app_digest_has_a_tag_verify_can_resolve() -> None:
     """
     text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     _, pins = stack.stack_pins(stack.parse_simple_yaml(text), None)
-    tags = {**pins.get("apps", {}), **pins.get("content", {})}
-    missing = sorted(name for name in pins.get("digests", {}) if not tags.get(name))
+    missing = stack.untagged_digests(pins)
     expect("every digests: key has a tag to resolve", not missing, f"missing: {missing}")
+
+
+# A stack with an image versioned under content: (the HyperDX fork's shape), a
+# content repo that is not an image, and an app that has not published yet.
+_IMAGES_PINS = {
+    "apps": {"an-app": "v1.0.0", "unshipped": "v0.1.0"},
+    "content": {"a-fork": "v0.2.7", "a-schema-repo": "v0.2.8"},
+    "digests": {"an-app": "sha256:aaa", "a-fork": "sha256:bbb"},
+}
+
+
+def test_the_image_list_includes_an_image_versioned_under_content() -> None:
+    """The air-gap list read apps: alone, so the HyperDX fork -- tagged under
+    content: with its digest under digests: -- never reached a mirror."""
+    refs = stack.app_images(_IMAGES_PINS, "registry.example/org")
+    expect(
+        "an image pinned under content: is listed with its tag and digest",
+        refs.get("a-fork") == "registry.example/org/a-fork:v0.2.7@sha256:bbb",
+        f"{refs}",
+    )
+    expect("an apps: image is still listed", "an-app" in refs, f"{refs}")
+    expect("a content repo with no digest is not an image", "a-schema-repo" not in refs, f"{refs}")
+    expect("an unpublished app stays out", "unshipped" not in refs, f"{refs}")
+
+
+def test_the_committed_image_list_carries_every_digest() -> None:
+    """The repo-level invariant: every pinned DFE image reaches the mirror list."""
+    _, pins = stack.stack_pins(stack.load_root(), None)
+    listed = set(stack.app_images(pins, stack.DEFAULT_REGISTRY))
+    pinned = set(pins.get("digests", {}))
+    missing = sorted(pinned - listed)
+    expect("images lists every digests: key", listed == pinned, f"missing: {missing}")
+
+
+# A real index shape: dfe-hyperdx v0.2.7 as GHCR serves it -- one platform image
+# and the buildx attestation manifest beside it.
+_SINGLE_ARCH_INDEX = {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "manifests": [
+        {"digest": "sha256:6c54", "platform": {"architecture": "amd64", "os": "linux"}},
+        {
+            "digest": "sha256:fa5e",
+            "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
+            "platform": {"architecture": "unknown", "os": "unknown"},
+        },
+    ],
+}
+
+
+def test_an_attestation_entry_is_not_a_platform() -> None:
+    found = stack.registry_pins.index_platforms(_SINGLE_ARCH_INDEX)
+    expect("only the real platform is read", found == {"linux/amd64"}, f"{found}")
+
+
+def test_a_single_manifest_is_not_read_as_an_index() -> None:
+    manifest = {"schemaVersion": 2, "config": {}, "layers": []}
+    expect(
+        "a manifest with no platform list is not an empty index",
+        stack.registry_pins.index_platforms(manifest) is None,
+        f"{stack.registry_pins.index_platforms(manifest)}",
+    )
+
+
+def test_a_single_manifest_image_reads_its_config_platform() -> None:
+    """A plain manifest lists no platforms, so its config names the one it has."""
+    import json
+
+    calls: list[tuple[str, ...]] = []
+
+    def _imagetools(ref: str, *flags: str) -> tuple[str, str]:
+        calls.append(flags)
+        if flags == ("--raw",):
+            return json.dumps({"schemaVersion": 2, "config": {}, "layers": []}), ""
+        return json.dumps({"architecture": "arm64", "os": "linux"}), ""
+
+    original = stack.registry_pins._imagetools
+    stack.registry_pins._imagetools = _imagetools
+    try:
+        found, err = stack.registry_pins.ref_platforms("registry.example/org/x@sha256:aaa")
+    finally:
+        stack.registry_pins._imagetools = original
+    expect("the config's platform is returned", found == {"linux/arm64"}, f"{found} {err!r}")
+    expect("after the raw read came back with no index", len(calls) == 2, f"{calls}")
+
+
+def _with_platforms(reader, fn):
+    """Run fn with registry_pins.ref_platforms replaced by reader."""
+    original = stack.registry_pins.ref_platforms
+    stack.registry_pins.ref_platforms = reader
+    try:
+        return fn()
+    finally:
+        stack.registry_pins.ref_platforms = original
+
+
+def _multi_arch_except(single: str):
+    """A registry where every image is multi-arch except the one named."""
+
+    def reader(ref: str) -> tuple[set[str], str]:
+        if f"/{single}:" in ref:
+            return {"linux/amd64"}, ""
+        return {"linux/amd64", "linux/arm64"}, ""
+
+    return reader
+
+
+def test_platforms_fail_an_index_missing_an_architecture() -> None:
+    findings = _with_platforms(
+        _multi_arch_except("a-fork"),
+        lambda: stack.platform_findings(_IMAGES_PINS, "registry.example/org"),
+    )
+    by_image = {image: (status, detail) for status, image, detail in findings}
+    expect(
+        "the single-arch image fails, naming what it lacks",
+        by_image.get("a-fork:v0.2.7", ("", ""))[0] == "FAIL"
+        and "missing linux/arm64" in by_image["a-fork:v0.2.7"][1],
+        f"{findings}",
+    )
+    passed = by_image.get("an-app:v1.0.0", ("",))[0] == "ok"
+    expect("the multi-arch image passes", passed, f"{findings}")
+
+
+def test_platforms_read_the_pinned_digest_not_the_tag() -> None:
+    """A tag can move; the gate's verdict is about the index a deployment pulls."""
+    asked: list[str] = []
+
+    def reader(ref: str) -> tuple[set[str], str]:
+        asked.append(ref)
+        return {"linux/amd64", "linux/arm64"}, ""
+
+    _with_platforms(reader, lambda: stack.platform_findings(_IMAGES_PINS, "registry.example/org"))
+    by_digest = bool(asked) and all("@sha256:" in r for r in asked)
+    expect("every read is by digest", by_digest, f"{asked}")
+
+
+def test_an_unreadable_registry_is_an_error_not_a_pass() -> None:
+    findings = _with_platforms(
+        lambda ref: (None, "403 Forbidden"),
+        lambda: stack.platform_findings(_IMAGES_PINS, "registry.example/org"),
+    )
+    expect(
+        "every image reports ERROR with the registry's own words",
+        bool(findings) and all(s == "ERROR" and "403" in d for s, _, d in findings),
+        f"{findings}",
+    )
+
+
+def _release_gate_over(maturity: str, reader) -> tuple[int, str]:
+    """release-gate over a throwaway stack of _IMAGES_PINS's published images."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    pins = (
+        'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n'
+        f"    maturity: {maturity}\n"
+        '    apps:\n      an-app: "v1.0.0"\n'
+        '    content:\n      a-fork: "v0.2.7"\n'
+        '    digests:\n      an-app: "sha256:aaa"\n      a-fork: "sha256:bbb"\n'
+    )
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "versions.yaml").write_text(pins, encoding="utf-8", newline="\n")
+        original = stack.REPO_ROOT
+        out = io.StringIO()
+        try:
+            stack.REPO_ROOT = Path(td)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                rc = _with_platforms(
+                    reader,
+                    lambda: stack.cmd_release_gate(
+                        argparse.Namespace(stack=None, registry="registry.example/org")
+                    ),
+                )
+        finally:
+            stack.REPO_ROOT = original
+    return rc, out.getvalue()
+
+
+def test_release_gate_fails_a_release_with_a_single_arch_image() -> None:
+    rc, out = _release_gate_over("release", _multi_arch_except("a-fork"))
+    expect("the gate exits non-zero", rc == 1, f"exit {rc}\n{out}")
+    expect(
+        "and names the image and the missing architecture",
+        "a-fork:v0.2.7" in out and "missing linux/arm64" in out,
+        out,
+    )
+
+
+def test_release_gate_passes_a_release_that_carries_both() -> None:
+    rc, out = _release_gate_over("release", lambda ref: ({"linux/amd64", "linux/arm64"}, ""))
+    expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
+    expect("and says how many images it read", "all 2 image(s)" in out, out)
+
+
+def test_release_gate_fails_closed_when_the_registry_cannot_be_read() -> None:
+    rc, out = _release_gate_over("release", lambda ref: (None, "403 Forbidden"))
+    expect("an unread registry fails the gate", rc == 1, f"exit {rc}\n{out}")
+
+
+def test_release_gate_never_reads_the_registry_below_release() -> None:
+    """The rc gate runs on every push to main with no registry credential."""
+    asked: list[str] = []
+
+    def reader(ref: str) -> tuple[set[str], str]:
+        asked.append(ref)
+        return {"linux/amd64"}, ""
+
+    rc, out = _release_gate_over("rc", reader)
+    expect("an rc stack passes", rc == 0, f"exit {rc}\n{out}")
+    expect("without a registry read", not asked, f"{asked}")
+    expect("and says the platforms were not read", "platforms not read" in out, out)
 
 
 def _renovate_manager() -> tuple[dict, str]:
