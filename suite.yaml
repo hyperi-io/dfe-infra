@@ -608,7 +608,7 @@ edges:
     kind: cargo-dep
     type: potential
     evidence: "dfe-receiver/Cargo.toml:26"
-    note: "A second range for the test-support feature sits at Cargo.toml:200 and must move with it."
+    note: "A second range for the test-support feature sits at Cargo.toml:196 and must move with it."
   - from: scalo-rs
     to: dfe-fetcher
     kind: cargo-dep
@@ -625,18 +625,18 @@ edges:
     kind: cargo-dep
     type: potential
     evidence: "dfe-transform-vrl/Cargo.toml:67"
-    note: "A second range for the dev dependency sits at Cargo.toml:176."
+    note: "A second range for the dev dependency sits at Cargo.toml:180."
   - from: scalo-rs
     to: dfe-transform-vector
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vector/Cargo.toml:61"
-    note: "A second range for the dev dependency sits at Cargo.toml:137."
+    evidence: "dfe-transform-vector/Cargo.toml:65"
+    note: "A second range for the dev dependency sits at Cargo.toml:142."
   - from: scalo-rs
     to: dfe-transform-elastic
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-elastic/Cargo.toml:150"
+    evidence: "dfe-transform-elastic/Cargo.toml:148"
     note: "The range sits in the workspace dependencies, and the service package inherits it."
 
   # --- scalo-rs: the generated Dockerfile ----------------------------------
@@ -687,7 +687,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:39"
+    evidence: "dfe-engine/pyproject.toml:43"
     note: "The range has no upper bound, so it admits a future major without complaint."
   - from: scalo-py
     to: dfe-engine
@@ -714,7 +714,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:46"
+    evidence: "dfe-engine/pyproject.toml:50"
     note: "Package data replaced the git submodule. The range has no upper bound."
   - from: dfe-schemas
     to: dfe-infra
@@ -735,8 +735,8 @@ edges:
     to: dfe-engine
     kind: python-dep-undeclared
     type: potential
-    evidence: "dfe-engine/src/dfe_engine/sampling/service.py:200"
-    note: "Also imported at service.py:236 and sampling/kafka_reader.py:134. pyproject.toml:116 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
+    evidence: "dfe-engine/src/dfe_engine/sampling/service.py:204"
+    note: "Also imported at service.py:240 and sampling/kafka_reader.py:134. pyproject.toml:121 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
 
   # --- dfe-engine ----------------------------------------------------------
 
