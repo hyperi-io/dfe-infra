@@ -70,7 +70,13 @@ lock is a property of the components and only a component move invalidates one.
 An existing file is never overwritten.
 `check_versions_drift.py --fix` propagates the SSoT into the pin mirrors that
 Renovate cannot reach (appset pins, `Chart.yaml` appVersions).
-`release-gate` fails a release-maturity stack that still has unpublished apps.
+`release-gate` fails a release-maturity stack that still has unpublished apps, or a DFE image whose pinned index lacks `linux/amd64` or `linux/arm64`. A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem nodes), and an image missing either pulls fine and dies at exec on the other.
+
+The architecture check reads each index from the registry by digest, through `docker buildx imagetools` and the docker credential store, so a release gate needs read access to every DFE package. A registry it cannot read fails the gate. Below `release` the gate never touches the registry.
+
+`dfe-stack platforms --stack <version>` prints the same per-image verdict for any stack and exits 1 on a gap:
+
+    python3 scripts/dfe-stack platforms --stack 2.2.0-rc.14
 
 ## How a cut reaches each target
 
@@ -93,10 +99,7 @@ for docker, and no place for the two paths to disagree.
 
 ## The maturity ladder
 
-`alpha` -> `beta` -> `rc` -> `release`. Only a release-maturity stack may
-auto-advance the top-level `latest:` pointer, and only when every app is
-published. Everything below release may carry unpublished apps, which is what
-lets an rc exist while a component is still in flight.
+`alpha` -> `beta` -> `rc` -> `release`. Only a release-maturity stack may auto-advance the top-level `latest:` pointer, and only when every app is published and every DFE image carries both architectures. Everything below release may carry unpublished or single-arch apps, which is what lets an rc exist while a component is still in flight.
 
 ### This ladder is the suite's, not a repo's
 

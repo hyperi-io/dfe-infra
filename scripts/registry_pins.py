@@ -22,6 +22,7 @@ digest.
 Everything here is decoupled from any pin FILE. The public surface is:
 
   ref_digest(ref)              -> (index digest, error) for a full image ref
+  ref_platforms(ref)           -> (os/arch set, error) for a full image ref
   tag_digest(org, app, tag)    -> the digest a tag resolves to, or None if absent
   package_versions(org, app)   -> the raw GHCR version records (paginated)
   package_tags(org, app)       -> {tag: digest} for every tagged version
@@ -179,19 +180,15 @@ def resolve_digest(org: str, app: str, tag: str) -> str | None:
     return found.digest if found else None
 
 
-def ref_digest(ref: str) -> tuple[str | None, str]:
-    """(digest, error) for a full image ref, read with `docker buildx imagetools`.
+def _imagetools(ref: str, *flags: str) -> tuple[str | None, str]:
+    """(stdout, error) of `docker buildx imagetools inspect <ref> <flags>`.
 
-    The multi-arch INDEX digest -- what a pin records -- never one platform's
-    manifest. Reads the registry through the docker credential store, so it needs
-    no read:packages scope, and resolves a public package unauthenticated.
+    Reads the registry through the docker credential store, so it needs no
+    read:packages scope, and reads a public package unauthenticated.
     """
     try:
         proc = subprocess.run(
-            [
-                "docker", "buildx", "imagetools", "inspect", ref,
-                "--format", "{{.Manifest.Digest}}",
-            ],
+            ["docker", "buildx", "imagetools", "inspect", ref, *flags],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -205,10 +202,78 @@ def ref_digest(ref: str) -> tuple[str | None, str]:
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
         return None, stderr.splitlines()[-1] if stderr else "docker buildx imagetools failed"
-    digest = proc.stdout.strip()
+    return proc.stdout, ""
+
+
+def ref_digest(ref: str) -> tuple[str | None, str]:
+    """(digest, error) for a full image ref, read with `docker buildx imagetools`.
+
+    The multi-arch INDEX digest -- what a pin records -- never one platform's
+    manifest.
+    """
+    out, err = _imagetools(ref, "--format", "{{.Manifest.Digest}}")
+    if out is None:
+        return None, err
+    digest = out.strip()
     if not digest.startswith("sha256:"):
         return None, f"unexpected digest {digest!r}"
     return digest, ""
+
+
+def index_platforms(doc: object) -> set[str] | None:
+    """The `os/arch` set an image index lists, or None when doc is not an index.
+
+    buildx attestation manifests report `unknown/unknown` and are not platforms,
+    or a single-arch image would read as two.
+    """
+    entries = doc.get("manifests") if isinstance(doc, dict) else None
+    if not isinstance(entries, list):
+        return None
+    found: set[str] = set()
+    for entry in entries:
+        plat = entry.get("platform") if isinstance(entry, dict) else None
+        if not isinstance(plat, dict):
+            continue
+        os_name, arch = plat.get("os"), plat.get("architecture")
+        if os_name and arch and "unknown" not in (os_name, arch):
+            found.add(f"{os_name}/{arch}")
+    return found
+
+
+def config_platform(doc: object) -> str | None:
+    """`os/arch` from an image config, or None when it names neither."""
+    if not isinstance(doc, dict):
+        return None
+    os_name, arch = doc.get("os"), doc.get("architecture")
+    return f"{os_name}/{arch}" if os_name and arch else None
+
+
+def ref_platforms(ref: str) -> tuple[set[str] | None, str]:
+    """(os/arch set, error) for a full image ref, read with `docker buildx imagetools`.
+
+    The same registry path and credentials as ref_digest. An index lists its
+    platforms; a single-manifest image lists none, so its config is read for the
+    one platform it was built for.
+    """
+    raw, err = _imagetools(ref, "--raw")
+    if raw is None:
+        return None, err
+    try:
+        found = index_platforms(json.loads(raw))
+    except json.JSONDecodeError as exc:
+        return None, f"unreadable manifest: {exc}"
+    if found is not None:
+        return found, ""
+    config, err = _imagetools(ref, "--format", "{{json .Image}}")
+    if config is None:
+        return None, err
+    try:
+        single = config_platform(json.loads(config))
+    except json.JSONDecodeError as exc:
+        return None, f"unreadable image config: {exc}"
+    if single is None:
+        return None, "image config names no os/architecture"
+    return {single}, ""
 
 
 def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None:
