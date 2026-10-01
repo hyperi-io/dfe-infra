@@ -2158,6 +2158,10 @@ stacks:
       # ghcr.io/hyperi-io/culvert:v2.1.15. Manifest-LIST digest (amd64 + arm64),
       # read via `oras manifest fetch --descriptor`.
       culvert: "sha256:a58a2ee3daeffc7cbb72deb1d58968441fa7507c9959395cf1824671aebbaf0b"
+      # ghcr.io/hyperi-io/dfe-toolbox-base, tagged by the family pin
+      # toolbox.dfe-toolbox (v1.0.0). Index digest (amd64 + arm64), built
+      # 2026-09-28, read via `docker buildx imagetools inspect`.
+      dfe-toolbox-base: "sha256:d0c9385a464a931cf43825956460ecbf76fdbe034d9d803f101c67051d2b0b8d"
 
     # Digests for the DOCKER-path third-party plain images -- the immutable half
     # of the tag@sha256 pin that `dfe-stack render --target docker` emits. Keyed

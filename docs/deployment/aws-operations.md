@@ -65,12 +65,8 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   cooldown rather than as unwatched drift on every reconcile. A deployment
   under a different image policy overrides `karpenter.nodeClass.amiAlias` in
   a values overlay rather than editing this chart's default.
-- Every pinned image is checked for both `linux/amd64` and `linux/arm64`
-  manifests (`scripts/check_image_arch.py`) -- an image missing either pulls
-  fine and only fails at container start. The one exception the stack works
-  around rather than ships: the Cruise Control UI's only credible
-  third-party image is amd64-only, so DFE fetches its static release
-  tarball at pod start instead of running that image at all.
+- Images are checked for both `linux/amd64` and `linux/arm64` manifests, because an image missing either pulls fine and only fails at container start. CI runs `scripts/check_image_arch.py --third-party-only` on every pin change, over the public third-party services and operators in its tables, with no registry credential. `dfe-stack release-gate` reads the private DFE images by digest, with a GHCR credential, before a release-maturity stack ships. Images pulled by the other bootstrap and add-on pins -- Argo CD, Valkey, local-path-provisioner, MetalLB, external-dns, metrics-server, Reloader, Karpenter, the AWS Load Balancer Controller and Strimzi's Kafka broker -- are not checked.
+- The one exception the stack works around rather than ships: the Cruise Control UI's only credible third-party image is amd64-only, so DFE fetches its static release tarball at pod start instead of running that image at all.
 
 ## Admin UI exposure
 

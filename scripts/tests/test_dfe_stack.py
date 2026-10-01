@@ -139,6 +139,19 @@ def test_the_image_list_includes_an_image_versioned_under_content() -> None:
     expect("an unpublished app stays out", "unshipped" not in refs, f"{refs}")
 
 
+def test_the_toolbox_base_image_takes_the_family_tag() -> None:
+    """The base image publishes as dfe-toolbox-base under toolbox.dfe-toolbox, a
+    family pin with a different name, so neither apps: nor content: holds it."""
+    pins = {"toolbox": {"dfe-toolbox": "v1.0.0"}, "digests": {"dfe-toolbox-base": "sha256:ccc"}}
+    refs = stack.app_images(pins, "registry.example/org")
+    expect(
+        "the base image is listed with the family tag and its own digest",
+        refs.get("dfe-toolbox-base") == "registry.example/org/dfe-toolbox-base:v1.0.0@sha256:ccc",
+        f"{refs}",
+    )
+    expect("so it is not reported untagged", stack.untagged_digests(pins) == [], f"{stack.untagged_digests(pins)}")
+
+
 def test_the_committed_image_list_carries_every_digest() -> None:
     """The repo-level invariant: every pinned DFE image reaches the mirror list."""
     _, pins = stack.stack_pins(stack.load_root(), None)
