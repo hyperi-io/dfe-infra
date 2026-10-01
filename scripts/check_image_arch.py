@@ -21,23 +21,27 @@ The registry read is registry_pins.ref_platforms, the one `dfe-stack platforms`
 and `dfe-stack release-gate` use, so there is a single definition of what an
 image's platforms are.
 
-Three image classes are checked:
+The image classes checked:
 
 - DFE images: every `digests:` key, read by its pinned digest, from the list
   `dfe-stack images` prints. An app with no digest is NOT YET PUBLISHED and is
   reported, not failed. A private package needs a GHCR credential in the
   docker credential store.
-- Third-party services from `services:` through the same key-to-repository
-  table `dfe-stack` renders the docker path from, plus the k8s-only images
-  listed in K8S_ONLY below.
-- Operator images whose chart version IS the app version (strimzi, the
-  redpanda operator, envoy-gateway). Operators whose chart resolves a
-  different appVersion are resolved with `helm show chart` only when
-  --resolve-charts is given, because that needs helm and the chart repos.
+- Third-party images a pin tags directly: `services:` through the same
+  key-to-repository table `dfe-stack` renders the docker path from, plus the
+  k8s-path images listed in K8S_ONLY below, which include the plain manifests
+  bootstrap.sh applies.
+- Images installed by a chart. Where the chart version IS the image tag
+  (cert-manager, external-secrets, strimzi, the redpanda operator,
+  envoy-gateway) no lookup is needed. Every other chart's appVersion is read
+  with `helm show chart` only when --resolve-charts is given, because that
+  needs helm and the chart repos. One chart can run several images.
+- Strimzi's Kafka broker image, whose tag joins the operator and Kafka pins.
 
 The third-party images are public, so --third-party-only reads them with no
-credential at all. CI runs it that way on every pin change (helm-lint.yml);
-`dfe-stack release-gate` gates the DFE images.
+credential at all. CI runs it that way on every pin change (helm-lint.yml) and
+in the stack release gate (release.yml); `dfe-stack release-gate` gates the
+DFE images.
 
 Network-dependent by design, so it is NOT part of the offline drift check.
 
@@ -60,32 +64,113 @@ import registry_pins
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# k8s-only third-party images that dfe-stack's docker table does not carry:
-# versions.yaml services key -> image repository.
+# Images the k8s path pulls that dfe-stack's docker table does not name, each
+# tagged by its pin as it stands: versions.yaml section.key -> image repository.
 K8S_ONLY = {
-    "nginx-unprivileged": "nginxinc/nginx-unprivileged",
-    "git-sync": "registry.k8s.io/git-sync/git-sync",
-    "forgejo": "code.forgejo.org/forgejo/forgejo",
+    "services.nginx-unprivileged": "nginxinc/nginx-unprivileged",
+    "services.git-sync": "registry.k8s.io/git-sync/git-sync",
+    "services.forgejo": "code.forgejo.org/forgejo/forgejo",
+    # helm/charts/clickhouse-cluster runs Keeper on the server's own tag.
+    "services.clickhouse-version": "docker.io/clickhouse/clickhouse-keeper",
+    # The image bootstrap/templates/valkey.yaml runs, which the drift check holds to this pin.
+    "bootstrap.valkey": "valkey/valkey",
+    # The image upstream's deploy/local-path-storage.yaml names at the pinned git tag.
+    "bootstrap.local-path-provisioner": "docker.io/rancher/local-path-provisioner",
 }
 
-# Operators whose chart version IS the image tag, so no chart lookup is needed:
-# versions.yaml key (under bootstrap: or operators:) -> (image repository, the
-# tag prefix the registry expects when the pin omits it).
+# Charts whose version IS the image tag, so no chart lookup is needed:
+# versions.yaml key (under bootstrap: or operators:) -> (image repositories the
+# chart runs, the tag prefix the registry expects when the pin omits it).
 OPERATOR_TAG_IS_CHART = {
-    "cert-manager": ("quay.io/jetstack/cert-manager-controller", "v"),
-    "external-secrets": ("ghcr.io/external-secrets/external-secrets", "v"),
-    "strimzi-kafka-operator": ("quay.io/strimzi/operator", ""),
-    "redpanda-operator": ("docker.redpanda.com/redpandadata/redpanda-operator", "v"),
-    "envoy-gateway": ("docker.io/envoyproxy/gateway", ""),
+    "cert-manager": (
+        (
+            "quay.io/jetstack/cert-manager-controller",
+            "quay.io/jetstack/cert-manager-cainjector",
+            "quay.io/jetstack/cert-manager-webhook",
+            "quay.io/jetstack/cert-manager-startupapicheck",
+        ),
+        "v",
+    ),
+    "external-secrets": (("ghcr.io/external-secrets/external-secrets",), "v"),
+    "strimzi-kafka-operator": (("quay.io/strimzi/operator",), ""),
+    "redpanda-operator": (("docker.redpanda.com/redpandadata/redpanda-operator",), "v"),
+    "envoy-gateway": (("docker.io/envoyproxy/gateway",), ""),
 }
 
-# Operators whose chart resolves its own appVersion: key -> (chart reference,
-# classic repo URL or None for OCI, image repository). Read with --resolve-charts.
+# Charts that tag their images with their own appVersion: key -> (chart
+# reference, classic repo URL or None for OCI, image repositories the chart
+# runs, the prefix the chart's template puts on an appVersion that lacks it).
+# Read with --resolve-charts.
 OPERATOR_VIA_CHART = {
-    "keda": ("keda", "https://kedacore.github.io/charts", "ghcr.io/kedacore/keda"),
-    "clickhouse-operator": ("oci://ghcr.io/clickhouse/clickhouse-operator-helm", None, "ghcr.io/clickhouse/clickhouse-operator"),
-    "cloudnative-pg": ("oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg", None, "ghcr.io/cloudnative-pg/cloudnative-pg"),
+    "keda": (
+        "keda",
+        "https://kedacore.github.io/charts",
+        (
+            "ghcr.io/kedacore/keda",
+            "ghcr.io/kedacore/keda-metrics-apiserver",
+            "ghcr.io/kedacore/keda-admission-webhooks",
+        ),
+        "",
+    ),
+    "clickhouse-operator": (
+        "oci://ghcr.io/clickhouse/clickhouse-operator-helm",
+        None,
+        ("ghcr.io/clickhouse/clickhouse-operator",),
+        "",
+    ),
+    "cloudnative-pg": (
+        "oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg",
+        None,
+        ("ghcr.io/cloudnative-pg/cloudnative-pg",),
+        "",
+    ),
+    "argocd": (
+        "argo-cd",
+        "https://argoproj.github.io/argo-helm",
+        ("quay.io/argoproj/argocd",),
+        "v",
+    ),
+    "metallb": (
+        "metallb",
+        "https://metallb.github.io/metallb",
+        ("quay.io/metallb/controller", "quay.io/metallb/speaker"),
+        "v",
+    ),
+    "external-dns": (
+        "external-dns",
+        "https://kubernetes-sigs.github.io/external-dns/",
+        ("registry.k8s.io/external-dns/external-dns",),
+        "v",
+    ),
+    "metrics-server": (
+        "metrics-server",
+        "https://kubernetes-sigs.github.io/metrics-server/",
+        ("registry.k8s.io/metrics-server/metrics-server",),
+        "v",
+    ),
+    "reloader": (
+        "reloader",
+        "https://stakater.github.io/stakater-charts",
+        ("ghcr.io/stakater/reloader",),
+        "v",
+    ),
+    "karpenter": (
+        "oci://public.ecr.aws/karpenter/karpenter",
+        None,
+        ("public.ecr.aws/karpenter/controller",),
+        "",
+    ),
+    "aws-load-balancer-controller": (
+        "aws-load-balancer-controller",
+        "https://aws.github.io/eks-charts",
+        ("public.ecr.aws/eks/aws-load-balancer-controller",),
+        "v",
+    ),
 }
+
+# Strimzi runs its brokers from this repository, tagged
+# <operators.strimzi-kafka-operator>-kafka-<services.kafka-version>.
+STRIMZI_KAFKA_IMAGE = "quay.io/strimzi/kafka"
 
 
 def _load_dfe_stack():
@@ -133,6 +218,20 @@ def _section(stack_map: object, name: str) -> dict[str, str]:
     return {str(k): str(v) for k, v in section.items()}
 
 
+def prefixed(tag: str, prefix: str) -> str:
+    """The tag carrying the prefix the registry expects, added only where it is missing."""
+    return tag if not prefix or tag.startswith(prefix) else prefix + tag
+
+
+def _chart_pin(pins: dict[str, str], key: str) -> tuple[str, str]:
+    """(section.key label, version) for a chart pinned under operators: or bootstrap:."""
+    for section in ("operators", "bootstrap"):
+        version = pins.get(f"{section}.{key}")
+        if version:
+            return f"{section}.{key}", version
+    return "", ""
+
+
 def image_refs(
     stack_map: dict, resolve_charts: bool, third_party_only: bool = False
 ) -> tuple[list[tuple[str, str]], list[str], list[str]]:
@@ -160,35 +259,43 @@ def image_refs(
             for app in dfe_stack.unpublished_apps(stack_map)
         ]
 
-    services = _section(stack_map, "services")
-    thirdparty = {key: repo for key, _var, repo in dfe_stack._DOCKER_THIRDPARTY}
-    thirdparty.update(K8S_ONLY)
-    for key, repo in sorted(thirdparty.items()):
-        tag = services.get(key)
+    pins = {
+        f"{name}.{key}": value
+        for name in ("services", "bootstrap", "operators")
+        for key, value in _section(stack_map, name).items()
+    }
+    tagged = [(f"services.{key}", repo) for key, _var, repo in dfe_stack._DOCKER_THIRDPARTY]
+    tagged += K8S_ONLY.items()
+    for path, repo in sorted(tagged):
+        tag = pins.get(path)
         if tag:
-            refs.append((f"services.{key}", f"{repo}:{tag}"))
+            refs.append((path, f"{repo}:{tag}"))
 
-    # cert-manager, external-secrets and argocd are pinned under bootstrap:,
-    # the rest under operators:; one lookup covers both.
-    operators = {**_section(stack_map, "bootstrap"), **_section(stack_map, "operators")}
-    for key, (repo, prefix) in sorted(OPERATOR_TAG_IS_CHART.items()):
-        tag = operators.get(key)
-        if tag:
-            full_tag = tag if not prefix or tag.startswith(prefix) else prefix + tag
-            refs.append((f"operators.{key}", f"{repo}:{full_tag}"))
-    for key, (chart_ref, repo_url, repo) in sorted(OPERATOR_VIA_CHART.items()):
-        chart_version = operators.get(key)
+    for key, (repos, prefix) in sorted(OPERATOR_TAG_IS_CHART.items()):
+        label, chart_version = _chart_pin(pins, key)
+        if chart_version:
+            refs += [(label, f"{repo}:{prefixed(chart_version, prefix)}") for repo in repos]
+    for key, (chart_ref, repo_url, repos, prefix) in sorted(OPERATOR_VIA_CHART.items()):
+        label, chart_version = _chart_pin(pins, key)
         if not chart_version:
             continue
         if not resolve_charts:
-            skipped.append(f"operators.{key}: chart {chart_version} resolves its own appVersion; pass --resolve-charts")
+            skipped.append(
+                f"{label}: chart {chart_version} resolves its own appVersion; pass --resolve-charts"
+            )
             continue
         try:
             app_version = chart_app_version(chart_ref, repo_url, chart_version)
         except RuntimeError as err:
-            broken.append(f"operators.{key}: chart {chart_version} did not resolve ({err})")
+            broken.append(f"{label}: chart {chart_version} did not resolve ({err})")
             continue
-        refs.append((f"operators.{key}", f"{repo}:{app_version}"))
+        refs += [(label, f"{repo}:{prefixed(app_version, prefix)}") for repo in repos]
+
+    operator = pins.get("operators.strimzi-kafka-operator")
+    kafka = pins.get("services.kafka-version")
+    if operator and kafka:
+        label = "operators.strimzi-kafka-operator+services.kafka-version"
+        refs.append((label, f"{STRIMZI_KAFKA_IMAGE}:{operator}-kafka-{kafka}"))
     return refs, skipped, broken
 
 

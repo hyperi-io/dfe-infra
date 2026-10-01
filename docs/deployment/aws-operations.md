@@ -65,7 +65,8 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   cooldown rather than as unwatched drift on every reconcile. A deployment
   under a different image policy overrides `karpenter.nodeClass.amiAlias` in
   a values overlay rather than editing this chart's default.
-- Images are checked for both `linux/amd64` and `linux/arm64` manifests, because an image missing either pulls fine and only fails at container start. CI runs `scripts/check_image_arch.py --third-party-only` on every pin change, over the public third-party services and operators in its tables, with no registry credential. `dfe-stack release-gate` reads the private DFE images by digest, with a GHCR credential, before a release-maturity stack ships. Images pulled by the other bootstrap and add-on pins -- Argo CD, Valkey, local-path-provisioner, MetalLB, external-dns, metrics-server, Reloader, Karpenter, the AWS Load Balancer Controller and Strimzi's Kafka broker -- are not checked.
+- Images are checked for both `linux/amd64` and `linux/arm64` manifests, because an image missing either pulls fine and only fails at container start. `scripts/check_image_arch.py --third-party-only --resolve-charts` reads every third-party image a `bootstrap:`, `operators:` or `services:` pin tags, Strimzi's Kafka broker included, with no registry credential. It runs on every pin change (`helm-lint.yml`) and in the stack release gate (`release.yml`). `dfe-stack release-gate` reads the DFE images by digest before a release-maturity stack ships.
+- Not checked: images whose tag no `versions.yaml` pin sets -- Dex, MetalLB's FRR pair, Forgejo's curl helper, local-path-provisioner's busybox and Envoy Gateway's proxy.
 - The one exception the stack works around rather than ships: the Cruise Control UI's only credible third-party image is amd64-only, so DFE fetches its static release tarball at pod start instead of running that image at all.
 
 ## Admin UI exposure
