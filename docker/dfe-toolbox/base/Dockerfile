@@ -24,7 +24,9 @@
 # scripts/check_versions_drift.py holds the two together, and
 # .github/workflows/toolbox-build.yml passes the SAME values as
 # --build-arg so a stale default here never reaches a pushed image.
-FROM debian:trixie-slim
+# The Debian base is tag@sha256 (toolbox.debian), declared before FROM so FROM can read it.
+ARG DEBIAN_TAG="trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a"
+FROM debian:${DEBIAN_TAG}
 
 ARG TARGETARCH
 

@@ -4,7 +4,7 @@
 #
 # ARG defaults mirror versions.yaml's toolbox.* pins (drift-checked); the
 # workflow overrides them at build time from the same source.
-ARG BASE_TAG="v1.0.0"
+ARG BASE_TAG="v1.0.1"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 

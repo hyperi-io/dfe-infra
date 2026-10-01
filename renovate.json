@@ -5,13 +5,13 @@
   "gitIgnoredAuthors": ["41898282+github-actions[bot]@users.noreply.github.com"],
   "customManagers": [
     {
-      "description": "The SSoT's own pins, SCOPED TO THE STACK UNDER DEVELOPMENT. An annotation comment above a `key: \"value\"` line names the image, so Renovate proposes the bump HERE and the propagator carries it to the mirrors. The org preset's identical manager covers .rs/.py/.sh only, which is why versions.yaml needs its own. The scoping is the first matchString and is not cosmetic: every stack block carries a complete copy of the pin set with the same annotations above it, so an unscoped manager reaches every block and would rewrite the frozen record of what shipped. Under matchStringsStrategy recursive each pattern runs over the WHOLE match of the one before it -- a named group narrows nothing -- so the first pattern has to START at the block it selects: a stack header, then only lines that are not another stack header, then the end of the file. Only the LAST block can reach `$`, and that is the stack `current` points at (test_dfe_stack.py holds both invariants). RE2 has no backreferences or lookarounds, so the block cannot be selected by name.",
+      "description": "The SSoT's own pins, SCOPED TO THE STACK UNDER DEVELOPMENT. An annotation comment above a `key: \"value\"` line names the image, so Renovate proposes the bump HERE and the propagator carries it to the mirrors. A value written tag@sha256 hands Renovate the digest as currentDigest, so it can move the digest under an unchanged tag. The org preset's identical manager covers .rs/.py/.sh only, which is why versions.yaml needs its own. The scoping is the first matchString and is not cosmetic: every stack block carries a complete copy of the pin set with the same annotations above it, so an unscoped manager reaches every block and would rewrite the frozen record of what shipped. Under matchStringsStrategy recursive each pattern runs over the WHOLE match of the one before it -- a named group narrows nothing -- so the first pattern has to START at the block it selects: a stack header, then only lines that are not another stack header, then the end of the file. Only the LAST block can reach `$`, and that is the stack `current` points at (test_dfe_stack.py holds both invariants). RE2 has no backreferences or lookarounds, so the block cannot be selected by name.",
       "customType": "regex",
       "managerFilePatterns": ["/^versions\\.yaml$/"],
       "matchStringsStrategy": "recursive",
       "matchStrings": [
         "\\n  [0-9][A-Za-z0-9_.-]*:\\n(?:(?:[^ \\n][^\\n]*| [^ \\n][^\\n]*|  [^0-9\\n][^\\n]*| {0,2})\\n)*[^\\n]*$",
-        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[^\\n]*\\n\\s*[A-Za-z0-9_.-]+:\\s*\"(?<currentValue>[^\"]+)\""
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[^\\n]*\\n\\s*[A-Za-z0-9_.-]+:\\s*\"(?<currentValue>[^\"@]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\""
       ],
       "versioningTemplate": "docker"
     }

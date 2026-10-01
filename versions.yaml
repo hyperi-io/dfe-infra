@@ -2225,7 +2225,9 @@ stacks:
     # tracks services.clickhouse-version directly, so the two can never drift.
     toolbox:
       # renovate: datasource=docker depName=ghcr.io/hyperi-io/dfe-toolbox-base
-      dfe-toolbox: "v1.0.0"              # the image family's own release tag (all four images move together). First cut.
+      dfe-toolbox: "v1.0.1"              # the image family's own release tag (all four images move together). A published family tag never moves, so every input change ships under a new one. v1.0.1: the Debian base pinned by digest (toolbox.debian); v1.0.0 stays published as it was.
+      # renovate: datasource=docker depName=debian
+      debian: "trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a"  # dfe-toolbox-base's FROM (docker/dfe-toolbox/base/Dockerfile ARG DEBIAN_TAG, drift-checked). Debian 13.7: trixie-slim, 13.7-slim and trixie-20260918-slim share this index digest, pushed 2026-09-19 (Docker Hub tag API) and read 2026-10-01 via `docker buildx imagetools inspect`. Renovate moves the digest under the trixie-slim tag; a move changes the base image's inputs, so it ships under a bumped dfe-toolbox family tag.
       # renovate: datasource=github-releases depName=kubernetes/kubernetes
       kubectl: "v1.35.8"                 # 2026-08-20 (clears the 7-day cooldown), verified via `curl -I https://dl.k8s.io/release/v1.35.8/bin/linux/amd64/kubectl`. Deliberately the MIDDLE of platform.kubernetes's 1.34-1.36 window, not the 1.36 ceiling: kubectl's official skew policy supports a server up to 1 minor away either side, and 1.35 is within that of both 1.34 and 1.36 while 1.36 would be 2 minors from a 1.34 server. renovate.json holds Renovate to 1.35.x; move that rule with the window.
       # renovate: datasource=github-releases depName=helm/helm
