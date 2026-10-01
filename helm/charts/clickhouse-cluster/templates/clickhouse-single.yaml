@@ -51,7 +51,7 @@ spec:
         fsGroup: 101            # clickhouse uid/gid in the official image
       containers:
         - name: clickhouse
-          image: "clickhouse/clickhouse-server:{{ .Values.clickhouse.version }}"
+          image: "clickhouse/clickhouse-server:{{ .Values.clickhouse.version }}{{ with .Values.clickhouse.imageDigest }}@{{ . }}{{ end }}"
           ports:
             - name: http
               containerPort: 8123

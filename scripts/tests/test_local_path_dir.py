@@ -7,12 +7,14 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Tests for bootstrap/local_path_dir.py.
+"""Tests for bootstrap/local_path_dir.py and bootstrap/local_path_image.py.
 
 The rewrite runs against a live ConfigMap, so the tests feed it the document
 upstream's manifest actually ships and assert the result is still a config the
 provisioner can read: the default entry moved, a hand-added per-node entry kept,
-and any key beside nodePathMap passed through.
+and any key beside nodePathMap passed through. The image pin is held to the same
+standard: only the provisioner reference moves, and a manifest it cannot pin is
+refused.
 
 Runs offline. Under pytest, and standalone via the main() runner at the bottom
 (matching the other tests in this dir).
@@ -169,6 +171,59 @@ def test_bootstrap_writes_the_helper_template_into_the_configmap():
     script = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
     assert '{"data": {"helperPod.yaml": sys.stdin.read()}}' in script
     assert '<"${TEMPLATES_DIR}/local-path-helper-pod.yaml"' in script
+
+
+local_path_image = _load("local_path_image")
+
+PINNED_DIGEST = "sha256:" + "1" * 64
+
+# The provisioner Deployment's container from the same manifest, plus the helper
+# pod's busybox line, which must come through untouched.
+UPSTREAM_MANIFEST = """      containers:
+        - name: local-path-provisioner
+          image: docker.io/rancher/local-path-provisioner:v0.0.36
+          imagePullPolicy: IfNotPresent
+  helperPod.yaml: |-
+      containers:
+      - name: helper-pod
+        image: docker.io/library/busybox
+"""
+
+
+def test_the_provisioner_image_is_pinned_and_nothing_else_moves():
+    pinned = local_path_image.pin(UPSTREAM_MANIFEST, "v0.0.36", PINNED_DIGEST)
+    want = UPSTREAM_MANIFEST.replace(
+        "local-path-provisioner:v0.0.36", f"local-path-provisioner:v0.0.36@{PINNED_DIGEST}"
+    )
+    assert pinned == want
+
+
+def test_a_manifest_that_does_not_name_the_pinned_tag_is_refused():
+    """A moved upstream manifest must fail the install, not apply an unpinned image."""
+    for manifest in (UPSTREAM_MANIFEST.replace("v0.0.36", "v0.0.37"), UPSTREAM_MANIFEST * 2):
+        try:
+            local_path_image.pin(manifest, "v0.0.36", PINNED_DIGEST)
+        except ValueError:
+            continue
+        raise AssertionError("expected a ValueError")
+
+
+def test_a_malformed_digest_is_refused():
+    for digest in ("", "sha256:abc", "1" * 64, PINNED_DIGEST.upper()):
+        try:
+            local_path_image.pin(UPSTREAM_MANIFEST, "v0.0.36", digest)
+        except ValueError:
+            continue
+        raise AssertionError(f"{digest!r} was accepted")
+
+
+def test_bootstrap_applies_the_pinned_manifest_not_the_upstream_url():
+    """Applying the URL directly would start a pod pulling the bare tag."""
+    script = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
+    assert "services-digests.local-path-provisioner" in script
+    assert 'local_path_image.py" --version "${LOCAL_PATH_VERSION}" --digest "${local_path_digest}"' in script
+    assert "| kubectl apply -f -" in script
+    assert "kubectl apply -f \"https://raw.githubusercontent.com/rancher/local-path-provisioner" not in script
 
 
 # --- standalone runner (mirrors the other tests in this dir) ------------------

@@ -256,7 +256,7 @@ spec:
     spec:
       containers:
         - name: pause
-          image: registry.k8s.io/pause:3.9
+          image: registry.k8s.io/pause:3.9@sha256:7031c1b283388d2c2e09b57badb803c05ebed362dc88d84b480cc47f72a21097
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 50m, memory: 32Mi } }
 ---
 apiVersion: keda.sh/v1alpha1

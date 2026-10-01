@@ -212,13 +212,16 @@ def test_fix_is_a_noop_when_nothing_drifts() -> None:
 def test_fix_propagates_one_ssot_key_to_every_mirror() -> None:
     """One SSoT bump must reach ALL of a key's mirrors, not just Renovate's one.
 
-    services.clickhouse-version has four: the server version and the keeper tag
-    in values.yaml, the chart appVersion, and the dfe-toolbox base image's
+    A ClickHouse lift moves services.clickhouse-version and, by constraints rule
+    clickhouse-keeper-server-pairing, services.clickhouse-keeper with it. Between
+    them they have four mirrors: the server version and the keeper tag in
+    values.yaml, the chart appVersion, and the dfe-toolbox base image's
     clickhouse-client build ARG. Only the keeper tag is helm-values, so Renovate
     could never have carried the other three.
     """
     versions = dict(drift.load_versions())
     versions["services.clickhouse-version"] = "26.3.17.110"
+    versions["services.clickhouse-keeper"] = "26.3.17.110"
 
     writes, fixed, refused = drift.plan_fix(versions)
     expect("propagation refuses nothing on a plain bump", refused == [], f"{refused}")
@@ -643,7 +646,7 @@ def test_fix_refuses_a_stack_that_is_not_current() -> None:
 def test_pending_mirrors_is_exactly_the_documented_rc14_set() -> None:
     """Widening this list is the cheapest way to make a real drift failure go
     away, so it has to be a reviewed edit rather than a quiet one."""
-    expect("PENDING_MIRRORS holds the fourteen rc.14 patterns and no more",
+    expect("PENDING_MIRRORS holds the eighteen rc.14 patterns and no more",
            set(drift.PENDING_MIRRORS) == {
                "operators.karpenter",
                "operators.aws-load-balancer-controller",
@@ -654,6 +657,10 @@ def test_pending_mirrors_is_exactly_the_documented_rc14_set() -> None:
                "services-digests.busybox",
                "services.envoy-gateway-proxy",
                "services-digests.envoy-gateway-proxy",
+               "services.clickhouse-keeper",
+               "services-digests.clickhouse-keeper",
+               "services-digests.forgejo",
+               "services-digests.valkey",
                "toolbox.*",
                "providers.hashicorp-aws",
                "providers.confluentinc-confluent",

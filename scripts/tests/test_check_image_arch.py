@@ -29,6 +29,23 @@ import check_image_arch as arch  # noqa: E402
 # by a family pin, a digest with no tag, third-party services, the bootstrap
 # manifests' images, charts tagged by their version and a chart read for its
 # appVersion.
+_THIRD_PARTY_TAGS = {
+    "services": {
+        "kafbat": "v1.5.0",
+        "git-sync": "v4.7.1",
+        "clickhouse-version": "26.3.32.14",
+        "clickhouse-keeper": "26.3.32.14",
+        "kafka-version": "4.3.1",
+    },
+    "bootstrap": {"valkey": "8.1.9-alpine", "local-path-provisioner": "v0.0.36"},
+}
+
+
+def _digest(key: str) -> str:
+    """A well-formed digest unique to one pin, so a mixed-up pair is visible."""
+    return "sha256:" + format(sum(map(ord, key)), "064x")
+
+
 _PINS = {
     "apps": {"an-app": "v1.0.0", "unshipped": "v0.1.0"},
     "toolbox": {"dfe-toolbox": "v2.0.0"},
@@ -37,17 +54,14 @@ _PINS = {
         "dfe-toolbox-base": "sha256:bbb",
         "orphan": "sha256:ccc",
     },
-    "services": {
-        "kafbat": "v1.5.0",
-        "git-sync": "v4.7.1",
-        "clickhouse-version": "26.3.32.14",
-        "kafka-version": "4.3.1",
+    "services": dict(_THIRD_PARTY_TAGS["services"]),
+    "services-digests": {
+        key: _digest(key) for section in _THIRD_PARTY_TAGS.values() for key in section
     },
     "bootstrap": {
         "cert-manager": "v1.21.2",
         "argocd": "10.9.0",
-        "valkey": "8.1.9-alpine",
-        "local-path-provisioner": "v0.0.36",
+        **_THIRD_PARTY_TAGS["bootstrap"],
     },
     "operators": {"strimzi-kafka-operator": "1.2.0", "keda": "2.20.1"},
 }
@@ -99,10 +113,14 @@ def test_a_digest_with_no_tag_fails() -> None:
 
 def test_third_party_images_come_from_the_shared_tables() -> None:
     refs, _, _ = _refs()
-    expect("a docker-path service", ("services.kafbat", "ghcr.io/kafbat/kafka-ui:v1.5.0") in refs, f"{refs}")
     expect(
-        "a k8s-only service",
-        ("services.git-sync", "registry.k8s.io/git-sync/git-sync:v4.7.1") in refs,
+        "a docker-path service, by the digest a deploy pulls",
+        ("services.kafbat", f"ghcr.io/kafbat/kafka-ui:v1.5.0@{_digest('kafbat')}") in refs,
+        f"{refs}",
+    )
+    expect(
+        "a k8s-only service, by its digest",
+        ("services.git-sync", f"registry.k8s.io/git-sync/git-sync:v4.7.1@{_digest('git-sync')}") in refs,
         f"{refs}",
     )
     expect(
@@ -117,23 +135,50 @@ def test_third_party_images_come_from_the_shared_tables() -> None:
     )
 
 
-def test_bootstrap_manifest_images_take_their_pin_as_the_tag() -> None:
+def test_bootstrap_manifest_images_are_read_by_their_digest() -> None:
     refs, _, _ = _refs()
-    expect("valkey", ("bootstrap.valkey", "valkey/valkey:8.1.9-alpine") in refs, f"{refs}")
+    expect(
+        "valkey",
+        ("bootstrap.valkey", f"valkey/valkey:8.1.9-alpine@{_digest('valkey')}") in refs,
+        f"{refs}",
+    )
     expect(
         "local-path-provisioner",
-        ("bootstrap.local-path-provisioner", "docker.io/rancher/local-path-provisioner:v0.0.36") in refs,
+        (
+            "bootstrap.local-path-provisioner",
+            f"docker.io/rancher/local-path-provisioner:v0.0.36@{_digest('local-path-provisioner')}",
+        )
+        in refs,
         f"{refs}",
+    )
+
+
+def test_a_docker_path_service_with_no_digest_fails() -> None:
+    """A deploy pulls these by digest, so a tag alone is not what runs."""
+    digests = {k: v for k, v in _PINS["services-digests"].items() if k != "kafka-version"}
+    refs, _, broken = arch.image_refs({**_PINS, "services-digests": digests}, resolve_charts=False)
+    expect(
+        "the tag alone is not read",
+        not any(label == "services.kafka-version" for label, _ in refs),
+        f"{refs}",
+    )
+    expect(
+        "the missing digest is a failure, named by its key",
+        any("services-digests.kafka-version" in b for b in broken),
+        f"{broken}",
     )
 
 
 def test_one_pin_tags_every_image_its_chart_runs() -> None:
     refs, _, _ = _refs()
-    clickhouse = sorted(r for label, r in refs if label == "services.clickhouse-version")
+    clickhouse = sorted(r for label, r in refs if label.startswith("services.clickhouse-"))
     expect(
-        "the ClickHouse pin reads the server and Keeper",
+        "the ClickHouse server and Keeper are each read by their own pin",
         clickhouse
-        == ["clickhouse/clickhouse-server:26.3.32.14", "docker.io/clickhouse/clickhouse-keeper:26.3.32.14"],
+        == [
+            f"clickhouse/clickhouse-server:26.3.32.14@{_digest('clickhouse-version')}",
+            f"docker.io/clickhouse/clickhouse-keeper:26.3.32.14@{_digest('clickhouse-keeper')}",
+        ],
         f"{clickhouse}",
     )
     cert_manager = sorted(r for label, r in refs if label == "bootstrap.cert-manager")
@@ -227,13 +272,13 @@ _BUSYBOX_DIGEST = "sha256:" + "b" * 64
 def test_a_digest_pinned_image_is_read_by_its_digest() -> None:
     pins = {
         **_PINS,
-        "services": {**_PINS["services"], "busybox": "1.36.1"},
-        "services-digests": {"busybox": _BUSYBOX_DIGEST},
+        "services": {**_PINS["services"], "busybox": "1.38.0"},
+        "services-digests": {**_PINS["services-digests"], "busybox": _BUSYBOX_DIGEST},
     }
     refs, _, broken = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
     expect(
         "the deployed tag@digest is what the registry is asked about",
-        ("services.busybox", f"docker.io/library/busybox:1.36.1@{_BUSYBOX_DIGEST}") in refs,
+        ("services.busybox", f"docker.io/library/busybox:1.38.0@{_BUSYBOX_DIGEST}") in refs,
         f"{refs}",
     )
     expect("and nothing is broken", broken == [], f"{broken}")

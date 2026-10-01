@@ -57,6 +57,7 @@ spec:
       enabled: false
     statefulset:
       replicas: {{ $replicas }}
+    # The operator's chart refuses an image.tag that is not bare semver, so this CR cannot carry kafka.redpanda.image.digest.
     image:
       repository: {{ .Values.kafka.redpanda.image.repository }}
       tag: {{ .Values.kafka.redpanda.image.tag }}

@@ -40,7 +40,10 @@
         "ghcr.io/ferretdb/postgres-documentdb",
         "otel/opentelemetry-collector-contrib",
         "envoyproxy/envoy",
-        "docker.io/envoyproxy/envoy"
+        "docker.io/envoyproxy/envoy",
+        "nginxinc/nginx-unprivileged",
+        "registry.k8s.io/git-sync/git-sync",
+        "code.forgejo.org/forgejo/forgejo"
       ],
       "enabled": false
     },
