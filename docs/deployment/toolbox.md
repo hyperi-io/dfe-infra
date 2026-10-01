@@ -9,12 +9,7 @@ default.
 
 ## The image
 
-`docker/dfe-toolbox/` builds four images (`linux/amd64` and `linux/arm64`),
-pushed by `.github/workflows/toolbox-build.yml` to
-`ghcr.io/hyperi-io/dfe-toolbox-{base,aws,gcp,azure}`. All four are Debian
-`trixie-slim`, run as uid/gid 1000, and share one entrypoint. gcloud and az
-each add close to 1 GB, so they stay out of the base -- `-aws`, `-gcp` and
-`-azure` each `FROM` the base image and add one cloud's CLI on top.
+`docker/dfe-toolbox/` builds four images (`linux/amd64` and `linux/arm64`), pushed by `.github/workflows/toolbox-build.yml` to `ghcr.io/hyperi-io/dfe-toolbox-{base,aws,gcp,azure}`. All four are Debian `trixie-slim`, pinned by digest (`toolbox.debian`), run as uid/gid 1000, and share one entrypoint. gcloud and az each add close to 1 GB, so they stay out of the base -- `-aws`, `-gcp` and `-azure` each `FROM` the base image and add one cloud's CLI on top.
 
 **Base:** kubectl, helm, argocd (its CLI pinned to the ArgoCD *app* version
 `bootstrap.argocd`'s chart deploys, so it stays inside its supported skew),
@@ -24,10 +19,7 @@ scripts need a full Kafka install plus a JVM), and jq/yq/openssl/curl/dig/nc.
 No `tcpdump`: the pod is unprivileged with no `CAP_NET_RAW`/`CAP_NET_ADMIN`,
 so the binary would be dead weight.
 
-Every version is a Docker build ARG defaulting to a `versions.yaml`
-`toolbox.*` pin; `scripts/check_versions_drift.py` holds each Dockerfile's
-default to its pin, and the build workflow overrides every one from the same
-source.
+Every version is a Docker build ARG defaulting to a `versions.yaml` `toolbox.*` pin; `scripts/check_versions_drift.py` holds each Dockerfile's default to its pin, and the build workflow overrides every one from the same source. A published family tag (`toolbox.dfe-toolbox`) never moves: a change to any image's inputs ships under a bumped tag, and the pull-request check fails until the bump is there.
 
 **Per-cloud:** `-aws` adds the AWS CLI v2 and the Session Manager plugin --
 AWS publishes no versioned plugin download, only a floating `latest`, so the

@@ -57,6 +57,7 @@ jobs:
       # ordering the split deliberately chose.
       pinned: ${{ steps.pins.outputs.pinned }}
       dfe_toolbox: ${{ steps.pins.outputs.DFE_TOOLBOX }}
+      debian: ${{ steps.pins.outputs.DEBIAN }}
       kubectl: ${{ steps.pins.outputs.KUBECTL }}
       helm: ${{ steps.pins.outputs.HELM }}
       argocd_cli: ${{ steps.pins.outputs.ARGOCD_CLI }}
@@ -84,6 +85,7 @@ jobs:
           v = load_versions()
           keys = [
               "toolbox.dfe-toolbox",
+              "toolbox.debian",
               "toolbox.kubectl",
               "toolbox.helm",
               "toolbox.argocd-cli",
@@ -131,6 +133,7 @@ jobs:
             --ref "${IMAGE_PREFIX}/dfe-toolbox-base:${TAG}" \
             --context docker/dfe-toolbox/base \
             --platform linux/amd64,linux/arm64 \
+            --build-arg DEBIAN_TAG="${{ needs.resolve.outputs.debian }}" \
             --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
             --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
             --build-arg ARGOCD_VERSION="${{ needs.resolve.outputs.argocd_cli }}" \
@@ -199,6 +202,7 @@ jobs:
             --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
             --context "${CONTEXT}" \
             --platform linux/amd64,linux/arm64 \
+            --build-arg DEBIAN_TAG="${{ needs.resolve.outputs.debian }}" \
             --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
             --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
             --build-arg ARGOCD_VERSION="${{ needs.resolve.outputs.argocd_cli }}" \

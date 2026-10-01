@@ -848,6 +848,7 @@ CHECKS += [
 # own, so there is only ever one ClickHouse version to keep in step with.
 _TOOLBOX_ARGS = [
     # (label, versions.yaml key, Dockerfile, ARG name)
+    ("toolbox base image Debian base", "toolbox.debian", "docker/dfe-toolbox/base/Dockerfile", "DEBIAN_TAG"),
     ("toolbox base image kubectl", "toolbox.kubectl", "docker/dfe-toolbox/base/Dockerfile", "KUBECTL_VERSION"),
     ("toolbox base image helm", "toolbox.helm", "docker/dfe-toolbox/base/Dockerfile", "HELM_VERSION"),
     ("toolbox base image argocd CLI", "toolbox.argocd-cli", "docker/dfe-toolbox/base/Dockerfile", "ARGOCD_VERSION"),

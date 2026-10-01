@@ -435,6 +435,36 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
     )
 
 
+def test_a_tag_at_digest_pin_hands_renovate_both_halves() -> None:
+    """The docker datasource reads a whole `tag@sha256:...` as one unparseable
+    version and proposes nothing, so the digest has to arrive as currentDigest."""
+    import re
+
+    manager, text = _renovate_manager()
+    if not manager:
+        return
+    inner = _as_python(manager["matchStrings"][-1])
+    matches = list(re.finditer(inner, _manager_region(manager, text)))
+    # A value holding `@` matches only with its digest captured; otherwise the
+    # every-annotation test above loses it.
+    digest_pinned = [m for m in matches if m.group("currentDigest")]
+    expect("the current stack carries a tag@sha256 pin", digest_pinned != [], "none found")
+    for m in digest_pinned:
+        name = m.group("depName")
+        expect(f"{name}'s tag carries no digest", "@" not in m.group("currentValue"), m.group(0))
+        expect(
+            f"{name}'s digest arrives as currentDigest",
+            re.fullmatch(r"sha256:[a-f0-9]{64}", m.group("currentDigest") or "") is not None,
+            m.group(0),
+        )
+    debian = [m for m in matches if m.group("depName") == "debian"]
+    expect(
+        "the toolbox Debian base is one of them",
+        len(debian) == 1 and debian[0].group("currentValue") == "trixie-slim",
+        f"{[m.group(0) for m in debian]}",
+    )
+
+
 def test_the_manager_reaches_one_stack_block_only() -> None:
     """The frozen blocks repeat most of the pin set under the same annotations, so
     an unscoped manager would rewrite the record of what shipped (#183). Renovate
