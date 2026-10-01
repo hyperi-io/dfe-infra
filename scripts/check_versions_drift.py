@@ -275,12 +275,26 @@ CHECKS += [
         Path("helm/charts/kafka/values.yaml"),
         r"redpandadata/redpanda\n\s*#[^\n]*\n\s*tag:\s*\"([^\"]+)\"",
     ),
+    # The single-mode StatefulSet pulls by it; the cluster-mode CR cannot carry it.
+    Check(
+        "redpanda broker digest (kafka values)",
+        "services-digests.redpanda-version",
+        Path("helm/charts/kafka/values.yaml"),
+        r'redpandadata/redpanda\n(?:\s*#[^\n]*\n)*\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # Kafka logical version (our kafka chart -> strimzi Kafka CR spec.kafka.version)
     Check(
         "kafka version (kafka values)",
         "services.kafka-version",
         Path("helm/charts/kafka/values.yaml"),
         r"name: dfe-kafka\n\s*version:\s*\"([^\"]+)\"",
+    ),
+    # apache/kafka at that version, which single mode and the MSK bootstrap Job run.
+    Check(
+        "kafka image digest (kafka values)",
+        "services-digests.kafka-version",
+        Path("helm/charts/kafka/values.yaml"),
+        r'name: dfe-kafka\n\s*version:[^\n]*\n(?:\s*#[^\n]*\n)*\s*imageDigest:\s*"([^"]+)"',
     ),
     # The kafka chart's own copy of the Strimzi operator version, which gates
     # kafka.storageModel=tiered-object at render time (spec.kafka.tieredStorage needs
@@ -322,7 +336,7 @@ CHECKS += [
         "cruise-control-ui server image digest (kafka values)",
         "services-digests.nginx-unprivileged",
         Path("helm/charts/kafka/values.yaml"),
-        r'digest:\s*"([^"]+)"',
+        r'nginx-unprivileged\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # kafbat (class D): chart value is tag@digest -- compare the TAG part to SSoT
     Check(
@@ -350,7 +364,7 @@ CHECKS += [
         "links image digest",
         "services-digests.nginx-unprivileged",
         Path("helm/charts/links/values.yaml"),
-        r'digest:\s*"([^"]+)"',
+        r'nginx-unprivileged\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     Check(
         "links chart appVersion",
@@ -368,12 +382,24 @@ CHECKS += [
         r'appVersion:\s*"([^"]+)"',
     ),
     Check(
+        "ferretdb image digest",
+        "services-digests.ferretdb",
+        Path("helm/charts/ferretdb/values.yaml"),
+        r'ferretdb/ferretdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
         "documentdb-pg image tag (ferretdb values)",
         "services.documentdb-pg",
         Path("helm/charts/ferretdb/values.yaml"),
         r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:\s*"([^"]+)"',
     ),
-    # ClickHouse chart values: server version + keeper tag
+    Check(
+        "documentdb-pg image digest (ferretdb values)",
+        "services-digests.documentdb-pg",
+        Path("helm/charts/ferretdb/values.yaml"),
+        r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    # ClickHouse chart values: server version and digest, keeper tag and digest
     Check(
         "clickhouse server version",
         "services.clickhouse-version",
@@ -381,12 +407,24 @@ CHECKS += [
         r"\n  version:\s*\"([^\"]+)\"",
     ),
     Check(
+        "clickhouse server image digest",
+        "services-digests.clickhouse-version",
+        Path("helm/charts/clickhouse-cluster/values.yaml"),
+        r'\n  imageDigest:\s*"([^"]+)"',
+    ),
+    Check(
         "clickhouse keeper tag",
-        "services.clickhouse-version",
+        "services.clickhouse-keeper",
         Path("helm/charts/clickhouse-cluster/values.yaml"),
         r"clickhouse-keeper\n\s*tag:\s*\"([^\"]+)\"",
     ),
-    # otel-collector: explicit image tag + chart appVersion
+    Check(
+        "clickhouse keeper digest",
+        "services-digests.clickhouse-keeper",
+        Path("helm/charts/clickhouse-cluster/values.yaml"),
+        r'clickhouse-keeper\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    # otel-collector: explicit image tag and digest + chart appVersion
     Check(
         "otel image tag",
         "services.otel-collector",
@@ -394,17 +432,29 @@ CHECKS += [
         r"opentelemetry-collector-contrib\n\s*tag:\s*\"([^\"]+)\"",
     ),
     Check(
+        "otel image digest",
+        "services-digests.otel-collector",
+        Path("helm/charts/otel-collector/values.yaml"),
+        r'opentelemetry-collector-contrib\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
         "otel chart appVersion",
         "services.otel-collector",
         Path("helm/charts/otel-collector/Chart.yaml"),
         r"appVersion:\s*\"([^\"]+)\"",
     ),
-    # valkey plain manifest image tag
+    # valkey plain manifest: one tag@sha256 string, both halves checked
     Check(
-        "valkey manifest image",
+        "valkey manifest image tag",
         "bootstrap.valkey",
         Path("bootstrap/templates/valkey.yaml"),
-        r"valkey/valkey:([^\s\"]+)",
+        r"valkey/valkey:([^\s\"@]+)@",
+    ),
+    Check(
+        "valkey manifest image digest",
+        "services-digests.valkey",
+        Path("bootstrap/templates/valkey.yaml"),
+        r"valkey/valkey:[^\s\"@]+@([^\s\"]+)",
     ),
     # services.forgejo cascades to the chart's appVersion: image.tag is empty,
     # so dfe-common.image falls back to it.
@@ -413,6 +463,12 @@ CHECKS += [
         "services.forgejo",
         Path("helm/charts/forgejo/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
+    ),
+    Check(
+        "forgejo image digest",
+        "services-digests.forgejo",
+        Path("helm/charts/forgejo/values.yaml"),
+        r'forgejo/forgejo\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # The four below were found by the reverse sweep, not by anyone adding them.
     # dfe-common.labels stamps app.kubernetes.io/version from .Chart.AppVersion
@@ -441,6 +497,12 @@ CHECKS += [
         "services.documentdb-pg",
         Path("helm/charts/cnpg-cluster/values.yaml"),
         r'postgres-documentdb\n\s*tag:\s*"([^"]+)"',
+    ),
+    Check(
+        "documentdb-pg image digest (cnpg values)",
+        "services-digests.documentdb-pg",
+        Path("helm/charts/cnpg-cluster/values.yaml"),
+        r'postgres-documentdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     Check(
         "kafbat chart appVersion",
@@ -860,7 +922,7 @@ UNCONSUMED: dict[str, str] = {
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
     "services.envoy-proxy": "docker path only; the k8s gateway runs services.envoy-gateway-proxy, a different (distroless) tag",
     "digests.*": "an app with no chart mirror yet -- a published app is checked against helm/charts/<app>/values.yaml image.digest instead",
-    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually",
+    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually, and bootstrap.sh reads local-path-provisioner's at runtime",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",
     "stack.*": "upgrade-graph metadata, not a version pin",
 }
@@ -932,6 +994,10 @@ PENDING_MIRRORS: dict[str, str] = {
     "services-digests.busybox": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "services.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "services-digests.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.clickhouse-keeper": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.clickhouse-keeper": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.forgejo": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.valkey": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
 }
 
 

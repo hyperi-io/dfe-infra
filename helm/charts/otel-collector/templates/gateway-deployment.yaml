@@ -24,7 +24,7 @@ spec:
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: otel-collector
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
           args: ["--config=/etc/otel/gateway-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           env:

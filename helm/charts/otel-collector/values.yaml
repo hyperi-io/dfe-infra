@@ -6,6 +6,8 @@ cloud: local
 image:
   repository: otel/opentelemetry-collector-contrib
   tag: "0.158.0"  # 2026-07-22 (7-day-compliant). Pinned explicitly, not via appVersion.
+  # == versions.yaml services-digests.otel-collector (drift-checked).
+  digest: "sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5"
   pullPolicy: IfNotPresent
 
 # The GATEWAY's pod securityContext. The contrib image ships USER 10001

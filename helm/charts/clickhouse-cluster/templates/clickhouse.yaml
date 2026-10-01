@@ -14,9 +14,10 @@ spec:
   shards: {{ .Values.clickhouse.shardsCount }}
   replicas: {{ .Values.clickhouse.replicas }}
   containerTemplate:
+    # The operator renders repository:tag and drops `hash` whenever a tag is set (its defaulting sets one), so the digest rides in the tag.
     image:
       repository: docker.io/clickhouse/clickhouse-server
-      tag: {{ .Values.clickhouse.version | quote }}
+      tag: "{{ .Values.clickhouse.version }}{{ with .Values.clickhouse.imageDigest }}@{{ . }}{{ end }}"
     resources:
       requests:
         cpu: {{ .Values.clickhouse.resources.requests.cpu }}

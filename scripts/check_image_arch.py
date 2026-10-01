@@ -27,12 +27,12 @@ The image classes checked:
   `dfe-stack images` prints. An app with no digest is NOT YET PUBLISHED and is
   reported, not failed. A private package needs a GHCR credential in the
   docker credential store.
-- Third-party images a pin tags directly: `services:` through the same
+- Third-party images a pin tags, each pinned tag@sha256 across that pin and the
+  same key under `services-digests:`: the `services:` keys in the
   key-to-repository table `dfe-stack` renders the docker path from, plus the
-  k8s-path images listed in K8S_ONLY below, which include the plain manifests
-  bootstrap.sh applies.
-- Third-party images pinned tag@sha256 across `services:` and
-  `services-digests:` (DIGEST_PINNED), read by the digest a deploy pulls.
+  k8s-path images in DIGEST_PINNED below, which include the plain manifests
+  bootstrap.sh applies. Each is read by the digest a deploy pulls, and a tag
+  with no digest is a failure.
 - Images installed by a chart. Where the chart version IS the image tag
   (cert-manager, external-secrets, strimzi, the redpanda operator,
   envoy-gateway) no lookup is needed. Every other chart's appVersion is read
@@ -76,27 +76,23 @@ import registry_pins
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Images the k8s path pulls that dfe-stack's docker table does not name, each
-# tagged by its pin as it stands: versions.yaml section.key -> image repository.
-K8S_ONLY = {
+# Images the k8s path pulls tag@sha256 that dfe-stack's docker table does not
+# name: versions.yaml section.key holding the tag -> image repository. The digest
+# sits under the same key in services-digests:.
+DIGEST_PINNED = {
     "services.nginx-unprivileged": "nginxinc/nginx-unprivileged",
     "services.git-sync": "registry.k8s.io/git-sync/git-sync",
     "services.forgejo": "code.forgejo.org/forgejo/forgejo",
-    # helm/charts/clickhouse-cluster runs Keeper on the server's own tag.
-    "services.clickhouse-version": "docker.io/clickhouse/clickhouse-keeper",
-    # The image bootstrap/templates/valkey.yaml runs, which the drift check holds to this pin.
-    "bootstrap.valkey": "valkey/valkey",
-    # The image upstream's deploy/local-path-storage.yaml names at the pinned git tag.
-    "bootstrap.local-path-provisioner": "docker.io/rancher/local-path-provisioner",
-}
-
-# Images pinned tag@sha256 with no chart version to derive them from: services key
-# (its digest under the same key in services-digests:) -> image repository.
-DIGEST_PINNED = {
+    # helm/charts/clickhouse-cluster's KeeperCluster.
+    "services.clickhouse-keeper": "docker.io/clickhouse/clickhouse-keeper",
     # bootstrap/templates/local-path-helper-pod.yaml, written over upstream's untagged helper.
-    "busybox": "docker.io/library/busybox",
+    "services.busybox": "docker.io/library/busybox",
     # The data-plane proxy both EnvoyProxy resources in helm/edge/gateway run.
-    "envoy-gateway-proxy": "docker.io/envoyproxy/envoy",
+    "services.envoy-gateway-proxy": "docker.io/envoyproxy/envoy",
+    # The image bootstrap/templates/valkey.yaml runs.
+    "bootstrap.valkey": "valkey/valkey",
+    # The image upstream's deploy/local-path-storage.yaml names, which bootstrap/local_path_image.py pins.
+    "bootstrap.local-path-provisioner": "docker.io/rancher/local-path-provisioner",
 }
 
 # Charts whose version IS the image tag, so no chart lookup is needed:
@@ -444,22 +440,18 @@ def image_refs(
         for name in ("services", "bootstrap", "operators")
         for key, value in _section(stack_map, name).items()
     }
-    tagged = [(f"services.{key}", repo) for key, _var, repo in dfe_stack._DOCKER_THIRDPARTY]
-    tagged += K8S_ONLY.items()
-    for path, repo in sorted(tagged):
-        tag = pins.get(path)
-        if tag:
-            refs.append((path, f"{repo}:{tag}"))
-
     digests = _section(stack_map, "services-digests")
-    for key, repo in sorted(DIGEST_PINNED.items()):
-        tag = pins.get(f"services.{key}")
+    pinned = [(f"services.{key}", repo) for key, _var, repo in dfe_stack._DOCKER_THIRDPARTY]
+    pinned += DIGEST_PINNED.items()
+    for path, repo in sorted(pinned):
+        tag = pins.get(path)
         if not tag:
             continue
+        key = path.split(".", 1)[1]
         if not digests.get(key):
-            broken.append(f"services.{key}: tag {tag} pinned with no services-digests.{key}")
+            broken.append(f"{path}: tag {tag} pinned with no services-digests.{key}")
             continue
-        refs.append((f"services.{key}", f"{repo}:{tag}@{digests[key]}"))
+        refs.append((path, f"{repo}:{tag}@{digests[key]}"))
 
     for name, (values_file, path) in sorted(CHART_VALUES_IMAGES.items()):
         label = f"{values_file} ({name})"

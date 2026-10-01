@@ -50,7 +50,7 @@ spec:
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: redpanda
-          image: "{{ .Values.kafka.redpanda.image.repository }}:{{ .Values.kafka.redpanda.image.tag }}"
+          image: "{{ .Values.kafka.redpanda.image.repository }}:{{ .Values.kafka.redpanda.image.tag }}{{ with .Values.kafka.redpanda.image.digest }}@{{ . }}{{ end }}"
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -184,7 +184,7 @@ spec:
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
         - name: kafka
-          image: "apache/kafka:{{ .Values.kafka.version }}"
+          image: "apache/kafka:{{ .Values.kafka.version }}{{ with .Values.kafka.imageDigest }}@{{ . }}{{ end }}"
           command: ["/bin/sh", "/mnt/config/entrypoint.sh"]
           env:
             - name: KAFKA_USER

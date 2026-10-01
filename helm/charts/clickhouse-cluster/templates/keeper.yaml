@@ -23,9 +23,10 @@ metadata:
 spec:
   replicas: {{ .Values.clickhouse.keeper.replicas }}
   containerTemplate:
+    # The operator renders repository:tag and drops `hash` whenever a tag is set (its defaulting sets one), so the digest rides in the tag.
     image:
       repository: {{ .Values.clickhouse.keeper.image.repository }}
-      tag: {{ .Values.clickhouse.keeper.image.tag | quote }}
+      tag: "{{ .Values.clickhouse.keeper.image.tag }}{{ with .Values.clickhouse.keeper.image.digest }}@{{ . }}{{ end }}"
     resources:
       requests:
         cpu: {{ .Values.clickhouse.keeper.resources.requests.cpu }}

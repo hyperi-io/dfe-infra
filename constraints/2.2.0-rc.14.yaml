@@ -42,6 +42,15 @@ rules:
     reason: "PLACEHOLDER bound -- the official clickhouse-operator 0.0.7 does not publish an explicit clickhouse-server compatibility range. Confirm the tested range and promote to error. Also verify the CRD kind (upstream docs say ClickHouseInstallation; our comment says ClickHouseCluster). NOTE: when-equals is an EXACT match, so this guard must be re-pointed on every clickhouse-operator bump or the rule silently stops firing."
     source: "https://github.com/ClickHouse/clickhouse-operator/releases"
 
+  clickhouse-keeper-server-pairing:
+    severity: "error"
+    when-key: "services.clickhouse-version"
+    when-equals: "26.3.32.14"
+    require-key: "services.clickhouse-keeper"
+    require-equals: "26.3.32.14"
+    reason: "Keeper ships in the ClickHouse release, and helm/charts/clickhouse-cluster runs the server and Keeper from the same one, so the two pins move as one. Error severity: a server bump leaves this when-equals guard dead, which fails --strict until the keeper pin and this rule are re-pointed together."
+    source: "https://github.com/ClickHouse/ClickHouse/releases"
+
   redpanda-operator-broker-pairing:
     severity: "warn"
     when-key: "operators.redpanda-operator"

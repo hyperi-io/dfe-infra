@@ -670,7 +670,14 @@ elif [[ -n "$(kubectl get storageclass -o name 2>/dev/null)" ]]; then
   echo "  StorageClass(es) present, none default -> using DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS}"
 else
   echo "  no StorageClass -> INSTALL local-path-provisioner ${LOCAL_PATH_VERSION}"
-  run kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
+  # Upstream's manifest names the provisioner by tag; it is pinned by digest before any pod can pull it.
+  local_path_digest=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" services-digests.local-path-provisioner)
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] local_path_image.py --version ${LOCAL_PATH_VERSION} --digest ${local_path_digest} | kubectl apply -f -"
+  else
+    python3 "${SCRIPT_DIR}/local_path_image.py" --version "${LOCAL_PATH_VERSION}" --digest "${local_path_digest}" \
+      | kubectl apply -f -
+  fi
   run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
   run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
   # Upstream's helper pod names busybox with no tag; ours pins it by digest (services.busybox).

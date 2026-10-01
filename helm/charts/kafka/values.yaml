@@ -33,6 +33,9 @@ kafka:
   provider: strimzi
   name: dfe-kafka
   version: "4.3.1"
+  # The digest of apache/kafka at the version above, which single mode and the MSK
+  # bootstrap Job run. == versions.yaml services-digests.kafka-version (drift-checked).
+  imageDigest: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"
   # cluster node count. Defaults to 3; set higher for more brokers.
   # (single mode forces 1.)
   replicas: 3
@@ -72,6 +75,9 @@ kafka:
       repository: docker.redpanda.com/redpandadata/redpanda
       # Broker tag the operator chart 26.2.3 pairs with (see versions.yaml).
       tag: "v26.2.2"
+      # Single mode only; the operator's chart refuses a tag that is not bare semver.
+      # == versions.yaml services-digests.redpanda-version (drift-checked).
+      digest: "sha256:468bd13a9f2bd24794cb7fddc867c767fb1008b9a07b297b89fde48c564d7d96"
     auth:
       # Bootstrap superuser the operator creates + manages (its admin identity
       # for reconciling the User CR). Operator generates its password Secret.
@@ -430,7 +436,7 @@ kafka:
       # credential -- the browser is never given it.
       image:
         repository: nginxinc/nginx-unprivileged
-        tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
+        tag: "1.31.6-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
         # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
         digest: "sha256:26b0bf6fbf07297983cb341998d79c831508787de26627dd2a112321b9c3a4af"
         pullPolicy: IfNotPresent
