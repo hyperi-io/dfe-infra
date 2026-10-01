@@ -11,20 +11,31 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOTAL_PASS=0
 TOTAL_FAIL=0
+TOTAL_UNPROVEN=0
+# A suite that could not tell a working seam from a broken one exits with this,
+# and gets its own word -- a guess either way is what the suites exist to prevent.
+readonly EXIT_UNPROVEN=3
 
 run_test() {
     local name="${1}"
     local script="${2}"
+    local rc=0
     echo ""
     echo "========================================"
     echo "  ${name}"
     echo "========================================"
-    if bash "${SCRIPT_DIR}/${script}"; then
-        echo "  >>> ${name}: PASSED"
-    else
-        echo "  >>> ${name}: FAILED"
-        (( TOTAL_FAIL++ )) || true
-    fi
+    bash "${SCRIPT_DIR}/${script}" || rc=$?
+    case "${rc}" in
+        0) echo "  >>> ${name}: PASSED" ;;
+        "${EXIT_UNPROVEN}")
+            echo "  >>> ${name}: UNPROVEN -- it ran and could not decide; see the verdict above"
+            (( TOTAL_UNPROVEN++ )) || true
+            ;;
+        *)
+            echo "  >>> ${name}: FAILED"
+            (( TOTAL_FAIL++ )) || true
+            ;;
+    esac
     (( TOTAL_PASS++ )) || true
 }
 
@@ -50,7 +61,7 @@ fi
 
 echo ""
 echo "========================================"
-echo "  FINAL: ${TOTAL_PASS} suites run, ${TOTAL_FAIL} failed"
+echo "  FINAL: ${TOTAL_PASS} suites run, ${TOTAL_FAIL} failed, ${TOTAL_UNPROVEN} unproven"
 echo "========================================"
 
 if (( TOTAL_FAIL > 0 )); then

@@ -97,13 +97,13 @@ implementation, and a real `global.domain` + `domain` value.
 | appset | charts | here |
 |---|---|---|
 | layer2-platform (wave 2) | network-policies, envoy-gateway-config | deps (gateway off by default) |
-| layer2-data (waves 4-6) | cnpg-cluster, clickhouse-cluster, ferretdb, kafka, kafbat, dfe-schema, otel-collector, links | deps (kafbat off on slim) |
+| layer2-data (waves 4-6) | cnpg-cluster, clickhouse-cluster, ferretdb, kafka, kafbat, otel-collector, links | deps (kafbat off on slim) |
 | layer2-deploy-repo (wave 4) | forgejo | dep, off (no GitOps loop) |
-| layer2-apps (wave 7) | slim app set: dfe-engine, dfe-ui, dfe-receiver, dfe-loader, hyperdx | deps (hyperdx under values key `dfe-hyperdx`) |
+| layer2-apps (waves 5 and 7) | slim app set: dfe-engine (5), then dfe-ui, dfe-receiver, dfe-loader, hyperdx | deps (hyperdx under values key `dfe-hyperdx`) |
 | layer1-addons / layer-scale | upstream operator charts | prerequisites, not deps |
 
-Helm has no sync waves; the schema Job and the apps retry their backing
-services, which is what the waves ordered. Shared facts the appsets pass as
+Helm has no sync waves; dfe-engine's schema bootstrap and the apps retry their
+backing services, which is what the waves ordered. Shared facts the appsets pass as
 one values file are anchored once in `values.yaml` (`x-dfe-shared`), sourced
 from `argocd/values/common.yaml`. Image pins ride each component chart's
 `appVersion`, drift-checked against `versions.yaml`.

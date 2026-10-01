@@ -89,11 +89,18 @@ spec:
       # be applied to every pod in the class.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- if $gitSync }}
-      # The FIRST sync, bounded. The sidecar retries forever, so on its own a bad
-      # credential leaves the link absent and the runner Running with zero hunts
-      # (dfe-infra#212); failing here surfaces it as a pod that never starts.
+      {{- /* The helper renders the initContainers key itself, so git-sync-init
+             joins its list, or opens one when the wait is switched off. */}}
+      {{- $waitForEngine := include "dfe-common.waitForEngine" . }}
+      {{- if $waitForEngine }}
+      {{- $waitForEngine | nindent 6 }}
+      {{- else if $gitSync }}
       initContainers:
+      {{- end }}
+      {{- if $gitSync }}
+        # The FIRST sync, bounded. The sidecar retries forever, so on its own a bad
+        # credential leaves the link absent and the runner Running with zero hunts
+        # (dfe-infra#212); failing here surfaces it as a pod that never starts.
         - name: git-sync-init
           image: {{ $gsImage | quote }}
           imagePullPolicy: {{ $gs.image.pullPolicy }}
@@ -127,16 +134,9 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
-            # Same in-cluster ClickHouse the engine uses (plaintext HTTP :8123). The
-            # runner coordinates leases/watermarks and runs hunt queries here.
-            - name: DFE_CLICKHOUSE_HOST
-              value: {{ .Values.clickhouse.host | quote }}
-            - name: DFE_CLICKHOUSE_PORT
-              value: {{ .Values.clickhouse.port | quote }}
-            - name: DFE_CLICKHOUSE_DATA_DATABASE
-              value: {{ .Values.clickhouse.database | quote }}
-            - name: DFE_CLICKHOUSE_SECURE
-              value: "false"
+            # The ClickHouse the engine uses, over the same transport. The runner
+            # coordinates leases/watermarks and runs hunt queries here.
+            {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             {{- if $gitSync }}
             # Through git-sync's link, which is swapped atomically, so a reload
@@ -174,6 +174,9 @@ spec:
             - name: deploy-repo
               mountPath: {{ $gs.mountPath }}
               readOnly: true
+            {{- end }}
+            {{- with (include "dfe-engine.clickhouseCaMount" .) }}
+            {{- . | nindent 12 }}
             {{- end }}
           resources:
             {{- toYaml .Values.huntRunner.resources | nindent 12 }}
@@ -213,6 +216,9 @@ spec:
         - name: git-sync-home
           emptyDir: {}
         {{- end }}
+        {{- with (include "dfe-engine.clickhouseCaVolume" .) }}
+        {{- . | nindent 8 }}
+        {{- end }}
 {{- if .Values.huntRunner.autoscaling.enabled }}
 ---
 apiVersion: keda.sh/v1alpha1
@@ -241,7 +247,7 @@ spec:
       metricType: AverageValue
       metadata:
         targetValue: {{ .Values.huntRunner.autoscaling.targetBacklog | default 10 | quote }}
-        url: {{ printf "http://%s/keda/hunt-backlog" (.Values.huntRunner.autoscaling.shimAddress | default "dfe-keda-shim.dfe.svc.cluster.local:8080") | quote }}
+        url: {{ printf "http://%s/keda/hunt-backlog" (.Values.huntRunner.autoscaling.shimAddress | default (include "dfe-common.kedaShimAddress" .)) | quote }}
         valueLocation: "value"
 {{- end }}
 {{- end }}

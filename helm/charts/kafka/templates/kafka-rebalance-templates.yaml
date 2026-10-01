@@ -1,0 +1,56 @@
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") .Values.kafka.rebalancing.enabled }}
+{{/*
+The two rebalance CONFIGURATION templates the Kafka CR's autoRebalance modes
+point at. They are not rebalance requests: the strimzi.io/rebalance-template
+annotation is what tells the Cluster Operator to hold them as configuration and
+copy them into a real KafkaRebalance named
+<cluster>-auto-rebalancing-<mode> when a node pool's spec.replicas changes.
+
+They carry no mode and no brokers. Mode comes from which autoRebalance entry
+referenced the template, and the broker list from the scaling event.
+
+goals is kafka.rebalancing.goals -- Strimzi/Cruise Control's own default
+priority order (RackAwareGoal down to IntraBrokerDiskUsageDistributionGoal),
+with LeaderReplicaDistributionGoal and LeaderBytesInDistributionGoal promoted
+to run right after the seven hard goals instead of last. Left empty, Cruise
+Control falls back to its own untouched default -- see the values.yaml
+comment for why that default alone was not enough.
+
+replicationThrottle is the one thing they must carry regardless. Strimzi
+leaves replica movement UNLIMITED when it is unset, so a rebalance triggered
+by a scale-out would compete with live ingest for the same NIC.
+
+They carry no strimzi.io/cluster label, matching Strimzi's own auto-rebalancing
+example: a template is looked up by name from the Kafka CR, and labelling it
+would make it read as a rebalance request against the cluster.
+*/}}
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaRebalance
+metadata:
+  name: {{ .Values.kafka.name }}-rebalance-add-brokers
+  annotations:
+    strimzi.io/rebalance-template: "true"
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicationThrottle: {{ int64 .Values.kafka.rebalancing.replicationThrottleBytesS }}
+  {{- with .Values.kafka.rebalancing.goals }}
+  goals:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaRebalance
+metadata:
+  name: {{ .Values.kafka.name }}-rebalance-remove-brokers
+  annotations:
+    strimzi.io/rebalance-template: "true"
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicationThrottle: {{ int64 .Values.kafka.rebalancing.replicationThrottleBytesS }}
+  {{- with .Values.kafka.rebalancing.goals }}
+  goals:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

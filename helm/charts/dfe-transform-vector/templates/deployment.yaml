@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -31,9 +35,17 @@ spec:
         checksum/enrichment: {{ include (print $.Template.BasePath "/enrichment-configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      # k8s injects a Docker-link env var per Service in the namespace, and a
+      # DFE_* name that collides with an app setting shadows it. Same class the
+      # engine, loader and receiver charts already guard.
+      enableServiceLinks: false
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
         - name: transform
           image: {{ include "dfe-common.image" . | quote }}
@@ -53,7 +65,10 @@ spec:
               protocol: TCP
             {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # dfe-transform-vector reads the DFE_TRANSFORM_* flat env contract
             # (src/config/loader.rs), never bare KAFKA_* names. Credentials arrive
@@ -97,13 +112,13 @@ spec:
             {{- end }}
             {{- end }}
             {{- include "dfe-common.transformFilesEnv" . | nindent 12 }}
-            # The supervisor assembles Vector's config dir, caches the binary and
-            # keeps Vector's data dir; all three must be writable under the
-            # read-only rootfs, and the paths must match the volumes below.
+            # The supervisor assembles Vector's config dir and keeps Vector's data
+            # dir; both must be writable under the read-only rootfs, and the path
+            # must match the volume below. No binary cache: the image ships Vector
+            # and the supervisor never downloads one, so cache_path and seed_cache
+            # lost their callers (dfe-transform-vector#66).
             - name: DFE_TRANSFORM_VECTOR_DATA_DIR
               value: /var/lib/vector
-            - name: DFE_TRANSFORM_VECTOR_CACHE_DIR
-              value: /var/cache/vector
             {{- with (include "dfe-common.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
@@ -113,15 +128,18 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
           volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
+            # The file, not the directory: the enrichment tables mount at
+            # /etc/dfe-transform-vector/data, and a directory mount here would put
+            # that volume inside this one. checksum/config rolls the pod on a change.
             - name: config
-              mountPath: /etc/dfe-transform-vector
+              mountPath: /etc/dfe-transform-vector/config.yaml
+              subPath: config.yaml
               readOnly: true
             {{- include "dfe-common.transformFilesMount" . | nindent 12 }}
             {{- include "dfe-common.enrichmentTablesMount" . | nindent 12 }}
             - name: vector-data
               mountPath: /var/lib/vector
-            - name: vector-cache
-              mountPath: /var/cache/vector
             - name: vector-runtime
               mountPath: /var/run/vector
             # Writable scratch: the container rootfs is read-only
@@ -149,14 +167,13 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
         {{- include "dfe-common.transformFilesVolume" . | nindent 8 }}
         {{- include "dfe-common.enrichmentTablesVolume" . | nindent 8 }}
         - name: vector-data
-          emptyDir: {}
-        - name: vector-cache
           emptyDir: {}
         - name: vector-runtime
           emptyDir: {}

@@ -1,0 +1,83 @@
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") .Values.kafka.controllerPool.enabled }}
+# The KRaft CONTROLLER pool -- the metadata quorum, kept off the brokers.
+# Renders only when kafka.controllerPool.enabled=true: the recommended shape
+# for a NEW deployment, but combined mode (kafka-nodepool.yaml) is the chart
+# default and stays the default on a cluster that already exists, because
+# flipping this on a live cluster re-forms the metadata quorum.
+#
+# Apache 4.3 says combined controller+broker "should be avoided in critical
+# deployment environments", and the reason is not tidiness: in combined mode the
+# process serving 116 MB/s of log write is the same process voting on metadata,
+# so a GC pause or an IO stall on the data path takes the control plane with it.
+#
+# Sized by PARTITION COUNT, not throughput -- the metadata log is small and does
+# not grow with ingest -- so this pool stays at its floor while the broker pool
+# scales out. The floor is Confluent's documented production minimum per
+# controller: 1 dedicated vCPU, 4 GB RAM, >= 1 GB heap, with 10-20 GiB of the
+# recommended 64 GB SSD actually used.
+#
+# kraftMetadata: shared puts the metadata log on this volume. The broker pool
+# carries the same marker on its own volume, which is what Strimzi's
+# auto-rebalancing example does.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: {{ .Values.kafka.name }}-controller
+  labels:
+    strimzi.io/cluster: {{ .Values.kafka.name }}
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ int .Values.kafka.controllerPool.replicas }}
+  roles:
+    - controller
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: {{ .Values.kafka.controllerPool.storage.size }}
+        kraftMetadata: shared
+        deleteClaim: false
+        {{- with (.Values.kafka.controllerPool.storage.storageClass | default .Values.kafka.storage.storageClass | default .Values.storageClass) }}
+        class: {{ . }}
+        {{- end }}
+  resources:
+    {{- toYaml .Values.kafka.controllerPool.resources | nindent 4 }}
+  {{- if or .Values.nodeScheduling .Values.kafka.podSpread.enabled }}
+  template:
+    pod:
+      {{- if .Values.nodeScheduling }}
+      {{- if .Values.nodeScheduling.nodeSelector }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  {{- range $key, $val := .Values.nodeScheduling.nodeSelector }}
+                  - key: {{ $key }}
+                    operator: In
+                    values:
+                      - {{ $val | quote }}
+                  {{- end }}
+      {{- end }}
+      {{- if .Values.nodeScheduling.tolerations }}
+      tolerations:
+        {{- toYaml .Values.nodeScheduling.tolerations | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- if .Values.kafka.podSpread.enabled }}
+      # Spread the quorum across workers -- three controllers on one node is one
+      # node loss away from no control plane at all.
+      {{- /* Counts controller pods only, never the brokers (label source:
+      scripts/tests/test_kafka_pool_spread.py). */}}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.kafka.podSpread.maxSkew }}
+          topologyKey: {{ .Values.kafka.podSpread.topologyKey }}
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              strimzi.io/cluster: {{ .Values.kafka.name }}
+              strimzi.io/controller-role: "true"
+      {{- end }}
+  {{- end }}
+{{- end }}

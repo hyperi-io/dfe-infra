@@ -8,10 +8,32 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-archiver (drift-checked).
-  digest: "sha256:40eccf53458f21d0ff1415feb2149130106816fb7852f480edeee54df8d42036"
+  digest: "sha256:1ccaa927a5a2398c3448b04ed8c6a608484218a4238ed3980fda365d7463f698"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
+
+# dfe-engine applies every ClickHouse object and every bootstrap Kafka topic at
+# its own startup and gates /readyz on the result, so an init container waits on
+# the engine Service before this pod starts (dfe-common.waitForEngine). Started
+# first, this app finds no table and no topic.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty -> this release's own namespace.
+  namespace: ""
+  port: 8000
+  # On expiry the init container exits non-zero and the pod sits in
+  # Init:CrashLoopBackOff rather than starting against an absent schema.
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 # Internal Service for the scalo Push listener, rendered on the direct transport
 # only (dfe-common.pushService). 6000 is the DFE gRPC convention.
@@ -25,12 +47,40 @@ kafka:
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
-  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
-  # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
-  # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
-  # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
-  # DFE Kafka credential contract (dfe-engine#98).
-  provider: ""
+  # Wire protocol for the broker's listener (PLAINTEXT | SASL_PLAINTEXT | SSL |
+  # SASL_SSL). Empty leaves the app's own PLAINTEXT default; the deployment's
+  # kafka layer names it beside bootstrapServers.
+  securityProtocol: ""
+  # No topicInclude dial, and no KAFKA_TOPIC_INCLUDE env: the landing topics are
+  # COMPILED from the sources that asked to be archived (apps.yaml, dfe-archiver
+  # routing.compiler: archiver) and reach the app as config.kafka.topics in the
+  # engine's overlay. A discovery pattern here outranks that answer in the only
+  # case where the two differ -- an empty compiled list means archive nothing,
+  # and a pattern turns it into archive everything the broker holds, which also
+  # keeps the app out of the idle state its manifest declares.
+
+# Local disk INSIDE the pod: an emptyDir mounted at this path, with the
+# destination pointed at it (ARCHIVER_DESTINATION). Empty by default -- a
+# pod-local directory loses every file when the pod is replaced, so it proves
+# the path rather than keeping archives. A deployment with object storage sets
+# s3.* and leaves this empty.
+archive:
+  localPath: ""
+
+# Tier-2 spool: an emptyDir, because the rootfs is read-only and the archiver
+# creates this directory at construction -- without it the pod never starts.
+# The path is sent as ARCHIVER_SPOOL_DIR too, so the mount and the app agree.
+# Matches the app's own default (dfe-archiver DEFAULT_SPOOL_DIR) and moves only
+# together with it.
+spool:
+  path: /var/spool/dfe/archiver
+  # The app's own max_spool_bytes default, 10GiB (dfe-archiver
+  # crates/core/src/buffer/tiered.rs:72). Its disk brake reads free space with
+  # fs2::available_space, which on an emptyDir answers for the NODE's
+  # filesystem, so an unsized volume lets a spooling archiver fill the node it
+  # runs on. With a sizeLimit kubelet evicts this pod instead. Move it together
+  # with the app's max_spool_bytes; empty leaves the volume unbounded.
+  sizeLimit: 10Gi
 
 # Archive destination. Both keys are rendered as env (S3_ENDPOINT / S3_BUCKET,
 # the archiver's flat-env contract) and env BEATS the config file, so a value set
@@ -41,12 +91,14 @@ kafka:
 s3:
   endpoint: ""
   bucket: ""
+  # Secret holding static keys (access_key_id, secret_access_key) for a store
+  # with no workload identity. Absent Secret is fine; empty drops the refs.
   secretName: dfe-archiver-s3
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created
-# topic -- the kafka chart's kafka.dlqTopics list. Change the topic only
-# together with that list, or the app dead-letters into a topic nothing created.
+# topic -- the dfe-schemas topic set dfe-engine creates. Change the topic only
+# together with that set, or the app dead-letters into a topic nothing created.
 dlq:
   topic: dfe_archiver_dlq
   mode: kafka_only
@@ -60,6 +112,13 @@ dlq:
 # Helm's map merge would silently leave stale keys behind when the engine's
 # overlay does not overwrite them.
 config: {}
+
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
 
 otel:
   endpoint: ""
@@ -75,10 +134,21 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+  # Mount the service-account token. Turn on only for Vault's Kubernetes auth method, which logs in with it: VAULT_K8S_ROLE (or OPENBAO_K8S_ROLE / BAO_K8S_ROLE) or secrets.openbao.auth.method kubernetes in the app config.
+  mountToken: false
 
-# KEDA autoscaling -- DEFAULT trigger is CPU (native cpu scaler, no shim). scalo
-# ScalingPressure (0-100) is OPT-IN via the fail-safe dfe-keda-shim (a metric outage
-# FREEZES scaling, never runs replicas up). minReplicaCount stays 1.
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
+
+# KEDA autoscaling -- two triggers render and the HPA takes the higher: the native
+# cpu scaler (no component in the path) and the scalo ScalingPressure composite
+# (0-100) via the fail-safe dfe-keda-shim, which matches this ServiceName's gauge
+# under any metric prefix (dfe-engine#379). Pressure needs the shim in the release
+# namespace (the engine chart ships it); the slim profile turns it off because that
+# tier carries no broker. minReplicaCount stays 1.
 keda:
   enabled: true
   minReplicaCount: 1
@@ -86,12 +156,12 @@ keda:
   cooldownPeriod: 300
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # opt-in: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: true             # scalo ScalingPressure via the fail-safe dfe-keda-shim
     # service: dfe-archiver   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

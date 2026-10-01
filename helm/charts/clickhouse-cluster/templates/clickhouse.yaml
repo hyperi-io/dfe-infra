@@ -14,9 +14,10 @@ spec:
   shards: {{ .Values.clickhouse.shardsCount }}
   replicas: {{ .Values.clickhouse.replicas }}
   containerTemplate:
+    # The operator renders repository:tag and drops `hash` whenever a tag is set (its defaulting sets one), so the digest rides in the tag.
     image:
       repository: docker.io/clickhouse/clickhouse-server
-      tag: {{ .Values.clickhouse.version | quote }}
+      tag: "{{ .Values.clickhouse.version }}{{ with .Values.clickhouse.imageDigest }}@{{ . }}{{ end }}"
     resources:
       requests:
         cpu: {{ .Values.clickhouse.resources.requests.cpu }}
@@ -24,9 +25,19 @@ spec:
       limits:
         cpu: {{ .Values.clickhouse.resources.limits.cpu }}
         memory: {{ .Values.clickhouse.resources.limits.memory }}
-    {{- if eq (include "dfe-clickhouse.storageBulk" .) "object" }}
+    {{- if and (eq (include "dfe-clickhouse.storageBulk" .) "object") (not .Values.clickhouse.objectStore.usePodIdentity) }}
     env:
       {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 6 }}
+    {{- end }}
+    {{- if eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
+    # Concatenated with the operator's own mounts (the CRD's own comment on
+    # this field) -- dataVolumeClaimSpec below keeps its default mount at
+    # /var/lib/clickhouse, so the s3_object metadata_path stays on the PVC and
+    # only this one subdirectory moves to the emptyDir declared under
+    # podTemplate.volumes.
+    volumeMounts:
+      - name: object-cache
+        mountPath: /var/lib/clickhouse/disks/s3_object_cache
     {{- end }}
   # Must be durable in every storage model. Under a tiered family this is the HOT
   # tier and holds the only copy of the parts on it; under a cached family it
@@ -60,6 +71,19 @@ spec:
   keeperClusterRef:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
+    # Level and rotation for the server's log file and its stdout copy; see
+    # clickhouse.serverLog for what an unset logger costs.
+    logger:
+      {{- include "dfe-clickhouse.logger" .Values.clickhouse.serverLog | nindent 6 }}
+    {{- if include "dfe-clickhouse.tlsEnabled" . }}
+    # Adds 8443 and 9440 to every pod and the headless Service; required drops
+    # 8123 and 9000. The operator mounts the Secret as a directory.
+    tls:
+      enabled: true
+      required: {{ .Values.clickhouse.tls.required }}
+      serverCertSecret:
+        name: {{ .Values.clickhouse.tls.secretName }}
+    {{- end }}
     extraConfig:
       # Allow the SQL_ custom-settings prefix (server config) so DFE tenant
       # isolation enforces: the per-_org_id RESTRICTIVE row policy reads
@@ -80,18 +104,30 @@ spec:
       {{- with (include "dfe-clickhouse.storageConfiguration" .) }}
       {{- . | nindent 6 }}
       {{- end }}
-    # Server-side async inserts for EVERY writer, via the default settings
-    # profile (the base every identity inherits). async_insert is a
-    # user/query-scope setting -- there is no table-level form -- so this one
-    # seam covers every table any identity writes; identities with tuned
-    # values (dfe_loader's minted profile) still override it. wait=1 keeps
-    # insert errors visible to the client instead of fire-and-forget. The
-    # flush cadence stays on ClickHouse's adaptive defaults (24.2+).
+      {{- /* Thread, memory and merge-pool limits for the cluster tier. Sized
+      from the replica's own CPU request, and gated to cluster mode inside the
+      helper -- see clickhouse.serverProfile in values.yaml. */ -}}
+      {{- with (include "dfe-clickhouse.serverProfile" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      {{- /* A TTL on each system log table the operator switches on, and the
+      ones switched off; see clickhouse.systemLogTTLDays and systemLogsOff. */ -}}
+      {{- with (include "dfe-clickhouse.systemLogs" . | trim) }}
+      {{- . | nindent 6 }}
+      {{- end }}
+    # Async inserts for EVERY writer, via the default settings profile (the base
+    # every identity inherits). async_insert is a user/query-scope setting --
+    # there is no table-level form -- so this one profile covers every table any
+    # identity writes; identities with tuned values (dfe_loader's minted profile)
+    # still override it. Both are ClickHouse's own defaults since 26.2 and are
+    # written here EXPLICITLY, so a `compatibility` setting or a future
+    # re-default cannot move them underneath us. The flush cadence stays on
+    # ClickHouse's adaptive defaults (24.2+).
     extraUsersConfig:
       profiles:
         default:
-          async_insert: 1
-          wait_for_async_insert: 1
+          async_insert: {{ .Values.clickhouse.userProfile.asyncInsert }}
+          wait_for_async_insert: {{ .Values.clickhouse.userProfile.waitForAsyncInsert }}
     # The deploy layer's one credential. Cluster mode creates no account of its
     # own, so without this every app is refused with code 516 (dfe-infra#136).
     # Secret-backed rather than declared in extraUsersConfig, which takes a
@@ -100,26 +136,56 @@ spec:
       secret:
         name: {{ .Values.clickhouse.users.admin.secretName }}
         key: password
-  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled }}
+  {{- $cacheOnInstanceStore := eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
+  {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled $cacheOnInstanceStore .Values.clickhouse.serviceAccount.name }}
   podTemplate:
-    {{- if .Values.nodeScheduling }}
-    {{- if .Values.nodeScheduling.nodeSelector }}
-    nodeSelector:
-      {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
+    {{- with .Values.clickhouse.serviceAccount.name }}
+    serviceAccountName: {{ . }}
     {{- end }}
-    {{- if .Values.nodeScheduling.tolerations }}
+    {{- /* instance-store needs a hard requirement, not a preference: the cache
+    is only real NVMe on the karpenter-pools chart's own `clickhouse` pool
+    (build_karpenter_pools names every pool's nodeSelector after its use case),
+    so start from that label and let a deployer's own nodeScheduling.nodeSelector
+    add to or override it. */ -}}
+    {{- $nodeSelector := dict }}
+    {{- if $cacheOnInstanceStore }}
+    {{- $nodeSelector = mergeOverwrite (deepCopy $nodeSelector) (dict "dfe.hyperi.io/workload" "clickhouse") }}
+    {{- end }}
+    {{- if and .Values.nodeScheduling .Values.nodeScheduling.nodeSelector }}
+    {{- $nodeSelector = mergeOverwrite (deepCopy $nodeSelector) .Values.nodeScheduling.nodeSelector }}
+    {{- end }}
+    {{- if $nodeSelector }}
+    nodeSelector:
+      {{- toYaml $nodeSelector | nindent 6 }}
+    {{- end }}
+    {{- if and .Values.nodeScheduling .Values.nodeScheduling.tolerations }}
     tolerations:
       {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
     {{- end }}
-    {{- end }}
     {{- if .Values.clickhouse.podSpread.enabled }}
+    {{- /* Selects the labels the operator writes on server pods -- the chart's
+    own are on no pod -- and matchLabelKeys narrows each count to the pod's own
+    shard (label source: scripts/tests/test_clickhouse_replica_spread.py). */}}
     topologySpreadConstraints:
       - maxSkew: {{ .Values.clickhouse.podSpread.maxSkew }}
         topologyKey: {{ .Values.clickhouse.podSpread.topologyKey }}
-        whenUnsatisfiable: ScheduleAnyway
+        whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            {{- include "dfe-common.selectorLabels" . | nindent 12 }}
+            app: {{ printf "%s-clickhouse" .Values.clickhouse.name | quote }}
+            clickhouse.com/role: clickhouse-server
+        matchLabelKeys:
+          - clickhouse.com/shard-id
+    {{- end }}
+    {{- if $cacheOnInstanceStore }}
+    volumes:
+      # The cache disk's actual backing store. sizeLimit is cacheSize itself --
+      # not a separate bound -- so the emptyDir and the ClickHouse-side
+      # max_size (set from the same value, templates/_storage.tpl) can never
+      # disagree about how big the cache is allowed to get.
+      - name: object-cache
+        emptyDir:
+          sizeLimit: {{ .Values.clickhouse.objectStore.cacheSize | quote }}
     {{- end }}
   {{- end }}
 {{- end }}

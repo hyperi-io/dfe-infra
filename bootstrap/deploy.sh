@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #  Project:      dfe-infra
 #  File:         deploy.sh
-#  Purpose:      Single-command DFE deployment (terraform → bridge → bootstrap)
+#  Purpose:      Single-command DFE deployment (tofu -> bridge -> bootstrap)
 #  Language:     Bash
 #
 #  License:      BUSL-1.1
@@ -19,16 +19,16 @@ DRY_RUN="${DFE_DRY_RUN:-false}"
 usage() {
     echo "Usage: ${0} [OPTIONS]"
     echo ""
-    echo "Deploy DFE to a target cluster. Runs terraform apply + bootstrap."
+    echo "Deploy DFE to a target cluster. Runs tofu apply + bootstrap."
     echo ""
     echo "Options:"
-    echo "  --cloud CLOUD     Target cloud: local, aws, gcp, az (default: local)"
-    echo "  --tf-dir DIR      Terraform environment dir (default: auto from --cloud)"
+    echo "  --cloud CLOUD     Target cloud: local, aws, gcp, azure (default: local)"
+    echo "  --tf-dir DIR      OpenTofu environment dir (default: auto from --cloud)"
     echo "  --dry-run         Show what would happen without executing"
-    echo "  --skip-terraform  Skip terraform apply (use existing state)"
+    echo "  --skip-terraform  Skip the tofu apply (use existing state)"
     echo "  --help            Show this help"
     echo ""
-    echo "Required env vars (for terraform):"
+    echo "Required env vars (for tofu):"
     echo "  VAULT_TOKEN       OpenBao/Vault token (local)"
     echo "  AWS_PROFILE       AWS profile (aws)"
     echo ""
@@ -58,23 +58,23 @@ echo "  Dry run:   ${DRY_RUN}"
 echo ""
 
 if [[ ! -d "${TF_DIR}" ]]; then
-    echo "ERROR: Terraform directory not found: ${TF_DIR}" >&2
+    echo "ERROR: OpenTofu directory not found: ${TF_DIR}" >&2
     exit 1
 fi
 
-# Step 1: Terraform
+# Step 1: OpenTofu
 if [[ "${SKIP_TF}" == "false" ]]; then
-    echo "==> Step 1: Terraform apply"
+    echo "==> Step 1: OpenTofu apply"
     cd "${TF_DIR}"
-    terraform init -input=false
+    tofu init -input=false
     if [[ "${DRY_RUN}" == "true" ]]; then
-        terraform plan
+        tofu plan
     else
-        terraform apply -auto-approve
+        tofu apply -auto-approve
     fi
     cd "${REPO_ROOT}"
 else
-    echo "==> Step 1: Terraform (skipped)"
+    echo "==> Step 1: OpenTofu (skipped)"
 fi
 
 # Step 1b: Pull secret credentials

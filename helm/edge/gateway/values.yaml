@@ -1,0 +1,769 @@
+project: dfe
+component: gateway
+env: local
+cloud: local
+
+gateway:
+  name: dfe-gateway
+  namespace: envoy-gateway-system
+  listenerPort: 443
+
+# SWAPPABLE front-door LB for the whole HTTP plane (UI, HyperDX, engine API).
+# Realised via an EnvoyProxy CR referenced by the GatewayClass (parametersRef).
+# Named envoyGateway, not gateway: the shared per-cloud values files are read by
+# every chart in the appset, and otel-collector already owns `gateway`.
+# Swap cloud LB <-> k8s LB with the same values the receiver uses:
+#   type            -- LoadBalancer (cloud/MetalLB) | ClusterIP | NodePort
+#   loadBalancerIP  -- the address the edge must answer on, when a DNS record
+#                      already names it. Empty lets the pool/CCM choose, which is
+#                      what a rebuild then re-rolls -- and every published
+#                      hostname points at whatever it held before.
+#   loadBalancerClass -- "" = cluster default CCM; "service.k8s.aws/nlb" for AWS;
+#                      a MetalLB/kube-vip class on bare metal
+#   annotations     -- provider LB config (NLB scheme, etc.)
+#   loadBalancerSourceRanges -- optional CIDR allow-list at the edge
+#   externalIPs     -- addresses the cluster already answers on, for a cluster
+#                      with no LB controller; pair it with type ClusterIP
+envoyGateway:
+  service:
+    type: LoadBalancer
+    loadBalancerIP: ""
+    loadBalancerClass: ""
+    annotations: {}
+    loadBalancerSourceRanges: []
+    externalIPs: []
+    # Is this Service actually reachable from the internet? Not derived from
+    # `type` or the annotations, because the scheme annotation that makes it so
+    # is cloud-specific (AWS: aws-load-balancer-scheme: internet-facing; GCP and
+    # Azure carry no equivalent here yet) and a chart-side render guard needs
+    # ONE stable field to check regardless of cloud. False on every local/
+    # on-prem overlay; a cloud overlay that requests a public LB sets it true
+    # alongside the annotation that does so (argocd/values/aws.yaml). Read by
+    # envoy-gateway-config.validateUi below.
+    internetFacing: false
+  # The data-plane image both EnvoyProxy resources run, set here so it is the
+  # services.envoy-gateway-proxy pin rather than the controller's compiled
+  # default; the drift check holds both halves to versions.yaml.
+  proxy:
+    image: "docker.io/envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4"
+
+# Pool balancer for the direct transport. `enabled`, `gateway` and `port` are
+# the deploy-config SSoT's (argocd/values/common.yaml `mesh:`) because every
+# pool chart reads them too; only the two dials below are this chart's, so they
+# are the only mesh keys declared here.
+mesh:
+  proxy:
+    # Every record on a brokerless profile crosses this proxy, so it is sized
+    # like a stage rather than like an edge.
+    replicas: 2
+  loadBalancer:
+    # RoundRobin | LeastRequest | Random | RingHash | Maglev | ConsistentHash.
+    type: RoundRobin
+  # HTTP/2 PING keepalive, both sides of the proxy.
+  keepalive:
+    interval: 30s
+    timeout: 10s
+
+tls:
+  issuerName: dfe-letsencrypt
+
+  # Request the edge wildcard cert with an explicit Certificate instead of the
+  # Gateway's cert-manager annotations, for a cluster whose cert-manager runs
+  # without the gateway-shim (--enable-gateway-api, off by default). Exactly one
+  # of the two issues the cert, so it is never requested twice.
+  wildcardCertificate:
+    enabled: false
+
+  # CNSA 2.0: the wildcard leaf cert is ECDSA P-384 / SHA-384 (192-bit),
+  # not cert-manager's RSA-2048/SHA-256 default.
+  privateKey:
+    algorithm: ECDSA        # ECDSA | RSA
+    size: 384               # P-384 for ECDSA; 3072+ if RSA is ever forced
+    rotationPolicy: Always  # fresh key each renewal (algorithm agility)
+
+  # Edge TLS posture (Envoy Gateway ClientTrafficPolicy). Track 3 owns
+  # this; Track 1 owns the jwt_authn filter (templates/envoy-patch-policy.yaml).
+  edge:
+    enabled: true
+    # TLS floor. Default 1.2 = the commercial-safe `prod` posture (TLS 1.2
+    # minimum, 1.3 preferred) - broad client + enterprise-middlebox compat.
+    # Still removes SSLv3/TLS 1.0/1.1, and at 1.2 the cipher list below
+    # holds the line at AES-256-GCM. CNSA `highsec` deployments set
+    # minVersion "1.3" via a values overlay. Values MUST be quoted strings
+    # ("1.2"): an unquoted 1.2 parses as a float and is rejected.
+    minVersion: "1.2"
+    maxVersion: "1.3"
+    # Key-exchange groups, preference order:
+    # - X25519MLKEM768: hybrid post-quantum group giving real harvest-now-
+    #   decrypt-later protection on the wire today (TLS 1.3 group, IANA
+    #   0x11EC; mainstream in 2026: Chrome/Firefox/OpenSSL 3.5/Go 1.24/
+    #   BoringSSL). HONEST caveats: its PQC half is ML-KEM-768 (below CNSA
+    #   2.0's ML-KEM-1024) and its classical half is X25519 (not a NIST
+    #   curve). The CNSA-pure hybrid is SecP384r1MLKEM1024 (P-384 + ML-KEM-
+    #   1024) - specified but thin deployment; add it here (preferred) once
+    #   BoringSSL/Envoy accept the name. We enable the interoperable group
+    #   now for actual PQC protection over CNSA-purity.
+    # - P-384: CNSA 1.0 classical curve.  - X25519: broad client compat.
+    #   Non-PQC clients fall back to these, so offering the hybrid is a safe
+    #   strict upgrade, not a compatibility break.
+    # NB the accepted name is BoringSSL/Envoy-version-specific (older Envoy
+    # used X25519Kyber768Draft00); this cluster runs envoy v1.37.
+    ecdhCurves:
+      - X25519MLKEM768
+      - P-384
+      - X25519
+    # AEAD suites offered at TLS 1.2 (ignored at 1.3, where BoringSSL fixes
+    # the suite set). AES-256-GCM first so a 1.2 fallback still lands on the
+    # CNSA symmetric target; no AES-128, no CBC.
+    ciphers:
+      - ECDHE-ECDSA-AES256-GCM-SHA384
+      - ECDHE-RSA-AES256-GCM-SHA384
+    # Strict-Transport-Security on every route of the wildcard listener, as
+    # ui.tls.hsts sets it on the public ones. A browser holding it refuses a
+    # certificate click-through for a year. Empty derives it from the edge
+    # issuer: OFF where issuerName is internalCA.issuerName and
+    # internalCA.persist is off, because every rebuild re-mints that root and
+    # would lock the admin out of the console; ON for a persisted internal
+    # root, Vault/OpenBao PKI, ACME or any other issuer. true or false wins.
+    hsts: ""
+
+  # Internal mesh CA (Track 3 keystone). A self-signed root mints an
+  # ECDSA P-384 CA exposed as the `dfe-internal-ca` ClusterIssuer;
+  # backing-service certs (ClickHouse, Kafka, Mongo/FerretDB, CNPG, OTLP)
+  # chain to it so in-cluster TLS shares one trust root. Inert until a
+  # Certificate references the issuer -- adding it changes no running
+  # workload, so it is safe to land ahead of the per-service rollout.
+  internalCA:
+    enabled: true
+    issuerName: dfe-internal-ca
+    # A ClusterIssuer reads its CA secret from cert-manager's
+    # cluster-resource-namespace, so the CA cert + bootstrap Issuer live
+    # there (default: cert-manager).
+    namespace: cert-manager
+    duration: "87600h"     # 10y root (SHA-384 signature follows P-384)
+    renewBefore: "720h"    # 30d
+
+    # Root PERSISTENCE across a rebuild (#238). Without it every rebuild mints a
+    # new root, every client re-trusts, and the HyperDX iframe fails outright
+    # because it cannot show the interstitial. The root is pushed to the
+    # deployment's secret store once (PushSecret, IfNotExists) and restored
+    # before cert-manager can mint (ExternalSecret, CreatedOnce); the leaf
+    # lifetimes are what rotate.
+    # OFF by default: an ExternalSecret pointed at a store the deployment does
+    # not have is Degraded forever, which fails the Argo sync of a deploy that is
+    # otherwise working. Turn it on where there IS a store. `dfe-ops ca --status`
+    # says which of the two a deployment is in.
+    # Vault issuer mode renders none of it -- the estate PKI owns the root.
+    # bootstrap.sh sets this true only for its own pre-apply, ahead of Argo; a
+    # deployment that persists its root must also set it (and secretStoreName)
+    # in the deploy repo's gateway overlay, or Argo renders it off.
+    persist:
+      enabled: false
+      secretStoreName: dfe-secret-store
+      secretStoreKind: ClusterSecretStore
+      # KV path, the same {project}/{env}/<area>/<name> convention every other
+      # secret uses. Empty derives it.
+      remoteKey: ""
+      # Underscored property names, NOT tls.crt/tls.key: the Vault provider reads
+      # a property as a gjson path, where a dot means nesting.
+      certProperty: tls_crt
+      keyProperty: tls_key
+
+  acme:
+    email: ""
+    server: "https://acme-v02.api.letsencrypt.org/directory"
+    cloudflareTokenSecretName: cloudflare-api-token
+    cloudflareTokenSecretKey: token
+
+  # PUBLIC certificates for the exposed UIs -- a second issuer, separate from
+  # the one above, because the internal wildcard stays on the internal CA and
+  # only the handful of public hostnames need a publicly trusted chain.
+  # Let's Encrypt by DNS-01 on Route 53, authenticated by the cluster module's
+  # cert-manager Pod Identity role: there is no key here because the AWS SDK
+  # reads the association from the pod's own environment.
+  public:
+    # The ClusterIssuer the public Certificates reference. Point it at an issuer
+    # you already have (ACM, a corporate CA) and leave email empty to render
+    # none of your own.
+    issuerName: dfe-letsencrypt-public
+    # Blank = no public ClusterIssuer is rendered. ACME requires a contact.
+    email: ""
+    server: "https://acme-v02.api.letsencrypt.org/directory"
+    route53:
+      # Blank = cert-manager reads the region from its own environment.
+      region: ""
+      # The cluster module's public_zone_id output. Blank makes cert-manager
+      # find the zone itself, which costs an extra ListHostedZonesByName call
+      # per challenge and can match the wrong zone where names overlap.
+      hostedZoneID: ""
+
+  # Vault/OpenBao PKI issuer mode -- the private-CA swap seam. vault.server
+  # set renders the issuerName ClusterIssuer Vault-backed; acme.email set
+  # renders it ACME (set exactly one). AppRole SecretID Secret is seeded by
+  # bootstrap.sh from DFE_CERTMANAGER_SECRET_ID.
+  vault:
+    server: ""             # e.g. https://bao.example.com:8200
+    path: ""               # PKI sign path, e.g. pki_tls/sign/example-role
+    caBundle: ""           # base64 PEM chain that verifies `server`'s TLS
+    appRole:
+      path: approle
+      roleId: ""
+      secretName: cert-manager-approle
+      secretKey: secretId
+
+domain: ""
+
+# Where the DFE app services run. Routes with no explicit backendNamespace are
+# placed HERE so route and backend share a namespace (only the parentRef
+# crosses namespaces, which the Gateway's allowedRoutes permits and needs no
+# ReferenceGrant). bootstrap.sh passes it from DFE_NAMESPACE; empty falls back
+# to the release namespace, where an app backendRef cannot resolve.
+appNamespace: ""
+
+# Canonical service-name map, supplied by the deploy-config SSoT
+# (argocd/values/common.yaml). A routes.*.hostname set below overrides its
+# entry for this deployment only.
+hostnames: {}
+
+# The OIDC groups the edge policy admits to every infra route carrying
+# edgePolicy, supplied by the deploy-config SSoT (argocd/values/common.yaml).
+# Empty refuses to render.
+adminGroups: []
+
+# Read-only here, and owned by the kafka chart: the Cruise Control UI is one of
+# that chart's workloads, so the route below can only render where that chart
+# renders the Service behind it. Same key names, so the ONE profile overlay
+# (argocd/values/profile-*.yaml) that sets them reaches both charts -- the
+# pattern `exposure:` and `mesh:` already use. The defaults match the kafka
+# chart's, so a deployment that never mentions Kafka renders no route either.
+kafka:
+  mode: disabled
+  provider: strimzi
+  rebalancing:
+    enabled: true
+    ui:
+      enabled: true
+
+# Whether the bundled Forgejo is the deploy repo, from the cluster label
+# dfe.hyperi.io/bundled-deploy-repo that also gates its ApplicationSet. The
+# forgejo route renders only when it is true.
+deployRepo:
+  bundled: false
+
+# Read-only here, and owned by the otel-collector chart: the otel route below
+# fronts that chart's bearer-token OTLP receiver, which exists only while this
+# switch is on. Same keys as argocd/values/common.yaml, so the one overlay that
+# sets them (the deploy repo's infra/common.yaml) reaches both charts. The
+# defaults match the collector's, so a deployment that never mentions them
+# renders no otel route.
+otel:
+  ingress:
+    enabled: false
+    # The collector's authenticated OTLP/HTTP port, which the route targets.
+    port: 4319
+    auth:
+      # Where the secret store holds the token. On with this empty refuses.
+      remoteKey: ""
+
+# Read-only here, and owned by the dfe-engine chart: /docs and /redoc are routed
+# only where the engine serves them. Same key as argocd/values/common.yaml, so the
+# one overlay that sets it (the deploy repo's infra/common.yaml) reaches the
+# engine, this chart and the links page.
+api:
+  docsEnabled: ""
+
+# Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
+# the dfe-receiver chart (exposure.mode, its ingest door) because a deployment's
+# cloud overlay feeds both -- one block describes what a deployment exposes, and
+# each chart reads the keys it owns.
+exposure:
+  # THE INFRA KILL SWITCH. false takes EVERY infra-class route off the edge in
+  # one flip and BEATS that route's own `enabled: true` -- it is absolute for
+  # the class, so a lock-down cannot be undone one route at a time.
+  # Product-class routes (dfe-ui, the engine API) are never touched by it:
+  # turning the product off is always its own explicit act. Ingest-class routes
+  # are data plane and unaffected.
+  infraUisExternal: true
+
+# PUBLIC UI EXPOSURE -- the cloud half of the edge, off until a deployment names
+# a public zone. Everything DFE uses internally stays private; the UIs are the
+# exception, because their users sit outside the VPC.
+#
+# The key names are the DIAL's (snake_case, `edge.product` and
+# `edge.admin_uis` in deployment.yaml) rather than this chart's camelCase, so
+# the dial's rate_limit, waf and tls sub-blocks are the same YAML as these and
+# a deployer's overlay is a copy rather than a translation.
+#
+# What renders, per UI marked public: its own Gateway listener on the public
+# hostname, its own publicly trusted Certificate, its own HTTPRoute, a
+# SecurityPolicy carrying the CIDR filter (and the OIDC group check where the
+# route takes one), and a local rate limit. Nothing public renders while
+# public_domain is empty -- the flags then record intent only.
+ui:
+  # The delegated public zone the exposed UIs answer on (the dial's
+  # dns.public_zone). Empty = this deployment publishes no public hostname and
+  # the whole public half of the chart renders nothing.
+  public_domain: ""
+
+  # Which UIs answer on a public hostname. dfe-ui is the product surface and is
+  # public by default on a cloud deploy; every admin UI is opt-in, one at a
+  # time. A name here must match a routes.<key> entry, and cruise_control needs
+  # the kafka chart to be deploying that UI as well -- either one missing fails
+  # the render rather than publishing a hostname with nothing behind it.
+  public:
+    dfe_ui: true
+    kafbat: false
+    cruise_control: false
+    hyperdx: false
+    argocd: false
+    links: false
+    forgejo: false
+
+  # The engine API on the product's own public hostname. dfe-ui leaves
+  # NEXT_PUBLIC_API_URL empty, so the browser calls the engine at
+  # window.location.origin under /api/v1 -- without a route there, every API call
+  # a public dfe-ui makes lands on dfe-ui itself. The key names are the dial's
+  # (edge.engine_api.*), the convention the rest of this block follows.
+  engine_api:
+    # The engine rides dfe-ui's public hostname, listener and certificate: no
+    # second Gateway listener and no second Certificate is rendered for it.
+    # false renders no public engine route at all, and so does
+    # ui.public.dfe_ui: false, because the hostname belongs to dfe-ui.
+    with_product: true
+    # Adds the path families the `dfe` CLI uses, and /openapi.json with them --
+    # the CLI is generated from the live spec, so a CLI used from outside the
+    # cluster needs the document. Off, because a browser uses neither.
+    cli_families_public: false
+    # Adds /api/v1/scim/v2. An external SaaS IdP provisions over the internet and
+    # needs it; an in-cluster IdP reaches the engine on its Service and does not.
+    scim_public: false
+
+  # Who may reach a public UI, comma-separated; empty = any address. Enforced
+  # twice -- at Envoy (SecurityPolicy authorization) and at the cloud load
+  # balancer (loadBalancerSourceRanges) -- so a gateway misconfiguration is not
+  # the only wall. NOTE the load-balancer half fences the WHOLE front door,
+  # ingest routes included, because one Service carries every listener.
+  allowed_cidrs: ""
+
+  # The proxy ranges Envoy may believe about the client address, comma-separated
+  # -- the load balancer's own subnets, plus any CDN in front. Required whenever
+  # allowed_cidrs is set: without it Envoy trusts the leftmost X-Forwarded-For
+  # entry, which the caller writes.
+  trusted_proxy_cidrs: ""
+
+  # Rate limiting sized for a handful of humans, so a credential-stuffing run
+  # hits a wall before it hits the login. LOCAL is per route per proxy replica,
+  # not per attacker -- per-attacker counting needs scope global, which needs
+  # Redis and an EnvoyGateway install change, so global is refused here.
+  rate_limit:
+    enabled: true
+    requests: 300           # a UI page load is a burst of tens; 5rps sustained clears it
+    unit: Minute            # Second | Minute | Hour | Day | Month | Year
+    scope: local            # local only -- global is refused at render
+
+  # Web application firewall. Default none: every public route sits behind OIDC
+  # or an app-side login with deny-by-default authorisation, so managed rules
+  # would guard code an unauthenticated caller never reaches. Any other mode
+  # terminates TLS above Envoy and moves the public certificate to the cloud's
+  # own store, which this chart does not render -- so it fails instead.
+  waf:
+    mode: none              # none only
+    plan: ""                # reserved: the CDN plan the WAF rides on
+    managed_rules: ""       # reserved: comma-separated managed rule groups
+
+  # Public edge TLS. min_version MUST be a quoted string ("1.2"): unquoted 1.2
+  # parses as a float and is rejected. hsts adds Strict-Transport-Security to
+  # every public response, so a browser never retries the name over plaintext.
+  tls:
+    min_version: "1.2"
+    hsts: true
+
+# HTTPRoutes -- map hostnames to backend services.
+#
+# Every route carries its CLASSIFICATION as data, and the class decides which
+# switches reach it:
+#   product -- dfe-ui + the engine API it consumes. Only `enabled` disables it.
+#   infra   -- the ops surfaces. exposure.infraUisExternal gates the whole class
+#              first, then `enabled`. Edge RBAC applies (see edgePolicy).
+#   ingest  -- data plane (otel, receiver). No UI switch reaches it.
+#
+# Cascade, in order, first match wins:
+#   1. class infra and exposure.infraUisExternal: false  -> not rendered
+#   2. class infra, ownLogin false, and the edge policy is not in front of it
+#      (oidc.enabled, an oidc.providers entry and edgePolicy true)
+#                                                        -> not rendered
+#   3. the backend is another chart's opt-in workload and that chart is not
+#      deploying it (cruiseControl from the kafka.* keys, forgejo from
+#      deployRepo.bundled, otel from otel.ingress.enabled, all above)
+#                                                        -> not rendered
+#   4. routes.<name>.enabled: false                      -> not rendered
+#   5. otherwise                                         -> rendered
+#
+# Per-route fields:
+#   class        -- product | infra | ingest (above)
+#   enabled      -- per-route opt-out. Every UI defaults true (D5: externally
+#                   reachable by default). The receiver defaults false because
+#                   it pairs with dfe-receiver's exposure.mode. otel stays true
+#                   and waits on otel.ingress.enabled instead (rule 3).
+#   routeName    -- the HTTPRoute's metadata.name, and what a SecurityPolicy
+#                   targetRef names. Defined here once, not in the template.
+#   hostnameKey  -- which entry of the canonical `hostnames` map supplies the
+#                   subdomain label. `hostname` overrides it for this deployment.
+#   edgePolicy   -- infra class only: front this route with the OIDC + group
+#                   check (adminGroups). See the exemptions inline.
+#   ownLogin     -- infra class only: the backend asks for a login itself. false
+#                   (or absent) renders the route only behind the edge policy.
+#   adminLink    -- infra class only: the name and one-line purpose the engine
+#                   lists the route under (templates/admin-links.yaml). Required
+#                   on every infra route that renders.
+#   hiddenPaths  -- PathPrefix values the gateway answers 404 for on this route
+#                   and its public face, so the backend never serves them to
+#                   anyone outside the cluster.
+routes:
+  dfeUi:
+    class: product
+    enabled: true
+    routeName: dfe-ui
+    hostnameKey: dfe
+    hostname: ""              # empty = hostnames.dfe from the config SSoT
+    backendService: dfe-ui
+    backendNamespace: ""      # set via ArgoCD values overlay
+    backendPort: 3000
+    pathPrefix: /
+    # dfe-ui answers its Prometheus scrape unauthenticated on the app port, and
+    # the collector scrapes the pod directly.
+    hiddenPaths:
+      - /metrics
+
+  dfeEngine:
+    class: product
+    enabled: true
+    routeName: dfe-engine
+    hostnameKey: dfe
+    hostname: ""
+    backendService: dfe-engine
+    backendNamespace: ""
+    backendPort: 8000
+    # /api/v1, never /api: NextAuth serves /api/auth/* on dfe-ui at the same
+    # origin (the docker proxy draws the same line).
+    pathPrefix: /api/v1
+    # Whole-request budget at the gateway. A source create or deploy commits and
+    # pushes the deploy repo and syncs routing before it answers, which runs past
+    # Envoy's 15s default on a small cluster; empty leaves the proxy's default.
+    requestTimeout: 120s
+    # Whose public listener and certificate this route answers on -- dfe-ui's,
+    # because the browser calls the engine at its own origin. The listener, the
+    # Certificate and the public-TLS policy all skip a route naming one.
+    publicListenerOf: dfeUi
+    # THE PATH FAMILIES, supplied by the engine team (hyperi-io/dfe-engine#395).
+    # A Gateway API PathPrefix matches whole path elements, so /api/v1/auth does
+    # not match /api/v1/authoring and /api/v1/sample does not match
+    # /api/v1/samples -- naming a family here opens that family and nothing else.
+    #
+    # What the browser calls, and therefore what the public route carries by
+    # default. `config/client` is TWO segments: the prefix is
+    # /api/v1/config/client, never /api/v1/config.
+    browserFamilies:
+      - auth
+      - config/client
+      - system
+      - orgs
+      - sources
+      - services
+      - service-surfaces
+      - deployments
+      - field-maps
+      - rules
+      - alerts
+      - transforms
+      - schemas
+      - hunts
+      - governance
+      - helm
+      - apps
+      - backing-services
+      - library
+      - gitops
+      - lifecycle
+      - repository
+    # Engine-owned ROOT paths the browser needs: JWKS and OIDC discovery, public
+    # by design so peers and the edge jwt_authn can verify DFE tokens.
+    browserPaths:
+      - /.well-known
+    # The families the `dfe` CLI uses, private until cli_families_public above
+    # opens them together.
+    privateFamilies:
+      - queries
+      - discovery
+      - sigma
+      - cel
+      - pipeline
+      - authoring
+      - app-contracts
+      - tasks
+      - synthetic-data
+      - sample
+      - samples
+      - hyperdx
+    # Opened by the same flag: the CLI is generated from the live spec, so a CLI
+    # run from outside needs the document the families belong to.
+    privatePaths:
+      - /openapi.json
+    # SCIM has its own opt-in (ui.engine_api.scim_public): an external SaaS IdP
+    # provisions over the internet, an in-cluster one does not.
+    scimPrefix: /api/v1/scim/v2
+    # NEVER public, under any flag, so no key here names them: /api/e2e is the
+    # test harness's, /docs and /redoc are the Swagger surface, and /livez and
+    # /readyz are the kubelet's.
+
+  # Argo CD. Envoy forwards plain HTTP, so this is argocd-server's plain HTTP
+  # port and bootstrap.sh installs Argo with server.insecure. An ADOPTED Argo
+  # needs server.insecure in its argocd-cmd-params-cm, or a BackendTLSPolicy on
+  # this Service trusting argocd-server's certificate: a TLS-serving server
+  # redirects plain HTTP to the same URL, which loops through the gateway.
+  argocd:
+    class: infra
+    enabled: true
+    edgePolicy: true
+    ownLogin: true
+    routeName: argocd
+    hostnameKey: argocd
+    hostname: ""
+    backendService: argocd-server
+    backendNamespace: argocd
+    backendPort: 80
+    adminLink:
+      name: Argo CD
+      purpose: GitOps sync state of every application this deployment runs
+
+  # HyperDX. Class infra, so the kill switch covers it, but NO edge policy: it
+  # is served inside a dfe-ui iframe and an interactive OIDC redirect cannot
+  # complete in a frame the IdP refuses to be framed in. The fork is its own PEP
+  # -- it authenticates from the dfe_token cookie dfe-ui shares across the
+  # domain -- so the group check happens app-side, not at the edge.
+  hyperdx:
+    class: infra
+    enabled: true
+    edgePolicy: false
+    ownLogin: true
+    routeName: hyperdx
+    hostnameKey: hyperdx
+    hostname: ""
+    backendService: dfe-hyperdx
+    backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
+    backendPort: 8080
+    adminLink:
+      name: Search
+      purpose: Search and dashboards over DFE data and the stack's own telemetry
+
+  # Forgejo (in-cluster deploy-repo FALLBACK git host). Only deployed when no
+  # external git is supplied (see layer2-deploy-repo appset), so the route
+  # renders only with deployRepo.bundled. The edge policy gates the browser UI;
+  # it also blocks git-over-HTTP from OUTSIDE the cluster, which nothing in the
+  # product needs -- Argo and the engine reach it on its Service DNS.
+  forgejo:
+    class: infra
+    enabled: true
+    edgePolicy: true
+    ownLogin: true
+    routeName: forgejo
+    hostnameKey: git
+    hostname: ""
+    backendService: dfe-forgejo
+    backendNamespace: forgejo
+    backendPort: 3000
+    adminLink:
+      name: Forgejo
+      purpose: The bundled deploy repo every configuration change is committed to
+
+  # Kafbat (Kafka UI). Class infra, so the kill switch covers it, but NO edge
+  # policy: it runs its own OIDC against the same provider (the integrated-app
+  # auth pattern), so the group check happens app-side. Fronting it here as well
+  # would put two interactive redirects in one page load.
+  kafbat:
+    class: infra
+    enabled: true
+    edgePolicy: false
+    ownLogin: true
+    routeName: kafbat
+    hostnameKey: kafbat
+    hostname: ""
+    backendService: dfe-kafbat
+    backendNamespace: kafka
+    backendPort: 8080
+    adminLink:
+      name: Kafbat
+      purpose: Kafka topics, consumer groups and their lag
+
+  # The Cruise Control UI (kafka chart, ns strimzi). A static page with NO auth
+  # of its own -- it reads the rebalancer's REST API through a proxy inside its
+  # own pod -- so it renders only behind the edge policy, and only where the
+  # kafka chart renders the Service: provider strimzi, kafka.mode cluster, and
+  # both rebalancing switches on.
+  cruiseControl:
+    class: infra
+    enabled: true
+    edgePolicy: true
+    ownLogin: false
+    routeName: cruise-control
+    hostnameKey: cruiseControl
+    hostname: ""
+    # <kafka.name>-cruise-control-ui, in the namespace layer2-data places the
+    # kafka chart in.
+    backendService: dfe-kafka-cruise-control-ui
+    backendNamespace: strimzi
+    backendPort: 8080
+    adminLink:
+      name: Cruise Control
+      purpose: Kafka partition balance and rebalance proposals
+
+  # Deployment links page (bundled chart, ns links). The page has NO auth of
+  # its own, so it renders only behind the edge policy.
+  links:
+    class: infra
+    enabled: true
+    edgePolicy: true
+    ownLogin: false
+    routeName: links
+    hostnameKey: links
+    hostname: ""
+    backendService: dfe-links
+    backendNamespace: links
+    backendPort: 8080
+    adminLink:
+      name: Deployment links
+      purpose: Every web surface this deployment exposes, with a reachability check
+
+  # dfe-receiver data ingest -- the path dfe-receiver's exposure.mode:
+  # internal depends on, so flip the two together. Off by default because the
+  # receiver chart defaults to public, where it has its own LoadBalancer and
+  # this route would be a second door. An HTTPRoute carries HTTP, so only the
+  # receiver's http listener is routable here.
+  receiver:
+    class: ingest
+    enabled: false
+    routeName: receiver
+    hostnameKey: receiver
+    hostname: ""
+    backendService: dfe-receiver
+    backendNamespace: ""
+    backendPort: 8080
+
+  # Platform OTLP/HTTP ingest: the one DNS door for telemetry from outside the
+  # cluster (edge agents, other estates). Renders only with otel.ingress.enabled,
+  # and its backend port is otel.ingress.port, the collector's bearer-token
+  # receiver. In-cluster senders keep the collector's Service DNS and 4317/4318.
+  otel:
+    class: ingest
+    enabled: true
+    routeName: otel
+    hostnameKey: otel
+    hostname: ""
+    backendService: dfe-otel-collector-gateway
+    backendNamespace: otel
+
+# OIDC -- disabled by default (local auth is default).
+# Each provider gets its own SecurityPolicy targeting the dfe-engine HTTPRoute.
+# Provider addition/removal is a Helm values change + ArgoCD sync -- NOT a
+# dfe-engine API call. dfe-infra owns this config, dfe-engine only reads headers.
+oidc:
+  enabled: false
+  # ESO ClusterSecretStore used to pull each provider's client secret from Vault
+  # into a dfe-oidc-<name> K8s Secret (key: client-secret) the SecurityPolicy refs.
+  secretStoreName: dfe-secret-store
+  # Interactive HTTPRoutes the OIDC SecurityPolicy fronts. One policy is
+  # generated per route, each with its OWN redirectURL on its OWN hostname
+  # (cookies must be set on the host the user is on). Universal: add any future
+  # interactive service's route here -- {name = HTTPRoute metadata.name,
+  # hostname = its subdomain label under {domain}, optional namespace when the
+  # route is not in appNamespace} -- and it is fronted with no policy-code
+  # change. A SecurityPolicy must live in its target route's namespace, so
+  # each policy (and the provider's client-secret ExternalSecret) is rendered
+  # there. NOT a blanket Gateway-level policy: dfe-engine /api machine paths
+  # use API-key/JWT and must not be redirected to OIDC login.
+  #
+  # HyperDX is deliberately NOT here: it is embedded as an iframe inside dfe-ui,
+  # so an interactive OIDC redirect on its route cannot complete (the IdP denies
+  # framing and it would be a second login). The fork is its own PEP -- it
+  # authenticates the user from the dfe_token cookie the UI shares across the
+  # domain -- so it needs no edge OIDC policy.
+  targetRoutes:
+    - name: dfe-engine
+      hostname: dfe
+  # Which provider owns the interactive login on every fronted route. A
+  # SecurityPolicy takes ONE oidc provider, and two policies naming the same
+  # HTTPRoute conflict -- only the oldest applies -- so the choice is declared
+  # here rather than falling out of the order of the list below. Empty takes the
+  # first entry. The others stay JWT issuers on the infra policy, so a session
+  # minted by any of them is still accepted.
+  loginProvider: ""
+  providers: []
+  # Example (jwksUrl feeds the admin policy's claim checks; default
+  # {issuerUrl}/keys suits many IdPs -- set it for providers with another layout):
+  # providers:
+  #   - name: google-workspace
+  #     issuerUrl: https://accounts.google.com
+  #     clientId: "123456.apps.googleusercontent.com"
+  #     clientSecretName: dfe-oidc-google   # the Secret's key is always client-secret
+  #     scopes: [openid, email, profile, groups]
+  #     jwksUrl: https://www.googleapis.com/oauth2/v3/certs
+  #
+  # A PRIVATE-CA IdP -- an IdP this deployment hosts for itself, which is the
+  # default shape because the chart issues the whole wildcard from
+  # dfe-internal-ca. Envoy Gateway's CONTROL PLANE fetches
+  # .well-known/openid-configuration using the system trust store, and its
+  # SecurityPolicy CRD has no field anywhere to hand it a CA bundle, so
+  # discovery fails with `x509: certificate signed by unknown authority` and the
+  # policy is REJECTED at admission (dfe-infra #222). Naming both endpoints
+  # skips discovery; backendRefs sends the token exchange to the IdP's Service
+  # over the pod network. Both are needed, and a backendRef outside the target
+  # route's namespace needs a ReferenceGrant in the IdP's namespace.
+  # providers:
+  #   - name: dex
+  #     issuerUrl: https://auth.example.com          # must equal the token `iss`
+  #     clientId: dfe
+  #     authorizationEndpoint: https://auth.example.com/auth
+  #     tokenEndpoint: https://auth.example.com/token
+  #     endSessionEndpoint: ""                       # optional, RP-initiated logout
+  #     backendRefs:
+  #       - name: dex                                # the IdP's in-cluster Service
+  #         namespace: dfe-local
+  #         port: 5556
+  #     # Cluster settings for that backend (timeouts, retries, health checks).
+  #     # There is NO TLS field here: an HTTPS IdP Service needs a
+  #     # BackendTLSPolicy targeting the Service, not a CA on the policy.
+  #     backendSettings: {}
+
+# jwt_authn filter -- chains after OIDC to extract claims into headers.
+# These headers are the contract between Envoy and dfe-engine.
+#
+# DEFAULT OFF, and it must stay off until the two limits below are answered.
+# Neither is a bug in this chart; both are what Envoy Gateway can and cannot do.
+# docs/deployment/gateway-oidc.md carries the long version.
+jwtAuthn:
+  enabled: false
+  issuer: ""
+  audiences: []
+  forwardHeaders:
+    subject: X-Oidc-Subject
+    # NOT MINTABLE BY ENVOY GATEWAY. A SecurityPolicy's
+    # spec.jwt.providers[].claimToHeaders says it outright: "The claim must be
+    # of type; string, int, double, bool. Array type claims are not supported".
+    # `groups` is an array in every OIDC provider worth testing against, so this
+    # header never arrives, and the engine's _resolve_group_grants maps nothing.
+    # An edge login is then AUTHENTICATED WITH ZERO ROLES: the engine answers
+    # roles: [], permissions: [], groups: [] and every authorization check fails.
+    # The engine reading the ID token itself is the way out of that; there is no
+    # Envoy Gateway feature to flatten an array claim (dfe-infra #222).
+    groups: X-Oidc-Groups
+    user: X-Forwarded-User    # backward compat (nginx convention)
+  # The EnvoyPatchPolicy's jwt_authn filter takes the token from an Authorization
+  # Bearer header, and an interactive OIDC login leaves the browser holding a
+  # COOKIE. So the SecurityPolicy half and the patch-policy half of this path do
+  # not currently meet on a browser request.
+  #
+  # And the trust side is asymmetric: dfe-engine's auth.trustProxyHeaders is a
+  # per-ENGINE flag, while the header stripping that makes X-Oidc-* trustworthy
+  # is per-gateway-LISTENER. One engine serving both a policy-fronted route and a
+  # plain one cannot trust the headers on one and not the other -- setting the
+  # flag makes them spoofable everywhere that engine is reachable.

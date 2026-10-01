@@ -35,11 +35,11 @@ dfe-common.imagePullSecrets — renders imagePullSecrets block for pod specs.
 Reads from .Values.imagePullSecrets (list of secret names).
 
 A chart whose image comes from a PUBLIC registry declares image.public: true
-to suppress the block entirely. The deployment overlay sets imagePullSecrets
-for the whole fleet (private ghcr images), and bootstrap only materialises the
-secret in the app namespace -- so a public-image chart in another namespace
-would otherwise reference a secret that does not exist there and the kubelet
-warns on every pull (kafbat in the kafka namespace was the live case).
+to suppress the block entirely. The appsets set imagePullSecrets for the whole
+fleet when bootstrap created a pull secret, and bootstrap creates it only in
+the DFE namespaces -- so a public-image chart in any other namespace would
+otherwise reference a secret that does not exist there and the kubelet warns
+on every pull (kafbat in the kafka namespace was the live case).
 Usage:
   spec:
     {{- include "dfe-common.imagePullSecrets" . | nindent 6 }}

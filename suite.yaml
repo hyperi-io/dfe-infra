@@ -84,7 +84,7 @@ tags:
 
   maturity:
     # Same ladder as versions.yaml. `support` is the orthogonal stance.
-    ladder: "alpha -> beta -> rc -> ga"
+    ladder: "alpha -> beta -> rc -> release"
     support: "standard | lts | eol"
 
   optional: "True where a complete DFE deployment can omit the member entirely. Anything else is required."
@@ -94,6 +94,8 @@ tags:
   package: "The name a library node PUBLISHES under, which is not always the repo name. A cargo-dep or python-dep edge out of that node is only read at a line declaring THAT name."
 
   classification_source: "Which rung answered `classification`: in-repo for a marker in the repo itself (.hyperi-ci.yaml or .hyperi-classification), org-property for the hyperi-io custom property that answers when the repo declares nothing."
+
+  local_gate_exclude_features: "Cargo features, as package/feature, that the dfe-fleet local gate leaves out because building them links a system library the host may lack. Every feature that turns one on is left out with it. Name the feature that pulls the library in, not the app feature that forwards to it."
 
   # `licence` records what the repo DECLARES, in the repo's own words, and
   # `none-declared` there is a reading rather than an omission in the graph.
@@ -186,7 +188,7 @@ nodes:
     role: infra
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: none-declared
     classification: product
@@ -208,7 +210,7 @@ nodes:
     role: infra
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -227,7 +229,7 @@ nodes:
     role: content
     language: none
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: none-declared
     classification: product
@@ -247,7 +249,7 @@ nodes:
     role: service
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -267,7 +269,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -283,7 +285,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -299,12 +301,14 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
     classification_source: org-property
     default_in_pass: true
+    # Links unixODBC (libodbc); db-odbc and full turn it on and are left out with it.
+    local_gate_exclude_features: [dfe-fetcher-db/odbc]
     artefacts:
       - kind: container
         registry: ghcr
@@ -315,7 +319,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -333,7 +337,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -349,7 +353,7 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -365,21 +369,19 @@ nodes:
     role: service
     language: rust
     audience: suite
-    maturity: alpha
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
     classification_source: in-repo
-    default_in_pass: false
+    default_in_pass: true
     artefacts:
       - kind: container
         registry: ghcr
         public: false
-        published: false
-    # Its versions.yaml pin is a placeholder, not a release tag, and it
-    # carries no digest, so the renderer excludes it from every manifest.
 
-  # dfe-transform-wasm and dfe-transform-splack are NOT members -- see
+  # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
+  # uncomment their versions.yaml pins and add them here when they ship. See
   # non_members below, which is where the reason is recorded machine-readably.
 
   # --- ui ------------------------------------------------------------------
@@ -389,7 +391,7 @@ nodes:
     role: ui
     language: typescript
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -406,7 +408,7 @@ nodes:
     role: ui
     language: typescript
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: MIT
     classification: fork
@@ -430,7 +432,7 @@ nodes:
     role: library
     language: rust
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: oss
@@ -472,7 +474,7 @@ nodes:
     role: library
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: oss
@@ -491,7 +493,7 @@ nodes:
     role: library
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: general-oss
@@ -510,7 +512,7 @@ nodes:
     role: content
     language: python
     audience: suite
-    maturity: ga
+    maturity: release
     support: standard
     licence: BUSL-1.1
     classification: product
@@ -532,7 +534,7 @@ nodes:
     role: library
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: general-oss
@@ -551,7 +553,7 @@ nodes:
     role: service
     language: python
     audience: general
-    maturity: ga
+    maturity: release
     support: standard
     licence: Apache-2.0
     classification: general-oss
@@ -563,7 +565,7 @@ nodes:
         registry: ghcr
         public: true
     # The optional edge-fleet VPN, and the only member with a PUBLIC container.
-    # It publishes no Helm chart, so helm/charts/culvert is dfe-infra's own --
+    # It publishes no Helm chart, so helm/edge/culvert is dfe-infra's own --
     # the same arrangement as every other app here -- and versions.yaml pins
     # its image like any other. Its only suite edge is the scalo-py dependency.
     # Its in-repo marker states the numeric tier 4, which is the org
@@ -602,9 +604,11 @@ nodes:
 # ---------------------------------------------------------------------------
 non_members:
 
-  dfe-transform-wasm: "No release tag, so it fails the release-authority test above. Its chart and placeholder app pin predate that test; it becomes a node when it first tags."
+  dfe-transform-wasm: "Coming: alpha, unpublished, and no release tag, so it fails the release-authority test above. Its versions.yaml pin is commented out and its chart stays as a placeholder; it becomes a node when it first tags."
 
-  dfe-transform-splack: "No release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
+  dfe-transform-splack: "Coming: alpha, unpublished, and no release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
+
+  dfe-toolbox: "Not a repo: the chart and the dfe-toolbox-{base,aws,gcp,azure} image family are built from Dockerfiles in THIS repo (docker/dfe-toolbox/) off the stack's own toolbox: pins, so it has no upstream to hold a build-cycle edge against. A member is a repo that releases something this repo consumes; dfe-toolbox releases with dfe-infra because it IS dfe-infra."
 
 # ---------------------------------------------------------------------------
 # EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the
@@ -619,42 +623,42 @@ edges:
     to: dfe-loader
     kind: cargo-dep
     type: potential
-    evidence: "dfe-loader/Cargo.toml:35"
+    evidence: "dfe-loader/Cargo.toml:36"
   - from: scalo-rs
     to: dfe-receiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-receiver/Cargo.toml:25"
-    note: "A second range for the test-support feature sits at Cargo.toml:180 and must move with it."
+    evidence: "dfe-receiver/Cargo.toml:26"
+    note: "A second range for the test-support feature sits at Cargo.toml:200 and must move with it."
   - from: scalo-rs
     to: dfe-fetcher
     kind: cargo-dep
     type: potential
-    evidence: "dfe-fetcher/Cargo.toml:35"
+    evidence: "dfe-fetcher/Cargo.toml:42"
   - from: scalo-rs
     to: dfe-archiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-archiver/Cargo.toml:45"
+    evidence: "dfe-archiver/Cargo.toml:49"
     note: "Workspace root; the three crates inherit it via workspace = true."
   - from: scalo-rs
     to: dfe-transform-vrl
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vrl/Cargo.toml:69"
+    evidence: "dfe-transform-vrl/Cargo.toml:67"
     note: "A second range for the dev dependency sits at Cargo.toml:176."
   - from: scalo-rs
     to: dfe-transform-vector
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vector/Cargo.toml:44"
-    note: "A second range for the dev dependency sits at Cargo.toml:109."
+    evidence: "dfe-transform-vector/Cargo.toml:61"
+    note: "A second range for the dev dependency sits at Cargo.toml:137."
   - from: scalo-rs
     to: dfe-transform-elastic
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-elastic/Cargo.toml:124"
-    note: "Alpha. Its floor is lower than the other six, so it can resolve an older scalo."
+    evidence: "dfe-transform-elastic/Cargo.toml:150"
+    note: "The range sits in the workspace dependencies, and the service package inherits it."
 
   # --- scalo-rs: the generated Dockerfile ----------------------------------
   # The Rust members do not hand-write a Dockerfile: scalo generates it, and
@@ -704,7 +708,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:37"
+    evidence: "dfe-engine/pyproject.toml:39"
     note: "The range has no upper bound, so it admits a future major without complaint."
   - from: scalo-py
     to: dfe-engine
@@ -731,7 +735,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:42"
+    evidence: "dfe-engine/pyproject.toml:46"
     note: "Package data replaced the git submodule. The range has no upper bound."
   - from: dfe-schemas
     to: dfe-infra
@@ -753,7 +757,7 @@ edges:
     kind: python-dep-undeclared
     type: potential
     evidence: "dfe-engine/src/dfe_engine/sampling/service.py:200"
-    note: "Also imported at service.py:236 and sampling/kafka_reader.py:134. pyproject.toml:109 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
+    note: "Also imported at service.py:236 and sampling/kafka_reader.py:134. pyproject.toml:116 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
 
   # --- dfe-engine ----------------------------------------------------------
 
@@ -779,14 +783,8 @@ edges:
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-schema/values.yaml:14"
-    note: "The dfe-schema chart runs an entry point of the ENGINE image, so it is a second copy of the engine tag and moves with it."
-  - from: dfe-engine
-    to: dfe-infra
-    kind: image-pin
-    type: lockstep
     evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:122"
-    note: "A third copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
+    note: "A second copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
 
   # --- dfe-infra -----------------------------------------------------------
 
@@ -850,7 +848,6 @@ edges:
     kind: image-pin
     type: lockstep
     evidence: "dfe-infra/helm/charts/dfe-transform-elastic/Chart.yaml:6"
-    note: "Placeholder pin, no digest, excluded from every rendered manifest until it first publishes."
   - from: dfe-ui
     to: dfe-infra
     kind: image-pin

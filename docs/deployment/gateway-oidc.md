@@ -5,21 +5,28 @@ nothing: dfe-engine holds the accounts and signs its own tokens. The other is
 edge OIDC, where Envoy Gateway takes the login, verifies the token, and hands
 dfe-engine an already-authenticated identity in `X-Oidc-*` headers.
 
-This page is about the second one, and about the parts of it that Envoy Gateway
-cannot do today. Read it before turning `jwtAuthn.enabled` on.
+This page is the second one, and what Envoy Gateway cannot do today; read it
+before turning `jwtAuthn.enabled` on. [edge.md](edge.md) says which routes take
+an edge policy at all.
 
 ## The values that turn OIDC on
 
-There is no single on/off switch, and deliberately no `auth.oidcEnabled`: the
-engine has no OIDC boolean at all, it reads whatever provider YAML is under
-`<config.mountPath>/auth/oidc-providers`. Four values say four separate things.
+There is no single on/off switch and deliberately no `auth.oidcEnabled`: the
+engine reads whatever provider YAML is under
+`<config.mountPath>/auth/oidc-providers`. Five values say five separate things.
 
 | chart | value | what it decides |
 |---|---|---|
 | dfe-engine | `authConfig.providersConfigMap` | which ConfigMap of provider definitions is seeded into the engine's auth directory |
 | dfe-engine | `oidc.enabled` + `oidc.providers` | which client credentials are mounted as env from which Secrets |
 | dfe-engine | `auth.trustProxyHeaders` | whether the engine believes `X-Oidc-*` on an inbound request |
+| dfe-engine | `auth.proxyProvider` | the provider a gateway login is stamped with; its `X-Oidc-Groups` link only to groups linked to that provider, so group files naming `dex` need `dex` here |
 | envoy-gateway-config | `oidc.enabled` + `oidc.providers` + `oidc.targetRoutes` | which routes get an OIDC SecurityPolicy, and against which IdP |
+
+`oidc.targetRoutes` names `dfe-engine`, and the engine's PUBLIC route follows it
+-- so an edge policy on a cloud deploy also fronts
+`GET /api/v1/auth/oidc/{provider}/callback`, which is where it collides with the
+engine's own external-IdP login ([edge.md](edge.md#what-the-engine-apis-split-gets-wrong)).
 
 ## A private-CA IdP is not discoverable
 
@@ -101,6 +108,19 @@ repo pins (`versions.yaml`, `envoy-gateway`):
   one and not the other, so setting the flag makes them spoofable everywhere that
   engine is reachable.
 
+## Argo CD's own login
+
+The Argo CD bootstrap installs signs in through the provider the gateway already fronts it with. bootstrap reads the gateway's `dfe-oidc-argocd-admin` SecurityPolicy, and `bootstrap/argocd_login.py` turns it into Argo's `oidc.config`: the same issuer and client id, and `clientSecret: $<secret>:client-secret`, a reference to the Secret that policy reads. The value never leaves that Secret. Dex is turned off.
+
+`argocd-rbac-cm` maps `dfe-admins` and `dfe-infra` to `role:admin` and `dfe-infra-viewers` to `role:readonly`, the engine's own names (dfe-engine `docs/control-plane/rbac-vocabulary.md`). `dfe-infra` is Argo's admin because its engine role, `infra_admin`, already carries `argo:*`. Any other group signs in and sees nothing. The admin pair is `adminGroups` in `argocd/values/common.yaml`, and `scripts/tests/test_argocd_login.py` fails when the two differ. A deployment that changes `adminGroups` in its own overlay does not change Argo's admins.
+
+- **No policy, no SSO.** With no provider, or `exposure.infraUisExternal: false`, the gateway renders no policy for the route, and Argo keeps its local `admin`. The access summary says which one a deployment got.
+- **Read at bootstrap time.** On a first bootstrap the gateway syncs after Argo is installed, so the login is read again once the readiness gate passes. A provider added later reaches Argo on the next bootstrap run.
+- **The IdP client allows `https://argocd.<domain>/auth/callback`**, beside the gateway's own `/oauth2/callback`.
+- **The edge still decides who reaches Argo.** A `dfe-infra-viewers` user needs that group in `adminGroups` as well, or the gateway refuses them first. That list is also Kafbat's admin role, so a deployment admitting viewers at the edge names Kafbat's admins itself, in `rbac.roles.admin.subjects` of its deploy repo's `infra/kafbat.yaml`.
+- **A private-CA IdP on the deployment's own domain** is verified against the CA that signed the gateway's certificate, set as Argo's `rootCA`. A public IdP keeps the system roots. The issuer hostname must resolve inside the cluster, as below.
+- **An adopted Argo is never reconfigured.**
+
 ## Reaching your own gateway from inside the cluster
 
 A pod that has to use the deployment's public hostname rather than a Service
@@ -135,5 +155,5 @@ hostname and serves the wildcard certificate as normal.
 ## Related
 
 - [index.md](index.md) - the deploy layers and the values cascade
-- `helm/charts/envoy-gateway-config/values.yaml` - the `oidc` and `jwtAuthn` keys
+- `helm/edge/gateway/values.yaml` - the `oidc` and `jwtAuthn` keys
 - `helm/charts/dfe-engine/values.yaml` - the `auth`, `oidc` and `authConfig` keys

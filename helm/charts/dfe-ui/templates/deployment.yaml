@@ -17,6 +17,10 @@ spec:
       annotations:
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      # k8s injects a Docker-link env var per Service in the namespace, and a
+      # DFE_* name that collides with an app setting shadows it. Same class the
+      # engine, loader and receiver charts already guard.
+      enableServiceLinks: false
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       containers:
@@ -42,14 +46,15 @@ spec:
               value: {{ .Values.config.nextPublicApiUrl | quote }}
             # NextAuth's authorize fetch runs server-side; a missing base URL
             # makes every credentials login fail before reaching the engine.
+            # The engine shares this release's namespace, which DFE_NAMESPACE
+            # names and need not be {project}-{env}.
             - name: INTERNAL_API_URL
-              value: {{ .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project (include "dfe-common.namespace" .)) | quote }}
-            - name: NEXT_PUBLIC_HYPERDX_URL
-              value: {{ .Values.config.nextPublicHyperdxUrl | quote }}
+              value: {{ .Values.config.internalApiUrl | default (printf "http://%s-engine.%s.svc.cluster.local:8000" .Values.project .Release.Namespace) | quote }}
             # Read at request time by the (auth) layout: lights the /observe/*
             # sidebar entries that iframe the chromeless dfe-hyperdx fork.
             - name: HYPERDX_URL
-              value: {{ .Values.config.hyperdxUrl | default (printf "https://%s.%s" (coalesce .Values.config.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain) | quote }}
+              {{- /* No domain means no derived URL: printf would emit "https://hyperdx.", which is truthy and beats the port fallback the app uses when this is empty. */}}
+              value: {{ .Values.config.hyperdxUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.config.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain)) | quote }}
             # Scopes the dfe_token cookie to {domain} so the HyperDX iframe
             # (hyperdx.{domain}) is sent the same engine token the UI (dfe.{domain})
             # holds. Empty leaves the cookie host-only (single-origin/docker).
@@ -72,11 +77,16 @@ spec:
             # proxy and the login round-trip bounces to the wrong origin. The UI
             # serves on {hostname}.{domain} (the gateway routes.dfeUi default),
             # never the apex.
+            {{- with .Values.config.nextauthUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.config.hostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain)) }}
             - name: NEXTAUTH_URL
-              value: {{ .Values.config.nextauthUrl | default (printf "https://%s.%s" (coalesce .Values.config.hostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain) | quote }}
-            {{- with (include "dfe-common.otelEndpoint" .) }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
+            {{- end }}
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            # @vercel/otel exports OTLP over HTTP only, so the collector's gRPC port 4317 becomes its HTTP port 4318.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ regexReplaceAll ":4317$" . ":4318" | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-ui

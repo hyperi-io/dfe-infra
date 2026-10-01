@@ -9,7 +9,9 @@
 # The engine resolves it in this order: DFE_APP_CATALOGUE_FILE, then a copy
 # mounted into the engine pod from this file, then the snapshot bundled in the
 # engine image. A deployment that mounts this file picks up a new app without
-# waiting for an engine release.
+# waiting for an engine release. Helm reads only files inside a chart, so the
+# engine chart carries the copy it mounts -- re-render it after editing here:
+#     python3 scripts/composition.py --write-catalogue
 #
 # Multiplicity and replication are INDEPENDENT axes. A transform is both: there
 # may be hundreds of them, one per source, and each one is separately KEDA-scaled.
@@ -40,6 +42,13 @@
 #   for each profile from this, so adding an app to the default path is an edit
 #   HERE rather than a hand-composed list per tier.
 #
+#   There is deliberately NO maturity key beside it: an app this list seeds has
+#   to be listable, so a maturity gate hiding it from the console would
+#   contradict the same file's own default composition (dfe-infra#329). An app
+#   not ready to be offered is kept out of `default_in` instead. suite.yaml's
+#   `maturity` answers a different question -- whether an unattended suite pass
+#   may pick the member up -- and is not a second copy of this.
+#
 # idle_when
 #   The config dot-paths whose emptiness means the app has NO WORK. It declares
 #   what unconfigured looks like, for the engine, the charts, the docs and
@@ -58,10 +67,26 @@
 #   HERE - never by a condition in engine code.
 #
 # hot_reload
-#   Whether the app can apply a config change in place, without a restart. A
-#   FACT about the app, reported to the console and nothing more: every chart
-#   checksums the whole config into its pod template, so any change rolls the
-#   pods as a rolling update either way.
+#   Whether the app applies a GOVERNED config change in place, without a
+#   restart. On Kubernetes it changes nothing: every chart checksums the whole
+#   config into its pod template, so any change rolls the pods either way. On
+#   Compose there is no chart, and this one bit decides whether the engine hands
+#   the operator a restart command (dfe-engine appmgmt/appconfig.py _render_one) -- so an
+#   app that reloads some settings and binds the rest at startup is false when
+#   the ones the engine writes are the startup-bound half, or true with those
+#   keys listed in `restart_paths`.
+#
+# reload_setting
+#   The app's own config key that turns its config watcher on, for an app whose
+#   watcher ships off. Where the engine renders the config it sets the key true
+#   unless the deployment already set it, and reports a restart when the
+#   deployment set it false. Absent means the app watches without being asked.
+#
+# restart_paths
+#   The config dot-paths a hot_reload app still binds at startup. A change at or
+#   below any of them is reported as needing a restart although the app reloads
+#   the rest, so one app can declare both halves. Only on a hot_reload app: on
+#   any other every change is a restart already.
 #
 # endpoints
 #   The listeners the app runs, by name. `push` is the scalo Push service a
@@ -80,20 +105,41 @@
 #   where the app ships a catalogue of them. The engine writes a source's
 #   transform.variant there without knowing which app it is.
 #
+# consumes
+#   The config file the app's own image reads, by name. On Kubernetes the app's
+#   chart renders the instance overlay into a ConfigMap and the name is the
+#   chart's; on Compose there is no chart, so dfe-engine renders the same
+#   content into <app-config-dir>/<app>/<name> and the container reads it
+#   there. An app with no `consumes` reads no config file the engine renders --
+#   the console and the UI, which carry no data-plane config at all. Fields:
+#     config  the file name, as the image's own CMD spells it
+#   The DIRECTORY is the image's too, and the fleet spells it two ways:
+#   /etc/dfe/<app>.yaml for the loader, fetcher and archiver, and
+#   /etc/dfe-<app>/config.yaml for the receiver and the transforms. Each chart
+#   mirrors its own image's CMD, so unifying the two is one app release per app
+#   for no change in behaviour -- deliberately not done (dfe-infra#79).
+#
 # files[]
 #   A family of files the app reads off disk. Content is carried in the instance's
 #   values overlay, because Helm cannot read a raw file out of an Argo $values
 #   source. Fields:
-#     name         identifier used in the API path
-#     values_path  dot-path in the overlay holding the list of {name, content}
-#     links_path   dot-path in the overlay holding the library links that produced
-#                  that content. Optional; defaults to values_path + "Links".
-#     dir_setting  the app's own config key naming the directory it reads
-#     suffixes     extensions the app will actually load; anything else is refused
-#     language     editor syntax hint
-#     reload       hot    the app applies a change without a restart
-#                  roll   a pod roll applies it; the chart checksums the files
-#                  restart needs a manual restart
+#     name          identifier used in the API path
+#     values_path   dot-path in the overlay holding the list of {name, content}
+#     links_path    dot-path in the overlay holding the library links that produced
+#                   that content. Optional; defaults to values_path + "Links".
+#     dir_setting   the app's own config key naming the directory it reads
+#     entries_path  the app's own config key holding one {name, path} entry per
+#                   file, for a set the app names table by table rather than by
+#                   directory. The name is the file name without its extension,
+#                   which is the name a program looks the table up by. Whoever
+#                   owns the mount derives these: the chart on Kubernetes
+#                   (dfe-common.enrichmentTablesConfig), the engine's writer on
+#                   Compose. Set this or dir_setting, never both.
+#     suffixes      extensions the app will actually load; anything else is refused
+#     language      editor syntax hint
+#     reload        hot    the app applies a change without a restart
+#                   roll   a pod roll applies it; the chart checksums the files
+#                   restart needs a manual restart
 #
 # routing
 #   Present when the app's routing block is DERIVED from the source definitions
@@ -137,6 +183,11 @@
 #   config calls for without the engine knowing which app it is. The platform
 #   topic convention is {source}_land in, {source}_load out.
 #
+# display_name
+#   The name a console shows a person for the app, where it differs from the
+#   app's id. Absent means the id is shown. It changes the label only: the id
+#   stays the name of the chart, the Service, the routes and the telemetry.
+#
 # kinds
 #   What KIND of thing an artefact in the versioned library is. The library CRUD
 #   is generic over these, so supporting a new authored language is an edit here
@@ -175,9 +226,40 @@ apps:
     multiplicity: single
     scale_deployed: true
     transports: [bus, direct]
-    # A reload rebuilds the router and the validator in place; the sinks and the
-    # listeners are built once at startup.
+    # A reload rebuilds the router and the validator and re-reads the auth
+    # tokens. The sinks, their buffers and the DLQ are built once
+    # (dfe-receiver src/pipeline/mod.rs PipelineState::build), and so is every
+    # listener (src/server/mod.rs build_handlers), so a destination added later
+    # has no sink and its records are refused until the container restarts.
     hot_reload: true
+    restart_paths:
+      - config.destinations
+      # The built-in loader destination is resolved from this (config/mod.rs
+      # resolved_destinations).
+      - config.loader
+      - config.kafka
+      - config.buffer
+      - config.routing.dlq
+      - config.file_sink
+      - config.raw_capture
+      # Whole: the HTTP listener reads its IP filter, rate limit, auth mode, TLS
+      # and body limits once (src/server/http/mod.rs serve), and only the bearer
+      # tokens reload, so a token edit reports a restart it does not need.
+      - config.server
+      - config.grpc
+      - config.otlp
+      - config.lumberjack
+      - config.splunk_hec
+      - config.syslog
+      - config.prometheus_rw
+      - config.fluent
+      - config.gelf
+      - config.flow
+      - config.webhook
+      - config.scaling
+      - config.config_reload_secs
+    consumes:
+      config: config.yaml
     routing:
       compiler: receiver
       values_paths:
@@ -189,14 +271,21 @@ apps:
     multiplicity: single
     scale_deployed: true
     transports: [bus, direct]
-    # Watching is opt-in per deployment (config.hot_reload.enabled).
     hot_reload: true
+    # HotReloadConfig::enabled defaults false (dfe-loader src/config/pipeline.rs).
+    reload_setting: config.hot_reload.enabled
     endpoints:
       push: {port: 6000}
+    consumes:
+      config: loader.yaml
     routing:
       compiler: loader
       values_paths:
         routing: config.routing
+        # Per-table _json/_raw capture, compiled from each source's derived
+        # schema. Its own path, not the whole metadata block, because the rest
+        # of that block is the deployment's.
+        capture: config.metadata.table_capture_modes
     # No idle_when: a bound listener always has work, and on the bus an empty
     # topic list is auto-discovery, so a topic appearing gives the loader work
     # with no config change for the gate to wake on.
@@ -210,10 +299,30 @@ apps:
     transports: [bus, direct]
     endpoints:
       push: {port: 6000}
+    # false even though the app DOES run a scalo ConfigReloader, polling every 5 s
+    # and taking SIGHUP (dfe-archiver crates/archiver/src/main.rs:146-163). What
+    # it re-reads is buffer thresholds, memory limits and the scaling tunables;
+    # transport, archive, routing and compression are snapshotted at startup
+    # (archiver.rs:109-111) -- and those are exactly the keys the engine writes
+    # here, `routing.values_paths` and every path in `idle_when` below. One bit
+    # cannot say both, and the engine spends it on whether to tell a Compose
+    # operator to restart (dfe-engine appmgmt/appconfig.py _render_one), so it answers
+    # for the governed writes.
     hot_reload: false
-    # Deployed everywhere by default and idle until an operator names a
-    # destination, rather than absent until someone remembers to add it. The
-    # topic pair is one condition: on the bus, neither an explicit list nor a
+    consumes:
+      config: archiver.yaml
+    routing:
+      compiler: archiver
+      values_paths:
+        # The landing topics of the sources that asked to be archived. A
+        # discovery pattern in its place archives every source, asked or not.
+        topics: config.kafka.topics
+    # Deployed by default and idle until an operator names a destination, rather
+    # than absent until someone remembers to add it. docker-slim is the one
+    # exception: the leanest Compose tier runs the core data path alone, so the
+    # archiver arrives with docker-single.
+    default_in: [slim, single, scale, mesh, docker-single]
+    # The topic pair is one condition: on the bus, neither an explicit list nor a
     # discovery pattern means nothing to read.
     idle_when:
       - config.archive.destination
@@ -227,12 +336,16 @@ apps:
     multiplicity: per_config
     scale_deployed: false
     transports: [bus, direct]
-    # One instance per fetcher source, written by the engine when the source is
-    # written, so no profile seeds one.
-    default_in: []
-    # Anything that can produce a record is work. The ingest listener defaults
-    # ON, so a deployment wanting the gate to turn on sources alone sets
-    # config.ingest.enabled false.
+    # docker-slim runs the core data path alone, so no fetcher may be deployed
+    # there.
+    profiles: [slim, single, scale, mesh, docker-single]
+    # On the Kubernetes tiers one instance per fetcher source, written by the
+    # engine when the source is written, so no tier seeds one. Compose holds one
+    # service per app, so docker-single starts that single fetcher idle and the
+    # source it is later given fills it.
+    default_in: [docker-single]
+    # Anything that can produce a record is work; the ingest listener defaults
+    # off, so an instance that wants it sets config.ingest.enabled true.
     idle_when:
       - config.sources
       - config.extractors.containers
@@ -241,6 +354,16 @@ apps:
     # rest of the stanza binds a connection, a topic or the concurrency
     # semaphore, all established once at startup (its config.example.yaml).
     hot_reload: true
+    # Whole blocks: a reload re-reads a source's filter and interval but adds no
+    # source, re-resolves no credential and rebuilds no output (dfe-fetcher#134),
+    # so a filter-only edit reports a restart it does not need.
+    restart_paths:
+      - config.sources
+      - config.output
+      - config.extractors
+      - config.ingest
+    consumes:
+      config: fetcher.yaml
     # instance_id keys the cursor store, so it has to be stable per source: a
     # changed id re-fetches the default window instead of resuming.
     source_binding:
@@ -253,9 +376,23 @@ apps:
         sources: config.sources
         output: config.output
       scope: instance
-    # The families dfe-fetcher ships, from its docs/capability-catalog.yaml.
-    # Each name is also the config key its stanza sits under in config.sources.
+    # What dfe-fetcher can fetch. Each name is the config key its stanza sits
+    # under in config.sources, and the engine refuses a source whose declared
+    # type is not here.
+    #
+    # The first three are SHAPES, not vendors: each is a keyed map of instances
+    # (sources.rest.<id>, and the same for db and file) driven by a profile or a
+    # connection, so one of them covers many upstreams. They are deliberately
+    # absent from the fetcher's docs/capability-catalog.yaml, which is derived
+    # from its typed per-vendor blocks alone. runZero, for one, is not a family:
+    # it ships as a profile and is configured under sources.rest.
+    #
+    # The rest are the typed per-vendor families, and those DO come from that
+    # capability catalogue.
     source_types:
+      - rest
+      - db
+      - file
       - aws
       - azure
       - m365
@@ -297,9 +434,17 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: false
-    # A transform instance IS a source's processing step, so it arrives with the
-    # source rather than with the profile.
-    default_in: []
+    consumes:
+      config: config.yaml
+    # A per_config transform instance exists while a source binds it, and not
+    # otherwise: the engine removes any instance no active, deployed source
+    # binds, so a tier listed here runs none until its first source does.
+    default_in: [single, scale, docker-single]
+    # On the bus a transform with no topics has nothing to consume, so it starts,
+    # stays Ready and holds no consumer group. The direct form's listener IS the
+    # work, which is why the bind address is not listed here.
+    idle_when:
+      - config.source.topics
     # No source shorthand in this app, so the topics are set explicitly.
     source_binding:
       config.source.topics: ["{source}_land"]
@@ -321,10 +466,17 @@ apps:
         reload: roll
       # Lookup tables the programs read. A second file set rather than a second
       # mechanism: same {name, content} shape, same library, own mount.
+      #
+      # roll, not hot: a table is materialised once at load. The background
+      # refresh (src/enrichment/refresh.rs:29-42, minimum 60 s, atomic swap) is
+      # opt-in per table and only runs for one declaring a `refresh` block, and
+      # the entries this set derives carry {name, path} alone
+      # (dfe-common.enrichmentTablesConfig), so a mounted table needs the roll.
       - name: enrichment
         values_path: enrichmentTables
         links_path: enrichmentTableLinks
         dir_setting: ""
+        entries_path: config.enrichment_tables
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll
@@ -340,6 +492,8 @@ apps:
       push: {port: 6000}
     hot_reload: true
     default_in: []
+    consumes:
+      config: config.yaml
     # This app derives topics and consumer group from its own dfe_source field.
     source_binding:
       config.dfe_source: "{source}"
@@ -362,6 +516,7 @@ apps:
         values_path: enrichmentTables
         links_path: enrichmentTableLinks
         dir_setting: ""
+        entries_path: config.enrichment_tables
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll
@@ -376,16 +531,28 @@ apps:
     transports: [bus]
     # endpoints:
     #   push: {port: 6000}          # dfe-transform-elastic#19
-    # Default composition waits on the published image
-    # (dfe-transform-elastic#17); until then a deployment adds it by hand.
-    # default_in: [single, scale, docker-single]   # dfe-transform-elastic#17
-    # Its batch size and scaling section take effect on the next batch.
-    hot_reload: true
-    default_in: []
+    # A per_config transform instance exists while a source binds it, and not
+    # otherwise: the engine removes any instance no active, deployed source
+    # binds, so a tier listed here runs none until its first source does.
+    default_in: [single, scale, docker-single]
+    # Nothing here reloads. The config is read once at startup and handed to the
+    # batch loop by reference, so every value needs a restart -- the batch size
+    # and the scaling block included. A `scaling` block in that file reaches
+    # nothing at all, because scalo resolves the section from a cascade the
+    # named file is not a layer of, and the app warns about it at startup.
+    hot_reload: false
+    consumes:
+      config: config.yaml
+    # Both paths are listed because the app idles on EITHER being empty: with no
+    # name there is no transform to select, and with no topics there is nothing
+    # to consume.
+    idle_when:
+      - config.source.name
+      - config.source.topics
     # It ships a catalogue of compiled-in transforms and selects one by name.
     variant_path: config.source.name
-    # The catalogue reaches a deployment as a release asset from that repo
-    # (dfe-transform-elastic#18), mounted where DFE_SOURCE_CATALOGUE_FILE says.
+    # The catalogue reaches a deployment from the app's own image, which prints
+    # it with `emit-catalogue`, mounted where DFE_SOURCE_CATALOGUE_FILE says.
     catalogue:
       file: sources.yaml
       entries_key: sources
@@ -405,7 +572,7 @@ apps:
   # appliance dials before it posts to the receiver -- so it has no transport,
   # no source binding and no routing to compile. It holds at one deployment
   # because WireGuard mints its server key in the pod, and at one replica for
-  # the same reason (helm/charts/culvert refuses more).
+  # the same reason (helm/edge/culvert refuses more).
   culvert:
     multiplicity: single
     scale_deployed: false
@@ -433,6 +600,7 @@ apps:
   # The observability console dfe-ui embeds in an iframe. Deployed wherever the
   # UI is, because the UI's observe pages are blank without it.
   hyperdx:
+    display_name: Search
     multiplicity: single
     scale_deployed: false
     transports: []

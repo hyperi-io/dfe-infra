@@ -200,17 +200,16 @@ flowchart LR
 
 ### dfe-engine
 
-Its image tag sits in three places in this repo (its own chart, the dfe-schema
-chart that runs an engine entry point, and the hyperdx chart's init container),
-and the drift check holds all three. dfe-ui vendors the engine's API spec and
-generates its scopes file from an engine module.
+Its image tag sits in two places in this repo (its own chart and the hyperdx
+chart's init container), and the drift check holds both. dfe-ui vendors the
+engine's API spec and generates its scopes file from an engine module.
 
 <!-- suite-graph:begin producer:dfe-engine -->
 ```mermaid
 flowchart LR
   dfe_engine["dfe-engine"]:::producer
   dfe_infra["dfe-infra"]:::suite
-  dfe_engine ==>|image-pin, lockstep x3| dfe_infra
+  dfe_engine ==>|image-pin, lockstep x2| dfe_infra
   dfe_ui["dfe-ui"]:::suite
   dfe_engine -->|generated-file, potential| dfe_ui
   dfe_engine -->|vendored-file, potential| dfe_ui
@@ -445,12 +444,13 @@ components through their management API - sit in `runtime_edges`. They are
 real and recorded so an outside reader sees the whole picture, but a release on
 either side changes no file in the other, so a build pass has nothing to check.
 
-dfe-transform-wasm and dfe-transform-splack are not members: neither has a
-release tag. Their charts and placeholder pins in this repo predate that test,
-and each joins the file when its first tag exists.
+dfe-transform-wasm and dfe-transform-splack are coming, not members: both are
+alpha and neither has a release tag. Their `versions.yaml` pins are commented
+out and their charts stay in the tree as placeholders, so each joins the file
+when its first tag exists.
 
-Both are listed under `non_members` with the reason, because a chart or
-a pin with no member is otherwise an advisory on every drift-check run, and an
+Both are listed under `non_members` with the reason, because a chart with no
+member is otherwise an advisory on every drift-check run, and an
 advisory nobody can act on trains the reader to skip the ones that mean
 something. The listing is checked rather than trusted: `check_suite_drift.py`
 fails when an entry is also a node, and when an entry names no chart and no

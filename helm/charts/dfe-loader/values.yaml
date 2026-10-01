@@ -8,10 +8,32 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-loader (drift-checked).
-  digest: "sha256:38711e8dae47e68f9a58227dea02018952db269885b9aaba3bd4b6b2f261de62"
+  digest: "sha256:26e3e438cafa1b3b3305299ce07d6040abbb829b123575f13e26ccb5463fd9a2"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
+
+# dfe-engine applies every ClickHouse object and every bootstrap Kafka topic at
+# its own startup and gates /readyz on the result, so an init container waits on
+# the engine Service before this pod starts (dfe-common.waitForEngine). Started
+# first, this app finds no table and no topic.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty -> this release's own namespace.
+  namespace: ""
+  port: 8000
+  # On expiry the init container exits non-zero and the pod sits in
+  # Init:CrashLoopBackOff rather than starting against an absent schema.
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 kafka:
   # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
@@ -21,22 +43,52 @@ kafka:
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
-  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
-  # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
-  # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
-  # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
-  # DFE Kafka credential contract (dfe-engine#98).
-  provider: ""
+  # Wire protocol for the broker's listener (PLAINTEXT | SASL_PLAINTEXT | SSL |
+  # SASL_SSL), set beside bootstrapServers. Only an SSL value is rendered: it
+  # turns the app's TLS on, and anything else leaves the app's own setting.
+  securityProtocol: ""
 
 clickhouse:
   host: ""
+  # The plaintext HTTP port, dialled only while tls.enabled is off.
   port: 8123
   database: dfe
+  # HTTPS to ClickHouse. argocd/values/common.yaml turns it on for every
+  # deployment it builds; off here keeps a render with no CA on plaintext. The
+  # loader takes TLS from the port (8443) and trusts only its system store, so a
+  # CA below is merged into a copy of that store and SSL_CERT_FILE names it.
+  tls:
+    enabled: false
+    port: 8443
+    # The loader cannot skip verification, so false fails the render.
+    verify: true
+    # Read for one thing: whether the in-cluster server has a CA and so serves
+    # TLS at all (clickhouse-cluster's rule). The appsets set internalCA.present
+    # from the edge label; an explicit issuerRef.name counts on its own, and an
+    # external server (clickhouse.mode external) needs neither.
+    issuerRef:
+      name: ""
+    internalCA:
+      present: false
+    # The CA that signed the server certificate, from a Secret or a ConfigMap in
+    # this namespace, under dataKey. Both empty trusts the system store alone.
+    ca:
+      secretName: ""
+      configMapName: ""
+      dataKey: ca.crt
+    # The init container that writes the merged trust store.
+    bundleResources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 32Mi
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created
-# topic -- the kafka chart's kafka.dlqTopics list. Change the topic only
-# together with that list, or the app dead-letters into a topic nothing created.
+# topic -- the dfe-schemas topic set dfe-engine creates. Change the topic only
+# together with that set, or the app dead-letters into a topic nothing created.
 dlq:
   topic: dfe_loader_dlq
   mode: kafka_only
@@ -67,6 +119,13 @@ config:
   clickhouse:
     protocol: http
 
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
+
 otel:
   endpoint: ""
 
@@ -81,12 +140,25 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+  # Mount the service-account token. Turn on only for Vault's Kubernetes auth method, which logs in with it: VAULT_K8S_ROLE (or OPENBAO_K8S_ROLE / BAO_K8S_ROLE) or secrets.openbao.auth.method kubernetes in the app config.
+  mountToken: false
+
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
-# DEFAULT trigger is CPU (native KEDA cpu scaler, no shim). scalo ScalingPressure
-# (dfe_scaling_pressure, 0-100) is OPT-IN via the fail-safe dfe-keda-shim (a metric
-# outage FREEZES scaling, never runs replicas up). minReplicaCount stays 1
-# (scale-to-zero is 2.2 backlog; set min/idle 0 to opt in).
+# Two triggers render and the HPA takes the higher: the native cpu scaler (no
+# component in the path, so a metric outage cannot take scaling with it) and the
+# scalo ScalingPressure composite (0-100) through the fail-safe dfe-keda-shim. The
+# shim matches the bare `scaling_pressure` gauge and any `<prefix>_scaling_pressure`
+# for this ServiceName (dfe-engine#379), so no app release is needed for the name.
+# Pressure needs the shim in the release namespace -- the engine chart ships it
+# (kedaShim.enabled) -- and the slim profile turns it off because that tier carries
+# no broker, leaving the composite's lag term with nothing to measure.
+# minReplicaCount stays 1 (scale-to-zero is 2.2 backlog; set min/idle 0 to opt in).
 keda:
   enabled: true
   minReplicaCount: 1
@@ -94,12 +166,12 @@ keda:
   cooldownPeriod: 120
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # opt-in: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: true             # scalo ScalingPressure via the fail-safe dfe-keda-shim
     # service: dfe-loader     # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

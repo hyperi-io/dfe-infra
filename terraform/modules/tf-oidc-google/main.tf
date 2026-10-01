@@ -7,18 +7,7 @@ terraform {
   }
 }
 
-# OAuth2 consent screen
-resource "google_iap_brand" "dfe" {
-  support_email     = "admin@${var.google_workspace_domain}"
-  application_title = "DFE Platform"
-  project           = var.project_id
-}
-
-# OAuth2 client (web application)
-resource "google_iap_client" "dfe" {
-  display_name = "DFE OIDC"
-  brand        = google_iap_brand.dfe.name
-}
+# The OAuth client for Google sign-in is created in the Cloud console, because the IAP OAuth Admin API that could create it is shut down.
 
 # Service account for Admin SDK group resolution
 resource "google_service_account" "dfe_groups" {

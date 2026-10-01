@@ -1,13 +1,14 @@
-# Wave 2: cluster platform config -- edge routing and network policy.
+# Wave 2: cluster platform config -- network policy, the toolbox pod, and the
+# Karpenter pools.
 #
 # First-party dfe-infra charts that configure the CLUSTER rather than run a
 # workload, so they sit apart from layer2-data (substrate) and layer2-apps (DFE
-# services). Both are generated here so a rebuild recreates them; applied by hand
-# they take neither the profile overlay nor the domain, and every HTTPRoute
-# renders on local.yaml's placeholder host.
+# services). They are generated here so a rebuild recreates them; applied by hand
+# they take neither the profile overlay nor the domain.
 #
-# Wave 2 puts the Gateway and its routes in place before the workloads they route
-# to; an HTTPRoute whose backend is absent reports NotFound until it exists.
+# The public gateway is NOT here: it belongs to the edge module and is generated
+# by appsets/layer2-edge.yaml, on the same wave 2 and under the same Application
+# name it had here.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -26,21 +27,86 @@ spec:
                   dfe.hyperi.io/managed: "true"
           - list:
               elements:
-                # Gateway + HTTPRoutes for every deployment surface. Needs the
-                # envoy-gateway operator, installed at wave 3 by layer1-addons;
-                # the CRDs it depends on come with that install, so this Application
-                # reports SyncFailed until the operator lands and then converges.
-                - app: envoy-gateway-config
-                  namespace: envoy-gateway-system
-                  wave: "2"
-                  appProject: infra
                 # Default-deny plus the explicit allows between DFE namespaces.
                 - app: network-policies
                   namespace: default
                   wave: "2"
                   appProject: infra
+                # Opt-in in-cluster troubleshooting pod. Always deployed here
+                # (not cloud-gated, unlike karpenter-pools below) -- the chart
+                # itself renders replicas: 0 and no RBAC until a deployment's
+                # own toolbox.pod.enabled says otherwise (argocd/values/common.yaml).
+                # Same namespace as network-policies for the same reason: a
+                # generic platform namespace, not a DFE app or data one.
+                - app: dfe-toolbox
+                  namespace: default
+                  wave: "2"
+                  appProject: infra
+    # envoy-gateway-config, for THIS RELEASE ONLY -- it moves to
+    # appsets/layer2-edge.yaml at rc.15 (dfe-infra#342).
+    #
+    # The edge module gates on the cluster secret's own dfe.hyperi.io/edge, and a
+    # secret written before that module carries no such key -- so layer2-edge
+    # generates nothing for an existing cluster, and without this generator the
+    # Application would simply disappear. Nothing sets preserveResourcesOnDeletion,
+    # so that would take the live Gateway, every HTTPRoute and every public
+    # Certificate with it.
+    #
+    # DoesNotExist, not NotIn: the gate is "this secret predates the module", not
+    # "the module is off". A deployer who set the key to false turned the edge off
+    # deliberately and gets no Gateway from here either -- NotIn would match that
+    # cluster too and quietly override the switch. So exactly one appset generates
+    # the Application for any cluster, and neither does when it is off.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/edge
+                    operator: DoesNotExist
+          - list:
+              elements:
+                # Name and wave unchanged from before the chart moved under
+                # helm/edge, so Argo adopts the live objects rather than
+                # deleting and recreating them.
+                - app: envoy-gateway-config
+                  chart: edge/gateway
+                  namespace: envoy-gateway-system
+                  wave: "2"
+                  appProject: infra
+    # karpenter-pools: the NodePools and EC2NodeClasses a workload actually
+    # schedules onto. AWS-only, the same shape layer1-addons gates its two
+    # AWS-only controllers on -- Exists AND In, because NotIn/In alone matches
+    # an absent key. Wave 3, after the karpenter controller itself (wave 1 in
+    # layer1-addons.yaml): a NodePool applied before the controller that reads
+    # it just sits unclaimed.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/cloud
+                    operator: Exists
+                  - key: dfe.hyperi.io/cloud
+                    operator: In
+                    values: ["aws"]
+          - list:
+              elements:
+                - app: karpenter-pools
+                  namespace: kube-system
+                  wave: "3"
+                  appProject: infra
   template:
     metadata:
+      # `app` is the Application NAME and `chart` is only its directory, so a
+      # chart that moves keeps the name Argo's tracking id is built from and the
+      # move adopts the live objects instead of deleting and recreating them.
       name: '{{ .app }}-{{ .name }}'
       namespace: argocd
       annotations:
@@ -54,7 +120,12 @@ spec:
       sources:
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-          path: 'helm/charts/{{ .app }}'
+          # `index` rather than `.chart`, because goTemplateOptions is
+          # missingkey=error and a field lookup on an element that states no
+          # chart would fail the render instead of falling back to the name.
+          # The default keeps the charts/ prefix, so only a chart living outside
+          # helm/charts (the edge module's two) has to state its directory.
+          path: 'helm/{{ index . "chart" | default (printf "charts/%s" .app) }}'
           helm:
             ignoreMissingValueFiles: true
             valueFiles:
@@ -62,11 +133,19 @@ spec:
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               # infra/common.yaml is the deployer's own common.yaml -- shared
-              # facts declared once and read by every appset; infra/<chart>.yaml
-              # is the per-chart overlay. Both optional.
+              # facts declared once and read by every appset; infra/<app>.yaml
+              # is the per-app overlay. Both optional. Keyed on the Application
+              # name rather than the chart directory, so moving a chart does not
+              # orphan the overlay a deployer already wrote.
               - '$values/infra/common.yaml'
               - '$values/infra/{{ .app }}.yaml'
             parameters:
+              # The registry every dfe-* image is pulled from -- dfe-toolbox
+              # renders one here. A missing annotation fails the render rather
+              # than handing the charts an empty registry, which beats every
+              # values file and sends each image to Docker Hub.
+              - name: global.registry
+                value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
               # The deployment's own domain, from the cluster fact rather than a
               # values file -- the tracked overlays carry placeholders only. Every
               # hostname envoy-gateway-config publishes derives from it.
@@ -76,10 +155,88 @@ spec:
               # LB pool choose, which re-rolls the edge address on a rebuild.
               - name: envoyGateway.service.loadBalancerIP
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/gateway_address" }}'
-              # Where the DFE apps run, so the network policies name the same
-              # namespace the apps are actually placed in.
+              # Where the DFE apps run, for the charts here that read it.
               - name: appNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # network-policies reads dfeNamespaces, NOT appNamespace, and a
+              # NetworkPolicy aimed at a namespace that does not exist is
+              # REJECTED -- which fails the whole Application sync and leaves
+              # the cluster with no policies at all rather than with wrong ones.
+              - name: dfeNamespaces[0]
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+              # The deployment's own posture and cloud. Every chart here labels
+              # what it renders from these, and the chart defaults say local, so
+              # without them an AWS deployment's objects claim to be a local one.
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              - name: cloud
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
+              # envoy-gateway-config renders its git route only where
+              # layer2-deploy-repo.yaml deploys Forgejo, on this same label.
+              - name: deployRepo.bundled
+                value: '{{ eq (index .metadata.labels "dfe.hyperi.io/bundled-deploy-repo") "true" }}'
+              # The toolbox pod's own dial facts (deployment.yaml's
+              # toolbox.pod.*, carried onto the cluster secret by bootstrap.sh
+              # the same way retention.defaultTtlDays is in layer2-apps.yaml).
+              # Applied to every app this generator deploys, same as domain/
+              # appNamespace above -- harmless on envoy-gateway-config and
+              # network-policies, which read neither. enabled/kubeApiAccess
+              # are left to Helm's own --set type inference (bare true/false
+              # becomes a real YAML boolean, which the chart's own
+              # validate.yaml requires); ttlSeconds forces a string so a
+              # numeric TTL is never silently coerced to an int.
+              - name: toolbox.pod.enabled
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_enabled" | default "false" }}'
+              - name: toolbox.pod.kubeApiAccess
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_kube_api_access" | default "false" }}'
+              - name: toolbox.pod.ttlSeconds
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_ttl_seconds" | default "" }}'
+                forceString: true
+            # `values` (a YAML string) rather than a structured block, same
+            # reason the karpenter addon in layer1-addons.yaml gives: a
+            # per-element conditional cannot live in a field this file's own
+            # tests parse as plain YAML before any Go templating runs.
+            values: |
+              {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- if $kafkaMode }}
+              # network-policies derives its external-service egress from the
+              # declared mode, so without this the baseline default-deny holds
+              # and no pod can reach a managed broker at all. bootstrap.sh sets
+              # the annotation only for msk, confluent-cloud and redpanda-cloud;
+              # an in-cluster broker keeps the profile overlay's own kafka.mode
+              # and renders no external egress.
+              kafka:
+                mode: {{ $kafkaMode | quote }}
+              {{- end }}
+              {{- if eq .app "karpenter-pools" }}
+              {{- $pools := index .metadata.annotations "dfe.hyperi.io/karpenter_pools" }}
+              # The three facts karpenter.cluster.* names, carried onto the
+              # cluster secret by bootstrap.sh from the kubernetes-cluster
+              # module's `karpenter` output. Without them the chart's own
+              # guards refuse to render (helm/charts/karpenter-pools/templates/_pools.tpl).
+              karpenter:
+                cluster:
+                  discoveryTag: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_discovery_tag" | quote }}
+                  instanceProfile: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_instance_profile" | quote }}
+                  kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_kms_key_id" | quote }}
+                {{- if $pools }}
+                # The pools the resolver sized, carried as one line of JSON on
+                # the cluster secret. Parsed rather than spliced, so an
+                # annotation that is not JSON fails this render instead of
+                # injecting arbitrary values into the Application. Absent, the
+                # chart's own `pools: {}` default renders no NodePool, so every
+                # workload the managed groups cannot fit stays Pending.
+                pools:
+                  {{- $pools | fromJson | toYaml | nindent 4 }}
+                {{- end }}
+              {{- end }}
+              {{- $pullSecret := "ghcr-pull-secret" }}
+              {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+              {{- if $pullSecret }}
+              # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
+              imagePullSecrets:
+                - {{ $pullSecret | quote }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

@@ -17,6 +17,20 @@ Run from the repo root (or anywhere -- paths resolve relative to this file's
 parent's parent). Exits non-zero on any mismatch, listing each one.
 
     python3 scripts/check_versions_drift.py
+    python3 scripts/check_versions_drift.py --stack 2.2.0-rc.12
+
+`--stack` picks which `stacks.<version>` block the appset pins, Chart.yaml
+appVersions and every other mirror are checked against; it defaults to the
+`current` pointer, so an existing caller with no flag sees no change. Some
+CHECKS entries watch a key that is pinned starting the 2.2.0-rc.14 block (cut
+on a separate branch, not merged here): a stack older than rc.14 carries no
+value for that key at all, so auditing it there is NOTED rather than failed --
+see PENDING_MIRRORS. A stack that does carry the key is compared strictly,
+like any other pin.
+
+One pair of literals has no versions.yaml key at all: the HELM_VERSION that
+helm-lint.yml and release.yml each install. The check holds them equal to each
+other, so the release gate resolves charts with the Helm the PR check used.
 
 No third-party deps required: versions.yaml and the structured files are parsed
 with a tiny purpose-built reader (the values we check are all simple
@@ -25,6 +39,7 @@ with a tiny purpose-built reader (the values we check are all simple
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from dataclasses import dataclass
@@ -35,6 +50,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSIONS_FILE = REPO_ROOT / "versions.yaml"
+
+# Imported by path so `python3 scripts/check_versions_drift.py` works from any cwd.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import version_range  # noqa: E402
 
 
 def _parse_nested(text: str) -> dict:
@@ -66,29 +85,34 @@ def _parse_nested(text: str) -> dict:
     return root
 
 
-def load_versions() -> dict[str, str]:
-    """Flatten the CURRENT stack's sections into dotted keys -> value.
+def load_versions(stack: str | None = None) -> dict[str, str]:
+    """Flatten the SELECTED stack's sections into dotted keys -> value.
 
-    versions.yaml is NESTED (stacks: -> <version> -> <section> -> key). Read the
-    `current` pointer, descend into stacks[current], and flatten THAT stack's
-    sections (e.g. operators.keda, services.clickhouse-version). The drift-check
-    always validates the stack under development.
+    versions.yaml is NESTED (stacks: -> <version> -> <section> -> key). Read
+    the `current` pointer, resolve the selected stack (the `stack` argument if
+    given, else `current`), descend into stacks[selected], and flatten THAT
+    stack's sections (e.g. operators.keda, services.clickhouse-version). The
+    default keeps every existing caller checking the stack under development;
+    `--stack` lets a caller audit a different block (e.g. an in-flight cut)
+    without moving `current`.
 
-    The `current` pointer is also returned, as `pointers.current`.
+    The selected stack id is also returned, as `pointers.current` -- the name
+    is kept rather than renamed to `pointers.selected` because every existing
+    Check against deployment.example.yaml / dfe-stack/Chart.yaml already reads
+    that key, and what those files SHOULD say is exactly "the stack being
+    audited", default or overridden.
     """
     root = _parse_nested(VERSIONS_FILE.read_text())
     current = root.get("current")
     stacks = root.get("stacks", {})
-    if not current or current not in stacks:
+    selected = stack or current
+    if not selected or selected not in stacks:
         raise SystemExit(
-            f"versions.yaml: `current` ({current!r}) not found in stacks: "
+            f"versions.yaml: stack {selected!r} not found in stacks: "
             f"({', '.join(stacks) or 'none'})"
         )
-    # The `current` pointer is itself a pin -- deployment.example.yaml names a
-    # stack version the same way a chart names an image tag -- so it is exposed
-    # under a synthetic section rather than left unreachable to the checks.
-    flat: dict[str, str] = {"pointers.current": current}
-    for section, body in stacks[current].items():
+    flat: dict[str, str] = {"pointers.current": selected}
+    for section, body in stacks[selected].items():
         if isinstance(body, dict):
             for key, value in body.items():
                 if isinstance(value, str):
@@ -123,6 +147,11 @@ def appset_chart_pattern(chart: str) -> str:
     Bounded lookahead so it cannot cross into the next chart in the list.
     """
     return r"chart:\s*" + re.escape(chart) + r"\b[\s\S]{0,300}?version:\s*\"([^\"]+)\""
+
+
+def docker_arg_pattern(arg: str) -> str:
+    """`ARG <name>="X"` in a Dockerfile -- capture group 1 is the pin."""
+    return r"ARG\s+" + re.escape(arg) + r'="([^"]+)"'
 
 
 def provider_pattern(provider: str) -> str:
@@ -204,6 +233,18 @@ _APPSET_PINS = [
         "argocd/appsets/layer-scale.yaml",
         "clickhouse-operator-helm",
     ),
+    (
+        "aws-load-balancer-controller appset (aws)",
+        "operators.aws-load-balancer-controller",
+        "argocd/appsets/layer1-addons.yaml",
+        "aws-load-balancer-controller",
+    ),
+    (
+        "karpenter appset (aws)",
+        "operators.karpenter",
+        "argocd/appsets/layer1-addons.yaml",
+        "karpenter",
+    ),
 ]
 
 CHECKS: list[Check] = [
@@ -234,12 +275,26 @@ CHECKS += [
         Path("helm/charts/kafka/values.yaml"),
         r"redpandadata/redpanda\n\s*#[^\n]*\n\s*tag:\s*\"([^\"]+)\"",
     ),
+    # The single-mode StatefulSet pulls by it; the cluster-mode CR cannot carry it.
+    Check(
+        "redpanda broker digest (kafka values)",
+        "services-digests.redpanda-version",
+        Path("helm/charts/kafka/values.yaml"),
+        r'redpandadata/redpanda\n(?:\s*#[^\n]*\n)*\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # Kafka logical version (our kafka chart -> strimzi Kafka CR spec.kafka.version)
     Check(
         "kafka version (kafka values)",
         "services.kafka-version",
         Path("helm/charts/kafka/values.yaml"),
         r"name: dfe-kafka\n\s*version:\s*\"([^\"]+)\"",
+    ),
+    # apache/kafka at that version, which single mode and the MSK bootstrap Job run.
+    Check(
+        "kafka image digest (kafka values)",
+        "services-digests.kafka-version",
+        Path("helm/charts/kafka/values.yaml"),
+        r'name: dfe-kafka\n\s*version:[^\n]*\n(?:\s*#[^\n]*\n)*\s*imageDigest:\s*"([^"]+)"',
     ),
     # The kafka chart's own copy of the Strimzi operator version, which gates
     # kafka.storageModel=tiered-object at render time (spec.kafka.tieredStorage needs
@@ -250,6 +305,38 @@ CHECKS += [
         "operators.strimzi-kafka-operator",
         Path("helm/charts/kafka/values.yaml"),
         r"operatorVersion:\s*\"([^\"]+)\"",
+    ),
+    # The MSK bootstrap Job's SASL/IAM login module: a jar, not an image, so the
+    # immutable half is the release sha256 the chart pins beside this version.
+    # Anchored on iamAuth because comment lines sit between the key and the pin.
+    Check(
+        "aws-msk-iam-auth jar version (kafka values)",
+        "services.aws-msk-iam-auth",
+        Path("helm/charts/kafka/values.yaml"),
+        r"iamAuth:\n(?:\s*#[^\n]*\n)*\s*version:\s*\"([^\"]+)\"",
+    ),
+    # The Cruise Control UI: a release tarball, not an image, on the same terms
+    # as the jar above -- the integrity half is the sha256 the chart pins beside
+    # it. Anchored on `release:` because comments sit between the key and the pin.
+    Check(
+        "cruise-control-ui release (kafka values)",
+        "services.cruise-control-ui",
+        Path("helm/charts/kafka/values.yaml"),
+        r"release:\n(?:\s*#[^\n]*\n)*\s*version:\s*\"([^\"]+)\"",
+    ),
+    # It is SERVED by the same nginx image the links page runs, so the kafka
+    # chart carries a second copy of that pin and both halves are checked here.
+    Check(
+        "cruise-control-ui server image tag (kafka values)",
+        "services.nginx-unprivileged",
+        Path("helm/charts/kafka/values.yaml"),
+        r"nginx-unprivileged\n\s*tag:\s*\"([^\"@]+)",
+    ),
+    Check(
+        "cruise-control-ui server image digest (kafka values)",
+        "services-digests.nginx-unprivileged",
+        Path("helm/charts/kafka/values.yaml"),
+        r'nginx-unprivileged\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # kafbat (class D): chart value is tag@digest -- compare the TAG part to SSoT
     Check(
@@ -277,7 +364,7 @@ CHECKS += [
         "links image digest",
         "services-digests.nginx-unprivileged",
         Path("helm/charts/links/values.yaml"),
-        r'digest:\s*"([^"]+)"',
+        r'nginx-unprivileged\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     Check(
         "links chart appVersion",
@@ -295,12 +382,24 @@ CHECKS += [
         r'appVersion:\s*"([^"]+)"',
     ),
     Check(
+        "ferretdb image digest",
+        "services-digests.ferretdb",
+        Path("helm/charts/ferretdb/values.yaml"),
+        r'ferretdb/ferretdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
         "documentdb-pg image tag (ferretdb values)",
         "services.documentdb-pg",
         Path("helm/charts/ferretdb/values.yaml"),
         r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:\s*"([^"]+)"',
     ),
-    # ClickHouse chart values: server version + keeper tag
+    Check(
+        "documentdb-pg image digest (ferretdb values)",
+        "services-digests.documentdb-pg",
+        Path("helm/charts/ferretdb/values.yaml"),
+        r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    # ClickHouse chart values: server version and digest, keeper tag and digest
     Check(
         "clickhouse server version",
         "services.clickhouse-version",
@@ -308,12 +407,24 @@ CHECKS += [
         r"\n  version:\s*\"([^\"]+)\"",
     ),
     Check(
+        "clickhouse server image digest",
+        "services-digests.clickhouse-version",
+        Path("helm/charts/clickhouse-cluster/values.yaml"),
+        r'\n  imageDigest:\s*"([^"]+)"',
+    ),
+    Check(
         "clickhouse keeper tag",
-        "services.clickhouse-version",
+        "services.clickhouse-keeper",
         Path("helm/charts/clickhouse-cluster/values.yaml"),
         r"clickhouse-keeper\n\s*tag:\s*\"([^\"]+)\"",
     ),
-    # otel-collector: explicit image tag + chart appVersion
+    Check(
+        "clickhouse keeper digest",
+        "services-digests.clickhouse-keeper",
+        Path("helm/charts/clickhouse-cluster/values.yaml"),
+        r'clickhouse-keeper\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    # otel-collector: explicit image tag and digest + chart appVersion
     Check(
         "otel image tag",
         "services.otel-collector",
@@ -321,17 +432,29 @@ CHECKS += [
         r"opentelemetry-collector-contrib\n\s*tag:\s*\"([^\"]+)\"",
     ),
     Check(
+        "otel image digest",
+        "services-digests.otel-collector",
+        Path("helm/charts/otel-collector/values.yaml"),
+        r'opentelemetry-collector-contrib\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
         "otel chart appVersion",
         "services.otel-collector",
         Path("helm/charts/otel-collector/Chart.yaml"),
         r"appVersion:\s*\"([^\"]+)\"",
     ),
-    # valkey plain manifest image tag
+    # valkey plain manifest: one tag@sha256 string, both halves checked
     Check(
-        "valkey manifest image",
+        "valkey manifest image tag",
         "bootstrap.valkey",
         Path("bootstrap/templates/valkey.yaml"),
-        r"valkey/valkey:([^\s\"]+)",
+        r"valkey/valkey:([^\s\"@]+)@",
+    ),
+    Check(
+        "valkey manifest image digest",
+        "services-digests.valkey",
+        Path("bootstrap/templates/valkey.yaml"),
+        r"valkey/valkey:[^\s\"@]+@([^\s\"]+)",
     ),
     # services.forgejo cascades to the chart's appVersion: image.tag is empty,
     # so dfe-common.image falls back to it.
@@ -340,6 +463,12 @@ CHECKS += [
         "services.forgejo",
         Path("helm/charts/forgejo/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
+    ),
+    Check(
+        "forgejo image digest",
+        "services-digests.forgejo",
+        Path("helm/charts/forgejo/values.yaml"),
+        r'forgejo/forgejo\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # The four below were found by the reverse sweep, not by anyone adding them.
     # dfe-common.labels stamps app.kubernetes.io/version from .Chart.AppVersion
@@ -370,10 +499,33 @@ CHECKS += [
         r'postgres-documentdb\n\s*tag:\s*"([^"]+)"',
     ),
     Check(
+        "documentdb-pg image digest (cnpg values)",
+        "services-digests.documentdb-pg",
+        Path("helm/charts/cnpg-cluster/values.yaml"),
+        r'postgres-documentdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
         "kafbat chart appVersion",
         "services.kafbat",
         Path("helm/charts/kafbat/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
+    ),
+    # karpenter-pools renders no image. Its appVersion is the Karpenter release
+    # whose CRDs every field in it was checked against, so the two moving apart
+    # is a chart written for a schema the cluster is not running.
+    Check(
+        "karpenter-pools chart appVersion",
+        "operators.karpenter",
+        Path("helm/charts/karpenter-pools/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
+    # The node image alias is dated, not `latest`, precisely so it has a pin
+    # this check can hold it to -- see the pin's own comment in versions.yaml.
+    Check(
+        "karpenter-pools AL2023 AMI alias",
+        "operators.karpenter-al2023-ami",
+        Path("helm/charts/karpenter-pools/values.yaml"),
+        r'amiAlias:\s*al2023@([^\s"]+)',
     ),
     # The worked example names a stack version the same way a chart names an
     # image tag, so it goes stale the moment `current` moves.
@@ -408,7 +560,56 @@ _PROVIDER_MIRRORS = [
     (
         "providers.hashicorp-random",
         "random",
-        ["terraform/modules/tf-secrets/variables.tf"],
+        [
+            "terraform/modules/tf-secrets/variables.tf",
+            "terraform/modules/secrets/aws-sm/versions.tf",
+            "terraform/environments/aws/versions.tf",
+        ],
+    ),
+    # The AWS path declares the provider in each module and in both roots, so a
+    # lift has to move all four together or one of them resolves a different
+    # major on its own `tofu init`.
+    (
+        "providers.hashicorp-aws",
+        "aws",
+        [
+            "terraform/modules/kubernetes-cluster/aws/versions.tf",
+            "terraform/modules/managed-kafka/msk/versions.tf",
+            "terraform/modules/managed-kafka/confluent-cloud/versions.tf",
+            "terraform/modules/managed-kafka/redpanda-cloud/versions.tf",
+            "terraform/modules/secrets/aws-sm/versions.tf",
+            "terraform/modules/toolbox/aws/versions.tf",
+            "terraform/modules/edge/aws/versions.tf",
+            "terraform/environments/aws/versions.tf",
+            "terraform/environments/aws-state/versions.tf",
+        ],
+    ),
+    # The two SaaS Kafka providers, each paired with aws above for the
+    # private-link handshake's other end. The aws root ALSO declares both --
+    # its `provider "confluent" {}` / `provider "redpanda" {}` blocks configure
+    # whichever body count selects -- so a lift has to move all three together.
+    (
+        "providers.confluentinc-confluent",
+        "confluent",
+        [
+            "terraform/modules/managed-kafka/confluent-cloud/versions.tf",
+            "terraform/environments/aws/versions.tf",
+        ],
+    ),
+    (
+        "providers.redpanda-data-redpanda",
+        "redpanda",
+        [
+            "terraform/modules/managed-kafka/redpanda-cloud/versions.tf",
+            "terraform/environments/aws/versions.tf",
+        ],
+    ),
+    # Zips the broker-count autoscaler's inline Lambda source. Local-only, no
+    # cloud API, and msk/ is its one consumer.
+    (
+        "providers.hashicorp-archive",
+        "archive",
+        ["terraform/modules/managed-kafka/msk/versions.tf"],
     ),
     # The optional OIDC modules. Nothing instantiates them, so the constraint in
     # the module is the whole of the pin -- there is no lock file behind it.
@@ -451,18 +652,35 @@ _APP_CHARTS = [
     "dfe-fetcher",
     "dfe-transform-vrl",
     "dfe-transform-vector",
-    "dfe-transform-wasm",
     "dfe-transform-elastic",
-    "dfe-transform-splack",
+    # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
+    # uncomment when they ship and their versions.yaml pins come back.
+    # "dfe-transform-wasm",
+    # "dfe-transform-splack",
     # The one app whose image is not published under the dfe- prefix; the chart
     # spells its repository out, so only the tag and digest halves are checked.
     "culvert",
 ]
+
+# The charts that do not sit under helm/charts. The edge module keeps its two
+# in helm/edge, so every path built from a chart name is resolved through here
+# rather than by concatenation.
+_CHART_DIRS = {
+    "culvert": "helm/edge/culvert",
+    "envoy-gateway-config": "helm/edge/gateway",
+}
+
+
+def chart_dir(name: str) -> str:
+    """The directory holding the chart of that name."""
+    return _CHART_DIRS.get(name, f"helm/charts/{name}")
+
+
 CHECKS += [
     Check(
         f"{app} chart appVersion",
         f"apps.{app}",
-        Path(f"helm/charts/{app}/Chart.yaml"),
+        Path(f"{chart_dir(app)}/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     )
     for app in _APP_CHARTS
@@ -478,10 +696,57 @@ CHECKS += [
     Check(
         f"{app} image digest",
         f"digests.{app}",
-        Path(f"helm/charts/{app}/values.yaml"),
+        Path(f"{chart_dir(app)}/values.yaml"),
         r'digest:\s*"([^"]+)"',
     )
     for app in _DIGEST_MIRRORS
+]
+
+# The engine chart mounts each app's container contract by RUNNING that app's
+# pinned image, so every content entry carries another copy of the app pin.
+# BOTH halves are checked: the ref is tag@sha256 and a deployment pulls by
+# digest, so a tag rewritten on its own would name one release and run another.
+_CONTRACT_ENTRIES = [
+    "dfe-receiver",
+    "dfe-loader",
+    "dfe-archiver",
+    "dfe-fetcher",
+    "dfe-transform-vrl",
+    "dfe-transform-vector",
+    "dfe-transform-elastic",
+]
+
+
+# The source catalogue is emitted by an app image as well, so it is one more
+# copy of that app's pin -- a second entry for an app already in the list above.
+_CATALOGUE_ENTRIES = ["dfe-transform-elastic"]
+
+
+def content_ref_pattern(role: str, app: str, half: str) -> str:
+    """One half of a content entry's `ref`, anchored on the entry's role and app.
+
+    Every ref sits in one file, so a bare `ref:` anchor would hand the first
+    entry's value to every check. The role is part of the anchor because one app
+    can back two entries -- its contract and its catalogue -- and a check claims
+    its FIRST match only.
+    """
+    head = (
+        r"role: " + re.escape(role) + r"\n\s*app: " + re.escape(app)
+        + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+    )
+    return head + (r"([^\"@]+)@" if half == "tag" else r"[^\"@]+@([^\"]+)\"")
+
+
+CHECKS += [
+    Check(
+        f"{app} {role} entry image {half}",
+        f"{'apps' if half == 'tag' else 'digests'}.{app}",
+        Path("helm/charts/dfe-engine/values.yaml"),
+        content_ref_pattern(role, app, half),
+    )
+    for role, apps in (("contract", _CONTRACT_ENTRIES), ("catalogue", _CATALOGUE_ENTRIES))
+    for app in apps
+    for half in ("tag", "digest")
 ]
 
 # The hyperdx chart runs an init container on the ENGINE image to materialise the
@@ -494,6 +759,14 @@ CHECKS += [
         Path("helm/charts/hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
     ),
+    # The immutable half of that same second copy: the init container pulls the
+    # engine image, so a re-pushed tag lands bytes `dfe-stack verify` never saw.
+    Check(
+        "hyperdx dashboards init-container engine digest",
+        "digests.dfe-engine",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # The chart directory is `hyperdx` while the pin is `apps.dfe-hyperdx`, so it
     # does not fit _APP_CHARTS' name-derived path. Left unchecked it kept upstream
     # HyperDX's own appVersion, which is not a tag the fork ever publishes.
@@ -503,20 +776,15 @@ CHECKS += [
         Path("helm/charts/hyperdx/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
-    # dfe-schema runs `dfe-schema apply` on the ENGINE image -- one of its entry
-    # points, not an artefact of its own -- so the chart name does not match the
-    # pin and it cannot ride _APP_CHARTS.
+    # The immutable half of that pin, which the same name mismatch kept out of
+    # _DIGEST_MIRRORS -- so versions.yaml carried digests.dfe-hyperdx while the
+    # chart rendered a bare tag. Anchored on the fork's repository line so it
+    # cannot match the dashboards digest, which is a different image.
     Check(
-        "dfe-schema chart appVersion",
-        "apps.dfe-engine",
-        Path("helm/charts/dfe-schema/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
-    Check(
-        "dfe-schema image digest",
-        "digests.dfe-engine",
-        Path("helm/charts/dfe-schema/values.yaml"),
-        r'digest:\s*"([^"]+)"',
+        "hyperdx fork image digest",
+        "digests.dfe-hyperdx",
+        Path("helm/charts/hyperdx/values.yaml"),
+        r'repository:\s*ghcr\.io/hyperi-io/dfe-hyperdx[^\n]*\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # The engine reports the deployment's dfe-ui version on
     # GET /api/v1/system/deployment. Helm cannot read a sibling chart's
@@ -542,6 +810,94 @@ CHECKS += [
         Path("helm/charts/dfe-engine/values.yaml"),
         r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
+    # bootstrap.sh writes this helperPod.yaml over upstream's, whose busybox has no tag.
+    Check(
+        "local-path helper pod busybox tag",
+        "services.busybox",
+        Path("bootstrap/templates/local-path-helper-pod.yaml"),
+        r"library/busybox:([^\s\"@]+)@",
+    ),
+    Check(
+        "local-path helper pod busybox digest",
+        "services-digests.busybox",
+        Path("bootstrap/templates/local-path-helper-pod.yaml"),
+        r"library/busybox:[^\s\"@]+@([^\s\"]+)",
+    ),
+    # One tag@sha256 string that both EnvoyProxy resources in the chart read.
+    Check(
+        "envoy gateway proxy image tag",
+        "services.envoy-gateway-proxy",
+        Path("helm/edge/gateway/values.yaml"),
+        r'envoyproxy/envoy:([^"@]+)@',
+    ),
+    Check(
+        "envoy gateway proxy image digest",
+        "services-digests.envoy-gateway-proxy",
+        Path("helm/edge/gateway/values.yaml"),
+        r'envoyproxy/envoy:[^"@]+@([^"]+)"',
+    ),
+]
+
+# dfe-toolbox image family (docker/dfe-toolbox/): a standalone ops shell, not
+# a deployed stack component, but every ARG default in its Dockerfiles must
+# still equal the versions.yaml pin it starts from -- the workflow overrides
+# each one at build time from the SAME source, but the default is what a
+# plain `docker build` with no --build-arg gets, and it is what
+# `check_versions_drift.py --fix` keeps current. clickhouse-client pins
+# services.clickhouse-version directly rather than a toolbox.* key of its
+# own, so there is only ever one ClickHouse version to keep in step with.
+_TOOLBOX_ARGS = [
+    # (label, versions.yaml key, Dockerfile, ARG name)
+    ("toolbox base image Debian base", "toolbox.debian", "docker/dfe-toolbox/base/Dockerfile", "DEBIAN_TAG"),
+    ("toolbox base image kubectl", "toolbox.kubectl", "docker/dfe-toolbox/base/Dockerfile", "KUBECTL_VERSION"),
+    ("toolbox base image helm", "toolbox.helm", "docker/dfe-toolbox/base/Dockerfile", "HELM_VERSION"),
+    ("toolbox base image argocd CLI", "toolbox.argocd-cli", "docker/dfe-toolbox/base/Dockerfile", "ARGOCD_VERSION"),
+    ("toolbox base image tofu", "toolbox.tofu", "docker/dfe-toolbox/base/Dockerfile", "TOFU_VERSION"),
+    ("toolbox base image yq", "toolbox.yq", "docker/dfe-toolbox/base/Dockerfile", "YQ_VERSION"),
+    ("toolbox base image clickhouse-client", "services.clickhouse-version", "docker/dfe-toolbox/base/Dockerfile", "CLICKHOUSE_VERSION"),
+    ("toolbox aws image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/aws/Dockerfile", "BASE_TAG"),
+    ("toolbox aws image aws-cli", "toolbox.aws-cli", "docker/dfe-toolbox/aws/Dockerfile", "AWS_CLI_VERSION"),
+    (
+        "toolbox aws image session-manager-plugin",
+        "toolbox.aws-session-manager-plugin",
+        "docker/dfe-toolbox/aws/Dockerfile",
+        "AWS_SSM_PLUGIN_VERSION",
+    ),
+    ("toolbox gcp image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/gcp/Dockerfile", "BASE_TAG"),
+    ("toolbox gcp image gcloud", "toolbox.gcloud", "docker/dfe-toolbox/gcp/Dockerfile", "GCLOUD_VERSION"),
+    ("toolbox azure image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/azure/Dockerfile", "BASE_TAG"),
+    ("toolbox azure image az-cli", "toolbox.az-cli", "docker/dfe-toolbox/azure/Dockerfile", "AZ_CLI_VERSION"),
+]
+CHECKS += [
+    Check(label, key, Path(f), docker_arg_pattern(arg)) for label, key, f, arg in _TOOLBOX_ARGS
+]
+
+# The in-cluster pod chart (helm/charts/dfe-toolbox) ships the base image --
+# no cloud CLI, per the security pass -- so it pins the same family tag rather
+# than a mirror of its own. Both the tag Helm actually renders and the
+# appVersion dfe-common.image falls back to are checked, so neither can drift
+# from the family's one pin or from each other.
+CHECKS += [
+    Check(
+        "dfe-toolbox chart image tag",
+        "toolbox.dfe-toolbox",
+        Path("helm/charts/dfe-toolbox/values.yaml"),
+        r'tag:\s*"([^"]+)"',
+    ),
+    Check(
+        "dfe-toolbox chart appVersion",
+        "toolbox.dfe-toolbox",
+        Path("helm/charts/dfe-toolbox/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
+    # The immutable half: the chart's image is dfe-toolbox-base, not a
+    # _APP_CHARTS name, so _DIGEST_MIRRORS never picks it up.
+    Check(
+        "dfe-toolbox chart image digest",
+        "digests.dfe-toolbox-base",
+        Path("helm/charts/dfe-toolbox/values.yaml"),
+        r'digest:\s*"([^"]+)"',
+    ),
 ]
 
 
@@ -552,20 +908,60 @@ CHECKS += [
 #
 # Patterns are exact keys or `section.*`.
 UNCONSUMED: dict[str, str] = {
+    "platform.kubernetes": "bootstrap/check_platform.py and dfe-ops preflight both read it at runtime by name; no hardcoded copy",
+    "platform.rke2": "bootstrap/check_platform.py reads it at runtime; no hardcoded copy",
+    "platform.rancher": "DECLARED, not checked: nothing in a cluster reports the Rancher managing it, so there is no second copy to drift against",
+    "platform.eks": "a REQUIREMENT on a cluster this repo does not build -- deployment.example.yaml takes an existing cluster and argocd/values/aws.yaml is a Plan 07 stub. Give it a Check once that stub becomes real provisioning",
     "bootstrap.cert-manager": "bootstrap.sh reads it at runtime (read_versions.py); no hardcoded copy",
     "bootstrap.external-secrets": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.local-path-provisioner": "bootstrap.sh reads it at runtime; no hardcoded copy",
+    "bootstrap.metallb": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "services.cnpg-cluster-instances": "replica count, overridden per profile",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
-    "services.envoy-proxy": "docker path only; k8s installs envoy-gateway, which carries its own proxy image",
+    "services.envoy-proxy": "docker path only; the k8s gateway runs services.envoy-gateway-proxy, a different (distroless) tag",
     "digests.*": "an app with no chart mirror yet -- a published app is checked against helm/charts/<app>/values.yaml image.digest instead",
-    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually",
+    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually, and bootstrap.sh reads local-path-provisioner's at runtime",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",
     "stack.*": "upgrade-graph metadata, not a version pin",
 }
+
+
+# The release gate must resolve charts with the Helm the PR check installs, and
+# toolbox.helm is the toolbox image's own, separate pin.
+HELM_WORKFLOWS = (
+    Path(".github/workflows/helm-lint.yml"),
+    Path(".github/workflows/release.yml"),
+)
+HELM_VERSION_PATTERN = r'(?m)^\s*HELM_VERSION:\s*"([^"]+)"'
+
+
+def helm_version_problems(texts: dict[Path, str]) -> list[str]:
+    """Problems with the HELM_VERSION literal across the given workflow texts.
+
+    Args:
+        texts: Workflow file text, keyed by its repo-relative path.
+
+    Returns:
+        One line per file that does not carry exactly one literal, plus one
+        line when the literals found disagree; empty when they all match.
+    """
+    problems: list[str] = []
+    found: dict[Path, str] = {}
+    for path, text in texts.items():
+        pins = re.findall(HELM_VERSION_PATTERN, text)
+        if len(pins) != 1:
+            problems.append(
+                f"  [missing] {path}: expected one HELM_VERSION literal, found {len(pins)}"
+            )
+            continue
+        found[path] = pins[0]
+    if len(set(found.values())) > 1:
+        detail = ", ".join(f"{path} has '{value}'" for path, value in found.items())
+        problems.append(f"  [DRIFT]  HELM_VERSION differs between workflows: {detail}")
+    return problems
 
 
 def unconsumed_reason(key: str) -> str | None:
@@ -574,6 +970,67 @@ def unconsumed_reason(key: str) -> str | None:
         return UNCONSUMED[key]
     section = key.split(".", 1)[0]
     return UNCONSUMED.get(f"{section}.*")
+
+
+# Keys whose mirror (a chart, an appset entry, a Dockerfile ARG, a terraform
+# provider block) already exists in this tree, but whose versions.yaml pin
+# starts only with the 2.2.0-rc.14 block on a branch not merged here. A stack
+# older than rc.14 predates the key and carries no value to compare against,
+# so it is NOTED rather than failed; a stack that carries the key is compared
+# strictly, like any other pin. Unlike UNCONSUMED, this is temporary -- drop
+# the entry once this tree's `current` stack reaches rc.14 or later. Patterns
+# are exact keys or `section.*`, same convention as UNCONSUMED.
+PENDING_MIRRORS: dict[str, str] = {
+    "operators.karpenter": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "operators.aws-load-balancer-controller": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "operators.karpenter-al2023-ami": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.aws-msk-iam-auth": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.cruise-control-ui": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "toolbox.*": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.hashicorp-aws": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.confluentinc-confluent": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.redpanda-data-redpanda": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "providers.hashicorp-archive": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.busybox": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.busybox": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.clickhouse-keeper": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.clickhouse-keeper": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.forgejo": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.valkey": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+}
+
+
+def pending_reason(key: str) -> str | None:
+    """The recorded reason this key's mirror has not landed yet, or None."""
+    if key in PENDING_MIRRORS:
+        return PENDING_MIRRORS[key]
+    section = key.split(".", 1)[0]
+    return PENDING_MIRRORS.get(f"{section}.*")
+
+
+def _pattern_is_pinned(pattern: str, versions: dict[str, str]) -> bool:
+    """Whether the selected stack carries a value for a PENDING_MIRRORS entry."""
+    if pattern.endswith(".*"):
+        section = pattern[:-2]
+        return any(k.split(".", 1)[0] == section for k in versions)
+    return pattern in versions
+
+
+def stacks_needing_pending_mirrors() -> list[str]:
+    """Selectable stacks that do NOT pin every PENDING_MIRRORS key.
+
+    Each one would start failing its own check the moment the list is deleted,
+    which is exactly what PENDING_MIRRORS exists to stop.
+    """
+    stacks = _parse_nested(VERSIONS_FILE.read_text()).get("stacks", {})
+    needing = []
+    for stack in stacks:
+        versions = load_versions(stack)
+        if not all(_pattern_is_pinned(p, versions) for p in PENDING_MIRRORS):
+            needing.append(stack)
+    return needing
 
 
 # CHECKS runs SSoT -> file, so a literal in a file no check points at is
@@ -601,6 +1058,9 @@ SWEEP_PATTERNS = (
     ("image ref", r'(?m)^[^\S\n]*image:[^\S\n]*"?[\w./-]+:([^"\s#@]+)'),
     ("provider constraint", r'(?m)^[^\S\n]*version[^\S\n]*=[^\S\n]*"([^"]+)"'),
     ("stack pin", r'(?m)^[^\S\n]*pin:[^\S\n]*"?([^"\s#]+)"?'),
+    # A content entry's ref is an image pin under a key nothing else here reads,
+    # so a seventh entry added with no check would otherwise pass unseen.
+    ("content ref", r'(?m)^[^\S\n]*ref:[^\S\n]*"[\w./-]+:([^"\s#@]+)'),
 )
 
 _HAS_DIGIT = re.compile(r"\d")
@@ -616,11 +1076,6 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "a chart's own version and its dfe-common dependency version; neither pins anything upstream",
     ),
     (
-        "argocd/previews/EXAMPLE-*",
-        "*",
-        "worked example whose values are placeholders by design",
-    ),
-    (
         "helm/library/dfe-common/tests/lint-test/*",
         "*",
         "helm-lint fixture, not a deployed chart",
@@ -631,7 +1086,7 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "curl for the PostSync setup Job; the tools block was deliberately dropped, and Renovate's infra-pins group watches helm-values",
     ),
     (
-        "helm/charts/envoy-gateway-config/Chart.yaml",
+        "helm/edge/gateway/Chart.yaml",
         "appVersion",
         "configures a gateway that is already present, and installs no upstream image",
     ),
@@ -640,7 +1095,46 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "appVersion",
         "policy-only chart with no upstream to track",
     ),
+    (
+        "helm/charts/dfe-transform-wasm/Chart.yaml",
+        "appVersion",
+        "placeholder chart for an app that is coming; its versions.yaml pin is commented out, so there is no SSoT key to check it against",
+    ),
+    (
+        "helm/charts/dfe-transform-splack/Chart.yaml",
+        "appVersion",
+        "placeholder chart for an app that is coming; its versions.yaml pin is commented out, so there is no SSoT key to check it against",
+    ),
 )
+
+
+@cache
+def root_ignored_names() -> frozenset[str]:
+    """Root-anchored .gitignore entries, as bare names.
+
+    An operator's own deployment.yaml sits at the repo root and carries a stack
+    pin, which is an INPUT to this checker rather than a mirror of versions.yaml
+    -- no check can ever read it, so the sweep would report it unswept forever
+    and refuse a deploy that followed the documented flow. Matching .gitignore
+    rather than one filename keeps every other local artefact out too.
+
+    Read from .gitignore rather than asked of git: this checker runs offline,
+    and a worked tree with no git at all still has to sweep the same set.
+    """
+    ignore = REPO_ROOT / ".gitignore"
+    if not ignore.is_file():
+        return frozenset()
+    names = set()
+    for raw in ignore.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        # A leading slash anchors the pattern to the repo root, which is the
+        # only depth this sweep reads unrecursed; a deeper path is not a name.
+        if not line.startswith("/") or line.startswith("/#"):
+            continue
+        entry = line.lstrip("/")
+        if "/" not in entry:
+            names.add(entry)
+    return frozenset(names)
 
 
 @cache
@@ -666,11 +1160,13 @@ def sweep_files() -> tuple[Path, ...]:
         ]
     # The repo root itself, NOT recursed -- a new top-level file is then swept
     # without anyone remembering to list it. deployment.example.yaml pins a
-    # stack version up here, outside every root above.
+    # stack version up here, outside every root above; the operator's own
+    # deployment.yaml is gitignored and stays out.
+    ignored = root_ignored_names()
     found += [
         p.relative_to(REPO_ROOT)
         for p in REPO_ROOT.iterdir()
-        if p.is_file() and p.suffix in SWEEP_SUFFIXES
+        if p.is_file() and p.suffix in SWEEP_SUFFIXES and p.name not in ignored
     ]
     return tuple(sorted(found))
 
@@ -735,16 +1231,24 @@ def reverse_sweep() -> list[str]:
     return problems
 
 
-def dead_guards(versions: dict[str, str]) -> list[str]:
-    """Constraint rules whose `when-equals` no longer matches its key.
+def dead_guards(versions: dict[str, str], stack: str) -> list[str]:
+    """Constraint rules whose guard no longer matches the pin it watches.
 
-    A `when-equals` guard is an exact match, so bumping the pin it watches
-    leaves the rule present, green and inert. Any such rule is reported: either
-    re-point it at the new value or delete it.
+    Both guard forms go dead the same way and for the same reason -- the rule
+    stays present, green and inert, which reads as passing. `when-equals` is an
+    exact match, so bumping the pin it watches kills it; `when-range` is a
+    comparator set, so lifting the pin outside the range kills it just as
+    silently (dfe-infra#295: a strimzi lift walked out of a `when-range` guard
+    and nothing said so, while the `when-equals` rule beside it WAS reported).
+
+    The comparison uses the same `version_range` the compat-check decides with,
+    so a rule cannot read live to one and dead to the other. `stack` is the
+    SELECTED stack id (from `load_versions`'s `pointers.current`), so this
+    follows `--stack` rather than always reading the block `current` points at.
     """
     root = _parse_nested(VERSIONS_FILE.read_text())
-    stack = root.get("stacks", {}).get(root.get("current"), {})
-    rel = stack.get("constraints") if isinstance(stack, dict) else None
+    block = root.get("stacks", {}).get(stack, {})
+    rel = block.get("constraints") if isinstance(block, dict) else None
     if not rel:
         return []
     path = REPO_ROOT / rel
@@ -756,18 +1260,24 @@ def dead_guards(versions: dict[str, str]) -> list[str]:
     for rule_id, body in rules.items():
         if not isinstance(body, dict):
             continue
-        pinned = body.get("when-equals")
         when_key = body.get("when-key")
-        if not pinned or not when_key:
+        pinned = body.get("when-equals")
+        spec = body.get("when-range")
+        if not when_key or not (pinned or spec):
             continue
         current = versions.get(when_key)
         if current is None:
             problems.append(
                 f"  [dead guard] {rule_id}: when-key '{when_key}' is not in versions.yaml"
             )
-        elif current != pinned:
+        elif pinned and current != pinned:
             problems.append(
                 f"  [dead guard] {rule_id}: when-equals '{pinned}' but {when_key} "
+                f"is now '{current}' -- the rule can never fire; re-point or delete it"
+            )
+        elif spec and not version_range.satisfies(current, spec):
+            problems.append(
+                f"  [dead guard] {rule_id}: when-range '{spec}' but {when_key} "
                 f"is now '{current}' -- the rule can never fire; re-point or delete it"
             )
     return problems
@@ -803,6 +1313,8 @@ def plan_fix(
         for check in checks:
             expected = versions.get(check.key)
             if expected is None:
+                if pending_reason(check.key):
+                    continue
                 refused.append(f"  [refused] {check.label}: versions.yaml has no key '{check.key}'")
                 continue
             found = extract_span(check)
@@ -854,9 +1366,35 @@ def apply_fix(versions: dict[str, str]) -> tuple[list[str], list[str]]:
     return fixed, refused
 
 
-def main() -> int:
-    fix = "--fix" in sys.argv[1:]
-    versions = load_versions()
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    """Strict: an unrecognised flag is an error, not something to skip past.
+
+    A mistyped `--satck 2.2.0-rc.14` that parsed quietly would audit `current`
+    instead and still exit 0, which is the one failure a drift gate must not
+    have. main() takes its argv from the caller rather than reading sys.argv,
+    so the test suite calling main() under the test runner's own argv never
+    reaches this parser at all.
+    """
+    parser = argparse.ArgumentParser(
+        description="Check every version pin in the tree against versions.yaml."
+    )
+    parser.add_argument("--fix", action="store_true", help="rewrite the mirrors that drifted, then re-verify")
+    parser.add_argument("--stack", default=None, help="the stacks.<version> block to audit (default: the `current` pointer)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv or [])
+    fix = args.fix
+    versions = load_versions(args.stack)
+    stack = versions["pointers.current"]
+
+    if fix and args.stack and args.stack != _parse_nested(VERSIONS_FILE.read_text()).get("current"):
+        raise SystemExit(
+            f"--fix WRITES the tree, and the tree mirrors `current`; refusing to "
+            f"propagate stack {args.stack!r} over it. Audit another stack read-only "
+            f"(--stack alone), or move `current` first."
+        )
 
     if fix:
         fixed, refused = apply_fix(versions)
@@ -875,12 +1413,24 @@ def main() -> int:
         # Fall through and verify, so --fix never reports success on its own say-so.
 
     failures: list[str] = []
+    notes: list[str] = []
+    # A pending key with eight mirrors would otherwise note eight times, and a
+    # wall of notes trains the reader to skip them.
+    noted_pending: set[str] = set()
     checked = 0
 
     for check in CHECKS:
         label, key = check.label, check.key
         expected = versions.get(key)
         if expected is None:
+            reason = pending_reason(key)
+            if reason:
+                if key not in noted_pending:
+                    noted_pending.add(key)
+                    notes.append(
+                        f"  [note] {key}: stack '{stack}' does not pin it yet -- {reason}"
+                    )
+                continue
             failures.append(f"  [config] {label}: versions.yaml key '{key}' not found")
             continue
         actual = extract_value(check)
@@ -894,15 +1444,46 @@ def main() -> int:
             )
 
     # Coverage: a key read by nothing is dead config, and it stays green forever
-    # unless something asks.
+    # unless something asks. A PENDING_MIRRORS key is NOTED rather than failed,
+    # but never skipped in silence -- a pin no check reads is the thing this
+    # file exists to catch.
     covered = {check.key for check in CHECKS}
     for key in sorted(versions):
         if key in covered or unconsumed_reason(key):
+            continue
+        reason = pending_reason(key)
+        if reason:
+            notes.append(
+                f"  [note] {key}: stack '{stack}' pins it with no CHECKS entry yet -- {reason}"
+            )
             continue
         failures.append(
             f"  [dead]    versions.yaml key '{key}' is read by no check -- add a "
             f"CHECKS entry, or an UNCONSUMED reason saying why it has no second copy"
         )
+
+    # PENDING_MIRRORS is temporary by construction: once EVERY selectable stack
+    # pins every key on it, it has done its job and must go, or it rots into a
+    # permanent exemption nobody revisits.
+    #
+    # Every stack, not the selected one: the list exists so a stack that
+    # PREDATES a key has nothing to compare against, and deleting it while such
+    # a stack is still selectable makes that stack's own check fail. The advice
+    # therefore has to wait for the older stack to be retired.
+    if PENDING_MIRRORS:
+        still_needed = stacks_needing_pending_mirrors()
+        if not still_needed:
+            failures.append(
+                "  [stale]   every stack pins every PENDING_MIRRORS key -- delete "
+                "PENDING_MIRRORS; each of those keys is now a normal pin"
+            )
+        elif all(_pattern_is_pinned(p, versions) for p in PENDING_MIRRORS):
+            print(
+                f"  [note]    stack '{stack}' pins every PENDING_MIRRORS key, but "
+                f"{', '.join(still_needed)} does not -- delete PENDING_MIRRORS once "
+                f"the older stack is retired, not before",
+                file=sys.stderr,
+            )
 
     # Stale UNCONSUMED entries rot the same way the pins do.
     for pattern in sorted(UNCONSUMED):
@@ -914,10 +1495,15 @@ def main() -> int:
             continue
         failures.append(f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml")
 
-    failures.extend(dead_guards(versions))
+    failures.extend(dead_guards(versions, stack))
+    failures.extend(helm_version_problems({path: read_source(path) for path in HELM_WORKFLOWS}))
 
     # The other direction: a literal in a file no check points at.
     failures.extend(reverse_sweep())
+
+    if notes:
+        print("\n".join(notes))
+        print()
 
     if failures:
         print(
@@ -930,13 +1516,14 @@ def main() -> int:
 
     # Say what the sweep looked at, not just that it found nothing: a silent
     # pass reads the same whether it swept the tree or swept nothing.
+    note_suffix = f"; {len(notes)} note(s) on pins pending a mirror" if notes else ""
     print(
-        f"OK -- all {checked} version pins match versions.yaml; "
+        f"OK -- all {checked} version pins match stack '{stack}' in versions.yaml; "
         f"{len(versions)} key(s) accounted for; "
-        f"{len(sweep_files())} file(s) swept for pins no check reads."
+        f"{len(sweep_files())} file(s) swept for pins no check reads{note_suffix}."
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

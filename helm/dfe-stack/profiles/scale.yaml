@@ -3,7 +3,7 @@
 # per-subchart keys (endpoints shortened for the single-namespace install).
 #
 # EXTRA prerequisites over slim/single (pins: versions.yaml `operators:`):
-#   - strimzi-kafka-operator 0.51.0 (Kafka cluster CRs)
+#   - strimzi-kafka-operator 1.2.0  (Kafka cluster CRs; 1.x serves kafka.strimzi.io/v1 only)
 #   - clickhouse-operator 0.0.7    (ClickHouseCluster + KeeperCluster CRs)
 #   - keda 2.20.1                  (the app charts' ScaledObjects)
 # At this tier the ArgoCD product path (argocd/appsets/) is the right vehicle;
@@ -23,12 +23,11 @@ x-scale-shared:
   kafka: &scaleKafka
     mode: cluster
     bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
-    provider: strimzi
   # Source: argocd/values/profile-scale.yaml `keda:`.
   keda: &scaleKeda
     enabled: true
     minReplicaCount: 2
-    maxReplicaCount: 10
+    maxReplicaCount: 12
 
 clickhouse-cluster:
   clickhouse:
@@ -48,10 +47,9 @@ kafka:
     mode: cluster
     provider: strimzi
     replicas: 3
-    defaultTopic:
-      # Source: argocd/values/profile-scale.yaml -- partitions cap consumer
-      # parallelism; sized from the KEDA ceiling of 10.
-      partitions: 12
+    # Partitions are derived in the chart from the broker count, the KEDA
+    # ceiling and the per-partition throughput cap (kafka.sizing), so there is
+    # no literal to state here.
   user:
     password:
       # Single-namespace install: the User Operator generates the credential
@@ -64,8 +62,10 @@ kafbat:
   enabled: true
   kafka:
     clusters:
+      # 9092 is the Strimzi CR's plain listener (tls: false); nothing in this
+      # render dials 9093, so the identity carries -no-tls (dfe-infra#191).
       - name: dfe
-        provider: strimzi
+        provider: strimzi-no-tls
         bootstrapServers: "dfe-kafka-kafka-bootstrap:9092"
         credentialsSecretName: dfe-kafka-user
 
@@ -104,10 +104,6 @@ dfe-hyperdx:
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"
   resources: *scaleResources
-
-dfe-schema:
-  clickhouse:
-    host: "dfe-clickhouse-clickhouse-headless"
 
 otel-collector:
   clickhouse:

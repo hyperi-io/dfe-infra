@@ -50,7 +50,13 @@ args = sys.argv[1:]
 with open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8") as fh:
     fixture = json.load(fh)
 
-if "httproute" in args:
+if "httproute" in args and "json" in args:
+    # `dfe-ops otel-ingress` reads the one otel route as JSON.
+    if fixture.get("otel_route") is None:
+        print('Error from server (NotFound): httproutes.gateway.networking.k8s.io "otel" not found', file=sys.stderr)
+        sys.exit(1)
+    json.dump(fixture["otel_route"], sys.stdout)
+elif "httproute" in args:
     for row in fixture.get("httproutes") or []:
         print("|".join(row))
 elif "gateway" in args:
@@ -220,6 +226,33 @@ def test_the_ingest_routes_are_listed_like_the_others() -> None:
     )
 
 
+def test_the_summary_says_otel_ingress_is_not_exposed_by_default() -> None:
+    """A deploy that never turned it on carries no otel route, and the summary says so."""
+    text = run_summary()
+    expect("the OTLP ingress line reads not exposed", "OTLP ingress: not exposed" in text, text)
+
+
+def test_the_summary_says_where_otel_ingress_answers_and_what_it_needs() -> None:
+    route = {
+        "spec": {"hostnames": [f"otel.{DOMAIN}"]},
+        "status": {"parents": [{"conditions": [
+            {"type": "Accepted", "status": "True", "reason": "Accepted"},
+            {"type": "ResolvedRefs", "status": "True", "reason": "ResolvedRefs"},
+        ]}]},
+    }
+    text = run_summary(
+        otel_route=route,
+        secrets=[*BASE_FIXTURE["secrets"], "dfe-otel-ingress-token"],
+    )
+    expect(
+        "the exposed hostname, the bearer requirement and the token's Secret are printed",
+        f"OTLP ingress: exposed at https://otel.{DOMAIN}" in text
+        and "Authorization: Bearer" in text
+        and "Secret otel/dfe-otel-ingress-token, key token" in text,
+        text,
+    )
+
+
 def test_a_route_added_later_still_gets_a_row() -> None:
     """The label map is a courtesy, so an unknown route falls back to its name."""
     rows = endpoints(run_summary(httproutes=[route("grafana", f"grafana.{DOMAIN}", path="/")]))
@@ -347,10 +380,10 @@ def test_the_gateway_falls_back_to_its_class() -> None:
 
 def test_the_seed_logins_are_still_listed() -> None:
     """The rest of the summary has to survive the endpoints rework."""
-    text = run_summary(seed_accounts=[{"username": "kaz", "groups": ["dfe_admin"]}])
+    text = run_summary(seed_accounts=[{"username": "alice", "groups": ["dfe_admin"]}])
     expect(
         "a configured seed account is printed with its groups",
-        "- `kaz`  groups=[dfe_admin]" in text,
+        "- `alice`  groups=[dfe_admin]" in text,
         text,
     )
     expect(

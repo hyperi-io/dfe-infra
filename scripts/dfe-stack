@@ -29,15 +29,21 @@ Subcommands:
                  certified manifest; --target docker = the dfe-docker .env
                  fragment (tag@digest per compose var). --stack X.Y.Z[-rc.N]
                  selects a version (default: `current`).
-  images         Flat DFE-owned image list for air-gap mirroring (third-party
-                 chart images are pulled by chart ref and listed by the CI chart
-                 render, not here -- stated, not silent).
+  images         Flat DFE-owned image list for air-gap mirroring: every image
+                 with a digest pin, whether its tag sits under apps:, content:
+                 or a family pin (the toolbox base image's toolbox.dfe-toolbox).
+                 Third-party chart images are NOT listed -- stated, not silent.
+  platforms      Read each DFE image's pinned index from the registry and print
+                 its platforms; exit 1 unless every one carries linux/amd64 and
+                 linux/arm64.
   graph          Derive the stack upgrade graph from the in-file stacks (JSON).
   check-upgrade  Verdict on FROM -> TO: honour each stack's declared
                  stack.previous, else sequential minors + free z-hops.
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
-  verify         Re-fetch GHCR digests (gh api) and compare to versions.yaml.
+  verify         Re-fetch GHCR digests and compare them to versions.yaml.
+  release-gate   Fail a release-maturity stack with an unpublished app, or with
+                 a DFE image whose index lacks linux/amd64 or linux/arm64.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
                  graph as JSON, the build-cycle table, a --producer,
                  --consumer or --lane slice, or (re)render the Mermaid blocks
@@ -48,6 +54,7 @@ Examples:
     python3 scripts/dfe-stack render --target docker
     python3 scripts/dfe-stack render --stack 2.2.0-rc.1 --out dfe-manifest.yaml
     python3 scripts/dfe-stack images
+    python3 scripts/dfe-stack platforms --stack 2.2.0-rc.14
     python3 scripts/dfe-stack graph
     python3 scripts/dfe-stack check-upgrade --from 2.2.0-rc.1 --to 2.2.0
     python3 scripts/dfe-stack resolve --pins ../dfe-deploy/pins.yaml
@@ -58,14 +65,17 @@ Examples:
     python3 scripts/dfe-stack suite --render-docs
 
 render/images/graph/check-upgrade/resolve/suite need only python3 + git.
-verify and cut read GHCR through `gh api`, which needs the `read:packages` scope
-a developer's own `gh login` usually lacks -- pass `--env-file PATH` and the
-GHCR_TOKEN (or GH_TOKEN) in that file authenticates gh for this process:
+verify, refresh-digests, platforms and a release-maturity release-gate read the
+registry through `docker buildx imagetools`, which authenticates from the docker
+credential store and needs no gh scope.
 
-    python3 scripts/dfe-stack --env-file bootstrap/.env verify
+cut still needs the GH packages API, because listing an app's published tags to
+pick the highest has no imagetools equivalent. That API wants the
+`read:packages` scope a developer's own `gh login` usually lacks -- pass
+`--env-file PATH` and the GHCR_TOKEN (or GH_TOKEN) in that file authenticates gh
+for this process:
 
-refresh-digests reads the registry through `docker buildx imagetools`, which
-authenticates from the docker credential store instead.
+    python3 scripts/dfe-stack --env-file bootstrap/.env cut 2.2.0-rc.15
 """
 
 from __future__ import annotations
@@ -88,6 +98,7 @@ import envfile  # noqa: E402
 import profiles  # noqa: E402
 import registry_pins  # noqa: E402
 import suite_graph  # noqa: E402
+import version_range  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
@@ -213,24 +224,74 @@ def versions_at(tag: str | None = None, stack: str | None = None) -> dict:
     return pins
 
 
-def app_images(v: dict, registry: str) -> dict[str, str]:
-    """Published DFE-owned images as name -> ref (tag@sha256 where digest known).
+# `digests:` keys whose tag is a family pin under another name: digests key ->
+# (section, key). The toolbox base image ships under the toolbox family's tag.
+_FAMILY_TAGS = {"dfe-toolbox-base": ("toolbox", "dfe-toolbox")}
 
-    Apps with no digest entry are NOT YET PUBLISHED and are excluded -- loudly,
-    via the caller (no silent truncation).
+
+def image_tag(v: dict, name: str) -> str:
+    """The tag a `digests:` key pins: under apps:, under content: for an image
+    versioned with the content repos (the HyperDX fork), or the family pin
+    _FAMILY_TAGS names. Empty when none has it.
     """
-    apps = v.get("apps", {})
-    digests = v.get("digests", {})
+    if name in _FAMILY_TAGS:
+        section, key = _FAMILY_TAGS[name]
+        return v.get(section, {}).get(key, "")
+    return v.get("apps", {}).get(name) or v.get("content", {}).get(name) or ""
+
+
+def app_images(v: dict, registry: str) -> dict[str, str]:
+    """Published DFE-owned images as name -> registry/name:tag@sha256.
+
+    A `digests:` key is what makes an image published, so the digests drive the
+    list rather than apps:, which does not hold the HyperDX fork. Apps with no
+    digest are NOT YET PUBLISHED and excluded -- loudly, via the caller.
+    """
     refs: dict[str, str] = {}
-    for name, tag in apps.items():
-        digest = digests.get(name, "")
-        if digest:
+    for name, digest in v.get("digests", {}).items():
+        tag = image_tag(v, name)
+        if tag and digest:
             refs[name] = f"{registry}/{name}:{tag}@{digest}"
     return refs
 
 
 def unpublished_apps(v: dict) -> list[str]:
     return sorted(set(v.get("apps", {})) - set(v.get("digests", {})))
+
+
+def untagged_digests(v: dict) -> list[str]:
+    """`digests:` keys with no tag to build a ref from, which app_images drops."""
+    return sorted(name for name in v.get("digests", {}) if not image_tag(v, name))
+
+
+# A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem
+# nodes), and an image missing either pulls fine and dies at exec on the other.
+REQUIRED_PLATFORMS = ("linux/amd64", "linux/arm64")
+
+
+def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
+    """(status, image, detail) per DFE image; status is ok, FAIL or ERROR.
+
+    Reads the pinned digest, never the tag, so the verdict is about the exact
+    index a deployment pulls. A registry that cannot be read is an ERROR, never
+    a pass.
+    """
+    findings: list[tuple[str, str, str]] = []
+    for name, ref in sorted(app_images(v, registry).items()):
+        label = f"{name}:{image_tag(v, name)}"
+        found, err = registry_pins.ref_platforms(ref)
+        if found is None:
+            findings.append(("ERROR", label, err))
+            continue
+        have = ", ".join(sorted(found)) or "no platforms"
+        missing = [p for p in REQUIRED_PLATFORMS if p not in found]
+        if missing:
+            findings.append(("FAIL", label, f"{have} -- missing {', '.join(missing)}"))
+        else:
+            findings.append(("ok", label, have))
+    for name in untagged_digests(v):
+        findings.append(("ERROR", name, "digest pinned with no tag under apps:, content: or a family pin"))
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -482,13 +543,33 @@ def cmd_images(args: argparse.Namespace) -> int:
             f"# WARNING: {len(missing)} app(s) unpublished, excluded: {', '.join(missing)}",
             file=sys.stderr,
         )
+    untagged = untagged_digests(v)
+    if untagged:
+        print(
+            f"# WARNING: {len(untagged)} digest(s) with no tag under apps:, content: or a family pin, "
+            f"excluded: {', '.join(untagged)}",
+            file=sys.stderr,
+        )
     print(
-        "# NOTE: third-party images (operators/services charts) are pulled by chart "
-        "ref; the complete mirror list comes from the CI chart render, not this "
-        "command.",
+        "# NOTE: third-party images (operator and service charts) are NOT listed: "
+        "each chart pulls its own by chart ref, and no tool here renders that list.",
         file=sys.stderr,
     )
     return 0
+
+
+def cmd_platforms(args: argparse.Namespace) -> int:
+    """Print every DFE image's platforms; exit 1 unless all carry the required set."""
+    _, v = stack_pins(load_root(args.tag), args.stack)
+    findings = platform_findings(v, args.registry)
+    for status, image, detail in findings:
+        print(f"{status:<5} {image}  {detail}")
+    bad = sum(1 for status, _, _ in findings if status != "ok")
+    print(
+        f"\n{len(findings)} image(s), {bad} without {' and '.join(REQUIRED_PLATFORMS)} "
+        "or unreadable"
+    )
+    return 1 if bad else 0
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
@@ -680,27 +761,23 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def cmd_verify(args: argparse.Namespace) -> int:
     _, v = stack_pins(load_root(), args.stack)
-    apps, digests = v.get("apps", {}), v.get("digests", {})
-    # The HyperDX fork is versioned under content:, so an apps-only lookup finds
-    # no tag and reports a correct pin as "(tag not found)".
-    content = v.get("content", {})
-    org = args.registry.split("/", 1)[1] if "/" in args.registry else args.registry
+    host, _, org = args.registry.partition("/")
+    if not org:
+        raise SystemExit(f"error: --registry {args.registry!r} names no org (want <host>/<org>)")
     bad = 0
-    for name, digest in sorted(digests.items()):
-        tag = apps.get(name) or content.get(name)
-        out = _run(
-            [
-                "gh", "api", "--paginate",
-                f"orgs/{org}/packages/container/{name}/versions?per_page=100",
-                "--jq",
-                f'.[] | select(.metadata.container.tags | index("{tag}")) | .name',
-            ]
-        )
-        actual = out.stdout.strip()
-        if out.returncode != 0:
-            print(f"ERROR {name}: gh api failed: {out.stderr.strip()}")
+    for name, digest in sorted(v.get("digests", {}).items()):
+        tag = image_tag(v, name)
+        if not tag:
+            print(f"ERROR {name}: digest pinned with no tag under apps:, content: or a family pin")
             bad += 1
-        elif actual != digest:
+            continue
+        try:
+            actual = registry_pins.tag_digest(org, name, tag, registry=host)
+        except registry_pins.RegistryError as exc:
+            print(f"ERROR {name}: {exc}")
+            bad += 1
+            continue
+        if actual != digest:
             print(f"DRIFT {name}: versions.yaml {digest} != registry {actual or '(tag not found)'}")
             bad += 1
         else:
@@ -716,42 +793,6 @@ def cmd_verify(args: argparse.Namespace) -> int:
 # Compatibility constraints (dfe-stack compat-check) -- validate the inter-
 # component locks declared in the stack's constraints file (guard + requirement).
 # ---------------------------------------------------------------------------
-
-_OPS = {
-    ">=": lambda a, b: a >= b,
-    "<=": lambda a, b: a <= b,
-    ">": lambda a, b: a > b,
-    "<": lambda a, b: a < b,
-    "==": lambda a, b: a == b,
-}
-
-
-def _ver_tuple(s: str) -> tuple[int, ...]:
-    """Tolerant version -> tuple of ints (strip a leading v, take leading-numeric
-    dotted segments). 26.3.13.31 -> (26,3,13,31); v26.1.8 -> (26,1,8)."""
-    s = s.strip()
-    if s.startswith("v"):
-        s = s[1:]
-    parts: list[int] = []
-    for seg in s.split("."):
-        m = re.match(r"\d+", seg)
-        if not m:
-            break
-        parts.append(int(m.group(0)))
-    return tuple(parts)
-
-
-def _satisfies_range(version: str, spec: str) -> bool:
-    """ALL whitespace-separated comparators (>= <= > < ==) must hold."""
-    av = _ver_tuple(version)
-    for token in spec.split():
-        m = re.match(r"(>=|<=|==|>|<)\s*(.+)", token)
-        if not m:
-            return False
-        if not _OPS[m.group(1)](av, _ver_tuple(m.group(2))):
-            return False
-    return True
-
 
 def flatten_pins(v: dict) -> dict[str, str]:
     """Pin sections -> dotted keys (operators.keda, services.kafka-version)."""
@@ -774,8 +815,17 @@ def _guard_holds(rule: dict, pins: dict) -> bool:
     if "when-equals" in rule:
         return val == rule["when-equals"]
     if "when-range" in rule:
-        return _satisfies_range(val, rule["when-range"])
+        return version_range.satisfies(val, rule["when-range"])
     return True
+
+
+def _guard_text(rule: dict) -> str:
+    """The guard as written, for a message that names what failed to match."""
+    if "when-equals" in rule:
+        return f"when-equals {rule['when-equals']!r}"
+    if "when-range" in rule:
+        return f"when-range {rule['when-range']!r}"
+    return "when-key"
 
 
 def _requirement_ok(rule: dict, pins: dict) -> tuple[bool, str | None]:
@@ -787,7 +837,7 @@ def _requirement_ok(rule: dict, pins: dict) -> tuple[bool, str | None]:
     if "require-equals" in rule:
         return val == rule["require-equals"], val
     if "require-range" in rule:
-        return _satisfies_range(val, rule["require-range"]), val
+        return version_range.satisfies(val, rule["require-range"]), val
     if "require-matches" in rule:
         return rule["require-matches"] in val, val
     return True, val
@@ -831,20 +881,6 @@ def annotated_images(text: str) -> dict[str, tuple[str, str]]:
     for m in _ANNOTATION.finditer(text):
         found[m.group("key")] = (m.group("a") or m.group("b"), m.group("value"))
     return found
-
-
-def resolve_digest(ref: str) -> tuple[str | None, str]:
-    """(manifest-list digest, error). Multi-arch safe -- the LIST digest, not one arch."""
-    out = _run(
-        [
-            "docker", "buildx", "imagetools", "inspect", ref,
-            "--format", "{{.Manifest.Digest}}",
-        ]
-    )
-    if out.returncode != 0:
-        return None, out.stderr.strip().splitlines()[-1] if out.stderr.strip() else "failed"
-    digest = out.stdout.strip()
-    return (digest, "") if digest.startswith("sha256:") else (None, f"unexpected: {digest!r}")
 
 
 def rewrite_digests(
@@ -917,7 +953,7 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
     for key in sorted(recorded):
         ref, tag = images[key]
         full = f"{ref}:{tag}"
-        digest, err = resolve_digest(full)
+        digest, err = registry_pins.ref_digest(full)
         if digest is None:
             print(f"ERROR {key}: {full}: {err}")
             stalled.append(key)
@@ -968,17 +1004,26 @@ def cmd_compat_check(args: argparse.Namespace) -> int:
     rules = con.get("rules", {})
     waivers = con.get("waivers", {})
     failures = 0
+    dead = 0
     for rid, rule in rules.items():
         if rid in waivers and not _waiver_expired(waivers[rid]):
             print(f"waived {rid}: {waivers[rid].get('reason', '')}")
             continue
         if rid in waivers:  # waiver present but EXPIRED -> rule re-activates
             print(f"WAIVER EXPIRED {rid}: {waivers[rid].get('expires')} -- rule re-activated")
+        sev = rule.get("severity", "error")
         if not _guard_holds(rule, pins):
-            print(f"n/a    {rid}: guard not met (skipped)")
+            # An error-severity rule whose guard cannot match is inert, and an
+            # inert rule reads as a passing one -- so --strict counts it.
+            if sev == "error":
+                print(f"DEAD   {rid}: guard {_guard_text(rule)} does not match "
+                      f"{rule.get('when-key')} = {pins.get(rule.get('when-key'))} -- "
+                      f"the rule can never fire; re-point or delete it")
+                dead += 1
+            else:
+                print(f"n/a    {rid}: guard not met (skipped)")
             continue
         ok, actual = _requirement_ok(rule, pins)
-        sev = rule.get("severity", "error")
         if ok:
             print(f"ok     {rid}: {rule.get('require-key')} = {actual}")
             continue
@@ -991,10 +1036,14 @@ def cmd_compat_check(args: argparse.Namespace) -> int:
     for wid, w in sorted(waivers.items()):
         if w.get("expires"):
             print(f"waiver {wid}: expires {w['expires']} ({w.get('scope', w.get('reason', ''))})")
-    if failures and args.strict:
-        print(f"\n{failures} error-severity constraint(s) violated ({name})")
+    if (failures or dead) and args.strict:
+        if failures:
+            print(f"\n{failures} error-severity constraint(s) violated ({name})")
+        if dead:
+            print(f"\n{dead} error-severity rule(s) can never fire ({name}) -- a guard "
+                  f"that matches nothing reports as a pass")
         return 1
-    tail = " (strict: no error violations)" if args.strict else " (advisory)"
+    tail = " (strict: no error violations or dead guards)" if args.strict else " (advisory)"
     print(f"\ncompat-check {name}: {len(rules)} rule(s) checked{tail}")
     return 0
 
@@ -1090,30 +1139,49 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     print(f"  versions.yaml apps.{name}")
     print(f"  helm/charts/{name}/Chart.yaml appVersion")
     # An app can be mirrored beyond its own chart -- the engine pin also drives
-    # the dfe-schema chart and the hyperdx dashboards tag.
+    # the hyperdx dashboards tag.
     print("  next: check_versions_drift.py --fix, for any other mirror of this pin")
     return 0
 
 
 def cmd_release_gate(args: argparse.Namespace) -> int:
-    """Fail if a release-maturity stack has any unpublished app (no digest).
+    """Fail a release-maturity stack with an unpublished or single-arch DFE image.
 
     A release must pin EVERY app; render silently comments out an app with no
     digest, so without this a release could cut a manifest MISSING a component
-    and auto-advance `latest` to it. rc/alpha/beta may carry unpublished apps.
+    and auto-advance `latest` to it. It must also carry both node architectures,
+    read from the registry by digest. rc/alpha/beta may carry either gap, and
+    their gate never touches the registry.
     """
     root = load_root()
     name, v = stack_pins(root, args.stack)
     maturity = v.get("maturity", "")
     unp = unpublished_apps(v)
-    if maturity == "release" and unp:
+    if maturity != "release":
+        print(
+            f"release-gate {name}: maturity={maturity}, {len(unp)} unpublished, "
+            "platforms not read (both allowed unless release)"
+        )
+        return 0
+    failed = False
+    if unp:
         print(
             f"release-gate FAIL: {name} is maturity=release but these apps are "
             f"unpublished (no digest): {', '.join(unp)}",
             file=sys.stderr,
         )
+        failed = True
+    findings = platform_findings(v, args.registry)
+    for status, image, detail in findings:
+        if status != "ok":
+            print(f"release-gate FAIL: {name} {image} {status}: {detail}", file=sys.stderr)
+            failed = True
+    if failed:
         return 1
-    print(f"release-gate {name}: maturity={maturity}, {len(unp)} unpublished (allowed unless release)")
+    print(
+        f"release-gate {name}: maturity=release, every app published, all "
+        f"{len(findings)} image(s) carry {' and '.join(REQUIRED_PLATFORMS)}"
+    )
     return 0
 
 
@@ -1223,6 +1291,36 @@ def _carry_constraints(root: dict, from_name: str, new: str) -> str | None:
     return dst_rel
 
 
+_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _stamp_git_content(block: list[str], from_pins: dict, org: str, held: list[str]) -> list[str]:
+    """Re-resolve every content entry whose value is a git commit, not a tag.
+
+    A content repo that cuts a tag per stack release (dfe-schemas, dfe-deploy,
+    dfe-hyperdx) is moved by the lockstep tagger and by Renovate. One that does
+    not -- dfe-docker -- can only be recorded by commit, and the key NAMES the
+    repo, so this needs no table: a 40-hex value means "resolve <org>/<key> at
+    main", and any other value is a tag somebody else owns.
+
+    Without this, an old stack names no dfe-docker ref at all and the only
+    pairing that reproduces its docker path is "whatever main looked like that
+    week" (dfe-infra#171).
+    """
+    moved: list[str] = []
+    for name, current in sorted(from_pins.get("content", {}).items()):
+        if not _GIT_SHA.match(current):
+            continue
+        sha = registry_pins.head_commit(org, name)
+        if sha == current:
+            held.append(f"{name} {current[:12]} (already at main)")
+            continue
+        if not _rewrite_scalar(block, "content", name, sha):
+            raise SystemExit(f"error: no content.{name} pin to rewrite")
+        moved.append(f"{name} {current[:12]} -> {sha[:12]} (git ref)")
+    return moved
+
+
 def cmd_cut(args: argparse.Namespace) -> int:
     """Cut a new stack version from the CURRENT LATEST build of every app.
 
@@ -1231,6 +1329,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
     repins the matching digest. Third-party pins carry over untouched: those are
     Renovate's to move, and several are deliberately held below a ceiling (the
     ClickHouse LTS line, the Kafka version strimzi supports).
+
+    A content entry recorded as a git commit rather than a tag is re-resolved
+    here too, so the new stack names the exact ref that ran it.
 
     `stack.previous` is DERIVED, not cloned: the source block is by definition
     the new version's predecessor, so cut re-points it at `--from`.
@@ -1295,6 +1396,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
             )
         moved.append(f"{app} {current} -> {tag}")
 
+    moved += _stamp_git_content(block, from_pins, args.org, held)
+
     print(f"cut {new} from {from_name}")
     for line in moved:
         print(f"  MOVED  {line}")
@@ -1341,7 +1444,7 @@ def main() -> int:
         metavar="PATH",
         help=(
             "KEY=VALUE file; GHCR_TOKEN or GH_TOKEN in it authenticates gh for "
-            "the registry reads; repeatable, later wins"
+            "the packages-API reads cut needs; repeatable, later wins"
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1361,6 +1464,14 @@ def main() -> int:
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.add_argument("--tag", help="git tag (git show versions.yaml@tag)")
     p.set_defaults(func=cmd_images)
+
+    p = sub.add_parser(
+        "platforms",
+        help="print each DFE image's platforms; exit 1 unless all carry amd64 and arm64",
+    )
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument("--tag", help="git tag (git show versions.yaml@tag)")
+    p.set_defaults(func=cmd_platforms)
 
     p = sub.add_parser("graph", help="derive the upgrade graph from the in-file stacks")
     p.set_defaults(func=cmd_graph)
@@ -1451,7 +1562,10 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
     p.set_defaults(func=cmd_cut)
 
-    p = sub.add_parser("release-gate", help="fail if a release-maturity stack has unpublished apps")
+    p = sub.add_parser(
+        "release-gate",
+        help="fail a release-maturity stack with unpublished apps or a single-arch image",
+    )
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_release_gate)
 

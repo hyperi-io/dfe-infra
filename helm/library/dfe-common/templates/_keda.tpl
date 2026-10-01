@@ -7,11 +7,14 @@ the engine's per-instance overlay drives scaling directly: the overlay sets
 scaleTargetRef is the app's own Deployment (dfe-common.fullname). The DEFAULT
 trigger is CPU utilisation (native KEDA cpu scaler - zero code, zero upstream risk,
 the safe fleet baseline; metrics-server is installed and the pods declare CPU
-requests). scalo ScalingPressure is OPT-IN per app (.Values.keda.pressure.enabled)
-and routes through the fail-safe dfe-keda-shim so a metric outage FREEZES scaling
-rather than running replicas up. An app may still set .Values.keda.triggers to
-override VERBATIM (any KEDA scaler type, e.g. Kafka lag), so the engine's
-HelmKedaConfig output still maps 1:1 when it emits explicit triggers.
+requests). scalo ScalingPressure renders alongside it per app
+(.Values.keda.pressure.enabled) and routes through the fail-safe dfe-keda-shim so a
+metric outage FREEZES scaling rather than running replicas up. The shim address is
+derived from the release namespace, where the engine chart puts the shim; set
+keda.pressure.shimAddress only for a shim outside this release's namespace. An app
+may still set .Values.keda.triggers to override VERBATIM (any KEDA scaler type,
+e.g. Kafka lag), so the engine's HelmKedaConfig output still maps 1:1 when it emits
+explicit triggers.
 
 NOTE: minReplicaCount defaults to 1 -- scale-to-zero (min/idle 0) is 2.2 backlog
 (kafka-pipeline-only idle shutdown; the 2.2 pipeline is efficient enough that one
@@ -50,20 +53,34 @@ spec:
       metricType: Utilization
       metadata:
         value: {{ $cpu.targetUtilization | default 70 | quote }}
-    {{- /* OPT-IN: scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim - a
-           metric outage FREEZES scaling, never runs replicas up. metricType Value:
-           the intensive 0-100 gauge, NOT AverageValue (which would mis-scale). */}}
+    {{- /* scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim - a metric
+           outage FREEZES scaling, never runs replicas up. metricType Value: the
+           intensive 0-100 gauge, NOT AverageValue (which would mis-scale). */}}
     {{- $p := .Values.keda.pressure | default dict }}
     {{- if $p.enabled }}
     - type: metrics-api
       metricType: Value
       metadata:
         targetValue: {{ $p.targetValue | default 70 | quote }}
-        url: {{ printf "http://%s/keda/pressure?service=%s" ($p.shimAddress | default "dfe-keda-shim.dfe.svc.cluster.local:8080") ($p.service | default (include "dfe-common.fullname" .)) | quote }}
+        url: {{ printf "http://%s/keda/pressure?service=%s" ($p.shimAddress | default (include "dfe-common.kedaShimAddress" .)) ($p.service | default (include "dfe-common.fullname" .)) | quote }}
         valueLocation: "value"
     {{- end }}
     {{- end }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+dfe-common.kedaShimAddress — the in-cluster address of the dfe-keda-shim Service,
+derived from THIS release's namespace. The engine chart names that Service
+`dfe-keda-shim` unprefixed and serves it on 8080 (kedaShim.port), and it is
+deployed into the same namespace as the apps that poll it, so a deployment in any
+namespace renders an address that resolves without a values override. Callers keep
+their own override key and fall back to this:
+
+  {{ .Values.keda.pressure.shimAddress | default (include "dfe-common.kedaShimAddress" .) }}
+*/}}
+{{- define "dfe-common.kedaShimAddress" -}}
+{{- printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace -}}
 {{- end -}}
 
 {{/*

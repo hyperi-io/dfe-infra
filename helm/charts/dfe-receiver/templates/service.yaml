@@ -37,6 +37,12 @@ spec:
       appProtocol: {{ . }}
       {{- end }}
     {{- end }}
+    # scalo's metrics listener, where dfe-engine reads the receiver's metric
+    # manifest. On this ClusterIP Service only, never a public one.
+    - port: 9090
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
   selector:
     {{- include "dfe-common.selectorLabels" . | nindent 4 }}
 {{- if eq (.Values.exposure.mode | default "public") "public" }}

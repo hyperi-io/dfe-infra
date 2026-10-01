@@ -1,0 +1,124 @@
+# THE EDGE MODULE, AWS FLAVOUR -- the tier table for helm/edge/gateway and
+# helm/edge/culvert, in one file. argocd/appsets/layer2-edge.yaml layers this
+# after argocd/values/aws.yaml and no other appset reads it, so a key here
+# reaches the two edge charts alone.
+#
+# TIER 1 is on by default and adds nothing beyond the cluster's own compute.
+# TIER 2 is a costed opt-in the deployer turns on in their own overlay.
+# TIER 3 is absent by design and no key in this file reaches it.
+# Cost is a T-shirt bucket against the cluster's compute plus a named pricing
+# model, never a rate (docs/deployment/aws.md#how-costs-are-described).
+#
+# A KEY STAYS IN aws.yaml WHEN A CHART OUTSIDE THIS MODULE READS IT.
+# exposure.mode is the dfe-receiver chart's and kafbat and dfe-engine read
+# oidc.enabled, so moving either would change what a non-edge chart renders.
+
+# TIER 1 -- the HTTP plane's front door, owned by the AWS Load Balancer
+# Controller that layer1-addons installs on this cloud.
+envoyGateway:
+  service:
+    type: LoadBalancer
+    # The chart's own cloud-agnostic exposure signal (values.yaml), read by
+    # envoy-gateway-config.validateUi's render guard -- set alongside the
+    # internet-facing scheme annotation below, not derived from it.
+    internetFacing: true
+    annotations:
+      # `external`, not `nlb`: the controller reconciles only `nlb-ip` and
+      # `external`, and ignores anything else. `nlb` was read by nothing, which
+      # left the in-tree cloud provider making the load balancer instead.
+      service.beta.kubernetes.io/aws-load-balancer-type: "external"
+      # Targets are pod IPs, so a request reaches Envoy in one hop and the node
+      # port hop that hides the client address is gone.
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+      # The UIs' users are outside the VPC. Everything else DFE runs stays
+      # private, and internal Services keep the default `internal` scheme.
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+      # Without this the target sees the load balancer's address, every request
+      # comes from one IP, and both the CIDR filter and the rate limit become
+      # decorations.
+      service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: "preserve_client_ip.enabled=true"
+      # NO aws-load-balancer-security-groups here, deliberately. Left absent,
+      # the controller creates a frontend security group AT CREATION and opens
+      # it to the Service's loadBalancerSourceRanges -- and creation is the only
+      # time an NLB can be given one, so an NLB born without a security group
+      # can never gain one afterwards. Naming a group here would also turn the
+      # backend rule management below off by default.
+      # With preserve_client_ip on and IP targets, the node and pod security
+      # groups have to admit the CLIENT address rather than the load balancer's;
+      # this is what keeps those rules in step.
+      service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+
+# The exposure key is shared by three charts and split by which one reads it:
+# the two below are the gateway's and culvert's, and dfe-receiver's own
+# exposure.mode stays in aws.yaml.
+exposure:
+  # TIER 1 -- the infra-class kill switch, off here because the gateway Service
+  # above is internet-facing. Argo CD, Kafbat, HyperDX, Forgejo, links and
+  # Cruise Control all stay off the public load balancer until an operator's own
+  # overlay opts one back on. dfe-ui is unaffected -- it is class product, and
+  # the kill switch never reaches it. Turning a route back on also needs
+  # oidc.enabled (aws.yaml) with an oidc.providers entry, or ui.allowed_cidrs,
+  # which the chart's render guard requires whenever the Service is
+  # internet-facing and this switch is on.
+  infraUisExternal: false
+  # TIER 1 -- culvert must render NO LoadBalancer either, or the tunnel's own
+  # bytes hit the per-GB-processed NLB the receiver's `vpn` default exists to
+  # avoid. NodePort carries no per-byte charge; the deployer reaches it through
+  # an address they bring, e.g. an Elastic IP on a small forwarder instance in
+  # the receiver's AZ. NodePort also makes exposure.loadBalancerSourceRanges
+  # inert, so the tunnel's allow-list belongs on the node security group -- the
+  # chart's service.yaml refuses the pair rather than render a dial that does
+  # nothing.
+  serviceType: NodePort
+  # Cluster, not the chart's own Local default: with Local a NodePort answers
+  # only on the node currently hosting culvert's one pod, and a forwarder
+  # that does not track pod placement needs every node's NodePort to work.
+  # The cost is the client's real source IP, which Cluster SNATs to a node --
+  # culvert's own PKI and OIDC identity are then the only attribution a
+  # connection carries, and a source-IP rule would have nothing to match.
+  externalTrafficPolicy: Cluster
+
+pki:
+  # TIER 1 -- external PKI is the rebuildable shape on a cloud flavour, because
+  # local mode mints the CA inside the pod and a restart without a durable
+  # volume invalidates every client config already issued. It is also the only
+  # mode that carries a tls-crypt-v2 key, which is what makes an unauthenticated
+  # packet cheap to drop, and the only one with a CRL that survives a rebuild.
+  # The deployment names the Secret holding ca.crt, server.crt and server.key in
+  # its own culvert instance values file, and the chart refuses to render
+  # without it rather than start with no PKI.
+  mode: external
+
+# TIER 1, and NOT a key in this file: culvert writes revocations and WireGuard
+# peers into the pod's PKI directory, so a restart without a volume loses both.
+# persistence.enabled is read by charts outside this module, so the value is set
+# per cloud in argocd/appsets/layer2-edge.yaml, where it reaches culvert alone.
+
+peers:
+  classes:
+    admin:
+      # TIER 1 -- the reach-back an operator administers one appliance through
+      # (`dfe-ops bastion hub`), opt-out here and absent on-prem, where the
+      # operator is already on the LAN. It costs nothing beyond the toolbox
+      # instance's own hours, since the tunnel bytes ride the address already
+      # in front of the cluster. The ranges it is reached FROM arrive on the
+      # cluster secret and are written by argocd/appsets/layer2-edge.yaml; an
+      # admin that dials in as a PEER instead waits on hyperi-io/culvert#40,
+      # and appliance isolation stays on either way.
+      enabled: true
+
+# TIER 2, no key here. A CloudFront distribution or a managed WAF in front of
+# the gateway terminates TLS above Envoy and moves the public certificate to the
+# cloud's own store, which this module does not render -- the gateway chart
+# fails on any ui.waf.mode but none rather than pretend otherwise. A CDN bills
+# per GB and a WAF per request, so both are the deployer's explicit opt-in.
+# The tier-2 Elastic IP forwarder in front of culvert's NodePort is one small
+# instance and one static address, both billed hourly -- bucket XS, the same
+# bucket render_dial.py's own tier-2 table prints -- and it arrives with
+# terraform/modules/edge.
+#
+# TIER 3, absent by design. Shield Advanced is a flat subscription an order
+# above this cluster's own compute, and Global Accelerator bills per GB on
+# traffic the load balancer already carries -- neither has a key in this module.
+# Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao and the Kubernetes API are
+# offered no door at all, on any flavour.

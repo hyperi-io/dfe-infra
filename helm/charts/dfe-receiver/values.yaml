@@ -8,10 +8,32 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-receiver (drift-checked).
-  digest: "sha256:0e9d04354c041d71a6c79eb923f5f59f7926e4ad321eb8dc64f940874b2fdf14"
+  digest: "sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
+
+# dfe-engine applies every ClickHouse object and every bootstrap Kafka topic at
+# its own startup and gates /readyz on the result, so an init container waits on
+# the engine Service before this pod starts (dfe-common.waitForEngine). Started
+# first, this app finds no table and no topic.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty -> this release's own namespace.
+  namespace: ""
+  port: 8000
+  # On expiry the init container exits non-zero and the pod sits in
+  # Init:CrashLoopBackOff rather than starting against an absent schema.
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 # PodDisruptionBudget (dfe-common.pdb): renders only where the workload can
 # carry two pods, so a single-replica deployment never gets a budget that blocks
@@ -123,27 +145,36 @@ receiver:
   # normal pod anyway. The pod's exposure is the Services and LBs above.
   listenAddress: "0.0.0.0"
 
-  # What the receiver holds while the next stage is not taking records. On the
-  # bus the broker is that slack; on the direct transport nothing downstream
-  # stores anything, so this IS the slack in the whole chain and a profile
-  # without a broker raises it. The keys map onto the app's own config.buffer,
-  # and the chart writes them there -- the engine compiles routing, not
-  # buffering, so this block is the one source for both the config file and the
-  # spool volume the deployment mounts.
+  # What the receiver holds while the next stage is not taking records, read
+  # only with acknowledgements off. With them on (the default) the receiver
+  # builds no buffer or spool: a sender's request waits for delivery and gets a
+  # 503 once its hold expires, and the sender retries from its own copy. With
+  # them off, on the bus the broker is the slack; on the direct transport
+  # nothing downstream stores anything, so this IS the slack in the whole chain
+  # and a profile without a broker raises it. The keys map onto the app's own
+  # config.buffer, and the chart writes them there -- the engine compiles
+  # routing, not buffering, so this block is the one source for both the config
+  # file and the spool volume the deployment mounts.
   buffer:
     # Bytes the buffers may hold. 0 = the app's auto-detect, which takes 85% of
     # the pod's memory limit and back-pressures at 80% of that.
     memoryLimit: 0
     spillover:
       # Spill to disk instead of dropping when memory fills. The trade belongs
-      # in the values file that turns it on: an outage shorter than the buffer
-      # is invisible to senders, a longer one back-pressures them.
+      # in the values file that turns it on, and it holds only with
+      # acknowledgements off: an outage shorter than the buffer is invisible to
+      # senders, a longer one back-pressures them, and a spooled record has
+      # already had its 2xx.
       enabled: false
       path: /var/spool/dfe-receiver
       # How large the spool volume may grow. Kubernetes' cap on the emptyDir,
       # with no key on the app's side -- the app spills until its own
       # max_usage_percent of whatever filesystem it was given.
       sizeLimit: 10Gi
+
+  # The loader's Push port on the direct transport: dfe-loader service.grpcPort and
+  # apps.yaml dfe-loader.endpoints.push, held equal by scripts/tests/test_receiver_loader.py.
+  loaderPort: 6000
 
 kafka:
   # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
@@ -153,17 +184,15 @@ kafka:
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
-  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
-  # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
-  # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
-  # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
-  # DFE Kafka credential contract (dfe-engine#98).
-  provider: ""
+  # Wire protocol for the broker's listener (PLAINTEXT | SASL_PLAINTEXT | SSL |
+  # SASL_SSL), set beside bootstrapServers. Only an SSL value is rendered: it
+  # turns the app's TLS on, and anything else leaves the app's own setting.
+  securityProtocol: ""
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created
-# topic -- the kafka chart's kafka.dlqTopics list. Change the topic only
-# together with that list, or the app dead-letters into a topic nothing created.
+# topic -- the dfe-schemas topic set dfe-engine creates. Change the topic only
+# together with that set, or the app dead-letters into a topic nothing created.
 dlq:
   topic: dfe_receiver_dlq
   mode: kafka_only
@@ -182,6 +211,13 @@ dlq:
 # consistent with the matching listener.
 config: {}
 
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
+
 otel:
   endpoint: ""
 
@@ -196,11 +232,22 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+  # Mount the service-account token. Turn on only for Vault's Kubernetes auth method, which logs in with it: VAULT_K8S_ROLE (or OPENBAO_K8S_ROLE / BAO_K8S_ROLE) or secrets.openbao.auth.method kubernetes in the app config.
+  mountToken: false
+
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
 
 # KEDA autoscaling -- folded into the chart (no side-car keda-scalers chart).
-# The engine/overlay drives these via the per-instance values file. DEFAULT
-# trigger is CPU (native KEDA cpu scaler, no shim); scalo ScalingPressure is OPT-IN
-# via the fail-safe dfe-keda-shim (a metric outage FREEZES scaling, never runs up).
+# The engine/overlay drives these via the per-instance values file. Two triggers
+# render and the HPA takes the higher: the native cpu scaler (no component in the
+# path) and the scalo ScalingPressure composite (0-100) through the fail-safe
+# dfe-keda-shim, which matches this ServiceName's gauge under any metric prefix
+# (dfe-engine#379). Pressure needs the shim in the release namespace (the engine
+# chart ships it); the slim profile turns it off because that tier carries no broker.
 # minReplicaCount stays 1 -- scale-to-zero is 2.2 backlog; set min/idle to 0 via
 # the overlay to opt this pipeline app in later.
 keda:
@@ -210,14 +257,14 @@ keda:
   cooldownPeriod: 120
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
-  # OPT-IN: scale on scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim -
-  # a metric outage FREEZES scaling, never runs replicas up. Set enabled: true to use.
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
+  # scalo ScalingPressure (0-100) via the fail-safe dfe-keda-shim, which freezes
+  # scaling on a metric outage rather than running replicas up.
   pressure:
-    enabled: false
+    enabled: true
     # service: dfe-receiver   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

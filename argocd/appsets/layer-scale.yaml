@@ -28,10 +28,11 @@ spec:
               elements:
                 - chart: strimzi-kafka-operator
                   repo: https://strimzi.io/charts/
-                  version: "0.51.0"
+                  version: "1.2.0"
                   namespace: strimzi
                   wave: "3"
                   appProject: infra
+                  chartValuesYaml: ""
                 # Official ClickHouse operator (clickhouse.com CRDs) -- cluster
                 # mode only. Single mode uses a plain StatefulSet (no operator).
                 # OCI chart; wave 3 so CRDs exist before the ClickHouseCluster CR
@@ -43,13 +44,23 @@ spec:
                 # Namespace is upstream's own and MUST match common.yaml
                 # operatorNamespaces.clickhouse, which is what opens the
                 # NetworkPolicy the operator needs to probe Keeper and run DDL.
-                # dfe-mesh-operators below carries the same pin; both move together.
+                # dfe-mesh-operators below carries the same pin and the same
+                # chartValuesYaml; both move together.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.7"
                   namespace: clickhouse-operator-system
                   wave: "3"
                   appProject: infra
+                  # The operator builds its logger in zap development mode, which
+                  # is debug level (cmd/main.go, v0.0.7). manager.args is appended
+                  # to the chart's own flags but replaces its default list, so
+                  # --leader-elect has to be restated.
+                  chartValuesYaml: |
+                    manager:
+                      args:
+                        - --leader-elect
+                        - --zap-log-level=info
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -63,11 +74,14 @@ spec:
         chart: '{{ .chart }}'
         targetRevision: '{{ .version }}'
         helm:
-          valuesObject:
+          # A string, not valuesObject: the template is parsed as YAML before it
+          # is Go-templated, so only a string can carry an element's chartValuesYaml.
+          values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
               cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+            {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
@@ -103,13 +117,19 @@ spec:
                   dfe.hyperi.io/profile: mesh
           - list:
               elements:
-                # Same pin as dfe-scale-operators above; the two move together.
+                # Same pin and chartValuesYaml as dfe-scale-operators above; the
+                # two move together.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.7"
                   namespace: clickhouse-operator-system
                   wave: "3"
                   appProject: infra
+                  chartValuesYaml: |
+                    manager:
+                      args:
+                        - --leader-elect
+                        - --zap-log-level=info
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -123,11 +143,14 @@ spec:
         chart: '{{ .chart }}'
         targetRevision: '{{ .version }}'
         helm:
-          valuesObject:
+          # A string, not valuesObject: the template is parsed as YAML before it
+          # is Go-templated, so only a string can carry an element's chartValuesYaml.
+          values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
               cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+            {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
@@ -175,7 +198,7 @@ spec:
       source:
         repoURL: https://charts.redpanda.com
         chart: operator
-        targetRevision: "26.1.6"
+        targetRevision: "26.2.3"
         helm:
           valuesObject:
             crds:
@@ -226,13 +249,12 @@ spec:
                 # ClickHouse -- has no transform hop at all.
                 #
                 # Every transform listed here was broken in deploy, two different ways:
-                #   - wasm / elastic / splack are built-FOR, not built-WITH -- nowhere
-                #     near GA. elastic and splack have no Dockerfile at all (library
-                #     crates: there is no image to pull, ever), wasm is unpublished
-                #     alpha. All three sat in ImagePullBackOff for the life of the
-                #     cluster. This restores the contract versions.yaml ALREADY states:
-                #     "An app with no digest here is NOT YET PUBLISHED and is excluded
-                #     from rendered manifests."
+                #   - splack and wasm have no published image: their versions.yaml
+                #     pins are commented out, so they are excluded from every
+                #     rendered manifest and sat in ImagePullBackOff for the life of
+                #     the cluster. This restores the contract versions.yaml ALREADY
+                #     states: "An app with no digest here is NOT YET PUBLISHED and is
+                #     excluded from rendered manifests."
                 #   - vrl / vector ARE published, but their sourceTopic/destTopic are
                 #     empty ("set per deployment") and nothing set them, so they died
                 #     on "sink.topic must not be empty" and crashlooped.
@@ -241,9 +263,19 @@ spec:
                 # all-pods-Ready -- so unconfigured, unshippable transforms were
                 # blocking the default E2E acceptance for the whole deploy.
                 #
-                # To deploy one: give it a Source-driven config (sourceTopic +
-                # destTopic) and add it back here. For wasm/elastic/splack, GA and a
-                # digest in versions.yaml come first.
+                # elastic is no longer in that set: it publishes images (v1.1.2 on
+                # GHCR as a multi-arch index) and its pin moves with the rc.14 cut.
+                # Its chart also has no topic dials to set -- PR #344 removed
+                # sourceTopic, destTopic and consumerGroup because the app reads
+                # none of them, and the engine compiles its routing from the source.
+                #
+                # To deploy vrl or vector: give it a Source-driven config
+                # (sourceTopic + destTopic) and add it back here. For splack and
+                # wasm, a published image and a digest in versions.yaml come first.
+                #
+                # dfe-transform-splack and dfe-transform-wasm are coming: alpha,
+                # unpublished, and their versions.yaml pins are commented out, so
+                # they cannot be added back here until both are uncommented.
                 []
   template:
     metadata:
@@ -262,6 +294,23 @@ spec:
             - "../../../argocd/values/common.yaml"
             - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
             - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+          parameters:
+            # The registry every dfe-* image is pulled from, guarded exactly as
+            # in layer2-apps: a missing annotation fails the render rather than
+            # sending each image to Docker Hub.
+            - name: global.registry
+              value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
+          # `values` (a YAML string) rather than a structured block, same reason
+          # layer2-apps.yaml gives: a conditional cannot live in a field this
+          # file's own tests parse as plain YAML before any Go templating runs.
+          values: |
+            {{- $pullSecret := "ghcr-pull-secret" }}
+            {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+            {{- if $pullSecret }}
+            # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
+            imagePullSecrets:
+              - {{ $pullSecret | quote }}
+            {{- end }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ if .namespace }}{{ .namespace }}{{ else }}{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}{{ end }}'

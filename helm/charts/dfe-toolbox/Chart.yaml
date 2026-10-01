@@ -1,0 +1,15 @@
+apiVersion: v2
+name: dfe-toolbox
+description: Opt-in in-cluster troubleshooting pod -- off by default
+type: application
+version: 0.1.0
+# stacks.<current>.toolbox.dfe-toolbox in versions.yaml -- the one release tag
+# shared by the whole dfe-toolbox-{base,aws,gcp,azure} image family.
+# check_versions_drift.py's CHECKS holds this and values.yaml's image.tag to
+# the same pin, so the two cannot drift from each other or from the
+# Dockerfiles' own BASE_TAG build args.
+appVersion: "v1.0.1"
+dependencies:
+  - name: dfe-common
+    version: "0.15.0"
+    repository: "file://../../library/dfe-common"

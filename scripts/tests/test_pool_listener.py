@@ -13,13 +13,17 @@
 A Kubernetes Service balances per connection and gRPC holds one open, so a
 sender pins itself to one pod of the pool it dials and the replicas KEDA adds
 take nothing. dfe-common.poolListener puts a Gateway API listener in front of
-each pool instead -- an alias Service naming the pool, and a GRPCRoute from that
-name to the pool's own Service -- and the profile is what turns it on.
+each pool instead -- an alias Service naming the pool, a GRPCRoute from that
+name to the pool's own Service, and a policy on that route -- and the profile is
+what turns it on.
 
 What is checked here is that it is ONE helper and one profile switch: the same
-two objects for every pool, no pool growing its own wiring, nothing rendered on
-a profile that did not ask, and the backend declared as cleartext HTTP/2 so the
-proxy does not dial it as HTTP/1.1.
+three objects for every pool, no pool growing its own wiring, nothing rendered
+on a profile that did not ask, and the backend declared as cleartext HTTP/2 so
+the proxy does not dial it as HTTP/1.1. The route policy is checked for the two
+things that decide whether a held request survives the proxy: a timeout no
+shorter than the sender's deadline, and retries that never re-send a request a
+pod already took.
 
     python3 scripts/tests/test_pool_listener.py
 
@@ -34,6 +38,7 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -62,17 +67,29 @@ QUIET_PROFILES = ("slim", "single", "scale")
 GATEWAY_NAMESPACE = "envoy-gateway-system"
 MESH_GATEWAY = "dfe-mesh"
 
+# The sender's send deadline. A route timing out sooner cuts a request the next
+# stage is still holding until its own ack is released.
+SENDER_DEADLINE_SECONDS = 30
 
-def render(chart: str, profile: str) -> list[dict]:
+# The only retry triggers that mean no pod took the request.
+SAFE_RETRY_TRIGGERS = ["connect-failure", "resource-exhausted"]
+
+DURATION_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def render(chart: str, profile: str, *extra: str) -> list[dict]:
     """One chart under one profile, with the same values cascade Argo layers."""
     cmd = [
-        "helm", "template", chart, str(CHARTS / chart),
+        "helm", "template", chart, str(chart_dir(chart)),
         "--namespace", "dfe",
         "--set", "appNamespace=dfe",
         "-f", str(VALUES / "common.yaml"),
         "-f", str(VALUES / f"profile-{profile}.yaml"),
+        *extra,
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    out = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+    )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {chart} on {profile}:\n{out.stderr}")
     return [d for d in yaml.safe_load_all(out.stdout) if d]
@@ -80,6 +97,15 @@ def render(chart: str, profile: str) -> list[dict]:
 
 def of_kind(docs: list[dict], kind: str) -> list[dict]:
     return [d for d in docs if d.get("kind") == kind]
+
+
+def seconds(duration: str) -> float:
+    """A Gateway API duration ("30s", "500ms", "1m") in seconds."""
+    for unit in sorted(DURATION_UNITS, key=len, reverse=True):
+        number = duration.removesuffix(unit)
+        if number != duration and number.replace(".", "", 1).isdigit():
+            return float(number) * DURATION_UNITS[unit]
+    raise ValueError(f"not a duration: {duration!r}")
 
 
 def test_every_pool_gets_a_listener_on_the_mesh_profile() -> None:
@@ -140,12 +166,82 @@ def test_the_backend_is_declared_cleartext_http2() -> None:
                f"got {ports!r}")
 
 
+def test_every_route_carries_its_own_policy() -> None:
+    for chart in sorted(POOLS):
+        alias = f"{chart}-mesh"
+        policies = of_kind(render(chart, MESH_PROFILE), "BackendTrafficPolicy")
+        expect(f"{chart} has one route policy", len(policies) == 1, f"got {len(policies)}")
+        if not policies:
+            continue
+        spec = policies[0]["spec"]
+        expect(
+            f"{chart} policy targets its own route, not the Gateway",
+            spec["targetRefs"]
+            == [{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute", "name": alias}],
+            f"got {spec['targetRefs']!r}",
+        )
+        expect(
+            f"{chart} policy merges into the Gateway's instead of replacing it",
+            spec.get("mergeType") == "StrategicMerge",
+            f"got {spec.get('mergeType')!r}",
+        )
+        timeout = spec["timeout"]["http"]["requestTimeout"]
+        expect(
+            f"{chart} request timeout is at or above the sender's {SENDER_DEADLINE_SECONDS}s",
+            seconds(timeout) >= SENDER_DEADLINE_SECONDS,
+            f"got {timeout!r}",
+        )
+        triggers = spec["retry"]["retryOn"]["triggers"]
+        expect(
+            f"{chart} retries only where no pod took the request",
+            sorted(triggers) == SAFE_RETRY_TRIGGERS,
+            f"got {triggers!r}",
+        )
+        passive = spec["healthCheck"]["passive"]
+        expect(
+            f"{chart} ejects a pod that keeps answering unavailable",
+            passive.get("consecutive5XxErrors", 0) > 0,
+            f"got {passive!r}",
+        )
+
+
+def test_the_duration_reader_reads_what_the_policy_writes() -> None:
+    """The timeout check is only as good as this parse, so its edges are pinned."""
+    expect("30s is 30", seconds("30s") == 30, str(seconds("30s")))
+    expect("500ms is half a second", seconds("500ms") == 0.5, str(seconds("500ms")))
+    expect("1m is 60", seconds("1m") == 60, str(seconds("1m")))
+    for bad in ("", "30", "s", "thirty s"):
+        try:
+            seconds(bad)
+        except ValueError:
+            continue
+        expect(f"{bad!r} is refused", False, "parsed as a duration")
+
+
+def test_another_gateway_can_leave_the_route_policy_out() -> None:
+    docs = render("dfe-loader", MESH_PROFILE, "--set", "mesh.routePolicy.enabled=false")
+    expect(
+        "mesh.routePolicy.enabled=false renders no policy",
+        of_kind(docs, "BackendTrafficPolicy") == [],
+        f"got {of_kind(docs, 'BackendTrafficPolicy')!r}",
+    )
+    expect(
+        "and the route still renders",
+        len(of_kind(docs, "GRPCRoute")) == 1,
+        f"got {len(of_kind(docs, 'GRPCRoute'))}",
+    )
+
+
 def test_no_listener_on_a_profile_that_did_not_ask() -> None:
     for profile in QUIET_PROFILES:
         for chart in sorted(POOLS):
             docs = render(chart, profile)
             routes = of_kind(docs, "GRPCRoute")
             expect(f"{chart} has no route on {profile}", routes == [], f"got {len(routes)}")
+            policies = of_kind(docs, "BackendTrafficPolicy")
+            expect(
+                f"{chart} has no route policy on {profile}", policies == [], f"got {len(policies)}"
+            )
             aliases = [
                 s for s in of_kind(docs, "Service")
                 if s["metadata"]["name"].endswith("-mesh")
@@ -251,6 +347,9 @@ def main() -> int:
     with standalone():
         test_every_pool_gets_a_listener_on_the_mesh_profile()
         test_the_backend_is_declared_cleartext_http2()
+        test_every_route_carries_its_own_policy()
+        test_the_duration_reader_reads_what_the_policy_writes()
+        test_another_gateway_can_leave_the_route_policy_out()
         test_no_listener_on_a_profile_that_did_not_ask()
         test_the_gateway_the_listeners_attach_to()
         test_the_senders_are_allowed_to_reach_the_listener()

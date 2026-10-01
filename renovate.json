@@ -1,19 +1,28 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "versions.yaml is the third-party SSoT for the DFE stack. Renovate lives HERE (relocated from dfe-docker, which now derives its pins via `make stack`). PIN FLOW IS INVERTED: Renovate edits versions.yaml ONLY, and `check_versions_drift.py --fix` propagates the SSoT into every mirror (chart values, chart appVersions, appset chart pins, plain manifests). Renovate cannot do that job itself -- it manages helm-values and terraform, but not the appset pins, the Chart.yaml appVersions or the bare `version:` keys, so a Renovate edit to a chart could only ever move ONE of a key's mirrors and left every PR failing the drift check. OPERATOR-COUPLED service versions -- services.clickhouse-version (clickhouse-operator), services.kafka-version (strimzi 0.51 ceiling 4.2.0), services.redpanda-version (redpanda-operator) -- carry an `# image:` annotation rather than a `# renovate:` one: `dfe-stack refresh-digests` resolves their digests, but the VERSION moves by hand in lockstep with the operator, verified against the operator support matrix and `dfe-stack compat-check`. The org preset's allowedVersions rules remain the backstop, gating by PACKAGE wherever the image is pinned.",
+  "description": "versions.yaml is the third-party SSoT for the DFE stack. Renovate lives HERE (relocated from dfe-docker, which now derives its pins via `make stack`). PIN FLOW IS INVERTED: Renovate edits versions.yaml ONLY, and `check_versions_drift.py --fix` propagates the SSoT into every mirror (chart values, chart appVersions, appset chart pins, plain manifests). Renovate cannot do that job itself -- it manages helm-values and terraform, but not the appset pins, the Chart.yaml appVersions or the bare `version:` keys, so a Renovate edit to a chart could only ever move ONE of a key's mirrors and left every PR failing the drift check. OPERATOR-COUPLED service versions -- services.clickhouse-version (clickhouse-operator), services.kafka-version (strimzi 1.2 ceiling 4.3.1), services.redpanda-version (redpanda-operator) -- carry an `# image:` annotation rather than a `# renovate:` one: `dfe-stack refresh-digests` resolves their digests, but the VERSION moves by hand in lockstep with the operator, verified against the operator support matrix and `dfe-stack compat-check`. The org preset's allowedVersions rules remain the backstop, gating by PACKAGE wherever the image is pinned.",
   "extends": ["github>hyperi-io/renovate-config"],
+  "gitIgnoredAuthors": ["41898282+github-actions[bot]@users.noreply.github.com"],
   "customManagers": [
     {
-      "description": "The SSoT's own pins. An annotation comment above a `key: \"value\"` line names the image, so Renovate proposes the bump HERE and the propagator carries it to the mirrors. The org preset's identical manager covers .rs/.py/.sh only, which is why versions.yaml needs its own.",
+      "description": "The SSoT's own pins, SCOPED TO THE STACK UNDER DEVELOPMENT. An annotation comment above a `key: \"value\"` line names the image, so Renovate proposes the bump HERE and the propagator carries it to the mirrors. A value written tag@sha256 hands Renovate the digest as currentDigest, so it can move the digest under an unchanged tag. The org preset's identical manager covers .rs/.py/.sh only, which is why versions.yaml needs its own. The scoping is the first matchString and is not cosmetic: every stack block carries a complete copy of the pin set with the same annotations above it, so an unscoped manager reaches every block and would rewrite the frozen record of what shipped. Under matchStringsStrategy recursive each pattern runs over the WHOLE match of the one before it -- a named group narrows nothing -- so the first pattern has to START at the block it selects: a stack header, then only lines that are not another stack header, then the end of the file. Only the LAST block can reach `$`, and that is the stack `current` points at (test_dfe_stack.py holds both invariants). RE2 has no backreferences or lookarounds, so the block cannot be selected by name.",
       "customType": "regex",
       "managerFilePatterns": ["/^versions\\.yaml$/"],
+      "matchStringsStrategy": "recursive",
       "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[^\\n]*\\n\\s*[A-Za-z0-9_.-]+:\\s*\"(?<currentValue>[^\"]+)\""
+        "\\n  [0-9][A-Za-z0-9_.-]*:\\n(?:(?:[^ \\n][^\\n]*| [^ \\n][^\\n]*|  [^0-9\\n][^\\n]*| {0,2})\\n)*[^\\n]*$",
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[^\\n]*\\n\\s*[A-Za-z0-9_.-]+:\\s*\"(?<currentValue>[^\"@]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?\""
       ],
       "versioningTemplate": "docker"
     }
   ],
   "packageRules": [
+    {
+      "description": "The toolbox kubectl stays in the middle minor of platform.kubernetes (1.34-1.36), so it is within kubectl's one-minor skew of both ends. Move this pattern when that window moves.",
+      "matchFileNames": ["versions.yaml"],
+      "matchDepNames": ["kubernetes/kubernetes"],
+      "allowedVersions": "/^v1\\.35\\./"
+    },
     {
       "description": "Stop Renovate editing the MIRRORS of an SSoT pin. These images are pinned in both versions.yaml and a chart; letting the helm-values manager edit the chart copy would fight the propagator and produce a PR that moves one mirror of a key that has up to three. versions.yaml is the only place these are proposed now. Deliberately package-scoped rather than a blanket helm-values disable: curlimages/curl in the forgejo chart has NO SSoT key, and losing Renovate on it would leave it genuinely unwatched.",
       "matchManagers": ["helm-values", "helmv3"],
@@ -29,7 +38,12 @@
         "ghcr.io/kafbat/kafka-ui",
         "ghcr.io/ferretdb/ferretdb",
         "ghcr.io/ferretdb/postgres-documentdb",
-        "otel/opentelemetry-collector-contrib"
+        "otel/opentelemetry-collector-contrib",
+        "envoyproxy/envoy",
+        "docker.io/envoyproxy/envoy",
+        "nginxinc/nginx-unprivileged",
+        "registry.k8s.io/git-sync/git-sync",
+        "code.forgejo.org/forgejo/forgejo"
       ],
       "enabled": false
     },

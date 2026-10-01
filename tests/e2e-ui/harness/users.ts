@@ -6,7 +6,7 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
 // Today: one local (email/password) account for auth-mode hyperdx. The OIDC
-// role matrix grows here from the shared 12-user fixture (docs/AUTH-TESTING.md)
+// role matrix grows here from the OIDC fixture (docs/AUTH-TESTING.md)
 // as its login path lands, together with the per-role capability truth table
 // the RBA specs assert against -- hand-written, never derived from engine
 // config, so the tests stay an independent oracle.

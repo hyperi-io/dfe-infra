@@ -1,0 +1,17 @@
+# local-path-provisioner's helperPod.yaml, written into the local-path-config
+# ConfigMap by bootstrap.sh. Upstream's deploy/local-path-storage.yaml at the
+# bootstrap.local-path-provisioner tag, with its untagged busybox image pinned.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: helper-pod
+spec:
+  priorityClassName: system-node-critical
+  tolerations:
+    - key: node.kubernetes.io/disk-pressure
+      operator: Exists
+      effect: NoSchedule
+  containers:
+  - name: helper-pod
+    image: docker.io/library/busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+    imagePullPolicy: IfNotPresent

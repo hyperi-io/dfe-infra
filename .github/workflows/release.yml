@@ -2,9 +2,9 @@
 #
 # The stack version is versions.yaml `current` (a CURATED manifest decision, not
 # commit-derived). On push to main this:
-#   1. GATES the stack: drift-check + compat-check --strict + release-gate, plus
-#      a live-registry digest verify when a read:packages PAT (GHCR_READ_TOKEN)
-#      is present (the default token can't read cross-repo org packages).
+#   1. GATES the stack: drift-check + compat-check --strict + release-gate + the
+#      third-party amd64/arm64 check + a live-registry digest verify, all read
+#      anonymously because every image the stack pins is public.
 #   2. reads `current`; if its tag already exists -> nothing to cut (idempotent,
 #      so editing pins WITHOUT bumping `current` just re-runs the gate).
 #   3. else cuts the `current` tag, then renders + signs + publishes the manifest
@@ -25,7 +25,7 @@ on:
 
 permissions:
   contents: write   # push the tag + latest-advance commit + the GH release
-  packages: write   # push (and read, for verify) the OCI artifact
+  packages: write   # push the OCI artifact
   id-token: write   # cosign keyless via GitHub OIDC
 
 # Serialise release runs so two quick pushes to versions.yaml cannot cut/publish
@@ -35,6 +35,11 @@ permissions:
 concurrency:
   group: stack-release
   cancel-in-progress: false
+
+# The same Helm helm-lint.yml pins, so the release gate resolves chart appVersions
+# exactly as the PR check did.
+env:
+  HELM_VERSION: "4.2.4"
 
 jobs:
   release:
@@ -52,25 +57,22 @@ jobs:
           python3 scripts/dfe-stack compat-check --strict
           python3 scripts/dfe-stack release-gate
 
-      - name: Gate -- live-registry digest verify (cross-repo read:packages)
-        env:
-          # The default GITHUB_TOKEN can only read container packages published
-          # by THIS repo. The dfe-* app images are published by their own repos
-          # (dfe-receiver, dfe-loader, ...), so verify needs a PAT with
-          # read:packages that can see the org's packages -- supply it as the
-          # GHCR_READ_TOKEN secret to ENFORCE the readback. Without the secret we
-          # skip loudly rather than fail: the digests are still checked for
-          # internal consistency by check_versions_drift.py and were captured via
-          # `docker buildx imagetools inspect`. A present token that finds a
-          # genuine mismatch still fails the gate.
-          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${GHCR_READ_TOKEN}" ]; then
-            GH_TOKEN="${GHCR_READ_TOKEN}" python3 scripts/dfe-stack verify
-          else
-            echo "::warning::verify SKIPPED -- no GHCR_READ_TOKEN secret; live-registry digest readback not enforced this run. Add a read:packages PAT as GHCR_READ_TOKEN to enforce."
-          fi
+      # The chart-installed add-ons take their image tags from their chart's
+      # appVersion, which --resolve-charts reads with helm.
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # Third-party images are public, so this needs no credential; the DFE
+      # images are dfe-stack release-gate's, above.
+      - name: Gate -- every pinned third-party image ships linux/amd64 and linux/arm64
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts
+
+      # Every DFE image is public, so verify reads each tag's digest anonymously
+      # through docker buildx imagetools; an image an outsider cannot pull fails here.
+      - name: Gate -- every pinned DFE digest matches the registry
+        run: python3 scripts/dfe-stack verify
 
       - name: Resolve `current` + decide whether to cut
         id: ver

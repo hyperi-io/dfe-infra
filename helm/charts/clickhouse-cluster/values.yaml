@@ -23,23 +23,42 @@ clickhouse:
   # OPERATOR TARGETS (full matrix + history: docs/deployment/clickhouse.md):
   # cluster mode targets the OFFICIAL ClickHouse operator; external covers
   # ClickHouse Cloud/BYO -- the two main public targets. The HyperI private
-  # cloud can swap this chart + operator for the internal n-tier cached
-  # operator + CH fork (SSD cache over spinning disk; not referenced by name
-  # here -- public repo). The Altinity operator is NOT tested with this stack.
+  # cloud ran an internal n-tier cached operator + CH fork (SSD cache over
+  # spinning disk; not referenced by name here -- public repo) until DFE 2.2
+  # retired it for this chart's cached-object storage model. The Altinity
+  # operator is NOT tested with this stack.
   mode: cluster
   name: dfe-clickhouse
-  version: "26.3.17.56"
+  version: "26.3.32.14"
+  # The server image's digest at the version above, so an overlay moving one moves both.
+  # == versions.yaml services-digests.clickhouse-version (drift-checked).
+  imageDigest: "sha256:456063a689194186633bb3db0862283068f4c2ee538852d3aaffa7eb66f1f841"
   # Cluster-mode node count. Defaults to 3; set higher for more nodes.
   # (single mode ignores this -- it is always 1 standalone pod.)
   replicas: 3
   shardsCount: 1
-  # Spread cluster pods evenly across k8s workers (best-effort: ScheduleAnyway,
-  # so it never blocks scheduling when workers < replicas).
+  # Spread each shard's replicas, and separately the keepers, across nodes. It is
+  # enforced (DoNotSchedule): a replica stays Pending rather than land on a node
+  # holding more of its shard than the emptiest eligible node. A one-node cluster
+  # is one domain, so every replica still schedules there. Nodes the pod does not
+  # tolerate still count as domains, because nodeTaintsPolicy defaults to Ignore.
   podSpread:
     enabled: true
     maxSkew: 1
     topologyKey: kubernetes.io/hostname
   database: dfe
+  # The identity the server pods (cluster CR + single-mode StatefulSet) run as.
+  # Dedicated rather than the release namespace's default account, so the S3
+  # object-store Pod Identity role (terraform/modules/kubernetes-cluster/aws/
+  # object-store.tf) binds only ClickHouse -- name MUST match that module's
+  # clickhouse_object_store_service_account default (dfe-clickhouse); a
+  # mismatch leaves the association pointed at an account nothing runs as.
+  # automountServiceAccountToken is off: the server calls S3 and Keeper, never
+  # the Kubernetes API.
+  serviceAccount:
+    create: true
+    name: dfe-clickhouse
+    automountServiceAccountToken: false
   # Keeper reference for cluster mode -- DFE deploys its OWN keeper (below),
   # self-contained. Do NOT point at another product's keeper.
   keeperClusterRef:
@@ -50,7 +69,9 @@ clickhouse:
     replicas: 3
     image:
       repository: docker.io/clickhouse/clickhouse-keeper
-      tag: "26.3.17.56"
+      tag: "26.3.32.14"   # == versions.yaml services.clickhouse-keeper (drift-checked)
+      # == versions.yaml services-digests.clickhouse-keeper (drift-checked).
+      digest: "sha256:8dd3ed81719ae9467ad659d86b7af53a9ec5be6b50320f9ca84cf9c31dc7ccc8"
     storage:
       size: 10Gi
       storageClass: ""
@@ -60,7 +81,38 @@ clickhouse:
         memory: 1Gi
       limits:
         cpu: "1"
-        memory: 1Gi
+        # 3Gi because Keeper's own default log caches are 1 GiB plus 500 MiB
+        # before a single request is served, so the old 1Gi limit was an OOMKill
+        # waiting on load rather than a bound on it.
+        memory: 3Gi
+    # Replaces the operator's liveness probe (the CRD's containerTemplate.livenessProbe,
+    # v0.0.7), which opens 2181 and sends nothing, so Keeper logs a Warning on
+    # every probe. `ruok` is the four-letter command Keeper answers `imok` to while
+    # the server runs, and it logs the request at Debug. Timings are the
+    # operator's own. The keeper image carries busybox nc. Empty keeps the
+    # operator's TCP probe.
+    livenessProbe:
+      exec:
+        command: ["sh", "-c", "echo ruok | nc 127.0.0.1 2181 | grep -q imok"]
+      initialDelaySeconds: 60
+      periodSeconds: 5
+      timeoutSeconds: 10
+      failureThreshold: 10
+    # Keeper's own log, written to the data PVC above. Same fields and bound as
+    # clickhouse.serverLog; left unset, the operator keeps 50 trace-level files of
+    # up to 1000M on it.
+    log:
+      level: information
+      size: 50M
+      count: 3
+    # Parallel to clickhouse.serviceAccount above. No Pod Identity association
+    # ever targets Keeper -- it never touches S3 -- but it must not stay on the
+    # namespace's default account either, or a future association or grant
+    # aimed at "default" reaches Keeper too.
+    serviceAccount:
+      create: true
+      name: dfe-keeper
+      automountServiceAccountToken: false
   # External CH (mode=external): connect to a supplied endpoint; deploy nothing.
   # Password materialised by ESO from Vault <project>/<env>/clickhouse/external.
   external:
@@ -69,8 +121,65 @@ clickhouse:
     user: default
     secretName: dfe-clickhouse-external
     secretStoreName: dfe-secret-store
+  # HTTPS on 8443 and native TLS on 9440, beside the plaintext 8123 and 9000.
+  # Served only when enabled AND there is a CA to sign with: an issuerRef below,
+  # or the internal CA the edge module deploys. Off here, so a render with neither
+  # (the dfe-stack trial) stays on HTTP; argocd/values/common.yaml turns it on,
+  # and the app charts read the same block to dial it. Cluster and single mode
+  # only: an external server brings its own certificate.
+  tls:
+    enabled: false
+    # true closes 8123 and 9000 (cluster mode only). The OTel collector and the
+    # smoke tests still dial them.
+    required: false
+    # An explicit cert-manager issuer -- an estate PKI, AWS Private CA or
+    # corporate CA -- which works whether or not the edge module is deployed.
+    # Empty signs with the internal CA. Either must sign for the in-cluster
+    # names below, which public ACME cannot.
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+      group: cert-manager.io
+    # The edge module's internal CA ClusterIssuer. The appsets set `present` from
+    # the cluster's dfe.hyperi.io/edge label, the same one that decides whether
+    # the gateway chart, and so this issuer, is deployed.
+    internalCA:
+      issuerName: dfe-internal-ca
+      present: false
+    # The server keypair Secret cert-manager writes here.
+    secretName: dfe-clickhouse-tls
+    privateKey:
+      algorithm: ECDSA
+      size: 384
+    # Names on top of the Service names clients dial, which the chart derives.
+    dnsNames: []
+    # The copy of the certificate's ca.crt each app namespace gets, and the data
+    # key it sits under. Empty secretName copies nothing. The copy is made from
+    # <secretName>-ca, a CA-only Secret in this namespace, so the keypair Secret
+    # is never readable from outside it.
+    ca:
+      secretName: dfe-clickhouse-ca
+      dataKey: ca.crt
   # Storage model, decided at deploy and refused afterwards (the engine holds
-  # clickhouse.storageModel as a protected var). Named <family>-<bulk>: the
+  # clickhouse.storageModel as a protected var, and the deployment repo's
+  # governance/policies/storage-layout.yaml governs it post-deploy).
+  # THREE VALUES:
+  #   auto           -> (the default, and what an empty string means too) the
+  #                     chart derives it: an objectStore.endpoint below yields
+  #                     `cached-object`, nothing yields `local`. This is the
+  #                     preferred model wherever an object store exists --
+  #                     always on a populated cloud, and on-prem whenever an
+  #                     S3-compatible store such as MinIO is supplied.
+  #   cached-object  -> explicit override. Refuses to render with no
+  #                     objectStore.endpoint set, rather than deploying
+  #                     something inert.
+  #   local          -> explicit override. Keeps local storage even when an
+  #                     endpoint IS configured -- the deploy pipeline still
+  #                     passes the endpoint through, so a later switch to
+  #                     cached-object stays possible, but that switch is a
+  #                     data migration, not a values edit (see
+  #                     docs/deployment/storage.md).
+  # An explicit value always wins over the derivation. Named <family>-<bulk>: the
   # family says whether parts MOVE to the bulk store or are COPIED to it, the
   # bulk half says what that store is. Full matrix: docs/deployment/storage.md
   #   local          -> parts live on the PVC, which is the capacity ceiling.
@@ -78,9 +187,11 @@ clickhouse:
   #                     StorageClass and a StatefulSet recreate
   #                     (volumeClaimTemplates are immutable).
   #   cached-object  -> parts live on an object-store disk fronted by a local
-  #                     read-through cache, so the PVC sizes the cache and the
-  #                     part metadata rather than the data. The cache is
-  #                     disposable; the bucket holds the durable copy.
+  #                     read-through cache, so the PVC sizes the part metadata
+  #                     rather than the data -- plus the cache itself, unless
+  #                     objectStore.cache.volume moves the cache to the node's
+  #                     instance store instead. The cache is disposable either
+  #                     way; the bucket holds the durable copy.
   #   tiered-block   -> two local volumes ranked hot then cold. New parts land
   #                     on the fast one and ClickHouse demotes the oldest to the
   #                     cold one once free space there falls below
@@ -88,8 +199,10 @@ clickhouse:
   #                     table DDL changes. Both volumes must be durable.
   # tiered-object and cached-block are named cells this chart does not render
   # yet; the render fails on either rather than deploying something inert.
+  # tiered-block is never derived by auto -- it is reached only by setting this
+  # field directly, same as the deploy repo's infra/ overlay does today.
   # Applies to both cluster and single mode; external mode owns its own storage.
-  storageModel: local
+  storageModel: auto
   # Object bulk store, for any model whose bulk half is `object`. Credentials
   # NEVER appear here -- the server reads them from the environment, wired from
   # a Secret the secrets store materialises (externalsecret-object-store.yaml),
@@ -99,10 +212,59 @@ clickhouse:
     # required, e.g. https://my-bucket.s3.ap-southeast-2.amazonaws.com/clickhouse/
     endpoint: ""
     region: ""
+    # AWS only: true skips the static-key ExternalSecret and the credential
+    # env vars below (objectStoreEnv), leaving use_environment_credentials
+    # (always on, templates/_storage.tpl) to resolve through EKS Pod Identity
+    # alone -- a static AWS_ACCESS_KEY_ID in the pod's own environment would
+    # shadow the Pod Identity Agent's injected credentials, which the AWS
+    # SDK's default credential chain checks first. false (every other target:
+    # on-prem MinIO, GCS, a BYO S3-compatible endpoint) keeps the current
+    # byte-for-byte behaviour: the server authenticates with secretName /
+    # secretStoreName / remoteKey below. See docs/deployment/storage.md.
+    usePodIdentity: false
+    # cached-object only: a fixed cache size, which OVERRIDES the ratio below
+    # when set. Under cache.volume: pvc this stays optional -- empty leaves the
+    # cache tracking the PVC it is given -- and a value here must sit BELOW
+    # storage.size, because the cache and the part metadata share that PVC.
+    # Under cache.volume: instance-store it is REQUIRED: an emptyDir has no PVC
+    # to size itself against, so the ratio below cannot apply, and this value
+    # also becomes the emptyDir's own sizeLimit (see templates/clickhouse.yaml)
+    # -- the two can never disagree because they are the same number.
+    cacheSize: ""
     # cached-object only: the local read-through cache in front of the object
-    # store. Sized BELOW storage.size -- the cache and the part metadata share
-    # that PVC.
-    cacheSize: 20Gi
+    # store, on the s3_object_cache disk.
+    cache:
+      # Where the cache disk's bytes actually live -- pvc (default, current
+      # behaviour byte-for-byte) keeps it on a subdirectory of the data PVC
+      # alongside the part metadata; instance-store moves it to an emptyDir on
+      # the node's local NVMe instead, leaving the PVC to hold only the part
+      # metadata. instance-store needs cacheSize set and clickhouse.mode:
+      # cluster, and it needs a node that actually carries local NVMe -- the
+      # karpenter-pools chart's `clickhouse` pool, whose instanceStorePolicy:
+      # RAID0 is what makes that NVMe available to a pod at all. Unlike a gp3
+      # PVC, which reattaches to whatever node picks the pod back up, an
+      # emptyDir is destroyed with the pod: a node replacement empties the
+      # cache and the server rewarms it from the object store on next read.
+      # That is why the pool carries a disruption budget of one node at a
+      # time. See docs/deployment/storage.md.
+      volume: pvc
+      # Cache parts as they are written, not only as they are read -- the default
+      # false leaves every just-ingested part out of the cache, and hunts over
+      # recent data are the primary read.
+      onWriteOperations: true
+      # Cache ceiling as a fraction of the PVC, so the cache grows with the volume
+      # instead of needing a second edit; ClickHouse refuses max_size and this
+      # ratio together, so cacheSize above wins whenever it is set. Meaningless
+      # under cache.volume: instance-store, which always sets cacheSize.
+      maxSizeRatioToTotalSpace: 0.6
+      # Free fraction the cache keeps ahead of demand in the background; the
+      # server default of 0 disables background eviction entirely.
+      keepFreeSpaceSizeRatio: 0.05
+      # Load the cache metadata after the server opens its ports, so a large cache
+      # does not hold startup while it is walked.
+      loadMetadataAsynchronously: true
+      # cache_hits_threshold is deliberately NOT set: it is a deprecated no-op in
+      # 26.3 (FileCacheSettings.cpp "Deprecated setting").
     # Empty leaves the server default. GCS rejects the batch-delete call, so a
     # deployment against a GCS endpoint sets this false.
     supportBatchDelete: ""
@@ -159,6 +321,80 @@ clickhouse:
     limits:
       cpu: "4"
       memory: 8Gi
+  # Server settings, written through the operator CR's settings.extraConfig and
+  # so CLUSTER MODE ONLY -- single mode runs no operator, and its 2-core shape is
+  # what the thread and pool figures below would starve.
+  #
+  # Deliberately NOT set here: parts_to_delay_insert / parts_to_throw_insert /
+  # max_parts_in_total, whose 26.3 defaults (1000 / 3000 / 100000) self-disable
+  # above a 1 GiB average part size, so raising them hides a partition-key fault
+  # instead of fixing it; and max_server_memory_usage, which ClickHouse already
+  # derives from the cgroup limit.
+  serverProfile:
+    # Concurrent query threads as a multiple of the container's cores -- the
+    # default 0 is unbounded, and hunts, engine queries and merges share a node.
+    concurrentThreadsSoftLimitRatioToCores: 2
+    # Fraction of container RAM the server may use: 0.9 of a cgroup limit is an
+    # OOMKill rather than a graceful MEMORY_LIMIT_EXCEEDED.
+    maxServerMemoryUsageToRamRatio: 0.8
+    # Floor for the background merge and mutation pool -- ClickHouse's own
+    # default, and enough for the small replica shapes.
+    backgroundPoolSizeFloor: 16
+    # Merge threads per CPU core of the replica's request, so a 24-core node
+    # merges with 48 threads rather than sitting on the fixed floor.
+    backgroundPoolSizePerCore: 2
+  # User-profile settings, written into the `default` profile every identity
+  # inherits. Both modes get these: async_insert is user/query scope with no
+  # table-level form, and the loader sets no per-query settings, so this profile
+  # is the only place they can land. async_insert_max_data_size and
+  # async_insert_busy_timeout_ms stay unset -- the compiled 10 MiB buffer and the
+  # adaptive timeout (24.2+) are the tuned values.
+  userProfile:
+    # Server-side async inserts for every writer. A shipped default since 26.2,
+    # pinned here against a `compatibility` setting or a future re-default.
+    asyncInsert: 1
+    # The client waits for the flush, so an insert error still reaches it. Also a
+    # shipped default since 26.2, and 0 is refused at render time: the loader
+    # would commit a Kafka offset on an ack it never earned.
+    waitForAsyncInsert: 1
+  # The server's own log, in both modes. Left unset, cluster mode takes the
+  # operator's trace level with 50 files of 1000M on the data PVC, and prints the
+  # same trace to stdout, which the otel collector ships into otel_logs; single
+  # mode takes the image's trace level with 10 files of 1000M on the node's disk.
+  #   level  one of trace, debug, information, notice, warning, error, critical,
+  #          fatal (test is for ClickHouse's own test suite). information drops
+  #          trace and debug; warnings and errors also go to the separate err.log
+  #          whatever this says.
+  #   size   rotate at this size, for the log and the err.log alike.
+  #   count  archives kept per file, gzipped. The disk bound is
+  #          2 x (count + 1) x size: 400M per replica as shipped.
+  serverLog:
+    level: information
+    size: 50M
+    count: 3
+  # Days each of the server's own system log tables keeps, in both modes. These
+  # five are the ones the operator switches on, and the image switches on in
+  # single mode too; neither gives them a TTL, so they grow for as long as the
+  # server runs. The TTL keys on event_date, which every one of them carries.
+  # 0 leaves that table with no TTL. Any other system log named here is switched
+  # on by naming it. The server applies a change at its next start by renaming
+  # the old table to <table>_0 and creating a new one; the _0 copy keeps its rows
+  # and its old TTL, if it had one, and is safe to drop. Sizing and the upgrade
+  # step: docs/deployment/clickhouse.md.
+  systemLogTTLDays:
+    asynchronous_metric_log: 7
+    metric_log: 7
+    part_log: 7
+    query_log: 30
+    # The HyperDX source over ClickHouse's own logs searches this table.
+    text_log: 7
+  # System log tables switched off outright, in both modes, by removing their
+  # config section. Nothing in DFE reads trace_log, which only the image's
+  # config.xml switches on, so only single mode has it. A table already created
+  # stays with the rows it has; it just stops being written. A table listed here
+  # cannot also carry a TTL above.
+  systemLogsOff:
+    - trace_log
   users:
     # The one credential the deploy layer owns, named `default` on every target.
     # Only `default` can take its password from a Secret
@@ -168,3 +404,19 @@ clickhouse:
     admin:
       name: default
       secretName: clickhouse-admin-password
+
+# Scheduling. These tolerations are the chart's half of the dedicated node pools
+# scripts/resolve_sizing.py taints: a pool labelled for clickhouse or keeper
+# refuses every pod that does not tolerate it. Inert on a cluster with no such
+# taint. A deployment overlay setting nodeScheduling.tolerations REPLACES this
+# list, because Helm replaces a list rather than merging it.
+nodeScheduling:
+  tolerations:
+    - key: dfe.hyperi.io/workload
+      operator: Equal
+      value: clickhouse
+      effect: NoSchedule
+    - key: dfe.hyperi.io/workload
+      operator: Equal
+      value: keeper
+      effect: NoSchedule

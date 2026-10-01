@@ -52,16 +52,17 @@ valid pull spec, so the digest flows through values. docker: `.env`
 | dfe-fetcher | apps.dfe-fetcher | DFE_FETCHER_VERSION | yes |
 | dfe-transform-vrl | apps.dfe-transform-vrl | DFE_TRANSFORM_VRL_VERSION | yes |
 | dfe-transform-vector | apps.dfe-transform-vector | DFE_TRANSFORM_VECTOR_VERSION | yes |
-| dfe-transform-wasm | apps.dfe-transform-wasm | (n/a) | NO - alpha |
 | dfe-transform-elastic | apps.dfe-transform-elastic | (n/a) | NO - alpha |
-| dfe-transform-splack | apps.dfe-transform-splack | (n/a) | NO - alpha |
 | dfe-hyperdx (fork) | content.dfe-hyperdx | DFE_HYPERDX_VERSION | NO - first image pending |
 
 Notes:
-- The three transforms (wasm/elastic/splack) are PRE-GA/alpha and NOT published
-  to GHCR (no digest). `dfe-stack` already excludes any app without a digest from
-  rendered manifests - loudly. They stay excluded from a stack cut until they
-  publish. Do not render them.
+- dfe-transform-splack and dfe-transform-wasm are COMING, not members. Alpha and
+  unpublished, so their `apps:` pins are commented out and their charts stay in
+  the tree as placeholders. Every line to uncomment when they ship carries the
+  word `coming` beside one of the two names, so grep that.
+- dfe-transform-elastic is PRE-GA/alpha and NOT published to GHCR (no digest).
+  `dfe-stack` already excludes any app without a digest from rendered manifests -
+  loudly. It stays excluded from a stack cut until it publishes. Do not render it.
 - dfe-hyperdx is the HyperDX fork. k8s chart pulls `ghcr.io/hyperi-io/dfe-hyperdx`
   (tag = fork CODE_VERSION via appVersion). docker pulls
   `ghcr.io/hyperi-io/hyperi-hyperdx` (NOTE: a DIFFERENT image name than k8s -
@@ -116,7 +117,7 @@ Not in compose. SSoT pins the chart version; appset/bootstrap uses it;
 drift-check enforces where a hardcoded pin exists. Already works - leave as-is.
 
 - bootstrap: `cert-manager`, `external-secrets`, `argocd`, `valkey` (plain
-  manifest image), `local-path-provisioner`.
+  manifest image), `local-path-provisioner`, `metallb` (on-prem only).
 - operators: `envoy-gateway`, `external-dns`, `keda`, `metrics-server`,
   `reloader`, `cloudnative-pg`, and the three OPERATOR chart pins
   (`strimzi-kafka-operator`, `clickhouse-operator`, `redpanda-operator` - the
@@ -137,7 +138,8 @@ image. One number, same image ref both sides.
 - SSoT: `services.ferretdb` (2.7.0). k8s: `helm/charts/ferretdb` (image tag defaults
   to Chart appVersion). docker: `HYPERDX_FERRETDB_VERSION` ->
   `ghcr.io/ferretdb/ferretdb`.
-- KNOWN GAP (see below): the k8s ferretdb chart appVersion is 1.24.0, NOT 2.7.0.
+- ALIGNED today: chart appVersion + the values.yaml image digest match
+  `services.ferretdb` / `services-digests.ferretdb`, drift-checked.
 
 ## Class E - third-party plain image, docker-ONLY
 
@@ -173,9 +175,8 @@ image. One number, same image ref both sides.
   app image tags via resolve --emit-values; EXTEND to class-B/D service versions).
 - The loop-closer (`check_versions_drift.py` / `dfe-stack verify --rendered`):
   assert each OUR-chart templated image tag == the SSoT logical version, so a
-  chart cannot drift from the manifest. Covers class A (already), class B (CH
-  server+keeper already; ADD kafka `kafka.version`), class D (ADD kafbat,
-  ferretdb once the gap below is closed).
+  chart cannot drift from the manifest. Covers class A, class B (CH
+  server+keeper, kafka `kafka.version`) and class D (kafbat, ferretdb).
 
 ## Known gaps this audit surfaced (track, do not silently ignore)
 
@@ -185,15 +186,11 @@ image. One number, same image ref both sides.
    `${...:?}` MUST have an SSoT entry, and renaming the IMAGE without renaming
    that entry renders a valid tag@digest for the wrong repository - which is
    exactly how `envoyproxy/envoy:1.31-alpine@<nginx digest>` reached a VM.
-2. **FerretDB k8s vs SSoT drift.** SSoT `services.ferretdb` = 2.7.0 (the docker +
-   HyperDX-fork target, needing the DocumentDB PG extension), but the k8s
-   `helm/charts/ferretdb` chart appVersion = 1.24.0 on vanilla CNPG PG17. The k8s
-   hyperdx chart already flags this ("confirm/upgrade before deploy"). The 1.x ->
-   2.x migration (DocumentDB backend) is REAL work, out of the stack-versioning
-   scope. Until it lands, ferretdb + documentdb-pg are effectively docker-only
-   (class E) on the k8s side, and ferretdb is EXCLUDED from the drift-check
-   loop-closer with this note (adding it now would either break CI or force the
-   out-of-scope migration).
+2. **CLOSED - FerretDB k8s matches SSoT.** `helm/charts/ferretdb` now bundles its
+   own postgres-documentdb backend and pins Chart appVersion 2.7.0 plus the
+   values.yaml image digest to `services.ferretdb` / `services-digests.ferretdb`,
+   matching the docker target. `check_versions_drift.py` asserts both, so
+   ferretdb is no longer excluded from the loop-closer.
 3. **Kafka/Redpanda operator ceiling.** `kafka-version` <= strimzi 0.51's
    supported set (4.2.0), `redpanda-version` paired with the redpanda operator
    chart. Both bounded in the org preset; bumped by hand with their operator.

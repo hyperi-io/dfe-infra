@@ -1,0 +1,285 @@
+{{/*
+dfe-kafka.cruiseControlUiConf -- the nginx server that serves the UI and makes
+the one hop to the Cruise Control REST API.
+
+ONE definition because two places read it: the ConfigMap that carries it, and
+the pod annotation that hashes it. A ConfigMap volume refreshes on the kubelet
+sync period and nginx never re-reads it, so without the hash a changed proxy
+config reaches the disk and not the process.
+*/}}
+{{- define "dfe-kafka.cruiseControlUiConf" -}}
+{{- $ccHost := printf "%s-cruise-control.%s.svc" .Values.kafka.name .Release.Namespace -}}
+server {
+    listen 8080;
+    server_name _;
+    root /srv;
+    index index.html;
+
+    # A single-page app: every unknown path is one of the app's own routes.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /kafkacruisecontrol/ {
+        # Written by the init container from the operator-managed secret. In a
+        # file rather than here, because a ConfigMap is readable by anything
+        # that can read a pod spec.
+        include /etc/nginx/cruise-control-auth/auth.conf;
+        # nginx resolves this name ONCE, at start, and refuses to start when it
+        # does not resolve. That is the right way round here: the pod cannot
+        # start before the operator-made secrets below exist, and the operator
+        # makes the Service in the same reconcile, so a name that still does not
+        # resolve is a restart rather than a 502 nobody reads.
+        proxy_pass https://{{ $ccHost }}:9090/kafkacruisecontrol/;
+        # Verification ON with the cluster CA named: left off, nginx accepts any
+        # certificate and the TLS hop proves nothing.
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 2;
+        proxy_ssl_trusted_certificate /etc/nginx/cruise-control-ca/ca.crt;
+        proxy_ssl_server_name on;
+        proxy_ssl_name {{ $ccHost }};
+        proxy_http_version 1.1;
+        # An optimisation proposal is computed on the request, so the default
+        # 60s read timeout cuts off the one call that matters.
+        proxy_read_timeout 300s;
+    }
+}
+{{- end }}
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") .Values.kafka.rebalancing.enabled .Values.kafka.rebalancing.ui.enabled }}
+{{- $ui := .Values.kafka.rebalancing.ui }}
+{{- $name := printf "%s-cruise-control-ui" .Values.kafka.name }}
+{{- $cc := printf "%s-cruise-control" .Values.kafka.name }}
+{{- $tarball := printf "cruise-control-ui-%s.tar.gz" $ui.release.version }}
+{{- $url := $ui.release.url | default (printf "https://github.com/linkedin/cruise-control-ui/releases/download/v%s/%s" $ui.release.version $tarball) }}
+# The Cruise Control UI: the rebalancer's front end, which Strimzi does not ship.
+#
+# Cruise Control's REST API is HTTPS with a certificate signed by the Kafka
+# cluster CA, and every call needs HTTP Basic credentials -- both on by default,
+# and both recommended on. The UI itself is a static single-page app with no
+# server of its own, so nginx serves it here and the SAME nginx makes the hop to
+# the API. That keeps three things true: the browser talks only to this pod's
+# own origin (no CORS, and Cruise Control is never addressable from outside the
+# cluster), the credential stays in the pod, and the cluster CA is verified by
+# something that can be handed a CA bundle.
+#
+# The identity is `healthcheck`, the USER-role account the Cluster Operator mints
+# into <cluster>-cruise-control-api. USER reaches every GET endpoint except
+# bootstrap and train -- the whole of what this UI reads -- and no POST, so
+# nothing here can start, stop or approve a rebalance. That is deliberate: the
+# ADMIN accounts in that secret are the operator's own, and Strimzi rejects an
+# ADMIN role in a user-supplied apiUsers secret, so read-only is both the only
+# shape available and the right one to put behind a browser.
+#
+# Both secrets are made by the operator while it reconciles the Kafka resource,
+# so on a first sync this pod waits in ContainerCreating until they appear.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cruise-control-ui
+data:
+  # Replaces the image's own conf.d/default.conf. The image's nginx.conf already
+  # points the pid file and every temp path at /tmp, so a read-only rootfs needs
+  # nothing beyond the scratch volume below.
+  default.conf: |
+    {{- include "dfe-kafka.cruiseControlUiConf" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cruise-control-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+      # The chart's selector labels name every workload in it alike, and this is
+      # the second one a cluster-tier deploy runs.
+      app.kubernetes.io/component: cruise-control-ui
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cruise-control-ui
+      annotations:
+        checksum/config: {{ include "dfe-kafka.cruiseControlUiConf" . | sha256sum }}
+    spec:
+      # A static file server has no business with the API server.
+      automountServiceAccountToken: false
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      initContainers:
+        # Fetch, verify, unpack, and compute the one credential line. The server
+        # image is reused so this pod has ONE image to review; its Alpine base
+        # carries wget, sha256sum, tar and base64.
+        - name: fetch-ui
+          image: "{{ $ui.image.repository }}:{{ $ui.image.tag }}@{{ $ui.image.digest }}"
+          imagePullPolicy: {{ $ui.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          resources:
+            {{- toYaml $ui.resources | nindent 12 }}
+          volumeMounts:
+            - name: ui
+              mountPath: /srv
+            - name: auth
+              mountPath: /etc/nginx/cruise-control-auth
+            - name: api-credential
+              mountPath: /etc/cruise-control-api
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              URL="{{ $url }}"
+              WANT="{{ $ui.release.sha256 }}"
+              TGZ=/tmp/{{ $tarball }}
+              echo "Fetching ${URL}"
+              if command -v curl >/dev/null 2>&1; then
+                curl -fsSL -o "$TGZ" "$URL"
+              else
+                wget -q -O "$TGZ" "$URL"
+              fi
+              # Verified BEFORE anything is unpacked: nothing upstream signs this
+              # asset, so the checksum is all that stands between a mirror and
+              # the JavaScript an admin's browser runs.
+              GOT=$(sha256sum "$TGZ" | cut -d' ' -f1)
+              if [ "$GOT" != "$WANT" ]; then
+                echo "checksum mismatch for ${URL}: got ${GOT}, want ${WANT}" >&2
+                exit 1
+              fi
+              tar -xzf "$TGZ" -C /tmp
+              cp -R /tmp/cruise-control-ui/dist/. /srv/
+              # group,cluster,url. The url is RELATIVE, so every API call the page
+              # makes comes back to this pod rather than to a Cruise Control
+              # address the browser could not reach in any case.
+              printf '%s,%s,/kafkacruisecontrol/\n' "{{ .Values.project }}" "{{ .Values.kafka.name }}" > /srv/static/config.csv
+              # The Basic header, computed once. The password reaches no
+              # ConfigMap, no page and no log line.
+              printf 'proxy_set_header Authorization "Basic %s";\n' \
+                "$(printf 'healthcheck:%s' "$(cat /etc/cruise-control-api/healthcheck.password)" | base64 | tr -d '\n')" \
+                > /etc/nginx/cruise-control-auth/auth.conf
+              echo "cruise-control-ui {{ $ui.release.version }} verified: ${GOT}"
+      containers:
+        - name: nginx
+          image: "{{ $ui.image.repository }}:{{ $ui.image.tag }}@{{ $ui.image.digest }}"
+          imagePullPolicy: {{ $ui.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            {{- toYaml $ui.resources | nindent 12 }}
+          volumeMounts:
+            - name: ui
+              mountPath: /srv
+              readOnly: true
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            - name: auth
+              mountPath: /etc/nginx/cruise-control-auth
+              readOnly: true
+            - name: cluster-ca
+              mountPath: /etc/nginx/cruise-control-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 15
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+      volumes:
+        - name: ui
+          emptyDir: {}
+        - name: nginx-config
+          configMap:
+            name: {{ $name }}
+        # Memory-backed: this file holds the API credential and must not reach a
+        # node's disk.
+        - name: auth
+          emptyDir:
+            medium: Memory
+        - name: api-credential
+          secret:
+            # Written by the Cluster Operator for every cluster carrying
+            # spec.cruiseControl. `healthcheck` is its USER-role account.
+            secretName: {{ $cc }}-api
+            items:
+              - key: healthcheck.password
+                path: healthcheck.password
+        - name: cluster-ca
+          secret:
+            secretName: {{ .Values.kafka.name }}-cluster-ca-cert
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cruise-control-ui
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "dfe-common.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: cruise-control-ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Strimzi writes its own NetworkPolicy over the Cruise Control pod admitting the
+# Cluster Operator and the Entity Operator on 9090 and nobody else, so on a
+# cluster that enforces policy this UI is refused by default. Policies are
+# additive -- every one selecting a pod contributes its allows -- so this adds
+# the one caller, rather than the alternative of turning the operator's policy
+# generation off for the whole cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-to-cruise-control
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cruise-control-ui
+spec:
+  podSelector:
+    matchLabels:
+      strimzi.io/cluster: {{ .Values.kafka.name }}
+      strimzi.io/name: {{ $cc }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "dfe-common.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: cruise-control-ui
+      ports:
+        - protocol: TCP
+          port: 9090
+{{- end }}

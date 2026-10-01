@@ -32,6 +32,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from _expect import expect, standalone, summary
@@ -41,11 +45,40 @@ GATE = REPO_ROOT / "bootstrap" / "smoke-test-readiness.sh"
 DESTROY = REPO_ROOT / "bootstrap" / "destroy.sh"
 
 # Answers kubectl's four read shapes off FAKE_KUBECTL_FIXTURE; an absent key is
-# an empty result, which is what a cluster with none of that kind returns.
+# an empty result, which is what a cluster with none of that kind returns. The
+# admin-links ConfigMap and the otel HTTPRoute are the exceptions: absent, each
+# is NotFound, as kubectl says.
 FAKE_KUBECTL = """#!/usr/bin/env python3
 import json, os, sys
 
 args = sys.argv[1:]
+if "httproute" in args:
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    if fixture.get("otel_route") is None:
+        print('Error from server (NotFound): httproutes.gateway.networking.k8s.io "otel" not found', file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(fixture["otel_route"]))
+    sys.exit(0)
+if "secret" in args and "name" in args:
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    sys.exit(0 if args[args.index("secret") + 1] in fixture.get("secrets", []) else 1)
+if "configmap" in args or "gateway" in args:
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    if "gateway" in args:
+        print(json.dumps({"items": [
+            {"metadata": {"name": "dfe-gateway"}, "status": {"addresses": [{"value": a}]}}
+            for a in fixture.get("gateways", [])
+        ]}))
+        sys.exit(0)
+    if "admin_links" not in fixture:
+        print('Error from server (NotFound): configmaps "dfe-admin-links" not found', file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({"data": {"admin_links.json": json.dumps(fixture["admin_links"])}}))
+    sys.exit(0)
+if "annotate" in args:
+    with open(os.environ["FAKE_KUBECTL_LOG"], "a", encoding="utf-8") as log:
+        log.write(" ".join(args) + "\\n")
+    sys.exit(0)
 if "exec" in args:
     fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
     if "exec_error" in fixture:
@@ -56,7 +89,9 @@ if "exec" in args:
         sys.exit(1)
     print(answer)
     sys.exit(0)
-if "pods" in args:
+if "applications.argoproj.io" in args:
+    key = "applications"
+elif "pods" in args:
     key = "pods"
 elif "deployment,statefulset" in args:
     key = "ns_workloads"
@@ -76,9 +111,15 @@ for line in fixture.get(key) or []:
 
 
 def run_gate(
-    fixture: dict, cwd: str | None = None, **env_overrides: str
+    fixture: dict,
+    cwd: str | None = None,
+    annotations: list[str] | None = None,
+    **env_overrides: str,
 ) -> subprocess.CompletedProcess:
-    """The gate against a fixed cluster reading, with no wait between polls."""
+    """The gate against a fixed cluster reading, with no wait between polls.
+
+    Every `kubectl annotate` the gate issues is appended to `annotations`.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         bindir = Path(tmp)
         kubectl = bindir / "kubectl"
@@ -86,18 +127,22 @@ def run_gate(
         kubectl.chmod(0o755)
         fixture_file = bindir / "fixture.json"
         fixture_file.write_text(json.dumps(fixture), encoding="utf-8", newline="\n")
+        log_file = bindir / "annotate.log"
+        log_file.touch()
 
         env = dict(os.environ)
         env.pop("DFE_NS", None)
         env.pop("DFE_ENV", None)
         env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
         env["FAKE_KUBECTL_FIXTURE"] = str(fixture_file)
+        env["FAKE_KUBECTL_LOG"] = str(log_file)
         # One pass: a fixed reading never converges, so a poll loop would only
         # burn the timeout before reaching the same verdict.
         env["READINESS_TIMEOUT"] = "0"
         env["READINESS_INTERVAL"] = "1"
+        env["READINESS_ADMIN_UI_WAIT"] = "0"
         env.update(env_overrides)
-        return subprocess.run(
+        result = subprocess.run(
             ["bash", str(GATE)],
             capture_output=True,
             text=True,
@@ -107,6 +152,44 @@ def run_gate(
             cwd=cwd,
             check=False,
         )
+        if annotations is not None:
+            annotations.extend(log_file.read_text(encoding="utf-8").splitlines())
+        return result
+
+
+def test_an_application_holding_a_comparison_error_is_hard_refreshed() -> None:
+    """Argo caches the error to its comparison expiry, well after the repo is back."""
+    annotations: list[str] = []
+    run_gate(
+        {
+            "applications": [
+                "argocd dfe-engine-default ComparisonError",
+                "argocd dfe-loader-default SyncError ComparisonError",
+                "argocd dfe-ui-default",
+                "argocd dfe-receiver-default OrphanedResourceWarning",
+            ],
+        },
+        annotations=annotations,
+    )
+    refreshed = sorted(
+        next(word for word in line.split() if word.startswith("dfe-")) for line in annotations
+    )
+    expect(
+        "only the two apps holding a ComparisonError are refreshed, and hard",
+        refreshed == ["dfe-engine-default", "dfe-loader-default"]
+        and all("argocd.argoproj.io/refresh=hard" in line for line in annotations),
+        f"{annotations}",
+    )
+
+
+def test_no_application_means_no_refresh() -> None:
+    annotations: list[str] = []
+    run_gate({"pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"]}, annotations=annotations)
+    expect(
+        "nothing is annotated on a cluster with no Applications",
+        annotations == [],
+        f"{annotations}",
+    )
 
 
 def test_a_file_matching_the_namespace_glob_does_not_blind_the_gate() -> None:
@@ -390,6 +473,134 @@ def test_the_credential_check_needs_the_namespace() -> None:
     expect(
         "no namespace skips the credential check",
         out.returncode == 0 and "no DFE_NS" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+@contextmanager
+def admin_ui_server(routes: dict[str, tuple[int, str]]) -> Iterator[int]:
+    """A plain-HTTP stand-in for the gateway on a port the kernel picks.
+
+    `routes` maps a path to (status, Location), and may be filled in once the
+    port is known.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            status, location = routes.get(self.path, (404, ""))
+            self.send_response(status)
+            if location:
+                self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_args: object) -> None:
+            """The gate's own output is what the tests read."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def healthy_with_admin_ui(port: int) -> dict:
+    """A converged deploy whose gateway, at 127.0.0.1, lists one admin UI on `port`."""
+    return {
+        **HEALTHY,
+        "setup_status": "False",
+        "admin_links": [{"name": "Argo CD", "url": f"http://argocd.dfe.test:{port}"}],
+        "gateways": ["127.0.0.1"],
+    }
+
+
+def test_an_admin_ui_that_redirects_to_itself_fails_the_gate() -> None:
+    """How the Argo CD redirect loop shipped: every pod Ready, the UI unreachable."""
+    routes: dict[str, tuple[int, str]] = {}
+    with admin_ui_server(routes) as port:
+        routes["/"] = (307, f"http://argocd.dfe.test:{port}/")
+        out = run_gate(healthy_with_admin_ui(port), DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "a looping admin UI fails a gate every other check passed",
+        out.returncode != 0
+        and "[FAIL] admin ui Argo CD: redirect loop" in out.stdout
+        and "an admin UI does not load through the gateway" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_an_admin_ui_that_loads_passes_the_gate() -> None:
+    routes: dict[str, tuple[int, str]] = {"/": (200, "")}
+    with admin_ui_server(routes) as port:
+        out = run_gate(healthy_with_admin_ui(port), DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "a loading admin UI passes, and says so",
+        out.returncode == 0 and "[PASS] admin ui Argo CD" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_a_gateway_listing_no_admin_ui_skips_the_check() -> None:
+    """dfe-docker, or a gateway that predates dfe-admin-links, has nothing to probe."""
+    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "no dfe-admin-links is a named skip, not a failure",
+        out.returncode == 0 and "no dfe-admin-links ConfigMap in dfe-local" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+# The otel HTTPRoute as the gateway chart renders it once otel.ingress.enabled is
+# on, with the status a gateway that programmed it writes.
+OTEL_ROUTE = {
+    "spec": {"hostnames": ["otel.dfe.test"]},
+    "status": {"parents": [{"conditions": [
+        {"type": "Accepted", "status": "True", "reason": "Accepted"},
+        {"type": "ResolvedRefs", "status": "True", "reason": "ResolvedRefs"},
+    ]}]},
+}
+
+
+def test_the_gate_says_otel_ingress_is_not_exposed_by_default() -> None:
+    """A deploy that never turned it on carries no otel route, and the gate says so."""
+    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "no otel route reads not exposed",
+        out.returncode == 0 and "[info] OTLP ingress: not exposed" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_the_gate_says_where_otel_ingress_answers_and_that_it_needs_the_token() -> None:
+    out = run_gate(
+        {**HEALTHY, "setup_status": "False", "otel_route": OTEL_ROUTE,
+         "secrets": ["dfe-otel-ingress-token"]},
+        DFE_NS="dfe-local", DFE_ENV="local",
+    )
+    expect(
+        "the exposed hostname and the bearer requirement are printed",
+        out.returncode == 0
+        and "[info] OTLP ingress: exposed at https://otel.dfe.test" in out.stdout
+        and "Authorization: Bearer" in out.stdout
+        and "Secret otel/dfe-otel-ingress-token, key token" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_the_gate_says_when_the_ingress_token_is_missing() -> None:
+    out = run_gate(
+        {**HEALTHY, "setup_status": "False", "otel_route": OTEL_ROUTE},
+        DFE_NS="dfe-local", DFE_ENV="local",
+    )
+    expect(
+        "an absent token Secret is named",
+        "dfe-otel-ingress-token is NOT on this cluster" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
 

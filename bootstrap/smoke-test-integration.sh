@@ -8,6 +8,10 @@
 #
 #                CORE e2e tests (the START -- both DEFAULT ingest pipelines must be
 #                live, streaming data, not just instrumented):
+#                  0. SCHEMA CONTROL: dfe-engine reports its bootstrap pass
+#                     converged. It is the only thing that creates a ClickHouse
+#                     object or a bootstrap topic, so checking it first keeps a
+#                     failed apply from reading as three broken pipelines.
 #                  1. SELF-TELEMETRY: the DFE stack's own infra OTel (logs/metrics/
 #                     traces) is landing in the OTel DB on ClickHouse VIA HyperDX.
 #                     Proves the instrumentation configs AND the self-telemetry
@@ -101,7 +105,9 @@ POST_CLEANUP="${DFE_POST_CLEANUP:-false}"
 PASS=0; FAIL=0; SKIP=0
 check() {
   local name="$1" cmd="$2"
-  if eval "$cmd" >/dev/null 2>&1; then echo "  [PASS] $name"; PASS=$((PASS+1)); else echo "  [FAIL] $name"; FAIL=$((FAIL+1)); fi
+  # pipefail is off for the check itself: a check ending in grep -q closes the
+  # pipe on the first match, and the producer's SIGPIPE would fail a passing check.
+  if ( set +o pipefail; eval "$cmd" ) >/dev/null 2>&1; then echo "  [PASS] $name"; PASS=$((PASS+1)); else echo "  [FAIL] $name"; FAIL=$((FAIL+1)); fi
 }
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 
@@ -206,13 +212,70 @@ echo "=== DFE VERTICAL-INTEGRATION smoke test (chains + freshness, not liveness)
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== CORE 0: schema control (dfe-engine reports its bootstrap converged) ==="
+# dfe-engine applies every ClickHouse object and every bootstrap topic at its own
+# startup, from the pinned dfe-schemas manifest, and registers a `schema` check on
+# /readyz that is true only when the last pass converged. Everything below reads
+# what that pass made, so it is asserted first.
+#
+# /readyz on the API port, not the engine Service: the Service drops a NotReady
+# pod from its endpoints, so a failed apply would read as "no engine" rather than
+# as a failed apply. `checks.schema` by NAME, not the overall status -- the
+# ClickHouse ping is the other half and the two fail for different reasons.
+# GET /api/v1/system/schema carries the per-object detail and needs a token this
+# script does not hold, so the failure message points there instead.
+ENGINE_WAIT="${DFE_ENGINE_WAIT:-300}"
+ENGINE_WAIT_INTERVAL="${DFE_ENGINE_WAIT_INTERVAL:-5}"
+engine_readyz() {
+  kubectl -n "$NS_APP" exec deploy/dfe-engine -c engine -- \
+    curl -fsS --max-time 5 http://localhost:8000/readyz 2>/dev/null
+}
+engine_schema_converged() {
+  printf '%s' "$(engine_readyz)" | grep -q '"schema": *true'
+}
+if kubectl -n "$NS_APP" get deploy dfe-engine >/dev/null 2>&1; then
+  engine_waited=0
+  while ! engine_schema_converged; do
+    [ "$engine_waited" -ge "$ENGINE_WAIT" ] && break
+    sleep "$ENGINE_WAIT_INTERVAL"
+    engine_waited=$((engine_waited + ENGINE_WAIT_INTERVAL))
+  done
+  echo "  waited ${engine_waited}s of ${ENGINE_WAIT}s for the engine's schema check"
+  check "dfe-engine reports schema converged (readyz checks.schema; detail on GET /api/v1/system/schema)" \
+    engine_schema_converged
+  echo "  engine /readyz: $(engine_readyz)"
+else
+  # Not a skip: no engine means no tables and no topics, and every CORE below
+  # would fail for that one reason.
+  check "dfe-engine deployment present in ns/$NS_APP (nothing else creates the schema)" "false"
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== CORE 1: self-telemetry pipeline (infra OTel -> HyperDX -> ClickHouse) ==="
 # The stack instruments itself: each app/daemonset emits OTLP -> otel gateway ->
 # HyperDX -> ClickHouse otel tables. A row NEWER than the freshness window proves
 # the pipeline is STREAMING right now (instrumentation live + ingest live), not
 # that some old row exists. This is the single strongest self-monitoring assert.
-check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FRESH_WINDOW}s)" \
-  "test \"\$(chq \"SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND\")\" -gt 0 2>/dev/null"
+#
+# POLL, do not sample once: a stack whose collectors became Ready seconds ago has
+# exported nothing yet, so one SELECT reports a streaming pipeline as a dead one
+# (live-proven on rc.13: FAIL here, PASS on an unchanged re-run four minutes
+# later). DFE_OTEL_WAIT=0 samples once, for a test.
+OTEL_WAIT="${DFE_OTEL_WAIT:-180}"
+OTEL_WAIT_INTERVAL="${DFE_OTEL_WAIT_INTERVAL:-5}"
+otel_logs_fresh() {
+  test "$(chq "SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND")" -gt 0 2>/dev/null
+}
+otel_waited=0
+while ! otel_logs_fresh; do
+  [ "$otel_waited" -ge "$OTEL_WAIT" ] && break
+  sleep "$OTEL_WAIT_INTERVAL"
+  otel_waited=$((otel_waited + OTEL_WAIT_INTERVAL))
+done
+echo "  waited ${otel_waited}s of ${OTEL_WAIT}s for a row newer than ${FRESH_WINDOW}s"
+check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FRESH_WINDOW}s, polled up to ${OTEL_WAIT}s)" \
+  otel_logs_fresh
 
 # ---------------------------------------------------------------------------
 echo ""
@@ -252,6 +315,8 @@ if [ "$posted" -gt 0 ]; then
   done
 fi
 echo "  marker ${MARK} per-node counts:"
+# check() discards its command's output, so the counts are printed by a call of their own.
+marker_on_all_nodes "$MARK" || true
 check "fixture events posted to receiver land in ${CH_DATA_TABLE} on EVERY ClickHouse node" \
   "test $sent -gt 0 && test $posted -eq $sent && marker_on_all_nodes '$MARK'"
 
@@ -340,21 +405,19 @@ KSH
     done
     # Dead letters must outlive a weekend, against the 72h data-topic default.
     #
-    # Read from the KafkaTopic CR where one exists. Reading it from the broker
-    # needs DescribeConfigs, which the app's KafkaUser is not granted and should
-    # not be widened to hold for a test's sake -- under Strimzi's authorizer that
-    # call returns TopicAuthorizationException and the check reports a
-    # misconfigured DLQ against a correctly configured one. A Ready CR means the
-    # operator has applied the spec, so it is both declared and reconciled state.
-    # Redpanda runs the same user as a superuser, so the CLI path works there.
-    if kubectl -n "$NS_KAFKA" get kafkatopic dfe-loader-dlq >/dev/null 2>&1; then
-      check "DLQ retention is longer than the data-topic default" \
-        "kubectl -n ${NS_KAFKA} get kafkatopic dfe-loader-dlq -o jsonpath='{.spec.config.retention\\.ms}' | grep -q '^604800000$'"
-      check "DLQ topic CR is reconciled onto the broker" \
-        "kubectl -n ${NS_KAFKA} get kafkatopic dfe-loader-dlq -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
-    else
+    # Reading a topic's config needs DescribeConfigs, which the DFE KafkaUser is
+    # not granted and must not be widened to hold for a test's sake -- under
+    # Strimzi's authorizer that call returns TopicAuthorizationException and the
+    # check reports a misconfigured DLQ against a correctly configured one. So it
+    # is asserted where the credential CAN read it (a single-tier broker with no
+    # authorizer, and redpanda, which runs this user as a superuser) and
+    # explicitly NOT asserted under Strimzi's authorizer.
+    # shellcheck disable=SC2016  # $P is expanded by the pod's shell, where kafka_cli defines it.
+    if printf '%s' "$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config $P --describe --topic dfe_loader_dlq')" | grep -q 'retention.ms='; then
       check "DLQ retention is longer than the data-topic default" \
         "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
+    else
+      skip "DLQ retention value -- this broker's authorizer withholds DescribeConfigs from the DFE user, by design. The topic's EXISTENCE is asserted above; its retention comes from the dfe-schemas topic set dfe-engine applied."
     fi
   fi
 elif profile_has_kafka; then

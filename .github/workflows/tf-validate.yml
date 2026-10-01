@@ -1,7 +1,6 @@
 # Runs on every PR and push to main.
-# Validates all Terraform modules and runs tests.
-# Matrix: both terraform and opentofu to ensure compatibility.
-name: Terraform Validate
+# Validates every OpenTofu module and environment root, and runs the module tests.
+name: OpenTofu Validate
 
 on:
   push:
@@ -14,46 +13,83 @@ on:
       - 'terraform/**'
       - '.github/workflows/tf-validate.yml'
 
+# Nothing in this workflow writes through the token.
+permissions:
+  contents: read
+
+# CI pins its own tooling -- versions.yaml pins the stack, not CI -- but this
+# tracks versions.yaml toolbox.tofu so the operator shell and CI validate on
+# one OpenTofu and the state format cannot drift between them. The AWS
+# modules declare required_version >= 1.10, and edge/aws, toolbox/aws and
+# managed-kafka/redpanda-cloud declare >= 1.11.
+env:
+  TOFU_VERSION: "1.12.6"
+
 jobs:
   validate:
-    name: validate + test (${{ matrix.tf }})
+    name: validate + test (tofu)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        tf: [terraform, tofu]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install OpenTofu
-        if: matrix.tf == 'tofu'
         uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
-          tofu_version: "1.7.0"
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      # terraform is RETIRING -- see hyperi-io/hyperi-developer#11. OpenTofu is
-      # being made canonical across HyperI; this matrix leg stays only until #11
-      # lands, then the job drops to tofu alone.
-      - name: Install Terraform
-        if: matrix.tf == 'terraform'
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: "1.9.0"
-
-      - name: Validate all modules
+      # Both target sets are discovered from the files themselves rather than
+      # assumed to sit one level under terraform/modules. edge/ and toolbox/ hold
+      # no .tf of their own and keep their tests under aws/, so a one-level walk
+      # validated an empty directory and ran neither module's contract tests while
+      # reporting success.
+      # The loop body stays in this shell (process substitution, not a pipe into
+      # while), so set -e aborts the step on the first failure instead of losing it
+      # in a subshell.
+      - name: Validate every module
         run: |
           set -e
-          for dir in terraform/modules/*/; do
+          while IFS= read -r dir; do
             echo "==> Validating $dir"
-            ${{ matrix.tf }} -chdir="$dir" init -backend=false
-            ${{ matrix.tf }} -chdir="$dir" validate
-          done
+            tofu -chdir="$dir" init -backend=false
+            tofu -chdir="$dir" validate
+          done < <(find terraform/modules -name '*.tf' -printf '%h\n' | sort -u)
 
-      - name: Run tests (modules with .tftest.hcl)
+      - name: Run every module's tests
         run: |
           set -e
-          for dir in terraform/modules/*/; do
-            if ls "${dir}tests/"*.tftest.hcl 2>/dev/null | grep -q .; then
-              echo "==> Testing $dir"
-              ${{ matrix.tf }} -chdir="$dir" test
-            fi
-          done
+          while IFS= read -r dir; do
+            echo "==> Testing $dir"
+            tofu -chdir="$dir" test
+          done < <(find terraform/modules -name '*.tftest.hcl' -printf '%h\n' | sed 's:/tests$::' | sort -u)
+
+  # The job above validates each module alone; only a root checks the arguments
+  # it passes them, and a root is what an operator actually applies.
+  validate-roots:
+    name: validate environment roots (tofu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      # -backend=false: validate reads no state and configures no provider, so no
+      # root needs a cloud credential here. Zero roots found fails rather than
+      # reporting a pass over nothing.
+      - name: Validate every environment root
+        run: |
+          set -e
+          count=0
+          while IFS= read -r dir; do
+            echo "==> Validating $dir"
+            tofu -chdir="$dir" init -backend=false -input=false
+            tofu -chdir="$dir" validate
+            count=$((count + 1))
+          done < <(find terraform/environments -name '*.tf' -printf '%h\n' | sort -u)
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::no .tf found under terraform/environments -- nothing was validated"
+            exit 1
+          fi
+          echo "validated $count environment roots"

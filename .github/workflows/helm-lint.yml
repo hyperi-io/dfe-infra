@@ -21,6 +21,8 @@ on:
       - 'suite.yaml'
       - 'docs/suite-graph.md'
       - '.github/workflows/helm-lint.yml'
+      # Its HELM_VERSION is held equal to this file's by check_versions_drift.py.
+      - '.github/workflows/release.yml'
   pull_request:
     paths:
       - 'helm/**'
@@ -39,10 +41,21 @@ on:
       - 'suite.yaml'
       - 'docs/suite-graph.md'
       - '.github/workflows/helm-lint.yml'
+      # Its HELM_VERSION is held equal to this file's by check_versions_drift.py.
+      - '.github/workflows/release.yml'
   # A push made with GITHUB_TOKEN triggers no workflow, so the propagate job's
   # write-back leaves its own head commit unchecked. workflow_dispatch is the
   # documented exception to that rule and is how it asks for this run.
   workflow_dispatch:
+
+# Nothing here writes to this repo, and the cross-repo reads carry
+# DFE_DEPLOY_TOKEN, which these scopes do not govern.
+permissions:
+  contents: read
+
+# One Helm for every job here, so the bats renders are the charts the lint job lints.
+env:
+  HELM_VERSION: "4.2.4"
 
 jobs:
   lint:
@@ -94,8 +107,24 @@ jobs:
       - name: Namespace drift failure paths
         run: python3 scripts/tests/test_check_namespace_drift.py
 
+      # Renovate rewrites a value and never reads the comment; a cut clones the
+      # previous block's comments onto pins it then moves. Either way the
+      # evidence detaches, and the file's whole value is that it can be trusted.
+      - name: Pin evidence failure paths
+        run: python3 scripts/tests/test_pin_evidence.py
+
+      # `with` skips a boolean false, so a dial written that way renders nothing
+      # for the deployment that asked for it off, leaving the consumer default.
+      - name: No chart gates a boolean dial on `with`
+        run: python3 scripts/tests/test_with_on_a_boolean.py
+
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
+
+      # Gates the stack under development only. Historical blocks are frozen
+      # records of what shipped; `--all` reports their backlog without failing.
+      - name: Pin evidence check (a bump must move its justification)
+        run: python3 scripts/check_pin_evidence.py
 
       - name: Namespace drift check (common.yaml is SSoT)
         run: python3 scripts/check_namespace_drift.py
@@ -149,13 +178,44 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: "4.2.3"
+          version: ${{ env.HELM_VERSION }}
 
       # Every file under scripts/tests runs here, including the ones no step
       # above names; the named steps stay for the failure paths they document.
       - name: scripts/tests under pytest
         run: python3 -m pip install --quiet --require-hashes -r scripts/tests/requirements-ci.txt
       - run: python3 -m pytest scripts/tests -q -p no:cacheprovider
+
+      # A step of its own, not a pytest case: it fetches the engine's bundled
+      # copy over the network (gh api), unlike --check-catalogue's pytest
+      # case above, which stays offline. This repo holds the SSoT and already
+      # owns that check, so the third copy is compared here too (dfe-infra#306).
+      #
+      # dfe-engine is PRIVATE, and the default GITHUB_TOKEN cannot read a
+      # sibling private repo's contents -- the same gap
+      # check_submodule_drift.py documents. Exit 2 (snapshot unreadable) used
+      # to be logged and swallowed, which read as a pass: the mirror went stale
+      # after #300 and #344 moved apps.yaml and nothing said so. Now a run
+      # carrying DFE_DEPLOY_TOKEN must be able to read it, and exit 2 there
+      # FAILS -- that secret needs contents:read on dfe-engine as well as
+      # dfe-deploy. A run without it skips and says so rather than passing (#200).
+      - name: Engine's bundled apps.yaml snapshot matches the SSoT
+        env:
+          GH_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN || github.token }}
+          HAS_ENGINE_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
+        run: |
+          set +e
+          python3 scripts/composition.py --check-engine-snapshot
+          code=$?
+          set -e
+          if [[ "$code" -eq 2 && "$HAS_ENGINE_TOKEN" != "true" ]]; then
+            echo "::notice::engine snapshot not checked -- this run has no token that can read hyperi-io/dfe-engine, so the comparison never ran. Mint DFE_DEPLOY_TOKEN with contents:read on dfe-engine (#200). Skipped rather than reported as a pass."
+            exit 0
+          fi
+          if [[ "$code" -eq 2 ]]; then
+            echo "::error::engine snapshot UNREADABLE with DFE_DEPLOY_TOKEN present -- widen that token to contents:read on hyperi-io/dfe-engine. An unread mirror is not a passing check."
+          fi
+          exit "$code"
 
       # An over-wide egress policy renders green and passes a dry-run, so the
       # derived external-service egress is checked by set equality per mode.
@@ -171,6 +231,11 @@ jobs:
       # then fail at admission or drop every packet (#222, #223).
       - name: Gateway OIDC and gateway egress render the working shape
         run: python3 scripts/tests/test_gateway_oidc.py
+
+      # docs/deployment/edge.md cites this as the proof of the exposure cascade,
+      # the kill switch and the render guards; it renders only, no cluster.
+      - name: Gateway route exposure cascade and render guards
+        run: bash scripts/test-route-exposure.sh
 
       # versions.yaml pinning tag@sha256 is worth nothing if the chart renders a
       # bare tag, and a bare tag is mutable.
@@ -238,7 +303,7 @@ jobs:
       - name: Lint application charts
         run: |
           set -e
-          for chart_dir in helm/charts/*/; do
+          for chart_dir in helm/charts/*/ helm/edge/*/; do
             if [[ -f "$chart_dir/Chart.yaml" ]]; then
               echo "==> Linting $chart_dir"
               helm dependency update "$chart_dir" 2>/dev/null || true
@@ -246,12 +311,67 @@ jobs:
             fi
           done
 
+      # A parse inside `a && b` is exempt from set -e, so it has to be a command
+      # of its own or only the last file's result reaches the step.
       - name: Validate YAML syntax of ArgoCD manifests
         run: |
           set -e
-          for f in $(find argocd -name '*.yaml' -type f); do
-            python3 -c "import yaml,sys; list(yaml.safe_load_all(open('$f')))" && echo "OK: $f"
-          done
+          while IFS= read -r -d '' f; do
+            python3 -c 'import sys, yaml; list(yaml.safe_load_all(open(sys.argv[1])))' "$f"
+            echo "OK: $f"
+          done < <(find argocd -name '*.yaml' -type f -print0)
+
+  # A job of its own, so a lint failure cannot hide these results. The trigger
+  # paths above cover every file bootstrap/tests reads.
+  bats:
+    name: bootstrap bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Pinned by commit; the runner image's own bats is whatever version it ships.
+      - name: Checkout bats-core
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bats-core/bats-core
+          ref: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5 # v1.14.0
+          path: .bats-core
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # The bootstrap templates render through envsubst, so a runner without it
+      # fails here by name rather than as a dozen test failures.
+      - name: Run bootstrap/tests
+        run: |
+          command -v envsubst
+          .bats-core/bin/bats --formatter tap bootstrap/tests/
+
+      - name: Shellcheck bootstrap/tests
+        run: shellcheck -S warning -s bash bootstrap/tests/*.bats
+
+  # Third-party images are public, so the registry reads here need no secret.
+  # The private DFE images are dfe-stack release-gate's, which reads them with
+  # a GHCR credential; --third-party-only keeps them out of this job.
+  third-party-arch:
+    name: third-party images carry amd64 and arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The chart-installed add-ons take their image tags from their chart's
+      # appVersion, which --resolve-charts reads with helm.
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Every pinned third-party image ships linux/amd64 and linux/arm64
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts
 
   # Whether the drift guard below can reach dfe-deploy at all. It is a job of
   # its own because a job-level `if:` cannot read the secrets context, and the
@@ -261,6 +381,8 @@ jobs:
   governance-drift-precondition:
     name: governance drift preconditions
     runs-on: ubuntu-latest
+    # It checks nothing out: it reads the secrets context and sets an output.
+    permissions: {}
     outputs:
       can_check: ${{ steps.gate.outputs.can_check }}
     steps:

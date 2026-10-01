@@ -4,6 +4,12 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- if .Values.webhook.enabled }}
+  annotations:
+    # A hook URL change puts this app OutOfSync, so Argo runs the sync whose
+    # PostSync Job re-registers the hook; a hook alone never triggers one.
+    dfe.hyperi.io/argo-webhook-url: {{ include "forgejo.argoWebhookUrl" . | quote }}
+  {{- end }}
 spec:
   # HARDCODED 1 -- Forgejo is single-writer (leveldb queue + SQLite on ONE RWO
   # PVC): a 2nd replica cannot lock /data/data/queues/common and CrashLoopBackOffs,
@@ -29,10 +35,9 @@ spec:
       initContainers:
         # Rancher's local-path provisioner (and some CSI drivers) do NOT honour the
         # pod fsGroup, so a freshly-provisioned PVC stays root-owned and the uid-1000
-        # init below fails at `mkdir` on /data. Chown it first, as root. Same root
-        # cause and same fix as scripts/fix-harbor-trivy.sh; do NOT "fix" it by
-        # running Forgejo as root instead. Reuses the (pinned) Forgejo image so no
-        # extra image is introduced.
+        # init below fails at `mkdir` on /data. Chown it first, as root; do NOT
+        # "fix" it by running Forgejo as root instead. Reuses the (pinned) Forgejo
+        # image so no extra image is introduced.
         - name: fix-data-perms
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}

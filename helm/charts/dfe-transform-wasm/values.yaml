@@ -1,3 +1,4 @@
+# dfe-transform-wasm is coming: alpha, unpublished, so nothing generates this chart until the app ships.
 project: dfe
 component: transform-wasm
 env: local
@@ -17,7 +18,9 @@ kafka:
   # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
   # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
   # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
-  # DFE Kafka credential contract (dfe-engine#98).
+  # DFE Kafka credential contract (dfe-engine#98). plaintext is not 'the others
+  # without TLS': no TLS and no SASL, so no credential is sent. It suits only a
+  # supplied broker with no authentication.
   provider: ""
   sourceTopic: ""        # set per deployment via ArgoCD values
   destTopic: ""          # set per deployment
@@ -49,14 +52,16 @@ serviceAccount:
   create: true
   annotations: {}
 
-# KEDA autoscaling -- folded into the chart. The DEFAULT trigger is CPU (native KEDA
-# cpu scaler, no shim needed). scalo ScalingPressure (dfe_scaling_pressure, 0-100) is
-# the OPT-IN advanced signal: the composite fuses Kafka CG lag + container-contract
-# metrics (buffer, memory) AND hard-gates to 0 when the downstream sink is unreachable
-# (circuit-breaker open), so pressure never scales out pods that would not help when
-# the real bottleneck is downstream. It routes through the fail-safe dfe-keda-shim (a
-# metric outage FREEZES scaling, never runs replicas up). Transforms are multi-instance;
-# set pressure.service per instance. minReplicaCount stays 1 (scale-to-zero is 2.2 backlog).
+# KEDA autoscaling -- folded into the chart. The SHIPPED trigger is the native KEDA
+# cpu scaler; scalo ScalingPressure (0-100) renders beside it and the HPA takes the
+# higher of the two. The shim matches this ServiceName's gauge under any metric prefix
+# (dfe-engine#379), so no app release is needed for the name. Pressure is the advanced signal: the composite fuses Kafka CG lag
+# + container-contract metrics (buffer, memory) AND hard-gates to 0 when the downstream
+# sink is unreachable (circuit-breaker open), so pressure never scales out pods that
+# would not help when the real bottleneck is downstream. It routes through the fail-safe
+# dfe-keda-shim (a metric outage FREEZES scaling, never runs replicas up). Transforms are
+# multi-instance; set pressure.service per instance. minReplicaCount stays 1
+# (scale-to-zero is 2.2 backlog).
 keda:
   enabled: true
   minReplicaCount: 1
@@ -64,12 +69,12 @@ keda:
   cooldownPeriod: 300
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # opt-in: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: true             # scalo ScalingPressure via the fail-safe dfe-keda-shim
     # service: dfe-transform-wasm   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

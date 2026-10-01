@@ -2,8 +2,9 @@
 #  Project:      dfe-infra
 #  File:         test_tester_idp.py
 #  Purpose:      Prove `dfe-ops idp deploy` renders a dex + glauth fixture that
-#                would actually work, and that no generated password reaches
-#                the values file, the argv, or the helm release history.
+#                would actually work, that no generated password reaches the
+#                values file, the argv, or the helm release history, and that
+#                the shipped fixture grants what the OIDC role spec asserts.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -34,10 +35,12 @@ import importlib.util
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 from _expect import expect, standalone, summary
@@ -45,6 +48,7 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 DFE_OPS = SCRIPTS / "dfe-ops"
+RBA_SPEC = REPO_ROOT / "tests" / "e2e-ui" / "specs" / "engine" / "oidc-rba.spec.ts"
 
 sys.path.insert(0, str(SCRIPTS))
 import tester_idp  # noqa: E402
@@ -399,6 +403,199 @@ def test_the_shipped_fixture_is_a_valid_directory() -> None:
            {"dfe-admins", "dfe-viewers", "dfe-analysts"} <= set(groups), f"{groups}")
 
 
+# --- the fixture against the OIDC role spec ----------------------------------
+# One row of the spec's TRUTH_TABLE, single-line or wrapped.
+_SPEC_ROW = re.compile(
+    r"\{\s*user:\s*'([^']+)',\s*roles:\s*\[([^\]]*)\],\s*orgIds:\s*\[([^\]]*)\],?\s*\}"
+)
+
+
+def spec_truth_table() -> dict[str, tuple[set[str], set[str]]]:
+    """user -> (roles, org ids) as oidc-rba.spec.ts asserts them."""
+    text = RBA_SPEC.read_text(encoding="utf-8")
+    rows = {
+        user: (set(re.findall(r"'([^']+)'", roles)), set(re.findall(r"'([^']+)'", orgs)))
+        for user, roles, orgs in _SPEC_ROW.findall(text)
+    }
+    expect("every spec row is parsed", len(rows) == text.count("user: '"), f"{sorted(rows)}")
+    return rows
+
+
+def shipped_resolution() -> dict[str, tuple[set[str], set[str]]]:
+    """user -> (roles, org ids) the shipped fixture pair grants.
+
+    Mirrors the engine's claim resolution: a claim value takes the group whose
+    source_id it is, for a login through that group's source_provider, and
+    grants its roles, its org_ids and the org its scope names. Direct groups
+    only, because the tester IdP emits no transitive membership.
+    """
+    directory = tomllib.loads(
+        tester_idp.DEFAULT_USERS_FILE.read_text(encoding="utf-8").replace(
+            "{{DFE_FIXTURE_PASS_SHA256}}", "x" * 64
+        )
+    )
+    group_name = {g["gidnumber"]: g["name"] for g in directory["groups"]}
+    engine = {
+        body["source_id"]: body
+        for body in map(
+            json.loads,
+            tester_idp.render_engine_groups(
+                tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8")
+            ).values(),
+        )
+        if body.get("source_provider") == tester_idp.DEFAULT_PROVIDER
+    }
+    out = {}
+    for user in directory["users"]:
+        roles: set[str] = set()
+        orgs: set[str] = set()
+        for gid in (user["primarygroup"], *user.get("othergroups", [])):
+            group = engine.get(group_name[gid])
+            if group is None:
+                continue
+            roles.update(group["roles"])
+            orgs.update(group["org_ids"])
+            if group["scope"].startswith("org:"):
+                orgs.add(group["scope"].removeprefix("org:"))
+        out[user["name"]] = (roles, orgs)
+    return out
+
+
+def test_every_spec_identity_is_in_the_shipped_directory() -> None:
+    """A row the directory lacks fails at the IdP login form, not at the assertion."""
+    missing = set(spec_truth_table()) - set(shipped_resolution())
+    expect("the directory carries every user the spec logs in as", not missing, f"{sorted(missing)}")
+
+
+def test_the_shipped_fixture_grants_exactly_what_the_spec_asserts() -> None:
+    """The spec is the oracle; the in-repo fixture pair must satisfy every row of it."""
+    granted = shipped_resolution()
+    for user, (roles, orgs) in sorted(spec_truth_table().items()):
+        got_roles, got_orgs = granted.get(user, (set(), set()))
+        expect(f"{user} resolves the spec's roles", got_roles == roles, f"{got_roles} != {roles}")
+        expect(f"{user} resolves the spec's org ids", got_orgs == orgs, f"{got_orgs} != {orgs}")
+
+
+def test_the_group_map_names_only_directory_groups() -> None:
+    """A mapped name the IdP never emits is a typo that grants nothing."""
+    _, groups = tester_idp.validate_users_toml(
+        tester_idp.DEFAULT_USERS_FILE.read_text(encoding="utf-8")
+    )
+    mapped = {
+        name.removesuffix(".yaml")
+        for name in tester_idp.render_engine_groups(
+            tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8")
+        )
+    }
+    expect("every mapped group is in the directory", mapped <= set(groups), f"{mapped - set(groups)}")
+    expect("and only the no-role group is unmapped",
+           set(groups) - mapped == {"dfe-nogroup"}, f"{set(groups) - mapped}")
+
+
+def test_the_group_map_repeats_the_engine_defaults() -> None:
+    """A seeded group store never gets the engine's own four, so the map carries them."""
+    files = tester_idp.render_engine_groups(tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8"))
+    defaults = {"dfe-admins": ["admin"], "dfe-analysts": ["data_analyst"],
+                "dfe-viewers": ["data_viewer"], "dfe-infra": ["infra_admin"]}
+    for name, roles in defaults.items():
+        body = json.loads(files.get(f"{name}.yaml", "{}"))
+        expect(f"{name} keeps the engine's roles", body.get("roles") == roles, f"{body}")
+
+
+def test_an_unusable_group_map_is_refused() -> None:
+    """Refused before the cluster sees it, by the rules the engine's group model applies."""
+    cases = {
+        "an org scope with no org": '[[groups]]\n  name = "g"\n  scope = "org:"\n',
+        "an unknown scope": '[[groups]]\n  name = "g"\n  scope = "tenant"\n',
+        "a path in the name": '[[groups]]\n  name = "../g"\n',
+        "roles that are not a list": '[[groups]]\n  name = "g"\n  roles = "admin"\n',
+        "a duplicate": '[[groups]]\n  name = "g"\n[[groups]]\n  name = "g"\n',
+        "an empty source_id": '[[groups]]\n  name = "g"\n  source_id = " "\n',
+        "no groups at all": "",
+    }
+    for label, text in cases.items():
+        try:
+            tester_idp.render_engine_groups(text)
+            expect(f"{label} is refused", False, "no error raised")
+        except ValueError:
+            expect(f"{label} is refused", True)
+
+
+def test_an_org_scoped_group_renders_the_engine_shape() -> None:
+    files = tester_idp.render_engine_groups(
+        '[[groups]]\n  name = "g"\n  roles = ["org_viewer"]\n'
+        '  scope = "org:acme"\n  org_ids = ["acme"]\n'
+    )
+    body = json.loads(files["g.yaml"])
+    expect("keyed by the file name the engine reads", list(files) == ["g.yaml"], f"{list(files)}")
+    expect("carrying roles, scope, org_ids and the link",
+           body == {"description": "", "scope": "org:acme", "roles": ["org_viewer"],
+                    "org_ids": ["acme"], "source_provider": "dex", "source_id": "g"}, f"{body}")
+
+
+def test_every_shipped_group_is_linked_for_the_provider() -> None:
+    """The engine links a claim value by source_id alone, so an unlinked file grants nothing."""
+    files = tester_idp.render_engine_groups(tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8"))
+    for key, text in sorted(files.items()):
+        body = json.loads(text)
+        expect(f"{key} names the provider", body.get("source_provider") == "dex", f"{body}")
+        expect(f"{key} links the name the IdP emits",
+               body.get("source_id") == key.removesuffix(".yaml"), f"{body}")
+
+
+def test_a_provider_and_a_source_id_override_reach_the_file() -> None:
+    """Another IdP sends ids, not names: the map says which, and wire-engine says whose."""
+    files = tester_idp.render_engine_groups(
+        '[[groups]]\n  name = "g"\n  source_id = "00000000-aaaa"\n', "entra"
+    )
+    body = json.loads(files["g.yaml"])
+    expect("the provider is the one given", body["source_provider"] == "entra", f"{body}")
+    expect("the id is the entry's own", body["source_id"] == "00000000-aaaa", f"{body}")
+    try:
+        tester_idp.render_engine_groups('[[groups]]\n  name = "g"\n', "")
+        expect("an empty provider is refused", False, "no error raised")
+    except ValueError:
+        expect("an empty provider is refused", True)
+
+
+def test_wire_engine_hands_the_group_map_over() -> None:
+    """Without it every fixture group past the engine's four defaults grants nothing."""
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "idp.env").write_text(
+        "TESTER_IDP_ISSUER=https://dex.example.com\n"
+        "TESTER_IDP_CLIENT_ID=dfe-engine\n"
+        "TESTER_IDP_CLIENT_SECRET=clientsecretvalue\n",
+        encoding="utf-8", newline="\n",
+    )
+    args = _ops().build_parser().parse_args(
+        ["idp", "wire-engine", "--secrets-file", str(tmp / "idp.env"), "--dry-run",
+         "--provider", "tester"]
+    )
+    saved_out = sys.stdout
+    sys.stdout = captured = io.StringIO()
+    try:
+        rc = tester_idp.cmd_idp_wire_engine(args)
+    finally:
+        sys.stdout = saved_out
+    expect("the dry run succeeds", rc == 0, f"rc={rc}")
+    objects = json.loads(captured.getvalue()) if rc == 0 else []
+    maps = [o for o in objects if o["metadata"]["name"] == tester_idp.DEFAULT_GROUPS_CONFIGMAP]
+    expect("a groups ConfigMap is rendered", len(maps) == 1, f"{[o['metadata']['name'] for o in objects]}")
+    data = maps[0]["data"] if maps else {}
+    expect("carrying the org-scoped fixture group",
+           json.loads(data.get("dfe-test-org-viewers.yaml", "{}")).get("scope") == "org:test_org",
+           f"{sorted(data)}")
+    admins = json.loads(data.get("dfe-admins.yaml", "{}"))
+    expect("linked to the provider the engine registers",
+           (admins.get("source_provider"), admins.get("source_id")) == ("tester", "dfe-admins"),
+           f"{admins}")
+    providers = [o for o in objects if o["metadata"]["name"] == "dfe-oidc-providers"]
+    expect("under the same name as the provider file",
+           bool(providers) and list(providers[0]["data"]) == ["tester.yaml"],
+           f"{[list(o['data']) for o in providers]}")
+    expect("and the client secret stays redacted", "clientsecretvalue" not in captured.getvalue())
+
+
 # --- hostname ----------------------------------------------------------------
 def test_the_hostname_is_composed_from_the_domain() -> None:
     ns = argparse.Namespace(hostname=None, domain="dfe.example.com", host_label="dex")
@@ -536,6 +733,25 @@ def test_the_dry_run_touches_nothing() -> None:
     expect("and ran no helm or kubectl at all", calls == [], f"{calls}")
 
 
+def test_a_dry_run_redacts_a_hash_outside_the_passsha256_lines() -> None:
+    """The placeholder is substituted everywhere, so a comment naming it carries the hash."""
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "users.toml").write_text(
+        "# the deploy fills {{DFE_FIXTURE_PASS_SHA256}} in\n" + USERS,
+        encoding="utf-8", newline="\n",
+    )
+    args = deploy_args(tmp, dry_run=True)
+    saved_out, saved_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = io.StringIO(), (captured := io.StringIO())
+    try:
+        rc = tester_idp.cmd_idp_deploy(args)
+    finally:
+        sys.stdout, sys.stderr = saved_out, saved_err
+    expect("the dry run succeeds", rc == 0, f"rc={rc}")
+    leaked = re.findall(r"\b[0-9a-f]{64}\b", captured.getvalue())
+    expect("no password hash reaches the printed glauth.cfg", leaked == [], f"{len(leaked)} hash(es)")
+
+
 def test_a_dry_run_never_prints_a_secret_value() -> None:
     """A dry run gets pasted into terminals and captured in CI logs."""
     objects = [
@@ -561,6 +777,16 @@ def test_the_cli_still_parses() -> None:
         "and names the flags the tool is parameterised on",
         all(f in out.stdout for f in ("--gateway", "--redirect-uri", "--users-file", "--domain")),
         out.stdout,
+    )
+    wire = subprocess.run(
+        [sys.executable, str(DFE_OPS), "idp", "wire-engine", "--help"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    expect("wire-engine --help works", wire.returncode == 0, wire.stderr)
+    expect(
+        "and names the group map flags",
+        all(f in wire.stdout for f in ("--groups-file", "--groups-configmap")),
+        wire.stdout,
     )
 
 

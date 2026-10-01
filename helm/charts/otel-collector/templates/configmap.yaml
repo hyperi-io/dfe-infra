@@ -9,6 +9,12 @@ data:
     extensions:
       health_check:
         endpoint: 0.0.0.0:{{ .Values.healthCheckPort }}
+      {{- if .Values.otel.ingress.enabled }}
+      # Checks every request to otlp/ingress against the token file, and
+      # re-reads the file when the Secret behind it changes.
+      bearertokenauth/ingress:
+        filename: {{ include "otel-collector.ingressTokenDir" . }}/token
+      {{- end }}
 
     receivers:
       otlp:
@@ -17,6 +23,16 @@ data:
             endpoint: 0.0.0.0:4317
           http:
             endpoint: 0.0.0.0:4318
+      {{- if .Values.otel.ingress.enabled }}
+      # OTLP/HTTP from outside the cluster, through the gateway's otel route. A
+      # request without the bearer token is refused before any pipeline sees it.
+      otlp/ingress:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:{{ .Values.otel.ingress.port }}
+            auth:
+              authenticator: bearertokenauth/ingress
+      {{- end }}
       {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
       k8s_cluster:
         collection_interval: {{ .Values.clusterTelemetry.k8sCluster.collectionInterval }}
@@ -154,7 +170,7 @@ data:
             password: ${env:KAFKA_PASSWORD}
         {{- end }}
       {{- end }}
-      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
       prometheus:
         config:
           scrape_configs:
@@ -244,6 +260,29 @@ data:
                   action: replace
                   target_label: k8s_namespace_name
             {{- end }}
+            {{- if and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts }}
+            # MSK's own open_monitoring, in Prometheus text format on every
+            # broker -- a DIFFERENT feed from kafka_metrics above, which speaks
+            # the Kafka protocol and knows nothing about JVM or OS metrics.
+            # Static targets, not kubernetes_sd_configs: the brokers are AWS
+            # hosts, not pods in this cluster. job_name becomes each target's
+            # `job` label, which the receiver maps onto service.name -- so
+            # neither job needs a resource processor of its own.
+            - job_name: msk-jmx-exporter
+              scrape_interval: {{ .Values.clusterTelemetry.mskOpenMonitoring.collectionInterval }}
+              static_configs:
+                - targets:
+                    {{- range splitList "," .Values.kafka.brokerHosts }}
+                    - {{ printf "%s:%v" . $.Values.clusterTelemetry.mskOpenMonitoring.jmxPort | quote }}
+                    {{- end }}
+            - job_name: msk-node-exporter
+              scrape_interval: {{ .Values.clusterTelemetry.mskOpenMonitoring.collectionInterval }}
+              static_configs:
+                - targets:
+                    {{- range splitList "," .Values.kafka.brokerHosts }}
+                    - {{ printf "%s:%v" . $.Values.clusterTelemetry.mskOpenMonitoring.nodeExporterPort | quote }}
+                    {{- end }}
+            {{- end }}
       {{- end }}
 
     processors:
@@ -303,13 +342,19 @@ data:
         database: {{ .Values.exporters.clickhouse.database | default .Values.clickhouse.database }}
         username: {{ .Values.exporters.clickhouse.username | default .Values.clickhouse.user }}
         password: ${env:CLICKHOUSE_PASSWORD}
-        # dfe-engine owns the otel table DDL (dfe_engine.schema.otel_tables),
-        # applied by dfe-schema before this collector starts. The exporter senses
-        # no topology, so left to create its own tables it emits a plain CREATE
+        # dfe-schemas declares the otel tables and dfe-engine applies them at its
+        # own startup, a wave before this collector. The exporter senses no
+        # topology, so left to create its own tables it emits a plain CREATE
         # TABLE against whichever replica it connected to and the siblings end up
         # without the table -- or with a different engine. With create_schema off
         # the only SQL it sends is INSERT.
         create_schema: false
+        {{- with .Values.exporters.clickhouse.connectionParams }}
+        connection_params:
+          {{- range $k, $v := . }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+        {{- end }}
         timeout: 10s
         sending_queue:
           queue_size: 1000
@@ -330,7 +375,7 @@ data:
       {{- end }}
 
     service:
-      extensions: [health_check]
+      extensions: [health_check{{ if .Values.otel.ingress.enabled }}, bearertokenauth/ingress{{ end }}]
       {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
       telemetry:
         metrics:
@@ -343,7 +388,7 @@ data:
       {{- end }}
       pipelines:
         traces:
-          receivers: [otlp]
+          receivers: [otlp{{ if .Values.otel.ingress.enabled }}, otlp/ingress{{ end }}]
           processors: [memory_limiter, batch]
           exporters:
             {{- if .Values.gateway.debugExporter }}
@@ -358,7 +403,10 @@ data:
         metrics:
           receivers:
             - otlp
-            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled }}
+            {{- if .Values.otel.ingress.enabled }}
+            - otlp/ingress
+            {{- end }}
+            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
             # One receiver carries every scrape job, so this must match the
             # receiver's own gate or configured jobs are never routed anywhere.
             - prometheus
@@ -417,7 +465,7 @@ data:
             {{- end }}
         {{- end }}
         logs:
-          receivers: [otlp]
+          receivers: [otlp{{ if .Values.otel.ingress.enabled }}, otlp/ingress{{ end }}]
           processors: [memory_limiter, batch]
           exporters:
             {{- if .Values.gateway.debugExporter }}
@@ -445,7 +493,11 @@ data:
     receivers:
       filelog:
         include: [/var/log/pods/*/*/*.log]
-        exclude: [/var/log/pods/*/otc-container/*.log]
+        # Must match the daemonset's own container name (below) -- kubelet builds
+        # this path from it. `otc-container` was the UPSTREAM chart's name, so
+        # the exclusion never matched and the collector shipped its own logs,
+        # one error line per failed export.
+        exclude: [/var/log/pods/*/{{ include "otel-collector.daemonsetContainerName" . }}/*.log]
         # Checkpointed, so a restart resumes at the offset it stopped at.
         storage: file_storage/filelog
         # First run only -- the checkpoint decides every later start. A fresh

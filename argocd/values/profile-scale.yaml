@@ -12,9 +12,14 @@ resources:
     cpu: "2"
     memory: 2Gi
 
+# Pressure stays on (the chart default): this tier carries a broker, so the
+# composite's kafka_lag term measures the real backlog the cpu trigger misses on an
+# I/O-bound loader. The ceiling is a DIVISOR of defaultTopic.partitions (12) -- at 10
+# replicas two consumers hold 2 partitions and eight hold 1, and the busy pair sets
+# the group's lag while the rest idle at half load.
 keda:
   minReplicaCount: 2
-  maxReplicaCount: 10
+  maxReplicaCount: 12
   pressure:
     targetValue: 70
 
@@ -51,12 +56,10 @@ kafka:
   provider: strimzi
   replicas: 3
   bootstrapServers: "dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092"
-  # Partitions cap consumer parallelism -- a group assigns at most one consumer
-  # per partition, so a loader replica past this count joins and idles.
-  # Sized from the KEDA ceiling of 10, rounded up to divide by 2/3/4/6.
-  # Raise only: Kafka cannot shrink a topic and KIP-694 is unadopted.
-  defaultTopic:
-    partitions: 12
+  # Partitions are derived in the kafka chart (kafka.sizing) from the broker
+  # count, the KEDA consumer ceiling and the per-partition throughput cap, and
+  # feed the broker's num.partitions and the landing topic alike -- so there is
+  # no literal here to drift from the one the broker uses.
 
 # Observability collection -- full set. Container-level kubelet series scale with
 # the node count here; measure before widening metricGroups.
@@ -77,6 +80,8 @@ deployRepo:
     - dfe-engine
     - dfe-loader
     - dfe-receiver
+    - dfe-transform-elastic
+    - dfe-transform-vrl
     - dfe-ui
     - hyperdx
 # END seeded apps

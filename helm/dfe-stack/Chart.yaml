@@ -12,17 +12,18 @@ version: 0.1.0
 # appVersion == versions.yaml `current` (the pin SSoT). Image pins are NOT
 # duplicated here: each component chart's appVersion carries its image tag and
 # is drift-checked against versions.yaml by scripts/check_versions_drift.py.
-appVersion: "2.2.0-rc.12"
+appVersion: "2.2.0-rc.14"
 
 # The dependency set mirrors the SLIM profile's chart set as composed by
 # argocd/appsets/*.yaml (layer2-platform wave 2, layer2-data waves 4-6,
 # layer2-apps wave 7). Helm has no sync waves; install ordering inside one
-# release is kind-sorted, and the dfe-schema Job + the apps retry their
-# backing-service connections, which is what the waves ordered.
+# release is kind-sorted, and dfe-engine's schema bootstrap + the apps retry
+# their backing-service connections, which is what the waves ordered.
 #
 # Deliberately NOT dependencies (they are not in a slim deployment either):
-#   - dfe-archiver / dfe-fetcher / dfe-transform-* / culvert -- per-source or
-#     opt-in apps; the deploy repo enables them (appsets/layer-scale.yaml).
+#   - dfe-archiver / dfe-fetcher / dfe-transform-* / culvert (helm/edge/culvert)
+#     -- per-source or opt-in apps; the deploy repo enables them
+#     (appsets/layer-scale.yaml).
 #   - argocd / keda / metrics-server / reloader / external-dns / the operators
 #     -- cluster addons the bootstrap or layer1-addons installs; the trial
 #     needs only the prerequisites named in README.md.
@@ -37,7 +38,7 @@ dependencies:
   # ClusterIP + port-forward instead (NOTES.txt). Flip on for a real edge.
   - name: envoy-gateway-config
     version: "0.2.0"
-    repository: "file://../charts/envoy-gateway-config"
+    repository: "file://../edge/gateway"
     condition: envoy-gateway-config.enabled
   # --- data substrate (layer2-data, waves 4-6) ------------------------------
   - name: cnpg-cluster
@@ -62,10 +63,6 @@ dependencies:
     version: "0.1.2"
     repository: "file://../charts/kafbat"
     condition: kafbat.enabled
-  - name: dfe-schema
-    version: "0.1.0"
-    repository: "file://../charts/dfe-schema"
-    condition: dfe-schema.enabled
   - name: otel-collector
     version: "0.1.0"
     repository: "file://../charts/otel-collector"

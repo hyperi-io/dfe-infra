@@ -132,6 +132,20 @@ creds_block() {
     || printf 'Run `python3 scripts/dfe-ops creds` for the fetch commands.\n'
 }
 
+# Which login Argo CD offers: the deployment's IdP, or only its local admin.
+argocd_block() {
+  # shellcheck disable=SC2016
+  python3 "${REPO_ROOT}/bootstrap/argocd_login.py" summary 2>/dev/null \
+    || printf -- '- Argo CD login: run `python3 bootstrap/argocd_login.py summary` to see it.\n'
+}
+
+# Whether OTLP ingest is reachable from outside the cluster, and the token it needs (#236).
+otel_ingress_block() {
+  # shellcheck disable=SC2016
+  python3 "${REPO_ROOT}/scripts/dfe-ops" otel-ingress 2>/dev/null \
+    || printf 'Run `python3 scripts/dfe-ops otel-ingress` to see whether OTLP is exposed.\n'
+}
+
 # Which CA signed the edge, and whether the root survives a rebuild (#238).
 ca_block() {
   # shellcheck disable=SC2016
@@ -158,6 +172,15 @@ $(endpoint_rows)
 An "internal" UI is not exposed; reach it with
 \`kubectl -n <ns> port-forward svc/<service> <localport>:<port>\`.
 
+## OTLP ingress
+
+\`\`\`
+$(otel_ingress_block)
+\`\`\`
+
+Off unless the deployment sets \`otel.ingress.enabled\` in its deploy repo's
+\`infra/common.yaml\`. The stack's own telemetry never needs it.
+
 ## How to log in + get credentials
 
 - **OIDC configured:** log in with your IdP; RBAC role (ro/rw/admin) comes from
@@ -173,6 +196,8 @@ Secret or \`.env\` key and never delete it, because the engine reasserts that va
 on every boot. The break-glass plaintext MAY be deleted once you have recorded it
 offline: the engine hashed it into the deploy repo on first boot and reconciles
 the account from that hash.
+
+$(argocd_block)
 
 ## Trusting the DFE certificate
 
@@ -208,7 +233,7 @@ kubectl -n ${NS} get secret dfe-engine-seed-accounts -o jsonpath='{.data.seed-ac
 ## Smoke check
 
 \`\`\`sh
-curl -fsS https://dfe.${DOMAIN}/api/v1/system/health   # engine health
+curl -fsS -o /dev/null https://dfe.${DOMAIN}/openapi.json   # the engine answers through the gateway
 kubectl -n ${NS} get pods                              # everything Running
 \`\`\`
 

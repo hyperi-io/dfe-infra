@@ -4,17 +4,32 @@
 # glauth config-backend schema: users carry a primarygroup (and optional
 # othergroups) by gidNumber; groups carry a gidNumber, and includegroups nests
 # one inside another. `dfe-ops idp deploy` appends the dex bind service account
-# and substitutes {{DFE_FIXTURE_PASS_SHA256}} with the sha256 of the password it
+# and replaces every passsha256 placeholder with the sha256 of the password it
 # generates, so no credential is ever committed here.
 #
 # The set is deliberately WIDER than a happy-path login: a user with no mapped
-# group (dfe-nobody), a user in two groups (dfe-multi-viewer), and a nested
-# group (dfe-nested-child includes dfe-nested-parent) each exist so a group ->
-# role mapping can be proven to resolve exactly one way and not another.
+# group (dfe-nobody), a user in two groups (dfe-test), a user whose one group
+# spans two orgs (dfe-multi-viewer), an org-scoped user (dfe-test-org-viewer)
+# and a nested group (dfe-nested-child includes dfe-nested-parent) each exist so
+# a group -> role mapping can be proven to resolve exactly one way and not
+# another.
 #
-# Pass a different file with --users-file to test against another directory
-# shape. Group NAMES are the contract with the engine's group -> role files;
-# uid/gid numbers are internal to glauth.
+# Group NAMES are the contract with the engine's group -> role files, which ship
+# beside this one as tester-idp-groups.toml and reach the engine through
+# `dfe-ops idp wire-engine`. Every user here is a row in
+# tests/e2e-ui/specs/engine/oidc-rba.spec.ts. Pass a different file with
+# --users-file to test against another directory shape; uid/gid numbers are
+# internal to glauth.
+
+# Two groups at once -- proves a multi-group claim resolves to the union of the
+# roles, not to whichever group the directory happened to list first.
+[[users]]
+  name = "dfe-test"
+  uidnumber = 6000
+  primarygroup = 5000
+  othergroups = [5005]
+  mail = "dfe-test@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
 
 [[users]]
   name = "dfe-admin"
@@ -23,11 +38,48 @@
   mail = "dfe-admin@dfe.test"
   passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
 
+# Org-scoped: its one group binds org_viewer at test_org only.
+[[users]]
+  name = "dfe-test-org-viewer"
+  uidnumber = 6002
+  primarygroup = 5007
+  mail = "dfe-test-org-viewer@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+# Authenticates but maps to no role: the authn-succeeds-authz-denies case.
+[[users]]
+  name = "dfe-nobody"
+  uidnumber = 6003
+  primarygroup = 5999
+  mail = "dfe-nobody@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[users]]
+  name = "dfe-infra-admin"
+  uidnumber = 6004
+  primarygroup = 5001
+  mail = "dfe-infra-admin@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[users]]
+  name = "dfe-infra-viewer"
+  uidnumber = 6005
+  primarygroup = 5002
+  mail = "dfe-infra-viewer@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
 [[users]]
   name = "dfe-analyst"
   uidnumber = 6006
   primarygroup = 5003
   mail = "dfe-analyst@dfe.test"
+  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
+
+[[users]]
+  name = "dfe-analyst-viewer"
+  uidnumber = 6007
+  primarygroup = 5004
+  mail = "dfe-analyst-viewer@dfe.test"
   passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
 
 [[users]]
@@ -44,22 +96,13 @@
   mail = "dfe-operator@dfe.test"
   passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
 
-# Two groups at once -- proves a multi-group claim resolves to the union of the
-# roles, not to whichever group the directory happened to list first.
+# One group carrying TWO org_ids at system scope -- proves the org union, and
+# probes whether an org role held at system scope over-grants across orgs.
 [[users]]
   name = "dfe-multi-viewer"
   uidnumber = 6010
-  primarygroup = 5005
-  othergroups = [5003]
+  primarygroup = 5008
   mail = "dfe-multi-viewer@dfe.test"
-  passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
-
-# Authenticates but maps to no role: the authn-succeeds-authz-denies case.
-[[users]]
-  name = "dfe-nobody"
-  uidnumber = 6003
-  primarygroup = 5999
-  mail = "dfe-nobody@dfe.test"
   passsha256 = "{{DFE_FIXTURE_PASS_SHA256}}"
 
 [[users]]
@@ -74,8 +117,20 @@
   gidnumber = 5000
 
 [[groups]]
+  name = "dfe-infra"
+  gidnumber = 5001
+
+[[groups]]
+  name = "dfe-infra-viewers"
+  gidnumber = 5002
+
+[[groups]]
   name = "dfe-analysts"
   gidnumber = 5003
+
+[[groups]]
+  name = "dfe-analyst-viewers"
+  gidnumber = 5004
 
 [[groups]]
   name = "dfe-viewers"
@@ -84,6 +139,14 @@
 [[groups]]
   name = "dfe-operators"
   gidnumber = 5006
+
+[[groups]]
+  name = "dfe-test-org-viewers"
+  gidnumber = 5007
+
+[[groups]]
+  name = "dfe-multi-viewers"
+  gidnumber = 5008
 
 [[groups]]
   name = "dfe-nested-parent"

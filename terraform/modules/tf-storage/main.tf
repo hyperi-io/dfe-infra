@@ -18,7 +18,7 @@ locals {
       server = ""
       path   = ""
     }
-    az = {
+    azure = {
       type   = "azurefiles"
       server = ""
       path   = ""

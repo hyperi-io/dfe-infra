@@ -71,9 +71,9 @@ dfe-receiver:
   resources: *meshResources
   keda: *meshKeda
   receiver:
-    # Source: argocd/values/profile-mesh.yaml `receiver.buffer` -- with no
-    # broker downstream this is the only slack in the chain, so 3 GiB of the
-    # pod's 4Gi plus 20 GiB of spool.
+    # Source: argocd/values/profile-mesh.yaml `receiver.buffer` -- read only
+    # with acknowledgements off, when it is the only slack in the chain: 3 GiB
+    # of the pod's 4Gi plus 20 GiB of spool.
     buffer:
       memoryLimit: 3221225472
       spillover:
@@ -94,10 +94,6 @@ dfe-hyperdx:
   clickhouse:
     host: "dfe-clickhouse-clickhouse-headless"
   resources: *meshResources
-
-dfe-schema:
-  clickhouse:
-    host: "dfe-clickhouse-clickhouse-headless"
 
 otel-collector:
   clickhouse:

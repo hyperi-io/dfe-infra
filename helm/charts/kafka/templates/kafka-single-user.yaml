@@ -34,7 +34,8 @@ spec:
       data:
         username: {{ .Values.user.name | quote }}
         password: "{{ `{{ .password }}` }}"
-        sasl.mechanism: "SCRAM-SHA-512"
+        # Derived from the provider table, never hand-set (dfe-infra#10).
+        sasl.mechanism: {{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) | quote }}
   dataFrom:
     - sourceRef:
         generatorRef:

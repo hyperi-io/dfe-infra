@@ -1,0 +1,34 @@
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" . "key" "otel") }}
+# Platform OTLP/HTTP ingest on the standard name otel.{domain}. Never edge-OIDC'd
+# (senders hold no browser session): the collector receiver it targets refuses
+# any request without the deployment's bearer token.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Values.routes.otel.routeName }}
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" . "key" "otel") }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    {{- include "envoy-gateway-config.dnsMarker" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+      # See httproute-argocd.yaml: pinned off the plaintext :80 listener.
+      sectionName: https
+  hostnames:
+    - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "otel") }}.{{ .Values.domain }}"
+  rules:
+    -
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" (include "envoy-gateway-config.edgeHsts" (dict "ctx" .)) "indent" 6) }}
+      backendRefs:
+        - name: {{ .Values.routes.otel.backendService }}
+          port: {{ .Values.otel.ingress.port }}
+          group: ""
+          kind: Service
+          weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "otel" "indent" 4) }}
+{{- end }}

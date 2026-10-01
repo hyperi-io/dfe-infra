@@ -13,10 +13,32 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-fetcher (drift-checked).
-  digest: "sha256:18bef367f23e1602018ffc615c32455a792b70f70e02362eea7b39e0e840ee62"
+  digest: "sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
+
+# dfe-engine applies every ClickHouse object and every bootstrap Kafka topic at
+# its own startup and gates /readyz on the result, so an init container waits on
+# the engine Service before this pod starts (dfe-common.waitForEngine). Started
+# first, this app finds no table and no topic.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty -> this release's own namespace.
+  namespace: ""
+  port: 8000
+  # On expiry the init container exits non-zero and the pod sits in
+  # Init:CrashLoopBackOff rather than starting against an absent schema.
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 kafka:
   # "disabled" is the DEPLOYMENT-WIDE transport dial, set once in the profile
@@ -26,26 +48,29 @@ kafka:
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
-  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
-  # confluent-cloud | msk_iam | plaintext). Empty = unset. When set, scalo's
-  # KafkaConfig DERIVES security_protocol + sasl_mechanism from it.
-  provider: ""
+  # Wire protocol for the broker's listener (PLAINTEXT | SASL_PLAINTEXT | SSL |
+  # SASL_SSL), set beside bootstrapServers. Only an SSL value is rendered: it
+  # turns the app's TLS on, and anything else leaves the app's own setting.
+  securityProtocol: ""
 
-# API credentials are injected via External Secrets Operator
-# ESO creates dfe-fetcher-api-creds from vault/cloud secret store. The refs are
-# optional in the deployment: an instance whose credentials are vault:/env:
-# references inside its own stanza has no such Secret.
-apiCredentials:
-  secretName: dfe-fetcher-api-creds
-  apiKeyKey: api-key
-  apiSecretKey: api-secret
+# Credentials for the upstream this instance polls. The source's fetcher stanza
+# names them as `env:NAME` references (dfe-fetcher src/config/resolve.rs), so
+# the Secret's KEYS are the variable names the stanza asks for and no value ever
+# reaches the engine-authored overlay. One Secret serves every instance: a key is
+# only read by the instance whose stanza names it. Optional, so a deployment that
+# fetches nothing needing credentials creates nothing.
+credentials:
+  secretName: dfe-fetcher-credentials
 
-# Cursor store. The fetcher records the window each connection resumed from at
-# cursor.file_path (/var/lib/dfe-fetcher/cursors.json by default) and the rootfs
-# is read-only, so that directory is a volume either way. Default emptyDir: the
+# Cursor store. The fetcher records the window each connection resumed from in
+# one file per connection, <instance_id>.<connection>.cursor.json, under
+# cursor.directory (the configmap sets /var/lib/dfe-fetcher), and the rootfs is
+# read-only, so that directory is a volume either way. Default emptyDir: the
 # slim tier is not guaranteed a StorageClass, and a lost cursor re-fetches the
 # default window rather than losing data. Turn this on where a re-fetch is
-# expensive (rate-limited or metered upstreams).
+# expensive (rate-limited or metered upstreams). Each lost cursor counts in
+# cursor_cold_start_total{source}: alert when it rises for a source that has
+# run before, because that source restarted from its default window.
 persistence:
   enabled: false
   size: 1Gi
@@ -53,8 +78,8 @@ persistence:
 
 # The DFE DLQ standard: kafka is the DLQ backend (a file DLQ write is an EROFS
 # no-op on the read-only rootfs) and every write lands on the app's pre-created
-# topic -- the kafka chart's kafka.dlqTopics list. Change the topic only
-# together with that list, or the app dead-letters into a topic nothing created.
+# topic -- the dfe-schemas topic set dfe-engine creates. Change the topic only
+# together with that set, or the app dead-letters into a topic nothing created.
 dlq:
   topic: dfe_fetcher_dlq
   mode: kafka_only
@@ -77,7 +102,18 @@ dlq:
 #                      (apps.yaml source_binding)
 #   otelServiceName    below
 #   component          instance-unique, to keep the objects and telemetry apart
+#
+# config.ingest.enabled is off in the app's own defaults and is the dial that
+# declares the container-extractor port 8080 on the pod here, so turning it on
+# also takes the instance out of idle whether or not anything ever posts to it.
 config: {}
+
+# Environment keys this deployment sets on top of the derived ones, as
+# {NAME: value}. dfe-engine writes them here from the overlay's own extraEnv
+# block, for a setting the app carries and this chart does not model. Rendered
+# first in the container's env, so a key the chart also sets is overridden by
+# the chart's own value below it.
+extraEnv: {}
 
 # OTel service.name for this instance. Empty falls back to the app name, which
 # leaves two instances of one app indistinguishable in the otel tables.
@@ -97,6 +133,14 @@ resources:
 serviceAccount:
   create: true
   annotations: {}   # workload identity annotations injected here
+  # Mount the service-account token. Turn on only for Vault's Kubernetes auth method, which logs in with it: VAULT_K8S_ROLE (or OPENBAO_K8S_ROLE / BAO_K8S_ROLE) or secrets.openbao.auth.method kubernetes in the app config.
+  mountToken: false
+
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
 
 # KEDA -- fetchers are DIFFERENT from the pipeline apps. A fetcher app is 1:1 with a
 # DFE source's fetcher CONFIG (the engine writes the overlay; Argo deploys it per

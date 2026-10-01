@@ -10,20 +10,27 @@ cloud: local
 tenantIsolation:
   enabled: true
 
+# The dfe-ui Playwright suite's posture: the engine runs as DFE_ENV=test with its
+# unauthenticated /api/e2e routes mounted, whose seed scripts wipe and reseed every
+# account and app instance. For a throwaway deployment under test, never one anyone
+# keeps. The render fails unless `env` is a dev posture. The appset passes the cluster
+# secret's dfe.hyperi.io/e2e_server annotation, which `dfe-ops stack-deploy --e2e` sets.
+e2eServer: false
+
 image:
   repository: ""     # set from global.registry
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:96b1637a305791f70262474f4a6961c42f783c4f53b5653046e38392760c3178"
+  digest: "sha256:1a68bd0c0581f298a48cb96ebf5a21814bea24966c92778daac6d4d4596de248"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
 
 # The certified stack version this deployment runs. The appset passes the cluster
-# secret's dfe.hyperi.io/target_revision annotation, the same string Argo pins the
-# base charts at, so the engine reports the stack the cluster is actually on when
-# the deploy repo's pins.yaml names no base. Empty = report nothing rather than
+# secret's dfe.hyperi.io/stack_version annotation, written by dfe-ops from
+# --stack, so the engine reports the stack the cluster was deployed at when the
+# deploy repo's pins.yaml names no base. Empty = report nothing rather than
 # guess.
 stackVersion: ""
 
@@ -38,27 +45,36 @@ profile: ""
 # names it. Helm cannot read a sibling chart's appVersion, so this is a second
 # copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
 # stops the two diverging.
-uiVersion: "v1.5.1"
+uiVersion: "v1.7.5"
 
-# The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set;
-# this chart has no broker settings of its own, and dfe-common.transport reads a
-# missing map as the bus default.
+# The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
+# and dfe-common.transport reads a missing map as the bus default. On the bus
+# the engine creates each source's _land/_load topics, so it needs the broker
+# address and the same SASL credential the data-plane apps use.
 kafka:
   mode: ""
+  bootstrapServers: ""
+  saslSecretName: dfe-kafka-user
+  # The listener's wire protocol, the dial every app chart reads. Empty takes
+  # SASL_PLAINTEXT, the in-cluster brokers' plain listener.
+  securityProtocol: ""
+  provider: ""
+  # The max.message.bytes every topic the engine creates takes, in bytes -- the
+  # kafka chart's own key for the same number. A managed broker sets it from the
+  # message size the broker was built with (layer2-apps.yaml); empty leaves the
+  # engine's own default.
+  messageMaxBytes: ""
 
 service:
   type: ClusterIP
   port: 8000
 
-# The app manifest the management API reflects, sourced from apps.yaml at the
-# repo root. Empty falls back to the snapshot bundled in the engine image, which
-# pins whatever that release shipped with.
-appCatalogue: {}
-
-# Authored files another repo ships and this engine serves: the reference
-# transform pipelines the library and the console's copy-paste view show, and the
-# source catalogue a transform ships. Each entry becomes ONE init container that
-# fills a shared emptyDir before the engine starts.
+# Files this engine serves that another image owns: the reference transform
+# pipelines the library and the console's copy-paste view show, the source
+# catalogue a transform ships, and each app's own container contract -- the
+# config schema and capability catalogue the settings API reads. Each entry
+# becomes ONE init container that fills a shared emptyDir before the engine
+# starts.
 #
 # NOT a ConfigMap and not a values blob: the elastic catalogue alone is 344 KB, so
 # either form re-serialises it into etcd on every Argo sync.
@@ -67,20 +83,31 @@ appCatalogue: {}
 #   name   the versions.yaml content pin this materialises, and the container name
 #   kind   the vehicle -- `image` copies files out of a pinned app image the
 #          deployment already has pull rights to; `asset` downloads a release
-#          asset over the engine image's python
-#   ref    the pinned image (tag@sha256) for `image`, the asset URL for `asset`
+#          asset over the engine image's python; `emit` runs the pinned app image
+#          so the app writes its own contract (role `contract`) or its own source
+#          catalogue (role `catalogue`), neither of which the image carries as a
+#          file
+#   ref    the pinned image (tag@sha256) for `image` and `emit`, the asset URL for
+#          `asset`
 #   role   where the files land, and so what reads them: `library` puts them under
 #          <mountPath>/library/<kind>, `catalogue` under <mountPath>/catalogue and
-#          sets DFE_SOURCE_CATALOGUE_FILE. Vehicle and role are independent.
+#          sets DFE_SOURCE_CATALOGUE_FILE, `contract` under
+#          <mountPath>/contract/<app> where DFE_APP_CONTRACT_DIR points. Vehicle
+#          and role are independent.
+#   app    the service the entry speaks for: the subdirectory it writes, and the
+#          command an `emit` entry runs. Required for `emit`.
 #   files  [{from, to}] -- `from` is a path inside the image or a name inside the
-#          asset, `to` is relative to the role's root
+#          asset, `to` is relative to the role's root. Absent for `emit`, where
+#          the app decides what it writes.
 #
-# EMPTY, and the pins in versions.yaml say why: neither transform release carries
-# its files as an asset, and neither Dockerfile copies them into the image, so
-# there is nothing to fetch yet. Each app that ships its files makes its entry
-# live -- the mechanism needs no change. The live block for the two content pins:
+# The emit entries carry a second copy of the versions.yaml apps + digests pins,
+# so check_versions_drift.py reads both halves of each ref and --fix moves them
+# with the SSoT. A deployment mirroring images elsewhere overrides the ref.
 #
-#   entries:
+# The two LIBRARY pins are still empty, and the pins in versions.yaml say why:
+# neither transform release carries its files as an asset, and neither Dockerfile
+# copies them into the image, so there is nothing to fetch yet. The live block:
+#
 #     - name: dfe-transform-vector-templates
 #       kind: image
 #       ref: "ghcr.io/hyperi-io/dfe-transform-vector:<tag>@<digest>"
@@ -100,7 +127,58 @@ content:
   # The catalogue's filename is the engine's contract, not a deployment choice:
   # the app manifest binds a catalogue by the name its app ships it under.
   catalogueFile: sources.yaml
-  entries: []
+  entries:
+    - name: dfe-receiver-contract
+      kind: emit
+      role: contract
+      app: dfe-receiver
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.41@sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
+    - name: dfe-loader-contract
+      kind: emit
+      role: contract
+      app: dfe-loader
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.45@sha256:26e3e438cafa1b3b3305299ce07d6040abbb829b123575f13e26ccb5463fd9a2"
+    - name: dfe-archiver-contract
+      kind: emit
+      role: contract
+      app: dfe-archiver
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.27@sha256:1ccaa927a5a2398c3448b04ed8c6a608484218a4238ed3980fda365d7463f698"
+    - name: dfe-fetcher-contract
+      kind: emit
+      role: contract
+      app: dfe-fetcher
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.31@sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
+    - name: dfe-transform-vrl-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vrl
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.29@sha256:75d97417d09456fabc0931202cbcb7a13e015b1eae46ccde67b920e8a2514a2c"
+    - name: dfe-transform-vector-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vector
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.44@sha256:f0e3ccfe6c4dac66e5256da1272c4c0dcfee97ef1b1dc2388fe9e1a4e299d465"
+    - name: dfe-transform-elastic-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
+    # The source catalogue the settings API offers, printed by the pinned image
+    # itself (`dfe-transform-elastic emit-catalogue`, dfe-transform-elastic#92)
+    # so the deployment needs no access to the app's repository. An image that
+    # predates the subcommand writes nothing, and the engine's catalogue API
+    # then reports the file missing rather than the pod failing to start.
+    - name: dfe-transform-elastic-catalogue
+      kind: emit
+      role: catalogue
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
+
+# Where the engine reads each app's live metric manifest, {service} being the app's
+# name. Each app chart publishes its metrics port on a Service of that name in this
+# namespace; an app in another namespace needs the full Service address here. Empty
+# reads none.
+metricsManifestUrl: "http://{service}:9090/metrics/manifest"
 
 config:
   mountPath: /config
@@ -123,20 +201,41 @@ reload:
 
 clickhouse:
   host: ""
+  # The plaintext HTTP port, dialled only while tls.enabled is off.
   port: 8123
   database: dfe
+  # HTTPS to ClickHouse for the engine, the hunt runner and the keda shim alike.
+  # argocd/values/common.yaml turns it on for every deployment it builds and the
+  # clickhouse-cluster chart serves it from the same block; off here keeps a
+  # render with no CA (the dfe-stack trial) on plaintext. An external server sets
+  # the same keys to reach its own endpoint.
+  tls:
+    enabled: false
+    port: 8443
+    # false only for a server whose certificate cannot be verified. Rendered
+    # only with tls.enabled, because a plaintext port presents no certificate.
+    verify: true
+    # Read for one thing: whether the in-cluster server has a CA and so serves
+    # TLS at all (clickhouse-cluster's rule). The appsets set internalCA.present
+    # from the edge label; an explicit issuerRef.name counts on its own, and an
+    # external server (clickhouse.mode external) needs neither.
+    issuerRef:
+      name: ""
+    internalCA:
+      present: false
+    # The CA that signed the server certificate, from a Secret or a ConfigMap in
+    # this namespace, under dataKey. Both empty trusts the image's system roots,
+    # which is right for a server with a public certificate.
+    ca:
+      secretName: ""
+      configMapName: ""
+      dataKey: ca.crt
 
 # Days every time-series table DFE deploys keeps rows, the OTel tables included.
 # 0 disables the default TTL.
 # A source or a dfe-schemas definition that declares its own TTL overrides it.
 retention:
   defaultTtlDays: 90
-
-postgresql:
-  host: ""
-  port: 5432
-  database: dfe
-  secretName: dfe-pg-app
 
 otel:
   endpoint: ""
@@ -204,6 +303,21 @@ auth:
   # A forged header is a full identity when this is wrong, so it stays false
   # until a deployment states otherwise.
   trustProxyHeaders: false
+  # The OIDC provider a gateway login (X-Oidc-*) is stamped with. Its asserted
+  # groups link only to groups linked to this provider, so group files that name
+  # another provider (dex, entra) need it here. Empty leaves the engine's `oidc`.
+  proxyProvider: ""
+  # Days an API key created without an expiry lasts; 0 creates one that never
+  # expires. Empty leaves the engine's 90.
+  apiKeyDefaultTtlDays: ""
+  # Back-off on failed password sign-ins, per username and per client address.
+  # The count lives in each engine pod and resets on restart. Each empty key
+  # leaves the engine's default: on, 5, 20, 900.
+  loginThrottle:
+    enabled: ""
+    usernameFailures: ""
+    clientFailures: ""
+    maxDelaySeconds: ""
 
   # THE admin credential. ESO's Password generator mints it ONCE
   # (refreshPolicy CreatedOnce) into this Secret, the engine reads it from there
@@ -245,8 +359,8 @@ auth:
 # of these: it is minted under auth.adminSecretName above (#233).
 #
 # DEFAULT-OFF: empty seedAccounts => no Secret, no env, a vanilla deploy is
-# unaffected. This is a PRODUCT; devex is one deployment, so the default stays
-# inert.
+# unaffected. This is a PRODUCT, and any one deployment's logins are that
+# deployment's own, so the default stays inert.
 #
 # Real values NEVER live here (this chart ships publicly). Set them in the
 # gitignored .env / the deploy-repo overlay. Each seed account is
@@ -266,7 +380,7 @@ seedAuth:
   # Set anywhere -> a render-time failure naming auth.adminPassword (#233).
   adminPassword: ""
 
-# OIDC provider credentials — mounted as env vars from K8s Secrets.
+# OIDC provider credentials -- mounted as env vars from K8s Secrets.
 # dfe-engine is the SSoT: it writes provider secrets to Vault and renders this
 # oidc config into the gitops repo; ESO materialises the K8s Secrets. Deploy is
 # local-auth-only; external OIDC is added later via dfe-engine + gitops.
@@ -292,13 +406,32 @@ oidc:
 # image's public roots first, so a private-CA deployment can still reach a
 # hosted IdP -- SSL_CERT_FILE replaces the trust store rather than adding to it.
 # Peer addresses or CIDRs whose X-Forwarded-Proto and X-Forwarded-For the engine
-# believes, or "*" for any peer. The cluster's pod CIDR is the usual value: the
-# TLS-terminating gateway is the peer, and the engine builds its OIDC redirect
-# URIs from the scheme this decides. Empty leaves the engine's loopback-only
-# default, which makes every callback URI http:// -- Okta and Entra refuse to
-# register those, so external OIDC cannot complete.
+# believes: list every proxy hop in front of it, the gateway and dfe-ui pods both.
+# The engine builds its OIDC redirect URIs from the scheme this decides, and
+# audits (and throttles sign-ins by) the right-most forwarded address no listed
+# hop added. Empty takes networkModel.podCIDR below. With both empty the engine
+# keeps its loopback-only default: every callback URI is http://, which Okta and
+# Entra refuse to register, and every request audits as the gateway's address.
+# Never "*": it audits the left-most forwarded address, which the caller wrote.
 api:
   forwardedAllowIps: ""
+  # Minutes an issued API token stays valid. Empty leaves the engine's own
+  # 60-minute default; a deployment that wants shorter sessions sets it here.
+  jwtExpireMinutes: ""
+  # Longest a session lasts from its sign-in, in minutes; a refresh never extends
+  # a token past it. Empty leaves the engine's 720.
+  maxSessionMinutes: ""
+  # Swagger UI at /docs and ReDoc at /redoc: "true", "false", or empty to serve
+  # them on a dev posture only. Set it in the deploy repo's infra/common.yaml, not
+  # here: the gateway routes the two paths and the links page lists them from the
+  # same key. /openapi.json is served either way.
+  docsEnabled: ""
+
+# Read-only here, and owned by argocd/values/common.yaml: the range the CNI hands
+# pods, where the gateway and dfe-ui run. It is api.forwardedAllowIps's default, so
+# a deployment on another pod range changes it there, once, for every chart.
+networkModel:
+  podCIDR: ""
 
 authConfig:
   providersConfigMap: ""
@@ -366,7 +499,8 @@ huntRunner:
     targetBacklog: 10       # due-hunts per pod (AverageValue -> ceil(due / targetBacklog))
     cooldownPeriod: 300
     pollingInterval: 30
-    shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # Default: dfe-keda-shim in this release's namespace (dfe-common.kedaShimAddress).
+    shimAddress: ""
   # How hunt and rule YAML REACHES the runner. The runner reads them off disk
   # (dfe_engine.hunt_runner.spec_loader on every reload tick) and the engine
   # governs them in the deploy repo, so without this the runner's directories are
@@ -423,6 +557,28 @@ huntRunner:
     limits:
       cpu: 500m
       memory: 512Mi
+
+# The hunt-runner pod's init container, read by name by dfe-common.waitForEngine.
+# The engine pod itself does not wait. The runner exits without the coordination
+# tables the engine's schema phase creates, and it syncs in the engine's own wave,
+# so this is the only thing holding it back. port == service.port.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty -> this release's own namespace.
+  namespace: ""
+  port: 8000
+  # On expiry the init container exits non-zero and the pod sits in
+  # Init:CrashLoopBackOff rather than starting against an absent schema.
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

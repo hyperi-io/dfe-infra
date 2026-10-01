@@ -56,6 +56,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import string
 import subprocess
@@ -65,10 +66,12 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import private_file
 from profiles import MODES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_USERS_FILE = REPO_ROOT / "bootstrap" / "fixtures" / "tester-idp-users.toml"
+DEFAULT_GROUPS_FILE = REPO_ROOT / "bootstrap" / "fixtures" / "tester-idp-groups.toml"
 
 # --- pins --------------------------------------------------------------------
 # The tester IdP is a TEST FIXTURE, not a stack component, so its pins live here
@@ -115,6 +118,12 @@ SEARCH_USER = "search"
 SEARCH_UID = 6999
 SEARCH_GID = 5998
 SEARCH_GROUP = "svcaccts"
+
+# The ConfigMap name the engine chart's authConfig.groupsConfigMap is pointed at.
+DEFAULT_GROUPS_CONFIGMAP = "dfe-auth-groups"
+# The engine stores a group as <name>.yaml, so its name must be a safe file stem.
+_ENGINE_GROUP_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}\Z")
+_ORG_SCOPE_PREFIX = "org:"
 
 _SECRET_ALPHABET = string.ascii_letters + string.digits
 
@@ -214,6 +223,53 @@ def validate_users_toml(users_toml: str) -> tuple[list[str], list[str]]:
         if missing:
             raise ValueError(f"user {user['name']!r} references undeclared gid(s) {sorted(missing)}")
     return users, groups
+
+
+# --- render: the engine's group -> role files --------------------------------
+def render_engine_groups(groups_toml: str, provider: str = DEFAULT_PROVIDER) -> dict[str, str]:
+    """One engine group file per [[groups]] entry, keyed `<name>.yaml`.
+
+    The engine links a groups-claim value to a group only through the group's
+    `source_id`, and only for a login through the provider in its
+    `source_provider`; a group's own name links nothing. So each file carries
+    `source_provider` (the name `wire-engine` registers the IdP under) and
+    `source_id` (the entry's `source_id`, else its name, which is what this IdP
+    puts in the claim). A group the IdP emits with no file here grants nothing.
+
+    A malformed entry is refused before anything reaches the cluster, with the
+    same name and scope rules the engine's group model applies. Each value is
+    JSON, which the engine's YAML loader reads unchanged.
+    """
+    if not provider:
+        raise ValueError("a provider name is required to link the groups")
+    entries = tomllib.loads(groups_toml).get("groups", [])
+    if not entries:
+        raise ValueError("groups file declares no [[groups]]")
+    files: dict[str, str] = {}
+    for entry in entries:
+        name = entry.get("name", "")
+        if not isinstance(name, str) or not _ENGINE_GROUP_NAME.match(name):
+            raise ValueError(f"{name!r} is not a valid engine group name")
+        key = f"{name}.yaml"
+        if key in files:
+            raise ValueError(f"group {name!r} is declared twice")
+        scope = entry.get("scope", "system")
+        org_scoped = isinstance(scope, str) and scope.startswith(_ORG_SCOPE_PREFIX)
+        if scope != "system" and not (org_scoped and scope[len(_ORG_SCOPE_PREFIX):].strip()):
+            raise ValueError(f"group {name!r}: scope must be 'system' or 'org:<id>', got {scope!r}")
+        source_id = entry.get("source_id", name)
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError(f"group {name!r}: source_id must be a non-empty string")
+        body = {"description": entry.get("description", ""), "scope": scope}
+        for field in ("roles", "org_ids"):
+            values = entry.get(field, [])
+            if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
+                raise ValueError(f"group {name!r}: {field} must be a list of names")
+            body[field] = values
+        body["source_provider"] = provider
+        body["source_id"] = source_id
+        files[key] = json.dumps(body, indent=2) + "\n"
+    return files
 
 
 def render_glauth_manifests(namespace: str, *, image: str = GLAUTH_IMAGE) -> list[dict]:
@@ -529,15 +585,6 @@ def _apply(args: argparse.Namespace, objects: list[dict]) -> None:
     _run([*_kube(args), "apply", "-f", "-"], stdin=doc)
 
 
-def _write_private(path: Path, text: str) -> None:
-    """Write a file only the owner can read, with the mode set BEFORE content."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(text)
-    os.chmod(path, 0o600)
-
-
 # --- deploy ------------------------------------------------------------------
 def cmd_idp_deploy(args: argparse.Namespace) -> int:
     hostname = resolve_hostname(args)
@@ -562,13 +609,13 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
         provider=args.provider,
     )
 
-    secrets_out = Path(args.secrets_out)
-    reused = args.reuse_secrets and secrets_out.is_file()
+    secrets_file = Path(args.secrets_file)
+    reused = args.reuse_secrets and secrets_file.is_file()
     if reused:
         # Adding a redirect URI or a user should not invalidate the credentials
         # every consumer of the fixture already holds.
         prior = {}
-        for line in secrets_out.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in secrets_file.read_text(encoding="utf-8", errors="replace").splitlines():
             if "=" in line and not line.startswith("#"):
                 key, _, value = line.partition("=")
                 prior[key] = value
@@ -579,7 +626,7 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
         ]
         if missing:
             print(
-                f"ERROR: --reuse-secrets but {secrets_out} carries no "
+                f"ERROR: --reuse-secrets but {secrets_file} carries no "
                 f"{', '.join(missing)}; delete it to generate a fresh set",
                 file=sys.stderr,
             )
@@ -618,7 +665,11 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(json.dumps({"dexValues": dex_values, "httpRoute": route}, indent=2))
         print("\n--- glauth.cfg (password hashes redacted) ---", file=sys.stderr)
-        for line in glauth_cfg.splitlines():
+        # By value too: the placeholder is substituted wherever it appears, comments included.
+        redacted = glauth_cfg
+        for secret in (fixture_password, search_password):
+            redacted = redacted.replace(sha256_hex(secret), "<redacted>")
+        for line in redacted.splitlines():
             print(
                 "  passsha256 = \"<redacted>\"" if "passsha256" in line else line, file=sys.stderr
             )
@@ -637,8 +688,8 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
 
     # Written before the first apply: past this line the credentials are live in
     # the cluster, and a helm timeout below exits with no copy of them on disk.
-    _write_private(
-        secrets_out,
+    private_file.write_private(
+        secrets_file,
         "# GENERATED by dfe-ops idp deploy -- mode 0600, never commit.\n"
         f"TESTER_IDP_ISSUER={issuer}\n"
         f"TESTER_IDP_CLIENT_ID={args.client_id}\n"
@@ -701,7 +752,7 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
     for uri in redirect_uris:
         print(f"    {uri}", file=sys.stderr)
     print(
-        f"\n  client secret + user password: {secrets_out} (mode 0600"
+        f"\n  client secret + user password: {secrets_file} (mode 0600"
         f"{', reused' if reused else ', freshly generated'})",
         file=sys.stderr,
     )
@@ -751,20 +802,33 @@ def render_provider_yaml(
 
 
 def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
-    """Hand the IdP's credentials and trust material to a consumer namespace.
+    """Hand the IdP's credentials, trust material and group map to a consumer namespace.
 
-    Three objects the engine chart references by name but does not create: the
-    client-credential Secret, the provider-definition ConfigMap, and the CA
-    bundle its OIDC discovery fetch has to trust. Without the CA the engine's
-    discovery call fails TLS verification against the deployment's own private
-    issuer, which surfaces as a 401 on callback rather than as a trust error.
+    Four objects the engine chart references by name but does not create: the
+    client-credential Secret, the provider-definition ConfigMap, the group ->
+    role ConfigMap, and the CA bundle its OIDC discovery fetch has to trust.
+    Without the CA the engine's discovery call fails TLS verification against
+    the deployment's own private issuer, which surfaces as a 401 on callback
+    rather than as a trust error. Without the group map every fixture group
+    beyond the engine's four defaults resolves to no role.
 
     The chart-values half (auth/oidc/authConfig) stays with the deployment, so
-    this command creates only what carries generated material.
+    this command creates only the objects those values name.
     """
     env_file = Path(args.secrets_file)
     if not env_file.is_file():
         print(f"ERROR: --secrets-file {env_file} not found (run `idp deploy` first)", file=sys.stderr)
+        return 2
+    groups_file = Path(args.groups_file)
+    if not groups_file.is_file():
+        print(f"ERROR: --groups-file {groups_file} not found", file=sys.stderr)
+        return 2
+    try:
+        group_files = render_engine_groups(
+            groups_file.read_text(encoding="utf-8", errors="replace"), args.provider
+        )
+    except (ValueError, tomllib.TOMLDecodeError) as exc:
+        print(f"ERROR: {groups_file} is not a usable group map: {exc}", file=sys.stderr)
         return 2
     env = {}
     for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -810,6 +874,16 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
             },
             "data": {f"{args.provider}.yaml": provider},
         },
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": args.groups_configmap,
+                "namespace": args.namespace,
+                "labels": {"app.kubernetes.io/part-of": "dfe-tester-idp"},
+            },
+            "data": group_files,
+        },
     ]
     if ca:
         objects.append(
@@ -832,7 +906,6 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
     _apply(args, objects)
     print(f"\n=== wired {env['TESTER_IDP_ISSUER']} into namespace {args.namespace} ===", file=sys.stderr)
     print("  Set these on the consumer's chart values to pick them up:", file=sys.stderr)
-    print("    auth.oidcEnabled: true", file=sys.stderr)
     print("    oidc.enabled: true", file=sys.stderr)
     print(f"    oidc.providers[0].secretName: {args.secret_name}", file=sys.stderr)
     print(
@@ -841,6 +914,7 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     print(f"    authConfig.providersConfigMap: {args.providers_configmap}", file=sys.stderr)
+    print(f"    authConfig.groupsConfigMap: {args.groups_configmap}", file=sys.stderr)
     if ca:
         print(f"    authConfig.caBundleConfigMap: {args.ca_configmap}", file=sys.stderr)
     print(f"\n  Login URL: /api/v1/auth/oidc/{args.provider}/login", file=sys.stderr)
@@ -960,7 +1034,7 @@ def add_idp_subparser(sub) -> None:
     dep.add_argument("--users-file", default=str(DEFAULT_USERS_FILE),
                      help="glauth-format TOML directory of users + groups")
     dep.add_argument("--base-dn", default=DEFAULT_BASE_DN, help="LDAP base DN for the directory")
-    dep.add_argument("--secrets-out", default=".tmp/tester-idp.env",
+    dep.add_argument("--secrets-out", dest="secrets_file", default=".tmp/tester-idp.env",
                      help="0600 file the generated client secret + user password are written to")
     dep.add_argument("--reuse-secrets", action="store_true",
                      help="keep the credentials in --secrets-out instead of generating new ones, "
@@ -990,6 +1064,10 @@ def add_idp_subparser(sub) -> None:
     we.add_argument("--secret-name", default="dfe-oidc-dex", help="Secret to create the credentials in")
     we.add_argument("--providers-configmap", default="dfe-oidc-providers",
                     help="ConfigMap to write the provider definition to")
+    we.add_argument("--groups-file", default=str(DEFAULT_GROUPS_FILE),
+                    help="TOML map of the fixture's group names to engine roles, scope and org_ids")
+    we.add_argument("--groups-configmap", default=DEFAULT_GROUPS_CONFIGMAP,
+                    help="ConfigMap to write the engine group files to")
     we.add_argument("--ca-configmap", default="dfe-oidc-ca",
                     help="ConfigMap to write the CA bundle to")
     we.add_argument("--ca-secret", default=None, metavar="NS/NAME",

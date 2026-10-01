@@ -26,6 +26,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
 import access_summary  # noqa: E402
+from acceptance.onboarding import run as onboarding_run  # noqa: E402
 from acceptance.onboarding import wizard  # noqa: E402
 
 
@@ -70,6 +71,29 @@ class TestWhichScreensAreExpected:
 
         assert wizard.unexpected_screens(expected, expected) == ()
 
+    def test_a_seeded_first_user_ends_the_wizard_at_the_organisation(self):
+        expected = wizard.expected_slugs(NEW_RELEASE, pending=("oidc_provider", "organisations"))
+
+        assert expected == (wizard.WELCOME, wizard.ORGANISATION)
+
+    def test_every_step_pending_expects_every_screen(self):
+        assert wizard.expected_slugs(NEW_RELEASE, pending=NEW_RELEASE) == wizard.expected_slugs(NEW_RELEASE)
+
+    def test_a_reset_screen_already_done_is_not_expected_again(self):
+        pending = ("oidc_provider", "organisations", "first_user")
+
+        assert wizard.RESET_BREAK_GLASS not in wizard.expected_slugs(OLD_RELEASE, pending=pending)
+
+    def test_pending_steps_come_off_the_document(self):
+        status = {"initial_setup": {"steps": list(NEW_RELEASE), "pending_steps": ["organisations"]}}
+
+        assert wizard.pending_steps(status) == ("organisations",)
+
+    def test_a_document_without_pending_steps_treats_every_step_as_pending(self):
+        status = {"initial_setup": {"steps": list(NEW_RELEASE), "complete": False}}
+
+        assert wizard.pending_steps(status) == NEW_RELEASE
+
 
 class TestReadingTheEngineContract:
     def test_the_steps_come_off_the_document(self):
@@ -84,6 +108,121 @@ class TestReadingTheEngineContract:
 
     def test_a_finished_deployment_says_so(self):
         assert wizard.setup_complete({"initial_setup": {"steps": [], "complete": True}})
+
+
+class TestHowAFieldIsFound:
+    # The console renders a required field's label with an asterisk beside it and
+    # an optional one with a trailing space, so both forms have to match.
+    def test_a_required_field_is_found_through_its_marker(self):
+        assert onboarding_run._label("Username").match("Username *")
+
+    def test_an_optional_fields_trailing_space_is_tolerated(self):
+        assert onboarding_run._label("Name").match("Name ")
+
+    def test_a_label_with_no_marker_still_matches(self):
+        assert onboarding_run._label("Display Name").match("Display Name")
+
+    def test_a_shorter_label_does_not_match_a_longer_one(self):
+        assert not onboarding_run._label("Name").match("Username *")
+
+    def test_the_source_name_field_is_found_on_either_console(self):
+        # ui v1.7.0 renders "Source Name *"; the rc.13 console renders "Source".
+        pattern = onboarding_run._label(*onboarding_run.SOURCE_NAME_LABELS)
+
+        assert pattern.match("Source Name *")
+        assert pattern.match("Source")
+
+    def test_the_source_name_labels_match_no_neighbouring_field(self):
+        pattern = onboarding_run._label(*onboarding_run.SOURCE_NAME_LABELS)
+
+        for neighbour in ("Display Name", "Source Type *", "Name *", "Field *"):
+            assert not pattern.match(neighbour), neighbour
+
+
+class _Control:
+    def __init__(self, page, label=""):
+        self._page, self._label = page, label
+
+    def count(self):
+        return 0
+
+    def wait_for(self, **_):
+        pass
+
+    def fill(self, value):
+        self._page.filled[self._label] = value
+
+    def click(self, **_):
+        self._page.clicked(self._label)
+
+
+class _Page:
+    """A console that lands each password on a scripted URL, or keeps it on the form."""
+
+    def __init__(self, ui, landings):
+        self.ui, self.landings, self.url, self.filled = ui, landings, f"{ui}/login", {}
+
+    def goto(self, url, **_):
+        self.url = url
+
+    def get_by_role(self, _role, **_):
+        return _Control(self)
+
+    def clicked(self, label):
+        if label == "Login":
+            self.url = f"{self.ui}{self.landings.get(self.filled['Password'], '/login')}"
+        elif label == "Set password":
+            self.url = f"{self.ui}/setup"
+
+    def wait_for_url(self, predicate, **_):
+        if not predicate(self.url):
+            raise _StubTimeoutError()
+
+
+class _StubTimeoutError(Exception):
+    pass
+
+
+class _Driver:
+    def __init__(self, landings):
+        self.ui = "https://dfe.example"
+        self.page = _Page(self.ui, landings)
+        self.records = []
+
+    def textbox(self, *names):
+        return _Control(self.page, names[0])
+
+    def button(self, *names):
+        return _Control(self.page, names[0])
+
+    def record(self, *row):
+        self.records.append(row)
+
+
+class TestTheForcedChange:
+    @pytest.fixture(autouse=True)
+    def _no_browser(self, monkeypatch):
+        stub = type(sys)("playwright.sync_api")
+        stub.TimeoutError = _StubTimeoutError
+        monkeypatch.setitem(sys.modules, "playwright", type(sys)("playwright"))
+        monkeypatch.setitem(sys.modules, "playwright.sync_api", stub)
+
+    def test_the_issued_password_leads_to_the_change(self):
+        driver = _Driver({"issued": onboarding_run.CHANGE_PASSWORD_PATH})
+
+        assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+        assert driver.page.filled["New Password"] == "chosen"
+
+    def test_an_issued_password_let_straight_in_fails_the_run(self):
+        driver = _Driver({"issued": "/setup"})
+
+        with pytest.raises(wizard.OnboardingError, match="without the forced change"):
+            onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen")
+
+    def test_a_password_already_changed_signs_straight_in(self):
+        driver = _Driver({"chosen": "/sources"})
+
+        assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
 
 
 class TestTheRunsVerdict:
@@ -194,12 +333,51 @@ class TestWhereTheAdminPasswordComesFrom:
             ops.admin_credential("vm", settings={})
 
 
+class TestTheBrowsersHostMap:
+    """Chromium keeps only the last --host-resolver-rules, so the map is one flag."""
+
+    def test_every_mapped_host_rides_in_one_flag(self):
+        args = onboarding_run.resolver_args(
+            [("dfe.example.test", "192.0.2.10"), ("hyperdx.example.test", "192.0.2.10")]
+        )
+        assert args == [
+            "--host-resolver-rules=MAP dfe.example.test 192.0.2.10, "
+            "MAP hyperdx.example.test 192.0.2.10"
+        ]
+
+    def test_no_map_adds_no_flag(self):
+        assert onboarding_run.resolver_args([]) == []
+
+    def test_every_route_host_under_the_consoles_domain_is_mapped(self, monkeypatch):
+        """The console frames HyperDX on its own hostname, which must resolve too."""
+        routes = {
+            "items": [
+                {"spec": {"hostnames": ["dfe.single.example.test"]}},
+                {"spec": {"hostnames": ["hyperdx.single.example.test"]}},
+                {"spec": {"hostnames": ["*.single.example.test"]}},
+                {"spec": {"hostnames": ["other.example.org"]}},
+            ]
+        }
+        monkeypatch.setattr(ops, "_kubectl_json", lambda _argv: (0, routes, ""))
+        assert ops._route_hosts(["kubectl"], "dfe.single.example.test") == [
+            "dfe.single.example.test",
+            "hyperdx.single.example.test",
+        ]
+
+    def test_an_unreadable_route_list_still_maps_the_console(self, monkeypatch):
+        monkeypatch.setattr(ops, "_kubectl_json", lambda _argv: (1, {}, "forbidden"))
+        assert ops._route_hosts(["kubectl"], "dfe.single.example.test") == ["dfe.single.example.test"]
+
+
 class TestSuiteOrder:
     def test_all_runs_onboarding_first(self):
         assert ops.suite_steps("all")[0] == ops.ONBOARDING_SUITE
 
-    def test_all_runs_every_suite(self):
-        assert set(ops.suite_steps("all")) == set(ops.SUITES) - {"all"}
+    def test_all_proves_a_fresh_deploy_without_the_seeded_source(self):
+        assert ops.suite_steps("all") == (ops.ONBOARDING_SUITE, "flows")
+
+    def test_a_suite_that_needs_a_seeded_source_is_not_a_named_suite(self):
+        assert "filebeat" not in ops.SUITES
 
     def test_a_named_suite_runs_only_itself(self):
         assert ops.suite_steps("flows") == ("flows",)

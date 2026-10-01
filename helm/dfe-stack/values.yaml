@@ -65,8 +65,13 @@ x-dfe-shared:
     argocd: argocd
     git: git
     kafbat: kafbat
+    cruiseControl: cruise-control
     links: links
     otel: otel
+  # Source: argocd/values/common.yaml `api:` -- whether the engine serves its
+  # Swagger UI, which the gateway routes and the links page lists by.
+  engineApi: &dfeEngineApi
+    docsEnabled: ""
   # Source: argocd/values/profile-slim.yaml `resources:` -- minimum viable +
   # safety; the 1Gi limit exists for hyperdx (multi-process Node).
   resources: &dfeSlimResources
@@ -98,6 +103,7 @@ envoy-gateway-config:
   hostnames: *dfeHostnames
   appNamespace: dfe
   telemetry: *dfeTelemetry
+  api: *dfeEngineApi
 
 # --- data substrate ---------------------------------------------------------
 
@@ -158,12 +164,6 @@ kafka:
 kafbat:
   enabled: false
 
-dfe-schema:
-  enabled: true
-  clickhouse: *dfeClickhouseEndpoint
-  resources: *dfeSlimResources
-  telemetry: *dfeTelemetry
-
 otel-collector:
   enabled: true
   # Where the DFE apps run -- the install namespace (see the header note).
@@ -182,6 +182,7 @@ links:
   appNamespace: dfe
   resources: *dfeSlimResources
   telemetry: *dfeTelemetry
+  api: *dfeEngineApi
 
 # Deploy-repo fallback git host -- OFF, no GitOps loop in the trial (pairs
 # with dfe-engine.gitops.enabled below).
@@ -193,10 +194,6 @@ forgejo:
 dfe-engine:
   enabled: true
   clickhouse: *dfeClickhouseEndpoint
-  postgresql:
-    # cnpg-cluster's Cluster CR is `dfe-pg`; CNPG serves it at <name>-rw and
-    # mints the app Secret dfe-pg-app the chart already defaults to.
-    host: dfe-pg-rw
   # No ArgoCD and no deploy repo in the trial; the engine runs store-backed
   # without publishing overlays. The product path re-enables this.
   gitops:
@@ -211,6 +208,7 @@ dfe-engine:
   auth:
     adminSecretName: ""
     breakglassSecretName: ""
+  api: *dfeEngineApi
 
 dfe-ui:
   enabled: true

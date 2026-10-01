@@ -30,13 +30,16 @@ from pathlib import Path
 
 import yaml
 
+from _charts import chart_dir
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
-GATEWAY = CHARTS / "envoy-gateway-config"
+GATEWAY = chart_dir("envoy-gateway-config")
 RECEIVER = CHARTS / "dfe-receiver"
+COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
+METALLB_POOL = REPO_ROOT / "bootstrap" / "templates" / "metallb-pool.yaml.tpl"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 ENV_EXAMPLE = REPO_ROOT / "bootstrap" / "local.env.example"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
@@ -50,6 +53,12 @@ _loader.exec_module(dfeops)
 
 def render(chart: Path, *sets: str) -> list[dict]:
     cmd = ["helm", "template", chart.name, str(chart)]
+    if chart == GATEWAY:
+        # The real hostnames map: every route this chart enables by default
+        # now refuses to render with no hostname to publish it on, and this
+        # file's own concern (a pinned address reaching the EnvoyProxy) is
+        # unrelated to which routes exist.
+        cmd += ["-f", str(COMMON_VALUES)]
     for s in sets:
         cmd += ["--set", s]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -66,11 +75,11 @@ def one(docs: list[dict], kind: str, name: str) -> dict:
 
 
 def envoy_service_patch(docs: list[dict]) -> dict:
-    """The StrategicMerge patch the EnvoyProxy applies to the generated Service."""
+    """The Service fields the EnvoyProxy sets, dedicated v1.8 fields and the legacy patch merged."""
     svc = one(docs, "EnvoyProxy", "dfe-envoy-proxy")["spec"]["provider"]["kubernetes"][
         "envoyService"
     ]
-    return svc.get("patch", {}).get("value", {}).get("spec", {})
+    return {**svc.get("patch", {}).get("value", {}).get("spec", {}), **svc}
 
 
 # --- the gateway's address ---------------------------------------------------
@@ -185,6 +194,58 @@ def test_the_env_contract_documents_the_new_keys() -> None:
         expect(f"local.env.example declares {key}", f"{key}=" in body, "key missing")
 
 
+# --- something on-prem has to be able to hand the addresses out --------------
+def test_the_metallb_pool_holds_the_two_pinned_addresses() -> None:
+    """A pinned loadBalancerIP is unassignable unless a pool holds that address."""
+    body = METALLB_POOL.read_text(encoding="utf-8")
+    for var in ("${DFE_GATEWAY_IP}", "${DFE_RECEIVER_IP}"):
+        expect(f"the pool holds {var} as a /32", f'"{var}/32"' in body, "address missing")
+    expect("and hands neither out to a Service that did not ask for it",
+           "autoAssign: false" in body, "the pool auto-assigns")
+    expect("the pool is advertised on layer 2",
+           "kind: L2Advertisement" in body, "nothing advertises the pool")
+
+
+def test_bootstrap_installs_metallb_on_prem_only() -> None:
+    """A cloud target already has a LoadBalancer controller; two would fight."""
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+    # A deployment picks its own on-prem name, so the gate lists the clouds.
+    expect("the clouds are declared in one place",
+           'DFE_CLOUD_LB_PROVIDERS="aws gcp azure"' in body, "the list is missing")
+    expect("the MetalLB step asks that list",
+           "if dfe_cloud_programs_loadbalancers; then" in body, "the gate is missing")
+    expect("the chart version comes from versions.yaml, not the script",
+           "bootstrap.metallb" in body and '--version "${METALLB_VERSION}"' in body,
+           "the version is not read from the SSoT")
+
+
+def test_preflight_previews_metallb_off_the_same_list() -> None:
+    """An on-prem cluster is local-dfe: a preview keyed on 'local' warned where it installs."""
+    for cloud in ("aws", "gcp", "azure"):
+        expect(f"{cloud} programs its own LoadBalancers", dfeops._cloud_programs_loadbalancers(cloud))
+    for cloud in ("local", "local-dfe", "example-onprem", "az", ""):
+        expect(f"{cloud!r} does not", not dfeops._cloud_programs_loadbalancers(cloud))
+
+
+def test_bootstrap_applies_the_pool_only_with_both_addresses() -> None:
+    """Half a pool is a bare /32, which MetalLB rejects and the deploy needs."""
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+    expect("bootstrap.sh renders the pool template",
+           "metallb-pool.yaml.tpl" in body, "the template is never applied")
+    expect("and refuses to render it with either address unset",
+           'if [[ -z "${DFE_GATEWAY_IP}" ]] || [[ -z "${DFE_RECEIVER_IP}" ]]; then' in body,
+           "the guard is missing")
+
+
+def test_destroy_leaves_the_loadbalancer_provider_alone() -> None:
+    """destroy.sh cannot tell an adopted MetalLB from one it installed."""
+    body = (REPO_ROOT / "bootstrap" / "destroy.sh").read_text(encoding="utf-8")
+    deletes = [ln.strip() for ln in body.splitlines() if "delete" in ln and "metallb" in ln]
+    expect("nothing in destroy.sh deletes MetalLB", deletes == [], f"got {deletes}")
+    expect("and the teardown records the decision",
+           "metallb-system" in body, "a reader cannot tell it was deliberate")
+
+
 # --- the profile-tagged domain -----------------------------------------------
 def derive(**env: str) -> str:
     mode = env.pop("mode", "slim")
@@ -200,10 +261,21 @@ def test_a_base_domain_is_tagged_with_the_profile() -> None:
            == "scale.dfe.example.com", "wrong domain")
 
 
-def test_an_explicit_domain_wins() -> None:
+def test_an_explicit_domain_alone_wins() -> None:
     expect("DFE_DOMAIN is not overwritten",
-           derive(DFE_DOMAIN="fixed.example.com", DFE_BASE_DOMAIN="dfe.example.com")
-           == "fixed.example.com", "the derivation overrode an explicit domain")
+           derive(DFE_DOMAIN="fixed.example.com") == "fixed.example.com",
+           "the derivation overrode an explicit domain")
+
+
+def test_an_explicit_domain_contradicting_the_base_is_refused() -> None:
+    """A declared base domain names the convention; a stale override must not publish."""
+    try:
+        derive(DFE_DOMAIN="fixed.example.com", DFE_BASE_DOMAIN="dfe.example.com")
+    except SystemExit as refused:
+        expect("the refusal names the domain the convention wants",
+               "slim.dfe.example.com" in str(refused), str(refused))
+        return
+    expect("a contradicting DFE_DOMAIN is refused", False, "the deploy would have published it")
 
 
 def test_no_base_domain_derives_nothing() -> None:
@@ -284,8 +356,13 @@ def main() -> int:
         test_the_cluster_secret_carries_both_addresses()
         test_the_appsets_pass_the_addresses_to_the_charts()
         test_the_env_contract_documents_the_new_keys()
+        test_the_metallb_pool_holds_the_two_pinned_addresses()
+        test_bootstrap_installs_metallb_on_prem_only()
+        test_bootstrap_applies_the_pool_only_with_both_addresses()
+        test_destroy_leaves_the_loadbalancer_provider_alone()
         test_a_base_domain_is_tagged_with_the_profile()
-        test_an_explicit_domain_wins()
+        test_an_explicit_domain_alone_wins()
+        test_an_explicit_domain_contradicting_the_base_is_refused()
         test_no_base_domain_derives_nothing()
         test_a_modeless_run_derives_nothing()
         test_bootstrap_derives_the_same_domain_without_the_driver()

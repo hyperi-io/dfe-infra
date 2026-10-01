@@ -11,6 +11,9 @@ cloud: local
 image:
   repository: ""
   tag: ""
+  # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
+  # digests.dfe-transform-elastic (drift-checked).
+  digest: "sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -27,27 +30,28 @@ kafka:
   mode: ""
   bootstrapServers: ""
   saslSecretName: dfe-kafka-user
-  # Managed-Kafka provider identity (strimzi | redpanda | msk | redpanda-cloud |
-  # confluent-cloud | msk_iam | plaintext). Empty = unset (no KAFKA_PROVIDER env,
-  # current no-provider behaviour). When set, scalo's KafkaConfig DERIVES
-  # security_protocol + sasl_mechanism from it -- never hand-set. Mirrors the
-  # DFE Kafka credential contract (dfe-engine#98).
-  provider: ""
-  sourceTopic: ""        # set per deployment via ArgoCD values
-  destTopic: ""          # set per deployment
-  consumerGroup: ""      # defaults to dfe-transform-elastic
+  # No sourceTopic / destTopic / consumerGroup dials: dfe-engine compiles this
+  # app's routing from the Source definitions and publishes it in the instance
+  # overlay, so a chart-side copy is a hand edit the engine re-syncs away
+  # (dfe-infra#181).
+  #
   # Empty leaves the deployment on plaintext and injects NO credentials. Setting
   # it turns SASL on and requires saslMechanism with it, because the app refuses
   # credentials that its security_protocol would never send.
   securityProtocol: ""
   saslMechanism: SCRAM-SHA-512
+  # The consumer-group protocol, rendered as KAFKA_CONSUMER_PROTOCOL. `classic`
+  # keeps every DFE consumer on one protocol: a broker cannot upgrade a classic
+  # group holding a cooperative-sticky member to KIP-848, and refuses the
+  # newcomer with a fatal GroupIdNotFound. Empty leaves scalo's default.
+  consumerProtocol: classic
 
 otel:
   endpoint: ""
 
-# The app's scalo config, rendered VERBATIM into a ConfigMap. An OPAQUE
-# passthrough: dfe-engine is the config authority and publishes it as the
-# per-instance overlay, so the chart never interprets the per-app keys.
+# The app's scalo config, rendered into a ConfigMap. dfe-engine is the config
+# authority and publishes it as the per-instance overlay; the chart adds only
+# source.brokers on the bus, from kafka.bootstrapServers (templates/configmap.yaml).
 # Kafka credentials stay OUT of here and arrive as env from a Secret, which the
 # app reads separately through scalo's KafkaConfig::from_env.
 config: {}
@@ -71,10 +75,19 @@ resources:
 serviceAccount:
   create: true
   annotations: {}
+  # Mount the service-account token. Turn on only for Vault's Kubernetes auth method, which logs in with it: VAULT_K8S_ROLE (or OPENBAO_K8S_ROLE / BAO_K8S_ROLE) or secrets.openbao.auth.method kubernetes in the app config.
+  mountToken: false
 
-# KEDA autoscaling -- folded into the chart. The DEFAULT trigger is CPU (native KEDA
-# cpu scaler, no shim needed). scalo ScalingPressure (dfe_scaling_pressure, 0-100) is
-# the OPT-IN advanced signal: the composite fuses Kafka CG lag + container-contract
+# Restart this workload when a Secret or ConfigMap it consumes changes. Env from
+# a secretKeyRef resolves once at pod start, so without this a rotated credential
+# never reaches the running pod.
+reload:
+  enabled: true
+
+# KEDA autoscaling -- folded into the chart. The DEFAULT trigger is scalo
+# ScalingPressure (dfe_scaling_pressure, 0-100), with the native KEDA cpu scaler
+# rendered alongside it so the HPA takes the higher of the two. Pressure is
+# the advanced signal: the composite fuses Kafka CG lag + container-contract
 # metrics (buffer, memory) AND hard-gates to 0 when the downstream sink is unreachable
 # (circuit-breaker open), so pressure never scales out pods that would not help when
 # the real bottleneck is downstream. It routes through the fail-safe dfe-keda-shim (a
@@ -87,12 +100,12 @@ keda:
   cooldownPeriod: 300
   pollingInterval: 15
   cpu:
-    targetUtilization: 70     # DEFAULT: native KEDA cpu scaler (no shim needed)
+    targetUtilization: 70     # second trigger: native KEDA cpu scaler (no shim needed)
   pressure:
-    enabled: false            # opt-in: scalo ScalingPressure via the fail-safe dfe-keda-shim
+    enabled: true             # DEFAULT: scalo ScalingPressure via the fail-safe dfe-keda-shim
     # service: dfe-transform-elastic   # ServiceName in otel_metrics_gauge (default: chart fullname)
     # targetValue: 70
-    # shimAddress: dfe-keda-shim.dfe.svc.cluster.local:8080
+    # shimAddress: dfe-keda-shim.<ns>.svc.cluster.local:8080 (default: the release namespace)
 
 # Node placement dial (overlay-settable; dfe-common.scheduling reads this).
 nodeScheduling: {}

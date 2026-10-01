@@ -1,0 +1,37 @@
+## Project:   dfe-infra
+## File:      sizing/targets/confluent-cloud.yaml
+## Purpose:   The per-target knob matrix for `--target confluent-cloud` --
+##            terraform/modules/managed-kafka/confluent-cloud. Every sizing
+##            knob the target changes or refuses, and why.
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Read by scripts/resolve_sizing.py's build_report -- see the module
+## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
+## prints beside it. NO LISTS: nested maps and scalars only, parsed by
+## scripts/yaml_subset.py.
+##
+## NOT A KNOB: the provider-by-tier default this target is expected to carry
+## once the aws overlay picks a Kafka provider by size is msk at Small and
+## Medium, confluent-cloud at Large. deployment.example.yaml documents the same
+## default in a comment beside kafka.provider until sizing/targets/aws.yaml
+## resolves it there.
+
+message_max_bytes:
+  state: managed
+  reason: "CONTRACT.md: Confluent caps a topic's max.message.bytes by cluster type -- 20 MB on Freight (the module's default) and Enterprise, which carries the chain's 16 MiB, and 8,388,608 on Basic -- and confluent-cloud/main.tf's check block, keyed on tier, flags a size above the ceiling at plan."
+
+broker_shape:
+  state: blocked
+  reason: "Confluent Cloud sells eCKUs, not instances -- confluent-cloud/variables.tf declares broker_shape_ref and resolved_shapes NOT APPLIED, since the elastic tiers expose no instance type for the resolver to select."
+
+broker_count:
+  state: blocked
+  reason: "confluent-cloud/variables.tf: broker_count is NOT APPLIED -- the elastic tiers have no broker count to set, Confluent scales eCKUs and bills throughput instead."
+
+kafka_version:
+  state: blocked
+  reason: "confluent-cloud/variables.tf: kafka_version is NOT APPLIED -- Confluent Cloud runs Kora with Kafka-protocol compatibility and exposes no version of its own."

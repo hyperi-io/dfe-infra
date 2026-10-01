@@ -18,6 +18,8 @@ storageClass: ""
 image:
   repository: ghcr.io/ferretdb/ferretdb
   tag: ""  # defaults to Chart.appVersion
+  # == versions.yaml services-digests.ferretdb (drift-checked); it pins the appVersion tag.
+  digest: "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985"
   pullPolicy: IfNotPresent
   # Public GHCR image: suppress the fleet-wide imagePullSecrets, which
   # bootstrap only materialises in the app namespace (the kafbat lesson).
@@ -42,6 +44,10 @@ ferretdb:
   #               chart's mongodb.uri + mongodb.passwordSecretName seam).
   #               Mirrors clickhouse.mode=external.
   mode: deploy
+  # FERRETDB_LOG_LEVEL: DEBUG, INFO, WARN or ERROR. At INFO every readiness
+  # probe logs a connection, two commands and a ping, which the otel collector
+  # ships into otel_logs.
+  logLevel: WARN
 
 # The FerretDB 2.x storage backend: PostgreSQL 17 WITH the DocumentDB
 # extension (ghcr.io/ferretdb/postgres-documentdb), a standalone StatefulSet +
@@ -78,6 +84,13 @@ documentdb:
   storage:
     size: 5Gi
     storageClass: ""  # empty -> top-level storageClass -> cluster default
+  # PostgreSQL settings passed as `postgres -c key=value`. The DocumentDB
+  # extension schedules pg_cron jobs every 2 seconds. cron.log_statement logs
+  # each run, and cron.log_run records each one in cron.job_run_details, which
+  # pg_cron never purges and which shares the PVC above.
+  postgresSettings:
+    cron.log_run: "off"
+    cron.log_statement: "off"
   resources:
     requests:
       cpu: 250m

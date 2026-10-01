@@ -1,4 +1,5 @@
 {{- if eq .Values.clickhouse.mode "single" }}
+{{- $tls := include "dfe-clickhouse.tlsEnabled" . }}
 # Standalone single-node ClickHouse (no operator, no Keeper). For small/test.
 # Tables are MergeTree (non-replicated) -- the engine emits topology=single DDL.
 # Admin user/db created on first start via the official image's entrypoint env.
@@ -19,6 +20,11 @@ spec:
     - name: native
       port: 9000
       targetPort: native
+    {{- if $tls }}
+    - name: https
+      port: 8443
+      targetPort: https
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -37,17 +43,24 @@ spec:
       labels:
         {{- include "dfe-common.labels" . | nindent 8 }}
     spec:
+      {{- with .Values.clickhouse.serviceAccount.name }}
+      serviceAccountName: {{ . }}
+      {{- end }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       securityContext:
         fsGroup: 101            # clickhouse uid/gid in the official image
       containers:
         - name: clickhouse
-          image: "clickhouse/clickhouse-server:{{ .Values.clickhouse.version }}"
+          image: "clickhouse/clickhouse-server:{{ .Values.clickhouse.version }}{{ with .Values.clickhouse.imageDigest }}@{{ . }}{{ end }}"
           ports:
             - name: http
               containerPort: 8123
             - name: native
               containerPort: 9000
+            {{- if $tls }}
+            - name: https
+              containerPort: 8443
+            {{- end }}
           env:
             - name: CLICKHOUSE_USER
               value: {{ .Values.clickhouse.users.admin.name | quote }}
@@ -60,7 +73,7 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
               value: "1"
-            {{- if eq (include "dfe-clickhouse.storageBulk" .) "object" }}
+            {{- if and (eq (include "dfe-clickhouse.storageBulk" .) "object") (not .Values.clickhouse.objectStore.usePodIdentity) }}
             {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 12 }}
             {{- end }}
           volumeMounts:
@@ -77,6 +90,17 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/users.d/dfe-users.xml
               subPath: dfe-users.xml
+            # config.d overlay: level and rotation for the server log, which
+            # lands in this container's writable layer on the node's disk.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-logger.yaml
+              subPath: dfe-logger.yaml
+            {{- if (include "dfe-clickhouse.systemLogs" . | trim) }}
+            # config.d overlay: the server's own system log tables, TTLs and switches.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-system-logs.yaml
+              subPath: dfe-system-logs.yaml
+            {{- end }}
             {{- if eq (include "dfe-clickhouse.storageBulk" .) "block" }}
             # The cold tier, on the mount path the disk declaration names. Same
             # path the operator uses for an additional volume in cluster mode.
@@ -89,6 +113,16 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/config.d/dfe-storage.yaml
               subPath: dfe-storage.yaml
+            {{- end }}
+            {{- if $tls }}
+            # config.d overlay: the HTTPS listener and the keypair it serves.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-tls.xml
+              subPath: dfe-tls.xml
+            # A directory, never a subPath, so a renewed Secret reaches the server.
+            - name: tls
+              mountPath: /etc/clickhouse-server/tls
+              readOnly: true
             {{- end }}
           resources:
             {{- toYaml .Values.clickhouse.resources | nindent 12 }}
@@ -108,6 +142,18 @@ spec:
         - name: custom-config
           configMap:
             name: {{ .Values.clickhouse.name }}-custom-config
+        {{- if $tls }}
+        # 0440 under fsGroup 101: the server's own group reads the key, nobody else.
+        - name: tls
+          secret:
+            secretName: {{ .Values.clickhouse.tls.secretName }}
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        {{- end }}
   volumeClaimTemplates:
     # storageModel: tiered-block makes this the HOT tier -- it holds the only
     # copy of the parts that have not been demoted.
@@ -158,23 +204,50 @@ data:
         <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
       </access_control_improvements>
     </clickhouse>
-  # users.d overlay: server-side async inserts for EVERY writer, via the
-  # default settings profile (the base every identity inherits). async_insert
-  # is user/query-scope -- no table-level form exists -- so this one seam
-  # covers every table any identity writes; the loader's minted profile still
-  # carries its own tuned values on top. wait=1 keeps insert errors visible to
-  # the client. Flush cadence stays on ClickHouse's adaptive defaults (24.2+).
+  # users.d overlay: async inserts for EVERY writer, via the default settings
+  # profile (the base every identity inherits). async_insert is user/query-scope
+  # -- no table-level form exists -- so this one profile covers every table any
+  # identity writes; the loader's minted profile still carries its own tuned
+  # values on top. Both are ClickHouse's own defaults since 26.2 and are written
+  # here EXPLICITLY, against a `compatibility` setting or a future re-default.
+  # Flush cadence stays on ClickHouse's adaptive defaults (24.2+).
   dfe-users.xml: |
     <clickhouse>
       <profiles>
         <default>
-          <async_insert>1</async_insert>
-          <wait_for_async_insert>1</wait_for_async_insert>
+          <async_insert>{{ .Values.clickhouse.userProfile.asyncInsert }}</async_insert>
+          <wait_for_async_insert>{{ .Values.clickhouse.userProfile.waitForAsyncInsert }}</wait_for_async_insert>
         </default>
       </profiles>
     </clickhouse>
+  # Merged over the image's own <logger>, which keeps its file paths and takes
+  # the level and rotation from clickhouse.serverLog.
+  dfe-logger.yaml: |
+    logger:
+      {{- include "dfe-clickhouse.logger" .Values.clickhouse.serverLog | nindent 6 }}
+  {{- with (include "dfe-clickhouse.systemLogs" . | trim) }}
+  # Merged over the image's own system log sections, which keep their
+  # partitioning and flush settings, take a TTL from clickhouse.systemLogTTLDays,
+  # and lose the sections clickhouse.systemLogsOff names.
+  dfe-system-logs.yaml: |
+    {{- . | nindent 4 }}
+  {{- end }}
   {{- with (include "dfe-clickhouse.storageConfiguration" .) }}
   dfe-storage.yaml: |
     {{- . | nindent 4 }}
+  {{- end }}
+  {{- if $tls }}
+  # Merged over the image's own <openSSL>, which keeps its protocol and
+  # verification defaults and takes the keypair from the mounted Secret.
+  dfe-tls.xml: |
+    <clickhouse>
+      <https_port>8443</https_port>
+      <openSSL>
+        <server>
+          <certificateFile>/etc/clickhouse-server/tls/tls.crt</certificateFile>
+          <privateKeyFile>/etc/clickhouse-server/tls/tls.key</privateKeyFile>
+        </server>
+      </openSSL>
+    </clickhouse>
   {{- end }}
 {{- end }}

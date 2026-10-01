@@ -31,15 +31,28 @@ sys.path.insert(0, str(SCRIPTS))
 import composition  # noqa: E402
 import profiles  # noqa: E402
 
-# The core data path Derek settled on: every profile stands these up with no
-# further configuration, so a fresh deploy ingests, loads, archives, and serves
-# the control plane and the console.
-CORE_COMPOSITION = frozenset(
-    {"dfe-receiver", "dfe-loader", "dfe-archiver", "dfe-engine", "dfe-ui", "hyperdx"}
-)
+# The core data path: every profile stands these up with no further
+# configuration, so a fresh deploy ingests, loads, and serves the control plane
+# and the console.
+CORE_COMPOSITION = frozenset({"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-ui", "hyperdx"})
+
+# The leanest Compose tier runs the core data path alone.
+ARCHIVERLESS = "docker-slim"
 
 # Deployed on demand -- one instance per source, written by the engine.
-ON_DEMAND = ("dfe-fetcher", "dfe-transform-vrl", "dfe-transform-vector", "culvert")
+# dfe-transform-vector belongs here rather than in SEEDED_IDLE because it
+# declares no `idle_when`, so it has no empty state to be stood up in.
+ON_DEMAND = ("dfe-fetcher", "dfe-transform-vector", "culvert")
+
+# Compose declares its services in a committed file and creates none at run time,
+# so the apps a source would otherwise deploy start idle instead, one each.
+COMPOSE_IDLE: dict[str, tuple[str, ...]] = {"docker-single": ("dfe-fetcher",)}
+
+# Seeded empty wherever a transform runs, rather than arriving with a source.
+# Each declares `idle_when` and carries the matching predicate in its own code,
+# so it starts, stays Ready and holds no consumer group until a source fills it.
+SEEDED_IDLE = ("dfe-transform-vrl", "dfe-transform-elastic")
+SEEDED_IDLE_PROFILES = ("single", "scale", "docker-single")
 
 
 def test_the_manifest_names_only_declared_profiles() -> None:
@@ -69,17 +82,37 @@ def test_every_profile_stands_up_the_core_composition() -> None:
         assert CORE_COMPOSITION <= set(composition.default_apps(profile)), profile
 
 
-def test_the_archiver_is_default_on_slim() -> None:
-    """The tier that used to omit it, with nothing recording why."""
-    assert "dfe-archiver" in composition.default_apps("slim")
-    assert "dfe-archiver" in composition.default_apps("docker-slim")
-
-
-def test_the_on_demand_apps_are_seeded_nowhere() -> None:
+def test_the_archiver_is_default_everywhere_but_the_leanest_compose_tier() -> None:
+    """Absent from one tier by declaration rather than by omission."""
     for profile in profiles.PROFILE_NAMES:
         deployed = composition.default_apps(profile)
+        if profile == ARCHIVERLESS:
+            assert "dfe-archiver" not in deployed
+            continue
+        assert "dfe-archiver" in deployed, profile
+
+
+def test_the_on_demand_apps_are_seeded_only_where_a_source_cannot_deploy_one() -> None:
+    for profile in profiles.PROFILE_NAMES:
+        deployed = composition.default_apps(profile)
+        idle = COMPOSE_IDLE.get(profile, ())
         for app in ON_DEMAND:
+            if app in idle:
+                assert app in deployed, f"{app} not in {profile}"
+                continue
             assert app not in deployed, f"{app} in {profile}"
+
+
+def test_the_transforms_are_seeded_idle_rather_than_waiting_for_a_source() -> None:
+    """A tier gets one transform of each kind, stood up empty.
+
+    The pairing is what matters: seeding an app that cannot idle would
+    crash-loop it, so anything listed here must also declare `idle_when`.
+    """
+    for app in SEEDED_IDLE:
+        assert composition.idle_when(app), f"{app} is seeded but declares no idle_when"
+        for profile in SEEDED_IDLE_PROFILES:
+            assert app in composition.default_apps(profile), f"{app} not seeded in {profile}"
 
 
 def test_culvert_is_offered_only_on_the_ha_tiers() -> None:
@@ -104,6 +137,20 @@ def test_the_seeded_set_is_exactly_the_manifests_default() -> None:
         assert tuple(seeded) == composition.default_apps(mode), mode
 
 
+def test_the_engine_chart_carries_the_current_manifest() -> None:
+    """A stale chart copy deploys the apps of whichever commit last rendered it."""
+    assert composition.write_catalogue(check_only=True) == 0
+
+
+def test_the_chart_copy_is_the_manifest_byte_for_byte() -> None:
+    """Re-serialising it could change a value; only the banner is added."""
+    copy = composition.CHART_MANIFEST.read_text(encoding="utf-8")
+    assert copy.startswith(composition.CATALOGUE_BANNER)
+    assert copy[len(composition.CATALOGUE_BANNER) :] == (
+        composition.MANIFEST.read_text(encoding="utf-8")
+    )
+
+
 def test_the_chart_default_carries_no_second_copy_of_the_composition() -> None:
     """The profile layer is the only place the seeded set is stated."""
     from ruamel.yaml import YAML
@@ -122,6 +169,7 @@ def test_the_idling_apps_declare_what_empty_means() -> None:
     """An app the deploy stands up before it has work says which keys say so."""
     assert composition.idle_when("dfe-archiver")
     assert composition.idle_when("dfe-fetcher")
+    assert composition.idle_when("dfe-transform-vrl")
 
 
 def test_an_app_whose_work_arrives_without_a_config_change_never_idles() -> None:
@@ -129,3 +177,79 @@ def test_an_app_whose_work_arrives_without_a_config_change_never_idles() -> None
     that idled there would stay idle when its work turned up."""
     assert composition.idle_when("dfe-receiver") == ()
     assert composition.idle_when("dfe-loader") == ()
+
+
+def _snapshot_checkout(tmp_path: Path, text: str) -> Path:
+    """A fake dfe-engine checkout whose bundled apps.yaml holds *text*."""
+    checkout = tmp_path / "engine-checkout"
+    snapshot = checkout / composition.ENGINE_SNAPSHOT_PATH
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text(text, encoding="utf-8")
+    return checkout
+
+
+def _set_manifest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str) -> Path:
+    """Point `composition.MANIFEST` at a throwaway apps.yaml holding *text*."""
+    manifest = tmp_path / "apps.yaml"
+    manifest.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(composition, "MANIFEST", manifest)
+    return manifest
+
+
+def test_the_engine_snapshot_check_agrees_regardless_of_key_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same declarations, keys in a different order, still agree."""
+    _set_manifest(
+        monkeypatch,
+        tmp_path,
+        "apps:\n  dfe-engine:\n    multiplicity: single\n    scale_deployed: true\n",
+    )
+    checkout = _snapshot_checkout(
+        tmp_path,
+        "apps:\n  dfe-engine:\n    scale_deployed: true\n    multiplicity: single\n",
+    )
+    assert composition.check_engine_snapshot(str(checkout)) == 0
+
+
+def test_the_engine_snapshot_check_fails_and_names_the_differing_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real disagreement -- the fetcher's ingest default, once -- fails CI."""
+    _set_manifest(
+        monkeypatch, tmp_path, "apps:\n  dfe-fetcher:\n    multiplicity: per_config\n"
+    )
+    checkout = _snapshot_checkout(
+        tmp_path, "apps:\n  dfe-fetcher:\n    multiplicity: single\n"
+    )
+    assert composition.check_engine_snapshot(str(checkout)) == 1
+    err = capsys.readouterr().err
+    assert "apps.dfe-fetcher.multiplicity" in err
+    assert "per_config" in err
+    assert "single" in err
+
+
+def test_the_engine_snapshot_check_ignores_a_comment_only_difference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last real divergence was a comment hunk; a comment alone must pass."""
+    _set_manifest(
+        monkeypatch,
+        tmp_path,
+        "# this repo's own re-render command, meaningless inside the engine image\n"
+        "apps:\n  dfe-engine:\n    multiplicity: single\n",
+    )
+    checkout = _snapshot_checkout(tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n")
+    assert composition.check_engine_snapshot(str(checkout)) == 0
+
+
+def test_an_unreadable_engine_snapshot_is_exit_2_not_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A network or checkout failure is unverified, never reported as drift."""
+    _set_manifest(monkeypatch, tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n")
+    empty_checkout = tmp_path / "no-such-snapshot-here"
+    empty_checkout.mkdir()
+    assert composition.check_engine_snapshot(str(empty_checkout)) == 2
+    err = capsys.readouterr().err
+    assert "UNVERIFIED" in err

@@ -27,13 +27,20 @@ GENERATED block, because Helm cannot read apps.yaml:
 
     python3 scripts/composition.py --write-seed
 
-`scripts/tests/test_composition.py` fails when a committed block and this
-derivation disagree, so the generated lists cannot quietly drift.
+Helm reads only files inside the chart directory, so the manifest the engine
+mounts and reflects is a copy the engine chart carries:
+
+    python3 scripts/composition.py --write-catalogue
+
+`scripts/tests/test_composition.py` fails when a committed block or the chart's
+copy and this manifest disagree, so neither can quietly drift.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +48,23 @@ import profiles
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "apps.yaml"
+
+# The engine chart's copy, mounted into the engine pod as the app catalogue.
+CHART_MANIFEST = REPO_ROOT / "helm" / "charts" / "dfe-engine" / "files" / "apps.yaml"
+
+# The third copy: the snapshot bundled in the engine image, which answers when
+# no chart mount is present. dfe-infra holds the SSoT and already owns the
+# check, so this repo compares against it rather than trusting a stale image.
+ENGINE_REPO = "hyperi-io/dfe-engine"
+ENGINE_SNAPSHOT_PATH = "src/dfe_engine/appmgmt/apps.yaml"
+
+# The axes this manifest declares; everything else in the file is comments.
+DECLARATION_KEYS = ("apps", "kinds", "mesh")
+
+CATALOGUE_BANNER = (
+    "# GENERATED from apps.yaml at the repo root -- do not edit. Regenerate with:\n"
+    "#     python3 scripts/composition.py --write-catalogue\n"
+)
 
 # Delimiters around the generated block in each profile values file.
 SEED_BEGIN = "# BEGIN seeded apps -- rendered by `python3 scripts/composition.py --write-seed`\n"
@@ -55,6 +79,15 @@ SEED_BANNER = (
 
 class CompositionError(Exception):
     """Raised when the manifest is missing, malformed, or names a bad profile."""
+
+
+class SnapshotUnavailableError(Exception):
+    """Raised when the engine's bundled snapshot cannot be read at all.
+
+    Distinct from `CompositionError` so the CLI can tell "the comparison
+    could not run" (exit 2) apart from "the comparison ran and disagreed"
+    (exit 1) -- a network or auth failure is not drift.
+    """
 
 
 def _apps() -> dict[str, dict]:
@@ -156,6 +189,24 @@ def idle_when(app: str) -> tuple[str, ...]:
     return tuple(_key(apps[app] or {}, "idle_when") or ())
 
 
+def multiplicity(app: str) -> str:
+    """How many deployments an app runs: `single`, or `per_config` (one per source).
+
+    Args:
+        app: An app name from the manifest.
+
+    Returns:
+        The declared multiplicity, or `single` when the app declares none.
+
+    Raises:
+        CompositionError: The app is not in the manifest.
+    """
+    apps = _apps()
+    if app not in apps:
+        raise CompositionError(f"{app!r} is not an app in {MANIFEST.name}")
+    return str((apps[app] or {}).get("multiplicity") or "single")
+
+
 def deployment_name(app: str) -> str:
     """The Kubernetes object name a single-multiplicity app renders under.
 
@@ -237,6 +288,173 @@ def write_seed(check_only: bool = False) -> int:
     return 0
 
 
+def catalogue_copy() -> str:
+    """The engine chart's copy of the manifest: the banner, then apps.yaml verbatim.
+
+    Returns:
+        The whole file body, newline-terminated.
+
+    Raises:
+        CompositionError: The manifest is missing.
+    """
+    if not MANIFEST.is_file():
+        raise CompositionError(f"{MANIFEST} not found")
+    # Copied byte for byte rather than re-serialised: a round trip through a YAML
+    # writer can change a value (YAML 1.1 reads `no` and `off` as booleans).
+    return CATALOGUE_BANNER + MANIFEST.read_text(encoding="utf-8")
+
+
+def write_catalogue(check_only: bool = False) -> int:
+    """Render the manifest into the engine chart, which is what mounts it.
+
+    Args:
+        check_only: Report drift and change nothing.
+
+    Returns:
+        Process exit status: 1 when the committed copy is stale.
+    """
+    fresh = catalogue_copy()
+    current = CHART_MANIFEST.read_text(encoding="utf-8") if CHART_MANIFEST.is_file() else ""
+    if current == fresh:
+        return 0
+    where = CHART_MANIFEST.relative_to(REPO_ROOT)
+    if check_only:
+        print(
+            "STALE against apps.yaml -- run `python3 scripts/composition.py "
+            f"--write-catalogue`: {where}",
+            file=sys.stderr,
+        )
+        return 1
+    CHART_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    CHART_MANIFEST.write_text(fresh, encoding="utf-8", newline="\n")
+    print(f"wrote the app manifest into {where}", file=sys.stderr)
+    return 0
+
+
+def _declarations(text: str) -> dict:
+    """The declaration blocks a snapshot comparison cares about.
+
+    Args:
+        text: A manifest's raw YAML text.
+
+    Returns:
+        Only the `apps`, `kinds` and `mesh` top-level keys. `YAML(typ="safe")`
+        already drops comments and normalises key order into plain dicts, so
+        neither needs handling here.
+
+    Raises:
+        CompositionError: The text does not parse as a mapping.
+    """
+    from ruamel.yaml import YAML
+
+    doc = YAML(typ="safe").load(text)
+    if not isinstance(doc, dict):
+        raise CompositionError("manifest does not parse as a mapping")
+    return {key: doc[key] for key in DECLARATION_KEYS if key in doc}
+
+
+def _diff_declarations(ssot, snapshot, path: str = "") -> list[str]:
+    """Every path where two parsed declarations disagree.
+
+    Args:
+        ssot: A value (or sub-value) from this repo's parsed apps.yaml.
+        snapshot: The matching value from the engine's parsed snapshot.
+        path: The dotted path walked so far, for recursion.
+
+    Returns:
+        One line per differing path, naming both values. Dicts are compared
+        key by key so a single changed field is named precisely; a list is
+        compared as a whole value, since list order is a real difference
+        here, not a comment or key-order artefact.
+    """
+    if isinstance(ssot, dict) and isinstance(snapshot, dict):
+        diffs: list[str] = []
+        for key in sorted(set(ssot) | set(snapshot)):
+            sub = f"{path}.{key}" if path else key
+            if key not in ssot:
+                diffs.append(f"{sub}: absent from apps.yaml, engine has {snapshot[key]!r}")
+            elif key not in snapshot:
+                diffs.append(f"{sub}: apps.yaml has {ssot[key]!r}, absent from the engine")
+            else:
+                diffs.extend(_diff_declarations(ssot[key], snapshot[key], sub))
+        return diffs
+    if ssot != snapshot:
+        return [f"{path}: apps.yaml={ssot!r}, engine={snapshot!r}"]
+    return []
+
+
+def _engine_snapshot_text(path: str | None) -> str:
+    """The engine's bundled apps.yaml, from a checkout or the GitHub API.
+
+    Args:
+        path: A dfe-engine checkout root, or None to fetch `origin/main` over
+            the GitHub API -- the CI path, where there is no such checkout.
+
+    Returns:
+        The snapshot file's raw text.
+
+    Raises:
+        SnapshotUnavailableError: The checkout has no such file, `gh` failed, or
+            its response could not be decoded -- never raised for drift.
+    """
+    if path is not None:
+        snapshot = Path(path) / ENGINE_SNAPSHOT_PATH
+        if not snapshot.is_file():
+            raise SnapshotUnavailableError(f"{snapshot} not found")
+        return snapshot.read_text(encoding="utf-8", errors="replace")
+    endpoint = f"repos/{ENGINE_REPO}/contents/{ENGINE_SNAPSHOT_PATH}"
+    result = subprocess.run(
+        ["gh", "api", endpoint, "--jq", ".content"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SnapshotUnavailableError(
+            f"gh api {endpoint} failed (exit {result.returncode}): {result.stderr.strip()}"
+        )
+    try:
+        return base64.b64decode(result.stdout).decode("utf-8")
+    except (ValueError, UnicodeDecodeError) as error:
+        raise SnapshotUnavailableError(f"could not decode the API response: {error}") from error
+
+
+def check_engine_snapshot(path: str | None = None) -> int:
+    """Compare the engine's bundled apps.yaml against this repo's SSoT.
+
+    Args:
+        path: A dfe-engine checkout root, or None to fetch over the API.
+
+    Returns:
+        0 when the declarations agree, 1 when they differ (each differing
+        path printed with both values), 2 when the snapshot could not be
+        read at all -- a network or auth failure is reported as unverified,
+        never as drift.
+    """
+    if not MANIFEST.is_file():
+        raise CompositionError(f"{MANIFEST} not found")
+    ssot = _declarations(MANIFEST.read_text(encoding="utf-8", errors="replace"))
+    try:
+        snapshot_text = _engine_snapshot_text(path)
+    except SnapshotUnavailableError as error:
+        print(f"UNVERIFIED -- the engine snapshot could not be read: {error}", file=sys.stderr)
+        return 2
+    snapshot = _declarations(snapshot_text)
+    diffs = _diff_declarations(ssot, snapshot)
+    if diffs:
+        print(
+            "DRIFT -- the engine's bundled apps.yaml disagrees with the SSoT:",
+            file=sys.stderr,
+        )
+        for line in diffs:
+            print(f"  {line}", file=sys.stderr)
+        return 1
+    print("the engine's bundled apps.yaml agrees with apps.yaml's declarations", file=sys.stderr)
+    return 0
+
+
 def _table() -> str:
     """One row per profile: what it deploys by default."""
     rows = []
@@ -275,9 +493,35 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="report a stale committed seed block and exit 1 (for CI)",
     )
+    parser.add_argument(
+        "--write-catalogue",
+        action="store_true",
+        help="render the manifest into the engine chart, which mounts it into the engine pod",
+    )
+    parser.add_argument(
+        "--check-catalogue",
+        action="store_true",
+        help="report a stale committed chart copy of the manifest and exit 1 (for CI)",
+    )
+    parser.add_argument(
+        "--check-engine-snapshot",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help=(
+            "compare the engine's bundled apps.yaml against this repo's SSoT; PATH is "
+            "a dfe-engine checkout, omitted fetches origin/main over the GitHub API "
+            "(exit 1 on drift, exit 2 when the snapshot cannot be read)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
+        if args.check_engine_snapshot is not None:
+            return check_engine_snapshot(args.check_engine_snapshot or None)
+        if args.write_catalogue or args.check_catalogue:
+            return write_catalogue(check_only=args.check_catalogue)
         if args.write_seed or args.check_seed:
             return write_seed(check_only=args.check_seed)
         if args.profile:

@@ -1,6 +1,13 @@
-# The app's scalo config file, rendered VERBATIM from the .Values.config blob.
-# dfe-engine is the config authority and emits `config` as an OPAQUE passthrough;
-# this chart only writes it to the path the image's CMD reads.
+# The app's scalo config file, rendered from the .Values.config blob dfe-engine
+# publishes, written to the path the image's CMD reads.
+#
+# The one key derived here is source.brokers on the bus. The app reads a
+# --config file straight into its struct, where source.brokers is REQUIRED, and
+# applies its DFE_TRANSFORM_ELASTIC_* env only after that; a file without the
+# key stops the pod before any env can supply it. The broker list is a
+# deployment fact, so it comes from kafka.bootstrapServers, never the engine.
+# Only a source the overlay names gets it: a lone brokers key fails the parse
+# (missing field name) that an absent source block passes as idle.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,4 +16,18 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- $cfg := deepCopy (.Values.config | default dict) }}
+    {{- $source := default dict (get $cfg "source") }}
+    {{- if and (include "dfe-common.transportIsBus" .) (get $source "name") }}
+    {{- if not (get $source "brokers") }}
+    {{- $brokers := list }}
+    {{- range splitList "," (.Values.kafka.bootstrapServers | default "") }}
+    {{- if trim . }}
+    {{- $brokers = append $brokers (trim .) }}
+    {{- end }}
+    {{- end }}
+    {{- $_ := set $source "brokers" $brokers }}
+    {{- end }}
+    {{- $_ := set $cfg "source" $source }}
+    {{- end }}
+    {{- toYaml $cfg | nindent 4 }}

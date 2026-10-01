@@ -18,11 +18,19 @@ layers an opinion on top: SASL over TLS, SCRAM-SHA-512 on brokers DFE owns,
 PLAIN only where the platform forbids SCRAM (Confluent Cloud), IAM only where
 the platform mandates it (MSK Serverless).
 
+The charts derive `security.protocol` and `sasl.mechanism` from one table,
+`helm/library/dfe-common/templates/_kafka.tpl`, and never take a hand-set
+mechanism. Its two extra keys, `strimzi-no-tls` and `redpanda-no-tls`, name a
+DFE-owned broker on the TLS-off listener the charts stand up in-cluster; every
+other key matches scalo's canonical table.
+
 DFE auto-deploys two of these providers as in-cluster brokers -- Strimzi
 (default, Apache-2.0) and Redpanda (opt-in, BSL). For the managed clouds DFE
 does NOT auto-deploy, this directory carries one guide each:
 
-- [aws-msk.md](aws-msk.md) -- AWS MSK provisioned (SASL/SCRAM) and MSK Serverless (IAM).
+- [aws-msk.md](aws-msk.md) -- AWS MSK provisioned (SASL/SCRAM) and MSK Serverless (IAM);
+  operating a running MSK deployment (bootstrap Job, autoscaling, telemetry) is
+  [aws-msk-operations.md](aws-msk-operations.md).
 - [confluent-cloud.md](confluent-cloud.md) -- Confluent Cloud (API-key PLAIN over TLS).
 - [redpanda-cloud.md](redpanda-cloud.md) -- Redpanda Cloud Serverless / Dedicated / BYOC (SCRAM).
 
@@ -139,12 +147,7 @@ the engine holds `kafka.storageModel`, `kafka.tieredObject.*` and
 
 1. Stand up the cluster with the guide's Terraform snippet (the right auth for
    the platform, plus whatever DFE defaults that platform lets you set).
-2. Point DFE at it: `kafka.mode=external`, `kafka.external.bootstrap=<endpoint>`,
-   and set the provider identity so scalo derives the correct
-   `security_protocol` + `sasl_mechanism` (never hand-set). The chart env var is
-   `KAFKA_PROVIDER` (helper `dfe-common.kafkaProviderEnv`); the engine-side name
-   is `DFE_KAFKA_PROVIDER`. Values: `msk`, `msk_iam`, `confluent-cloud`,
-   `redpanda-cloud`.
+2. Point DFE at it: `kafka.mode=external`, `kafka.external.bootstrap=<endpoint>` and `kafka.securityProtocol=SASL_SSL`, because every managed cloud here serves TLS only. Every app chart and dfe-engine read the wire protocol from that one dial, never from a provider key. On the bootstrap path you set none of the three by hand: `DFE_KAFKA_PROVIDER` of `msk`, `confluent-cloud` or `redpanda-cloud` puts them on the Argo cluster secret, and the layer 2 appsets hand them to the charts.
 3. Get the client config for that provider from the CLI:
    `dfe kafka client-config --provider <msk|msk_iam|confluent-cloud|redpanda-cloud>`.
    It emits the derived transport settings from the canonical provider table

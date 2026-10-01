@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -21,7 +25,14 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
     spec:
+      # k8s injects a Docker-link env var per Service in the namespace, and a
+      # DFE_* name that collides with an app setting shadows it. Same class the
+      # engine, loader and receiver charts already guard.
+      enableServiceLinks: false
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       containers:
@@ -43,22 +54,27 @@ spec:
               protocol: TCP
             {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
           env:
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_ELASTIC_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
+            # BARE names on purpose, and the one app chart where that is right:
+            # this app builds its transport through scalo's KafkaConfig::from_env
+            # (dfe-transform-elastic src/service.rs:894), which falls back to
+            # `KAFKA_<CANONICAL>` (scalo-rs transport/kafka/config.rs:1880). The
+            # receiver and loader charts prefix theirs because those two hand-build
+            # their config and never call from_env. Only CANONICAL names land, so
+            # the topic and group dials were deleted as inert (dfe-infra#181) --
+            # routing is the engine's, in the overlay this chart mounts.
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
-            - name: KAFKA_SOURCE_TOPIC
-              value: {{ .Values.kafka.sourceTopic | quote }}
-            - name: KAFKA_DEST_TOPIC
-              value: {{ .Values.kafka.destTopic | quote }}
-            - name: KAFKA_CONSUMER_GROUP
-              value: {{ .Values.kafka.consumerGroup | default (printf "dfe-%s" .Values.component) | quote }}
-            {{- if .Values.kafka.securityProtocol }}
-            # check_credentials runs before KafkaTransport::new, and only the
-            # latter calls apply_provider, so KAFKA_PROVIDER alone leaves
-            # security_protocol at plaintext and the app refuses to start with
-            # credentials it believes would never be sent. Both are set here
-            # until scalo derives them earlier.
+            {{- with .Values.kafka.consumerProtocol }}
+            - name: KAFKA_CONSUMER_PROTOCOL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if and .Values.kafka.securityProtocol .Values.kafka.saslSecretName }}
+            # No KAFKA_PROVIDER beside these: KafkaTransport::new derives the
+            # protocol from a provider and overwrites this one, so a provider
+            # key that disagrees with the listener would win.
             - name: KAFKA_SECURITY_PROTOCOL
               value: {{ .Values.kafka.securityProtocol | quote }}
             - name: KAFKA_SASL_MECHANISM
@@ -84,6 +100,7 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
           volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
             - name: config
               mountPath: {{ .Values.configMountPath }}
               readOnly: true
@@ -112,6 +129,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config

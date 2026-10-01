@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -24,12 +28,16 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       # Same class as dfe-engine and dfe-loader: k8s injects DFE_RECEIVER_PORT=
       # "tcp://IP:8080" from svc/dfe-receiver, into a pod that reads DFE_RECEIVER_*
       # as its own config (config/mod.rs ENV_PREFIX). DFE resolves by DNS and reads
       # none of these -- switch them off before the collision finds us.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
         - name: receiver
           image: {{ include "dfe-common.image" . | quote }}
@@ -50,8 +58,17 @@ spec:
               containerPort: {{ .port }}
               protocol: {{ .protocol | default "TCP" }}
             {{- end }}
+            # scalo's metrics server (0.0.0.0:9090 unless metrics.address moves it).
+            # Outside listeners, which an engine overlay replaces whole and which
+            # decides what is exposed.
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_RECEIVER_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if (include "dfe-common.transportIsBus" .) }}
             # Same flat-env contract as the SASL block below (mod.rs:261, prefix
             # DFE_RECEIVER at :35). A bare KAFKA_BOOTSTRAP_SERVERS is read by
@@ -61,7 +78,13 @@ spec:
             # destination comes from the config blob (see the configmap).
             - name: DFE_RECEIVER_KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if contains "SSL" (upper .Values.kafka.securityProtocol) }}
+            # A TLS listener only: the app sets kafka.tls.enabled from this in both
+            # directions (mod.rs:623), so a plaintext value would switch off TLS
+            # the overlay turned on.
+            - name: DFE_RECEIVER_KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
             # SASL credential by env, not in the config blob -- see the same block in
             # dfe-loader. Env beats the config file, and the engine-authored YAML
@@ -126,8 +149,8 @@ spec:
             {{- else }}
             # DLQ standard: fixed per-app topic on the kafka backend -- a file
             # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
-            # pre-created by the kafka chart (kafka.dlqTopics); names are the
-            # receiver's flat-env contract (mod.rs DLQ_TOPIC/DLQ_MODE).
+            # created by dfe-engine from the dfe-schemas topic set; names are
+            # the receiver's flat-env contract (mod.rs DLQ_TOPIC/DLQ_MODE).
             - name: DFE_RECEIVER_DLQ_TOPIC
               value: {{ .Values.dlq.topic | quote }}
             - name: DFE_RECEIVER_DLQ_MODE
@@ -140,6 +163,7 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: dfe-receiver
           volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
             - name: config
               mountPath: /etc/dfe-receiver
               readOnly: true
@@ -170,6 +194,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
@@ -177,10 +202,11 @@ spec:
           emptyDir: {}
         {{- $spill := .Values.receiver.buffer.spillover }}
         {{- if $spill.enabled }}
-        # Node-local scratch, not a PVC: the spool is slack for an outage the
-        # pod is expected to outlive, and a record still held when the pod dies
-        # was never acknowledged as durable on this transport. sizeLimit is what
-        # stops one receiver filling the node's disk for everything else.
+        # Node-local scratch, not a PVC. With acknowledgements on (the default)
+        # the receiver builds no spool and answers a sender only once the record
+        # is delivered, so nothing on this volume is on the ack path. With them
+        # off a spooled record has already had its 2xx, and it dies with the pod.
+        # sizeLimit stops one receiver filling the node's disk for everything else.
         - name: spool
           emptyDir:
             sizeLimit: {{ $spill.sizeLimit }}

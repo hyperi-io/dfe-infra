@@ -1,0 +1,31 @@
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" . "key" "forgejo") }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Values.routes.forgejo.routeName }}
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" . "key" "forgejo") }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    {{- include "envoy-gateway-config.dnsMarker" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+      # See httproute-argocd.yaml: pinned off the plaintext :80 listener.
+      sectionName: https
+  hostnames:
+    - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "forgejo") }}.{{ .Values.domain }}"
+  rules:
+    -
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" (include "envoy-gateway-config.edgeHsts" (dict "ctx" .)) "indent" 6) }}
+      backendRefs:
+        - name: {{ .Values.routes.forgejo.backendService }}
+          port: {{ .Values.routes.forgejo.backendPort }}
+          group: ""
+          kind: Service
+          weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "forgejo" "indent" 4) }}
+{{- end }}

@@ -1,61 +1,42 @@
 # Auth testing -- where the identities come from
 
-Proving auth end to end needs real identities in a real identity provider. Those
-already exist, and they are NOT in this repo. This page says what exists and how
-to reach it, so nobody rebuilds it.
+Proving auth end to end needs real identities in a real identity provider. `dfe-ops idp` stands one up on the deployment's own cluster, so a test never borrows a shared IdP or edits its redirect URIs.
 
-Nothing here is a credential. Every secret is held in the estate's secret store
-and fetched by the tooling described below.
+## The tester IdP
+
+`dfe-ops idp deploy` installs Dex with a glauth LDAP directory behind it and routes it on the deployment's gateway. The users live in glauth because Dex's static password database emits no `groups` claim, and the groups claim is what the engine maps to roles.
+
+- `deploy` generates the client secret and one shared user password and writes both to a mode-0600 file (`--secrets-out`, default `.tmp/tester-idp.env`). Neither is printed or committed. The e2e specs read that password as `E2E_FIXTURE_PASSWORD`, from the file's `TESTER_IDP_USER_PASSWORD` line.
+- `wire-engine` hands the client credentials, the provider definition, the group map and the CA bundle to the engine's namespace, then prints the chart values that pick them up.
+- `status` reports whether it is serving, and `teardown` removes it.
+
+Every environment value is a flag: `python3 scripts/dfe-ops idp deploy --help` lists them.
 
 ## The fixture
 
-The estate's infrastructure repository carries a `dfe-oidc-testing` subproject.
-One file defines every test user and group; a renderer projects that same
-definition into four providers, so a test written once runs against any of them
-by changing one variable:
+Two files, and the group NAMES are the contract between them:
 
-- **dex** (backed by an LDAP directory) -- headless, deterministic, no browser,
-  no rate limit. Develop against this one.
-- **Entra ID**, **Okta**, **Google Workspace** -- real providers, for proving a
-  real provider behaves rather than proving our plumbing.
+- `bootstrap/fixtures/tester-idp-users.toml` -- the users and groups the IdP serves. `--users-file` on `deploy` points it at a different directory.
+- `bootstrap/fixtures/tester-idp-groups.toml` -- the engine's role, scope and org ids for each of those groups. `wire-engine` writes it to the `dfe-auth-groups` ConfigMap, which `authConfig.groupsConfigMap` seeds into the engine. `--groups-file` points it at a different map.
+- Each group file carries `source_provider`, the `--provider` name (default `dex`), and `source_id`, the claim value that links to it (the entry's `source_id`, else its name). From dfe-engine #669 on, the engine links a claim value to a group only through those two, never through the group's name, so a login through any other provider name gets none of these groups.
 
-The subproject also renders drop-in provider config for dfe-engine, so wiring the
-engine to a provider is a file copy rather than a configuration exercise.
+The engine seeds its own four default groups only into an empty group store, so the map repeats them. Every user is a row in `tests/e2e-ui/specs/engine/oidc-rba.spec.ts`, and `scripts/tests/test_tester_idp.py` fails if the two files stop granting what that spec asserts.
 
-## The identities that matter to us
-
-Twelve users span the RBAC roles. Two of them exist specifically to prove
-**tenant isolation**, which is what makes them worth naming here:
+The set is wider than a happy-path login on purpose:
 
 | Fixture user | Carries | Proves |
 |---|---|---|
-| `dfe-acme-viewer` | `org_viewer` on one org | Sees ONLY that org's rows |
-| `dfe-multi-viewer` | `org_viewer` on two orgs | Sees exactly those two, no more |
-| `dfe-nobody` | no roles at all | Default deny -- every screen refuses |
-| `dfe-admin` | `admin` | The allow-everything baseline |
+| `dfe-test` | `dfe-admins` and `dfe-viewers` | A multi-group claim resolves to the union of the roles |
+| `dfe-admin` | `dfe-admins` | The allow-everything baseline |
+| `dfe-test-org-viewer` | `dfe-test-org-viewers`, scoped to `test_org` | An org-scoped role binds at that org and names it in `org_ids` |
+| `dfe-multi-viewer` | `dfe-multi-viewers`, system scope over `test_org` and `test_org_2` | One group confers two orgs, and an org role held at system scope does not over-grant |
+| `dfe-nobody` | `dfe-nogroup`, which maps to no role | Authentication succeeds and authorisation denies -- every screen refuses |
+| `dfe-nested-member` | `dfe-nested-child`, which nests `dfe-nested-parent` | Nested membership never reaches the groups claim, so only direct groups grant |
 
-`dfe-nobody` is the one people forget. A feature that renders for a user with no
-roles is a bug, and it is the cheapest one to catch.
+`dfe-infra-admin`, `dfe-infra-viewer`, `dfe-analyst`, `dfe-analyst-viewer`, `dfe-viewer` and `dfe-operator` carry one role group each.
 
-Provider coverage is uneven by design: Okta's free plan caps active users, and
-the Google credential is deliberately read-only against the real directory. dex
-carries the full set.
+`dfe-nobody` is the one people forget. A feature that renders for a user with no roles is a bug, and it is the cheapest one to catch.
 
-## What this repo has to do with it
+## Real providers
 
-Nothing automated, yet. The fixture is a laptop-and-engine asset: it renders
-provider config you copy into a dfe-engine checkout. Nothing copies it into a
-cluster, and no deployed environment here points at any of these providers.
-
-Closing that gap is the work -- see the auth/tenancy plan and the cross-repo
-issues it tracks. The relevant point for anyone picking this up: **the identity
-provider side is done. Do not build another one.**
-
-## Reaching it
-
-The subproject's own `devpack/README.md` is the operating manual -- how to fetch
-credentials from the secret store, which variable switches provider, and how to
-read a failed login. Access to the underlying tenants is granted per person and
-is documented in the infrastructure repository, not here.
-
-Ask in the team channel if you need the pack and cannot find it.
+The tester IdP proves the engine's login, claim and role mapping. Proving a real provider such as Entra ID, Okta or Google Workspace behaves needs identities in your own tenant of it.

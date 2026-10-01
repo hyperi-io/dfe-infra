@@ -95,7 +95,23 @@ def setup_complete(status: Mapping) -> bool:
     return bool(isinstance(initial, Mapping) and initial.get("complete"))
 
 
-def expected_slugs(steps: Iterable[str]) -> tuple[str, ...]:
+def pending_steps(status: Mapping) -> tuple[str, ...]:
+    """The declared steps the engine still reports as pending.
+
+    Args:
+        status: The ``GET /api/v1/auth/setup-status`` document.
+
+    Returns:
+        The pending step ids, in the engine's order; every declared step when the
+        document does not say.
+    """
+    initial = status.get("initial_setup")
+    if not isinstance(initial, Mapping) or initial.get("pending_steps") is None:
+        return engine_steps(status)
+    return tuple(str(s) for s in initial.get("pending_steps") or ())
+
+
+def expected_slugs(steps: Iterable[str], pending: Iterable[str] | None = None) -> tuple[str, ...]:
     """The screens this deployment must show, given the engine's steps.
 
     The break-glass reset screen is driven by the engine's ``admin_password``
@@ -103,18 +119,31 @@ def expected_slugs(steps: Iterable[str]) -> tuple[str, ...]:
     rule for both releases: while the engine asks for the step the screen is
     expected, and the moment it stops the screen must be gone.
 
+    The console leaves the wizard the moment no required step is pending, so a
+    deployment whose first user already exists (seeded accounts) shows the
+    organisation screen and nothing after it, and never reaches ``complete``.
+
     Args:
         steps: The engine's declared setup steps.
+        pending: The steps still pending; every declared step when omitted.
 
     Returns:
         The wizard slugs the run walks, in console order.
     """
     declared = set(steps)
-    return tuple(
-        slug
-        for slug in WIZARD_SLUGS
-        if slug != RESET_BREAK_GLASS or ADMIN_PASSWORD_STEP in declared
-    )
+    still = declared if pending is None else set(pending)
+    slugs = [WELCOME]
+    # Declared rather than pending: the console renders an already-satisfied
+    # organisation step as a done-state screen with Next, so the run meets the
+    # screen either way and only what it does there changes.
+    if "organisations" in declared:
+        slugs.append(ORGANISATION)
+    if "first_user" in still:
+        slugs += [LOGIN, FIRST_USER]
+        if ADMIN_PASSWORD_STEP in declared and ADMIN_PASSWORD_STEP in still:
+            slugs.append(RESET_BREAK_GLASS)
+        slugs.append(COMPLETE)
+    return tuple(slugs)
 
 
 def unexpected_screens(expected: Sequence[str], seen: Iterable[str]) -> tuple[str, ...]:

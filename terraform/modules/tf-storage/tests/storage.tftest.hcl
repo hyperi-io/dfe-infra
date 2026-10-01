@@ -1,7 +1,7 @@
 # Pure unit test — no providers needed.
 variables {
-  cloud          = "local"
-  nfs_server     = "storage.example.com"
+  cloud           = "local"
+  nfs_server      = "storage.example.com"
   nfs_config_path = "/data/dfe-config"
 }
 

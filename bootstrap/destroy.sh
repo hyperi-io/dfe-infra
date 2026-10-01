@@ -30,6 +30,11 @@ if [[ "${DRY_RUN}" != "true" ]] && [[ "${1:-}" != "--force" ]]; then
 fi
 
 echo "==> [1/7] Deleting ArgoCD Applications + ApplicationSets"
+# KEDA scalers carry finalizer.keda.sh, which only the KEDA operator clears, so
+# they go before Argo's concurrent cascade can reap the operator ahead of them.
+run kubectl delete scaledobject --all -A 2>/dev/null || true
+run kubectl delete scaledjob --all -A 2>/dev/null || true
+run kubectl delete triggerauthentication --all -A 2>/dev/null || true
 run kubectl -n argocd delete applicationset --all 2>/dev/null || true
 # Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
 # app.catalog.cattle.io and every Argo Application survives the teardown.
@@ -49,12 +54,6 @@ run kubectl -n cnpg delete cluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete clickhousecluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete keepercluster --all 2>/dev/null || true
 run kubectl -n clickhouse delete clickhouseinstallation --all 2>/dev/null || true
-# KEDA scalers carry finalizer.keda.sh, which only the KEDA operator clears, so
-# they go while it is still running; the keda namespace itself goes after the
-# dfe-* namespaces below.
-run kubectl delete scaledobject --all -A 2>/dev/null || true
-run kubectl delete scaledjob --all -A 2>/dev/null || true
-run kubectl delete triggerauthentication --all -A 2>/dev/null || true
 if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 5
 fi
@@ -67,6 +66,13 @@ echo "==> [4/7] Deleting DFE namespaces"
 # teardown, which then blocks a clean redeploy.
 # clickhouse-operator is the pre-rc.7 namespace, kept so a teardown of an older
 # deploy cannot leave a second operator reconciling the same CRs.
+# Deleting the external-dns namespace here does not itself clean up the DNS
+# records it published on AWS: sync policy only removes a record once it has
+# reconciled the Service/Ingress deletion from step 1, and this script gives
+# it no guaranteed time to do that before its pod is gone. That is what
+# terraform/modules/kubernetes-cluster/aws/dns.tf's destroy-time cleanup is
+# for -- it empties the private zone itself, independent of whether
+# external-dns ever got the chance.
 for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
@@ -98,13 +104,20 @@ echo "==> [7/7] Cleaning up namespaces"
 for ns in argocd cert-manager external-secrets envoy-gateway-system; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
+# destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
+# already carried, and removing an adopted LoadBalancer provider would strand
+# every other tenant's Service on the cluster.
+echo "  metallb-system and its address pool left in place -- an adopted LoadBalancer provider is never removed"
 
 echo ""
 echo "=== Teardown complete ==="
 echo ""
-echo "To also destroy Terraform state:"
-echo "  cd terraform/environments/local && terraform destroy"
+echo "To also destroy OpenTofu state:"
+echo "  cd terraform/environments/local && tofu destroy"
+echo "  (AWS: cd terraform/environments/aws && tofu destroy -- the private DNS"
+echo "  zone empties itself of what external-dns published as its own last"
+echo "  step, so it needs no manual record cleanup first; see docs/deployment/aws.md)"
 echo ""
 echo "To redeploy:"
-echo "  cd terraform/environments/local && terraform apply"
+echo "  cd terraform/environments/local && tofu apply"
 echo "  python3 bootstrap/bridge.py --tf-dir terraform/environments/local"

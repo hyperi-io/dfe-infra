@@ -2,18 +2,21 @@
 #  Project:      dfe-infra
 #  File:         test_resolve_pins.py
 #  Purpose:      Prove the tag -> digest resolver + writer: the registry lookup
-#                (mocked, never the network), the fresh/stale/missing verdict,
-#                the cooldown hold, and that --write rewrites ONLY the current
-#                stack's digests: while preserving comments and formatting.
+#                (mocked, never the network), that a registry nobody could reach
+#                raises instead of reading as absent, the fresh/stale/missing
+#                verdict, the cooldown hold, and that --write rewrites ONLY the
+#                current stack's digests: while preserving comments and
+#                formatting.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/registry_pins.py + scripts/resolve_pins.py (dfe-infra#116).
 
-The GH packages API is mocked in every test -- no network, so the suite is
-hermetic and runs on a bare CI image. Runs under pytest, and standalone via the
-main() runner at the bottom (matching the other tests in this dir).
+Both registry reads -- `docker buildx imagetools` and the GH packages API -- are
+mocked in every test, so the suite is hermetic and runs on a bare CI image. Runs
+under pytest, and standalone via the main() runner at the bottom (matching the
+other tests in this dir).
 
     python3 -m pytest scripts/tests/test_resolve_pins.py
     python3 scripts/tests/test_resolve_pins.py
@@ -23,6 +26,8 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -172,6 +177,192 @@ def test_gh_api_raises_on_failure(monkeypatch):
     assert raised
 
 
+# --- registry_pins digest resolution ------------------------------------------
+_INDEX = "sha256:" + "9" * 64
+
+
+class _FakeProc:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _fake_run(docker=None, gh=None):
+    """A subprocess.run stub routing on argv[0]; an Exception value is raised.
+
+    `docker`/`gh` is either one value returned on every call, or a list
+    consumed one entry per call -- popping past the end raises, which proves
+    a caller did not make more calls than the list scripts.
+    """
+    calls = {"docker": docker, "gh": gh}
+
+    def run(cmd, *a, **k):
+        key = "docker" if cmd[0] == "docker" else "gh"
+        value = calls[key]
+        if isinstance(value, list):
+            if not value:
+                raise AssertionError(f"{cmd[0]} called more times than scripted")
+            proc = value.pop(0)
+        else:
+            proc = value
+        if isinstance(proc, Exception):
+            raise proc
+        if proc is None:
+            raise AssertionError(f"{cmd[0]} must not be called")
+        return proc
+
+    return run
+
+
+def test_ref_digest_reads_the_digest_imagetools_reports(monkeypatch):
+    monkeypatch.setattr(
+        registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX + "\n"))
+    )
+    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
+
+
+def test_ref_raw_returns_what_imagetools_prints(monkeypatch):
+    raw = '{"schemaVersion": 2, "manifests": []}'
+    monkeypatch.setattr(registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=raw)))
+    assert registry_pins.ref_raw("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (raw, "")
+
+
+def test_is_absent_tells_a_missing_tag_from_a_failed_read():
+    assert registry_pins.is_absent("ERROR: ghcr.io/hyperi-io/x:v9: not found")
+    assert registry_pins.is_absent("manifest unknown")
+    assert not registry_pins.is_absent("cannot run docker buildx: [Errno 2] No such file")
+    assert not registry_pins.is_absent("unexpected status: 403 Forbidden")
+
+
+def test_tag_digest_prefers_imagetools_and_leaves_the_api_alone(monkeypatch):
+    monkeypatch.setattr(
+        registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX))
+    )
+    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1") == _INDEX
+
+
+def test_tag_digest_falls_back_to_the_api_without_docker(monkeypatch):
+    registry_pins.package_versions.cache_clear()
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=FileNotFoundError("docker"),
+            gh=_FakeProc(stdout=json.dumps(FAKE_PACKAGES["dfe-engine"])),
+        ),
+    )
+    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1") == "sha256:" + "a" * 64
+
+
+def test_tag_digest_is_none_only_when_the_registry_says_not_found(monkeypatch):
+    registry_pins.package_versions.cache_clear()
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=_FakeProc(returncode=1, stderr="ERROR: ghcr.io/o/a:v9.9.9: not found"),
+            gh=_FakeProc(returncode=1, stderr="gh: You need at least read:packages scope"),
+        ),
+    )
+    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v9.9.9") is None
+
+
+def test_tag_digest_raises_when_neither_read_could_answer(monkeypatch):
+    """An unreachable registry must not read as an absent tag, let alone a match."""
+    registry_pins.package_versions.cache_clear()
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=_FakeProc(returncode=1, stderr="failed to do request: dial tcp: no such host"),
+            gh=_FakeProc(returncode=1, stderr="gh: You need at least read:packages scope"),
+        ),
+    )
+    raised = False
+    try:
+        registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1")
+    except registry_pins.RegistryError as exc:
+        raised = "no such host" in str(exc)
+    assert raised
+
+
+# --- registry_pins retry -------------------------------------------------------
+def _no_sleep(monkeypatch):
+    """Make the retry backoff instant and deterministic for a test."""
+    monkeypatch.setattr(registry_pins, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(registry_pins, "_random", lambda: 0.5)
+
+
+def test_imagetools_retries_a_502_then_succeeds(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=[
+                _FakeProc(returncode=1, stderr="Error response from daemon: 502 Bad Gateway"),
+                _FakeProc(stdout=_INDEX),
+            ]
+        ),
+    )
+    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
+
+
+def test_imagetools_gives_up_after_three_502s(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=[
+                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
+                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
+                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
+            ]
+        ),
+    )
+    out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v1.15.1")
+    assert out is None
+    assert "502 Bad Gateway" in err
+    assert "3 attempts" in err
+
+
+def test_imagetools_does_not_retry_manifest_unknown(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(docker=[_FakeProc(returncode=1, stderr="manifest unknown")]),
+    )
+    out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v9.9.9")
+    assert out is None
+    assert registry_pins.is_absent(err)
+
+
+def test_imagetools_does_not_retry_a_missing_docker_binary(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(docker=[OSError("No such file or directory: 'docker'")]),
+    )
+    out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v1.15.1")
+    assert out is None
+    assert "cannot run docker buildx" in err
+
+
+def test_imagetools_does_not_retry_401_or_403(monkeypatch):
+    _no_sleep(monkeypatch)
+    for code in ("401 Unauthorized", "403 Forbidden"):
+        monkeypatch.setattr(
+            registry_pins.subprocess,
+            "run",
+            _fake_run(docker=[_FakeProc(returncode=1, stderr=code)]),
+        )
+        out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v1.15.1")
+        assert out is None
+        assert code in err
+
+
 # --- resolve_pins verdicts ----------------------------------------------------
 def test_default_selection_is_published_apps_only(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path)
@@ -272,6 +463,49 @@ def test_ad_hoc_write_refuses_tag_mismatch(monkeypatch, tmp_path):
     assert rc == 1  # refused -> use bump-app first
 
 
+# --- registry token from an env file ------------------------------------------
+_FILE_TOKEN = "ghp_fromtheenvfile"
+
+
+def test_pin_takes_repeatable_env_files():
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    resolve_pins.add_pin_subparser(ap.add_subparsers(dest="command"))
+    args = ap.parse_args(["pin", "--env-file", "a.env", "--env-file", "b.env"])
+    assert args.env_file == ["a.env", "b.env"]
+
+
+def test_the_env_file_token_reaches_the_registry_and_is_never_printed(
+    monkeypatch, tmp_path, capsys
+):
+    """gh without read:packages gets a 403 from ghcr; the scoped token lives in a file."""
+    _install(monkeypatch, tmp_path)
+    token_file = tmp_path / "ghcr.env"
+    token_file.write_text(f"GHCR_TOKEN={_FILE_TOKEN}\n", encoding="utf-8", newline="\n")
+    seen_tokens: list[str | None] = []
+
+    def reading_versions(org, app):
+        seen_tokens.append(os.environ.get("GH_TOKEN"))
+        return tuple(FAKE_PACKAGES.get(app, []))
+
+    monkeypatch.setattr(registry_pins, "package_versions", reading_versions)
+    previous = os.environ.pop("GH_TOKEN", None)
+    try:
+        rc = resolve_pins.cmd_pin(_args(check=True, env_file=[str(token_file)]))
+    finally:
+        os.environ.pop("GH_TOKEN", None)
+        if previous is not None:
+            os.environ["GH_TOKEN"] = previous
+
+    out = capsys.readouterr()
+    assert rc == 1  # the synthetic stack carries stale pins; the read itself ran
+    assert seen_tokens
+    assert all(token == _FILE_TOKEN for token in seen_tokens)
+    assert _FILE_TOKEN not in out.out
+    assert _FILE_TOKEN not in out.err
+
+
 # --- arg helper ---------------------------------------------------------------
 def _args(**over):
     import argparse
@@ -286,6 +520,7 @@ def _args(**over):
         write=False,
         cooldown_days=7,
         allow_fresh=False,
+        env_file=[],
         func=None,
     )
     for k, v in over.items():

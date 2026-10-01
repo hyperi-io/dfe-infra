@@ -4,6 +4,10 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
 spec:
   {{- include "dfe-common.replicas" . }}
   {{- include "dfe-common.rollout" . | nindent 2 }}
@@ -24,6 +28,9 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
       # k8s injects a legacy Docker-link env var per Service in the namespace, and
       # this chart now ADDS svc/dfe-loader -> DFE_LOADER_PORT="tcp://IP:6000". The
       # loader layers `Env::prefixed("DFE_LOADER_")` over its config (config/loader.rs),
@@ -33,6 +40,38 @@ spec:
       # reads none of these: switch them off rather than wait for the collision.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- /* The helper renders the initContainers key itself, so the CA bundle
+             joins its list, or opens one when the wait is switched off. */}}
+      {{- $waitForEngine := include "dfe-common.waitForEngine" . }}
+      {{- $caBundle := include "dfe-loader.clickhouseCaBundle" . }}
+      {{- if $waitForEngine }}
+      {{- $waitForEngine | nindent 6 }}
+      {{- else if $caBundle }}
+      initContainers:
+      {{- end }}
+      {{- if $caBundle }}
+        # SSL_CERT_FILE replaces the system store rather than adding to it, and
+        # the loader's release check still needs the public roots, so the
+        # ClickHouse CA is appended to a copy of the image's own bundle.
+        - name: clickhouse-ca-bundle
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              cat /etc/ssl/certs/ca-certificates.crt /etc/dfe-clickhouse-ca/{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }} > /etc/dfe-trust/ca-bundle.pem
+          volumeMounts:
+            - name: clickhouse-ca
+              mountPath: /etc/dfe-clickhouse-ca
+              readOnly: true
+            - name: ca-bundle
+              mountPath: /etc/dfe-trust
+          resources:
+            {{- toYaml .Values.clickhouse.tls.bundleResources | nindent 12 }}
+      {{- end }}
       containers:
         - name: loader
           image: {{ include "dfe-common.image" . | quote }}
@@ -54,7 +93,10 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_LOADER_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- if eq (include "dfe-common.transport" .) "direct" }}
             # Direct transport (slim, mesh): receiver -> loader gRPC on the
             # service grpcPort; the DLQ's kafka backend is gone with the broker.
@@ -72,7 +114,12 @@ spec:
             # nothing, leaving the broker list on its localhost:9092 default.
             - name: DFE_LOADER_KAFKA_BROKERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
-            {{- include "dfe-common.kafkaProviderEnv" . | nindent 12 }}
+            {{- if contains "SSL" (upper .Values.kafka.securityProtocol) }}
+            # A TLS listener only: the app turns kafka.tls on from an SSL value
+            # and ignores any other (loader.rs:247).
+            - name: DFE_LOADER_KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
             # The SASL credential MUST arrive by env, not in the config blob: the
             # engine's model_dump masks the pydantic SecretStr, so the authored
@@ -106,8 +153,13 @@ spec:
             # DLQs on schema_pending_timeout. hosts and protocol must move
             # TOGETHER (the loader validates the pairing). The key is
             # `protocol` -- the loader ignores a `transport` key silently.
+            #
+            # The DOUBLE underscore below is not a typo: `clickhouse.protocol` has
+            # no flat-env name, so it arrives through the figment cascade, where
+            # `__` is the nesting separator (loader.rs:351-367). HOSTS beside it is
+            # single because it does have one (loader.rs:220).
             - name: DFE_LOADER_CLICKHOUSE_HOSTS
-              value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
+              value: {{ include "dfe-loader.clickhouseHosts" . | quote }}
             - name: DFE_LOADER_CLICKHOUSE__PROTOCOL
               value: "http"
             - name: DFE_LOADER_CLICKHOUSE_DATABASE
@@ -127,8 +179,9 @@ spec:
             # DLQ standard: fixed per-app topic on the kafka backend. The file
             # DLQ cannot work here -- the rootfs is read-only, so a file DLQ
             # write is an EROFS no-op and the poison message vanishes. The
-            # topic is pre-created by the kafka chart (kafka.dlqTopics); names
-            # are the loader's flat-env contract (loader.rs DLQ_TOPIC/DLQ_MODE).
+            # topic is created by dfe-engine from the dfe-schemas topic set;
+            # names are the loader's flat-env contract (loader.rs
+            # DLQ_TOPIC/DLQ_MODE).
             - name: DFE_LOADER_DLQ_TOPIC
               value: {{ .Values.dlq.topic | quote }}
             - name: DFE_LOADER_DLQ_MODE
@@ -140,10 +193,23 @@ spec:
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-loader
+            {{- if $caBundle }}
+            # The merged store the init container wrote, read in place of the
+            # system store by every TLS client in the process.
+            - name: SSL_CERT_FILE
+              value: /etc/dfe-trust/ca-bundle.pem
+            {{- end }}
           volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
             - name: config
               mountPath: /etc/dfe
               readOnly: true
+            {{- if $caBundle }}
+            # Beside /etc/dfe rather than nested in its read-only ConfigMap mount.
+            - name: ca-bundle
+              mountPath: /etc/dfe-trust
+              readOnly: true
+            {{- end }}
             # Writable scratch: the container rootfs is read-only
             # (dfe-common.containerSecurityContext), so anything writing /tmp
             # needs this emptyDir.
@@ -183,8 +249,26 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        {{- if $caBundle }}
+        {{- $ca := .Values.clickhouse.tls.ca }}
+        {{- $key := $ca.dataKey | default "ca.crt" }}
+        - name: clickhouse-ca
+          {{- if $ca.secretName }}
+          secret:
+            secretName: {{ $ca.secretName }}
+          {{- else }}
+          configMap:
+            name: {{ $ca.configMapName }}
+          {{- end }}
+            items:
+              - key: {{ $key }}
+                path: {{ $key }}
+        - name: ca-bundle
+          emptyDir: {}
+        {{- end }}

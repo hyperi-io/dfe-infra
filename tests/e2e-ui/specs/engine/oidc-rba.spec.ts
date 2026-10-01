@@ -10,8 +10,10 @@
 // oracle (docs/AUTH-TESTING.md); a drifted group file or claim mapping fails
 // the row that names the broken identity.
 //
-// Requires the deployed engine wired to an IdP serving the shared fixture and
-// E2E_FIXTURE_PASSWORD in the environment.
+// Requires the tester IdP serving bootstrap/fixtures/tester-idp-users.toml
+// (`dfe-ops idp deploy`), the engine wired to it with the group map in
+// tester-idp-groups.toml (`dfe-ops idp wire-engine`), and E2E_FIXTURE_PASSWORD
+// set to the TESTER_IDP_USER_PASSWORD that deploy wrote.
 
 import { ENGINE_URL } from '../../harness/env';
 import { expect, test } from '../../harness/fixtures';
@@ -47,7 +49,7 @@ const TRUTH_TABLE: Expectation[] = [
 test.describe('OIDC login and role resolution', () => {
   test.skip(
     FIXTURE_PASSWORD === '',
-    'E2E_FIXTURE_PASSWORD not set (see README: fetch-secrets)',
+    'E2E_FIXTURE_PASSWORD not set (see docs/AUTH-TESTING.md)',
   );
 
   for (const expected of TRUTH_TABLE) {

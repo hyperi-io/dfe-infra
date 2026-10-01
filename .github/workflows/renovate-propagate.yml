@@ -1,8 +1,9 @@
 # Renovate edits versions.yaml (the SSoT) and nothing else -- it cannot reach
 # the appset pins, the Chart.yaml appVersions or the bare `version:` keys, so it
 # could only ever move one mirror of a key that has up to three. This job
-# propagates the SSoT across every mirror and re-resolves the digests, then
-# pushes the result back onto Renovate's own branch so the PR arrives green.
+# re-resolves the digests, propagates the SSoT across every mirror, runs the
+# drift check, and pushes the result back onto Renovate's own branch so the PR
+# arrives green.
 #
 # Runs on PUSH, not pull_request: a pull_request run from a bot gets a read-only
 # token and cannot push. Renovate pushes its branches to this repo (never a
@@ -45,17 +46,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Refuses rather than guessing when a pattern stops matching, so a chart
-      # that changed shape fails the job instead of being written at a guessed
-      # offset.
-      - name: Propagate the SSoT into every mirror
-        run: python3 scripts/check_versions_drift.py --fix
-
+      # Before the propagation: refresh-digests writes versions.yaml only, so a
+      # digest it moves reaches the chart copies that read it only through --fix.
       - name: Re-resolve third-party digests
         run: python3 scripts/dfe-stack refresh-digests
 
+      # Refuses rather than guessing when a pattern stops matching, so a chart
+      # that changed shape is never written at a guessed offset. A refusal still
+      # reaches the drift check below, which is the gate and what gets reported.
+      - name: Propagate the SSoT into every mirror
+        continue-on-error: true
+        run: python3 scripts/check_versions_drift.py --fix
+
+      - name: Check every mirror against the SSoT
+        id: drift
+        continue-on-error: true
+        run: python3 scripts/check_versions_drift.py
+
       - name: Push the propagation back onto the branch
         id: push
+        if: steps.drift.outcome == 'success'
         run: |
           set -euo pipefail
           # Explicit paths, never `git add -A`: this job runs on a bot's branch
@@ -74,6 +84,31 @@ jobs:
           git push origin "HEAD:${GITHUB_REF_NAME}"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
+      # A workflow_dispatch run does not attach to the PR, so a commit status is
+      # the only verdict from this job the PR shows. It carries the drift check's
+      # own exit, on the commit the branch now points at: the propagation when
+      # one was pushed, Renovate's commit otherwise.
+      - name: Report the drift check on the branch head
+        if: steps.drift.outcome == 'success' || steps.drift.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRIFT_OUTCOME: ${{ steps.drift.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "${DRIFT_OUTCOME}" = "success" ]; then
+            state=success
+            description="SSoT propagated to every mirror; drift check passed"
+          else
+            state=failure
+            description="Drift check failed after propagation; nothing was pushed"
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/$(git rev-parse HEAD)" \
+            --method POST \
+            -f state="${state}" \
+            -f context="pin propagation" \
+            -f description="${description}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
       # The pull_request run for a bot-authored commit lands in `action_required`
       # and waits for a human, so the branch would otherwise go unverified until
       # someone noticed. workflow_dispatch is not gated that way.
@@ -83,18 +118,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run helm-lint.yml --ref "${GITHUB_REF_NAME}"
 
-      # A workflow_dispatch run does not attach to the PR, so the step above
-      # verifies the branch without the PR showing anything. A commit status
-      # does show, and reports what the steps above actually verified -- the job
-      # fails before reaching here if propagation or the digests fail.
-      - name: Report the propagation on the pushed commit
-        if: steps.push.outputs.pushed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fail the run when drift remains
+        if: steps.drift.outcome == 'failure'
         run: |
-          set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/statuses/$(git rev-parse HEAD)" \
-            --method POST \
-            -f state=success \
-            -f context="pin propagation" \
-            -f description="SSoT propagated to every mirror; drift check passed"
+          echo "::error::check_versions_drift.py failed after propagation; see its step above."
+          exit 1

@@ -1,0 +1,67 @@
+project: dfe
+component: toolbox
+env: local
+cloud: local
+
+# The appset always deploys this chart (argocd/appsets/layer2-platform.yaml,
+# not cloud-gated); everything below decides whether it does anything.
+# argocd/values/common.yaml carries the fleet-wide default (both off), and a
+# deployer opts in per deployment through the deploy repo's infra/ overlay.
+toolbox:
+  pod:
+    # false -> replicas: 0 (rendered, not running). true -> replicas: 1.
+    enabled: false
+    # Grants a dedicated ServiceAccount + read-only ClusterRole (RoleBindings
+    # into the namespaces below), turns automountServiceAccountToken on, and
+    # is what the pod actually authenticates to the API server with. Refused
+    # by validate.yaml when enabled is not also true.
+    kubeApiAccess: false
+    # Seconds the pod may run before the companion CronJob scales it back to
+    # zero. Empty (the default) renders no CronJob -- the pod runs until an
+    # operator flips enabled back to false by hand.
+    ttlSeconds: ""
+    # How often the CronJob checks elapsed time against ttlSeconds. Only read
+    # when ttlSeconds is set. 1-minute granularity is enough for a
+    # troubleshooting session measured in minutes or hours.
+    ttlCheckSchedule: "* * * * *"
+    terminationGracePeriodSeconds: 5
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
+
+# ghcr.io/hyperi-io/dfe-toolbox-base. imageComponent (rather than component
+# above) is what dfe-common.image names the image after, so this renders
+# "<registry>/dfe-toolbox-base:<tag>" and not "<registry>/dfe-toolbox" --
+# component names the k8s objects, imageComponent names the published image.
+imageComponent: toolbox-base
+image:
+  repository: ""
+  # stacks.<current>.toolbox.dfe-toolbox in versions.yaml -- check_versions_drift.py
+  # holds this and Chart.yaml's appVersion to the same pin (CHECKS entries
+  # "dfe-toolbox chart image tag" / "dfe-toolbox chart appVersion").
+  tag: "v1.0.1"
+  # stacks.<current>.digests.dfe-toolbox-base, drift-checked ("dfe-toolbox chart
+  # image digest"); dfe-common.image renders tag@digest.
+  digest: "sha256:0e086e98c2ff74249cdb4b35f8ab3c4e0d4cbc5133eb367045d54c17dcdb9dc7"
+  pullPolicy: IfNotPresent
+
+# The DFE namespaces the pod may read from when kubeApiAccess is true, and
+# the ones its NetworkPolicy may reach besides cluster DNS. appNamespace
+# arrives from the appset (the dfe.hyperi.io/dfe_namespace annotation every
+# chart in layer2-platform.yaml's parameters block receives, whether it reads
+# it or not). dataNamespaces/otelNamespace mirror the network-policies
+# chart's own defaults; SSoT for both is argocd/values/common.yaml, and these
+# are chart defaults for a standalone render only.
+appNamespace: ""
+dataNamespaces:
+  - cnpg
+  - strimzi
+  - clickhouse
+otelNamespace: otel
+
+# Node placement dial (overlay-settable; dfe-common.scheduling reads this).
+nodeScheduling: {}

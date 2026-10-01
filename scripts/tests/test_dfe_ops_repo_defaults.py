@@ -4,7 +4,8 @@
 #  Purpose:      Prove the acceptance and ui subcommands find their companion
 #                checkout from the environment or the sibling directory, and
 #                demand the flag when there is neither -- never from a path
-#                baked into a product repo.
+#                baked into a product repo. kubeconfig's secret-store path is
+#                always the operator's flag.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -13,7 +14,8 @@
 
 A hardcoded absolute path works on exactly one machine and is wrong for every
 other org deploying the suite, so the default is resolved: the env var, else the
-checkout beside this repo, else nothing and the flag is required.
+checkout beside this repo, else nothing and the flag is required. The same holds
+for `dfe-ops kubeconfig --vault-path`, which has nothing to resolve from.
 
     python3 -m pytest scripts/tests/test_dfe_ops_repo_defaults.py -q
 """
@@ -88,3 +90,14 @@ def test_no_absolute_developer_path_is_baked_into_a_default() -> None:
                 os.environ.get("DFE_UI_REPO", ""),
                 os.environ.get("KUBECONFIG", ""),
             ), f"{name} {action.dest} defaults to {action.default}"
+
+
+def test_the_ssh_key_path_is_the_operator_s_to_name() -> None:
+    """Where a deployer keeps a node's SSH key is estate context, so kubeconfig has no default."""
+    parser = dfeops.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["kubeconfig", "--node", "192.0.2.10"])
+    args = parser.parse_args(
+        ["kubeconfig", "--node", "192.0.2.10", "--vault-path", "kv/example/ssh"]
+    )
+    assert args.vault_path == "kv/example/ssh"
