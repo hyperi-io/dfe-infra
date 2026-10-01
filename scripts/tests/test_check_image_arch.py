@@ -221,6 +221,158 @@ def test_the_committed_stack_needs_no_credential_in_third_party_mode() -> None:
     expect("and nothing is unreadable before the registry is asked", broken == [], f"{broken}")
 
 
+_BUSYBOX_DIGEST = "sha256:" + "b" * 64
+
+
+def test_a_digest_pinned_image_is_read_by_its_digest() -> None:
+    pins = {
+        **_PINS,
+        "services": {**_PINS["services"], "busybox": "1.36.1"},
+        "services-digests": {"busybox": _BUSYBOX_DIGEST},
+    }
+    refs, _, broken = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
+    expect(
+        "the deployed tag@digest is what the registry is asked about",
+        ("services.busybox", f"docker.io/library/busybox:1.36.1@{_BUSYBOX_DIGEST}") in refs,
+        f"{refs}",
+    )
+    expect("and nothing is broken", broken == [], f"{broken}")
+
+
+def test_a_digest_pinned_tag_with_no_digest_fails() -> None:
+    pins = {**_PINS, "services": {**_PINS["services"], "envoy-gateway-proxy": "distroless-v1.39.1"}}
+    refs, _, broken = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
+    expect(
+        "the tag alone is not read",
+        not any(label == "services.envoy-gateway-proxy" for label, _ in refs),
+        f"{refs}",
+    )
+    expect(
+        "the missing digest is a failure, named by its key",
+        any("services-digests.envoy-gateway-proxy" in b for b in broken),
+        f"{broken}",
+    )
+
+
+def test_a_chart_default_image_waits_for_resolve_charts() -> None:
+    _, skipped, broken = _refs()
+    expect(
+        "Dex is named against the chart that sets it",
+        any(s.startswith("bootstrap.argocd: chart 10.9.0 sets dex") for s in skipped),
+        f"{skipped}",
+    )
+    expect("and is not a failure", not any("dex" in b for b in broken), f"{broken}")
+
+
+def test_the_forgejo_curl_is_read_from_its_chart_values() -> None:
+    refs, _, broken = _refs(third_party_only=True)
+    curl = [ref for label, ref in refs if "forgejo" in label]
+    expect("one curl reference is read", len(curl) == 1, f"{refs}")
+    expect(
+        "by the tag@digest the values pin",
+        bool(curl) and curl[0].startswith("curlimages/curl:") and "@sha256:" in curl[0],
+        f"{curl}",
+    )
+    expect("and nothing is broken", broken == [], f"{broken}")
+
+
+def test_default_image_ref_reads_repository_and_tag() -> None:
+    values = arch.dfe_stack.parse_simple_yaml(
+        "dex:\n  enabled: true\n  image:\n    repository: ghcr.io/dexidp/dex\n    tag: v2.45.1\n"
+    )
+    ref = arch.default_image_ref([values], ("dex", "image"), None)
+    expect("repository:tag as the chart renders it", ref == "ghcr.io/dexidp/dex:v2.45.1", ref)
+
+
+def test_an_unset_tag_takes_the_app_version_where_the_template_does() -> None:
+    # An empty `tag:` parses as a map, not a string, so it must read as unset.
+    values = arch.dfe_stack.parse_simple_yaml(
+        "frrk8s:\n  image:\n    repository: quay.io/metallb/frr-k8s\n    tag:\n    pullPolicy:\n"
+    )
+    ref = arch.default_image_ref([values], ("frrk8s", "image"), "v0.0.25")
+    expect("the chart's appVersion fills the tag", ref == "quay.io/metallb/frr-k8s:v0.0.25", ref)
+
+
+def test_an_unset_tag_with_no_fallback_fails() -> None:
+    values = {"dex": {"image": {"repository": "ghcr.io/dexidp/dex"}}}
+    try:
+        arch.default_image_ref([values], ("dex", "image"), None)
+        raised = ""
+    except ValueError as err:
+        raised = str(err)
+    expect("it raises rather than reading a bare repository", "dex.image.tag" in raised, raised)
+
+
+def test_a_missing_repository_fails() -> None:
+    try:
+        arch.default_image_ref([{"dex": {}}], ("dex", "image"), "v1")
+        raised = ""
+    except ValueError as err:
+        raised = str(err)
+    expect("a path that names no image is an error", "dex.image.repository" in raised, raised)
+
+
+def test_a_parent_chart_value_wins_over_the_subchart_default() -> None:
+    parent = {"frrk8s": {"frr": {"image": {"tag": "10.5.3"}}}}
+    own = {"frrk8s": {"frr": {"image": {"repository": "quay.io/frrouting/frr", "tag": "10.4.3"}}}}
+    ref = arch.default_image_ref([parent, own], ("frrk8s", "frr", "image"), "v0.0.25")
+    expect("the parent's tag, the subchart's repo", ref == "quay.io/frrouting/frr:10.5.3", ref)
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def test_chart_dir_refs_read_a_vendored_subchart() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        chart = Path(tmp) / "metallb"
+        _write(chart / "Chart.yaml", "name: metallb\nappVersion: v0.16.1\n")
+        _write(chart / "values.yaml", "frr-k8s:\n  prometheus:\n    enabled: false\n")
+        _write(chart / "charts/frr-k8s/Chart.yaml", "name: frr-k8s\nappVersion: v0.0.25\n")
+        _write(
+            chart / "charts/frr-k8s/values.yaml",
+            "frrk8s:\n  image:\n    repository: quay.io/metallb/frr-k8s\n    tag:\n"
+            "  frr:\n    image:\n      repository: quay.io/frrouting/frr\n      tag: 10.4.3\n",
+        )
+        images = [
+            ("frr-k8s", "frr-k8s", ("frrk8s", "image"), True),
+            ("frr", "frr-k8s", ("frrk8s", "frr", "image"), True),
+        ]
+        refs = arch.chart_dir_refs(chart, images)
+        expect(
+            "the subchart's own appVersion and values decide both",
+            refs == ["quay.io/metallb/frr-k8s:v0.0.25", "quay.io/frrouting/frr:10.4.3"],
+            f"{refs}",
+        )
+        try:
+            arch.chart_dir_refs(chart, [("x", "absent", ("a", "image"), True)])
+            raised = ""
+        except RuntimeError as err:
+            raised = str(err)
+        expect("a subchart the archive does not vendor is an error", "absent" in raised, raised)
+
+
+def test_every_chart_default_image_names_a_chart_the_checker_resolves() -> None:
+    for name, (key, _sub, _path, _fallback) in arch.CHART_DEFAULT_IMAGES.items():
+        expect(f"{name}'s chart is in OPERATOR_VIA_CHART", key in arch.OPERATOR_VIA_CHART)
+
+
+def test_values_image_ref_reads_a_full_reference() -> None:
+    values = {"setup": {"image": "curlimages/curl:8.22.0@sha256:" + "a" * 64}}
+    ref = arch.values_image_ref(values, ("setup", "image"))
+    expect("the reference is read whole", ref.startswith("curlimages/curl:8.22.0@sha256:"), ref)
+    for bad in ({"setup": {"image": "curlimages/curl"}}, {"setup": {}}, {}):
+        try:
+            arch.values_image_ref(bad, ("setup", "image"))
+            raised = False
+        except ValueError:
+            raised = True
+        expect(f"{bad} is refused rather than read untagged", raised)
+
+
 def test_verdict_passes_an_image_carrying_every_platform() -> None:
     status, _ = arch.verdict({"linux/amd64", "linux/arm64"}, "", {"linux/amd64", "linux/arm64"})
     expect("both platforms pass", status == "ok", status)

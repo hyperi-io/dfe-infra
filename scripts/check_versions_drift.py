@@ -28,6 +28,10 @@ value for that key at all, so auditing it there is NOTED rather than failed --
 see PENDING_MIRRORS. A stack that does carry the key is compared strictly,
 like any other pin.
 
+One pair of literals has no versions.yaml key at all: the HELM_VERSION that
+helm-lint.yml and release.yml each install. The check holds them equal to each
+other, so the release gate resolves charts with the Helm the PR check used.
+
 No third-party deps required: versions.yaml and the structured files are parsed
 with a tiny purpose-built reader (the values we check are all simple
 `key: "value"` lines), so this runs on a bare CI image without PyYAML.
@@ -744,6 +748,32 @@ CHECKS += [
         Path("helm/charts/dfe-engine/values.yaml"),
         r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
+    # bootstrap.sh writes this helperPod.yaml over upstream's, whose busybox has no tag.
+    Check(
+        "local-path helper pod busybox tag",
+        "services.busybox",
+        Path("bootstrap/templates/local-path-helper-pod.yaml"),
+        r"library/busybox:([^\s\"@]+)@",
+    ),
+    Check(
+        "local-path helper pod busybox digest",
+        "services-digests.busybox",
+        Path("bootstrap/templates/local-path-helper-pod.yaml"),
+        r"library/busybox:[^\s\"@]+@([^\s\"]+)",
+    ),
+    # One tag@sha256 string that both EnvoyProxy resources in the chart read.
+    Check(
+        "envoy gateway proxy image tag",
+        "services.envoy-gateway-proxy",
+        Path("helm/edge/gateway/values.yaml"),
+        r'envoyproxy/envoy:([^"@]+)@',
+    ),
+    Check(
+        "envoy gateway proxy image digest",
+        "services-digests.envoy-gateway-proxy",
+        Path("helm/edge/gateway/values.yaml"),
+        r'envoyproxy/envoy:[^"@]+@([^"]+)"',
+    ),
 ]
 
 # dfe-toolbox image family (docker/dfe-toolbox/): a standalone ops shell, not
@@ -828,12 +858,47 @@ UNCONSUMED: dict[str, str] = {
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
-    "services.envoy-proxy": "docker path only; k8s installs envoy-gateway, which carries its own proxy image",
+    "services.envoy-proxy": "docker path only; the k8s gateway runs services.envoy-gateway-proxy, a different (distroless) tag",
     "digests.*": "an app with no chart mirror yet -- a published app is checked against helm/charts/<app>/values.yaml image.digest instead",
     "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",
     "stack.*": "upgrade-graph metadata, not a version pin",
 }
+
+
+# The release gate must resolve charts with the Helm the PR check installs, and
+# toolbox.helm is the toolbox image's own, separate pin.
+HELM_WORKFLOWS = (
+    Path(".github/workflows/helm-lint.yml"),
+    Path(".github/workflows/release.yml"),
+)
+HELM_VERSION_PATTERN = r'(?m)^\s*HELM_VERSION:\s*"([^"]+)"'
+
+
+def helm_version_problems(texts: dict[Path, str]) -> list[str]:
+    """Problems with the HELM_VERSION literal across the given workflow texts.
+
+    Args:
+        texts: Workflow file text, keyed by its repo-relative path.
+
+    Returns:
+        One line per file that does not carry exactly one literal, plus one
+        line when the literals found disagree; empty when they all match.
+    """
+    problems: list[str] = []
+    found: dict[Path, str] = {}
+    for path, text in texts.items():
+        pins = re.findall(HELM_VERSION_PATTERN, text)
+        if len(pins) != 1:
+            problems.append(
+                f"  [missing] {path}: expected one HELM_VERSION literal, found {len(pins)}"
+            )
+            continue
+        found[path] = pins[0]
+    if len(set(found.values())) > 1:
+        detail = ", ".join(f"{path} has '{value}'" for path, value in found.items())
+        problems.append(f"  [DRIFT]  HELM_VERSION differs between workflows: {detail}")
+    return problems
 
 
 def unconsumed_reason(key: str) -> str | None:
@@ -863,6 +928,10 @@ PENDING_MIRRORS: dict[str, str] = {
     "providers.confluentinc-confluent": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "providers.redpanda-data-redpanda": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "providers.hashicorp-archive": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.busybox": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.busybox": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
 }
 
 
@@ -1360,6 +1429,7 @@ def main(argv: list[str] | None = None) -> int:
         failures.append(f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml")
 
     failures.extend(dead_guards(versions, stack))
+    failures.extend(helm_version_problems({path: read_source(path) for path in HELM_WORKFLOWS}))
 
     # The other direction: a literal in a file no check points at.
     failures.extend(reverse_sweep())

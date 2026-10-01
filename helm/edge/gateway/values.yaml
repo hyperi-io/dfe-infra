@@ -41,6 +41,11 @@ envoyGateway:
     # alongside the annotation that does so (argocd/values/aws.yaml). Read by
     # envoy-gateway-config.validateUi below.
     internetFacing: false
+  # The data-plane image both EnvoyProxy resources run, set here so it is the
+  # services.envoy-gateway-proxy pin rather than the controller's compiled
+  # default; the drift check holds both halves to versions.yaml.
+  proxy:
+    image: "docker.io/envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4"
 
 # Pool balancer for the direct transport. `enabled`, `gateway` and `port` are
 # the deploy-config SSoT's (argocd/values/common.yaml `mesh:`) because every
