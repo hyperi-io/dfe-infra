@@ -57,7 +57,7 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    diffs against -- see --previous below. Only
                                    carries a value for the locked fields this
                                    script itself derives (partition_count,
-                                   cloud_token, msk_broker_type, storage_model,
+                                   cloud_token, kafka_provider, storage_model,
                                    controller_mode, and az_count on a populated
                                    cloud).
     sizing/<tier>.nodes.json       on-prem only: the same node demand as the
@@ -2850,7 +2850,7 @@ def build_resolved(
     locked: dict[str, object] = {
         "partition_count": core.partitions,
         "cloud_token": dial.cloud,
-        "msk_broker_type": dial.kafka_provider,
+        "kafka_provider": dial.kafka_provider,
         "storage_model": dial.storage_model,
         "controller_mode": dial.controller_pool,
     }

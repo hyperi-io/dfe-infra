@@ -1606,7 +1606,7 @@ def test_an_unchanged_previous_behaves_exactly_as_today(tmp_path: Path) -> None:
 
 
 def test_a_locked_change_is_refused_without_migrate(tmp_path: Path, capsys) -> None:
-    """kafka.provider moving from strimzi to msk is msk_broker_type -- LOCKED."""
+    """kafka.provider moving from strimzi to msk is kafka_provider -- LOCKED."""
     first = tmp_path / "first"
     first.mkdir()
     _run(_dial(first, provider="strimzi", estimate=1000), first)
@@ -1621,8 +1621,8 @@ def test_a_locked_change_is_refused_without_migrate(tmp_path: Path, capsys) -> N
     assert status == resolve_sizing.EXIT_LOCKED_CHANGE
     assert not (second / "sizing").exists()
     err = capsys.readouterr().err
-    assert "LOCKED msk_broker_type: strimzi -> msk-express" in err
-    assert "Standard to Express is a cluster replacement" in err
+    assert "LOCKED kafka_provider: strimzi -> msk-express" in err
+    assert "cluster replacement plus a client cutover" in err
     assert "--migrate" in err
 
 
@@ -1642,8 +1642,8 @@ def test_a_locked_change_is_accepted_and_written_with_migrate(tmp_path: Path, ca
     assert (second / "sizing" / "scale.report.md").is_file()
     assert (second / "sizing.auto.tfvars.json").is_file()
     err = capsys.readouterr().err
-    assert "MIGRATING msk_broker_type: strimzi -> msk-express" in err
-    assert "Standard to Express is a cluster replacement" in err
+    assert "MIGRATING kafka_provider: strimzi -> msk-express" in err
+    assert "cluster replacement plus a client cutover" in err
 
 
 def test_migrate_without_previous_is_an_argparse_error(capsys) -> None:
@@ -1651,6 +1651,26 @@ def test_migrate_without_previous_is_an_argparse_error(capsys) -> None:
         resolve_sizing.main(["--dial", "deployment.yaml", "--migrate"])
     assert excinfo.value.code == 2
     assert "--migrate requires --previous" in capsys.readouterr().err
+
+
+def test_an_old_resolved_carrying_msk_broker_type_does_not_trip_the_renamed_lock(
+    tmp_path: Path, capsys
+) -> None:
+    """find_locked_changes only compares a field present on BOTH sides, so a
+    resolved.yaml written before the msk_broker_type -> kafka_provider rename
+    (carrying the old key) must not refuse even though the provider moved."""
+    previous = tmp_path / "old-resolved.yaml"
+    previous.write_text("locked:\n  msk_broker_type: strimzi\n", encoding="utf-8")
+
+    second = tmp_path / "second"
+    second.mkdir()
+    dial = _dial(second, provider="msk", estimate=1000)
+    status = _run(dial, second, previous=previous)
+
+    assert status == 0
+    assert (second / "sizing" / "resolved.yaml").is_file()
+    err = capsys.readouterr().err
+    assert "LOCKED" not in err
 
 
 # ---------------------------------------------------------------------------
@@ -2395,7 +2415,7 @@ def test_migrate_still_fails_on_a_fatal_assertion(tmp_path: Path, capsys) -> Non
 
     assert status == 1
     err = capsys.readouterr().err
-    assert "MIGRATING msk_broker_type" in err
+    assert "MIGRATING kafka_provider" in err
     assert "A1 keeper" in err
 
 

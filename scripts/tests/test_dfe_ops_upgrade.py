@@ -1394,3 +1394,93 @@ def test_cmd_upgrade_apply_dry_run_names_the_from_version_tool_and_the_operator_
     # Stage 2 is the operators stage; stages 1 and 3 move no operator pin, so
     # the extra wait must not be emitted for them.
     assert err.count("operatorLastSuccessfulVersion") == 1
+
+
+# ---------------------------------------------------------------------------
+# cmd_upgrade_apply against a REAL git repo -- stage 2+ stage nothing new
+# ---------------------------------------------------------------------------
+# bump_pin_file always sets base.dfe-infra to the overall TARGET stack, so an
+# earlier stage already carries the whole pin move. Only git itself is real
+# here; compat-check, preflight and the Argo wait are stubbed the same way
+# test_cmd_upgrade_apply_dial_commits_the_refreshed_sizing stubs them.
+
+TWO_STAGE_ORDER_YAML = """
+stages:
+  "10-first":
+    "10-a":
+      key: bootstrap.cert-manager
+  "20-second":
+    "10-b":
+      key: services.clickhouse-version
+      rollback: "within the same LTS line only"
+"""
+
+TWO_STAGE_VERSIONS_YAML = """
+current: "2.0.0"
+stacks:
+  1.0.0:
+    bootstrap:
+      cert-manager: "v1.0.0"
+    services:
+      clickhouse-version: "26.3.17.56"
+  2.0.0:
+    bootstrap:
+      cert-manager: "v1.1.0"
+    services:
+      clickhouse-version: "26.3.32.14"
+"""
+
+
+@pytest.fixture
+def real_git_deploy(tmp_path: Path) -> Path:
+    """A real git repo standing in for the deploy checkout, with pins.yaml,
+    sizing/ and upgrades/ committed so a stage with nothing new hits a real
+    `git commit` on a clean tree rather than a mocked one."""
+    d = tmp_path / "real-deploy"
+    d.mkdir()
+    (d / "pins.yaml").write_text(PINS_YAML, encoding="utf-8")
+    (d / "sizing").mkdir()
+    (d / "sizing" / "resolved.yaml").write_text("locked: {}\n", encoding="utf-8")
+    (d / "upgrades").mkdir()
+    (d / "upgrades" / ".gitkeep").write_text("", encoding="utf-8")
+    assert u._git(d, "init", "-q").returncode == 0
+    assert u._git(d, "add", "-A").returncode == 0
+    assert u._git(d, "commit", "-q", "-m", "initial").returncode == 0
+    return d
+
+
+def _stub_cluster_facing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
+    monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
+    for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(name, "Test")
+    for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(name, "test@example.invalid")
+
+
+def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Stage 1 bumps the pin to the final target; stage 2's `git add` stages
+    nothing (same pin, unchanged sizing/upgrades), so `git commit` must be
+    skipped there rather than failing the whole apply."""
+    order_path = real_git_deploy.parent / "upgrade-order.yaml"
+    order_path.write_text(TWO_STAGE_ORDER_YAML, encoding="utf-8")
+    versions_path = real_git_deploy.parent / "versions.yaml"
+    versions_path.write_text(TWO_STAGE_VERSIONS_YAML, encoding="utf-8")
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _stub_cluster_facing_calls(monkeypatch)
+
+    args = _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=False)
+    rc = u.cmd_upgrade_apply(args)
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert "dfe-ops upgrade apply OK: 1.0.0 -> 2.0.0 (2 stage(s))" in err
+    assert "stage 2 (20-second) changed nothing" in err
+    log = u._git(real_git_deploy, "log", "--oneline").stdout
+    assert "stage 1 -- bootstrap.cert-manager" in log
+    assert "stage 2 -- services.clickhouse-version" not in log
+    assert (real_git_deploy / "pins.yaml").read_text(encoding="utf-8") == PINS_YAML.replace("1.0.0", "2.0.0")

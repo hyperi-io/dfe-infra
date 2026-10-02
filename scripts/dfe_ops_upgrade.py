@@ -1199,12 +1199,18 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         emit(f"git -C {deploy} commit -m {message!r}")
         if not args.dry_run:
             _git(deploy, "add", "pins.yaml", "sizing", "upgrades")
-            commit = _git(deploy, "commit", "-m", message)
-            if commit.returncode != 0:
-                print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: git commit failed", file=sys.stderr)
-                print(_last_line(commit.stderr) or _last_line(commit.stdout), file=sys.stderr)
-                _print_rollback(stage_moves)
-                return EXIT_BLOCKED
+            # A later stage's pin already matches an earlier stage's bump, so
+            # this can stage nothing -- commit only when something is staged.
+            staged = _git(deploy, "diff", "--cached", "--quiet")
+            if staged.returncode == 0:
+                print(f"  stage {stage_index} ({stage}) changed nothing -- pin and sizing already matched", file=sys.stderr)
+            else:
+                commit = _git(deploy, "commit", "-m", message)
+                if commit.returncode != 0:
+                    print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: git commit failed", file=sys.stderr)
+                    print(_last_line(commit.stderr) or _last_line(commit.stdout), file=sys.stderr)
+                    _print_rollback(stage_moves)
+                    return EXIT_BLOCKED
 
         if args.push:
             emit(f"git -C {deploy} push")
