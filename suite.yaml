@@ -639,7 +639,7 @@ edges:
     to: dfe-archiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-archiver/Cargo.toml:49"
+    evidence: "dfe-archiver/Cargo.toml:50"
     note: "Workspace root; the three crates inherit it via workspace = true."
   - from: scalo-rs
     to: dfe-transform-vrl
