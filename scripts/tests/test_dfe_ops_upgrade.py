@@ -366,6 +366,102 @@ def test_check_locked_sizing_resolver_failure(monkeypatch: pytest.MonkeyPatch, t
     assert "resolver failed" in detail
 
 
+# Everything resolve_sizing.py writes under --out on a populated cloud, sizing/
+# and the two root-level artefacts that belong beside the OpenTofu root.
+RESOLVER_OUTPUT = {
+    "sizing/resolved.yaml": "locked:\n  partition_count: 24\n",
+    "sizing/scale.values.yaml": "kafka: {}\n",
+    "sizing/scale.report.md": "# report\n",
+    "sizing.auto.tfvars.json": "{}\n",
+    "shapes/resolved/aws-us-west-2.json": "{}\n",
+}
+
+PREVIOUS_RESOLVED = "locked:\n  partition_count: 12\n"
+
+
+def _write_resolver_output(cmd: list[str]) -> None:
+    """Write RESOLVER_OUTPUT under the --out the resolver argv names."""
+    out = Path(cmd[cmd.index("--out") + 1])
+    for rel, text in RESOLVER_OUTPUT.items():
+        path = out / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def _fake_resolver(monkeypatch: pytest.MonkeyPatch, returncode: int) -> list[list[str]]:
+    """Stand in for resolve_sizing.py: write its artefacts, then exit `returncode`.
+
+    The real resolver writes before it exits 1 on a fatal finding, so the
+    artefacts are written whatever the code.
+    """
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(cmd)
+        _write_resolver_output(cmd)
+        return _proc(returncode, stderr="resolve_sizing: MIGRATING partition_count: 12 -> 24\n")
+
+    monkeypatch.setattr(u, "_run", fake_run)
+    return calls
+
+
+@pytest.fixture
+def committed_sizing(deploy: Path) -> Path:
+    """The deploy's committed sizing/resolved.yaml, at its pre-resolve value."""
+    previous = deploy / "sizing" / "resolved.yaml"
+    previous.parent.mkdir()
+    previous.write_text(PREVIOUS_RESOLVED, encoding="utf-8")
+    return previous
+
+
+def test_check_locked_sizing_refresh_copies_only_sizing_into_the_deploy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, committed_sizing: Path
+) -> None:
+    calls = _fake_resolver(monkeypatch, 0)
+    ok, detail, blocked = u.check_locked_sizing(
+        tmp_path / "deployment.yaml", committed_sizing, fixtures=tmp_path / "fixtures",
+        live=False, migrate=True, refresh=deploy,
+    )
+    assert ok is True
+    assert blocked is False
+    assert committed_sizing.read_text(encoding="utf-8") == RESOLVER_OUTPUT["sizing/resolved.yaml"]
+    assert (deploy / "sizing" / "scale.values.yaml").is_file()
+    assert (deploy / "sizing" / "scale.report.md").is_file()
+    # The OpenTofu inputs and the shape answer stay out of the deploy repo.
+    assert not (deploy / "sizing.auto.tfvars.json").exists()
+    assert not (deploy / "shapes").exists()
+    assert "--migrate" in calls[0]
+    assert Path(calls[0][calls[0].index("--out") + 1]) != deploy
+    assert f"refreshed {deploy / 'sizing'}" in detail
+
+
+def test_check_locked_sizing_without_refresh_leaves_the_deploy_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, committed_sizing: Path
+) -> None:
+    _fake_resolver(monkeypatch, 0)
+    ok, detail, _blocked = u.check_locked_sizing(
+        tmp_path / "deployment.yaml", committed_sizing, fixtures=tmp_path / "fixtures", live=False
+    )
+    assert ok is True
+    assert committed_sizing.read_text(encoding="utf-8") == PREVIOUS_RESOLVED
+    assert sorted(p.name for p in (deploy / "sizing").iterdir()) == ["resolved.yaml"]
+    assert "refreshed" not in detail
+
+
+def test_check_locked_sizing_refresh_copies_nothing_when_the_resolver_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, committed_sizing: Path
+) -> None:
+    _fake_resolver(monkeypatch, 1)
+    ok, _detail, blocked = u.check_locked_sizing(
+        tmp_path / "deployment.yaml", committed_sizing, fixtures=tmp_path / "fixtures",
+        live=False, migrate=True, refresh=deploy,
+    )
+    assert ok is False
+    assert blocked is True
+    assert committed_sizing.read_text(encoding="utf-8") == PREVIOUS_RESOLVED
+    assert sorted(p.name for p in (deploy / "sizing").iterdir()) == ["resolved.yaml"]
+
+
 # ---------------------------------------------------------------------------
 # preflight checks -- each PASS and FAIL
 # ---------------------------------------------------------------------------
@@ -771,6 +867,75 @@ def test_cmd_upgrade_apply_stop_before_unknown_stage_refuses(
     assert rc == u.EXIT_BLOCKED
     err = capsys.readouterr().err
     assert "does not match any stage" in err
+
+
+# ---------------------------------------------------------------------------
+# cmd_upgrade_apply --dial -- the stage commit carries the refreshed sizing
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_upgrade_apply_dial_commits_the_refreshed_sizing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    committed_sizing: Path,
+    order_path: Path,
+    versions_path: Path,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    monkeypatch.setattr(u, "run_preflight", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(u, "wait_for_argo", lambda *_args, **_kwargs: (True, "converged"))
+    calls: list[list[str]] = []
+    staged: dict[str, str] = {}
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(cmd)
+        if str(u.RESOLVE_SIZING) in cmd:
+            _write_resolver_output(cmd)
+        if cmd[:1] == ["git"] and "add" in cmd:
+            staged["resolved.yaml"] = committed_sizing.read_text(encoding="utf-8")
+        return _proc(0)
+
+    monkeypatch.setattr(u, "_run", fake_run)
+    # 1.0.0 -> 1.1.0 reaches 10-bootstrap then 20-operators; stopping before the
+    # second keeps the run to one stage with no before-hook to satisfy.
+    args = _apply_args(
+        deploy=str(deploy), to="1.1.0", dial=str(tmp_path / "deployment.yaml"),
+        fixtures=str(tmp_path / "fixtures"), yes=True, dry_run=False, stop_before="20-operators",
+    )
+    rc = u.cmd_upgrade_apply(args)
+
+    assert rc == u.EXIT_OK
+    assert staged["resolved.yaml"] == RESOLVER_OUTPUT["sizing/resolved.yaml"]
+    git_add = next(cmd for cmd in calls if cmd[:1] == ["git"] and "add" in cmd)
+    assert git_add[-3:] == ["pins.yaml", "sizing", "upgrades"]
+    assert not (deploy / "sizing.auto.tfvars.json").exists()
+
+
+def test_cmd_upgrade_apply_dry_run_dial_names_where_the_sizing_lands(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
+
+    args = _apply_args(
+        deploy=str(deploy), to="1.1.0", dial=str(tmp_path / "deployment.yaml"),
+        fixtures=str(tmp_path / "fixtures"),
+    )
+    rc = u.cmd_upgrade_apply(args)
+
+    assert rc == u.EXIT_OK
+    err = capsys.readouterr().err
+    assert f"then copy <tmp>/sizing/ over {deploy / 'sizing'}" in err
+    assert f"--out {deploy}" not in err
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------

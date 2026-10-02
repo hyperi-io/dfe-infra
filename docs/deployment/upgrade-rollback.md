@@ -114,10 +114,14 @@ creating it:
 ## Config vs data -- rolling back a sizing move
 
 A sizing move that touched a LOCKED field needed `--migrate` to go
-forward. `governance/policies/sizing-locks.yaml` in the deployment repo
-names the same fields sizing.yaml's `locked:` section carries a reason
-for: `partition_count`, `storage_model`, `msk_broker_type`,
-`controller_mode`, `cloud_token`, `az_count`. Reversing one is the same
+forward. sizing.yaml's `locked:` section names six fields, each with a
+reason: `partition_count`, `storage_model`, `msk_broker_type`,
+`controller_mode`, `cloud_token`, `az_count`. In the deployment repo,
+`governance/policies/sizing-locks.yaml` protects the chart keys behind three
+of them (`kafka.sizing.*`, `kafka.controllerPool.enabled`, `cloud`),
+`storage-layout.yaml` protects `storage_model`'s (`clickhouse.storageModel`,
+`kafka.storageModel`), and `msk_broker_type` and
+`az_count` are OpenTofu inputs with no chart key. Reversing one is the same
 operation run backward: re-resolve with the previous dial against the
 committed `sizing/resolved.yaml` as `--previous`, and `resolve_sizing.py`
 reports the field moving the other way as a new locked change, refused

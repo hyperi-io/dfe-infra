@@ -46,8 +46,9 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
 
     apply      Runs preflight, then walks the plan stage by stage: bump
                `pins.yaml` (a surgical field edit, never a hand rewrite) and,
-               with --dial, re-run the resolver with --migrate so the sizing
-               artefacts move the same way a re-size would; commit the stage
+               with --dial, re-run the resolver with --migrate and copy its
+               sizing/ output over <deploy>/sizing/, so the committed sizing
+               moves the same way a re-size would; commit the stage
                in the deploy repo (`chore(upgrade): <stack> stage <n> -- <keys>`);
                push only with --push; wait for Argo to report every
                Application Synced and Healthy, bounded by --timeout, and after
@@ -92,6 +93,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -409,7 +411,13 @@ def run_compat_check(stack: str) -> tuple[bool, str]:
 
 
 def check_locked_sizing(
-    dial: Path, previous: Path, *, fixtures: Path | None, live: bool, migrate: bool = False
+    dial: Path,
+    previous: Path,
+    *,
+    fixtures: Path | None,
+    live: bool,
+    migrate: bool = False,
+    refresh: Path | None = None,
 ) -> tuple[bool, str, bool]:
     """Run resolve_sizing.py's locked-change classifier against a deploy's
     committed sizing/resolved.yaml.
@@ -419,6 +427,13 @@ def check_locked_sizing(
     is `ok=True, blocked=False` -- there being nothing to check is not a
     failure. `blocked` is True exactly when the resolver exited 3 (a LOCKED
     field moved and --migrate was not accepted).
+
+    The resolver always writes into a temporary --out. With `refresh` (a
+    deploy checkout) a clean resolve's sizing/ is copied over
+    `<refresh>/sizing/`; without it the output is discarded, which is what
+    `plan` needs. Only sizing/ is copied: the OpenTofu inputs and the shape
+    answer the resolver writes at the root of --out belong beside the
+    OpenTofu root module, which a deploy repo does not hold.
     """
     if not previous.is_file():
         return True, f"skipped: no {previous}", False
@@ -433,8 +448,13 @@ def check_locked_sizing(
     if migrate:
         cmd.append("--migrate")
 
+    refreshed = ""
     with tempfile.TemporaryDirectory(prefix="dfe-ops-upgrade-sizing-") as tmp:
         result = _run([*cmd, "--out", tmp])
+        if refresh is not None and result.returncode == 0:
+            target = refresh / "sizing"
+            shutil.copytree(Path(tmp) / "sizing", target, dirs_exist_ok=True)
+            refreshed = f"\nrefreshed {target}"
 
     output = ((result.stdout or "") + (result.stderr or "")).strip()
     if result.returncode == 3:
@@ -443,7 +463,7 @@ def check_locked_sizing(
         return True, detail, True
     if result.returncode != 0:
         return False, f"resolver failed (rc {result.returncode}): {_last_line(output)}", True
-    return True, output or "no locked-field change", False
+    return True, (output or "no locked-field change") + refreshed, False
 
 
 # --- preflight checks ----------------------------------------------------------
@@ -1133,18 +1153,19 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             bump_pin_file(deploy, to_name)
 
         if args.dial:
+            previous = deploy / "sizing" / "resolved.yaml"
             emit(
-                f"resolve_sizing.py resolve --dial {args.dial} "
-                f"--previous {deploy / 'sizing' / 'resolved.yaml'} --migrate --out {deploy}"
+                f"resolve_sizing.py resolve --dial {args.dial} --previous {previous} --migrate "
+                f"--out <tmp>, then copy <tmp>/sizing/ over {deploy / 'sizing'}"
             )
             if not args.dry_run:
-                previous = deploy / "sizing" / "resolved.yaml"
                 ok, detail, _blocked = check_locked_sizing(
                     Path(args.dial),
                     previous,
                     fixtures=Path(args.fixtures) if args.fixtures else None,
                     live=args.live,
                     migrate=True,
+                    refresh=deploy,
                 )
                 print(f"  sizing: {detail}", file=sys.stderr)
                 if not ok:
