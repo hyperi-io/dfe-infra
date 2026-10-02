@@ -121,7 +121,7 @@ FOCUS_INVARIANTS = (
 LOCKED_FIELDS = (
     "partition_count",
     "storage_model",
-    "msk_broker_type",
+    "kafka_provider",
     "controller_mode",
     "cloud_token",
     "az_count",

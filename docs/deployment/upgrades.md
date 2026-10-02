@@ -104,14 +104,14 @@ result against `sizing/resolved.yaml`. Every changed field is classified:
 - DRAIN-FIRST: broker count down. `remove-brokers` moves data off the broker
   before its pod goes.
 - LOCKED: the six fields in `sizing.yaml`'s `locked:` section -- partition
-  count, storage model, MSK broker type, combined against separate KRaft
+  count, storage model, Kafka provider, combined against separate KRaft
   controllers, the cloud token, the AZ count. The resolver refuses a move in
   any of them without `--migrate` and the runbook it names. In the deployment
   repo, `governance/policies/sizing-locks.yaml` holds the chart keys behind
   three of them as protected vars (`kafka.sizing.*`,
   `kafka.controllerPool.enabled`, `cloud`), and `storage-layout.yaml` holds
   the storage model's (`clickhouse.storageModel`, `kafka.storageModel`). The
-  MSK broker type and the AZ count are OpenTofu
+  Kafka provider and the AZ count are OpenTofu
   inputs with no chart key, so the resolver is their only lock.
 
 ## Platform upgrade

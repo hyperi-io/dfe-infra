@@ -161,7 +161,7 @@ priced on this scale in [edge.md](edge.md).
   storage-cap assertion, so an override is a different answer, not an
   exemption.
 - `sizing.yaml`'s `locked:` section names six fields locked once resolved --
-  `partition_count`, `storage_model`, `msk_broker_type` (recorded as the
+  `partition_count`, `storage_model`, `kafka_provider` (recorded from the
   dial's `kafka.provider`), `controller_mode` (combined against separate KRaft
   controllers, `kafka.controller_pool`), `cloud_token` and `az_count`. The
   resolver records each in `sizing/resolved.yaml` (`az_count` only when it
@@ -175,7 +175,7 @@ priced on this scale in [edge.md](edge.md).
   `kafka.controllerPool.enabled` and `cloud`. `storage-layout.yaml` covers the
   storage model (`clickhouse.storageModel`, `kafka.storageModel`). Neither
   policy governs a direct git commit.
-- The MSK broker type and the AZ count are OpenTofu inputs with no chart key,
+- The Kafka provider and the AZ count are OpenTofu inputs with no chart key,
   so the resolver's lock is the only one they get. The MSK module refuses any
   broker shape that is not MSK Express
   (`terraform/modules/managed-kafka/msk/variables.tf`), and `network.az_count`

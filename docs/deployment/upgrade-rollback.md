@@ -115,12 +115,12 @@ creating it:
 
 A sizing move that touched a LOCKED field needed `--migrate` to go
 forward. sizing.yaml's `locked:` section names six fields, each with a
-reason: `partition_count`, `storage_model`, `msk_broker_type`,
+reason: `partition_count`, `storage_model`, `kafka_provider`,
 `controller_mode`, `cloud_token`, `az_count`. In the deployment repo,
 `governance/policies/sizing-locks.yaml` protects the chart keys behind three
 of them (`kafka.sizing.*`, `kafka.controllerPool.enabled`, `cloud`),
 `storage-layout.yaml` protects `storage_model`'s (`clickhouse.storageModel`,
-`kafka.storageModel`), and `msk_broker_type` and
+`kafka.storageModel`), and `kafka_provider` and
 `az_count` are OpenTofu inputs with no chart key. Reversing one is the same
 operation run backward: re-resolve with the previous dial against the
 committed `sizing/resolved.yaml` as `--previous`, and `resolve_sizing.py`
@@ -132,7 +132,7 @@ values overlay, the tofu tfvars. It writes no infrastructure and moves no
 data. Whether the underlying resource can follow the config back down
 depends on the field. `partition_count` cannot go back down at all --
 sizing.yaml's own reason is that a keyed topic hashes on partition count,
-so the count "only ever grows." `storage_model`, `msk_broker_type`,
+so the count "only ever grows." `storage_model`, `kafka_provider`,
 `controller_mode` and `cloud_token` each need the migration sizing.yaml's
 reason names -- a data migration, a cluster replacement, a quorum
 re-formation, a new deployment -- carried out by hand before the config
