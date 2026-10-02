@@ -709,7 +709,7 @@ edges:
     kind: python-dep
     type: potential
     evidence: "dfe-engine/pyproject.toml:43"
-    note: "The range has no upper bound, so it admits a future major without complaint."
+    note: "The range stops below 3, so a scalo major needs a deliberate bump here."
   - from: scalo-py
     to: dfe-engine
     kind: contract-guard
@@ -735,8 +735,8 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:50"
-    note: "Package data replaced the git submodule. The range has no upper bound."
+    evidence: "dfe-engine/pyproject.toml:51"
+    note: "Package data replaced the git submodule. The range stops below 1, so the first 1.x needs a deliberate bump here."
   - from: dfe-schemas
     to: dfe-infra
     kind: version-pin
