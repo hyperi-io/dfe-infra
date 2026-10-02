@@ -1432,10 +1432,19 @@ stacks:
 
 
 @pytest.fixture
-def real_git_deploy(tmp_path: Path) -> Path:
+def real_git_deploy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """A real git repo standing in for the deploy checkout, with pins.yaml,
     sizing/ and upgrades/ committed so a stage with nothing new hits a real
-    `git commit` on a clean tree rather than a mocked one."""
+    `git commit` on a clean tree rather than a mocked one.
+
+    The identity env vars are set here, before the first commit -- a CI
+    runner carries no global git identity, so the commit this fixture makes
+    needs its own, the same way the commits under test do.
+    """
+    for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(name, "Test")
+    for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(name, "test@example.invalid")
     d = tmp_path / "real-deploy"
     d.mkdir()
     (d / "pins.yaml").write_text(PINS_YAML, encoding="utf-8")
@@ -1453,10 +1462,6 @@ def _stub_cluster_facing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
     monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
-    for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
-        monkeypatch.setenv(name, "Test")
-    for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
-        monkeypatch.setenv(name, "test@example.invalid")
 
 
 def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
