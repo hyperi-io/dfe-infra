@@ -26,8 +26,8 @@ A few things hold for every deployment:
 - Nodes and the data plane sit in private subnets, behind one NAT gateway by
   default (`network.nat: single`) or one per availability zone (`per-az`)
   when a zone failure or the cross-zone charge outweighs the extra gateway.
-- `network.az_count` (default 3, 2-6) sizes the VPC and is one of the four
-  fields the resolver derives and locks; a Strimzi/MSK broker count steps up
+- `network.az_count` (default 3, 2-6) sizes the VPC and is one of the six
+  fields `sizing.yaml` locks once resolved (see [Sizing knobs and locks](#sizing-knobs-and-locks)); a Strimzi/MSK broker count steps up
   to at least the AZ count, so a deployment spanning more zones than the
   tyre-kick floor's three brokers still spreads one broker per zone.
 - The Kubernetes API's private endpoint is always on. `endpoint.public: true`
@@ -136,8 +136,10 @@ priced on this scale in [edge.md](edge.md).
 - Pointing `--out` at `terraform/environments/aws` is what lands
   `sizing.auto.tfvars.json` beside `render_dial.py --tofu`'s own
   `dial.auto.tfvars.json`, so `tofu init` picks up both -- every
-  `*.auto.tfvars.json` in that directory loads, in name order. Commit
-  `sizing/resolved.yaml` so a re-size has something to check itself against.
+  `*.auto.tfvars.json` in that directory loads, in name order. Copy
+  `<out>/sizing/` into the deployment repo's own `sizing/` and commit it there,
+  so a re-size has something to check itself against: `dfe-ops upgrade --dial`
+  diffs a re-resolve against `<deploy>/sizing/resolved.yaml`, never against `--out`.
   The values fragment slots into a deploy repo's own overlay for the
   data-layer charts.
 - `bootstrap.sh` reads `<out>/sizing/` from the same place, so resolving with
@@ -158,13 +160,27 @@ priced on this scale in [edge.md](edge.md).
   last, over whatever the ratios derived -- and still checked against every
   storage-cap assertion, so an override is a different answer, not an
   exemption.
-- `sizing.yaml` names six fields locked once resolved -- partition count, the
-  storage model, MSK Standard against Express, combined against separate
-  KRaft controllers (`kafka.controller_pool`), the cloud itself and the
-  availability-zone count. Every one of them is written into
-  `sizing/resolved.yaml`, so a re-resolve that moves any of them refuses and
-  exits 3 unless you also pass
-  `--previous sizing/resolved.yaml --migrate`.
+- `sizing.yaml`'s `locked:` section names six fields locked once resolved --
+  `partition_count`, `storage_model`, `msk_broker_type` (recorded as the
+  dial's `kafka.provider`), `controller_mode` (combined against separate KRaft
+  controllers, `kafka.controller_pool`), `cloud_token` and `az_count`. The
+  resolver records each in `sizing/resolved.yaml` (`az_count` only when it
+  resolved against a cloud catalogue), so a re-resolve given
+  `--previous <deploy>/sizing/resolved.yaml` that moves any of them refuses
+  and exits 3 unless you also pass `--migrate`.
+- Four of the six also have a chart key, and the deployment repo holds those
+  keys as protected vars, so the engine's API refuses an edit to them unless
+  the caller holds `helmvars:override`. `governance/policies/sizing-locks.yaml`
+  covers three: `kafka.sizing.*` (the partition count derives from it),
+  `kafka.controllerPool.enabled` and `cloud`. `storage-layout.yaml` covers the
+  storage model (`clickhouse.storageModel`, `kafka.storageModel`). Neither
+  policy governs a direct git commit.
+- The MSK broker type and the AZ count are OpenTofu inputs with no chart key,
+  so the resolver's lock is the only one they get. The MSK module refuses any
+  broker shape that is not MSK Express
+  (`terraform/modules/managed-kafka/msk/variables.tf`), and `network.az_count`
+  feeds the VPC's zone list in
+  `terraform/modules/kubernetes-cluster/aws/vpc.tf`.
 - Above 100,000 GB/day the resolver refuses outright and points at a
   professional-services engagement rather than a generated profile.
 
