@@ -18,6 +18,12 @@ and runs the check there as a real subprocess. Nothing is mocked and no module
 attribute is patched: the check reads its own repo root off its own location,
 so a temp copy is the only honest way to give it a different tree.
 
+The member clone (app-b) is a REAL git repo -- one commit, with
+refs/remotes/origin/main pointed at it to stand in for a fetch -- because the
+check now reads that ref via `git show`, not the clone's working tree. A case
+that wants to prove the ref is what gets read, not the checkout, commits one
+Cargo.toml and then dirties the working tree with a different one afterward.
+
     python3 scripts/tests/test_check_suite_drift.py
 
 No third-party deps and no test runner, matching the tools it tests.
@@ -38,6 +44,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import suite_graph  # noqa: E402
+
+GIT = shutil.which("git")
 
 SUITE = '''\
 schema: "1"
@@ -163,8 +171,17 @@ def build(
     clones: bool = True,
     orphan_chart: bool = True,
     stale_docs: bool = False,
+    worktree_cargo: str | None = None,
+    with_ref: bool = True,
 ) -> Path:
-    """A whole tiny dfe-infra beside its member clones, ready to check."""
+    """A whole tiny dfe-infra beside its member clones, ready to check.
+
+    `worktree_cargo`, when given, overwrites app-b's Cargo.toml AFTER the
+    commit -- an uncommitted change standing in for a feature branch or a
+    clone behind origin, to prove the check reads `ref` and not the checkout.
+    `with_ref` false leaves refs/remotes/origin/main unset, standing in for a
+    clone that has never been fetched.
+    """
     infra = root / "infra"
     (infra / "scripts").mkdir(parents=True)
     for name in ("suite_graph.py", "check_suite_drift.py"):
@@ -189,10 +206,34 @@ def build(
     _write(infra / "docs/suite-graph.md", page)
 
     if clones:
-        repos = root / "repos"
-        (repos / "app-b" / ".git").mkdir(parents=True)
-        _write(repos / "app-b/Cargo.toml", cargo)
+        _make_clone(
+            root / "repos" / "app-b", cargo, worktree_cargo=worktree_cargo, with_ref=with_ref
+        )
     return infra
+
+
+def _make_clone(
+    clone: Path, cargo: str, *, worktree_cargo: str | None, with_ref: bool
+) -> None:
+    """A real app-b repo: one commit, refs/remotes/origin/main standing in for a fetch."""
+    clone.mkdir(parents=True)
+    _run_git(clone, "init", "-q", "-b", "main")
+    _run_git(clone, "config", "user.email", "test@example.invalid")
+    _run_git(clone, "config", "user.name", "Test")
+    _write(clone / "Cargo.toml", cargo)
+    _run_git(clone, "add", "Cargo.toml")
+    _run_git(clone, "commit", "-q", "-m", "initial")
+    if with_ref:
+        _run_git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
+    if worktree_cargo is not None:
+        _write(clone / "Cargo.toml", worktree_cargo)
+
+
+def _run_git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        [GIT, *args], cwd=cwd, check=True, capture_output=True,
+        text=True, encoding="utf-8", errors="replace",
+    )
 
 
 def _write(path: Path, text: str) -> None:
@@ -201,11 +242,11 @@ def _write(path: Path, text: str) -> None:
 
 
 def check(infra: Path, *args: str) -> tuple[int, str]:
-    """Run the copied check with an empty PATH, so `maid` is never on it."""
-    empty = infra.parent / "empty-path"
-    empty.mkdir(exist_ok=True)
+    """Run the copied check with a PATH holding git but never `maid`."""
+    restricted = infra.parent / "restricted-path"
+    restricted.mkdir(exist_ok=True)
     env = dict(os.environ)
-    env["PATH"] = str(empty)
+    env["PATH"] = str(Path(GIT).parent) if GIT else str(restricted)
     proc = subprocess.run(
         [sys.executable, str(infra / "scripts" / "check_suite_drift.py"), *args],
         capture_output=True,
@@ -218,7 +259,9 @@ def check(infra: Path, *args: str) -> tuple[int, str]:
     return proc.returncode, proc.stdout + proc.stderr
 
 
-def _one_case(name: str, expect_code: int, needle: str, **kwargs) -> None:
+def _one_case(
+    name: str, expect_code: int, needle: str, *, extra_args: tuple[str, ...] = (), **kwargs
+) -> None:
     """One built tree, one check run, one verdict."""
     no_app_b_block = kwargs.pop("no_app_b_block", False)
     with tempfile.TemporaryDirectory(prefix="suite-drift-") as tmp:
@@ -229,7 +272,7 @@ def _one_case(name: str, expect_code: int, needle: str, **kwargs) -> None:
             text = page.read_text(encoding="utf-8", errors="replace")
             head, _, _ = text.partition("<!-- suite-graph:begin producer:app-b -->")
             page.write_text(head, encoding="utf-8", newline="\n")
-        code, output = check(infra, "--repos", str(root / "repos"))
+        code, output = check(infra, "--repos", str(root / "repos"), *extra_args)
         expect(name, code == expect_code and needle in output, f"exit {code}\n{output}")
 
 
@@ -262,6 +305,41 @@ def main() -> int:
             expect("without --strict the same skip exits 0 and says so",
                    code == 0 and "SKIPPED  citations into app-b" in output,
                    f"exit {code}\n{output}")
+
+        _one_case(
+            "a citation correct on origin/main but wrong in the working tree is OK",
+            0,
+            "OK -- suite.yaml",
+            worktree_cargo=CARGO.replace('liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'),
+        )
+        _one_case(
+            "a citation wrong on origin/main but correct in the working tree FAILs",
+            1,
+            "does not declare liba",
+            cargo=CARGO.replace('liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'),
+            worktree_cargo=CARGO,
+        )
+        _one_case(
+            "--ref '' reads the working tree, the old behaviour",
+            0,
+            "OK -- suite.yaml",
+            cargo=CARGO.replace('liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'),
+            worktree_cargo=CARGO,
+            extra_args=("--ref", ""),
+        )
+        _one_case(
+            "a clone with no origin/main is SKIPPED, naming the ref",
+            0,
+            "SKIPPED  citations into app-b: origin/main not found -- git fetch first",
+            with_ref=False,
+        )
+        _one_case(
+            "--strict over a clone with no origin/main exits 2",
+            2,
+            "never checked",
+            with_ref=False,
+            extra_args=("--strict",),
+        )
 
         _one_case(
             "an in-repo citation whose file is gone FAILs",
