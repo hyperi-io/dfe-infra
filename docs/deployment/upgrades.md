@@ -93,6 +93,12 @@ stack upgrade from a deployment repo's own `pins.yaml`, walking
   bumped value even with no marker -- a finalise run by hand, outside this
   tool.
 
+### What a stage moves
+
+One pin, `base.dfe-infra`, selects the whole certified stack, and `apply` sets it to the target at every stage. So the first stage moves every component: its commit, named for that stage's keys alone, carries the whole pin move, and with `--push` Argo CD converges on the full target during that stage's wait. Later stages find the pin already moved and skip their commit unless they add something, such as a finalise marker under `upgrades/`.
+
+The work around the pin still runs in stage order: confirms, `before` checks, `finalise` notes and waits. Preflight still enforces the Strimzi conversion before anything moves. `--stop-before` skips a stage's hooks and waits, not its component versions. Staging the pin itself is open in https://github.com/hyperi-io/dfe-infra/issues/508.
+
 ## Re-size
 
 Re-run the sizing resolver with a new estimate, focus or ratio and diff the
