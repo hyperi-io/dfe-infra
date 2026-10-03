@@ -44,7 +44,8 @@ env:
 jobs:
   release:
     name: gate, tag `current`, publish + sign the manifest
-    runs-on: ubuntu-latest
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

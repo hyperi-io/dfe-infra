@@ -47,7 +47,8 @@ env:
 jobs:
   resolve:
     name: Resolve pins from versions.yaml
-    runs-on: ubuntu-latest
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
+    runs-on: ubuntu-24.04
     outputs:
       # Whether this stack block names the toolbox at all. The pins arrive with
       # the rc.14 block (dfe-infra#315) while the images themselves landed with
@@ -119,7 +120,7 @@ jobs:
     name: toolbox family tag covers its inputs
     needs: resolve
     if: github.event_name == 'pull_request' && needs.resolve.outputs.pinned == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
@@ -178,7 +179,7 @@ jobs:
     needs: resolve
     # aws/gcp/azure need base, so gating here skips the whole family.
     if: github.event_name != 'pull_request' && needs.resolve.outputs.pinned == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -249,7 +250,7 @@ jobs:
     name: Build + push dfe-toolbox-aws
     needs: [resolve, base]
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -312,7 +313,7 @@ jobs:
     name: Build + push dfe-toolbox-gcp
     needs: [resolve, base]
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -374,7 +375,7 @@ jobs:
     name: Build + push dfe-toolbox-azure
     needs: [resolve, base]
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

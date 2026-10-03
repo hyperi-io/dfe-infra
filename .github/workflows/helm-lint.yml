@@ -60,7 +60,8 @@ env:
 jobs:
   lint:
     name: helm lint + yaml validate
-    runs-on: ubuntu-latest
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -325,7 +326,7 @@ jobs:
   # paths above cover every file bootstrap/tests reads.
   bats:
     name: bootstrap bats
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -358,7 +359,7 @@ jobs:
   # a GHCR credential; --third-party-only keeps them out of this job.
   third-party-arch:
     name: third-party images carry amd64 and arm64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -380,7 +381,7 @@ jobs:
   # the warnings that mean something get scrolled past.
   governance-drift-precondition:
     name: governance drift preconditions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # It checks nothing out: it reads the secrets context and sets an output.
     permissions: {}
     outputs:
@@ -415,7 +416,7 @@ jobs:
     name: governance actions vs chart values
     needs: governance-drift-precondition
     if: needs.governance-drift-precondition.outputs.can_check == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
