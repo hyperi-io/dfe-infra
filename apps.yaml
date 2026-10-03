@@ -175,6 +175,19 @@
 #     entries_key      top-level key in that file holding the entries
 #     variant_pattern  how an entry becomes transform.variant, with {entry} and
 #                      {transform} substituted
+#   Three more fields name the schema files the table of a source created from
+#   an entry is built from. They are declared together or not at all, and a
+#   catalogue without them binds no table schema. Each pattern takes {package}
+#   and {data_stream}, the entry's own keys. The table is bound only when the
+#   entry's derived schema resolves and selects from meta_schema: the meta
+#   schema alone, or with the vendor fields on top, composes a CREATE wider than
+#   ClickHouse accepts for the widest vendors.
+#     meta_schema         the meta schema every entry's table is built on, as a
+#                         schema registry path without a file extension
+#     derived_pattern     the derived schema narrowing it to one stream's fields;
+#                         the deploy repo's copy wins over the one a release ships
+#     additional_pattern  the vendor fields appended after that selection, bound
+#                         only where the schemas tree carries them
 #
 # source_binding
 #   Present when an instance of this app IS a DFE source's processing step, which
@@ -557,6 +570,12 @@ apps:
       file: sources.yaml
       entries_key: sources
       variant_pattern: "filebeat.{entry}.{transform}"
+      # The transform rewrites every vendor's events into ECS, so ECS is the
+      # base for every entry; the vendor-shaped meta/<package>/<stream> is the
+      # record a fetcher writes with no transform in between.
+      meta_schema: meta/elastic/ecs
+      derived_pattern: "derived/{package}/{data_stream}"
+      additional_pattern: "additional/{package}/{data_stream}"
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
