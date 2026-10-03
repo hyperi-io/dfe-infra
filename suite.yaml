@@ -239,8 +239,9 @@ nodes:
       - kind: git-tag
         registry: github
         public: false
-    # The template for the customer-owned deploy repo. It pins dfe-infra and
-    # dfe-schemas by reference and vendors neither.
+    # The template for the customer-owned deploy repo. It pins dfe-infra by
+    # reference and vendors nothing. It carries no dfe-schemas pin: the wheel
+    # rides inside the dfe-engine image, so the engine pin selects it.
 
   # --- orchestration -------------------------------------------------------
 
@@ -743,12 +744,6 @@ edges:
     type: lockstep
     evidence: "dfe-infra/versions.yaml:1601"
     note: "Lockstep by policy: the content block is tagged with the stack release, stated at versions.yaml:1597."
-  - from: dfe-schemas
-    to: dfe-deploy
-    kind: version-pin
-    type: lockstep
-    evidence: "dfe-deploy/pins.yaml:17"
-    note: "The pin's own comment calls it a lockstep tag by default."
 
   # --- logreducer ----------------------------------------------------------
 

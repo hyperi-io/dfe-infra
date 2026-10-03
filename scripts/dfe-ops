@@ -3604,7 +3604,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="deploy DFE to a target cloud (wraps bootstrap/deploy.sh)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    dp.add_argument("--cloud", default="local", help="target cloud: local, aws, gcp, az")
+    dp.add_argument("--cloud", default="local", help="target cloud: local, aws, gcp, azure")
     dp.add_argument("--tf-dir", default=None, help="terraform env dir (default: auto from --cloud)")
     dp.add_argument("--dry-run", action="store_true", help="show what would happen without executing")
     dp.add_argument("--skip-terraform", action="store_true", help="skip terraform apply (use existing state)")
