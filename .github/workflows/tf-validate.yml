@@ -28,7 +28,8 @@ env:
 jobs:
   validate:
     name: validate + test (tofu)
-    runs-on: ubuntu-latest
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -66,7 +67,7 @@ jobs:
   # it passes them, and a root is what an operator actually applies.
   validate-roots:
     name: validate environment roots (tofu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

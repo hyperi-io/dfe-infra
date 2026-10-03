@@ -34,7 +34,8 @@ jobs:
   # is the display defect #200 is about.
   precondition:
     name: can this run reach dfe-docker
-    runs-on: ubuntu-latest
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
+    runs-on: ubuntu-24.04
     outputs:
       can_write: ${{ steps.gate.outputs.can_write }}
     steps:
@@ -53,7 +54,7 @@ jobs:
 
   propagate:
     name: move the consumer's stack dial onto current
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: precondition
     if: needs.precondition.outputs.can_write == 'true'
     steps:
@@ -68,7 +69,7 @@ jobs:
   # even when nothing can be opened about it.
   report:
     name: report the current gap
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: precondition
     if: needs.precondition.outputs.can_write != 'true'
     steps:
