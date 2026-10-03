@@ -241,17 +241,12 @@ flowchart LR
 
 ### dfe-schemas
 
-dfe-engine takes it as a package dependency by range. The two version pins are
-lockstep by policy rather than by a gate: the content block in `versions.yaml`
-is tagged with the stack release, so the pin here and the one in dfe-deploy
-move with it.
+dfe-engine takes it as a package dependency by range. The one version pin is lockstep by policy rather than by a gate: the content block in `versions.yaml` is tagged with the stack release. dfe-deploy pins none, because the wheel rides inside the dfe-engine image.
 
 <!-- suite-graph:begin producer:dfe-schemas -->
 ```mermaid
 flowchart LR
   dfe_schemas["dfe-schemas"]:::producer
-  dfe_deploy["dfe-deploy"]:::suite
-  dfe_schemas ==>|version-pin, lockstep| dfe_deploy
   dfe_engine["dfe-engine"]:::suite
   dfe_schemas -->|python-dep, potential| dfe_engine
   dfe_infra["dfe-infra"]:::suite

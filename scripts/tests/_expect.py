@@ -47,6 +47,8 @@ def expect(name: str, condition: bool, detail: str = "") -> None:
     _failures += 1
     if not _standalone:
         raise AssertionError(f"{name}: {detail}" if detail else name)
+    # Detail is test text about charts rendered from example values, never a live
+    # credential, which is why code-scanning alert 14 on this print is dismissed.
     print(f"FAIL  {name}  {detail}")
 
 

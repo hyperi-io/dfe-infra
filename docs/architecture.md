@@ -139,9 +139,7 @@ via `$values`. Adding/removing a values file adds/removes the app; the
 engine turns dials, this repo defines what dials exist (every dial must be
 a chart value).
 
-> **Note:** the 2nd-pass review found the `$values` reference resolving to
-> the values directory rather than the matched file - confirm it against
-> `argocd/appsets/layer2-apps.yaml` before relying on overlay dials.
+The overlay entry is `$values/{{ .path.path }}/{{ .path.filename }}` (`argocd/appsets/layer2-apps.yaml`), the directory and name of the file the generator matched, so each Application layers its own file and no other.
 
 ## Documents in this area
 
