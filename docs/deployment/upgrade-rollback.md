@@ -91,6 +91,8 @@ or committing anything. Without it, a clean rollback bumps `pins.yaml`,
 commits `chore(upgrade): rollback to <stack> -- <keys>` in the deploy
 repo, and pushes only with `--push`.
 
+That commit moves the one `base.dfe-infra` pin, so every stage reverses at once; the per-stage notes above say what each stage's components need around it.
+
 ## Backup marker and restore points
 
 `dfe-ops upgrade preflight` (which `apply` runs first) checks a backup
@@ -103,10 +105,7 @@ creating it:
 - Keeper and ClickHouse share the `services.clickhouse-version` pin --
   take a Keeper snapshot and a ClickHouse backup before either scope
   moves. Neither is scripted here.
-- the deploy repo commit each stage makes
-  (`chore(upgrade): <stack> stage <n> -- <keys>`) is the config-side
-  restore point: `git revert`, or a hand edit of `pins.yaml`, returns to
-  what the pin named before that stage.
+- the deploy repo commit the first stage makes (`chore(upgrade): <stack> stage <n> -- <keys>`) is the config-side restore point. It carries the whole pin move (see [upgrades.md](upgrades.md), "What a stage moves"), so `git revert` of it, or a hand edit of `pins.yaml`, returns every component to the stack pinned before the upgrade.
 - the committed `sizing/resolved.yaml`, as it stood before a `--dial`
   re-resolve, is the sizing-side restore point `--previous` diffs the next
   resolve against, whichever direction a field moves.
@@ -189,9 +188,7 @@ instead of refusing on the pin diff alone. Without `--finalise`, apply is
 unchanged: it prints `finalise pending (manual, after a soak): <key>:
 <note>` and moves on.
 
-`--stop-before <stage-key>` stops the walk before a named
-`upgrade-order.yaml` stage (e.g. `30-services`), touching nothing in it or
-after -- land the earlier stages now, come back to the rest once ready.
+`--stop-before <stage-key>` stops the walk before a named `upgrade-order.yaml` stage (e.g. `30-services`), skipping its hooks, finalise notes and waits and everything after. It does not hold back that stage's component versions, which the first stage already moved with the whole pin.
 The per-stage confirm still applies to the stages that do run, unless
 `--yes`, and `--dry-run` prints every command a stage would run, including
 a reached finalise or a `--stop-before` halt, without touching anything.
