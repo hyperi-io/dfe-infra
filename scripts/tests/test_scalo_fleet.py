@@ -2012,7 +2012,8 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
         with pytest.raises(sf.FleetError) as caught:
             self._rebuild("--release-unoptimized")
         message = str(caught.value)
-        assert str(self.caller) in message
+        # macOS parks temp dirs behind a /var -> /private/var symlink.
+        assert str(self.caller) in message or str(self.caller.resolve()) in message
         assert "on.workflow_dispatch.inputs.release-unoptimized is not declared" in message
         # Refused before any cargo step and before anything reached the remote.
         assert _fake_argv(self.bindir, "cargo") == []

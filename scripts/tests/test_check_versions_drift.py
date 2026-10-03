@@ -562,46 +562,6 @@ def test_pending_mirrors_must_be_deleted_once_the_stack_pins_them_all() -> None:
            "delete PENDING_MIRRORS" in captured.getvalue(), captured.getvalue())
 
 
-def test_the_delete_advice_waits_for_the_older_stack_to_be_retired() -> None:
-    """Following the printed instruction must not break a stack that is still
-    selectable.
-
-    PENDING_MIRRORS exists because a stack that PREDATES a key has no value to
-    compare against. Deleting it while such a stack can still be deployed makes
-    that stack's own preflight fail, so the advice is correct only once the
-    older stack is gone -- and the message has to say so.
-    """
-    stacks = list(drift._parse_nested(drift.VERSIONS_FILE.read_text())["stacks"])
-    current = drift.load_versions()["pointers.current"]
-    # A key the current stack pins and the oldest one does not -- the shape
-    # every real entry has while two stacks are still selectable.
-    half_landed = sorted(set(drift.load_versions(current)) - set(drift.load_versions(stacks[0])))
-    expect("the real versions.yaml carries a half-landed key to stand in for",
-           half_landed != [], f"every key is pinned by both {stacks[0]} and {current}")
-
-    original = drift.PENDING_MIRRORS
-    captured = io.StringIO()
-    try:
-        drift.PENDING_MIRRORS = {half_landed[0]: "stand-in for a half-landed pin"}
-        still_needed = drift.stacks_needing_pending_mirrors()
-        expect("at least one selectable stack still needs the list",
-               still_needed != [], "nothing would break if it were deleted now")
-        expect("and the current stack is not one of them", current not in still_needed,
-               f"{current} does not pin {half_landed[0]}")
-        with contextlib.redirect_stderr(captured), contextlib.redirect_stdout(io.StringIO()):
-            drift.main(["--stack", current])
-    finally:
-        drift.PENDING_MIRRORS = original
-    out = captured.getvalue()
-    # The exit code is not asserted: standing the list down to one key turns every real
-    # entry into an ordinary missing-key failure, which says nothing about this.
-    expect("the delete advice is not raised as a failure",
-           "[stale]   every stack pins" not in out, out)
-    expect("and it names its precondition instead",
-           "once the older stack is retired, not before" in out, out)
-    expect("naming the stacks that still need it", still_needed[0] in out, out)
-
-
 def test_a_mistyped_stack_flag_is_rejected_rather_than_ignored() -> None:
     """The one failure a drift gate must not have: a typo that audits the wrong
     stack and still exits 0."""

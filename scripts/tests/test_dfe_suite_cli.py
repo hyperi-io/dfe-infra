@@ -680,6 +680,10 @@ class SignalsTests(unittest.TestCase):
         code, output = self._run()
         assert "0 open signal(s)" in output
         assert "NOT CHECKED" in output
+        # The headline must say CI warnings were never read, not claim a
+        # clean 0 -- the two look identical downstream of a real miss.
+        assert "ci warnings 0" not in output, output
+        assert "ci warnings not checked" in output, output
         # Unchecked is not clean: returning 0 here would pass the gate on a
         # check that never ran.
         assert code == 1, output

@@ -483,18 +483,19 @@ def cmd_signals(args: argparse.Namespace) -> int:
     report = _gather(args.member, repo)
     alerts = report["alerts"]
     counts = _counts(report)
+    checked = bool(report["ci"]["checked"])
     total = sum(counts.values())
-    say(
-        f"{args.member}: {total} open signal(s) -- "
-        + ", ".join(f"{k} {v}" for k, v in counts.items())
+    headline = ", ".join(
+        "ci warnings not checked" if k == "ci warnings" and not checked else f"{k} {v}"
+        for k, v in counts.items()
     )
+    say(f"{args.member}: {total} open signal(s) -- {headline}")
     for issue in report["issues"]:
         print(f"  issue #{issue.get('number')}: {issue.get('title')}", flush=True)
     for pr in alerts["bot_prs"]:
         print(f"  bot PR #{pr.get('number')}: {pr.get('title')}", flush=True)
     for line in report["ci"]["warnings"]:
         print(f"  ci warning: {line}", flush=True)
-    checked = bool(report["ci"]["checked"])
     if not checked:
         print("  ci warnings: NOT CHECKED -- see notes", flush=True)
     for note in report["notes"]:
