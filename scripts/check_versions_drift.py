@@ -972,14 +972,13 @@ def unconsumed_reason(key: str) -> str | None:
     return UNCONSUMED.get(f"{section}.*")
 
 
-# Keys whose mirror (a chart, an appset entry, a Dockerfile ARG, a terraform
-# provider block) already exists in this tree, but whose versions.yaml pin
-# starts only with the 2.2.0-rc.14 block on a branch not merged here. A stack
-# older than rc.14 predates the key and carries no value to compare against,
-# so it is NOTED rather than failed; a stack that carries the key is compared
-# strictly, like any other pin. Unlike UNCONSUMED, this is temporary -- drop
-# the entry once this tree's `current` stack reaches rc.14 or later. Patterns
-# are exact keys or `section.*`, same convention as UNCONSUMED.
+# Keys whose mirror already exists in this tree but whose versions.yaml pin
+# starts only with the 2.2.0-rc.14 block, so the table is permanent: any older
+# selectable stack predates the key, has nothing to compare it against, and
+# needs this exemption for as long as it stays selectable -- not just until
+# `current` reaches rc.14.
+#
+# Patterns are exact keys or `section.*`, same convention as UNCONSUMED.
 PENDING_MIRRORS: dict[str, str] = {
     "operators.karpenter": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "operators.aws-load-balancer-controller": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
@@ -1462,28 +1461,14 @@ def main(argv: list[str] | None = None) -> int:
             f"CHECKS entry, or an UNCONSUMED reason saying why it has no second copy"
         )
 
-    # PENDING_MIRRORS is temporary by construction: once EVERY selectable stack
-    # pins every key on it, it has done its job and must go, or it rots into a
-    # permanent exemption nobody revisits.
-    #
-    # Every stack, not the selected one: the list exists so a stack that
-    # PREDATES a key has nothing to compare against, and deleting it while such
-    # a stack is still selectable makes that stack's own check fail. The advice
-    # therefore has to wait for the older stack to be retired.
-    if PENDING_MIRRORS:
-        still_needed = stacks_needing_pending_mirrors()
-        if not still_needed:
-            failures.append(
-                "  [stale]   every stack pins every PENDING_MIRRORS key -- delete "
-                "PENDING_MIRRORS; each of those keys is now a normal pin"
-            )
-        elif all(_pattern_is_pinned(p, versions) for p in PENDING_MIRRORS):
-            print(
-                f"  [note]    stack '{stack}' pins every PENDING_MIRRORS key, but "
-                f"{', '.join(still_needed)} does not -- delete PENDING_MIRRORS once "
-                f"the older stack is retired, not before",
-                file=sys.stderr,
-            )
+    # A key's entry has done its job and can go once EVERY selectable stack --
+    # not just the current one -- pins it, since a stack that still PREDATES
+    # the key has nothing to compare it against.
+    if PENDING_MIRRORS and not stacks_needing_pending_mirrors():
+        failures.append(
+            "  [stale]   every stack pins every PENDING_MIRRORS key -- delete "
+            "PENDING_MIRRORS; each of those keys is now a normal pin"
+        )
 
     # Stale UNCONSUMED entries rot the same way the pins do.
     for pattern in sorted(UNCONSUMED):
