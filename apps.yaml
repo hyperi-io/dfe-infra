@@ -587,7 +587,7 @@ apps:
   # composition has to be able to name them.
   dfe-engine:
     multiplicity: single
-    scale_deployed: true
+    scale_deployed: false
     transports: []
     hot_reload: false
 
