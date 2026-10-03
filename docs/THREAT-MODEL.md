@@ -11,7 +11,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 # DFE exposure model
 
 **The vast majority of this stack has no internet-facing and no user-facing
-exposure.** Two components do; everything else consumes from the broker or is
+exposure.** Three components do; everything else consumes from the broker or is
 reached only from inside the deployment.
 
 Read this before assessing any security finding, advisory or scanner warning in
@@ -24,6 +24,7 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 |---|---|---|
 | **dfe-receiver** | **Internet / user facing** | The ingest edge. Takes arbitrary data from whoever can route to it. The primary attack surface. |
 | **dfe-ui** | **User facing** | Browser-facing Next.js app, behind auth in every deployment that has an issuer. |
+| **dfe-hyperdx** | **User facing, authenticated** | Search and dashboards embedded in dfe-ui. Verifies the engine's token on every request and queries ClickHouse as the one ClickHouse user the engine hands that session: one HyperDX team per ClickHouse identity, and a team holding any other user's connection refuses the session. Admin surfaces are engine-only. Its own store holds every team's connection, the unrestricted platform reader's included, so a flaw that crosses the team fence reaches every org's data. |
 | dfe-fetcher | Outbound only | Reaches external APIs, but **it initiates** every connection. Its ingest port is off by default. |
 | dfe-engine | CLI and API | Reachable by operators, not by the public. The API is authenticated. |
 | dfe-loader, dfe-archiver, dfe-transform-* | Not exposed | Consume from the broker and write to a datastore. On the direct transport, dfe-loader, dfe-archiver, dfe-transform-vrl and dfe-transform-vector each bind a plaintext, unauthenticated gRPC Push listener on a ClusterIP Service, port 6000 (`dfe-common.pushService`). dfe-transform-elastic's direct-transport listener is implemented but not wired in yet (dfe-transform-elastic#19). The namespace baseline NetworkPolicy (`dfe-ingress-policy`, `helm/charts/network-policies`) admits the gateway namespace and every DFE and otel namespace, so the listener is reachable only from pods in those namespaces, never from outside the cluster. |
@@ -48,7 +49,7 @@ A deployment that carries a CA runs its in-cluster hops over TLS with verificati
 
 Grade by reachability first, then severity:
 
-1. **Is the flawed code path reachable from dfe-receiver or dfe-ui?** If yes,
+1. **Is the flawed code path reachable from dfe-receiver, dfe-ui or dfe-hyperdx?** If yes,
    treat it seriously whatever the score, because the input is untrusted.
 2. **Is it only reachable from outbound traffic we initiate, or from an
    operator-authenticated path?** Then a mid-range score is usually a
