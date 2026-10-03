@@ -179,6 +179,20 @@ def test_an_app_whose_work_arrives_without_a_config_change_never_idles() -> None
     assert composition.idle_when("dfe-loader") == ()
 
 
+def test_every_keyed_source_family_is_one_the_app_can_fetch() -> None:
+    """A keyed name outside source_types is a family no source can declare."""
+    for name, raw in composition._apps().items():
+        app = raw or {}
+        keyed = app.get("keyed_source_types") or []
+        assert set(keyed) <= set(app.get("source_types") or []), name
+
+
+def test_the_fetchers_keyed_families_are_its_instance_maps() -> None:
+    """dfe-fetcher reads rest, db and file as maps keyed by instance id, the rest flat."""
+    fetcher = composition._apps()["dfe-fetcher"]
+    assert fetcher["keyed_source_types"] == ["rest", "db", "file"]
+
+
 def _snapshot_checkout(tmp_path: Path, text: str) -> Path:
     """A fake dfe-engine checkout whose bundled apps.yaml holds *text*."""
     checkout = tmp_path / "engine-checkout"
