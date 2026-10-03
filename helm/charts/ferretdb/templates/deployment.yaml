@@ -51,6 +51,8 @@ spec:
             # documentdb.sslmode raises it for an external TLS-serving backend.
             - name: FERRETDB_POSTGRESQL_URL
               value: "postgres://{{ .Values.documentdb.auth.username }}:$(PGPASSWORD)@{{ include "dfe-common.fullname" . }}-documentdb:5432/{{ .Values.documentdb.database }}?sslmode={{ .Values.documentdb.sslmode }}"
+            - name: FERRETDB_LOG_LEVEL
+              value: {{ .Values.ferretdb.logLevel | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

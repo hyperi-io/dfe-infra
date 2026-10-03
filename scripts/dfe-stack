@@ -29,15 +29,21 @@ Subcommands:
                  certified manifest; --target docker = the dfe-docker .env
                  fragment (tag@digest per compose var). --stack X.Y.Z[-rc.N]
                  selects a version (default: `current`).
-  images         Flat DFE-owned image list for air-gap mirroring (third-party
-                 chart images are pulled by chart ref and listed by the CI chart
-                 render, not here -- stated, not silent).
+  images         Flat DFE-owned image list for air-gap mirroring: every image
+                 with a digest pin, whether its tag sits under apps:, content:
+                 or a family pin (the toolbox base image's toolbox.dfe-toolbox).
+                 Third-party chart images are NOT listed -- stated, not silent.
+  platforms      Read each DFE image's pinned index from the registry and print
+                 its platforms; exit 1 unless every one carries linux/amd64 and
+                 linux/arm64.
   graph          Derive the stack upgrade graph from the in-file stacks (JSON).
   check-upgrade  Verdict on FROM -> TO: honour each stack's declared
                  stack.previous, else sequential minors + free z-hops.
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
   verify         Re-fetch GHCR digests and compare them to versions.yaml.
+  release-gate   Fail a release-maturity stack with an unpublished app, or with
+                 a DFE image whose index lacks linux/amd64 or linux/arm64.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
                  graph as JSON, the build-cycle table, a --producer,
                  --consumer or --lane slice, or (re)render the Mermaid blocks
@@ -48,6 +54,7 @@ Examples:
     python3 scripts/dfe-stack render --target docker
     python3 scripts/dfe-stack render --stack 2.2.0-rc.1 --out dfe-manifest.yaml
     python3 scripts/dfe-stack images
+    python3 scripts/dfe-stack platforms --stack 2.2.0-rc.14
     python3 scripts/dfe-stack graph
     python3 scripts/dfe-stack check-upgrade --from 2.2.0-rc.1 --to 2.2.0
     python3 scripts/dfe-stack resolve --pins ../dfe-deploy/pins.yaml
@@ -58,8 +65,9 @@ Examples:
     python3 scripts/dfe-stack suite --render-docs
 
 render/images/graph/check-upgrade/resolve/suite need only python3 + git.
-verify and refresh-digests read the registry through `docker buildx imagetools`,
-which authenticates from the docker credential store and needs no gh scope.
+verify, refresh-digests, platforms and a release-maturity release-gate read the
+registry through `docker buildx imagetools`, which authenticates from the docker
+credential store and needs no gh scope.
 
 cut still needs the GH packages API, because listing an app's published tags to
 pick the highest has no imagetools equivalent. That API wants the
@@ -216,24 +224,74 @@ def versions_at(tag: str | None = None, stack: str | None = None) -> dict:
     return pins
 
 
-def app_images(v: dict, registry: str) -> dict[str, str]:
-    """Published DFE-owned images as name -> ref (tag@sha256 where digest known).
+# `digests:` keys whose tag is a family pin under another name: digests key ->
+# (section, key). The toolbox base image ships under the toolbox family's tag.
+_FAMILY_TAGS = {"dfe-toolbox-base": ("toolbox", "dfe-toolbox")}
 
-    Apps with no digest entry are NOT YET PUBLISHED and are excluded -- loudly,
-    via the caller (no silent truncation).
+
+def image_tag(v: dict, name: str) -> str:
+    """The tag a `digests:` key pins: under apps:, under content: for an image
+    versioned with the content repos (the HyperDX fork), or the family pin
+    _FAMILY_TAGS names. Empty when none has it.
     """
-    apps = v.get("apps", {})
-    digests = v.get("digests", {})
+    if name in _FAMILY_TAGS:
+        section, key = _FAMILY_TAGS[name]
+        return v.get(section, {}).get(key, "")
+    return v.get("apps", {}).get(name) or v.get("content", {}).get(name) or ""
+
+
+def app_images(v: dict, registry: str) -> dict[str, str]:
+    """Published DFE-owned images as name -> registry/name:tag@sha256.
+
+    A `digests:` key is what makes an image published, so the digests drive the
+    list rather than apps:, which does not hold the HyperDX fork. Apps with no
+    digest are NOT YET PUBLISHED and excluded -- loudly, via the caller.
+    """
     refs: dict[str, str] = {}
-    for name, tag in apps.items():
-        digest = digests.get(name, "")
-        if digest:
+    for name, digest in v.get("digests", {}).items():
+        tag = image_tag(v, name)
+        if tag and digest:
             refs[name] = f"{registry}/{name}:{tag}@{digest}"
     return refs
 
 
 def unpublished_apps(v: dict) -> list[str]:
     return sorted(set(v.get("apps", {})) - set(v.get("digests", {})))
+
+
+def untagged_digests(v: dict) -> list[str]:
+    """`digests:` keys with no tag to build a ref from, which app_images drops."""
+    return sorted(name for name in v.get("digests", {}) if not image_tag(v, name))
+
+
+# A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem
+# nodes), and an image missing either pulls fine and dies at exec on the other.
+REQUIRED_PLATFORMS = ("linux/amd64", "linux/arm64")
+
+
+def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
+    """(status, image, detail) per DFE image; status is ok, FAIL or ERROR.
+
+    Reads the pinned digest, never the tag, so the verdict is about the exact
+    index a deployment pulls. A registry that cannot be read is an ERROR, never
+    a pass.
+    """
+    findings: list[tuple[str, str, str]] = []
+    for name, ref in sorted(app_images(v, registry).items()):
+        label = f"{name}:{image_tag(v, name)}"
+        found, err = registry_pins.ref_platforms(ref)
+        if found is None:
+            findings.append(("ERROR", label, err))
+            continue
+        have = ", ".join(sorted(found)) or "no platforms"
+        missing = [p for p in REQUIRED_PLATFORMS if p not in found]
+        if missing:
+            findings.append(("FAIL", label, f"{have} -- missing {', '.join(missing)}"))
+        else:
+            findings.append(("ok", label, have))
+    for name in untagged_digests(v):
+        findings.append(("ERROR", name, "digest pinned with no tag under apps:, content: or a family pin"))
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -485,13 +543,33 @@ def cmd_images(args: argparse.Namespace) -> int:
             f"# WARNING: {len(missing)} app(s) unpublished, excluded: {', '.join(missing)}",
             file=sys.stderr,
         )
+    untagged = untagged_digests(v)
+    if untagged:
+        print(
+            f"# WARNING: {len(untagged)} digest(s) with no tag under apps:, content: or a family pin, "
+            f"excluded: {', '.join(untagged)}",
+            file=sys.stderr,
+        )
     print(
-        "# NOTE: third-party images (operators/services charts) are pulled by chart "
-        "ref; the complete mirror list comes from the CI chart render, not this "
-        "command.",
+        "# NOTE: third-party images (operator and service charts) are NOT listed: "
+        "each chart pulls its own by chart ref, and no tool here renders that list.",
         file=sys.stderr,
     )
     return 0
+
+
+def cmd_platforms(args: argparse.Namespace) -> int:
+    """Print every DFE image's platforms; exit 1 unless all carry the required set."""
+    _, v = stack_pins(load_root(args.tag), args.stack)
+    findings = platform_findings(v, args.registry)
+    for status, image, detail in findings:
+        print(f"{status:<5} {image}  {detail}")
+    bad = sum(1 for status, _, _ in findings if status != "ok")
+    print(
+        f"\n{len(findings)} image(s), {bad} without {' and '.join(REQUIRED_PLATFORMS)} "
+        "or unreadable"
+    )
+    return 1 if bad else 0
 
 
 def cmd_graph(args: argparse.Namespace) -> int:
@@ -683,16 +761,16 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def cmd_verify(args: argparse.Namespace) -> int:
     _, v = stack_pins(load_root(), args.stack)
-    apps, digests = v.get("apps", {}), v.get("digests", {})
-    # The HyperDX fork is versioned under content:, so an apps-only lookup finds
-    # no tag and reports a correct pin as "(tag not found)".
-    content = v.get("content", {})
     host, _, org = args.registry.partition("/")
     if not org:
         raise SystemExit(f"error: --registry {args.registry!r} names no org (want <host>/<org>)")
     bad = 0
-    for name, digest in sorted(digests.items()):
-        tag = apps.get(name) or content.get(name)
+    for name, digest in sorted(v.get("digests", {}).items()):
+        tag = image_tag(v, name)
+        if not tag:
+            print(f"ERROR {name}: digest pinned with no tag under apps:, content: or a family pin")
+            bad += 1
+            continue
         try:
             actual = registry_pins.tag_digest(org, name, tag, registry=host)
         except registry_pins.RegistryError as exc:
@@ -1067,24 +1145,43 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
 
 
 def cmd_release_gate(args: argparse.Namespace) -> int:
-    """Fail if a release-maturity stack has any unpublished app (no digest).
+    """Fail a release-maturity stack with an unpublished or single-arch DFE image.
 
     A release must pin EVERY app; render silently comments out an app with no
     digest, so without this a release could cut a manifest MISSING a component
-    and auto-advance `latest` to it. rc/alpha/beta may carry unpublished apps.
+    and auto-advance `latest` to it. It must also carry both node architectures,
+    read from the registry by digest. rc/alpha/beta may carry either gap, and
+    their gate never touches the registry.
     """
     root = load_root()
     name, v = stack_pins(root, args.stack)
     maturity = v.get("maturity", "")
     unp = unpublished_apps(v)
-    if maturity == "release" and unp:
+    if maturity != "release":
+        print(
+            f"release-gate {name}: maturity={maturity}, {len(unp)} unpublished, "
+            "platforms not read (both allowed unless release)"
+        )
+        return 0
+    failed = False
+    if unp:
         print(
             f"release-gate FAIL: {name} is maturity=release but these apps are "
             f"unpublished (no digest): {', '.join(unp)}",
             file=sys.stderr,
         )
+        failed = True
+    findings = platform_findings(v, args.registry)
+    for status, image, detail in findings:
+        if status != "ok":
+            print(f"release-gate FAIL: {name} {image} {status}: {detail}", file=sys.stderr)
+            failed = True
+    if failed:
         return 1
-    print(f"release-gate {name}: maturity={maturity}, {len(unp)} unpublished (allowed unless release)")
+    print(
+        f"release-gate {name}: maturity=release, every app published, all "
+        f"{len(findings)} image(s) carry {' and '.join(REQUIRED_PLATFORMS)}"
+    )
     return 0
 
 
@@ -1368,6 +1465,14 @@ def main() -> int:
     p.add_argument("--tag", help="git tag (git show versions.yaml@tag)")
     p.set_defaults(func=cmd_images)
 
+    p = sub.add_parser(
+        "platforms",
+        help="print each DFE image's platforms; exit 1 unless all carry amd64 and arm64",
+    )
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument("--tag", help="git tag (git show versions.yaml@tag)")
+    p.set_defaults(func=cmd_platforms)
+
     p = sub.add_parser("graph", help="derive the upgrade graph from the in-file stacks")
     p.set_defaults(func=cmd_graph)
 
@@ -1457,7 +1562,10 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
     p.set_defaults(func=cmd_cut)
 
-    p = sub.add_parser("release-gate", help="fail if a release-maturity stack has unpublished apps")
+    p = sub.add_parser(
+        "release-gate",
+        help="fail a release-maturity stack with unpublished apps or a single-arch image",
+    )
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_release_gate)
 

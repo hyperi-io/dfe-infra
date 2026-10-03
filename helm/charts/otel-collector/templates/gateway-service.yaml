@@ -16,5 +16,11 @@ spec:
     - name: prometheus
       port: {{ .Values.gateway.service.prometheusPort }}
       targetPort: prometheus
+    {{- if .Values.otel.ingress.enabled }}
+    # The bearer-token receiver, which the gateway's otel route targets.
+    - name: otlp-ingress
+      port: {{ .Values.otel.ingress.port }}
+      targetPort: otlp-ingress
+    {{- end }}
   selector:
     app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway

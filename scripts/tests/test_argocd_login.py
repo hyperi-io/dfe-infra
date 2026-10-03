@@ -225,6 +225,20 @@ def test_both_argo_carrying_groups_are_argo_admin_and_the_viewer_group_read_only
     ]
 
 
+def test_argos_admins_are_the_deployments_admin_groups() -> None:
+    """Argo keeps its own policy lines, so they are held to adminGroups in common.yaml."""
+    admin_groups = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))["adminGroups"]
+    argo_admins = [
+        line.split(", ")[1]
+        for line in argocd_login.policy_csv().splitlines()
+        if line.endswith(", role:admin")
+    ]
+    assert sorted(argo_admins) == sorted(admin_groups), (
+        f"Argo CD's admins {argo_admins} are not adminGroups {admin_groups}: change "
+        "bootstrap/argocd_login.py and argocd/values/common.yaml together"
+    )
+
+
 def test_the_mapped_groups_are_ones_the_fixture_idp_serves() -> None:
     groups = {g["name"] for g in tomllib.loads(USERS_FIXTURE.read_text(encoding="utf-8"))["groups"]}
     mapped = {argocd_login.ADMIN_GROUP, argocd_login.INFRA_GROUP, argocd_login.VIEWER_GROUP}

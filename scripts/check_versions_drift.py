@@ -28,6 +28,10 @@ value for that key at all, so auditing it there is NOTED rather than failed --
 see PENDING_MIRRORS. A stack that does carry the key is compared strictly,
 like any other pin.
 
+One pair of literals has no versions.yaml key at all: the HELM_VERSION that
+helm-lint.yml and release.yml each install. The check holds them equal to each
+other, so the release gate resolves charts with the Helm the PR check used.
+
 No third-party deps required: versions.yaml and the structured files are parsed
 with a tiny purpose-built reader (the values we check are all simple
 `key: "value"` lines), so this runs on a bare CI image without PyYAML.
@@ -271,12 +275,26 @@ CHECKS += [
         Path("helm/charts/kafka/values.yaml"),
         r"redpandadata/redpanda\n\s*#[^\n]*\n\s*tag:\s*\"([^\"]+)\"",
     ),
+    # The single-mode StatefulSet pulls by it; the cluster-mode CR cannot carry it.
+    Check(
+        "redpanda broker digest (kafka values)",
+        "services-digests.redpanda-version",
+        Path("helm/charts/kafka/values.yaml"),
+        r'redpandadata/redpanda\n(?:\s*#[^\n]*\n)*\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # Kafka logical version (our kafka chart -> strimzi Kafka CR spec.kafka.version)
     Check(
         "kafka version (kafka values)",
         "services.kafka-version",
         Path("helm/charts/kafka/values.yaml"),
         r"name: dfe-kafka\n\s*version:\s*\"([^\"]+)\"",
+    ),
+    # apache/kafka at that version, which single mode and the MSK bootstrap Job run.
+    Check(
+        "kafka image digest (kafka values)",
+        "services-digests.kafka-version",
+        Path("helm/charts/kafka/values.yaml"),
+        r'name: dfe-kafka\n\s*version:[^\n]*\n(?:\s*#[^\n]*\n)*\s*imageDigest:\s*"([^"]+)"',
     ),
     # The kafka chart's own copy of the Strimzi operator version, which gates
     # kafka.storageModel=tiered-object at render time (spec.kafka.tieredStorage needs
@@ -318,7 +336,7 @@ CHECKS += [
         "cruise-control-ui server image digest (kafka values)",
         "services-digests.nginx-unprivileged",
         Path("helm/charts/kafka/values.yaml"),
-        r'digest:\s*"([^"]+)"',
+        r'nginx-unprivileged\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # kafbat (class D): chart value is tag@digest -- compare the TAG part to SSoT
     Check(
@@ -346,7 +364,7 @@ CHECKS += [
         "links image digest",
         "services-digests.nginx-unprivileged",
         Path("helm/charts/links/values.yaml"),
-        r'digest:\s*"([^"]+)"',
+        r'nginx-unprivileged\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     Check(
         "links chart appVersion",
@@ -364,12 +382,24 @@ CHECKS += [
         r'appVersion:\s*"([^"]+)"',
     ),
     Check(
+        "ferretdb image digest",
+        "services-digests.ferretdb",
+        Path("helm/charts/ferretdb/values.yaml"),
+        r'ferretdb/ferretdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
         "documentdb-pg image tag (ferretdb values)",
         "services.documentdb-pg",
         Path("helm/charts/ferretdb/values.yaml"),
         r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:\s*"([^"]+)"',
     ),
-    # ClickHouse chart values: server version + keeper tag
+    Check(
+        "documentdb-pg image digest (ferretdb values)",
+        "services-digests.documentdb-pg",
+        Path("helm/charts/ferretdb/values.yaml"),
+        r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    # ClickHouse chart values: server version and digest, keeper tag and digest
     Check(
         "clickhouse server version",
         "services.clickhouse-version",
@@ -377,12 +407,24 @@ CHECKS += [
         r"\n  version:\s*\"([^\"]+)\"",
     ),
     Check(
+        "clickhouse server image digest",
+        "services-digests.clickhouse-version",
+        Path("helm/charts/clickhouse-cluster/values.yaml"),
+        r'\n  imageDigest:\s*"([^"]+)"',
+    ),
+    Check(
         "clickhouse keeper tag",
-        "services.clickhouse-version",
+        "services.clickhouse-keeper",
         Path("helm/charts/clickhouse-cluster/values.yaml"),
         r"clickhouse-keeper\n\s*tag:\s*\"([^\"]+)\"",
     ),
-    # otel-collector: explicit image tag + chart appVersion
+    Check(
+        "clickhouse keeper digest",
+        "services-digests.clickhouse-keeper",
+        Path("helm/charts/clickhouse-cluster/values.yaml"),
+        r'clickhouse-keeper\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    # otel-collector: explicit image tag and digest + chart appVersion
     Check(
         "otel image tag",
         "services.otel-collector",
@@ -390,17 +432,29 @@ CHECKS += [
         r"opentelemetry-collector-contrib\n\s*tag:\s*\"([^\"]+)\"",
     ),
     Check(
+        "otel image digest",
+        "services-digests.otel-collector",
+        Path("helm/charts/otel-collector/values.yaml"),
+        r'opentelemetry-collector-contrib\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
         "otel chart appVersion",
         "services.otel-collector",
         Path("helm/charts/otel-collector/Chart.yaml"),
         r"appVersion:\s*\"([^\"]+)\"",
     ),
-    # valkey plain manifest image tag
+    # valkey plain manifest: one tag@sha256 string, both halves checked
     Check(
-        "valkey manifest image",
+        "valkey manifest image tag",
         "bootstrap.valkey",
         Path("bootstrap/templates/valkey.yaml"),
-        r"valkey/valkey:([^\s\"]+)",
+        r"valkey/valkey:([^\s\"@]+)@",
+    ),
+    Check(
+        "valkey manifest image digest",
+        "services-digests.valkey",
+        Path("bootstrap/templates/valkey.yaml"),
+        r"valkey/valkey:[^\s\"@]+@([^\s\"]+)",
     ),
     # services.forgejo cascades to the chart's appVersion: image.tag is empty,
     # so dfe-common.image falls back to it.
@@ -409,6 +463,12 @@ CHECKS += [
         "services.forgejo",
         Path("helm/charts/forgejo/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
+    ),
+    Check(
+        "forgejo image digest",
+        "services-digests.forgejo",
+        Path("helm/charts/forgejo/values.yaml"),
+        r'forgejo/forgejo\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # The four below were found by the reverse sweep, not by anyone adding them.
     # dfe-common.labels stamps app.kubernetes.io/version from .Chart.AppVersion
@@ -437,6 +497,12 @@ CHECKS += [
         "services.documentdb-pg",
         Path("helm/charts/cnpg-cluster/values.yaml"),
         r'postgres-documentdb\n\s*tag:\s*"([^"]+)"',
+    ),
+    Check(
+        "documentdb-pg image digest (cnpg values)",
+        "services-digests.documentdb-pg",
+        Path("helm/charts/cnpg-cluster/values.yaml"),
+        r'postgres-documentdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     Check(
         "kafbat chart appVersion",
@@ -744,6 +810,32 @@ CHECKS += [
         Path("helm/charts/dfe-engine/values.yaml"),
         r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
+    # bootstrap.sh writes this helperPod.yaml over upstream's, whose busybox has no tag.
+    Check(
+        "local-path helper pod busybox tag",
+        "services.busybox",
+        Path("bootstrap/templates/local-path-helper-pod.yaml"),
+        r"library/busybox:([^\s\"@]+)@",
+    ),
+    Check(
+        "local-path helper pod busybox digest",
+        "services-digests.busybox",
+        Path("bootstrap/templates/local-path-helper-pod.yaml"),
+        r"library/busybox:[^\s\"@]+@([^\s\"]+)",
+    ),
+    # One tag@sha256 string that both EnvoyProxy resources in the chart read.
+    Check(
+        "envoy gateway proxy image tag",
+        "services.envoy-gateway-proxy",
+        Path("helm/edge/gateway/values.yaml"),
+        r'envoyproxy/envoy:([^"@]+)@',
+    ),
+    Check(
+        "envoy gateway proxy image digest",
+        "services-digests.envoy-gateway-proxy",
+        Path("helm/edge/gateway/values.yaml"),
+        r'envoyproxy/envoy:[^"@]+@([^"]+)"',
+    ),
 ]
 
 # dfe-toolbox image family (docker/dfe-toolbox/): a standalone ops shell, not
@@ -756,6 +848,7 @@ CHECKS += [
 # own, so there is only ever one ClickHouse version to keep in step with.
 _TOOLBOX_ARGS = [
     # (label, versions.yaml key, Dockerfile, ARG name)
+    ("toolbox base image Debian base", "toolbox.debian", "docker/dfe-toolbox/base/Dockerfile", "DEBIAN_TAG"),
     ("toolbox base image kubectl", "toolbox.kubectl", "docker/dfe-toolbox/base/Dockerfile", "KUBECTL_VERSION"),
     ("toolbox base image helm", "toolbox.helm", "docker/dfe-toolbox/base/Dockerfile", "HELM_VERSION"),
     ("toolbox base image argocd CLI", "toolbox.argocd-cli", "docker/dfe-toolbox/base/Dockerfile", "ARGOCD_VERSION"),
@@ -797,6 +890,14 @@ CHECKS += [
         Path("helm/charts/dfe-toolbox/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
+    # The immutable half: the chart's image is dfe-toolbox-base, not a
+    # _APP_CHARTS name, so _DIGEST_MIRRORS never picks it up.
+    Check(
+        "dfe-toolbox chart image digest",
+        "digests.dfe-toolbox-base",
+        Path("helm/charts/dfe-toolbox/values.yaml"),
+        r'digest:\s*"([^"]+)"',
+    ),
 ]
 
 
@@ -820,12 +921,47 @@ UNCONSUMED: dict[str, str] = {
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
-    "services.envoy-proxy": "docker path only; k8s installs envoy-gateway, which carries its own proxy image",
+    "services.envoy-proxy": "docker path only; the k8s gateway runs services.envoy-gateway-proxy, a different (distroless) tag",
     "digests.*": "an app with no chart mirror yet -- a published app is checked against helm/charts/<app>/values.yaml image.digest instead",
-    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually",
+    "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually, and bootstrap.sh reads local-path-provisioner's at runtime",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",
     "stack.*": "upgrade-graph metadata, not a version pin",
 }
+
+
+# The release gate must resolve charts with the Helm the PR check installs, and
+# toolbox.helm is the toolbox image's own, separate pin.
+HELM_WORKFLOWS = (
+    Path(".github/workflows/helm-lint.yml"),
+    Path(".github/workflows/release.yml"),
+)
+HELM_VERSION_PATTERN = r'(?m)^\s*HELM_VERSION:\s*"([^"]+)"'
+
+
+def helm_version_problems(texts: dict[Path, str]) -> list[str]:
+    """Problems with the HELM_VERSION literal across the given workflow texts.
+
+    Args:
+        texts: Workflow file text, keyed by its repo-relative path.
+
+    Returns:
+        One line per file that does not carry exactly one literal, plus one
+        line when the literals found disagree; empty when they all match.
+    """
+    problems: list[str] = []
+    found: dict[Path, str] = {}
+    for path, text in texts.items():
+        pins = re.findall(HELM_VERSION_PATTERN, text)
+        if len(pins) != 1:
+            problems.append(
+                f"  [missing] {path}: expected one HELM_VERSION literal, found {len(pins)}"
+            )
+            continue
+        found[path] = pins[0]
+    if len(set(found.values())) > 1:
+        detail = ", ".join(f"{path} has '{value}'" for path, value in found.items())
+        problems.append(f"  [DRIFT]  HELM_VERSION differs between workflows: {detail}")
+    return problems
 
 
 def unconsumed_reason(key: str) -> str | None:
@@ -855,6 +991,14 @@ PENDING_MIRRORS: dict[str, str] = {
     "providers.confluentinc-confluent": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "providers.redpanda-data-redpanda": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "providers.hashicorp-archive": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.busybox": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.busybox": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.envoy-gateway-proxy": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services.clickhouse-keeper": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.clickhouse-keeper": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.forgejo": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "services-digests.valkey": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
 }
 
 
@@ -1352,6 +1496,7 @@ def main(argv: list[str] | None = None) -> int:
         failures.append(f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml")
 
     failures.extend(dead_guards(versions, stack))
+    failures.extend(helm_version_problems({path: read_source(path) for path in HELM_WORKFLOWS}))
 
     # The other direction: a literal in a file no check points at.
     failures.extend(reverse_sweep())

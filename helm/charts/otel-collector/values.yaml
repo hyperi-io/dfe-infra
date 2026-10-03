@@ -6,6 +6,8 @@ cloud: local
 image:
   repository: otel/opentelemetry-collector-contrib
   tag: "0.158.0"  # 2026-07-22 (7-day-compliant). Pinned explicitly, not via appVersion.
+  # == versions.yaml services-digests.otel-collector (drift-checked).
+  digest: "sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5"
   pullPolicy: IfNotPresent
 
 # The GATEWAY's pod securityContext. The contrib image ships USER 10001
@@ -249,3 +251,24 @@ exporters:
     # still holds the original text.
     connectionParams:
       type_json_skip_duplicated_paths: "1"
+
+# OTLP ingest from OUTSIDE the cluster, through the gateway's otel route. Off,
+# nothing here renders. On, a second OTLP/HTTP receiver listens on `port`, admits
+# only a bearer token, and feeds the same pipelines, while 4317/4318 stay exactly
+# as they are for senders inside the cluster. Defaulted here so the chart renders
+# standalone. A real deploy takes the switch from argocd/values/common.yaml or
+# the deploy repo's infra/common.yaml, which the gateway chart reads too.
+otel:
+  ingress:
+    enabled: false
+    port: 4319
+    auth:
+      # The ClusterSecretStore the token is read from.
+      secretStoreName: dfe-secret-store
+      # The token's path in that store. Required when enabled.
+      remoteKey: ""
+      # The field within that entry. Each line's first word is a valid token, so
+      # a rotation can hold the old and the new one at once.
+      property: token
+      # The Secret the token lands in, mounted into the gateway pod.
+      secretName: dfe-otel-ingress-token

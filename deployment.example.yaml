@@ -114,11 +114,13 @@ dns:
 ## PASTE-INTO-A-VALUES-FILE, sub-block by sub-block. `product.rate_limit`,
 ## `product.waf` and `product.tls` are the gateway chart's `ui.*` values
 ## verbatim; the body of `ingest.receiver` is the dfe-receiver chart's
-## `exposure:` values verbatim. Everything else is the DIAL's own spelling and
-## needs translating -- `product.public` is the chart's `ui.public.dfe_ui`,
-## `admin_uis.public.*` is the rest of its `ui.public`, `admin_uis.external` is
-## `exposure.infraUisExternal`, and `admin_uis.oidc.admin_groups` is
-## `oidc.adminGroups`.
+## `exposure:` values verbatim; the body of `ingest.otel` is the `otel.ingress:`
+## block of the deploy repo's `infra/common.yaml` verbatim. Everything else is
+## the DIAL's own spelling and needs translating -- `product.public` is the
+## chart's `ui.public.dfe_ui`, `admin_uis.public.*` is the rest of its
+## `ui.public`, `admin_uis.external` is `exposure.infraUisExternal`, and
+## `admin_uis.oidc.admin_groups` is the top-level `adminGroups` of the deploy
+## repo's `infra/common.yaml`.
 ##
 ## Every boolean below is unquoted, unlike the rest of this dial
 ## (render_dial.py's own convention writes true/false as quoted strings, see
@@ -235,7 +237,10 @@ edge:
     ## here because a provider is a list of maps this dial cannot express -- put
     ## the real entries in the deploy repo's own overlay under `oidc.providers`,
     ## and with none the chart renders NO SecurityPolicy at all. admin_groups is
-    ## the chart's `oidc.adminGroups`.
+    ## the top-level `adminGroups`, which the gateway and Kafbat both read: it
+    ## goes in the deploy repo's `infra/common.yaml`, and an empty list refuses
+    ## to render. Argo CD's own admins (bootstrap/argocd_login.py) do not follow
+    ## it.
     oidc:
       enabled: true
       providers: []
@@ -365,12 +370,20 @@ edge:
         ttl_minutes: 60
         peer_cidr: ""
         reach: [22, 443]
-    ## The OTLP door. Private on a cloud flavour, and authentication is the gate
-    ## on making it public -- a public OTLP endpoint with no auth accepts
-    ## telemetry from anyone, so the pair is refused.
+    ## OTLP ingest from OUTSIDE the cluster (edge agents, other estates) on
+    ## otel.<k8s.domain>. OFF on every flavour: the stack's own telemetry reaches
+    ## the collector on its Service and never needs it. The body is the
+    ## `otel.ingress:` block of the deploy repo's `infra/common.yaml` verbatim --
+    ## paste it there, the one file the gateway and the collector both read.
+    ## There is no unauthenticated mode: on, the collector admits only the bearer
+    ## token the deployment's secret store holds at `auth.remoteKey` (property
+    ## `token`), and on with it empty is refused here and by both charts. Tier 2
+    ## by exposure, no spend.
     otel:
-      public: false
-      auth: required           # required | none
+      enabled: false
+      port: 4319
+      auth:
+        remoteKey: ""
 
   ## GROUP (e) -- Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao and the
   ## Kubernetes API. TIER 3: no door is offered, and there is no key here that
@@ -692,6 +705,8 @@ overlay: ""
 ## the OTel tables included. Whole days; 0 disables the default TTL. A source, or
 ## a dfe-schemas definition, that declares its own TTL overrides it. Read by both
 ## substrates: k8s -> DFE_CLICKHOUSE_DEFAULT_TTL_DAYS, docker-vm the same key.
+## Retention is time-only, so the ClickHouse volume has to hold the whole
+## window: docs/deployment/clickhouse.md, "Sizing the disk".
 retention:
   default_ttl_days: 90
 

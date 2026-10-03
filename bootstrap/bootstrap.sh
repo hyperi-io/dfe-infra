@@ -670,9 +670,23 @@ elif [[ -n "$(kubectl get storageclass -o name 2>/dev/null)" ]]; then
   echo "  StorageClass(es) present, none default -> using DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS}"
 else
   echo "  no StorageClass -> INSTALL local-path-provisioner ${LOCAL_PATH_VERSION}"
-  run kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner/${LOCAL_PATH_VERSION}/deploy/local-path-storage.yaml"
+  # Upstream's manifest names the provisioner by tag; it is pinned by digest before any pod can pull it.
+  local_path_digest=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" services-digests.local-path-provisioner)
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] local_path_image.py --version ${LOCAL_PATH_VERSION} --digest ${local_path_digest} | kubectl apply -f -"
+  else
+    python3 "${SCRIPT_DIR}/local_path_image.py" --version "${LOCAL_PATH_VERSION}" --digest "${local_path_digest}" \
+      | kubectl apply -f -
+  fi
   run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
   run kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  # Upstream's helper pod names busybox with no tag; ours pins it by digest (services.busybox).
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] patch local-path-config helperPod.yaml <- ${TEMPLATES_DIR}/local-path-helper-pod.yaml"
+  else
+    kubectl -n local-path-storage patch configmap local-path-config \
+      --type merge -p "$(python3 -c 'import json,sys; print(json.dumps({"data": {"helperPod.yaml": sys.stdin.read()}}))' <"${TEMPLATES_DIR}/local-path-helper-pod.yaml")"
+  fi
   # Upstream hands every node /opt/local-path-provisioner, so on a node whose data
   # disk is mounted elsewhere every PV lands on the root filesystem.
   if [[ -n "${DFE_LOCAL_PATH_DIR:-}" ]]; then
@@ -685,11 +699,11 @@ else
         | python3 "${SCRIPT_DIR}/local_path_dir.py" --dir "${DFE_LOCAL_PATH_DIR}")"
       kubectl -n local-path-storage patch configmap local-path-config \
         --type merge -p "$(python3 -c 'import json,sys; print(json.dumps({"data": {"config.json": sys.stdin.read()}}))' <<<"${local_path_config}")"
-      # The provisioner reads config.json at start; a running pod keeps the old path.
-      kubectl -n local-path-storage rollout restart deployment/local-path-provisioner
-      kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
     fi
   fi
+  # The provisioner loads helperPod.yaml and config.json at start and re-reads them only on a 30s poll after the kubelet syncs the mount.
+  run kubectl -n local-path-storage rollout restart deployment/local-path-provisioner
+  run kubectl -n local-path-storage rollout status deployment/local-path-provisioner --timeout=120s
 fi
 # Case 4: AWS-only, and independent of which branch above ran -- EKS 1.30+
 # ships gp2 with no default, so DFE_STORAGE_CLASS (gp3) can still be missing

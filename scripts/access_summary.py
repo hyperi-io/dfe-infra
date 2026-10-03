@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import private_file
+
 FILENAME = "access-summary.md"
 ADMIN_LABEL = "admin"
 BREAKGLASS_LABEL = "break-glass"
@@ -109,6 +111,9 @@ def run_dir(repo: Path, stack: str, mode: str) -> Path:
 def write(path: Path, body: str) -> Path:
     """Write the summary readable only by the person who ran the deploy.
 
+    The file is 0600 before the passwords reach it, including a summary left by
+    an earlier run.
+
     Args:
         path: Where to write it.
         body: The rendered Markdown.
@@ -116,7 +121,4 @@ def write(path: Path, body: str) -> Path:
     Returns:
         The path written.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8", newline="\n")
-    path.chmod(0o600)
-    return path
+    return private_file.write_private(path, body)

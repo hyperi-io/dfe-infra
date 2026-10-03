@@ -59,6 +59,8 @@ spec:
         type: ClusterIP
       envoyDeployment:
         replicas: {{ $mesh.proxy.replicas }}
+        container:
+          image: {{ $.Values.envoyGateway.proxy.image | quote }}
 ---
 # How the proxy talks to a pool. Round robin rather than the Least Request
 # default: every push is one unary RPC of roughly one batch, so the cheap

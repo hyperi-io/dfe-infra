@@ -35,8 +35,8 @@ Every surface falls into exactly one:
 ## The three tiers
 
 1. **On by default**, where a DDoS attempt cannot blow the budget.
-2. **Opt-in.** Most carry a spend line; the engine's two family switches are
-   opt-in for what they EXPOSE, and cost nothing.
+2. **Opt-in.** Most carry a spend line. The engine's two family switches and
+   OTLP ingress are opt-in for what they EXPOSE, and cost nothing.
 3. **Not offered.** No key here reaches one.
 
 Buckets are [aws.md](aws.md#how-costs-are-described)'s: relative to the cluster's
@@ -61,7 +61,7 @@ own compute, the pricing model named, never a rate.
 | Tunnel on a NodePort | d | 1 once on | off | the engine's instance values file | none |
 | An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` (`forwarder` is unproven, [edge-vpn.md](edge-vpn.md#the-tunnels-address-on-aws)) | XS hourly |
 | Admin reach-back to one appliance | d | 1 | on | `edge.ingest.tunnel.admin_peer` | XS hourly |
-| OTLP route, private | d | 1 | private | `edge.ingest.otel.public` | none |
+| OTLP ingress on `otel.<domain>`, bearer token only | d | 2 | off | `edge.ingest.otel.enabled` | no spend |
 | A CDN or managed WAF in front | a | 2 | `none` | `edge.product.waf.mode` | S, per GB and per request |
 | Shield Advanced, Global Accelerator | a | 3 | absent | -- | -- |
 | Group (e) | e | 3 | absent | -- | -- |
@@ -87,6 +87,22 @@ every router the engine adds. Five traps:
   origin stays the internal hostname or the Service.
 - `/api/v1/tasks` carries the only SSE stream, and stays private until the
   console wants it.
+
+### Response hardening
+
+HTTPS routes send a one-year HSTS header: public listeners on `edge.product.tls.hsts`, the wildcard on the gateway chart's `tls.edge.hsts`. A browser holding it gets no click-through on a certificate it does not trust, so a root re-minted on every rebuild would lock the admin out of the console. `tls.edge.hsts` left empty follows the edge issuer:
+
+| Edge issuer | Wildcard HSTS |
+|---|---|
+| `tls.issuerName` is `tls.internalCA.issuerName`, `tls.internalCA.persist` off | off |
+| the same, `tls.internalCA.persist` on | on |
+| Vault/OpenBao PKI, ACME, or any other issuer | on |
+
+An explicit `true` or `false` wins over the table. `edge.product.tls.hsts` does not follow it.
+
+`bootstrap.sh` sets `tls.internalCA.persist.enabled=true` only for its own pre-apply of the root restore; no appset sets it for Argo's gateway app. A deployment that persists its root (`DFE_CA_PERSIST=true`) must also set `tls.internalCA.persist.enabled: true`, and the store name, in its deploy repo's gateway overlay, or Argo renders the persist objects and the wildcard's HSTS off.
+
+`routes.<key>.hiddenPaths` answers a path with a 404 from the proxy; dfe-ui hides its unauthenticated `/metrics`. `/docs` and `/redoc` follow `api.docsEnabled` in `infra/common.yaml`, read by the engine, the gateway and the links page alike.
 
 ## GCP and Azure
 
@@ -114,6 +130,35 @@ about the node's NIC and disk.
 | Admin reach-back | d | 3 | absent | -- | -- |
 
 The reach-back is cloud-only: on-prem the operator is already on the LAN.
+
+## OTLP ingress
+
+Telemetry from outside the cluster -- edge agents, other estates -- lands on
+`otel.<domain>`. It is OFF on every flavour. The stack's own senders reach the
+collector on its Service, on 4317/4318, and never need it.
+
+On, the gateway routes `otel.<domain>` to a second collector receiver on 4319
+that checks a bearer token before any pipeline sees the request. The token comes
+from the deployment's secret store through an ExternalSecret. There is no
+unauthenticated mode.
+
+The dial's `edge.ingest.otel` block is the `otel.ingress:` block of the deploy
+repo's `infra/common.yaml`, key for key. Paste it there, because the gateway and
+the collector are two Applications and that is the one file both read:
+
+```yaml
+otel:
+  ingress:
+    enabled: true
+    auth:
+      remoteKey: <path of the token in the secret store>   # property: token
+```
+
+On with `remoteKey` empty is refused by `render_dial.py`, the gateway chart and
+the collector chart alike. Senders POST to `/v1/traces`, `/v1/metrics` or
+`/v1/logs` with `Authorization: Bearer <token>`. `dfe-ops otel-ingress` says
+whether the door is exposed and where, and the readiness gate and the access
+summary print the same lines.
 
 ## The tunnel's inbound, and reaching one appliance
 
@@ -150,8 +195,11 @@ render cases need no cluster.
 | A browser family answers and a private one 404s | 1 | `dfe-ops edge-probe` | kind, on-prem |
 | Tier-3 keys are absent | 1 | render case | render |
 | TLS floor, HSTS, rate limit, CIDR filter | 1 | `dfe-ops edge-probe` | kind, on-prem |
+| HSTS on every HTTPS route, each listener on its own switch, the wildcard's default following the edge issuer; dfe-ui's `/metrics` a 404 on both faces | 1 | `scripts/tests/test_gateway_route_hardening.py` | render |
+| `/docs` and `/redoc` routed and listed only where the engine serves them | 1 | `scripts/tests/test_engine_docs_surface.py` | render |
 | The receiver is private in `vpn` mode | 1 | `dfe-ops edge-probe` | kind, on-prem |
-| The OTLP route is private on cloud | 1 | `dfe-ops edge-probe` | kind |
+| OTLP ingress renders no route while off, and refuses to render on with no token | 1 | `scripts/tests/test_otel_ingress.py`, `scripts/test-route-exposure.sh` | render |
+| `otel.<domain>` answers 404 while off, and 401 to a tokenless request while on | 1 | `dfe-ops edge-probe` | kind, on-prem, AWS |
 | Edge OIDC login and group check | 1 | `dfe-ops idp` and the onboarding suite | on-prem |
 | A client reaches the receiver only through the tunnel | 1 | dial in, post, then post direct and fail | on-prem |
 | One appliance peer cannot reach another | 1 | the isolation regression | on-prem |

@@ -9,10 +9,12 @@ cloud: local
 # kubelet got "503 Service Unavailable" from codeberg.org, while code.forgejo.org
 # served the same tag 200 OK). Forgejo is a drop-in Gitea fork -- same REST API
 # (the setup Job is unchanged) and same app.ini/env (accepts FORGEJO__ and GITEA__
-# prefixes). Digest-pin follow-up: dfe-common.image is tag-only today.
+# prefixes).
 image:
   repository: code.forgejo.org/forgejo/forgejo
   tag: ""
+  # == versions.yaml services-digests.forgejo (drift-checked); it pins the appVersion tag.
+  digest: "sha256:eda2e378442d2f18cfa563994f8ad66e71f04ac9c3bb4259cc57bdd641890f5c"
   pullPolicy: IfNotPresent
 
 replicaCount: 1

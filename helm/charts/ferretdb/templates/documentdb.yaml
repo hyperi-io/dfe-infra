@@ -53,6 +53,15 @@ spec:
         - name: documentdb
           image: "{{ .Values.documentdb.image.repository }}:{{ .Values.documentdb.image.tag }}{{ with .Values.documentdb.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.documentdb.image.pullPolicy }}
+          {{- with .Values.documentdb.postgresSettings }}
+          # The image's own command, plus documentdb.postgresSettings.
+          args:
+            - postgres
+            {{- range $key, $value := . }}
+            - -c
+            - {{ printf "%s=%v" $key $value | quote }}
+            {{- end }}
+          {{- end }}
           ports:
             - name: postgres
               containerPort: 5432

@@ -187,10 +187,23 @@ class _FakeProc:
 
 
 def _fake_run(docker=None, gh=None):
-    """A subprocess.run stub routing on argv[0]; an Exception value is raised."""
+    """A subprocess.run stub routing on argv[0]; an Exception value is raised.
+
+    `docker`/`gh` is either one value returned on every call, or a list
+    consumed one entry per call -- popping past the end raises, which proves
+    a caller did not make more calls than the list scripts.
+    """
+    calls = {"docker": docker, "gh": gh}
 
     def run(cmd, *a, **k):
-        proc = docker if cmd[0] == "docker" else gh
+        key = "docker" if cmd[0] == "docker" else "gh"
+        value = calls[key]
+        if isinstance(value, list):
+            if not value:
+                raise AssertionError(f"{cmd[0]} called more times than scripted")
+            proc = value.pop(0)
+        else:
+            proc = value
         if isinstance(proc, Exception):
             raise proc
         if proc is None:
@@ -205,6 +218,19 @@ def test_ref_digest_reads_the_digest_imagetools_reports(monkeypatch):
         registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX + "\n"))
     )
     assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
+
+
+def test_ref_raw_returns_what_imagetools_prints(monkeypatch):
+    raw = '{"schemaVersion": 2, "manifests": []}'
+    monkeypatch.setattr(registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=raw)))
+    assert registry_pins.ref_raw("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (raw, "")
+
+
+def test_is_absent_tells_a_missing_tag_from_a_failed_read():
+    assert registry_pins.is_absent("ERROR: ghcr.io/hyperi-io/x:v9: not found")
+    assert registry_pins.is_absent("manifest unknown")
+    assert not registry_pins.is_absent("cannot run docker buildx: [Errno 2] No such file")
+    assert not registry_pins.is_absent("unexpected status: 403 Forbidden")
 
 
 def test_tag_digest_prefers_imagetools_and_leaves_the_api_alone(monkeypatch):
@@ -257,6 +283,84 @@ def test_tag_digest_raises_when_neither_read_could_answer(monkeypatch):
     except registry_pins.RegistryError as exc:
         raised = "no such host" in str(exc)
     assert raised
+
+
+# --- registry_pins retry -------------------------------------------------------
+def _no_sleep(monkeypatch):
+    """Make the retry backoff instant and deterministic for a test."""
+    monkeypatch.setattr(registry_pins, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(registry_pins, "_random", lambda: 0.5)
+
+
+def test_imagetools_retries_a_502_then_succeeds(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=[
+                _FakeProc(returncode=1, stderr="Error response from daemon: 502 Bad Gateway"),
+                _FakeProc(stdout=_INDEX),
+            ]
+        ),
+    )
+    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
+
+
+def test_imagetools_gives_up_after_three_502s(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(
+            docker=[
+                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
+                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
+                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
+            ]
+        ),
+    )
+    out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v1.15.1")
+    assert out is None
+    assert "502 Bad Gateway" in err
+    assert "3 attempts" in err
+
+
+def test_imagetools_does_not_retry_manifest_unknown(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(docker=[_FakeProc(returncode=1, stderr="manifest unknown")]),
+    )
+    out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v9.9.9")
+    assert out is None
+    assert registry_pins.is_absent(err)
+
+
+def test_imagetools_does_not_retry_a_missing_docker_binary(monkeypatch):
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(
+        registry_pins.subprocess,
+        "run",
+        _fake_run(docker=[OSError("No such file or directory: 'docker'")]),
+    )
+    out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v1.15.1")
+    assert out is None
+    assert "cannot run docker buildx" in err
+
+
+def test_imagetools_does_not_retry_401_or_403(monkeypatch):
+    _no_sleep(monkeypatch)
+    for code in ("401 Unauthorized", "403 Forbidden"):
+        monkeypatch.setattr(
+            registry_pins.subprocess,
+            "run",
+            _fake_run(docker=[_FakeProc(returncode=1, stderr=code)]),
+        )
+        out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v1.15.1")
+        assert out is None
+        assert code in err
 
 
 # --- resolve_pins verdicts ----------------------------------------------------

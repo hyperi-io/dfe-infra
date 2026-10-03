@@ -212,13 +212,16 @@ def test_fix_is_a_noop_when_nothing_drifts() -> None:
 def test_fix_propagates_one_ssot_key_to_every_mirror() -> None:
     """One SSoT bump must reach ALL of a key's mirrors, not just Renovate's one.
 
-    services.clickhouse-version has four: the server version and the keeper tag
-    in values.yaml, the chart appVersion, and the dfe-toolbox base image's
+    A ClickHouse lift moves services.clickhouse-version and, by constraints rule
+    clickhouse-keeper-server-pairing, services.clickhouse-keeper with it. Between
+    them they have four mirrors: the server version and the keeper tag in
+    values.yaml, the chart appVersion, and the dfe-toolbox base image's
     clickhouse-client build ARG. Only the keeper tag is helm-values, so Renovate
     could never have carried the other three.
     """
     versions = dict(drift.load_versions())
     versions["services.clickhouse-version"] = "26.3.17.110"
+    versions["services.clickhouse-keeper"] = "26.3.17.110"
 
     writes, fixed, refused = drift.plan_fix(versions)
     expect("propagation refuses nothing on a plain bump", refused == [], f"{refused}")
@@ -643,13 +646,21 @@ def test_fix_refuses_a_stack_that_is_not_current() -> None:
 def test_pending_mirrors_is_exactly_the_documented_rc14_set() -> None:
     """Widening this list is the cheapest way to make a real drift failure go
     away, so it has to be a reviewed edit rather than a quiet one."""
-    expect("PENDING_MIRRORS holds the ten rc.14 patterns and no more",
+    expect("PENDING_MIRRORS holds the eighteen rc.14 patterns and no more",
            set(drift.PENDING_MIRRORS) == {
                "operators.karpenter",
                "operators.aws-load-balancer-controller",
                "operators.karpenter-al2023-ami",
                "services.aws-msk-iam-auth",
                "services.cruise-control-ui",
+               "services.busybox",
+               "services-digests.busybox",
+               "services.envoy-gateway-proxy",
+               "services-digests.envoy-gateway-proxy",
+               "services.clickhouse-keeper",
+               "services-digests.clickhouse-keeper",
+               "services-digests.forgejo",
+               "services-digests.valkey",
                "toolbox.*",
                "providers.hashicorp-aws",
                "providers.confluentinc-confluent",
@@ -742,6 +753,49 @@ def test_the_committed_constraints_carry_no_dead_guard() -> None:
     versions = drift.load_versions()
     problems = drift.dead_guards(versions, versions["pointers.current"])
     expect("the committed rules can all still fire", problems == [], f"got {problems}")
+
+
+_HELM_LINT = Path(".github/workflows/helm-lint.yml")
+_RELEASE = Path(".github/workflows/release.yml")
+
+
+def _workflow(version: str) -> str:
+    return f'name: x\nenv:\n  HELM_VERSION: "{version}"\njobs: {{}}\n'
+
+
+def test_the_committed_workflows_agree_on_helm() -> None:
+    texts = {path: drift.read_source(path) for path in drift.HELM_WORKFLOWS}
+    problems = drift.helm_version_problems(texts)
+    expect("helm-lint.yml and release.yml install one Helm", problems == [], f"got {problems}")
+    expect("and both files are read", set(texts) == {_HELM_LINT, _RELEASE}, f"{sorted(texts)}")
+
+
+def test_a_helm_version_moved_in_one_workflow_is_drift() -> None:
+    problems = drift.helm_version_problems(
+        {_HELM_LINT: _workflow("4.3.0"), _RELEASE: _workflow("4.2.4")}
+    )
+    expect("one drift line", len(problems) == 1, f"got {problems}")
+    if problems:
+        expect("naming both values", "4.3.0" in problems[0] and "4.2.4" in problems[0], problems[0])
+        expect("and both files", str(_RELEASE) in problems[0], problems[0])
+
+
+def test_a_workflow_that_stops_pinning_helm_is_reported() -> None:
+    """A literal the pattern no longer finds would otherwise compare as agreement."""
+    problems = drift.helm_version_problems(
+        {_HELM_LINT: _workflow("4.2.4"), _RELEASE: "env:\n  HELM_VERSION: ${{ vars.HELM }}\n"}
+    )
+    expect("the file with no literal is named", any(str(_RELEASE) in p for p in problems),
+           f"got {problems}")
+
+
+def test_the_toolbox_helm_is_not_tied_to_the_workflows() -> None:
+    """toolbox.helm is the toolbox image's own pin, a separate decision."""
+    texts = {_HELM_LINT: _workflow("4.2.4"), _RELEASE: _workflow("4.2.4")}
+    expect("agreeing workflows pass whatever toolbox.helm says",
+           drift.helm_version_problems(texts) == [])
+    expect("and no check holds HELM_VERSION to it",
+           not any(c.file in (_HELM_LINT, _RELEASE) for c in drift.CHECKS))
 
 
 def test_main_ignores_the_ambient_argv() -> None:

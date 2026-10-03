@@ -60,7 +60,9 @@ stack upgrade from a deployment repo's own `pins.yaml`, walking
   prints `PASS`/`FAIL` with the evidence line that decided it.
 - `apply` runs preflight, then walks the plan stage by stage: bumps
   `pins.yaml`'s `base.dfe-infra` via a surgical field edit (never a hand
-  rewrite), re-runs the resolver with `--migrate` when `--dial` is given,
+  rewrite), re-runs the resolver with `--migrate` when `--dial` is given (with
+  `--fixtures` or `--live`) and copies its `sizing/` output, never its
+  OpenTofu inputs, over `<deploy>/sizing/`,
   commits the stage (`chore(upgrade): <stack> stage <n> -- <keys>`), pushes
   only with `--push`, and waits for Argo to report every Application Synced
   and Healthy, bounded by `--timeout`. Confirms before each stage unless
@@ -101,11 +103,16 @@ result against `sizing/resolved.yaml`. Every changed field is classified:
   under a Karpenter node roll, retention, any dynamically updatable knob.
 - DRAIN-FIRST: broker count down. `remove-brokers` moves data off the broker
   before its pod goes.
-- LOCKED: partition count, `storageModel`, MSK Standard against Express,
-  combined against separate KRaft controllers, the cloud token, the AZ
-  count. Refused without `--migrate` and the runbook it names. The lock list
-  is `governance/policies/sizing-locks.yaml` in the deployment repo, beside
-  the storage-layout lock the engine already enforces.
+- LOCKED: the six fields in `sizing.yaml`'s `locked:` section -- partition
+  count, storage model, Kafka provider, combined against separate KRaft
+  controllers, the cloud token, the AZ count. The resolver refuses a move in
+  any of them without `--migrate` and the runbook it names. In the deployment
+  repo, `governance/policies/sizing-locks.yaml` holds the chart keys behind
+  three of them as protected vars (`kafka.sizing.*`,
+  `kafka.controllerPool.enabled`, `cloud`), and `storage-layout.yaml` holds
+  the storage model's (`clickhouse.storageModel`, `kafka.storageModel`). The
+  Kafka provider and the AZ count are OpenTofu
+  inputs with no chart key, so the resolver is their only lock.
 
 ## Platform upgrade
 

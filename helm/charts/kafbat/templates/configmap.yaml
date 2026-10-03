@@ -64,13 +64,17 @@ data:
     the break-glass admin) permissionless. Omitting rbac makes kafbat grant
     authenticated users full access, which IS the break-glass semantic. */}}
     {{- if and .Values.rbac.enabled (eq (include "kafbat.effectiveAuthType" .) "OAUTH2") }}
+    {{- $admins := .Values.rbac.roles.admin.subjects | default .Values.adminGroups }}
+    {{- if not (and (kindIs "slice" $admins) $admins) }}
+    {{- fail "kafbat: OIDC with RBAC is on and the admin role names no group -- rbac.roles.admin.subjects is empty and so is adminGroups (argocd/values/common.yaml). Set adminGroups, or name this deployment's Kafbat admins in rbac.roles.admin.subjects" }}
+    {{- end }}
     rbac:
       roles:
         # admin -- full control (maps OIDC admin groups + the break-glass account).
         - name: admin
           clusters: [{{ range $i, $c := .Values.kafka.clusters }}{{ if $i }}, {{ end }}{{ $c.name }}{{ end }}]
           subjects:
-            {{- range .Values.rbac.roles.admin.subjects }}
+            {{- range $admins }}
             - { provider: oauth, type: role, value: {{ . | quote }} }
             {{- end }}
             {{- if .Values.breakGlass.enabled }}

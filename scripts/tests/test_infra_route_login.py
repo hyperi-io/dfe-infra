@@ -147,7 +147,12 @@ def test_routes_with_their_own_login_keep_rendering_without_the_edge_login() -> 
 
 def test_product_and_ingest_routes_are_untouched() -> None:
     served = routes()
-    assert {"dfe-ui", "dfe-engine", "otel", "receiver"} <= served, sorted(served)
+    assert {"dfe-ui", "dfe-engine", "receiver"} <= served, sorted(served)
+    # The otel route answers to otel.ingress.enabled alone (test_otel_ingress.py).
+    assert "otel" not in served, sorted(served)
+    ingress = ("--set", "otel.ingress.enabled=true",
+               "--set", "otel.ingress.auth.remoteKey=dfe/local/otel/ingress")
+    assert "otel" in routes(*ingress), sorted(routes(*ingress))
 
 
 def test_own_login_is_read_from_the_route_values() -> None:

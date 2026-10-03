@@ -66,6 +66,7 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import private_file
 from profiles import MODES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -225,15 +226,22 @@ def validate_users_toml(users_toml: str) -> tuple[list[str], list[str]]:
 
 
 # --- render: the engine's group -> role files --------------------------------
-def render_engine_groups(groups_toml: str) -> dict[str, str]:
+def render_engine_groups(groups_toml: str, provider: str = DEFAULT_PROVIDER) -> dict[str, str]:
     """One engine group file per [[groups]] entry, keyed `<name>.yaml`.
 
-    The engine resolves a groups claim by NAME against these files, so a group
-    the IdP emits with no file here grants nothing. A malformed entry is refused
-    before anything reaches the cluster, with the same name and scope rules the
-    engine's group model applies. Each value is JSON, which the engine's YAML
-    loader reads unchanged.
+    The engine links a groups-claim value to a group only through the group's
+    `source_id`, and only for a login through the provider in its
+    `source_provider`; a group's own name links nothing. So each file carries
+    `source_provider` (the name `wire-engine` registers the IdP under) and
+    `source_id` (the entry's `source_id`, else its name, which is what this IdP
+    puts in the claim). A group the IdP emits with no file here grants nothing.
+
+    A malformed entry is refused before anything reaches the cluster, with the
+    same name and scope rules the engine's group model applies. Each value is
+    JSON, which the engine's YAML loader reads unchanged.
     """
+    if not provider:
+        raise ValueError("a provider name is required to link the groups")
     entries = tomllib.loads(groups_toml).get("groups", [])
     if not entries:
         raise ValueError("groups file declares no [[groups]]")
@@ -249,12 +257,17 @@ def render_engine_groups(groups_toml: str) -> dict[str, str]:
         org_scoped = isinstance(scope, str) and scope.startswith(_ORG_SCOPE_PREFIX)
         if scope != "system" and not (org_scoped and scope[len(_ORG_SCOPE_PREFIX):].strip()):
             raise ValueError(f"group {name!r}: scope must be 'system' or 'org:<id>', got {scope!r}")
+        source_id = entry.get("source_id", name)
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError(f"group {name!r}: source_id must be a non-empty string")
         body = {"description": entry.get("description", ""), "scope": scope}
         for field in ("roles", "org_ids"):
             values = entry.get(field, [])
             if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
                 raise ValueError(f"group {name!r}: {field} must be a list of names")
             body[field] = values
+        body["source_provider"] = provider
+        body["source_id"] = source_id
         files[key] = json.dumps(body, indent=2) + "\n"
     return files
 
@@ -572,15 +585,6 @@ def _apply(args: argparse.Namespace, objects: list[dict]) -> None:
     _run([*_kube(args), "apply", "-f", "-"], stdin=doc)
 
 
-def _write_private(path: Path, text: str) -> None:
-    """Write a file only the owner can read, with the mode set BEFORE content."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(text)
-    os.chmod(path, 0o600)
-
-
 # --- deploy ------------------------------------------------------------------
 def cmd_idp_deploy(args: argparse.Namespace) -> int:
     hostname = resolve_hostname(args)
@@ -605,13 +609,13 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
         provider=args.provider,
     )
 
-    secrets_out = Path(args.secrets_out)
-    reused = args.reuse_secrets and secrets_out.is_file()
+    secrets_file = Path(args.secrets_file)
+    reused = args.reuse_secrets and secrets_file.is_file()
     if reused:
         # Adding a redirect URI or a user should not invalidate the credentials
         # every consumer of the fixture already holds.
         prior = {}
-        for line in secrets_out.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in secrets_file.read_text(encoding="utf-8", errors="replace").splitlines():
             if "=" in line and not line.startswith("#"):
                 key, _, value = line.partition("=")
                 prior[key] = value
@@ -622,7 +626,7 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
         ]
         if missing:
             print(
-                f"ERROR: --reuse-secrets but {secrets_out} carries no "
+                f"ERROR: --reuse-secrets but {secrets_file} carries no "
                 f"{', '.join(missing)}; delete it to generate a fresh set",
                 file=sys.stderr,
             )
@@ -684,8 +688,8 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
 
     # Written before the first apply: past this line the credentials are live in
     # the cluster, and a helm timeout below exits with no copy of them on disk.
-    _write_private(
-        secrets_out,
+    private_file.write_private(
+        secrets_file,
         "# GENERATED by dfe-ops idp deploy -- mode 0600, never commit.\n"
         f"TESTER_IDP_ISSUER={issuer}\n"
         f"TESTER_IDP_CLIENT_ID={args.client_id}\n"
@@ -748,7 +752,7 @@ def cmd_idp_deploy(args: argparse.Namespace) -> int:
     for uri in redirect_uris:
         print(f"    {uri}", file=sys.stderr)
     print(
-        f"\n  client secret + user password: {secrets_out} (mode 0600"
+        f"\n  client secret + user password: {secrets_file} (mode 0600"
         f"{', reused' if reused else ', freshly generated'})",
         file=sys.stderr,
     )
@@ -820,7 +824,9 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
         print(f"ERROR: --groups-file {groups_file} not found", file=sys.stderr)
         return 2
     try:
-        group_files = render_engine_groups(groups_file.read_text(encoding="utf-8", errors="replace"))
+        group_files = render_engine_groups(
+            groups_file.read_text(encoding="utf-8", errors="replace"), args.provider
+        )
     except (ValueError, tomllib.TOMLDecodeError) as exc:
         print(f"ERROR: {groups_file} is not a usable group map: {exc}", file=sys.stderr)
         return 2
@@ -900,7 +906,6 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
     _apply(args, objects)
     print(f"\n=== wired {env['TESTER_IDP_ISSUER']} into namespace {args.namespace} ===", file=sys.stderr)
     print("  Set these on the consumer's chart values to pick them up:", file=sys.stderr)
-    print("    auth.oidcEnabled: true", file=sys.stderr)
     print("    oidc.enabled: true", file=sys.stderr)
     print(f"    oidc.providers[0].secretName: {args.secret_name}", file=sys.stderr)
     print(
@@ -1029,7 +1034,7 @@ def add_idp_subparser(sub) -> None:
     dep.add_argument("--users-file", default=str(DEFAULT_USERS_FILE),
                      help="glauth-format TOML directory of users + groups")
     dep.add_argument("--base-dn", default=DEFAULT_BASE_DN, help="LDAP base DN for the directory")
-    dep.add_argument("--secrets-out", default=".tmp/tester-idp.env",
+    dep.add_argument("--secrets-out", dest="secrets_file", default=".tmp/tester-idp.env",
                      help="0600 file the generated client secret + user password are written to")
     dep.add_argument("--reuse-secrets", action="store_true",
                      help="keep the credentials in --secrets-out instead of generating new ones, "

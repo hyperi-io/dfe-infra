@@ -148,6 +148,14 @@ spec:
               # region is the right one whenever the endpoint above is set.
               - name: clickhouse.objectStore.region
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/region" | default "" }}'
+              # Whether dfe-internal-ca exists: the gateway chart that mints it is
+              # deployed unless the edge label is "false" (layer2-edge.yaml, and
+              # layer2-platform.yaml for a secret with no label, hence the "true"
+              # default). Without it clickhouse-cluster serves HTTP unless an
+              # issuerRef is named. Same parameter in layer2-apps.yaml, so both
+              # ends agree on the scheme.
+              - name: clickhouse.tls.internalCA.present
+                value: '{{ ne (index .metadata.labels "dfe.hyperi.io/edge" | default "true") "false" }}'
             # `values` (a YAML string) rather than a structured parameters block,
             # same reason layer2-platform.yaml gives: a per-element conditional
             # cannot live in a field this file's own tests parse as plain YAML

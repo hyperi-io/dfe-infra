@@ -1,6 +1,7 @@
 {{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" . "key" "otel") }}
-# Platform OTLP/HTTP ingest on the standard name otel.{domain} -- machine
-# telemetry, never edge-OIDC'd (senders hold no browser session).
+# Platform OTLP/HTTP ingest on the standard name otel.{domain}. Never edge-OIDC'd
+# (senders hold no browser session): the collector receiver it targets refuses
+# any request without the deployment's bearer token.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -21,10 +22,13 @@ spec:
   hostnames:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "otel") }}.{{ .Values.domain }}"
   rules:
-    - backendRefs:
+    -
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" (include "envoy-gateway-config.edgeHsts" (dict "ctx" .)) "indent" 6) }}
+      backendRefs:
         - name: {{ .Values.routes.otel.backendService }}
-          port: {{ .Values.routes.otel.backendPort }}
+          port: {{ .Values.otel.ingress.port }}
           group: ""
           kind: Service
           weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "otel" "indent" 4) }}
 {{- end }}

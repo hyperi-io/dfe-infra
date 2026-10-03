@@ -32,6 +32,7 @@ spec:
                   namespace: strimzi
                   wave: "3"
                   appProject: infra
+                  chartValuesYaml: ""
                 # Official ClickHouse operator (clickhouse.com CRDs) -- cluster
                 # mode only. Single mode uses a plain StatefulSet (no operator).
                 # OCI chart; wave 3 so CRDs exist before the ClickHouseCluster CR
@@ -43,13 +44,23 @@ spec:
                 # Namespace is upstream's own and MUST match common.yaml
                 # operatorNamespaces.clickhouse, which is what opens the
                 # NetworkPolicy the operator needs to probe Keeper and run DDL.
-                # dfe-mesh-operators below carries the same pin; both move together.
+                # dfe-mesh-operators below carries the same pin and the same
+                # chartValuesYaml; both move together.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.7"
                   namespace: clickhouse-operator-system
                   wave: "3"
                   appProject: infra
+                  # The operator builds its logger in zap development mode, which
+                  # is debug level (cmd/main.go, v0.0.7). manager.args is appended
+                  # to the chart's own flags but replaces its default list, so
+                  # --leader-elect has to be restated.
+                  chartValuesYaml: |
+                    manager:
+                      args:
+                        - --leader-elect
+                        - --zap-log-level=info
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -63,11 +74,14 @@ spec:
         chart: '{{ .chart }}'
         targetRevision: '{{ .version }}'
         helm:
-          valuesObject:
+          # A string, not valuesObject: the template is parsed as YAML before it
+          # is Go-templated, so only a string can carry an element's chartValuesYaml.
+          values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
               cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+            {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
@@ -103,13 +117,19 @@ spec:
                   dfe.hyperi.io/profile: mesh
           - list:
               elements:
-                # Same pin as dfe-scale-operators above; the two move together.
+                # Same pin and chartValuesYaml as dfe-scale-operators above; the
+                # two move together.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.7"
                   namespace: clickhouse-operator-system
                   wave: "3"
                   appProject: infra
+                  chartValuesYaml: |
+                    manager:
+                      args:
+                        - --leader-elect
+                        - --zap-log-level=info
   template:
     metadata:
       name: '{{ .chart }}-{{ .name }}'
@@ -123,11 +143,14 @@ spec:
         chart: '{{ .chart }}'
         targetRevision: '{{ .version }}'
         helm:
-          valuesObject:
+          # A string, not valuesObject: the template is parsed as YAML before it
+          # is Go-templated, so only a string can carry an element's chartValuesYaml.
+          values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
               cloud: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
               env: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+            {{- with .chartValuesYaml }}{{ . | nindent 0 }}{{- end }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'

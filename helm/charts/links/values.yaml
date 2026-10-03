@@ -9,11 +9,11 @@ links:
   enabled: true
 
 # nginxinc/nginx-unprivileged -- non-root static file server (uid 101, listens
-# 8080, pid + temp under /tmp). The 1.31-alpine TAG FLOATS upstream, so
-# `dfe-stack refresh-digests` re-resolves the digest on every refresh.
+# 8080, pid + temp under /tmp). Upstream rebuilds even a patch tag when its
+# Alpine base moves, so the digest is what pins the bytes.
 image:
   repository: nginxinc/nginx-unprivileged
-  tag: "1.31-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
+  tag: "1.31.6-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
   # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
   digest: "sha256:26b0bf6fbf07297983cb341998d79c831508787de26627dd2a112321b9c3a4af"
   pullPolicy: IfNotPresent
@@ -52,6 +52,13 @@ hostnames: {}
 # (the umbrella maps it under `links:`); disabled matches the brokerless default.
 kafka:
   mode: disabled
+
+# Read-only here, and owned by the dfe-engine chart: the page lists the engine's
+# Swagger UI only where the engine serves it -- true, or unset on a dev posture
+# (`env` dev, development, local, test or ci). The profile cascade supplies it
+# from argocd/values/common.yaml, the same key the gateway routes /docs on.
+api:
+  docsEnabled: ""
 
 # The page content. The chart renders a DEFAULT page covering every standard
 # stack surface: gateway https URLs derived from `domain` + `hostnames` when

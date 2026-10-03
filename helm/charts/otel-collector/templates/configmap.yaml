@@ -9,6 +9,12 @@ data:
     extensions:
       health_check:
         endpoint: 0.0.0.0:{{ .Values.healthCheckPort }}
+      {{- if .Values.otel.ingress.enabled }}
+      # Checks every request to otlp/ingress against the token file, and
+      # re-reads the file when the Secret behind it changes.
+      bearertokenauth/ingress:
+        filename: {{ include "otel-collector.ingressTokenDir" . }}/token
+      {{- end }}
 
     receivers:
       otlp:
@@ -17,6 +23,16 @@ data:
             endpoint: 0.0.0.0:4317
           http:
             endpoint: 0.0.0.0:4318
+      {{- if .Values.otel.ingress.enabled }}
+      # OTLP/HTTP from outside the cluster, through the gateway's otel route. A
+      # request without the bearer token is refused before any pipeline sees it.
+      otlp/ingress:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:{{ .Values.otel.ingress.port }}
+            auth:
+              authenticator: bearertokenauth/ingress
+      {{- end }}
       {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
       k8s_cluster:
         collection_interval: {{ .Values.clusterTelemetry.k8sCluster.collectionInterval }}
@@ -359,7 +375,7 @@ data:
       {{- end }}
 
     service:
-      extensions: [health_check]
+      extensions: [health_check{{ if .Values.otel.ingress.enabled }}, bearertokenauth/ingress{{ end }}]
       {{- if .Values.clusterTelemetry.selfTelemetry.enabled }}
       telemetry:
         metrics:
@@ -372,7 +388,7 @@ data:
       {{- end }}
       pipelines:
         traces:
-          receivers: [otlp]
+          receivers: [otlp{{ if .Values.otel.ingress.enabled }}, otlp/ingress{{ end }}]
           processors: [memory_limiter, batch]
           exporters:
             {{- if .Values.gateway.debugExporter }}
@@ -387,6 +403,9 @@ data:
         metrics:
           receivers:
             - otlp
+            {{- if .Values.otel.ingress.enabled }}
+            - otlp/ingress
+            {{- end }}
             {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
             # One receiver carries every scrape job, so this must match the
             # receiver's own gate or configured jobs are never routed anywhere.
@@ -446,7 +465,7 @@ data:
             {{- end }}
         {{- end }}
         logs:
-          receivers: [otlp]
+          receivers: [otlp{{ if .Values.otel.ingress.enabled }}, otlp/ingress{{ end }}]
           processors: [memory_limiter, batch]
           exporters:
             {{- if .Values.gateway.debugExporter }}

@@ -40,7 +40,38 @@ spec:
       # reads none of these: switch them off rather than wait for the collision.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
+      {{- /* The helper renders the initContainers key itself, so the CA bundle
+             joins its list, or opens one when the wait is switched off. */}}
+      {{- $waitForEngine := include "dfe-common.waitForEngine" . }}
+      {{- $caBundle := include "dfe-loader.clickhouseCaBundle" . }}
+      {{- if $waitForEngine }}
+      {{- $waitForEngine | nindent 6 }}
+      {{- else if $caBundle }}
+      initContainers:
+      {{- end }}
+      {{- if $caBundle }}
+        # SSL_CERT_FILE replaces the system store rather than adding to it, and
+        # the loader's release check still needs the public roots, so the
+        # ClickHouse CA is appended to a copy of the image's own bundle.
+        - name: clickhouse-ca-bundle
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              cat /etc/ssl/certs/ca-certificates.crt /etc/dfe-clickhouse-ca/{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }} > /etc/dfe-trust/ca-bundle.pem
+          volumeMounts:
+            - name: clickhouse-ca
+              mountPath: /etc/dfe-clickhouse-ca
+              readOnly: true
+            - name: ca-bundle
+              mountPath: /etc/dfe-trust
+          resources:
+            {{- toYaml .Values.clickhouse.tls.bundleResources | nindent 12 }}
+      {{- end }}
       containers:
         - name: loader
           image: {{ include "dfe-common.image" . | quote }}
@@ -128,7 +159,7 @@ spec:
             # `__` is the nesting separator (loader.rs:351-367). HOSTS beside it is
             # single because it does have one (loader.rs:220).
             - name: DFE_LOADER_CLICKHOUSE_HOSTS
-              value: {{ printf "%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
+              value: {{ include "dfe-loader.clickhouseHosts" . | quote }}
             - name: DFE_LOADER_CLICKHOUSE__PROTOCOL
               value: "http"
             - name: DFE_LOADER_CLICKHOUSE_DATABASE
@@ -162,11 +193,23 @@ spec:
             {{- end }}
             - name: OTEL_SERVICE_NAME
               value: dfe-loader
+            {{- if $caBundle }}
+            # The merged store the init container wrote, read in place of the
+            # system store by every TLS client in the process.
+            - name: SSL_CERT_FILE
+              value: /etc/dfe-trust/ca-bundle.pem
+            {{- end }}
           volumeMounts:
             {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
             - name: config
               mountPath: /etc/dfe
               readOnly: true
+            {{- if $caBundle }}
+            # Beside /etc/dfe rather than nested in its read-only ConfigMap mount.
+            - name: ca-bundle
+              mountPath: /etc/dfe-trust
+              readOnly: true
+            {{- end }}
             # Writable scratch: the container rootfs is read-only
             # (dfe-common.containerSecurityContext), so anything writing /tmp
             # needs this emptyDir.
@@ -212,3 +255,20 @@ spec:
             name: {{ include "dfe-common.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        {{- if $caBundle }}
+        {{- $ca := .Values.clickhouse.tls.ca }}
+        {{- $key := $ca.dataKey | default "ca.crt" }}
+        - name: clickhouse-ca
+          {{- if $ca.secretName }}
+          secret:
+            secretName: {{ $ca.secretName }}
+          {{- else }}
+          configMap:
+            name: {{ $ca.configMapName }}
+          {{- end }}
+            items:
+              - key: {{ $key }}
+                path: {{ $key }}
+        - name: ca-bundle
+          emptyDir: {}
+        {{- end }}

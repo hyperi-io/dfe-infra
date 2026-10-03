@@ -87,3 +87,15 @@ Three things about the values that are easy to get wrong:
 
 Vault signs from the CSR's SANs, so the leaf carries an empty subject and a
 critical `subjectAltName`. That is correct, not a truncated certificate.
+
+## In-cluster ClickHouse
+
+A deployment that carries a CA runs its in-cluster hops over TLS with verification on; one without stays on plain HTTP. For ClickHouse that is one block, `clickhouse.tls` in `argocd/values/common.yaml`, which the server chart and every client chart read and judge by the same rule: `enabled` and a CA to sign with. Nothing is installed on a developer box: only pods verify this certificate.
+
+- With the edge module on (bootstrap's default) the certificate comes from `dfe-internal-ca`. The data and apps appsets set `clickhouse.tls.internalCA.present` from the cluster's `dfe.hyperi.io/edge` label, the same one that decides whether the gateway chart minting that issuer is deployed.
+- `clickhouse.tls.issuerRef` names another cert-manager issuer -- an estate PKI, AWS Private CA or corporate CA -- in the deploy repo's `infra/common.yaml`, and turns TLS on with the edge module on or off. It has to sign for in-cluster Service names such as `dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local`, so public ACME cannot, and a Vault sign role has to allow those names and their `*.` form.
+- A cluster with the edge module off and no `issuerRef` stays on HTTP: no Certificate is requested, so nothing waits on one. dfe-docker Compose and the `helm/dfe-stack` trial are HTTP the same way.
+- clickhouse-cluster issues `dfe-clickhouse-tls` and serves HTTPS on 8443 and native TLS on 9440 beside 8123 and 9000. A renewal lands in the same Secret, which both modes mount as a directory.
+- That Secret holds `tls.key`, so it is read only inside the clickhouse namespace, by a namespaced SecretStore that copies `ca.crt` into `dfe-clickhouse-tls-ca`. Only that CA-only Secret is copied into the app namespace, as `dfe-clickhouse-ca`, through a ClusterSecretStore whose conditions admit only the namespaces it copies into.
+- dfe-engine reads the CA as `DFE_CLICKHOUSE_CA_CERT`, hyperdx as `NODE_EXTRA_CA_CERTS`, and dfe-loader through `SSL_CERT_FILE`, pointed at the image's own roots with the CA appended -- that variable replaces the trust store rather than adding to it.
+- An external ClickHouse sets `clickhouse.tls.port`, `verify` and `ca` for the server being dialled: `ca.configMapName` for a corporate CA bundle the deployment supplies, both `ca` names empty for a public certificate. dfe-loader cannot skip verification and turns TLS on only for port 8443 or 9440 or a `clickhouse.cloud` host, so its chart refuses anything else.

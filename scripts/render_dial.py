@@ -33,8 +33,8 @@ every DFE_* key + its comments are present), then the dial's non-empty values
 are merged in place over it. Estate ENDPOINTS and SECRETS stay blank in the
 committed template -- the operator's own tooling injects them from the
 deployment's secrets backend at deploy time, or an operator fills the copied
-``.env`` by hand. This renderer
-never reads or writes a secret.
+``.env`` by hand. This renderer never sets a secret, but every rewrite carries
+the ones filled in, so the file is written at mode 0600 every time.
 
 Dependency-free (no PyYAML) and stdlib only, matching the dfe-ops rule -- the
 dial's k8s slice is scalar / nested-map only, so scripts/yaml_subset.py reads it.
@@ -46,10 +46,10 @@ import argparse
 import ipaddress
 import json
 import re
-import shutil
 import sys
 from pathlib import Path
 
+import private_file
 from yaml_subset import YamlSubsetError, at, split_list
 from yaml_subset import parse as _parse_yaml_subset
 
@@ -143,7 +143,8 @@ def _merge_env(env_path: Path, updates: dict[str, str]) -> None:
     Every OTHER line -- the example's blanks, comments, untouched settings --
     survives verbatim, so the estate secrets/endpoints stay present-but-blank for
     the operator (or the thin caller) to fill. A mapped key is replaced in place;
-    a genuinely new key is appended under a labelled header.
+    a genuinely new key is appended under a labelled header. The file carries
+    whatever secrets the operator filled in, so the rewrite lands at 0600.
     """
     remaining = dict(updates)
     out: list[str] = []
@@ -161,8 +162,7 @@ def _merge_env(env_path: Path, updates: dict[str, str]) -> None:
         out.append("## Set by render_dial.py from deployment.yaml -- do not edit by hand.")
         out.extend(f'{key}="{value}"' for key, value in remaining.items())
 
-    with env_path.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(out) + "\n")
+    private_file.write_private(env_path, "\n".join(out) + "\n")
 
 
 def _derived_command(dial: dict[str, object], env_path: Path) -> str:
@@ -315,9 +315,9 @@ def _ingest_mode(dial: dict[str, object]) -> str:
 # expects, where an unquoted true is a bool and a quoted "false" is a non-empty
 # string that is always truthy.
 
-# New path -> the deprecated top-level path that still feeds it. Read for ONE
-# release: a dial setting only the old one renders with a deprecation line, a
-# dial setting both is refused because the two are one key.
+# New path -> the deprecated path that still feeds it. Read for ONE release: a
+# dial setting only the old one renders with a deprecation line, a dial setting
+# both is refused because the two are one key.
 _EDGE_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("edge", "product", "public"): ("ui", "public", "dfe_ui"),
     ("edge", "product", "domain"): ("ui", "public_domain"),
@@ -349,6 +349,7 @@ _EDGE_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("edge", "ingest", "receiver", "vpn", "podLabel"): ("ingest", "vpn", "podLabel"),
     ("edge", "ingest", "receiver", "networkPolicy", "enabled"):
         ("ingest", "networkPolicy", "enabled"),
+    ("edge", "ingest", "otel", "enabled"): ("edge", "ingest", "otel", "public"),
 }
 
 # Every edge.* boolean, and the value the deployment takes when the dial omits
@@ -376,7 +377,7 @@ _EDGE_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
     # Follows the culvert chart's own listeners list, which exposes WireGuard
     # and OpenVPN over UDP; false opens 51820 alone at every layer.
     ("edge", "ingest", "tunnel", "openvpn"): True,
-    ("edge", "ingest", "otel", "public"): False,
+    ("edge", "ingest", "otel", "enabled"): False,
     ("edge", "aws", "load_balancer_controller"): True,
 }
 
@@ -423,7 +424,12 @@ TUNNEL_ADMIN_REACH = (22, 443)
 # value other than these is refused rather than accepted and dropped.
 ADMIN_PEER_ISSUE = "hyperi-io/culvert#40"
 ADMIN_PEER_TTL_MINUTES = 60
-OTEL_AUTH = ("required", "none")
+# `edge.ingest.otel` is the `otel.ingress` block of the deploy repo's
+# infra/common.yaml verbatim, which the gateway and collector charts both read.
+OTEL_AT = ("edge", "ingest", "otel")
+# The one value the retired scalar `edge.ingest.otel.auth` may still carry: it
+# names the only behaviour there is, so it is read with a deprecation line.
+OTEL_AUTH_RETIRED = "required"
 
 _EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
     ("edge", "flavour"): EDGE_FLAVOURS,
@@ -436,7 +442,6 @@ _EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
     ("edge", "ingest", "tunnel", "externalTrafficPolicy"): TRAFFIC_POLICIES,
     ("edge", "ingest", "tunnel", "pki_mode"): PKI_MODES,
     ("edge", "ingest", "tunnel", "address", "mode"): ADDRESS_MODES,
-    ("edge", "ingest", "otel", "auth"): OTEL_AUTH,
     ("edge", "aws", "cloudfront", "mode"): CLOUDFRONT_MODES,
 }
 
@@ -451,7 +456,6 @@ _EDGE_ENUM_DEFAULTS: dict[tuple[str, ...], str] = {
     ("edge", "ingest", "tunnel", "externalTrafficPolicy"): "Local",
     ("edge", "ingest", "tunnel", "pki_mode"): "local",
     ("edge", "ingest", "tunnel", "address", "mode"): "byo",
-    ("edge", "ingest", "otel", "auth"): "required",
     ("edge", "aws", "cloudfront", "mode"): "none",
 }
 
@@ -479,6 +483,8 @@ _EDGE_TIER2: tuple[tuple[str, tuple[object, ...], str, str], ...] = (
     ("edge.engine_api.scim_public", (True,), "",
      "/api/v1/scim/v2 on the product's own public hostname, for an IdP that"
      " provisions from outside"),
+    ("edge.ingest.otel.enabled", (True,), "",
+     "OTLP ingest on otel.<domain> from outside the cluster, bearer token only"),
 )
 
 
@@ -508,13 +514,25 @@ def _edge_alias_conflicts(dial: dict[str, object]) -> list[str]:
     ]
 
 
+def _otel_auth_scalar(dial: dict[str, object]) -> str | None:
+    """The retired scalar form of `edge.ingest.otel.auth`, or None for the map form."""
+    return _scalar(dial, (*OTEL_AT, "auth"))
+
+
 def _edge_deprecations(dial: dict[str, object]) -> list[str]:
     """One line per deprecated path still carrying the value, naming the new one."""
-    return [
+    lines = [
         f"{'.'.join(old)} moved to {'.'.join(new)}; the old path is read for one release"
         for new, old in _EDGE_ALIASES.items()
         if _scalar(dial, new) is None and _scalar(dial, old) is not None
     ]
+    if _otel_auth_scalar(dial) == OTEL_AUTH_RETIRED:
+        lines.append(
+            f"edge.ingest.otel.auth: {OTEL_AUTH_RETIRED} is the only behaviour there is and "
+            "is read for one release -- auth is now a map naming the token's store path, "
+            "edge.ingest.otel.auth.remoteKey"
+        )
+    return lines
 
 
 def _edge_flags(dial: dict[str, object]) -> dict[str, bool]:
@@ -555,9 +573,7 @@ def _edge_enums(dial: dict[str, object]) -> dict[str, str]:
     return out
 
 
-def _edge_refusals(
-    dial: dict[str, object], flags: dict[str, bool], enums: dict[str, str]
-) -> None:
+def _edge_refusals(dial: dict[str, object], flags: dict[str, bool]) -> None:
     """The combinations the module does not offer, refused by name.
 
     A dial that asks for one of these is asking for something no chart renders,
@@ -572,12 +588,35 @@ def _edge_refusals(
             "families and /openapi.json, edge.engine_api.scim_public opens "
             "/api/v1/scim/v2. Delete the key"
         )
-    if flags["edge.ingest.otel.public"] and enums["edge.ingest.otel.auth"] != "required":
+    _otel_refusals(dial, flags)
+
+
+def _otel_refusals(dial: dict[str, object], flags: dict[str, bool]) -> None:
+    """What both charts refuse for `otel.ingress`, refused here first by the dial's name.
+
+    The dial block is pasted verbatim under otel.ingress in the deploy repo's
+    infra/common.yaml, so a value the gateway or the collector would refuse at
+    render is caught before it reaches either.
+    """
+    auth = _otel_auth_scalar(dial)
+    if auth is not None and auth != OTEL_AUTH_RETIRED:
         raise DialError(
-            "edge.ingest.otel.public is true with edge.ingest.otel.auth "
-            f"{enums['edge.ingest.otel.auth']!r} -- a public OTLP door with no auth "
-            "accepts telemetry from anyone, so authentication is the gate on making it public"
+            f"edge.ingest.otel.auth is {auth!r} -- OTLP ingest has no unauthenticated mode. "
+            "auth is a map naming where the deployment's secret store holds the bearer "
+            "token: set edge.ingest.otel.auth.remoteKey, or leave edge.ingest.otel.enabled "
+            "false"
         )
+    remote_key = _scalar(dial, (*OTEL_AT, "auth", "remoteKey"))
+    if flags["edge.ingest.otel.enabled"] and remote_key is None:
+        raise DialError(
+            "edge.ingest.otel.enabled is true and edge.ingest.otel.auth.remoteKey is empty -- "
+            "the collector admits only a bearer token, and this names where the deployment's "
+            "secret store holds it (property token). The gateway and the collector refuse "
+            "the same pair at render"
+        )
+    port = _scalar(dial, (*OTEL_AT, "port"))
+    if port is not None and not (port.isdigit() and 0 < int(port) < 65536):
+        raise DialError(f"edge.ingest.otel.port must be a port number 1-65535, got {port!r}")
 
 
 def _edge_bool(dial: dict[str, object], path: tuple[str, ...]) -> bool:
@@ -1274,6 +1313,21 @@ def main() -> int:
     if args.tofu:
         return _render_tofu(dial, args.out)
 
+    # Every refusal runs before the env file is touched: a later step reads
+    # whatever file is there, so a refused dial must leave none behind.
+    try:
+        conflicts = _edge_alias_conflicts(dial)
+        if conflicts:
+            raise DialError("; ".join(conflicts))
+        deprecated = _edge_deprecations(dial)
+        edge_flags = _edge_flags(dial)
+        edge_enums = _edge_enums(dial)
+        _edge_refusals(dial, edge_flags)
+        controller_pool = _controller_pool(dial)
+    except DialError as error:
+        print(f"render_dial: {error}", file=sys.stderr)
+        return 1
+
     args.out = args.out or ENV_FILE
     # Seed the env file from the committed example on first render, so every
     # DFE_* key + its guidance is present before the dial merges over it.
@@ -1284,8 +1338,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ENV_TEMPLATE, args.out)
+        private_file.write_private(args.out, ENV_TEMPLATE.read_text(encoding="utf-8"))
         print(f"render_dial: seeded {args.out} from {ENV_TEMPLATE.name}", file=sys.stderr)
 
     updates = _env_updates(dial)
@@ -1298,18 +1351,6 @@ def main() -> int:
         )
     else:
         print("render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr)
-
-    try:
-        conflicts = _edge_alias_conflicts(dial)
-        if conflicts:
-            raise DialError("; ".join(conflicts))
-        deprecated = _edge_deprecations(dial)
-        edge_flags = _edge_flags(dial)
-        edge_enums = _edge_enums(dial)
-        _edge_refusals(dial, edge_flags, edge_enums)
-    except DialError as error:
-        print(f"render_dial: {error}", file=sys.stderr)
-        return 1
 
     for line in deprecated:
         print(f"render_dial: deprecated -- {line}", file=sys.stderr)
@@ -1351,6 +1392,15 @@ def main() -> int:
            else "off -- the module offers the tunnel, the deployment turns it on"),
         file=sys.stderr,
     )
+    token_path = _scalar(dial, (*OTEL_AT, "auth", "remoteKey"))
+    print(
+        "  OTLP ingest from outside the cluster (edge.ingest.otel.enabled): "
+        + (f"on -- bearer token from {token_path}; paste the block under otel.ingress in"
+           " the deploy repo's infra/common.yaml"
+           if edge_flags["edge.ingest.otel.enabled"]
+           else "off -- in-cluster senders use the collector's Service"),
+        file=sys.stderr,
+    )
     print(
         "  tier 2 opt-ins that are ON: " + (", ".join(tier2) if tier2 else "none"),
         file=sys.stderr,
@@ -1360,12 +1410,6 @@ def main() -> int:
         " repo's values overlay",
         file=sys.stderr,
     )
-
-    try:
-        controller_pool = _controller_pool(dial)
-    except DialError as error:
-        print(f"render_dial: {error}", file=sys.stderr)
-        return 1
 
     print(
         f"KRaft metadata quorum (kafka.controller_pool): {controller_pool}",

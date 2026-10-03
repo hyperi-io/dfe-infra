@@ -34,7 +34,7 @@ All component versions come from `versions.yaml` (the SSoT).
   token for your Vault/OpenBao (e.g. `bao.example.com`; Terraform uses it).
   slim, single and mesh need no store at all
   ([index.md](index.md#secrets-store-and-pull-secret)).
-- `bootstrap/local.env`: copy `bootstrap/local.env.example` and fill it in.
+- `bootstrap/local.env`: copy `bootstrap/local.env.example` at mode 0600, as in [Deploy](#deploy), and fill it in.
   Registry pull credentials go in only for a private registry.
 - OpenTofu (or Terraform) and helm on PATH. CI pins the exact versions it uses in
   the workflows themselves (`.github/workflows/tf-validate.yml`,
@@ -65,7 +65,7 @@ dfe-infra ships the Helm charts that deploy them.
 Integrated path:
 
 ```bash
-cp bootstrap/local.env.example bootstrap/local.env   # fill in creds
+(umask 077 && cp bootstrap/local.env.example bootstrap/local.env)   # 0600 from creation; fill in creds
 bash bootstrap/deploy.sh --cloud local
 ```
 

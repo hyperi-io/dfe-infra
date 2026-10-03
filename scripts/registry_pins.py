@@ -22,6 +22,9 @@ digest.
 Everything here is decoupled from any pin FILE. The public surface is:
 
   ref_digest(ref)              -> (index digest, error) for a full image ref
+  ref_raw(ref)                 -> (raw index or manifest JSON, error) for a full image ref
+  ref_platforms(ref)           -> (os/arch set, error) for a full image ref
+  is_absent(error)             -> whether a read error means the tag does not exist
   tag_digest(org, app, tag)    -> the digest a tag resolves to, or None if absent
   package_versions(org, app)   -> the raw GHCR version records (paginated)
   package_tags(org, app)       -> {tag: digest} for every tagged version
@@ -58,8 +61,10 @@ from __future__ import annotations
 
 import datetime
 import json
+import random
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from functools import cache
 
@@ -67,6 +72,20 @@ GHCR = "ghcr.io"
 
 # The only two failures that mean the tag is GONE rather than unreadable.
 _ABSENT = re.compile(r"not found|manifest unknown", re.IGNORECASE)
+
+# Registry/network failures worth a retry -- never an absence, never an auth error.
+_TRANSIENT = re.compile(
+    r"\b(?:500|502|503|504|429)\b|toomanyrequests|i/o timeout|tls handshake timeout"
+    r"|connection reset|\beof\b",
+    re.IGNORECASE,
+)
+
+_MAX_ATTEMPTS = 3
+_BACKOFF_BASE_SECONDS = (1.0, 2.0)
+
+# Module attributes so tests replace them with instant, deterministic stand-ins.
+_sleep = time.sleep
+_random = random.random
 
 
 @dataclass(frozen=True)
@@ -179,36 +198,120 @@ def resolve_digest(org: str, app: str, tag: str) -> str | None:
     return found.digest if found else None
 
 
+def _imagetools(ref: str, *flags: str) -> tuple[str | None, str]:
+    """(stdout, error) of `docker buildx imagetools inspect <ref> <flags>`.
+
+    Reads the registry through the docker credential store, so it needs no
+    read:packages scope, and reads a public package unauthenticated. A
+    transient failure (_TRANSIENT) is retried up to _MAX_ATTEMPTS times with
+    jittered backoff; an absent tag or a missing docker binary returns on the
+    first try.
+    """
+    error = ""
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            proc = subprocess.run(
+                ["docker", "buildx", "imagetools", "inspect", ref, *flags],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except OSError as exc:
+            # Worded so it cannot match _ABSENT: no docker is a missing tool, not a
+            # missing image.
+            return None, f"cannot run docker buildx: {exc}"
+        if proc.returncode == 0:
+            return proc.stdout, ""
+        stderr = proc.stderr.strip()
+        error = stderr.splitlines()[-1] if stderr else "docker buildx imagetools failed"
+        if is_absent(error) or not _TRANSIENT.search(stderr):
+            return None, error
+        if attempt < _MAX_ATTEMPTS - 1:
+            _sleep(_BACKOFF_BASE_SECONDS[attempt] * (0.5 + _random()))
+    return None, f"{error} (after {_MAX_ATTEMPTS} attempts)"
+
+
+def ref_raw(ref: str) -> tuple[str | None, str]:
+    """(raw index or manifest JSON, error) for a full image ref, read with `docker buildx imagetools`."""
+    return _imagetools(ref, "--raw")
+
+
+def is_absent(err: str) -> bool:
+    """Whether a registry read error means the tag does not exist, not that the read failed."""
+    return bool(_ABSENT.search(err))
+
+
 def ref_digest(ref: str) -> tuple[str | None, str]:
     """(digest, error) for a full image ref, read with `docker buildx imagetools`.
 
     The multi-arch INDEX digest -- what a pin records -- never one platform's
-    manifest. Reads the registry through the docker credential store, so it needs
-    no read:packages scope, and resolves a public package unauthenticated.
+    manifest.
     """
-    try:
-        proc = subprocess.run(
-            [
-                "docker", "buildx", "imagetools", "inspect", ref,
-                "--format", "{{.Manifest.Digest}}",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-    except OSError as exc:
-        # Worded so it cannot match _ABSENT: no docker is a missing tool, not a
-        # missing image.
-        return None, f"cannot run docker buildx: {exc}"
-    if proc.returncode != 0:
-        stderr = proc.stderr.strip()
-        return None, stderr.splitlines()[-1] if stderr else "docker buildx imagetools failed"
-    digest = proc.stdout.strip()
+    out, err = _imagetools(ref, "--format", "{{.Manifest.Digest}}")
+    if out is None:
+        return None, err
+    digest = out.strip()
     if not digest.startswith("sha256:"):
         return None, f"unexpected digest {digest!r}"
     return digest, ""
+
+
+def index_platforms(doc: object) -> set[str] | None:
+    """The `os/arch` set an image index lists, or None when doc is not an index.
+
+    buildx attestation manifests report `unknown/unknown` and are not platforms,
+    or a single-arch image would read as two.
+    """
+    entries = doc.get("manifests") if isinstance(doc, dict) else None
+    if not isinstance(entries, list):
+        return None
+    found: set[str] = set()
+    for entry in entries:
+        plat = entry.get("platform") if isinstance(entry, dict) else None
+        if not isinstance(plat, dict):
+            continue
+        os_name, arch = plat.get("os"), plat.get("architecture")
+        if os_name and arch and "unknown" not in (os_name, arch):
+            found.add(f"{os_name}/{arch}")
+    return found
+
+
+def config_platform(doc: object) -> str | None:
+    """`os/arch` from an image config, or None when it names neither."""
+    if not isinstance(doc, dict):
+        return None
+    os_name, arch = doc.get("os"), doc.get("architecture")
+    return f"{os_name}/{arch}" if os_name and arch else None
+
+
+def ref_platforms(ref: str) -> tuple[set[str] | None, str]:
+    """(os/arch set, error) for a full image ref, read with `docker buildx imagetools`.
+
+    The same registry path and credentials as ref_digest. An index lists its
+    platforms; a single-manifest image lists none, so its config is read for the
+    one platform it was built for.
+    """
+    raw, err = ref_raw(ref)
+    if raw is None:
+        return None, err
+    try:
+        found = index_platforms(json.loads(raw))
+    except json.JSONDecodeError as exc:
+        return None, f"unreadable manifest: {exc}"
+    if found is not None:
+        return found, ""
+    config, err = _imagetools(ref, "--format", "{{json .Image}}")
+    if config is None:
+        return None, err
+    try:
+        single = config_platform(json.loads(config))
+    except json.JSONDecodeError as exc:
+        return None, f"unreadable image config: {exc}"
+    if single is None:
+        return None, "image config names no os/architecture"
+    return {single}, ""
 
 
 def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None:
@@ -225,7 +328,7 @@ def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None
     try:
         return resolve_digest(org, app, tag)
     except RegistryError as api_exc:
-        if _ABSENT.search(err):
+        if is_absent(err):
             return None
         raise RegistryError(
             f"{registry}/{org}/{app}:{tag} did not resolve -- "

@@ -154,9 +154,7 @@ def test_the_retired_families_key_is_refused_and_names_both_switches() -> None:
         "edge:\n  engine_api:\n    private_path_families: []\n", source="test-dial"
     )
     with pytest.raises(render_dial.DialError, match=r"private_path_families") as raised:
-        render_dial._edge_refusals(
-            dial, render_dial._edge_flags(dial), render_dial._edge_enums(dial)
-        )
+        render_dial._edge_refusals(dial, render_dial._edge_flags(dial))
     assert "cli_families_public" in str(raised.value)
     assert "scim_public" in str(raised.value)
 

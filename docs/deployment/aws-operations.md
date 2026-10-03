@@ -58,19 +58,18 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   pool is arm64, and its generation floor sits one generation below the oldest
   generation in its resolved instance family list, so a new Graviton
   generation arrives as drift, with no plan change.
-- Karpenter's node image is `amiAlias: al2023@v20260827`
+- Karpenter's node image is a dated `amiAlias: al2023@v<YYYYMMDD>`
   (`helm/charts/karpenter-pools/values.yaml`, `operators.karpenter-al2023-ami`
   in `versions.yaml`, drift-checked) -- a dated AL2023 release, not `latest`,
   so a new image arrives as a `versions.yaml` bump through the usual 7-day
   cooldown rather than as unwatched drift on every reconcile. A deployment
   under a different image policy overrides `karpenter.nodeClass.amiAlias` in
   a values overlay rather than editing this chart's default.
-- Every pinned image is checked for both `linux/amd64` and `linux/arm64`
-  manifests (`scripts/check_image_arch.py`) -- an image missing either pulls
-  fine and only fails at container start. The one exception the stack works
-  around rather than ships: the Cruise Control UI's only credible
-  third-party image is amd64-only, so DFE fetches its static release
-  tarball at pod start instead of running that image at all.
+- Images are checked for both `linux/amd64` and `linux/arm64` manifests, because an image missing either pulls fine and only fails at container start. `scripts/check_image_arch.py --third-party-only --resolve-charts` does it with no registry credential, on every pin change (`helm-lint.yml`) and in the stack release gate (`release.yml`). `dfe-stack release-gate` reads the DFE images by digest before a release-maturity stack ships.
+- Every third-party image a pin tags deploys as tag@sha256, and the check reads it by that digest. Forgejo's curl helper comes from the chart values that pin it, and Dex and MetalLB's FRR pair from their chart's own values at the pinned version.
+- Two pinned images still deploy by tag: the cluster-mode Redpanda broker, whose operator chart accepts only a bare semver tag, and Strimzi's broker, which its operator resolves.
+- Named in a chart render but never pulled, so not checked: Envoy Gateway's rate-limit image (the gateway uses only `rateLimit.local`), cert-manager's ACME HTTP-01 solver (every issuer here solves DNS-01), and Strimzi's Kafka Bridge, Kafka Connect build and other-version Kafka images (no chart renders a KafkaBridge or KafkaConnect, and the Kafka resource names only `services.kafka-version`).
+- The one exception the stack works around rather than ships: the Cruise Control UI's only credible third-party image is amd64-only, so DFE fetches its static release tarball at pod start instead of running that image at all.
 
 ## Admin UI exposure
 

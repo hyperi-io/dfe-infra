@@ -1168,7 +1168,7 @@ partitions:
 locked:
   partition_count: "A keyed topic cannot be repartitioned without breaking hash(key) % partitions, so the count only ever grows."
   storage_model: "local and cached-object put parts in different places; changing it is a data migration, not a setting."
-  msk_broker_type: "Standard to Express is a cluster replacement plus a client cutover, not an update."
+  kafka_provider: "Moving between an in-cluster Kafka and a managed service is a cluster replacement plus a client cutover, not an update."
   controller_mode: "Combined to separate controllers re-forms the metadata quorum."
   cloud_token: "The cloud a deployment lives in is not a field; it is a new deployment."
   az_count: "Changing the AZ count re-homes every replica and every volume."

@@ -19,7 +19,7 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # ClickHouse (HTTP 8123 + native 9000)
+    # ClickHouse: HTTP 8123 + native 9000, and the same two over TLS, 8443 + 9440
     - to:
         - namespaceSelector:
             matchLabels:
@@ -27,6 +27,8 @@ spec:
       ports:
         - { port: 8123, protocol: TCP }
         - { port: 9000, protocol: TCP }
+        - { port: 8443, protocol: TCP }
+        - { port: 9440, protocol: TCP }
     # Kafka -- Strimzi brokers (plaintext 9092 + TLS 9093 listeners)
     - to:
         - namespaceSelector:

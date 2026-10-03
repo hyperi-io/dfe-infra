@@ -19,10 +19,13 @@ spec:
   hostnames:
     - "{{ include "envoy-gateway-config.routeHost" (dict "ctx" . "key" "forgejo") }}.{{ .Values.domain }}"
   rules:
-    - backendRefs:
+    -
+      {{- include "envoy-gateway-config.responseHeaders" (dict "hsts" (include "envoy-gateway-config.edgeHsts" (dict "ctx" .)) "indent" 6) }}
+      backendRefs:
         - name: {{ .Values.routes.forgejo.backendService }}
           port: {{ .Values.routes.forgejo.backendPort }}
           group: ""
           kind: Service
           weight: 1
+    {{- include "envoy-gateway-config.hiddenRule" (dict "ctx" . "key" "forgejo" "indent" 4) }}
 {{- end }}

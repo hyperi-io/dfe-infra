@@ -34,6 +34,7 @@ SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import dfe_ops_kind as kind  # noqa: E402
 import envfile  # noqa: E402
+import private_file  # noqa: E402
 
 # dfe-ops carries no extension, so it is loaded by path rather than imported.
 _loader = importlib.machinery.SourceFileLoader("dfeops_kind", str(SCRIPTS / "dfe-ops"))
@@ -327,7 +328,7 @@ def test_env_file_round_trips_and_is_private(tmp_path: Path) -> None:
         "DFE_ENV": "local",
     }
     path = tmp_path / "facts.env"
-    kind.write_private(path, kind.render_env_file(values))
+    private_file.write_private(path, kind.render_env_file(values))
     assert envfile.parse_env_file(path) == values
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 

@@ -255,8 +255,8 @@ def test_the_hunt_runner_git_sync_images_carry_their_own_pin() -> None:
 
 
 def test_the_links_page_keeps_its_third_party_digest() -> None:
-    """The one third-party chart on this path; its tag floats, so the digest is
-    the only immutable half it has."""
+    """Upstream rebuilds even a patch tag in place, so the digest is the only
+    immutable half the links page has."""
     stack = current_stack()
     want = (
         f"nginxinc/nginx-unprivileged:{stack['services']['nginx-unprivileged']}"
@@ -264,8 +264,90 @@ def test_the_links_page_keeps_its_third_party_digest() -> None:
     )
     rendered = images(render("links"))
     expect(
-        "links renders the floating tag pinned by digest",
+        "links renders its tag pinned by digest",
         rendered == [want],
+        f"wanted {want}, got {rendered}",
+    )
+
+
+def _pin(repository: str, key: str) -> str:
+    """repository:tag@sha256 for a services: key and its services-digests: twin."""
+    stack = current_stack()
+    return f"{repository}:{stack['services'][key]}@{stack['services-digests'][key]}"
+
+
+def _operator_images(docs: list[dict]) -> list[str]:
+    """repository:tag from each ClickHouse operator CR's container template."""
+    found: list[str] = []
+    for doc in docs:
+        if doc.get("kind") in ("ClickHouseCluster", "KeeperCluster"):
+            image = doc["spec"]["containerTemplate"]["image"]
+            found.append(f"{image['repository']}:{image['tag']}")
+    return found
+
+
+# Chart, --set overrides selecting the workload, the image repository it runs,
+# and the services: key pinning that image. The kafka chart is rendered once per
+# workload, because each mode deploys a different broker.
+THIRD_PARTY_WORKLOADS = [
+    ("ferretdb", (), "ghcr.io/ferretdb/ferretdb", "ferretdb"),
+    ("ferretdb", (), "ghcr.io/ferretdb/postgres-documentdb", "documentdb-pg"),
+    ("forgejo", (), "code.forgejo.org/forgejo/forgejo", "forgejo"),
+    ("otel-collector", (), "otel/opentelemetry-collector-contrib", "otel-collector"),
+    (
+        "clickhouse-cluster",
+        ("clickhouse.mode=single",),
+        "clickhouse/clickhouse-server",
+        "clickhouse-version",
+    ),
+    ("kafka", ("kafka.mode=single",), "apache/kafka", "kafka-version"),
+    (
+        "kafka",
+        ("kafka.mode=single", "kafka.provider=redpanda", "kafka.redpanda.acceptLicense=true"),
+        "docker.redpanda.com/redpandadata/redpanda",
+        "redpanda-version",
+    ),
+    (
+        "kafka",
+        (
+            "appNamespace=dfe-aws",
+            "kafka.mode=external",
+            "kafka.provider=msk",
+            "kafka.external.bootstrap=b-1.dfe.example:9096",
+            "kafka.external.msk.bootstrapIam=b-1.dfe.example:9098",
+        ),
+        "apache/kafka",
+        "kafka-version",
+    ),
+]
+
+
+def test_every_upstream_image_a_chart_runs_carries_the_ssot_digest() -> None:
+    """A tag is mutable, so each container running an upstream image pulls the
+    digest versions.yaml certified, not whatever the tag points at today."""
+    for chart, sets, repository, key in THIRD_PARTY_WORKLOADS:
+        want = _pin(repository, key)
+        rendered = [i for i in images(render(chart, *sets)) if i.split(":", 1)[0] == repository]
+        expect(
+            f"{chart} {' '.join(sets) or '(defaults)'} runs {repository} by tag@sha256",
+            rendered and all(i == want for i in rendered),
+            f"wanted {want}, got {rendered}",
+        )
+
+
+def test_the_clickhouse_operator_crs_carry_the_digest_in_the_tag() -> None:
+    """The operator renders repository:tag and drops `hash` once its defaulting
+    sets a tag, so the digest has to ride in the tag to reach the pod."""
+    rendered = sorted(_operator_images(render("clickhouse-cluster")))
+    want = sorted(
+        [
+            _pin("docker.io/clickhouse/clickhouse-server", "clickhouse-version"),
+            _pin("docker.io/clickhouse/clickhouse-keeper", "clickhouse-keeper"),
+        ]
+    )
+    expect(
+        "the ClickHouseCluster and KeeperCluster each name tag@sha256",
+        rendered == want,
         f"wanted {want}, got {rendered}",
     )
 

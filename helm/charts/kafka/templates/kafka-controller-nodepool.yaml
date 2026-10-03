@@ -68,13 +68,16 @@ spec:
       {{- if .Values.kafka.podSpread.enabled }}
       # Spread the quorum across workers -- three controllers on one node is one
       # node loss away from no control plane at all.
+      {{- /* Counts controller pods only, never the brokers (label source:
+      scripts/tests/test_kafka_pool_spread.py). */}}
       topologySpreadConstraints:
         - maxSkew: {{ .Values.kafka.podSpread.maxSkew }}
           topologyKey: {{ .Values.kafka.podSpread.topologyKey }}
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               strimzi.io/cluster: {{ .Values.kafka.name }}
+              strimzi.io/controller-role: "true"
       {{- end }}
   {{- end }}
 {{- end }}

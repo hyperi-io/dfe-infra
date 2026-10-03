@@ -15,6 +15,26 @@ co-deployed engine needs no configuration at all.
 {{- end -}}
 
 {{/*
+hyperdx.clickhouseCa -- "true" when a ClickHouse CA is mounted for Node to
+trust, empty otherwise.
+
+TLS follows clickhouse-cluster's rule, so the CA is mounted exactly when the
+engine hands out an https connection: tls.enabled AND a CA to sign with (an
+issuerRef, or the edge module's internal CA), or an external server.
+*/}}
+{{- define "hyperdx.clickhouseCa" -}}
+{{- $tls := .Values.clickhouse.tls | default dict -}}
+{{- $signed := or (eq (toString .Values.clickhouse.mode) "external") (dig "issuerRef" "name" "" $tls) (eq (toString (dig "internalCA" "present" false $tls)) "true") -}}
+{{- if and (eq (toString $tls.enabled) "true") $signed -}}
+{{- $ca := $tls.ca | default dict -}}
+{{- if and $ca.secretName $ca.configMapName -}}
+{{- fail "clickhouse.tls.ca takes a secretName or a configMapName, not both" -}}
+{{- end -}}
+{{- if or $ca.secretName $ca.configMapName -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 The dfe-engine image the dashboard init container runs.
 
 dfe-common.image reads .Values.component, which is "hyperdx" here, so the engine

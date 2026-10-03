@@ -2,3 +2,5 @@
 {{- include "dfe-clickhouse.validateStorageModel" . -}}
 {{- include "dfe-clickhouse.validateCacheVolume" . -}}
 {{- include "dfe-clickhouse.validateUserProfile" . -}}
+{{- include "dfe-clickhouse.validateLogger" . -}}
+{{- include "dfe-clickhouse.validateTls" . -}}

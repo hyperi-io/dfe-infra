@@ -51,6 +51,8 @@ _REAL_REACH = probe._reach
 # ---------------------------------------------------------------------------
 
 DIAL_TEXT = """\
+k8s:
+  domain: cluster.example.test
 edge:
   enabled: true
   flavour: aws
@@ -80,11 +82,15 @@ edge:
     receiver:
       mode: vpn
     otel:
-      public: false
-      auth: required
+      enabled: false
+      port: 4319
+      auth:
+        remoteKey: ""
 """
 
 PRODUCT = "dfe.example.test"
+# The otel route answers on the cluster domain (k8s.domain), never the public zone.
+OTEL = "otel.cluster.example.test"
 
 
 def _settings(**overrides: object) -> probe.EdgeSettings:
@@ -232,7 +238,14 @@ def test_parse_edge_reads_the_dials_own_key_names() -> None:
     assert settings.admin_uis_external is False
     assert settings.admin_uis_public == dict.fromkeys(probe.ADMIN_UIS, False)
     assert settings.receiver_mode == "vpn"
-    assert settings.otel_public is False
+    assert settings.otel_enabled is False
+    assert settings.cluster_domain == "cluster.example.test"
+
+
+def test_parse_edge_reads_the_retired_otel_public_flag_for_one_release() -> None:
+    """render_dial.py still feeds edge.ingest.otel.enabled from it, so the probe must too."""
+    text = DIAL_TEXT.replace("      enabled: false\n      port: 4319", "      public: true")
+    assert probe.parse_edge(probe.parse_yaml_subset(text)).otel_enabled is True
 
 
 def test_parse_edge_takes_the_deployments_own_defaults_for_an_absent_block() -> None:
@@ -652,41 +665,81 @@ def test_receiver_skips_and_says_so_when_the_dial_sets_no_mode() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_otel_passes_on_a_404(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("flavour", ["aws", "gcp", "azure", "onprem"])
+def test_otel_off_passes_on_a_404_on_every_flavour(
+    flavour: str, gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
-    check = probe.check_otel_private(_settings(), "127.0.0.1")
+    check = probe.check_otel_ingress(_settings(flavour=flavour), "127.0.0.1")
     assert check.verdict == probe.PASS
-    assert "otel.example.test answered 404" in check.evidence
+    assert f"{OTEL} answered 404" in check.evidence
 
 
-def test_otel_passes_when_the_connection_is_refused(
+def test_otel_off_passes_when_the_connection_is_refused(
     gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
-    check = probe.check_otel_private(_settings(), "127.0.0.1")
+    check = probe.check_otel_ingress(_settings(), "127.0.0.1")
     assert check.verdict == probe.PASS
 
 
-def test_otel_fails_when_the_route_answers(
+def test_otel_off_fails_when_the_route_answers(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gateway.routes[("otel.example.test", "/")] = 200
+    gateway.routes[(OTEL, "/")] = 200
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
-    check = probe.check_otel_private(_settings(), "127.0.0.1")
+    check = probe.check_otel_ingress(_settings(), "127.0.0.1")
     assert check.verdict == probe.FAIL
-    assert "while edge.ingest.otel.public is false" in check.evidence
+    assert "while edge.ingest.otel.enabled is false" in check.evidence
 
 
-def test_otel_skips_on_the_onprem_flavour() -> None:
-    check = probe.check_otel_private(_settings(flavour="onprem"), "127.0.0.1")
+@pytest.mark.parametrize("flavour", ["aws", "onprem"])
+def test_otel_on_passes_when_a_request_with_no_token_is_refused(
+    flavour: str, gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """401 is the collector's bearer-token receiver answering: the door is there and shut."""
+    gateway.routes[(OTEL, probe.OTEL_PROBE_PATH)] = 401
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_otel_ingress(_settings(flavour=flavour, otel_enabled=True), "127.0.0.1")
+    assert check.verdict == probe.PASS
+    assert f"{OTEL}{probe.OTEL_PROBE_PATH} answered 401" in check.evidence
+
+
+@pytest.mark.parametrize("status", [200, 405, 403])
+def test_otel_on_fails_when_a_request_with_no_token_is_not_refused(
+    status: int, gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anything but 401 means the request got past authentication, or never met it."""
+    gateway.routes[(OTEL, probe.OTEL_PROBE_PATH)] = status
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_otel_ingress(_settings(otel_enabled=True), "127.0.0.1")
+    assert check.verdict == probe.FAIL
+    assert f"answered {status}" in check.evidence
+
+
+def test_otel_on_fails_when_no_route_is_programmed(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    check = probe.check_otel_ingress(_settings(otel_enabled=True), "127.0.0.1")
+    assert check.verdict == probe.FAIL
+    assert "404" in check.evidence
+    assert "edge.ingest.otel.enabled is true" in check.evidence
+
+
+def test_otel_on_fails_when_nothing_answers(
+    gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    check = probe.check_otel_ingress(_settings(otel_enabled=True), "127.0.0.1")
+    assert check.verdict == probe.FAIL
+    assert "answered nothing" in check.evidence
+
+
+def test_otel_skips_and_names_the_key_when_the_dial_has_no_cluster_domain() -> None:
+    check = probe.check_otel_ingress(_settings(cluster_domain=""), "127.0.0.1")
     assert check.verdict == probe.SKIP
-    assert "edge.flavour is onprem" in check.evidence
-
-
-def test_otel_skips_when_the_dial_opts_the_door_in() -> None:
-    check = probe.check_otel_private(_settings(otel_public=True), "127.0.0.1")
-    assert check.verdict == probe.SKIP
-    assert "edge.ingest.otel.public is true" in check.evidence
+    assert "k8s.domain is empty" in check.evidence
 
 
 # ---------------------------------------------------------------------------

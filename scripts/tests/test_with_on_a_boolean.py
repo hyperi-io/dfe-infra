@@ -18,7 +18,7 @@ written that way and would have left certificate verification on for exactly
 the deployment that asked for it off. `if` is the form that renders both.
 
 The engine chart's own case is proven end to end in
-test_engine_deployment_facts.py, which renders `clickhouse.verify=false` and
+test_engine_deployment_facts.py, which renders `clickhouse.tls.verify=false` and
 asserts the variable arrives carrying "false". This file holds the class: every
 `with` in every first-party chart, checked against the type its own values.yaml
 declares, so the next boolean dial cannot be written the same way.
