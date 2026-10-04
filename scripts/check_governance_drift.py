@@ -19,10 +19,10 @@ into live here, and the dial rule (docs/architecture.md) says every dial must
 be a chart value. This check closes the loop: every `cls: helmvars` change
 must resolve to an existing key in the referenced chart's values.yaml.
 
-The deploy template is a PRIVATE repo, so a checkout may legitimately be
-absent (public forks, tokenless CI). Absence is a LOUD skip, never a silent
-pass -- and --require turns it into a failure for CI legs that are expected
-to have the checkout.
+A checkout of the deploy template may legitimately be absent (an operator run
+with no clone beside this repo). Absence is a LOUD skip, never a silent pass --
+and --require turns it into a failure for CI legs that are expected to have
+the checkout.
 
 Usage:
     python3 scripts/check_governance_drift.py --deploy-root ../dfe-deploy
@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     if not actions_dir.is_dir():
         msg = (
             f"dfe-deploy governance actions not found at {actions_dir} -- "
-            "governance drift NOT checked (private template repo; supply --deploy-root or DFE_DEPLOY_ROOT)"
+            "governance drift NOT checked (supply --deploy-root or DFE_DEPLOY_ROOT)"
         )
         if args.require:
             print(f"FAIL: {msg}", file=sys.stderr)
