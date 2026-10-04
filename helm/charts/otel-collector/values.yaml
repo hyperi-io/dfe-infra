@@ -59,6 +59,9 @@ daemonset:
   # Root, unlike every other DFE pod: node pod-log files are root-owned (0640),
   # so a non-root filelog receiver silently opens zero files. Rootfs stays
   # read-only and all capabilities stay dropped (containerSecurityContext).
+  # Node paths it mounts: /var/log/pods and the node root at /hostfs (for the
+  # host_metrics filesystem and disk scrapers), both read-only, and the
+  # checkpoint below, writable.
   podSecurityContext:
     runAsNonRoot: false
     runAsUser: 0

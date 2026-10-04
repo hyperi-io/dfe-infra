@@ -74,6 +74,14 @@ spec:
             - name: varlogpods
               mountPath: /var/log/pods
               readOnly: true
+            # Read-only, for host_metrics root_path: the filesystem scraper
+            # statfs()es each node mount through it and the disk scraper reads
+            # the node's /proc. HostToContainer so a volume mounted on the node
+            # after the pod started is seen too.
+            - name: hostfs
+              mountPath: /hostfs
+              readOnly: true
+              mountPropagation: HostToContainer
             - name: checkpoint
               mountPath: {{ .Values.daemonset.checkpoint.mountPath }}
             - name: tmp
@@ -85,6 +93,10 @@ spec:
         - name: varlogpods
           hostPath:
             path: /var/log/pods
+        - name: hostfs
+          hostPath:
+            path: /
+            type: Directory
         # A node directory, not an emptyDir: the offsets have to survive the pod
         # being replaced, which is exactly when the replay would happen.
         - name: checkpoint
