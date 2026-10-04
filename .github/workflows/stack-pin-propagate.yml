@@ -18,8 +18,8 @@ on:
       - '.github/workflows/stack-pin-propagate.yml'
   workflow_dispatch:
 
-# Nothing is written in THIS repo; the write is on the target, and it comes
-# from DFE_DEPLOY_TOKEN rather than from the ambient token.
+# Nothing is written in THIS repo; the write is on the target, through a GitHub
+# App token scoped to dfe-docker rather than the ambient token.
 permissions:
   contents: read
 
@@ -28,54 +28,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Whether this run can write to the target at all. A job of its own because a
-  # job-level `if:` cannot read the secrets context, and the propagation has to
-  # be able to come out SKIPPED: a job that opened no PR while reporting `pass`
-  # is the display defect #200 is about.
-  precondition:
-    name: can this run reach dfe-docker
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
-    runs-on: ubuntu-24.04
-    outputs:
-      can_write: ${{ steps.gate.outputs.can_write }}
-    steps:
-      - name: Check for the cross-repo token
-        id: gate
-        env:
-          HAS_DEPLOY_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN != '' }}
-        run: |
-          if [[ "$HAS_DEPLOY_TOKEN" == "true" ]]; then
-            echo "can_write=true" >> "$GITHUB_OUTPUT"
-            echo "DFE_DEPLOY_TOKEN is present -- the propagation runs."
-            exit 0
-          fi
-          echo "can_write=false" >> "$GITHUB_OUTPUT"
-          echo "::notice::stack pin NOT propagated -- this repo has no DFE_DEPLOY_TOKEN secret. It needs contents:write and pull-requests:write on hyperi-io/dfe-docker, which is more than the read scopes it is minted with today. Tracked in #200. The job is skipped rather than reported as a pass."
-
   propagate:
     name: move the consumer's stack dial onto current
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
     runs-on: ubuntu-24.04
-    needs: precondition
-    if: needs.precondition.outputs.can_write == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # contents:write lands the dial on a branch, pull-requests:write opens the PR.
+      - name: Mint a dfe-docker token
+        id: docker-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: dfe-docker
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Open the bump PR on dfe-docker
         env:
-          GH_TOKEN: ${{ secrets.DFE_DEPLOY_TOKEN }}
+          GH_TOKEN: ${{ steps.docker-token.outputs.token }}
         run: python3 scripts/propagate_stack_pin.py --open-pr
-
-  # Runs whatever the token situation is, so the drift is visible in the run
-  # even when nothing can be opened about it.
-  report:
-    name: report the current gap
-    runs-on: ubuntu-24.04
-    needs: precondition
-    if: needs.precondition.outputs.can_write != 'true'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: What the propagation would have moved
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/propagate_stack_pin.py
