@@ -458,14 +458,18 @@ def _gather(member: str, repo: Path) -> dict:
 
 
 def _counts(report: dict) -> dict[str, int]:
-    """The open-signal tallies, in the order both callers print them."""
+    """The open-signal tallies, in the order both callers print them.
+
+    The gather reports `ci_warnings` as None when it could not read CI at all.
+    That counts as 0 here because both callers report `ci.checked` on its own.
+    """
     summary = report["summary"]
     return {
         "issues": summary["open_issues"],
         "bot PRs": summary["bot_prs"],
         "dependabot": summary["dependabot"],
         "code-scanning": summary["code_scanning"],
-        "ci warnings": summary["ci_warnings"],
+        "ci warnings": summary["ci_warnings"] or 0,
     }
 
 
