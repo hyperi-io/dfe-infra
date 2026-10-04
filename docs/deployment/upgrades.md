@@ -18,6 +18,10 @@ rolling update with `metadata.version` finalised after a soak; then the apps.
 `dfe-ops upgrade` (below) walks that file so the order is never applied by
 hand; see it for a deployment-repo driven upgrade.
 
+**Pointing Argo CD at a newer stack is not a supported upgrade.** Moving a running deployment's dfe-infra ref, the cluster secret's `dfe.hyperi.io/target_revision`, onto another stack syncs every Application to the new ref at once. None of the `before:` steps in `upgrade-order.yaml` runs, and nothing refuses the move today.
+
+Across the Strimzi 0.x to 1.x lift that wedges Kafka. The 1.x CRDs fail Argo CD's server-side diff against CRDs still storing `v1beta2`, so the operator stays on 0.x while its Application reports Synced over a ComparisonError. The kafka chart applies cleanly and asks for a Kafka version the running operator rejects, and the Kafka CR goes NotReady and stops being reconciled. `dfe-ops upgrade preflight` and `apply` both refuse while a Strimzi CRD stores a pre-v1 version, and name the conversion tool to run first.
+
 A Kafka version bump can hit a server-side-apply field-ownership conflict:
 the Strimzi operator's own client also writes fields like `KafkaNodePool`
 `.spec.storage.volumes` or `KafkaUser` `.spec.authorization.acls`, and if
