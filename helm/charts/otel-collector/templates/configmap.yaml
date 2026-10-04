@@ -621,13 +621,57 @@ data:
           - type: noop
             id: noop
           {{- end }}
-      hostmetrics:
+      # root_path points the filesystem and disk scrapers at the node's root,
+      # mounted read-only at /hostfs by the daemonset; without it they report
+      # the collector container's own overlay.
+      host_metrics:
         collection_interval: 30s
+        root_path: /hostfs
         scrapers:
           cpu: {}
           memory: {}
           disk: {}
-          filesystem: {}
+          # The node's mount table also lists every container's overlay, every
+          # pod volume under the kubelet and the kernel's pseudo filesystems.
+          # None is node storage, and each would be a series of its own.
+          filesystem:
+            exclude_mount_points:
+              mount_points:
+                - '^/dev($|/)'
+                - '^/proc($|/)'
+                - '^/sys($|/)'
+                - '^/run/k3s/containerd($|/)'
+                - '^/run/containerd($|/)'
+                - '^/var/lib/docker($|/)'
+                - '^/var/lib/kubelet($|/)'
+                - '^/snap($|/)'
+              match_type: regexp
+            exclude_fs_types:
+              fs_types:
+                - autofs
+                - binfmt_misc
+                - bpf
+                - cgroup2
+                - configfs
+                - debugfs
+                - devpts
+                - devtmpfs
+                - fusectl
+                - hugetlbfs
+                - iso9660
+                - mqueue
+                - nsfs
+                - overlay
+                - proc
+                - procfs
+                - pstore
+                - rpc_pipefs
+                - securityfs
+                - selinuxfs
+                - squashfs
+                - sysfs
+                - tracefs
+              match_type: strict
           network: {}
       {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
       kubeletstats:
@@ -706,7 +750,7 @@ data:
           exporters: [otlp/gateway]
         metrics:
           receivers:
-            - hostmetrics
+            - host_metrics
             {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
             - kubeletstats
             {{- end }}
