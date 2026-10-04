@@ -22,7 +22,7 @@ quoted here from the current stack, `versions.yaml` wins on any mismatch:
 
 | component | why | versions.yaml key |
 |---|---|---|
-| external-secrets 2.5.0 | generates the in-cluster secrets (ClickHouse admin, FerretDB, NextAuth) | `bootstrap.external-secrets` |
+| external-secrets 2.5.0 | generates the in-cluster secrets (dfe-engine JWT, ClickHouse admin, FerretDB, NextAuth) | `bootstrap.external-secrets` |
 | cloudnative-pg 0.29.0 | runs the `dfe-pg` PostgreSQL cluster | `operators.cloudnative-pg` |
 
 ```sh

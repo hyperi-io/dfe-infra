@@ -14,7 +14,7 @@ PREFLIGHT
 ---------
 {{- $missing := list }}
 {{- if not (.Capabilities.APIVersions.Has "external-secrets.io/v1") }}
-{{- $missing = append $missing "external-secrets (ClusterSecretStore/ExternalSecret CRDs) -- generates the ClickHouse admin, FerretDB and NextAuth secrets" }}
+{{- $missing = append $missing "external-secrets (ClusterSecretStore/ExternalSecret CRDs) -- generates the dfe-engine JWT, ClickHouse admin, FerretDB and NextAuth secrets" }}
 {{- end }}
 {{- if not (.Capabilities.APIVersions.Has "generators.external-secrets.io/v1alpha1") }}
 {{- $missing = append $missing "external-secrets generators (Password CRD) -- same operator, CRDs not registered yet" }}
