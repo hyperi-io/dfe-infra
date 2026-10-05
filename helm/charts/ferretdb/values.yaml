@@ -51,7 +51,7 @@ ferretdb:
 
 # The FerretDB 2.x storage backend: PostgreSQL 17 WITH the DocumentDB
 # extension (ghcr.io/ferretdb/postgres-documentdb), a standalone StatefulSet +
-# PVC in this namespace. DELIBERATELY NOT the shared CNPG cluster: CNPG runs
+# PVC in this namespace. DELIBERATELY NOT a CNPG cluster: CNPG runs
 # its own instance manager in place of the image entrypoint, so the extension
 # preload/initialisation this image performs at initdb never happens there and
 # FerretDB 2.x fails its DocumentDB check. Mirrors the proven dfe-docker

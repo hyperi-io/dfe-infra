@@ -37,11 +37,6 @@ clickhouse-cluster:
     replicas: 3
     shardsCount: 1
 
-cnpg-cluster:
-  cluster:
-    # Source: argocd/values/profile-scale.yaml `cluster.instances` (HA).
-    instances: 3
-
 kafka:
   kafka:
     mode: cluster

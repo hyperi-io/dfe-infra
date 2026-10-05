@@ -16,8 +16,8 @@ it forward: `dfe-ops upgrade rollback --to <stack>` bumps `pins.yaml` to
 the earlier stack and Argo CD reconciles the chart down. No data changes
 hands.
 
-**20-operators.** envoy-gateway, external-dns, keda and cloudnative-pg
-roll back the same way. strimzi-kafka-operator carries a `before` note --
+**20-operators.** envoy-gateway, external-dns and keda roll back the same
+way. strimzi-kafka-operator carries a `before` note --
 the CRD stored-version conversion (`bin/v1-api-conversion.sh
 convert-resource`, then `crd-upgrade`) that has to run on the live cluster
 before the 1.x operator starts. That tool comes from the tarball the RUNNING

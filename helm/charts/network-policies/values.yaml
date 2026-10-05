@@ -32,7 +32,6 @@ dataNamespaces:
 # SSoT is argocd/values/common.yaml `operatorNamespaces`; these are chart
 # defaults for a standalone render only.
 operatorNamespaces:
-  cnpg: cnpg-system
   strimzi: strimzi
   clickhouse: clickhouse-operator-system
 

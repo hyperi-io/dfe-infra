@@ -3,7 +3,7 @@
 # already name a class on the cluster -- see bootstrap.sh step [1b/7]. EKS 1.30+
 # ships gp2 with no default, and the aws-ebs-csi-driver add-on makes gp3
 # POSSIBLE but creates no StorageClass object of its own, so the data pods' PVCs
-# (Forgejo, ClickHouse, Keeper, CNPG) stay Pending until something creates one.
+# (Forgejo, ClickHouse, Keeper, FerretDB) stay Pending until something creates one.
 #
 # DFE_STORAGE_CLASS_IS_DEFAULT is "true" only when the cluster has no default
 # class at that point. A cluster that already has one keeps it: two default

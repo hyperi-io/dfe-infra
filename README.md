@@ -56,7 +56,7 @@ carries those inputs is specified in
 - **Registry:** released images on GHCR (`ghcr.io/hyperi-io`); `DFE_REGISTRY`
   points a deployment at its own mirror (Harbor, ECR, ACR, GAR).
 - **Ingress/auth:** Envoy Gateway + OIDC SecurityPolicy.
-- **Data:** ClickHouse, CNPG PostgreSQL, FerretDB; Strimzi Kafka (KRaft,
+- **Data:** ClickHouse, FerretDB (own DocumentDB PostgreSQL); Strimzi Kafka (KRaft,
   SASL/SCRAM); OTel -> ClickHouse -> HyperDX.
 - **Secrets:** ESO + OpenBao (on-prem) / cloud secret managers.
 - **Autoscaling:** KEDA from OTel metrics.

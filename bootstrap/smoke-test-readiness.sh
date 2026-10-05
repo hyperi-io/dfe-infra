@@ -49,7 +49,7 @@ DEV_POSTURES="dev development local test ci"
 # Allowlist of the namespaces this deploy creates (destroy.sh's teardown list) --
 # a denylist of the cluster's own is per-distribution and misses calico-system,
 # tigera-operator, longhorn-system and metallb-system.
-WATCH_NS="${READINESS_WATCH_NS:-argocd cert-manager external-secrets envoy-gateway-system keda strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links dfe-*}"
+WATCH_NS="${READINESS_WATCH_NS:-argocd cert-manager external-secrets envoy-gateway-system keda strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links dfe-*}"
 [ -n "$DFE_NS" ] && WATCH_NS="$WATCH_NS $DFE_NS"
 
 # True when a namespace matches one of the WATCH_NS globs.

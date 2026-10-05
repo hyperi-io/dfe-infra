@@ -6,9 +6,9 @@
 #
 # This policy expresses the default egress surface every namespace needs:
 #   1. Intra-namespace pod-to-pod (required for clustered services like
-#      ClickHouse replication, Kafka broker replication, CNPG → CNPG).
+#      ClickHouse replication, Kafka broker replication).
 #   2. DNS (UDP + TCP 53) to the cluster DNS service.
-#   3. Kubernetes API (TCP 443, 6443) — required by operators (CNPG, Strimzi,
+#   3. Kubernetes API (TCP 443, 6443) -- required by operators (Strimzi,
 #      ClickHouse operator) and by service-account auth from application pods.
 #   4. OTel Collector (TCP 4317 gRPC, 4318 HTTP) in the OTel namespace, for telemetry.
 #   5. EKS Pod Identity agent (TCP 80 on a fixed link-local address) — every
@@ -18,7 +18,7 @@
 #
 # Everything else is denied by default (Kubernetes NetworkPolicy semantics).
 # Add per-service egress policies layered on top for specific cross-namespace
-# flows (e.g. DFE app egress to CNPG, ClickHouse, Kafka).
+# flows (e.g. DFE app egress to ClickHouse, Kafka, FerretDB).
 #
 # THE OPT-OUT. Policies are additive, so a pod this one selects can always
 # reach the whole namespace and no later policy can take that back. A workload

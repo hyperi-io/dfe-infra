@@ -1,4 +1,5 @@
-# Wave 4: CNPG PostgreSQL cluster, ClickHouse cluster, Strimzi Kafka, FerretDB, OTel Collector.
+# Wave 4: ClickHouse cluster, Strimzi Kafka, FerretDB (with its own DocumentDB
+# PostgreSQL backend). Wave 6: OTel Collector, Kafbat, links.
 # HyperDX is an app, not substrate: layer2-apps deploys it at wave 5 from the
 # deploy repo's values/hyperdx-<instance>-values.yaml, like every other app.
 apiVersion: argoproj.io/v1alpha1
@@ -19,10 +20,6 @@ spec:
                   dfe.hyperi.io/managed: "true"
           - list:
               elements:
-                - app: cnpg-cluster
-                  namespace: cnpg
-                  wave: "4"
-                  appProject: data
                 - app: clickhouse-cluster
                   namespace: clickhouse
                   wave: "4"

@@ -31,7 +31,8 @@ check() {
 
 skip() { echo "  [SKIP] ${1}"; }
 
-# FerretDB shares the cnpg namespace; there is no ferretdb namespace.
+# FerretDB and its DocumentDB backend deploy into the cnpg namespace; there is
+# no ferretdb namespace.
 NS_CNPG="${DFE_CNPG_NS:-cnpg}"
 NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
@@ -56,7 +57,7 @@ echo "  profile: ${PROFILE:-unknown}"
 echo ""
 
 echo "--- Namespaces ---"
-check "cnpg namespace (also hosts FerretDB)" "kubectl get ns ${NS_CNPG}"
+check "cnpg namespace (hosts FerretDB)" "kubectl get ns ${NS_CNPG}"
 check "clickhouse namespace" "kubectl get ns ${NS_CH}"
 check "otel namespace" "kubectl get ns ${NS_OTEL}"
 if profile_has_kafka; then
@@ -67,14 +68,8 @@ fi
 
 echo ""
 echo "--- PostgreSQL (FerretDB's DocumentDB backend) ---"
-if kubectl -n "${NS_CNPG}" get cluster.postgresql.cnpg.io dfe-pg >/dev/null 2>&1; then
-    check "CNPG cluster healthy" \
-      "kubectl -n ${NS_CNPG} get cluster.postgresql.cnpg.io dfe-pg -o jsonpath='{.status.phase}' | grep -q 'healthy state'"
-    check "CNPG instances running" "running_pods ${NS_CNPG} cnpg.io/cluster=dfe-pg"
-else
-    check "documentdb statefulset ready" \
-      "kubectl -n ${NS_CNPG} get sts dfe-ferretdb-documentdb -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
-fi
+check "documentdb statefulset ready" \
+  "kubectl -n ${NS_CNPG} get sts dfe-ferretdb-documentdb -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 
 echo ""
 echo "--- Kafka ---"

@@ -464,7 +464,7 @@ fi
 # chain, and must never read as a pass either (the 2026-07-16 kafka seam went
 # untested behind a reassuring SKIP, which is why this prints WHY).
 # To make it real, run mongosh from a client pod that has it, or assert on the PG
-# side (dfe-pg-* ships psql) that ferretdb's DocumentDB schema is being written.
+# side (dfe-ferretdb-documentdb-0 ships psql) that ferretdb's DocumentDB schema is being written.
 if kubectl -n "$NS_FERRET" exec deploy/dfe-ferretdb -- mongosh --version >/dev/null 2>&1; then
   check "ferretdb write+read round-trips to PG" \
     "kubectl -n $NS_FERRET exec deploy/dfe-ferretdb -- mongosh mongodb://localhost:27017/smoke --quiet --eval 'db.s.insertOne({k:1}); printjson(db.s.findOne({k:1}))' | grep -q 'k'"

@@ -42,13 +42,11 @@ spec.loader.exec_module(nsdrift)
 SSOT = {
     "clickhouse": "clickhouse-operator-system",
     "strimzi": "strimzi",
-    "cnpg": "cnpg-system",
 }
 NETPOL = dict(SSOT)
 APPSETS = {
     "clickhouse-operator-helm": {"clickhouse-operator-system"},
     "strimzi-kafka-operator": {"strimzi"},
-    "cloudnative-pg": {"cnpg-system"},
 }
 
 
@@ -81,11 +79,11 @@ def test_appset_installs_elsewhere() -> None:
 
 
 def test_netpol_default_diverges() -> None:
-    netpol = dict(NETPOL, cnpg="cnpg")
+    netpol = dict(NETPOL, strimzi="kafka")
     problems = nsdrift.compare(SSOT, netpol, APPSETS)
     expect(
         "diverged network-policies default is caught",
-        any("cnpg" in p for p in problems),
+        any("strimzi" in p and "kafka" in p for p in problems),
         f"got {problems}",
     )
 

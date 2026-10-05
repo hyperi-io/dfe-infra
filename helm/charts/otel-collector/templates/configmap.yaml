@@ -532,7 +532,7 @@ data:
               - expr: 'body matches "(^|[ \\t])(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL|PANIC|trace|debug|info|warn|warning|error|fatal)([ \\t:]|$)"'
                 output: sev-token
 
-          # Structured JSON: etcd, cnpg, external-secrets, fleet, gitlab.
+          # Structured JSON: etcd, external-secrets, fleet, gitlab.
           - type: regex_parser
             id: sev-json
             parse_from: body

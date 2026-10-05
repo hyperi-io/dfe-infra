@@ -84,8 +84,8 @@ kubectl -n argocd get app -w               # watch Layer 2 sync
 
 ```mermaid
 flowchart LR
-  W1["AppProjects"] --> W2["operators<br/>cert-mgr, ESO, Envoy, CNPG, Strimzi, ..."]
-  W2 --> W4["data platform<br/>PostgreSQL, Kafka, ClickHouse, OTel"]
+  W1["AppProjects"] --> W2["operators<br/>cert-mgr, ESO, Envoy, Strimzi, ..."]
+  W2 --> W4["data platform<br/>FerretDB, Kafka, ClickHouse, OTel"]
   W4 --> W5["DFE services<br/>engine, ui, receiver, loader, archiver, fetcher"]
 ```
 
@@ -142,7 +142,7 @@ flowchart LR
    are orphaned.
 3. **Manual sweep** (not yet automated -- checklist):
    - [ ] `kubectl get pv` -- confirm local-path PVs were reclaimed.
-   - [ ] Clear stuck finalizers (CNPG / Strimzi / ClickHouse) if deletion hangs.
+   - [ ] Clear stuck finalizers (Strimzi / ClickHouse) if deletion hangs.
    - [ ] Remove any non-wildcard DNS records added for the deployment.
    - [ ] Remove DFE node taints/labels so future scheduling is not blocked.
    - [ ] Confirm no orphaned OpenBao paths remain.

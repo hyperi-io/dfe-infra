@@ -93,10 +93,6 @@ ALLOWED_TOPIC_CREATE = {
     "terraform/modules/managed-kafka/",
 }
 
-# PostgreSQL, not ClickHouse: CNPG creating its own databases at initdb is the
-# backing service standing itself up, which stays dfe-infra's.
-ALLOWED_DDL |= {"helm/charts/cnpg-cluster/templates/cluster.yaml"}
-
 # Every kafka.mode the chart renders, so a topic cannot come back on one tier.
 KAFKA_MODES = ("disabled", "single", "cluster", "external")
 

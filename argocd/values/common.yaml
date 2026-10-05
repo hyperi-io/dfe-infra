@@ -47,12 +47,10 @@ adminGroups:
 # ingress from these, and otel-collector scrapes their controllers' metrics.
 # A wrong name here fails SILENTLY -- a namespaceSelector naming a namespace that
 # does not exist matches nothing and raises no error (dfe-infra#136).
-# MUST agree with the destination namespaces in appsets/layer-scale.yaml and
-# appsets/layer1-addons.yaml.
+# MUST agree with the destination namespaces in appsets/layer-scale.yaml.
 operatorNamespaces:
   clickhouse: clickhouse-operator-system
   strimzi: strimzi
-  cnpg: cnpg-system
 
 # Image pull secrets -- none by default, so a public-image pod pulls anonymously.
 # When bootstrap.sh creates one (DFE_PULL_SECRET_TOKEN), it records the name on

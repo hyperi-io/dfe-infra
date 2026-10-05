@@ -107,19 +107,6 @@ envoy-gateway-config:
 
 # --- data substrate ---------------------------------------------------------
 
-cnpg-cluster:
-  enabled: true
-  cluster:
-    # Source: argocd/values/profile-slim.yaml `cluster.instances` (no HA).
-    instances: 1
-    resources:
-      # Trial sizing (laptop k3d/kind); the product slim tier keeps the
-      # chart's 500m/1Gi requests.
-      requests:
-        cpu: 250m
-        memory: 512Mi
-  telemetry: *dfeTelemetry
-
 clickhouse-cluster:
   enabled: true
   # Single-namespace install: consumers read the admin Secret directly, so no

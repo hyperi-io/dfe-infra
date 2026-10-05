@@ -20,7 +20,7 @@
 |------|-----------|--------|-------|
 | 2 | cert-manager, ESO, Envoy Gateway | | |
 | 3 | KEDA, operators | | |
-| 4 | CNPG, Kafka, ClickHouse, FerretDB, OTel | | |
+| 4 | Kafka, ClickHouse, FerretDB, OTel | | |
 | 5 | DFE services, HyperDX | | |
 
 ## Smoke Tests

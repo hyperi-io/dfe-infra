@@ -216,12 +216,6 @@ _APPSET_PINS = [
         "reloader",
     ),
     (
-        "cloudnative-pg appset",
-        "operators.cloudnative-pg",
-        "argocd/appsets/layer1-addons.yaml",
-        "cloudnative-pg",
-    ),
-    (
         "strimzi appset (scale)",
         "operators.strimzi-kafka-operator",
         "argocd/appsets/layer-scale.yaml",
@@ -373,8 +367,7 @@ CHECKS += [
         r'appVersion:\s*"([^"]+)"',
     ),
     # ferretdb (class D shape): appVersion cascades the image tag (image.tag is
-    # empty), and the chart's documentdb backend pins its own copy of the
-    # documentdb-pg tag alongside cnpg-cluster's.
+    # empty), and the chart's documentdb backend pins the documentdb-pg tag.
     Check(
         "ferretdb chart appVersion",
         "services.ferretdb",
@@ -470,7 +463,7 @@ CHECKS += [
         Path("helm/charts/forgejo/values.yaml"),
         r'forgejo/forgejo\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
-    # The four below were found by the reverse sweep, not by anyone adding them.
+    # The three below were found by the reverse sweep, not by anyone adding them.
     # dfe-common.labels stamps app.kubernetes.io/version from .Chart.AppVersion
     # onto every object a chart renders, so a stale appVersion is a wrong version
     # label on live objects even where no image tag depends on it.
@@ -485,24 +478,6 @@ CHECKS += [
         "services.kafka-version",
         Path("helm/charts/kafka/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
-    ),
-    Check(
-        "cnpg-cluster chart appVersion",
-        "services.postgresql",
-        Path("helm/charts/cnpg-cluster/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
-    Check(
-        "documentdb-pg image tag (cnpg values)",
-        "services.documentdb-pg",
-        Path("helm/charts/cnpg-cluster/values.yaml"),
-        r'postgres-documentdb\n\s*tag:\s*"([^"]+)"',
-    ),
-    Check(
-        "documentdb-pg image digest (cnpg values)",
-        "services-digests.documentdb-pg",
-        Path("helm/charts/cnpg-cluster/values.yaml"),
-        r'postgres-documentdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     Check(
         "kafbat chart appVersion",
@@ -917,7 +892,7 @@ UNCONSUMED: dict[str, str] = {
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.local-path-provisioner": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.metallb": "bootstrap.sh reads it at runtime; no hardcoded copy",
-    "services.cnpg-cluster-instances": "replica count, overridden per profile",
+    "services.postgresql": "the PostgreSQL major of FerretDB's DocumentDB backend; render_dial.py reads it at runtime for the AWS toolbox's psql, with no hardcoded copy",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
