@@ -19,14 +19,14 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: {{ . }}
     {{- end }}
-    # Allow from other data namespaces (FerretDB→CNPG, HyperDX→ClickHouse)
+    # Allow from other data namespaces (HyperDX->ClickHouse)
     {{- range $.Values.dataNamespaces }}
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ . }}
     {{- end }}
-    # Allow from operator namespaces (CNPG, Strimzi, ClickHouse operators)
+    # Allow from operator namespaces (Strimzi, ClickHouse operators)
     {{- range $operator, $operatorNamespace := $.Values.operatorNamespaces }}
     - from:
         - namespaceSelector:

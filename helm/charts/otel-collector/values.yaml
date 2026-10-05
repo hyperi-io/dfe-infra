@@ -207,7 +207,6 @@ clusterTelemetry:
 operatorNamespaces:
   clickhouse: clickhouse-operator-system
   strimzi: strimzi
-  cnpg: cnpg-system
 
 clickhouse:
   host: dfe-clickhouse.clickhouse.svc.cluster.local

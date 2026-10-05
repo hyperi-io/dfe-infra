@@ -41,10 +41,6 @@ dependencies:
     repository: "file://../edge/gateway"
     condition: envoy-gateway-config.enabled
   # --- data substrate (layer2-data, waves 4-6) ------------------------------
-  - name: cnpg-cluster
-    version: "0.1.0"
-    repository: "file://../charts/cnpg-cluster"
-    condition: cnpg-cluster.enabled
   - name: clickhouse-cluster
     version: "0.2.0"
     repository: "file://../charts/clickhouse-cluster"

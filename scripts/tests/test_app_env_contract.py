@@ -695,7 +695,7 @@ def test_no_values_file_offers_a_postgresql_dial() -> None:
     """No template reads .Values.postgresql, so a key by that name is a dial that moves nothing.
 
     The engine keeps its state in ClickHouse and its config in the gitops repo, and
-    cnpg-cluster writes its Cluster from keys of its own.
+    the ferretdb chart configures its DocumentDB backend from keys of its own.
     """
     files = [
         *sorted((REPO_ROOT / "helm").rglob("values.yaml")),

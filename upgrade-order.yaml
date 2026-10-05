@@ -39,8 +39,6 @@ stages:
       key: operators.external-dns
     "30-keda":
       key: operators.keda
-    "40-cloudnative-pg":
-      key: operators.cloudnative-pg
     "50-strimzi-kafka-operator":
       key: operators.strimzi-kafka-operator
       before: "kafka.strimzi.io stored-version conversion on the running cluster: bin/v1-api-conversion.sh convert-resource, then crd-upgrade"

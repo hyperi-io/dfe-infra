@@ -181,9 +181,11 @@ never from a literal in this module or its `templates/user_data.sh.tftpl`:
   than shipping a box with no pinned tools.
 - `clickhouse-client` reads `services.clickhouse-version`, `psql` reads
   `services.postgresql`, and `kafka-cli` reads `services.kafka-version` --
-  the SAME keys the deployed ClickHouse server, CNPG cluster and Kafka broker
-  already pin, so the debugging tool's protocol version can never skew from
-  the server it is debugging. The `toolbox:` stage deliberately carries no
+  the keys that record the deployed ClickHouse server, the PostgreSQL major
+  of FerretDB's DocumentDB backend and the Kafka broker, so the debugging
+  tool's protocol version follows the server it is debugging. The
+  `services.postgresql` major is held to `services.documentdb-pg`'s tag by
+  hand, not by a check. The `toolbox:` stage deliberately carries no
   pin of its own for any of the three, for exactly this reason (its own
   comment says so).
 - `jq` and `openssl` are a deliberate exception: neither carries an

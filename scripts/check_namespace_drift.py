@@ -54,7 +54,6 @@ NETPOL_VALUES = REPO_ROOT / "helm" / "charts" / "network-policies" / "values.yam
 OPERATOR_CHARTS = {
     "clickhouse": "clickhouse-operator-helm",
     "strimzi": "strimzi-kafka-operator",
-    "cnpg": "cloudnative-pg",
 }
 
 

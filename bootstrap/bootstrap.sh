@@ -248,7 +248,7 @@ run() {
 # install, reuse its CRDs); absent -> INSTALL DFE-owned. Logs the decision (never
 # a silent skip). DFE_FORCE_INSTALL=true overrides (always install).
 # NOTE: the Argo-managed operators in argocd/appsets (external-dns, keda,
-# metrics-server, reloader, cnpg) are NOT yet guarded -- per-operator appset
+# metrics-server, reloader) are NOT yet guarded -- per-operator appset
 # adopt is a later iteration that needs a rich cluster to validate. On a bare
 # cluster they install correctly.
 dfe_have_crd() { kubectl get crd "$1" >/dev/null 2>&1; }
@@ -658,7 +658,7 @@ echo "==> [1b/7] StorageClass (detect-or-install)"
 #      as-is (the common case below covers when that class does not exist yet)
 #   3. no StorageClass at all (bare RKE2)                 -> INSTALL
 #      local-path-provisioner (pinned) and mark it default, so the data pods'
-#      PVCs (CH/Gitea/CNPG) can bind with no deployer input
+#      PVCs (CH/Gitea/FerretDB) can bind with no deployer input
 #   4. DFE_CLOUD=aws and DFE_STORAGE_CLASS still does not exist after the
 #      above -- EKS 1.30+ ships gp2 with no default, and the aws-ebs-csi-driver
 #      add-on makes gp3 POSSIBLE but creates no StorageClass object of its own

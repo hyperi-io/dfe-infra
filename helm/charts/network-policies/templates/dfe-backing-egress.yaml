@@ -1,6 +1,6 @@
 # DFE app egress to backing services -- the cross-namespace flows the baseline
 # egress policy intentionally omits (see baseline-egress.yaml header, "Add
-# per-service egress policies ... to CNPG, ClickHouse, Kafka"). WITHOUT this the
+# per-service egress policies ... to ClickHouse, Kafka, FerretDB"). WITHOUT this the
 # data plane (engine/receiver/loader/ui) cannot reach ClickHouse, Kafka, the
 # bundled Forgejo deploy repo, or HyperDX -- every pod that tries CrashLoopBackOffs
 # (proven live 2026-07-16: engine CH connect timed out, loader/receiver could not
@@ -37,8 +37,8 @@ spec:
       ports:
         - { port: 9092, protocol: TCP }
         - { port: 9093, protocol: TCP }
-    # cnpg namespace: PostgreSQL (5432) + the FerretDB mongo-wire proxy
-    # (27017) that hyperdx's metadata store rides.
+    # cnpg namespace: FerretDB's DocumentDB PostgreSQL backend (5432) + the
+    # FerretDB mongo-wire proxy (27017) that hyperdx's metadata store rides.
     - to:
         - namespaceSelector:
             matchLabels:

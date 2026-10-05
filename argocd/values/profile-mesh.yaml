@@ -45,10 +45,6 @@ clickhouse:
   replicas: 3
   shardsCount: 1
 
-# CNPG -- HA.
-cluster:
-  instances: 3
-
 # Kafka -- DISABLED. This profile uses gRPC transport (receiver -> loader direct).
 kafka:
   mode: disabled

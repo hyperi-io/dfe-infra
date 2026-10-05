@@ -25,7 +25,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  description: "Layer 2 data platform: Kafka, ClickHouse, CNPG, FerretDB, HyperDX, OTel"
+  description: "Layer 2 data platform: Kafka, ClickHouse, FerretDB, HyperDX, OTel"
   sourceRepos:
     - "*"
   destinations:

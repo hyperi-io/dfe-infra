@@ -1,5 +1,5 @@
-# Layer 1 addons: KEDA, metrics-server, Reloader, CNPG operator, and
-# external-dns where the cluster declares a DNS provider.
+# Layer 1 addons: KEDA, metrics-server, Reloader, and external-dns where the
+# cluster declares a DNS provider.
 # Chart versions MUST match versions.yaml (the SSOT).
 # Envoy Gateway uses OCI and is deployed as a standalone app in bootstrap/.
 #
@@ -70,13 +70,6 @@ spec:
                   repo: https://stakater.github.io/stakater-charts
                   version: "2.2.14"
                   namespace: reloader
-                  wave: "3"
-                  appProject: infra
-                  chartValuesYaml: ""
-                - chart: cloudnative-pg
-                  repo: https://cloudnative-pg.github.io/charts
-                  version: "0.29.0"
-                  namespace: cnpg-system
                   wave: "3"
                   appProject: infra
                   chartValuesYaml: ""

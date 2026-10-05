@@ -41,10 +41,6 @@ clickhouse:
   replicas: 3
   shardsCount: 1
 
-# CNPG -- HA.
-cluster:
-  instances: 3
-
 # Kafka -- cluster mode via Strimzi (default provider). replicas default 3.
 # bootstrapServers MUST be overridden here: common.yaml defaults to the single
 # tier's plain Service name, which does not exist in cluster mode. Strimzi owns the

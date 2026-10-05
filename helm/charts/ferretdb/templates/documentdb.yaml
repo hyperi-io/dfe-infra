@@ -1,7 +1,7 @@
 {{- if eq .Values.ferretdb.mode "deploy" }}
 # The FerretDB 2.x backend: PostgreSQL 17 + the DocumentDB extension, run as a
-# standalone StatefulSet (the clickhouse-single shape). NOT the shared CNPG
-# cluster: CNPG replaces this image's entrypoint with its own instance
+# standalone StatefulSet (the clickhouse-single shape). NOT a CNPG cluster:
+# CNPG replaces this image's entrypoint with its own instance
 # manager, so the extension preload/initialisation the image performs at
 # initdb never happens there and FerretDB 2.x fails its DocumentDB check.
 apiVersion: v1

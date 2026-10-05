@@ -119,11 +119,12 @@ drift-check enforces where a hardcoded pin exists. Already works - leave as-is.
 - bootstrap: `cert-manager`, `external-secrets`, `argocd`, `valkey` (plain
   manifest image), `local-path-provisioner`, `metallb` (on-prem only).
 - operators: `envoy-gateway`, `external-dns`, `keda`, `metrics-server`,
-  `reloader`, `cloudnative-pg`, and the three OPERATOR chart pins
+  `reloader`, and the three OPERATOR chart pins
   (`strimzi-kafka-operator`, `clickhouse-operator`, `redpanda-operator` - the
   operator's own release line, distinct from the class-B service version).
-- data: `postgresql` (CNPG PG major), `otel-collector`, `forgejo` (bundled
-  deploy-repo fallback, k8s-only).
+- data: `otel-collector`, `forgejo` (bundled deploy-repo fallback, k8s-only).
+  `postgresql` is no chart or image: it records the PostgreSQL major of
+  FerretDB's DocumentDB backend, which the AWS toolbox installs psql at.
 
 ## Class D - third-party plain image, BOTH paths
 
@@ -141,6 +142,15 @@ image. One number, same image ref both sides.
 - ALIGNED today: chart appVersion + the values.yaml image digest match
   `services.ferretdb` / `services-digests.ferretdb`, drift-checked.
 
+### postgres-documentdb (FerretDB 2.x PG backend)
+- SSoT: `services.documentdb-pg` (17-0.107.0-ferretdb-2.7.0). k8s:
+  `helm/charts/ferretdb` `documentdb.image` (a standalone StatefulSet beside
+  FerretDB). docker: `HYPERDX_POSTGRES_VERSION` ->
+  `ghcr.io/ferretdb/postgres-documentdb`.
+- ALIGNED today: the chart's tag and digest match `services.documentdb-pg` /
+  `services-digests.documentdb-pg`, drift-checked. It is the only PostgreSQL
+  the stack deploys.
+
 ## Class E - third-party plain image, docker-ONLY
 
 ### Envoy (dfe-proxy)
@@ -157,13 +167,6 @@ image. One number, same image ref both sides.
   healthcheck drives the admin `/ready` over bash's `/dev/tcp`, and distroless
   ships no shell. Envoy publishes no alpine variant and no LTS line - it supports
   the newest four minors, so track the newest.
-
-### postgres-documentdb (FerretDB 2.x PG backend)
-- SSoT: `services.documentdb-pg` (17-0.107.0-ferretdb-2.7.0). docker:
-  `HYPERDX_POSTGRES_VERSION` -> `ghcr.io/ferretdb/postgres-documentdb`.
-- Docker-only FOR NOW: k8s backs FerretDB with vanilla CNPG PG17, not
-  the documentdb-pg image. Becomes class D (both paths) once the k8s FerretDB 2.x
-  migration lands (see gap below).
 
 ## Rendering contract (what dfe-stack render must emit)
 

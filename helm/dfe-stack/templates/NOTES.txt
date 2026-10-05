@@ -19,9 +19,6 @@ PREFLIGHT
 {{- if not (.Capabilities.APIVersions.Has "generators.external-secrets.io/v1alpha1") }}
 {{- $missing = append $missing "external-secrets generators (Password CRD) -- same operator, CRDs not registered yet" }}
 {{- end }}
-{{- if not (.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1") }}
-{{- $missing = append $missing "cloudnative-pg (Cluster CRD) -- runs the dfe-pg PostgreSQL cluster" }}
-{{- end }}
 {{- if $missing }}
 WARNING: this cluster is missing prerequisite operators (or this is an
 offline `helm template`, which cannot see the cluster's CRDs):
@@ -31,7 +28,7 @@ offline `helm template`, which cannot see the cluster's CRDs):
 Install them first (pins: versions.yaml; commands: the chart README), or the
 resources needing their CRDs will fail to apply.
 {{- else }}
-Prerequisite CRDs found (external-secrets, cloudnative-pg).
+Prerequisite CRDs found (external-secrets).
 {{- end }}
 
 REACHING THE STACK (no LoadBalancer -- port-forward)

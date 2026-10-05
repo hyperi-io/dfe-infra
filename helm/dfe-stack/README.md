@@ -14,23 +14,20 @@ images, so graduating is a values change, not a migration.
 
 ## Prerequisites
 
-Two operators must exist before install. In a product deployment
-`bootstrap/bootstrap.sh` installs cert-manager + external-secrets pre-Argo and
-the ArgoCD appset `layer1-addons` installs the CNPG operator; the trial
-installs them directly. Pins come from `versions.yaml` (the pin SSoT) --
-quoted here from the current stack, `versions.yaml` wins on any mismatch:
+One operator must exist before install. In a product deployment
+`bootstrap/bootstrap.sh` installs cert-manager + external-secrets pre-Argo; the
+trial installs external-secrets directly. Pins come from `versions.yaml` (the
+pin SSoT) -- quoted here from the current stack, `versions.yaml` wins on any
+mismatch:
 
 | component | why | versions.yaml key |
 |---|---|---|
-| external-secrets 2.5.0 | generates the in-cluster secrets (dfe-engine JWT, ClickHouse admin, FerretDB, NextAuth) | `bootstrap.external-secrets` |
-| cloudnative-pg 0.29.0 | runs the `dfe-pg` PostgreSQL cluster | `operators.cloudnative-pg` |
+| external-secrets 2.10.0 | generates the in-cluster secrets (dfe-engine JWT, ClickHouse admin, FerretDB, NextAuth) | `bootstrap.external-secrets` |
 
 ```sh
 helm repo add external-secrets https://charts.external-secrets.io
 helm install external-secrets external-secrets/external-secrets \
-  -n external-secrets --create-namespace --version 2.5.0 --set installCRDs=true
-helm repo add cnpg https://cloudnative-pg.github.io/charts
-helm install cnpg cnpg/cloudnative-pg -n cnpg-system --create-namespace --version 0.29.0
+  -n external-secrets --create-namespace --version 2.10.0 --set installCRDs=true
 ```
 
 The chart's NOTES print a CRD preflight on every install/template, so a
@@ -65,7 +62,7 @@ helm install dfe helm/dfe-stack -n dfe --create-namespace
 ```
 
 kind works the same (`kind create cluster`). Both ship a default StorageClass,
-which the PVCs (ClickHouse, PostgreSQL, FerretDB, engine store) rely on. Note
+which the PVCs (ClickHouse, FerretDB's DocumentDB backend, engine store) rely on. Note
 k3d/kind's default CNIs do not enforce NetworkPolicy; the policies install
 inert there and enforce on a real CNI.
 
@@ -87,9 +84,9 @@ helm install dfe helm/dfe-stack -n dfe --create-namespace -f helm/dfe-stack/prof
 ## Enabling the gateway (edge TLS instead of port-forward)
 
 `envoy-gateway-config.enabled=true` adds the Gateway, HTTPRoutes and the
-self-signed internal CA. It needs envoy-gateway v1.8.3 + Gateway API CRDs
+self-signed internal CA. It needs envoy-gateway v1.9.1 + Gateway API CRDs
 (`argocd/bootstrap/envoy-gateway-app.yaml` is the product install),
-cert-manager v1.20.3 (`bootstrap.cert-manager`), a LoadBalancer
+cert-manager v1.21.2 (`bootstrap.cert-manager`), a LoadBalancer
 implementation, and a real `global.domain` + `domain` value.
 
 ## How this maps to the product composition
@@ -97,7 +94,7 @@ implementation, and a real `global.domain` + `domain` value.
 | appset | charts | here |
 |---|---|---|
 | layer2-platform (wave 2) | network-policies, envoy-gateway-config | deps (gateway off by default) |
-| layer2-data (waves 4-6) | cnpg-cluster, clickhouse-cluster, ferretdb, kafka, kafbat, otel-collector, links | deps (kafbat off on slim) |
+| layer2-data (waves 4-6) | clickhouse-cluster, ferretdb, kafka, kafbat, otel-collector, links | deps (kafbat off on slim) |
 | layer2-deploy-repo (wave 4) | forgejo | dep, off (no GitOps loop) |
 | layer2-apps (waves 5 and 7) | slim app set: dfe-engine (5), then dfe-ui, dfe-receiver, dfe-loader, hyperdx | deps (hyperdx under values key `dfe-hyperdx`) |
 | layer1-addons / layer-scale | upstream operator charts | prerequisites, not deps |

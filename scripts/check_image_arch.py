@@ -135,12 +135,6 @@ OPERATOR_VIA_CHART = {
         ("ghcr.io/clickhouse/clickhouse-operator",),
         "",
     ),
-    "cloudnative-pg": (
-        "oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg",
-        None,
-        ("ghcr.io/cloudnative-pg/cloudnative-pg",),
-        "",
-    ),
     "argocd": (
         "argo-cd",
         "https://argoproj.github.io/argo-helm",

@@ -71,7 +71,6 @@ _PINS = {
 NOT_AN_IMAGE = {
     "operators.karpenter-al2023-ami": "an EC2 AMI alias for Karpenter's node class",
     "services.postgresql": "the Postgres major; the image is services.documentdb-pg",
-    "services.cnpg-cluster-instances": "a replica count",
     "services.kafka-replicas": "a replica count",
     "services.clickhouse-replicas": "a replica count",
     "services.hyperdx": "the upstream version the fork tracks; the image is digests.dfe-hyperdx",

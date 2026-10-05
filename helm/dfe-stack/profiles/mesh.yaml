@@ -45,11 +45,6 @@ clickhouse-cluster:
     replicas: 3
     shardsCount: 1
 
-cnpg-cluster:
-  cluster:
-    # Source: argocd/values/profile-mesh.yaml `cluster.instances` (HA).
-    instances: 3
-
 # Source: argocd/values/profile-mesh.yaml `kafbat.enabled` (no Kafka to manage).
 kafbat:
   enabled: false

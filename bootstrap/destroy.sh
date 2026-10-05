@@ -47,7 +47,8 @@ fi
 
 echo "==> [3/7] Deleting DFE data resources (CRDs)"
 run kubectl -n strimzi delete kafka --all 2>/dev/null || true
-run kubectl -n cnpg delete cluster --all 2>/dev/null || true
+# A CloudNativePG Cluster exists only on an install that predates its removal.
+run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all 2>/dev/null || true
 # ClickHouseCluster/KeeperCluster are the clickhouse.com operator's kinds and
 # clickhouseinstallation is Altinity's; a CR left behind keeps its finalizer and
 # wedges the namespace delete below.
@@ -73,7 +74,7 @@ echo "==> [4/7] Deleting DFE namespaces"
 # terraform/modules/kubernetes-cluster/aws/dns.tf's destroy-time cleanup is
 # for -- it empties the private zone itself, independent of whether
 # external-dns ever got the chance.
-for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links; do
+for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done
 # KEDA registers the external-metrics APIService cluster-wide; deleting its

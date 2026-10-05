@@ -129,7 +129,7 @@ tls:
 
   # Internal mesh CA (Track 3 keystone). A self-signed root mints an
   # ECDSA P-384 CA exposed as the `dfe-internal-ca` ClusterIssuer;
-  # backing-service certs (ClickHouse, Kafka, Mongo/FerretDB, CNPG, OTLP)
+  # backing-service certs (ClickHouse, Kafka, Mongo/FerretDB, OTLP)
   # chain to it so in-cluster TLS shares one trust root. Inert until a
   # Certificate references the issuer -- adding it changes no running
   # workload, so it is safe to land ahead of the per-service rollout.
