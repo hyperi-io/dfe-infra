@@ -388,8 +388,6 @@ spec:
               value: {{ .Values.config.mountPath }}/sources
             - name: DFE_SERVICES_CONFIG_YAML_DIR
               value: {{ .Values.config.mountPath }}/services
-            - name: DFE_DEPLOYMENT_CONFIG_DIR
-              value: {{ .Values.config.mountPath }}/deployments
             # Points the management API at the mounted manifest, so a new or
             # changed app reflects without an engine release.
             - name: DFE_APP_CATALOGUE_FILE
@@ -408,11 +406,6 @@ spec:
             # Set only where a content entry materialises one: a path naming a
             # file nothing wrote is refused rather than answered with no sources.
             - name: DFE_SOURCE_CATALOGUE_FILE
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.metricsManifestUrl }}
-            # Where a metrics refresh reads each app's live manifest; unset, none is read.
-            - name: DFE_SERVICES_METRICS_MANIFEST_URL
               value: {{ . | quote }}
             {{- end }}
             - name: DFE_SCHEMAS_DIR
