@@ -310,7 +310,7 @@ route_paths() {
 # The engine team's answer (hyperi-io/dfe-engine#395), as the chart carries it.
 BROWSER_PREFIXES=(
   /api/v1/auth /api/v1/config/client /api/v1/system /api/v1/orgs /api/v1/sources
-  /api/v1/services /api/v1/service-surfaces /api/v1/deployments /api/v1/field-maps
+  /api/v1/services /api/v1/field-maps
   /api/v1/rules /api/v1/alerts /api/v1/transforms /api/v1/schemas /api/v1/hunts
   /api/v1/governance /api/v1/helm /api/v1/apps /api/v1/backing-services
   /api/v1/library /api/v1/gitops /api/v1/lifecycle /api/v1/repository
@@ -330,8 +330,8 @@ for p in "${BROWSER_PREFIXES[@]}"; do
   assert_has "engine-browser" "${p}" "${P}"
 done
 assert_has "engine-browser" "/.well-known" "${P}"
-# 22 families plus /.well-known, and nothing that was not asked for.
-assert_count "engine-browser-total" 23 "$(printf '%s\n' "${P}" | grep -c .)"
+# 20 families plus /.well-known, and nothing that was not asked for.
+assert_count "engine-browser-total" 21 "$(printf '%s\n' "${P}" | grep -c .)"
 for p in "${CLI_PREFIXES[@]}" "${NEVER_PUBLIC[@]}"; do
   assert_absent "engine-browser" "${p}" "${P}"
 done
@@ -342,14 +342,14 @@ P="$(route_paths dfe-engine-public --set ui.engine_api.cli_families_public=true)
 for p in "${CLI_PREFIXES[@]}"; do
   assert_has "engine-cli" "${p}" "${P}"
 done
-assert_count "engine-cli-total" 36 "$(printf '%s\n' "${P}" | grep -c .)"
+assert_count "engine-cli-total" 34 "$(printf '%s\n' "${P}" | grep -c .)"
 assert_absent "engine-cli" "/api/v1/scim/v2" "${P}"
 
 echo ""
 echo "case 19 -- scim_public is its own opt-in and adds that prefix alone"
 P="$(route_paths dfe-engine-public --set ui.engine_api.scim_public=true)"
 assert_has "engine-scim" "/api/v1/scim/v2" "${P}"
-assert_count "engine-scim-total" 24 "$(printf '%s\n' "${P}" | grep -c .)"
+assert_count "engine-scim-total" 22 "$(printf '%s\n' "${P}" | grep -c .)"
 assert_absent "engine-scim" "/api/v1/queries" "${P}"
 
 echo ""
