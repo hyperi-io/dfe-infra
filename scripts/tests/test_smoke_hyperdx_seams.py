@@ -41,7 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SMOKE = REPO_ROOT / "bootstrap" / "smoke-test-hyperdx.sh"
 
 CH_USER = "hdx"
-CH_PASSWORD = "s3cr3t-clickhouse-pw"
+CH_FIXTURE_VALUE = "fixture-clickhouse-value"
 TOKEN = "engine.issued.jwt"
 
 JWKS = "HyperDX can fetch the engine JWKS"
@@ -119,7 +119,7 @@ class Frontend(BaseHTTPRequestHandler):
         elif parts.path == "/" and parts.query:
             seen["queries"].append(parse_qs(parts.query)["query"][0])
             sent = (self.headers.get("X-ClickHouse-User"), self.headers.get("X-ClickHouse-Key"))
-            if sent == (CH_USER, CH_PASSWORD):
+            if sent == (CH_USER, CH_FIXTURE_VALUE):
                 seen["ch_credentials_ok"] = True
                 self.reply(200, "42\n")
             else:
@@ -177,7 +177,7 @@ def run_smoke(
                 },
                 "pod_env": {
                     "CLICKHOUSE_USER": CH_USER,
-                    "CLICKHOUSE_PASSWORD": CH_PASSWORD,
+                    "CLICKHOUSE_PASSWORD": CH_FIXTURE_VALUE,
                     **(pod_env or {}),
                 },
             }
@@ -228,7 +228,7 @@ def test_a_node_only_pod_passes_all_three_seams() -> None:
         seen["queries"] == ["SELECT count() FROM dfe.otel_logs"],
     )
     expect("the pod's own ClickHouse credentials were sent", seen["ch_credentials_ok"])
-    expect("the password is never echoed", CH_PASSWORD not in out.stdout + out.stderr)
+    expect("the password is never echoed", CH_FIXTURE_VALUE not in out.stdout + out.stderr)
 
 
 def test_unreadable_headers_skip_the_embed_checks() -> None:
