@@ -87,6 +87,13 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.kedaShim.resources | nindent 12 }}
+          # The engine image's Python boot outlasts the liveness window, so liveness is held off until this passes.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /livez
