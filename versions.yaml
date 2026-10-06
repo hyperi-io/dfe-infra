@@ -2382,7 +2382,7 @@ stacks:
       dfe-fetcher: "v1.4.32"        # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
       dfe-transform-vrl: "v1.1.30"   # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
       dfe-transform-vector: "v1.0.45"  # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
-      dfe-transform-elastic: "v1.1.8" # scalo-rs 2.13.0, built without PGO+BOLT. Idle until a source names it.
+      dfe-transform-elastic: "v1.1.9" # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64. Idle until a source names it.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -2400,7 +2400,7 @@ stacks:
       dfe-fetcher: "sha256:1cb24225a027aa06f9fb08289f8df4567e3202bd9c89fb789706c7d7d028bf7d"
       dfe-transform-vrl: "sha256:07455044dad76fbe7e2e305ea44d2ba071abd7f314f44f230568095c48df562e"
       dfe-transform-vector: "sha256:baa9ccb150a743c2a0cac08d0fa2172a3238f51e980dea2e6de616be215572b1"
-      dfe-transform-elastic: "sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
+      dfe-transform-elastic: "sha256:60e0d6891283137d024a99434c4c4231e6271925d460247c0b78b0421151ada4"
       dfe-hyperdx: "sha256:9ddfc727828b8b97e3aff347c22083a20e317adfa7c5621ec2c563e3b1a79ae6"
       culvert: "sha256:6a791a4ba432e03a896a9c503be17f15facae1b49cb5eebf50cb416c8a4711df"
       # Tagged by toolbox.dfe-toolbox.
