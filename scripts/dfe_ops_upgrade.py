@@ -183,7 +183,7 @@ STRIMZI_OPERATOR_KEY = "operators.strimzi-kafka-operator"
 KAFKA_VERSION_KEY = "services.kafka-version"
 
 # The Argo cluster secret bootstrap writes (bootstrap/templates/cluster-secret.yaml.tpl).
-CLUSTER_SECRET = "dfe-cluster"
+ARGO_CLUSTER = "dfe-cluster"
 TARGET_REVISION_ANNOTATION = "dfe.hyperi.io/target_revision"
 STACK_VERSION_ANNOTATION = "dfe.hyperi.io/stack_version"
 
@@ -596,7 +596,7 @@ def check_argo_apps(
         sync = (status.get("sync") or {}).get("status") or "Unknown"
         health = (status.get("health") or {}).get("status") or "Unknown"
         if stale_revision and stale_revision in _source_revisions(app):
-            bad.append(f"{name} (still renders from {stale_revision})")
+            bad.append(f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})")
         elif sync != "Synced" or health != "Healthy":
             bad.append(f"{name} (sync {sync}, health {health})")
     if bad:
@@ -1163,11 +1163,11 @@ def read_target_revision(kubeconfig: str | None, namespace: str) -> str:
     jsonpath = "jsonpath={.metadata.annotations." + TARGET_REVISION_ANNOTATION.replace(".", "\\.") + "}"
     result = _kubectl(
         kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
-        "get", "secret", CLUSTER_SECRET, "-o", jsonpath,
+        "get", "secret", ARGO_CLUSTER, "-o", jsonpath,
     )
     if result.returncode != 0:
         raise UpgradeError(
-            f"cannot read {TARGET_REVISION_ANNOTATION} on secret/{CLUSTER_SECRET} in {namespace}: "
+            f"cannot read {TARGET_REVISION_ANNOTATION} on secret/{ARGO_CLUSTER} in {namespace}: "
             f"{_last_line(result.stderr) or 'kubectl failed'}"
         )
     return (result.stdout or "").strip()
@@ -1179,29 +1179,34 @@ def decide_retarget(current: str, from_name: str, to_name: str, explicit: str | 
     A tag-pinned secret names the FROM stack and moves to the TO tag (the stack
     name is the git tag). A branch is tracked on purpose and left alone. A
     commit SHA could be any stack, so it refuses without an explicit ref.
+    `current` came out of a Secret, so no message here repeats it.
     """
+    key = f"secret/{ARGO_CLUSTER} {TARGET_REVISION_ANNOTATION}"
     if explicit:
         if explicit == current:
-            return None, f"already targets {current}"
-        return explicit, f"{current or '(unset)'} -> {explicit} (--target-revision)"
+            return None, f"{key} already names the --target-revision ref"
+        return explicit, f"{key} -> {explicit} (--target-revision)"
     if not current:
-        raise UpgradeError(f"secret/{CLUSTER_SECRET} carries no {TARGET_REVISION_ANNOTATION} -- pass --target-revision")
+        raise UpgradeError(f"{key} is unset -- pass --target-revision")
     if _norm_ref(current) == _norm_ref(to_name):
-        return None, f"already targets {current}"
+        return None, f"{key} already names the {to_name} tag"
     if _norm_ref(current) == _norm_ref(from_name):
-        return to_name, f"{current} -> {to_name}"
+        return to_name, f"{key}: the {from_name} tag -> {to_name}"
     if re.fullmatch(r"[0-9a-f]{40}", current):
         raise UpgradeError(
-            f"secret/{CLUSTER_SECRET} pins commit {current}, which names no stack -- pass "
-            f"--target-revision <ref> to say where the charts go"
+            f"{key} pins a commit, which names no stack -- pass --target-revision <ref> "
+            f"to say where the charts go"
         )
-    return None, f"tracks {current}, a branch, so the charts already follow it -- left as it is"
+    return None, (
+        f"{key} names neither the {from_name} nor the {to_name} tag, so it tracks a branch "
+        f"the charts already follow -- left as it is"
+    )
 
 
 def write_target_revision(kubeconfig: str | None, namespace: str, ref: str, stack: str) -> tuple[bool, str]:
     """Move the cluster secret's target_revision, and its stack_version with it."""
     result = _kubectl(
-        kubeconfig, "-n", namespace, "annotate", "--overwrite", f"secret/{CLUSTER_SECRET}",
+        kubeconfig, "-n", namespace, "annotate", "--overwrite", f"secret/{ARGO_CLUSTER}",
         f"{TARGET_REVISION_ANNOTATION}={ref}", f"{STACK_VERSION_ANNOTATION}={stack}",
     )
     if result.returncode != 0:
@@ -1211,7 +1216,7 @@ def write_target_revision(kubeconfig: str | None, namespace: str, ref: str, stac
 
 def retarget_command(namespace: str, ref: str, stack: str) -> str:
     return (
-        f"kubectl -n {namespace} annotate --overwrite secret/{CLUSTER_SECRET} "
+        f"kubectl -n {namespace} annotate --overwrite secret/{ARGO_CLUSTER} "
         f"{TARGET_REVISION_ANNOTATION}={ref} {STACK_VERSION_ANNOTATION}={stack}"
     )
 
@@ -1727,7 +1732,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
 
         if stage == chart_stage:
             ref = args.target_revision or to_name
-            emit(f"if secret/{CLUSTER_SECRET} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
+            emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
             emit(f"wait for Argo Applications to leave {from_name} (timeout {args.timeout}s)")
             if not args.dry_run and retarget:
                 ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)

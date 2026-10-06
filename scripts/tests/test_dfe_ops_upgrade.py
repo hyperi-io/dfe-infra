@@ -1801,21 +1801,32 @@ def test_decide_retarget_moves_a_tag_pinned_secret() -> None:
 
 
 def test_decide_retarget_leaves_a_branch_and_a_secret_already_there() -> None:
-    assert u.decide_retarget("main", "1.0.0", "2.0.0", None) == (
-        None, "tracks main, a branch, so the charts already follow it -- left as it is",
-    )
+    ref, why = u.decide_retarget("release-train-xyzzy", "1.0.0", "2.0.0", None)
+    assert ref is None
+    assert "tracks a branch the charts already follow -- left as it is" in why
     assert u.decide_retarget("2.0.0", "1.0.0", "2.0.0", None)[0] is None
+
+
+def test_decide_retarget_never_repeats_the_value_it_read_from_the_secret() -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    for current in ("release-train-xyzzy", "1.0.0", "2.0.0", "v1.0.0"):
+        _ref, why = u.decide_retarget(current, "0.9.0" if current == "release-train-xyzzy" else "1.0.0", "2.0.0", None)
+        assert "secret/dfe-cluster dfe.hyperi.io/target_revision" in why
+        assert "release-train-xyzzy" not in why and "v1.0.0" not in why
+    with pytest.raises(u.UpgradeError) as refused:
+        u.decide_retarget(sha, "1.0.0", "2.0.0", None)
+    assert sha not in str(refused.value)
 
 
 def test_decide_retarget_refuses_a_commit_pin_without_an_explicit_ref() -> None:
     sha = "0123456789abcdef0123456789abcdef01234567"
-    with pytest.raises(u.UpgradeError, match="pins commit"):
+    with pytest.raises(u.UpgradeError, match="pins a commit"):
         u.decide_retarget(sha, "1.0.0", "2.0.0", None)
     assert u.decide_retarget(sha, "1.0.0", "2.0.0", "2.0.0")[0] == "2.0.0"
 
 
 def test_decide_retarget_refuses_an_unset_annotation() -> None:
-    with pytest.raises(u.UpgradeError, match="carries no"):
+    with pytest.raises(u.UpgradeError, match="is unset"):
         u.decide_retarget("", "1.0.0", "2.0.0", None)
 
 
@@ -1846,7 +1857,8 @@ def test_check_argo_apps_fails_an_app_still_on_the_old_ref(monkeypatch: pytest.M
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
     ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
     assert ok is False
-    assert "1 app(s) not Synced/Healthy: kafka-dfe (still renders from 1.0.0)" in detail
+    assert "1 app(s) not Synced/Healthy: kafka-dfe (still renders from the previous" in detail
+    assert "1.0.0" not in detail  # the stale ref came out of the cluster Secret
 
 
 # ---------------------------------------------------------------------------
