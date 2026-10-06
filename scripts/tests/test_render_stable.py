@@ -36,6 +36,7 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 ENGINE = CHARTS / "dfe-engine"
+HYPERDX = CHARTS / "hyperdx"
 
 # A mint function guarded by a cluster read: the pairing that only works under
 # `helm install`, and silently re-mints under every `helm template`.
@@ -199,6 +200,57 @@ def test_a_non_dev_posture_cannot_render_without_minting() -> None:
     )
 
 
+def hyperdx_session_env(out: str) -> dict:
+    """The EXPRESS_SESSION_SECRET entry of the hyperdx container, or {} when absent."""
+    deployment = next(d for d in docs(out) if d.get("kind") == "Deployment")
+    container = next(c for c in deployment["spec"]["template"]["spec"]["containers"]
+                     if c["name"] == "hyperdx")
+    return next((e for e in container["env"] if e["name"] == "EXPRESS_SESSION_SECRET"), {})
+
+
+def test_hyperdx_session_key_is_minted_once_and_read_by_the_pod() -> None:
+    """Unset, the image signs sessions with a key published in upstream's source."""
+    first = render(HYPERDX)
+    expect("hyperdx renders byte-identically twice", first == render(HYPERDX),
+           "two renders of the same inputs differ")
+    gens = named(first, "Password", "dfe-hyperdx-session-gen")
+    es = named(first, "ExternalSecret", "dfe-hyperdx-session")
+    expect("the session key renders the ESO generator", len(gens) == 1, f"got {len(gens)}")
+    expect("the session key renders the ExternalSecret", len(es) == 1, f"got {len(es)}")
+    expect("the session key renders no template-minted Secret",
+           named(first, "Secret", "dfe-hyperdx-session") == [], "a Secret rendered")
+    if gens:
+        expect("the generated key is at least 32 characters",
+               gens[0]["spec"]["length"] >= 32, f"got {gens[0]['spec']['length']}")
+    if es:
+        spec = es[0]["spec"]
+        expect("the session key is written once, not refreshed",
+               spec.get("refreshPolicy") == "CreatedOnce", f"got {spec.get('refreshPolicy')}")
+        expect("no refresh interval reopens the generator",
+               str(spec.get("refreshInterval")) == "0", f"got {spec.get('refreshInterval')}")
+        expect("the Secret carries the key the pod reads",
+               "session-secret" in spec["target"]["template"]["data"], f"got {spec['target']}")
+        expect("an uninstall keeps the session key",
+               es[0]["metadata"].get("annotations", {}).get("helm.sh/resource-policy")
+               == "keep", f"got {es[0]['metadata'].get('annotations')}")
+    ref = hyperdx_session_env(first).get("valueFrom", {}).get("secretKeyRef", {})
+    expect("hyperdx reads EXPRESS_SESSION_SECRET from the minted Secret",
+           (ref.get("name"), ref.get("key")) == ("dfe-hyperdx-session", "session-secret"),
+           f"got {ref}")
+
+
+def test_hyperdx_session_key_can_come_from_the_deployment() -> None:
+    out = render(HYPERDX, "sessionSecret.create=false")
+    expect("sessionSecret.create=false renders no generator",
+           named(out, "Password", "dfe-hyperdx-session-gen") == [], "a generator rendered")
+    expect("sessionSecret.create=false renders no ExternalSecret",
+           named(out, "ExternalSecret", "dfe-hyperdx-session") == [],
+           "an ExternalSecret rendered")
+    ref = hyperdx_session_env(out).get("valueFrom", {}).get("secretKeyRef", {})
+    expect("the pod still reads the deployment's Secret",
+           ref.get("name") == "dfe-hyperdx-session", f"got {ref}")
+
+
 def test_no_chart_mints_a_secret_behind_a_lookup() -> None:
     """The #224 shape, repo-wide: a cluster read cannot guard a render-time mint."""
     offenders = []
@@ -223,6 +275,8 @@ def main() -> int:
         test_the_seed_accounts_secret_no_longer_claims_the_admin_password()
         test_the_engine_reads_the_minted_secret()
         test_a_non_dev_posture_cannot_render_without_minting()
+        test_hyperdx_session_key_is_minted_once_and_read_by_the_pod()
+        test_hyperdx_session_key_can_come_from_the_deployment()
         test_no_chart_mints_a_secret_behind_a_lookup()
         return summary()
 

@@ -1,0 +1,50 @@
+{{- /*
+HyperDX's Express session signing key. Unset, the image signs sessions with a
+key published in upstream's source.
+
+ESO writes it once, by the same mechanism and for the same reason as dfe-engine's
+JWT key (templates/jwt-secret.yaml there): Argo renders with `helm template`, so a
+template-minted value would change on every sync and end every live session.
+*/ -}}
+{{- if .Values.sessionSecret.create }}
+{{- $name := .Values.sessionSecret.name -}}
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ $name }}-gen
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  length: 48
+  digits: 6
+  symbols: 0          # alphanumeric -- avoids escaping in env contexts
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # The Secret carries ESO's ownerReference, so an uninstall that took this
+    # with it would drop the key and end every live session.
+    helm.sh/resource-policy: keep
+spec:
+  refreshPolicy: CreatedOnce
+  refreshInterval: "0"
+  target:
+    name: {{ $name }}
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        {{ .Values.sessionSecret.key }}: "{{ `{{ .password }}` }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ $name }}-gen
+{{- end }}
