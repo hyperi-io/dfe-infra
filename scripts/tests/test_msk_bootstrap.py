@@ -249,9 +249,9 @@ def test_the_iam_jar_is_pinned_and_verified() -> None:
     fetch = init["command"][2]
     expect("the jar is fetched by an init container", len(pod["initContainers"]) == 1)
     expect("the pinned version is in the URL",
-           "releases/download/v2.3.8/aws-msk-iam-auth-2.3.8-all.jar" in fetch, fetch)
+           "releases/download/v2.3.9/aws-msk-iam-auth-2.3.9-all.jar" in fetch, fetch)
     expect("the published checksum is pinned",
-           "8c7b14f9fc4c9dc3f78837a970d84f9303b5bf849d272c6c414e5ee49f3e5ac4" in fetch, fetch)
+           "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43" in fetch, fetch)
     expect("the checksum is checked, not just carried", "sha256sum" in fetch, fetch)
     expect("a mismatch fails the Job", "exit 1" in fetch, fetch)
     expect("the CLI loads the verified jar off the shared volume",
@@ -259,9 +259,9 @@ def test_the_iam_jar_is_pinned_and_verified() -> None:
                for e in pod["containers"][0]["env"]),
            repr(pod["containers"][0]["env"]))
     mirrored = bootstrap_job(render(merged({"kafka": {"external": {"msk": {"bootstrap": {
-        "iamAuth": {"url": "https://mirror.example/aws-msk-iam-auth-2.3.8-all.jar"}}}}}})))
+        "iamAuth": {"url": "https://mirror.example/aws-msk-iam-auth-2.3.9-all.jar"}}}}}})))
     expect("an air-gapped deploy can point the URL at a mirror",
-           "https://mirror.example/aws-msk-iam-auth-2.3.8-all.jar"
+           "https://mirror.example/aws-msk-iam-auth-2.3.9-all.jar"
            in mirrored["spec"]["template"]["spec"]["initContainers"][0]["command"][2])
 
 

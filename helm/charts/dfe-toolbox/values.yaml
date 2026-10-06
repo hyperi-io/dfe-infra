@@ -43,7 +43,7 @@ image:
   # stacks.<current>.toolbox.dfe-toolbox in versions.yaml -- check_versions_drift.py
   # holds this and Chart.yaml's appVersion to the same pin (CHECKS entries
   # "dfe-toolbox chart image tag" / "dfe-toolbox chart appVersion").
-  tag: "v1.0.1"
+  tag: "v1.0.2"
   # stacks.<current>.digests.dfe-toolbox-base, drift-checked ("dfe-toolbox chart
   # image digest"); dfe-common.image renders tag@digest.
   digest: "sha256:0e086e98c2ff74249cdb4b35f8ab3c4e0d4cbc5133eb367045d54c17dcdb9dc7"

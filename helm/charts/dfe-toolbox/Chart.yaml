@@ -8,7 +8,7 @@ version: 0.1.0
 # check_versions_drift.py's CHECKS holds this and values.yaml's image.tag to
 # the same pin, so the two cannot drift from each other or from the
 # Dockerfiles' own BASE_TAG build args.
-appVersion: "v1.0.1"
+appVersion: "v1.0.2"
 dependencies:
   - name: dfe-common
     version: "0.15.0"

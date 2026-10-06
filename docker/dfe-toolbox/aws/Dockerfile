@@ -4,12 +4,12 @@
 #
 # ARG defaults mirror versions.yaml's toolbox.* pins (drift-checked); the
 # workflow overrides them at build time from the same source.
-ARG BASE_TAG="v1.0.1"
+ARG BASE_TAG="v1.0.2"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 
 ARG TARGETARCH
-ARG AWS_CLI_VERSION="2.36.36"
+ARG AWS_CLI_VERSION="2.37.9"
 # AWS ships no versioned download for the Session Manager plugin -- only a
 # floating "latest" URL per OS/arch -- so this pin is informational: it
 # records the version `latest` resolved to when the pin was last verified,

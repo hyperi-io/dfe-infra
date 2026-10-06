@@ -3,7 +3,7 @@ name: clickhouse-cluster
 description: ClickHouse cluster for DFE analytics and observability (via the official ClickHouse operator)
 type: application
 version: 0.2.0
-appVersion: "26.3.32.14"
+appVersion: "26.3.42.3"
 dependencies:
   - name: dfe-common
     version: "0.15.0"

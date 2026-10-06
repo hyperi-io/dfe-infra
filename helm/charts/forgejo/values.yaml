@@ -3,7 +3,7 @@ component: forgejo
 env: local
 cloud: local
 
-# Forgejo image. Tag defaults to Chart.appVersion (15.0.5 LTS). Pulled from the
+# Forgejo image. Tag defaults to Chart.appVersion (15.0.9 LTS). Pulled from the
 # CANONICAL Forgejo registry code.forgejo.org -- NOT codeberg.org/forgejo, whose
 # container registry returns 503s under load (proven on the bare-cluster test:
 # kubelet got "503 Service Unavailable" from codeberg.org, while code.forgejo.org
@@ -14,7 +14,7 @@ image:
   repository: code.forgejo.org/forgejo/forgejo
   tag: ""
   # == versions.yaml services-digests.forgejo (drift-checked); it pins the appVersion tag.
-  digest: "sha256:eda2e378442d2f18cfa563994f8ad66e71f04ac9c3bb4259cc57bdd641890f5c"
+  digest: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"
   pullPolicy: IfNotPresent
 
 replicaCount: 1

@@ -36,38 +36,38 @@ rules:
   clickhouse-operator-server-range:
     severity: "warn"
     when-key: "operators.clickhouse-operator"
-    when-equals: "0.0.7"
+    when-equals: "0.0.8"
     require-key: "services.clickhouse-version"
     require-range: ">=25.0.0 <27.0.0"
-    reason: "PLACEHOLDER bound -- the official clickhouse-operator 0.0.7 does not publish an explicit clickhouse-server compatibility range. Confirm the tested range and promote to error. Also verify the CRD kind (upstream docs say ClickHouseInstallation; our comment says ClickHouseCluster). NOTE: when-equals is an EXACT match, so this guard must be re-pointed on every clickhouse-operator bump or the rule silently stops firing."
+    reason: "PLACEHOLDER bound -- the official clickhouse-operator 0.0.8 does not publish an explicit clickhouse-server compatibility range. Confirm the tested range and promote to error. Also verify the CRD kind (upstream docs say ClickHouseInstallation; our comment says ClickHouseCluster). NOTE: when-equals is an EXACT match, so this guard must be re-pointed on every clickhouse-operator bump or the rule silently stops firing."
     source: "https://github.com/ClickHouse/clickhouse-operator/releases"
 
   clickhouse-keeper-server-pairing:
     severity: "error"
     when-key: "services.clickhouse-version"
-    when-equals: "26.3.32.14"
+    when-equals: "26.3.42.3"
     require-key: "services.clickhouse-keeper"
-    require-equals: "26.3.32.14"
+    require-equals: "26.3.42.3"
     reason: "Keeper ships in the ClickHouse release, and helm/charts/clickhouse-cluster runs the server and Keeper from the same one, so the two pins move as one. Error severity: a server bump leaves this when-equals guard dead, which fails --strict until the keeper pin and this rule are re-pointed together."
     source: "https://github.com/ClickHouse/ClickHouse/releases"
 
   redpanda-operator-broker-pairing:
     severity: "warn"
     when-key: "operators.redpanda-operator"
-    when-equals: "26.2.3"
+    when-equals: "26.2.4"
     require-key: "services.redpanda-version"
-    require-equals: "v26.2.2"
-    reason: "redpanda-operator chart 26.2.3 is tested/paired with broker image v26.2.2. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
+    require-equals: "v26.2.3"
+    reason: "redpanda-operator chart 26.2.4 is tested/paired with broker image v26.2.3. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
     source: "https://github.com/redpanda-data/redpanda-operator/releases"
 
   envoy-gateway-proxy-pairing:
     severity: "error"
     when-key: "operators.envoy-gateway"
-    when-equals: "v1.9.1"
+    when-equals: "v1.9.2"
     require-key: "services.envoy-gateway-proxy"
-    require-equals: "distroless-v1.39.1"
-    reason: "Envoy Gateway v1.9.1 compiles in docker.io/envoyproxy/envoy:distroless-v1.39.1 as its default proxy, and helm/edge/gateway pins that image explicitly, so the two must move as one. Error severity: a gateway bump leaves this when-equals guard dead, which fails --strict until the proxy pin and this rule are re-pointed together."
-    source: "https://github.com/envoyproxy/gateway/blob/v1.9.1/api/v1alpha1/shared_types.go"
+    require-equals: "distroless-v1.39.2"
+    reason: "Envoy Gateway v1.9.2 compiles in docker.io/envoyproxy/envoy:distroless-v1.39.1 as its default proxy; helm/edge/gateway pins distroless-v1.39.2 explicitly over it for BoringSSL CVE-2026-35189, one patch ahead on the same Envoy minor. The gateway and proxy pins move as one. Error severity: a gateway bump leaves this when-equals guard dead, which fails --strict until the proxy pin and this rule are re-pointed together."
+    source: "https://github.com/envoyproxy/gateway/blob/v1.9.2/api/v1alpha1/shared_types.go"
 
   ferretdb2-requires-documentdb:
     severity: "error"
