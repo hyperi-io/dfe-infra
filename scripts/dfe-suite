@@ -8,21 +8,26 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Drive the DFE suite from the graph rather than from a memorised roster.
 
-Six jobs::
+Seven jobs::
 
     dfe-suite release <node> [SUBJECT]        # ship a library node
     dfe-suite check <producer> <version>      # dry-run walk of its out-edges
     dfe-suite walk <producer> <version>       # the same walk, rebuilding what moved
     dfe-suite signals <member>                # every open signal on a member
+    dfe-suite pins [member ...]               # backing-service pins vs versions.yaml
     dfe-suite review-plan <group>             # a review pack per member of a group
     dfe-suite kinds                           # what each edge check does
 
 ``signals`` is the clean-state gate: a member's open issues, bot PRs,
 code-scanning findings and the WARNINGS in its latest CI run's logs -- not only
 the failures -- each of which is resolved, closed as not required, or marked in
-code as risk accepted before that member's rebuild commit lands. It reports;
+code as risk accepted before that member's rebuild commit lands. Its backing-
+service pins that disagree with versions.yaml are open signals too. It reports;
 /fixes clears. The name is deliberately not ``hygiene``: that is
 ``hyperi-ai helper hygiene``, which is repo tidiness and a different job.
+
+``pins`` is scripts/check_member_pins.py: every member's image pins at
+origin/main, tag and digest, against the current versions.yaml stack.
 
 The graph is dfe-infra's ``suite.yaml``, read through its own
 ``scripts/dfe-stack suite --producer <name>``. Nothing here parses that file:
@@ -63,6 +68,7 @@ import os
 import subprocess
 from collections.abc import Callable
 
+import check_member_pins
 from dfe_suite.graph import in_edges, load_graph, load_producer, out_edges
 from dfe_suite.kinds import (
     ACTION_HUMAN_READ,
@@ -479,18 +485,21 @@ def cmd_signals(args: argparse.Namespace) -> int:
     Report only. The gather is the same read-only scan /fixes runs, so the
     two never disagree about what is open; /fixes is what clears it.
 
-    Returns 1 when anything is open AND when the CI warnings could not be read
-    at all -- an unread log is not a clean one, and returning 0 there would
-    pass the gate on a check that never ran.
+    Returns 1 when anything is open AND when the CI warnings or the pins could
+    not be read at all -- an unread log is not a clean one, and returning 0
+    there would pass the gate on a check that never ran.
     """
     repo = _consumer_repo(args.member, args.repos)
     report = _gather(args.member, repo)
     alerts = report["alerts"]
     counts = _counts(report)
+    pin_lines, counts["pin drift"], pins_read = _pin_signals(args.member, args.repos)
     checked = bool(report["ci"]["checked"])
     total = sum(counts.values())
     headline = ", ".join(
-        "ci warnings not checked" if k == "ci warnings" and not checked else f"{k} {v}"
+        "ci warnings not checked" if k == "ci warnings" and not checked
+        else "pins not read" if k == "pin drift" and not pins_read
+        else f"{k} {v}"
         for k, v in counts.items()
     )
     say(f"{args.member}: {total} open signal(s) -- {headline}")
@@ -502,9 +511,43 @@ def cmd_signals(args: argparse.Namespace) -> int:
         print(f"  ci warning: {line}", flush=True)
     if not checked:
         print("  ci warnings: NOT CHECKED -- see notes", flush=True)
+    for line in pin_lines:
+        print(f"  pin: {line.strip()}", flush=True)
     for note in report["notes"]:
         print(f"  note: {note}", flush=True)
-    return 1 if total or not checked else 0
+    return 1 if total or not checked or not pins_read else 0
+
+
+def _pin_signals(member: str, repos: str | None) -> tuple[list[str], int, bool]:
+    """(lines to print, pin edits open, whether the pins were read) for one member.
+
+    An exempt member was read and has nothing open; a member that is not a
+    suite node has no stack pins to hold it to.
+    """
+    try:
+        _stack, _images, reports, stale = check_member_pins.scan([member], repos=repos)
+    except FleetError as exc:
+        return [f"not checked -- {exc}"], 0, True
+    (report,) = reports
+    if report.exempt:
+        return [f"exempt -- {report.exempt}"], 0, True
+    if report.unread:
+        return [f"NOT READ -- {report.unread}"], 0, False
+    lines = [finding.render() for finding in report.findings]
+    lines += [f"{f.path} {f.image}: waiver {f.old} -- {f.new}" for f in stale]
+    return lines, len(report.edits) + len(stale), True
+
+
+def cmd_pins(args: argparse.Namespace) -> int:
+    """Every member's backing-service pins against versions.yaml; scripts/check_member_pins.py."""
+    argv = list(args.member)
+    if args.repos:
+        argv += ["--repos", args.repos]
+    if args.no_fetch:
+        argv.append("--no-fetch")
+    if args.api:
+        argv.append("--api")
+    return check_member_pins.main(argv)
 
 
 def _node(graph: dict, member: str) -> dict:
@@ -698,6 +741,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  dfe-suite check scalo-py 2.29.10 --repos ~/projects\n"
             "  dfe-suite walk scalo-rs 2.11.0 --no-tests dfe-loader\n"
             "  dfe-suite signals dfe-loader\n"
+            "  dfe-suite pins\n"
+            "  dfe-suite pins dfe-loader dfe-engine --no-fetch\n"
             "  dfe-suite review-plan rust\n"
             "  dfe-suite review-plan typescript --role ui --json\n"
             "  git add <fix-files>\n"
@@ -799,6 +844,19 @@ def build_parser() -> argparse.ArgumentParser:
     signals.add_argument("member", help="the member repo to report on")
     signals.add_argument("--repos", help="directory holding the member checkouts")
 
+    pins = sub.add_parser(
+        "pins", help="every member's backing-service pins at origin/main against versions.yaml"
+    )
+    add_shared(pins)
+    pins.add_argument("member", nargs="*", help="members to scan (default: every suite.yaml node)")
+    pins.add_argument("--repos", help="directory holding the member checkouts")
+    pins.add_argument(
+        "--no-fetch", action="store_true", help="read origin/main as it stands, without a fetch"
+    )
+    pins.add_argument(
+        "--api", action="store_true", help="read every member's main through gh api, even one checked out here"
+    )
+
     review = sub.add_parser(
         "review-plan", help="a /complete-review context pack per member of a group"
     )
@@ -841,6 +899,7 @@ def main(argv: list[str] | None = None) -> int:
         "check": cmd_check,
         "walk": cmd_walk,
         "signals": cmd_signals,
+        "pins": cmd_pins,
         "review-plan": cmd_review_plan,
         "kinds": cmd_kinds,
     }

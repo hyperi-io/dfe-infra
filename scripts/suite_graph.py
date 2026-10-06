@@ -237,6 +237,32 @@ def validate(graph: dict) -> list[str]:
         for member in lane.get("members", []):
             if member not in nodes:
                 problems.append(f"lane {lane.get('name')}: member {member} is not a node")
+    problems += _waiver_problems(graph.get("pin_waivers", []), nodes)
+    return problems
+
+
+WAIVER_FIELDS = ("member", "file", "image", "reason")
+# A version or a digest in a waiver: the stack moves on and the waiver would not.
+_VERSION_LITERAL = re.compile(r"\d+\.\d+|sha256:")
+
+
+def _waiver_problems(waivers: object, nodes: dict) -> list[str]:
+    if not isinstance(waivers, list):
+        return [f"pin_waivers: is {type(waivers).__name__}, not a list"]
+    problems = []
+    for n, waiver in enumerate(waivers, start=1):
+        if not isinstance(waiver, dict):
+            problems.append(f"pin_waivers #{n}: not a map of {', '.join(WAIVER_FIELDS)}")
+            continue
+        where = f"pin_waivers #{n} ({waiver.get('member')} {waiver.get('file')})"
+        problems += [f"{where}: missing `{f}`" for f in WAIVER_FIELDS if not waiver.get(f)]
+        if waiver.get("member") and waiver["member"] not in nodes:
+            problems.append(f"{where}: member {waiver['member']} is not a node")
+        problems += [
+            f"{where}: `{f}` carries a version literal ({waiver[f]!r}); name the image, not a version"
+            for f in WAIVER_FIELDS
+            if isinstance(waiver.get(f), str) and _VERSION_LITERAL.search(waiver[f])
+        ]
     return problems
 
 

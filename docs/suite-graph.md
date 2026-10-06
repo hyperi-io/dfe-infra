@@ -424,6 +424,18 @@ back, and the lanes are what resolve it.
 in-edges, so someone picking up one member sees every producer whose release
 puts work on their desk.
 
+## Backing-service pins in the members
+
+`scripts/check_member_pins.py` (also `dfe-suite pins`, and part of `dfe-suite signals`) holds every member's test, compose and script image pins to `versions.yaml`'s current stack. It reads each member's main, from a local checkout after a fetch or otherwise (or with `--api`) through `gh api` from the repo its node names, compares tag and digest, and exits 1 with the edits as `file:line old -> new`. A pin with no digest is drift. dfe-infra and the dfe-hyperdx fork are not scanned, and a managed Kafka version (MSK's `3.9.x.kraft`) is not an image.
+
+Adding a service is a data edit in the current stack's block of `versions.yaml`:
+
+- annotate its key (`# renovate: datasource=docker depName=<ref>` or `# image: <ref>`) and give it a `services-digests:` entry under the same key. An undigested pin is not checked.
+- `aliases=<ref>` on the annotation line names the same image under another registry, once both resolve to one index digest.
+- `rejects=<ref>` names a look-alike that is a different image: apache/kafka rejects apache/kafka-native.
+
+A member that has to pin something else gets a `pin_waivers:` entry in `suite.yaml`: member, file, image and reason, with no version. A waiver that excuses nothing fails the scan.
+
 ## Lanes
 
 A full suite pass runs the lanes in this order: `toolchain` (dfe-infra,
