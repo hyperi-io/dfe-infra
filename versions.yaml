@@ -2275,7 +2275,11 @@ stacks:
       hashicorp-archive: "~> 2.8"    # terraform/modules/managed-kafka/msk
       # The optional OIDC modules ship with no lock file, so the constraint is
       # the only ceiling a customer's `tofu init` has to resolve against.
-      okta-okta: "~> 6.0"            # terraform/modules/tf-oidc-okta
-      hashicorp-google: "~> 7.0"     # terraform/modules/tf-oidc-google
+      # okta 7.0.0 (2026-08-24, current major, GA waives the cooldown): none of
+      # its breaking changes touch okta_app_oauth.
+      okta-okta: "~> 7.0"            # terraform/modules/tf-oidc-okta
+      # google 8.5.0 (2026-09-29, newest 8.x, GA waives the cooldown): the 8.0
+      # upgrade guide changes neither service-account resource the module uses.
+      hashicorp-google: "~> 8.5"     # terraform/modules/tf-oidc-google
       hashicorp-azuread: "~> 3.0"    # terraform/modules/tf-oidc-entra
 
