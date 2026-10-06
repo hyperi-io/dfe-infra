@@ -113,6 +113,18 @@ spec:
             {{- end }}
             - name: MONGO_URI
               value: {{ .Values.mongodb.uri | quote }}
+            # Unset, the image signs sessions with a key published in upstream's source.
+            - name: EXPRESS_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sessionSecret.name }}
+                  key: {{ .Values.sessionSecret.key }}
+            # Unset, the image stores third-party tokens in plain text.
+            - name: TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.tokenEncryption.name }}
+                  key: {{ .Values.tokenEncryption.key }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
             {{- if .Values.dashboards.enabled }}

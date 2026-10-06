@@ -36,6 +36,7 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 ENGINE = CHARTS / "dfe-engine"
+HYPERDX = CHARTS / "hyperdx"
 
 # A mint function guarded by a cluster read: the pairing that only works under
 # `helm install`, and silently re-mints under every `helm template`.
@@ -199,6 +200,71 @@ def test_a_non_dev_posture_cannot_render_without_minting() -> None:
     )
 
 
+# (env var, Secret, data key, value template, values block). The token key is the
+# SHA-256 hex of its password because the image takes 64 hex chars or base64 of
+# exactly 32 bytes, and refuses to start on anything else.
+HYPERDX_KEYS = (
+    ("EXPRESS_SESSION_SECRET", "dfe-hyperdx-session", "session-secret",
+     "{{ .password }}", "sessionSecret"),
+    ("TOKEN_ENCRYPTION_KEY", "dfe-hyperdx-token-encryption", "token-encryption-key",
+     "{{ .password | sha256sum }}", "tokenEncryption"),
+)
+
+
+def hyperdx_env(out: str, name: str) -> dict:
+    """One env entry of the hyperdx container, or {} when absent."""
+    deployment = next(d for d in docs(out) if d.get("kind") == "Deployment")
+    container = next(c for c in deployment["spec"]["template"]["spec"]["containers"]
+                     if c["name"] == "hyperdx")
+    return next((e for e in container["env"] if e["name"] == name), {})
+
+
+def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
+    """Unset, sessions are signed with upstream's published key and tokens stored plain."""
+    first = render(HYPERDX)
+    expect("hyperdx renders byte-identically twice", first == render(HYPERDX),
+           "two renders of the same inputs differ")
+    for env, secret, key, value, _ in HYPERDX_KEYS:
+        gens = named(first, "Password", f"{secret}-gen")
+        es = named(first, "ExternalSecret", secret)
+        expect(f"{env} renders the ESO generator", len(gens) == 1, f"got {len(gens)}")
+        expect(f"{env} renders the ExternalSecret", len(es) == 1, f"got {len(es)}")
+        expect(f"{env} renders no template-minted Secret",
+               named(first, "Secret", secret) == [], "a Secret rendered")
+        if gens:
+            expect(f"{env}'s generated password is at least 32 characters",
+                   gens[0]["spec"]["length"] >= 32, f"got {gens[0]['spec']['length']}")
+        if es:
+            spec = es[0]["spec"]
+            expect(f"{env} is written once, not refreshed",
+                   spec.get("refreshPolicy") == "CreatedOnce",
+                   f"got {spec.get('refreshPolicy')}")
+            expect(f"{env}: no refresh interval reopens the generator",
+                   str(spec.get("refreshInterval")) == "0",
+                   f"got {spec.get('refreshInterval')}")
+            data = spec["target"]["template"]["data"]
+            expect(f"{env}'s Secret carries the key the pod reads, in the format it parses",
+                   data.get(key) == value, f"got {data}")
+            expect(f"an uninstall keeps {env}",
+                   es[0]["metadata"].get("annotations", {}).get("helm.sh/resource-policy")
+                   == "keep", f"got {es[0]['metadata'].get('annotations')}")
+        ref = hyperdx_env(first, env).get("valueFrom", {}).get("secretKeyRef", {})
+        expect(f"hyperdx reads {env} from the minted Secret",
+               (ref.get("name"), ref.get("key")) == (secret, key), f"got {ref}")
+
+
+def test_hyperdx_keys_can_come_from_the_deployment() -> None:
+    for env, secret, _, _, block in HYPERDX_KEYS:
+        out = render(HYPERDX, f"{block}.create=false")
+        expect(f"{block}.create=false renders no generator",
+               named(out, "Password", f"{secret}-gen") == [], "a generator rendered")
+        expect(f"{block}.create=false renders no ExternalSecret",
+               named(out, "ExternalSecret", secret) == [], "an ExternalSecret rendered")
+        ref = hyperdx_env(out, env).get("valueFrom", {}).get("secretKeyRef", {})
+        expect(f"the pod still reads the deployment's {env} Secret",
+               ref.get("name") == secret, f"got {ref}")
+
+
 def test_no_chart_mints_a_secret_behind_a_lookup() -> None:
     """The #224 shape, repo-wide: a cluster read cannot guard a render-time mint."""
     offenders = []
@@ -223,6 +289,8 @@ def main() -> int:
         test_the_seed_accounts_secret_no_longer_claims_the_admin_password()
         test_the_engine_reads_the_minted_secret()
         test_a_non_dev_posture_cannot_render_without_minting()
+        test_hyperdx_keys_are_minted_once_and_read_by_the_pod()
+        test_hyperdx_keys_can_come_from_the_deployment()
         test_no_chart_mints_a_secret_behind_a_lookup()
         return summary()
 

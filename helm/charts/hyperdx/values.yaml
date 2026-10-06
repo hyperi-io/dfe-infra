@@ -112,6 +112,26 @@ dfeAuth:
   headerGroups: x-oidc-groups
   defaultTeam: dfe
 
+# Express session signing key, generated once in-cluster by
+# templates/generated-keys.yaml. Unset, the image signs sessions with a key
+# published in upstream's source.
+sessionSecret:
+  name: dfe-hyperdx-session
+  key: session-secret
+  # false when the deployment supplies a Secret under `name` itself; the chart
+  # then creates nothing and the pod still reads it.
+  create: true
+
+# Key that encrypts the third-party tokens HyperDX stores (TOKEN_ENCRYPTION_KEY),
+# generated once in-cluster by templates/generated-keys.yaml as 64 hex chars.
+# Unset, those tokens are stored in plain text. A deployment supplying its own
+# (create: false) must give 64 hex chars or base64 of exactly 32 bytes: the
+# image refuses to start on anything else.
+tokenEncryption:
+  name: dfe-hyperdx-token-encryption
+  key: token-encryption-key
+  create: true
+
 # Casbin dropped (DFE authz standard, Cut A): dfe-engine is the ONE PDP and
 # CH GRANTs are the authoritative data control, so hyperdx needs IDENTITY only
 # (the dfeAuth header seam above) -- no per-route policy engine, no Postgres
