@@ -17,6 +17,47 @@ run() {
     fi
 }
 
+# Success only when kubectl answered and no KEDA operator pod is running, so an
+# unreadable answer never reads as "gone".
+keda_operator_absent() {
+    local pods
+    pods="$(kubectl -n keda get pods -l app.kubernetes.io/name=keda-operator \
+        --field-selector=status.phase=Running -o name 2>/dev/null)" || return 1
+    [[ -z "${pods}" ]]
+}
+
+# Only the KEDA operator clears finalizer.keda.sh, so a KEDA resource still
+# terminating once the operator is gone would hold its Argo Application forever.
+clear_stranded_keda_finalizers() {
+    local resource kind ns name finalizers
+    keda_operator_absent || return 0
+    for resource in scaledobjects scaledjobs triggerauthentications; do
+        while read -r kind ns name finalizers; do
+            [[ "${finalizers}" == *'"finalizer.keda.sh"'* ]] || continue
+            if kubectl patch "${kind}.keda.sh" "${name}" -n "${ns}" --type merge \
+                -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1; then
+                echo "  no KEDA operator is running: cleared finalizer.keda.sh from ${kind} ${ns}/${name}"
+            else
+                echo "  WARN: could not clear finalizer.keda.sh from ${kind} ${ns}/${name}"
+            fi
+        done < <(kubectl get "${resource}.keda.sh" -A -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.kind}{" "}{.metadata.namespace}{" "}{.metadata.name}{" "}{.metadata.finalizers}{"\n"}{end}' 2>/dev/null || true)
+    done
+}
+
+# Bounded, so an Application held up by anything else cannot stall the teardown.
+await_applications_gone() {
+    local waited=0
+    while (( waited < 300 )); do
+        clear_stranded_keda_finalizers
+        if [[ -z "$(kubectl -n argocd get applications.argoproj.io -o name 2>/dev/null)" ]]; then
+            return 0
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    echo "  WARN: ArgoCD Applications still present after ${waited}s, continuing"
+}
+
 echo "=== DFE Teardown ==="
 echo "This will DELETE all DFE resources from the cluster."
 echo ""
@@ -30,15 +71,20 @@ if [[ "${DRY_RUN}" != "true" ]] && [[ "${1:-}" != "--force" ]]; then
 fi
 
 echo "==> [1/8] Deleting ArgoCD Applications + ApplicationSets"
-# KEDA scalers carry finalizer.keda.sh, which only the KEDA operator clears, so
-# they go before Argo's concurrent cascade can reap the operator ahead of them.
-run kubectl delete scaledobject --all -A 2>/dev/null || true
-run kubectl delete scaledjob --all -A 2>/dev/null || true
-run kubectl delete triggerauthentication --all -A 2>/dev/null || true
+# ApplicationSets first, so Argo stops recreating what is deleted below.
 run kubectl -n argocd delete applicationset --all 2>/dev/null || true
+# KEDA clears its own finalizer.keda.sh, so its resources go while it still runs.
+run kubectl delete scaledobject --all -A --timeout=30s 2>/dev/null || true
+run kubectl delete scaledjob --all -A --timeout=30s 2>/dev/null || true
+run kubectl delete triggerauthentication --all -A --timeout=30s 2>/dev/null || true
 # Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
 # app.catalog.cattle.io and every Argo Application survives the teardown.
-run kubectl -n argocd delete applications.argoproj.io --all 2>/dev/null || true
+run kubectl -n argocd delete applications.argoproj.io --all --wait=false 2>/dev/null || true
+if [[ "${DRY_RUN}" != "true" ]]; then
+    await_applications_gone
+else
+    echo "[DRY-RUN] wait for the Applications to go, clearing finalizer.keda.sh from any KEDA resource still terminating once no KEDA operator pod is running"
+fi
 
 echo "==> [2/8] Waiting for ArgoCD to clean up managed resources..."
 if [[ "${DRY_RUN}" != "true" ]]; then
