@@ -2375,7 +2375,7 @@ stacks:
     # check_versions_drift.py holds each chart's appVersion to its pin.
     apps:
       dfe-engine: "v1.22.13"        # 2026-10-06. scalo-py 2.31.1, dfe-schemas 0.2.9.
-      dfe-ui: "v1.7.5"              # 2026-09-27.
+      dfe-ui: "v1.7.6"              # 2026-10-06. Defaults drift and Apply Defaults, the services feature removed, and the source view fixes.
       dfe-receiver: "v1.15.42"      # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
       dfe-loader: "v1.18.46"        # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64. reqwest stays on 0.12 (dfe-loader#240).
       dfe-archiver: "v1.7.28"       # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
@@ -2393,7 +2393,7 @@ stacks:
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
       dfe-engine: "sha256:ee6a7bb4e7263e243309b7ba9ac435ceb0210bd5f1b8abf5e1b6397b21679a04"
-      dfe-ui: "sha256:144800e1cc7479ca1fd713228daaa02bbb348b2293a02abdbac9c581b9a3e2dd"
+      dfe-ui: "sha256:b152f9564b3a92f8379efc8c957dfbaa165b9f8995f2a8d8db2fbf87a6de8bb9"
       dfe-receiver: "sha256:6b2da2ebe3b6ab0d38b6da8ac8709228bdd9a6e5af0f5f1cc2c855053078f6ae"
       dfe-loader: "sha256:e5138a95c5714cc3cd9895f026db36ceb7908d5f58214c6f6f0bd9e9cf1b682a"
       dfe-archiver: "sha256:7293f3601aaac634ff187c50e47ed337f38c5eaa4134c067654527fc86e47458"
