@@ -33,6 +33,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -489,7 +490,7 @@ def test_teardown_keeps_strimzi_crds_another_tenant_still_uses() -> None:
     expect("no CRD is deleted", _first(calls, ["delete", "crd"]) == -1, f"{calls}")
     expect(
         "and the run says which CRD kept them",
-        "kafkas.kafka.strimzi.io" in result.stdout,
+        re.search(r"\bkafkas\.kafka\.strimzi\.io\b", result.stdout) is not None,
         result.stdout,
     )
 
