@@ -2432,7 +2432,7 @@ stacks:
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.7"               # The deploy-repo template, seeded from this tag.
       # A commit, not a version: dfe-docker cuts no per-stack tag.
-      dfe-docker: "79703851d9771be29382bff5e5515a1ce47a47f8"
+      dfe-docker: "2105701a016839862dae3c17012801048486caf5"
       dfe-hyperdx: "v0.2.8"              # 2026-09-29, amd64 and arm64.
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
