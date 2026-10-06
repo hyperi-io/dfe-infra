@@ -159,8 +159,9 @@ class _Control:
 class _Page:
     """A console that lands each password on a scripted URL, or keeps it on the form."""
 
-    def __init__(self, ui, landings):
+    def __init__(self, ui, landings, after_change="/setup"):
         self.ui, self.landings, self.url, self.filled = ui, landings, f"{ui}/login", {}
+        self.after_change, self.logins = after_change, []
 
     def goto(self, url, **_):
         self.url = url
@@ -170,9 +171,10 @@ class _Page:
 
     def clicked(self, label):
         if label == "Login":
+            self.logins.append(self.filled["Password"])
             self.url = f"{self.ui}{self.landings.get(self.filled['Password'], '/login')}"
         elif label == "Set password":
-            self.url = f"{self.ui}/setup"
+            self.url = f"{self.ui}{self.after_change}"
 
     def wait_for_url(self, predicate, **_):
         if not predicate(self.url):
@@ -184,9 +186,9 @@ class _StubTimeoutError(Exception):
 
 
 class _Driver:
-    def __init__(self, landings):
+    def __init__(self, landings, after_change="/setup"):
         self.ui = "https://dfe.example"
-        self.page = _Page(self.ui, landings)
+        self.page = _Page(self.ui, landings, after_change)
         self.records = []
 
     def textbox(self, *names):
@@ -211,7 +213,18 @@ class TestTheForcedChange:
         driver = _Driver({"issued": onboarding_run.CHANGE_PASSWORD_PATH})
 
         assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+        assert driver.page.filled["Current Password"] == "issued"
         assert driver.page.filled["New Password"] == "chosen"
+
+    def test_a_change_that_signs_the_admin_out_signs_back_in_with_the_new_password(self):
+        driver = _Driver(
+            {"issued": onboarding_run.CHANGE_PASSWORD_PATH, "chosen": "/setup"},
+            after_change="/login",
+        )
+
+        assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+        assert driver.page.logins == ["issued", "chosen"]
+        assert driver.page.url.endswith("/setup")
 
     def test_an_issued_password_let_straight_in_fails_the_run(self):
         driver = _Driver({"issued": "/setup"})

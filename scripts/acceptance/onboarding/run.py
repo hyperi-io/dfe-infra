@@ -186,6 +186,8 @@ def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str
             f"the console holds '{user}' on its issued password until it sets its own. "
             "Set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
         )
+    # The console takes a new password only with the issued one entered as the current one.
+    driver.textbox("Current Password").fill(password)
     for label in ("New Password", "Confirm Password"):
         driver.textbox(label).fill(new_password)
     driver.button("Set password").click(timeout=STEP_TIMEOUT_MS)
@@ -193,6 +195,10 @@ def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str
         lambda url: CHANGE_PASSWORD_PATH not in url, timeout=STEP_TIMEOUT_MS * 2
     )
     driver.record("change-password", "done", f"'{user}' replaced its issued password")
+    # The console signs the admin out once the password changes.
+    if not _left_login(driver.page.url):
+        sign_in(driver, user, new_password)
+        driver.page.wait_for_url(_left_login, timeout=STEP_TIMEOUT_MS)
     return new_password
 
 
