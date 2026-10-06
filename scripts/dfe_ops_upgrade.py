@@ -14,9 +14,11 @@
 
     dfe-ops upgrade plan --deploy <dir> [--to <stack>]
     dfe-ops upgrade preflight --deploy <dir> [--to <stack>]
-    dfe-ops upgrade apply --deploy <dir> [--to <stack>] [--yes] [--push] [--dry-run]
-                           [--finalise] [--stop-before <stage-key>]
-    dfe-ops upgrade rollback --deploy <dir> --to <stack> [--dry-run] [--check-cluster]
+    dfe-ops upgrade apply --deploy <dir> [--to <stack>] [--from <stack>] [--yes] [--push]
+                           [--dry-run] [--finalise] [--stop-before <stage-key>]
+                           [--target-revision <ref>]
+    dfe-ops upgrade rollback --deploy <dir> --to <stack> [--dry-run] [--push]
+                           [--skip-cluster-check] [--target-revision <ref>]
 
 Every verb takes `--deploy`, a dfe-deploy checkout (its `pins.yaml` names the
 FROM stack in `base.dfe-infra`), and `--to`, a versions.yaml stack version
@@ -38,11 +40,11 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
     preflight  The checks `apply` refuses to run without: the deploy repo is
                clean, the cluster answers, every Argo Application is Synced
                and Healthy, no KafkaRebalance is mid-flight, ClickHouse carries
-               no long merge, the Strimzi stored-version conversion already
-               ran (only checked when the plan crosses it), the on-prem node
-               capacity holds the new sizing, and a backup marker exists when
-               the plan carries a one-way step. Each check prints PASS/FAIL
-               with the evidence line that decided it.
+               no long merge, every Strimzi CRD the 1.x operator needs stores
+               v1 only (only checked when the plan crosses the conversion), the
+               on-prem node capacity holds the new sizing, and a backup marker
+               exists when the plan carries a one-way step. Each check prints
+               PASS/FAIL with the evidence line that decided it.
 
     apply      Runs preflight, then walks the plan stage by stage: bump
                `pins.yaml` (a surgical field edit, never a hand rewrite) and,
@@ -54,16 +56,38 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                Application Synced and Healthy, bounded by --timeout, and after
                a stage that bumps the Strimzi operator wait again on every
                Kafka CR's `status.operatorLastSuccessfulVersion` reaching the
-               new operator version, under the same bound. Confirms
-               before each stage unless --yes. Stops at the first failure and
-               prints that step's rollback note. --stop-before <stage-key>
-               stops the walk before that upgrade-order.yaml stage, touching
-               nothing in it or after. A reached step carrying a `finalise`
-               note is printed and left pending unless --finalise is given, in
-               which case apply asks whether the soak is over and, on yes,
-               records it in the marker `rollback` reads (see below).
-               --dry-run prints every command it would run, including a
-               reached finalise and a --stop-before halt, and touches nothing.
+               new operator version, under the same bound.
+
+               The first stage that moves an Argo-managed component also moves
+               the cluster secret's `dfe.hyperi.io/target_revision` from the
+               FROM stack's tag to the TO stack's, after that stage's before
+               hooks pass and its commit is pushed -- the ref every chart and
+               operator Application renders from. A secret tracking a branch is
+               left alone, and one pinned to a commit refuses unless
+               --target-revision names the ref. A retarget needs --push.
+
+               When the plan moves services.kafka-version on a Strimzi
+               cluster, that same stage first writes two holds into the
+               deploy's infra/kafka.yaml: kafka.metadataVersion at the live
+               status.kafkaMetadataVersion, and kafka.version at the FROM
+               version so the operator moves before the brokers do. The stage
+               that carries services.kafka-version drops the version hold and
+               waits for every Kafka CR to report the new version. The
+               metadata hold stays until finalise.
+
+               Confirms before each stage unless --yes. Stops at the first
+               failure and prints that step's rollback note. --stop-before
+               <stage-key> stops the walk before that upgrade-order.yaml stage,
+               touching nothing in it or after. A reached step carrying a
+               `finalise` note is printed and left pending unless --finalise is
+               given, in which case apply asks whether the soak is over and, on
+               yes, runs the step's finalise program (services.kafka-version
+               drops the metadata hold) and records it in the marker `rollback`
+               reads. --from <stack> names the FROM stack when pins.yaml already
+               names the target, which is how a finalise after the soak, or a
+               resumed apply, is run. --dry-run prints every command it would
+               run, including a reached finalise and a --stop-before halt, and
+               touches nothing.
 
     rollback   The reverse plan for TO -> the deploy's current FROM, refusing
                by name a step with `rollback: none` and no `finalise` note (an
@@ -72,23 +96,26 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                --finalise` writes (`upgrades/<from>-to-<to>.finalised`), not
                from the pin diff alone. A `finalise`-bearing step with no
                marker yet is reversed like any other step, with a note that
-               the soak can be abandoned safely. --check-cluster additionally
-               reads the live Kafka CR's `status.kafkaMetadataVersion` and
-               refuses when it already shows the bumped value, even with no
-               marker (a finalise run by hand, outside this tool).
+               the soak can be abandoned safely. A rollback that moves
+               services.kafka-version also reads every live Kafka CR and
+               refuses when its status.kafkaMetadataVersion is above what the
+               rollback target's Kafka version runs, marker or not;
+               --skip-cluster-check rolls the pin back without that read and
+               without the retarget. Like apply, it moves the cluster secret's
+               target_revision back to the rollback target's tag.
 
 Nothing here executes a `before` or `finalise` note as a shell command -- they
 are runbook prose, not argv. `apply` checks the one `before` note this repo
 already has a program for (the Strimzi stored-version conversion) and
 otherwise prints the note and asks for confirmation that an operator ran it by
-hand. That one check also names the conversion tarball to fetch, at the version
-the cluster is RUNNING rather than the one it is moving to. A `finalise` note works the same way: printed and left pending unless
---finalise is passed, in which case apply asks for confirmation instead of
-running anything itself, and only writes the marker once the operator (or a
-future automated hook) confirms it ran.
+hand. That one check refuses with the exact conversion commands, from the
+tarball of the version the cluster is RUNNING rather than the one it is moving
+to; it never runs them, because crd-upgrade is one-way and needs a JVM and
+cluster-admin rights on the CRDs. A `finalise` note is printed and left pending
+unless --finalise is passed, in which case apply asks for confirmation, runs
+the step's FINALISE_HOOKS entry if it has one, and only writes the marker once
+both succeed.
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -130,23 +157,40 @@ DEFAULT_ARGOCD_NAMESPACE = "argocd"
 DEFAULT_CLICKHOUSE_NAMESPACE = "clickhouse"
 DEFAULT_CLICKHOUSE_SELECTOR = "app.kubernetes.io/name=clickhouse"
 DEFAULT_CLICKHOUSE_MERGE_THRESHOLD = 300.0  # seconds
-DEFAULT_KAFKA_NAMESPACE = "kafka"
-DEFAULT_KAFKA_NAME = "dfe-kafka"  # helm/charts/kafka/values.yaml's kafka.name default
 DEFAULT_TIER = "scale"
 DEFAULT_BACKUP_MARKER = "upgrades/.backup-ok"
 DEFAULT_TIMEOUT = 900
 _SYNC_POLL_INTERVAL = 10.0
 
-# The Strimzi-owned CRDs a 0.x -> 1.x stored-version conversion touches.
+# Every CRD the 1.x operator requires stored as v1: CRD_NAMES in the conversion tool's crd-upgrade.
 STRIMZI_CRDS = (
     "kafkas.kafka.strimzi.io",
     "kafkanodepools.kafka.strimzi.io",
     "kafkatopics.kafka.strimzi.io",
     "kafkausers.kafka.strimzi.io",
+    "kafkaconnects.kafka.strimzi.io",
+    "kafkaconnectors.kafka.strimzi.io",
+    "kafkabridges.kafka.strimzi.io",
+    "kafkamirrormaker2s.kafka.strimzi.io",
+    "kafkarebalances.kafka.strimzi.io",
+    "strimzipodsets.core.strimzi.io",
 )
 
 # The upgrade-order.yaml step whose pin move IS the Strimzi operator upgrade.
 STRIMZI_OPERATOR_KEY = "operators.strimzi-kafka-operator"
+
+# The upgrade-order.yaml step whose pin move rolls the Kafka brokers.
+KAFKA_VERSION_KEY = "services.kafka-version"
+
+# The Argo cluster secret bootstrap writes (bootstrap/templates/cluster-secret.yaml.tpl).
+ARGO_CLUSTER = "dfe-cluster"
+TARGET_REVISION_ANNOTATION = "dfe.hyperi.io/target_revision"
+STACK_VERSION_ANNOTATION = "dfe.hyperi.io/stack_version"
+
+# The deploy repo's kafka chart overlay, layered last by appsets/layer2-data.yaml.
+KAFKA_OVERLAY = Path("infra") / "kafka.yaml"
+# Marks a line apply wrote, so only those are ever rewritten or dropped.
+HOLD_MARK = "# dfe-ops upgrade hold"
 
 
 class UpgradeError(RuntimeError):
@@ -195,8 +239,43 @@ def _kubectl_json(kubeconfig: str | None, *args: str) -> tuple[int, dict, str]:
         return 1, {}, f"unparseable kubectl output: {exc}"
 
 
+def _absent(err: str) -> bool:
+    """Whether a kubectl error says the object or its type does not exist, as
+    opposed to a cluster that could not answer."""
+    return "NotFound" in err or "the server doesn't have a resource type" in err
+
+
 def _git(deploy: Path, *args: str) -> subprocess.CompletedProcess:
     return _run(["git", "-C", str(deploy), *args])
+
+
+# The deploy paths an upgrade commit carries. `git add` with one missing
+# pathspec stages nothing at all, so only the ones that exist are named.
+STAGED_PATHS = ("pins.yaml", "sizing", "upgrades", str(KAFKA_OVERLAY))
+
+
+def _stage(deploy: Path) -> tuple[bool, str]:
+    present = [p for p in STAGED_PATHS if (deploy / p).exists()]
+    result = _git(deploy, "add", *present)
+    if result.returncode != 0:
+        return False, _last_line(result.stderr) or "git add failed"
+    return True, " ".join(present)
+
+
+def _wait_until(
+    check: Callable[[], tuple[bool, str]], *, timeout: float, stuck: str, sleep=time.sleep, now=time.monotonic
+) -> tuple[bool, str]:
+    """Poll `check` until it passes or `timeout` seconds pass; `stuck` heads the
+    timeout detail. `sleep`/`now` are injected so a test drives it without a clock."""
+    deadline = now() + timeout
+    while True:
+        ok, detail = check()
+        if ok:
+            return True, detail
+        remaining = deadline - now()
+        if remaining <= 0:
+            return False, f"{stuck} after {timeout:.0f}s -- {detail}"
+        sleep(min(_SYNC_POLL_INTERVAL, remaining))
 
 
 # --- upgrade-order.yaml -------------------------------------------------------
@@ -487,11 +566,22 @@ def check_cluster_reachable(kubeconfig: str | None, timeout: str = "10s") -> tup
     return True, _last_line(result.stdout) or "cluster reachable"
 
 
-def check_argo_apps(kubeconfig: str | None, namespace: str = DEFAULT_ARGOCD_NAMESPACE) -> tuple[bool, str]:
+def _source_revisions(app: dict) -> list[str]:
+    spec = app.get("spec") or {}
+    sources = [spec["source"]] if isinstance(spec.get("source"), dict) else list(spec.get("sources") or [])
+    return [str(src.get("targetRevision") or "") for src in sources if isinstance(src, dict)]
+
+
+def check_argo_apps(
+    kubeconfig: str | None, namespace: str = DEFAULT_ARGOCD_NAMESPACE, *, stale_revision: str = ""
+) -> tuple[bool, str]:
     """Every Argo Application in `namespace` is Synced and Healthy.
 
     Reads kubectl directly (`applications.argoproj.io`), the same path
     dfe-ops refresh/cycle already use -- no second CLI (argocd) dependency.
+    With `stale_revision`, an Application still rendering from that ref also
+    fails: right after a retarget every Application is still Synced to the old
+    one until the ApplicationSet controller regenerates it.
     """
     rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "applications.argoproj.io")
     if rc != 0:
@@ -505,7 +595,9 @@ def check_argo_apps(kubeconfig: str | None, namespace: str = DEFAULT_ARGOCD_NAME
         status = app.get("status") or {}
         sync = (status.get("sync") or {}).get("status") or "Unknown"
         health = (status.get("health") or {}).get("status") or "Unknown"
-        if sync != "Synced" or health != "Healthy":
+        if stale_revision and stale_revision in _source_revisions(app):
+            bad.append(f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})")
+        elif sync != "Synced" or health != "Healthy":
             bad.append(f"{name} (sync {sync}, health {health})")
     if bad:
         extra = f", +{len(bad) - 6} more" if len(bad) > 6 else ""
@@ -516,7 +608,7 @@ def check_argo_apps(kubeconfig: str | None, namespace: str = DEFAULT_ARGOCD_NAME
 def check_no_kafka_rebalance(kubeconfig: str | None) -> tuple[bool, str]:
     rc, doc, err = _kubectl_json(kubeconfig, "get", "kafkarebalances.kafka.strimzi.io", "-A")
     if rc != 0:
-        if "NotFound" in err or "the server doesn't have a resource type" in err:
+        if _absent(err):
             return True, "no KafkaRebalance CRD on this cluster"
         return False, f"cannot list KafkaRebalance: {err}"
     items = doc.get("items") or []
@@ -562,20 +654,29 @@ def check_clickhouse_merges(
 
 
 def check_strimzi_conversion(kubeconfig: str | None, crds: tuple[str, ...] = STRIMZI_CRDS) -> tuple[bool, str]:
-    """Every Strimzi CRD this stack owns stores v1 only -- the sign
+    """Every Strimzi CRD the 1.x operator needs stores v1 only -- the sign
     `bin/v1-api-conversion.sh convert-resource` (then `crd-upgrade`) already
-    ran, which 1.x requires before the operator upgrade lands."""
+    ran, which 1.x requires before the operator upgrade lands.
+
+    A CRD that is not installed has nothing stored to convert; a CRD kubectl
+    could not read fails, because an unanswered read proves nothing.
+    """
     stale = []
+    unread = []
     checked = 0
     for crd in crds:
-        rc, doc, _err = _kubectl_json(kubeconfig, "get", "crd", crd)
+        rc, doc, err = _kubectl_json(kubeconfig, "get", "crd", crd)
         if rc != 0:
-            continue  # not installed yet -- nothing to convert
+            if not _absent(err):
+                unread.append(f"{crd} ({err or 'kubectl failed'})")
+            continue
         checked += 1
         stored = (doc.get("status") or {}).get("storedVersions") or []
         non_v1 = [v for v in stored if v != "v1"]
         if non_v1:
             stale.append(f"{crd} (stored: {', '.join(stored)})")
+    if unread:
+        return False, f"cannot read {len(unread)} Strimzi CRD(s): {', '.join(unread)}"
     if checked == 0:
         return True, "no Strimzi CRDs installed -- nothing to convert"
     if stale:
@@ -588,15 +689,24 @@ def strimzi_conversion_tool(operator_version: str) -> str:
     return f"strimzi-v1-api-conversion-{operator_version}.tar.gz"
 
 
+# The two conversion runs, in order, from the Strimzi 1.0.0 API conversion guide.
+CONVERSION_COMMANDS = (
+    "bin/v1-api-conversion.sh convert-resource --all-namespaces",
+    "bin/v1-api-conversion.sh crd-upgrade",
+)
+
+
 def conversion_tool_line(move: Move) -> str:
-    """Which release's conversion tarball to fetch for this operator move.
+    """Which release's conversion tarball to fetch for this operator move, and
+    the two commands to run from it.
 
     The tool rewrites the CRs the RUNNING operator wrote, so it comes from that
     release rather than the one the pin is moving to.
     """
     return (
         f"fetch {strimzi_conversion_tool(move.old)} from the RUNNING operator release "
-        f"{move.old}, never the target {move.new}"
+        f"{move.old}, never the target {move.new}, then run "
+        f"`{CONVERSION_COMMANDS[0]}` and `{CONVERSION_COMMANDS[1]}`"
     )
 
 
@@ -610,6 +720,59 @@ def check_strimzi_conversion_before(kubeconfig: str | None, move: Move) -> tuple
     return ok, f"{detail}; {conversion_tool_line(move)}"
 
 
+def _list_kafka_crs(kubeconfig: str | None, namespace: str | None = None) -> tuple[list[dict] | None, str]:
+    """Every Strimzi Kafka CR: an empty list when the CRD is absent, None plus
+    the error when kubectl could not answer. Reads every namespace unless the
+    caller names one, because "every Kafka CR" is the claim callers make."""
+    args = ["get", "kafkas.kafka.strimzi.io", *(["-n", namespace] if namespace else ["-A"])]
+    rc, doc, err = _kubectl_json(kubeconfig, *args)
+    if rc != 0:
+        return ([], "no Kafka CRD on this cluster") if _absent(err) else (None, err)
+    return list(doc.get("items") or []), ""
+
+
+def _cr_name(item: dict) -> str:
+    meta = item.get("metadata") or {}
+    return f"{meta.get('namespace', '')}/{meta.get('name', '<unnamed>')}"
+
+
+def _major_minor(version: str) -> tuple[int, int] | None:
+    """(major, minor) of a Kafka version (`4.3.1`) or a metadata version
+    (`4.3-IV0`, `4.2`); None when the text carries neither."""
+    match = re.match(r"\s*(\d+)\.(\d+)", version or "")
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def check_kafka_status(
+    kubeconfig: str | None,
+    field: str,
+    want: str,
+    *,
+    accept: Callable[[str], bool] | None = None,
+    namespace: str | None = None,
+) -> tuple[bool, str]:
+    """Every Kafka CR's `status.<field>` is `want` (or passes `accept`).
+
+    No Kafka CRD, or no Kafka CR, passes: a cluster with no Strimzi broker has
+    nothing to report. A CR that has not written the field is behind.
+    """
+    accept = accept or (lambda seen: seen == want)
+    items, err = _list_kafka_crs(kubeconfig, namespace)
+    if items is None:
+        return False, f"cannot list Kafka CRs: {err}"
+    if not items:
+        return True, f"{err or 'no Kafka CR on this cluster'} -- no {field} to wait on"
+    behind = []
+    for item in items:
+        seen = str((item.get("status") or {}).get(field) or "")
+        if not seen or not accept(seen):
+            behind.append(f"{_cr_name(item)} ({field} {seen or 'unset'})")
+    if behind:
+        extra = f", +{len(behind) - 6} more" if len(behind) > 6 else ""
+        return False, f"{len(behind)} Kafka CR(s) not yet at {field} {want}: {', '.join(behind[:6])}{extra}"
+    return True, f"{len(items)} Kafka CR(s) report {field} {want}"
+
+
 def check_kafka_operator_version(
     kubeconfig: str | None, version: str, *, namespace: str | None = None
 ) -> tuple[bool, str]:
@@ -618,64 +781,87 @@ def check_kafka_operator_version(
     The CR's own `Ready` condition stays True and stale across an operator
     upgrade, so a wait on it returns at once and proves nothing; this field is
     the one the new operator writes only after it has reconciled the cluster.
-    Reads every namespace unless the caller names one, because "every Kafka CR"
-    is the claim being made.
     """
-    args = ["get", "kafkas.kafka.strimzi.io"]
-    args += ["-n", namespace] if namespace else ["-A"]
-    rc, doc, err = _kubectl_json(kubeconfig, *args)
-    if rc != 0:
-        if "NotFound" in err or "the server doesn't have a resource type" in err:
-            return True, "no Kafka CRD on this cluster -- no operator version to reconcile"
-        return False, f"cannot list Kafka CRs: {err}"
-    items = doc.get("items") or []
+    return check_kafka_status(kubeconfig, "operatorLastSuccessfulVersion", version, namespace=namespace)
+
+
+def check_kafka_version(kubeconfig: str | None, version: str) -> tuple[bool, str]:
+    """Every Kafka CR reports `status.kafkaVersion` at `version` -- the roll is done."""
+    return check_kafka_status(kubeconfig, "kafkaVersion", version)
+
+
+def check_kafka_metadata_moved(kubeconfig: str | None, kafka_version: str) -> tuple[bool, str]:
+    """Every Kafka CR's `status.kafkaMetadataVersion` is on `kafka_version`'s
+    major.minor -- the finalise has landed."""
+    target = _major_minor(kafka_version)
+    return check_kafka_status(
+        kubeconfig, "kafkaMetadataVersion", f"{kafka_version}'s line",
+        accept=lambda seen: _major_minor(seen) == target,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class KafkaState:
+    """What the live Strimzi Kafka CRs agree on: the broker version and the
+    metadata version. `crs` is 0 on a cluster with no Strimzi broker."""
+
+    crs: int
+    version: str = ""
+    metadata: str = ""
+
+
+def read_kafka_state(kubeconfig: str | None) -> KafkaState:
+    """The live Kafka version and metadata version every Strimzi Kafka CR reports.
+
+    Raises UpgradeError when kubectl cannot answer, or when the CRs disagree:
+    infra/kafka.yaml carries one hold for the whole chart, so there is no
+    single value to pin.
+    """
+    items, err = _list_kafka_crs(kubeconfig)
+    if items is None:
+        raise UpgradeError(f"cannot list Kafka CRs: {err}")
     if not items:
-        return True, "no Kafka CR on this cluster -- no operator version to reconcile"
-    behind = []
+        return KafkaState(crs=0)
+    seen: dict[tuple[str, str], list[str]] = {}
     for item in items:
-        meta = item.get("metadata") or {}
-        name = f"{meta.get('namespace', '')}/{meta.get('name', '<unnamed>')}"
-        seen = str((item.get("status") or {}).get("operatorLastSuccessfulVersion") or "")
-        if seen != version:
-            behind.append(f"{name} (operatorLastSuccessfulVersion {seen or 'unset'})")
-    if behind:
-        extra = f", +{len(behind) - 6} more" if len(behind) > 6 else ""
-        return False, f"{len(behind)} Kafka CR(s) not yet reconciled by {version}: {', '.join(behind[:6])}{extra}"
-    return True, f"{len(items)} Kafka CR(s) report operatorLastSuccessfulVersion {version}"
+        status = item.get("status") or {}
+        pair = (str(status.get("kafkaVersion") or ""), str(status.get("kafkaMetadataVersion") or ""))
+        seen.setdefault(pair, []).append(_cr_name(item))
+    if len(seen) > 1:
+        detail = "; ".join(f"{', '.join(names)}: kafka {v or 'unset'}, metadata {m or 'unset'}" for (v, m), names in seen.items())
+        raise UpgradeError(f"the Kafka CRs disagree, so no one hold fits them all: {detail}")
+    ((version, metadata),) = seen
+    return KafkaState(crs=len(items), version=version, metadata=metadata)
 
 
-def check_cluster_metadata_version(
-    kubeconfig: str | None,
-    moves: list[Move],
-    *,
-    kafka_name: str = DEFAULT_KAFKA_NAME,
-    kafka_namespace: str = DEFAULT_KAFKA_NAMESPACE,
-) -> tuple[bool, str]:
-    """Whether the LIVE cluster already carries a finalised metadata.version
-    for a step this rollback would reverse -- the signal a finalise run by
-    hand (outside `apply --finalise`, so no marker was written) leaves behind.
+def check_rollback_metadata(kubeconfig: str | None, target_kafka: str) -> tuple[bool, str]:
+    """Whether the brokers can go back to Kafka `target_kafka` at all.
 
-    Reads the Strimzi Kafka CR's `status.kafkaMetadataVersion` -- the field
-    upgrade-order.yaml's kafka-brokers `finalise` note names -- and refuses
-    when it already equals (or is prefixed by) a finalise-bearing step's NEW
-    pin, the value that step's finalise would have moved it to. Unreachable,
-    absent, or not yet at that value all pass: this is a live-cluster
-    corroboration on top of the marker, never a replacement for it.
+    Kafka cannot run a metadata version newer than its own release line, so a
+    rollback to 4.2.0 under a live 4.3-IV0 strands the brokers. That happens
+    with no finalise marker whenever the metadata version moved without
+    `apply --finalise`: unpinned, Strimzi bumps it as soon as a version roll
+    finishes. Every Kafka CR's live `status.kafkaMetadataVersion` is compared
+    by major.minor against the target. No Strimzi broker passes; a cluster
+    kubectl cannot read, or a CR with no metadata version, fails.
     """
-    finalise_moves = [move for move in moves if move.step.finalise]
-    if not finalise_moves:
-        return True, "no finalise-bearing step in this rollback -- nothing to check"
-    rc, doc, err = _kubectl_json(kubeconfig, "-n", kafka_namespace, "get", "kafka", kafka_name)
-    if rc != 0:
-        return True, f"cannot read Kafka CR {kafka_name} in {kafka_namespace} -- skipped: {err}"
-    live = str((doc.get("status") or {}).get("kafkaMetadataVersion") or "")
-    if not live:
-        return True, f"Kafka CR {kafka_name} carries no status.kafkaMetadataVersion -- skipped"
-    bumped = [move for move in finalise_moves if live == move.new or live.startswith(move.new)]
-    if bumped:
-        names = ", ".join(move.step.key for move in bumped)
-        return False, f"live status.kafkaMetadataVersion is {live!r} -- {names} already reflects the bumped value"
-    return True, f"live status.kafkaMetadataVersion is {live!r} -- does not match a bumped step"
+    target = _major_minor(target_kafka)
+    if target is None:
+        return False, f"cannot read a major.minor from the rollback target's Kafka version {target_kafka!r}"
+    items, err = _list_kafka_crs(kubeconfig)
+    if items is None:
+        return False, f"cannot list Kafka CRs: {err}"
+    if not items:
+        return True, f"{err or 'no Kafka CR on this cluster'} -- no metadata version to strand"
+    above = []
+    for item in items:
+        live = str((item.get("status") or {}).get("kafkaMetadataVersion") or "")
+        live_mm = _major_minor(live)
+        if live_mm is None or live_mm > target:
+            above.append(f"{_cr_name(item)} (kafkaMetadataVersion {live or 'unset'})")
+    if above:
+        return False, f"Kafka {target_kafka} cannot run the live metadata version: {', '.join(above)}"
+    return True, f"{len(items)} Kafka CR(s) carry a metadata version Kafka {target_kafka} runs"
 
 
 def check_node_capacity(kubeconfig: str | None, nodes_file: Path) -> tuple[bool, str]:
@@ -724,8 +910,9 @@ def run_preflight(
         "clickhouse merges under threshold",
         *check_clickhouse_merges(kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_merge_threshold),
     ))
-    if any("stored-version conversion" in move.step.before for move in moves):
-        checks.append(("strimzi stored-version conversion", *check_strimzi_conversion(kubeconfig)))
+    conversion = next((move for move in moves if "stored-version conversion" in move.step.before), None)
+    if conversion is not None:
+        checks.append(("strimzi stored-version conversion", *check_strimzi_conversion_before(kubeconfig, conversion)))
     resolved_nodes_file = nodes_file or (deploy / "sizing" / f"{DEFAULT_TIER}.nodes.json")
     checks.append(("on-prem node capacity", *check_node_capacity(kubeconfig, resolved_nodes_file)))
     checks.append(("backup marker (one-way steps)", *check_backup_marker(deploy, moves, backup_marker)))
@@ -799,6 +986,241 @@ def bump_pin_file(deploy: Path, stack: str) -> bool:
     return True
 
 
+# --- the kafka overlay holds (infra/kafka.yaml) ---------------------------------
+# Only lines ending in HOLD_MARK are rewritten or dropped, so a deployer's own value is never touched.
+
+_KAFKA_BLOCK = re.compile(r"^kafka:\s*(#.*)?$")
+
+
+def _kafka_block(lines: list[str]) -> tuple[int, int, str] | None:
+    """(index of the top-level `kafka:` line, end of its block, child indent),
+    or None when the file has no `kafka:` key."""
+    start = next((i for i, line in enumerate(lines) if _KAFKA_BLOCK.match(line)), None)
+    if start is None:
+        if any(line.startswith("kafka:") for line in lines):
+            raise UpgradeError(f"{KAFKA_OVERLAY}: `kafka:` is not a block mapping -- edit the hold by hand")
+        return None
+    end = len(lines)
+    indent = ""
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not lines[i][0].isspace():
+            end = i
+            break
+        if not indent:
+            indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+    return start, end, indent or "  "
+
+
+def _child_line(lines: list[str], block: tuple[int, int, str], key: str) -> int | None:
+    start, end, indent = block
+    pattern = re.compile(rf"^{re.escape(indent)}{re.escape(key)}:(\s|$)")
+    return next((i for i in range(start + 1, end) if pattern.match(lines[i])), None)
+
+
+def overlay_entry(text: str, key: str) -> tuple[str, bool] | None:
+    """(value, written by apply) of `kafka.<key>` in an overlay's text, or None."""
+    lines = text.splitlines()
+    block = _kafka_block(lines)
+    index = _child_line(lines, block, key) if block else None
+    if index is None:
+        return None
+    line = lines[index].rstrip()
+    value = line.split(":", 1)[1].split(" #", 1)[0].strip()
+    return _unquote(value), line.endswith(HOLD_MARK)
+
+
+def set_overlay_hold(text: str, key: str, value: str) -> str:
+    """Write `kafka.<key>: "<value>"` as a hold, replacing an earlier hold.
+
+    Raises UpgradeError when the deployer set the key themselves.
+    """
+    lines = text.splitlines()
+    entry = f'{key}: "{value}"  {HOLD_MARK}'
+    block = _kafka_block(lines)
+    if block is None:
+        gap = [""] if lines and lines[-1].strip() else []
+        lines += [*gap, "kafka:", f"  {entry}"]
+        return "\n".join(lines) + "\n"
+    index = _child_line(lines, block, key)
+    if index is None:
+        lines.insert(block[0] + 1, f"{block[2]}{entry}")
+    elif lines[index].rstrip().endswith(HOLD_MARK):
+        lines[index] = f"{block[2]}{entry}"
+    else:
+        raise UpgradeError(f"{KAFKA_OVERLAY} sets kafka.{key} itself, so apply will not overwrite it")
+    return "\n".join(lines) + "\n"
+
+
+def drop_overlay_hold(text: str, key: str) -> str:
+    """Remove a `kafka.<key>` hold, and the `kafka:` line with it when nothing
+    else is left under it -- an empty `kafka:` is a YAML null, which Helm reads
+    as deleting every chart default under kafka."""
+    lines = text.splitlines()
+    block = _kafka_block(lines)
+    index = _child_line(lines, block, key) if block else None
+    if block is None or index is None or not lines[index].rstrip().endswith(HOLD_MARK):
+        return text
+    del lines[index]
+    start, end, _indent = block
+    children = [ln for ln in lines[start + 1 : end - 1] if ln.strip() and not ln.strip().startswith("#")]
+    if not children:
+        del lines[start]
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+def _read_overlay(deploy: Path) -> str:
+    path = deploy / KAFKA_OVERLAY
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+def _write_overlay(deploy: Path, text: str) -> None:
+    path = deploy / KAFKA_OVERLAY
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+@dataclass(frozen=True, slots=True)
+class KafkaHold:
+    """The infra/kafka.yaml holds apply writes for a Strimzi Kafka version move.
+    An empty field writes nothing for that key."""
+
+    metadata: str = ""
+    version: str = ""
+
+
+def plan_kafka_hold(
+    kubeconfig: str | None, deploy: Path, kafka_move: Move | None, finalised: dict[str, str]
+) -> tuple[KafkaHold | None, str]:
+    """Which holds the move needs, decided from the live Kafka CRs before any
+    stage runs, so a cluster in an unexpected state refuses before anything moves.
+
+    The metadata hold pins the CURRENT metadata version: unset, Strimzi moves
+    it to the new version's default the moment the roll finishes, which ends
+    the soak before it starts. The version hold keeps the brokers on the FROM
+    version until the stage that carries services.kafka-version, so the
+    operator moves first; it is skipped once the brokers already run TO, so a
+    resumed apply never rolls them back.
+    """
+    if kafka_move is None:
+        return None, "the plan does not move services.kafka-version"
+    if KAFKA_VERSION_KEY in finalised:
+        return None, f"{KAFKA_VERSION_KEY} finalise already ran -- nothing to hold"
+    state = read_kafka_state(kubeconfig)
+    if state.crs == 0:
+        return None, "no Strimzi Kafka CR on this cluster -- nothing to hold"
+    if state.version not in (kafka_move.old, kafka_move.new):
+        raise UpgradeError(
+            f"the Kafka CRs run {state.version or 'no reported version'}, neither "
+            f"{kafka_move.old} nor {kafka_move.new} -- settle the brokers before upgrading"
+        )
+    text = _read_overlay(deploy)
+    pinned = overlay_entry(text, "metadataVersion")
+    if pinned is None and not state.metadata:
+        raise UpgradeError("the Kafka CR reports no status.kafkaMetadataVersion, so there is no value to hold")
+    deployer_version = overlay_entry(text, "version")
+    version_held_by_hand = deployer_version is not None and not deployer_version[1]
+    hold = KafkaHold(
+        metadata=state.metadata if pinned is None else "",
+        version=kafka_move.old if state.version == kafka_move.old and not version_held_by_hand else "",
+    )
+    detail = f"metadata held at {pinned[0] if pinned else state.metadata}"
+    if hold.version:
+        detail += f", brokers held at {hold.version} until the {kafka_move.step.stage} stage"
+    return hold, detail
+
+
+def release_metadata_hold(deploy: Path, move: Move) -> tuple[bool, str]:
+    """services.kafka-version's finalise: drop the kafka.metadataVersion hold,
+    so Strimzi moves the metadata version to `move.new`'s default once Argo
+    syncs. One way: Kafka cannot run a metadata version above its own line."""
+    text = _read_overlay(deploy)
+    entry = overlay_entry(text, "metadataVersion")
+    if entry is None:
+        return True, f"no kafka.metadataVersion in {KAFKA_OVERLAY} -- the metadata version is not held"
+    value, held = entry
+    if not held:
+        return False, (
+            f"{KAFKA_OVERLAY} sets kafka.metadataVersion {value} itself -- raise it to the "
+            f"{move.new} line by hand"
+        )
+    _write_overlay(deploy, drop_overlay_hold(text, "metadataVersion"))
+    return True, f"dropped the kafka.metadataVersion {value} hold; Strimzi moves it to {move.new}'s default"
+
+
+# --- the cluster secret's target revision ----------------------------------------
+# Every chart and operator Application renders from this ref; pins.yaml reaches only `dfe-stack resolve`.
+
+
+def _norm_ref(ref: str) -> str:
+    return _norm_stack(ref) if ref else ""
+
+
+def read_target_revision(kubeconfig: str | None, namespace: str) -> str:
+    """The cluster secret's target_revision. Raises UpgradeError when unreadable."""
+    jsonpath = "jsonpath={.metadata.annotations." + TARGET_REVISION_ANNOTATION.replace(".", "\\.") + "}"
+    result = _kubectl(
+        kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
+        "get", "secret", ARGO_CLUSTER, "-o", jsonpath,
+    )
+    if result.returncode != 0:
+        raise UpgradeError(
+            f"cannot read {TARGET_REVISION_ANNOTATION} on secret/{ARGO_CLUSTER} in {namespace}: "
+            f"{_last_line(result.stderr) or 'kubectl failed'}"
+        )
+    return (result.stdout or "").strip()
+
+
+def decide_retarget(current: str, from_name: str, to_name: str, explicit: str | None) -> tuple[str | None, str]:
+    """(the ref to write, why) -- None leaves the secret as it is.
+
+    A tag-pinned secret names the FROM stack and moves to the TO tag (the stack
+    name is the git tag). A branch is tracked on purpose and left alone. A
+    commit SHA could be any stack, so it refuses without an explicit ref.
+    `current` came out of a Secret, so no message here repeats it.
+    """
+    key = f"secret/{ARGO_CLUSTER} {TARGET_REVISION_ANNOTATION}"
+    if explicit:
+        if explicit == current:
+            return None, f"{key} already names the --target-revision ref"
+        return explicit, f"{key} -> {explicit} (--target-revision)"
+    if not current:
+        raise UpgradeError(f"{key} is unset -- pass --target-revision")
+    if _norm_ref(current) == _norm_ref(to_name):
+        return None, f"{key} already names the {to_name} tag"
+    if _norm_ref(current) == _norm_ref(from_name):
+        return to_name, f"{key}: the {from_name} tag -> {to_name}"
+    if re.fullmatch(r"[0-9a-f]{40}", current):
+        raise UpgradeError(
+            f"{key} pins a commit, which names no stack -- pass --target-revision <ref> "
+            f"to say where the charts go"
+        )
+    return None, (
+        f"{key} names neither the {from_name} nor the {to_name} tag, so it tracks a branch "
+        f"the charts already follow -- left as it is"
+    )
+
+
+def write_target_revision(kubeconfig: str | None, namespace: str, ref: str, stack: str) -> tuple[bool, str]:
+    """Move the cluster secret's target_revision, and its stack_version with it."""
+    result = _kubectl(
+        kubeconfig, "-n", namespace, "annotate", "--overwrite", f"secret/{ARGO_CLUSTER}",
+        f"{TARGET_REVISION_ANNOTATION}={ref}", f"{STACK_VERSION_ANNOTATION}={stack}",
+    )
+    if result.returncode != 0:
+        return False, _last_line(result.stderr) or "kubectl annotate failed"
+    return True, f"{TARGET_REVISION_ANNOTATION}={ref}, {STACK_VERSION_ANNOTATION}={stack}"
+
+
+def retarget_command(namespace: str, ref: str, stack: str) -> str:
+    return (
+        f"kubectl -n {namespace} annotate --overwrite secret/{ARGO_CLUSTER} "
+        f"{TARGET_REVISION_ANNOTATION}={ref} {STACK_VERSION_ANNOTATION}={stack}"
+    )
+
+
 # --- finalise markers ----------------------------------------------------------
 # The record that a one-way step's `finalise` note actually ran -- the fact
 # `rollback` keys its refusal on, rather than the pin diff alone. A pin move
@@ -864,20 +1286,20 @@ def write_finalise_marker(
 
 
 def wait_for_argo(
-    kubeconfig: str | None, *, argocd_namespace: str, timeout: float, sleep=time.sleep, now=time.monotonic
+    kubeconfig: str | None,
+    *,
+    argocd_namespace: str,
+    timeout: float,
+    stale_revision: str = "",
+    sleep=time.sleep,
+    now=time.monotonic,
 ) -> tuple[bool, str]:
     """Block until check_argo_apps reports every Application Synced and
-    Healthy, or `timeout` seconds pass. `sleep`/`now` are injected so a test
-    drives this without a real clock."""
-    deadline = now() + timeout
-    while True:
-        ok, detail = check_argo_apps(kubeconfig, argocd_namespace)
-        if ok:
-            return True, detail
-        remaining = deadline - now()
-        if remaining <= 0:
-            return False, f"still not converged after {timeout:.0f}s -- {detail}"
-        sleep(min(_SYNC_POLL_INTERVAL, remaining))
+    Healthy (and none on `stale_revision`), or `timeout` seconds pass."""
+    return _wait_until(
+        lambda: check_argo_apps(kubeconfig, argocd_namespace, stale_revision=stale_revision),
+        timeout=timeout, stuck="still not converged", sleep=sleep, now=now,
+    )
 
 
 def wait_for_kafka_operator_version(
@@ -893,28 +1315,29 @@ def wait_for_kafka_operator_version(
 
     Argo reporting the operator Application Healthy only says the new
     Deployment is up, which is minutes before it has reconciled the clusters it
-    watches. `sleep`/`now` are injected the same way wait_for_argo's are.
+    watches.
     """
-    deadline = now() + timeout
-    while True:
-        ok, detail = check_kafka_operator_version(kubeconfig, version, namespace=namespace)
-        if ok:
-            return True, detail
-        remaining = deadline - now()
-        if remaining <= 0:
-            return False, f"still not reconciled after {timeout:.0f}s -- {detail}"
-        sleep(min(_SYNC_POLL_INTERVAL, remaining))
+    return _wait_until(
+        lambda: check_kafka_operator_version(kubeconfig, version, namespace=namespace),
+        timeout=timeout, stuck="still not reconciled", sleep=sleep, now=now,
+    )
 
 
 # --- plan ----------------------------------------------------------------------
 
 
-def _load_from_to(deploy: Path, to_arg: str | None) -> tuple[dict, str, dict, str, dict]:
-    """(root, from_name, from_pins, to_name, to_pins) -- raises UpgradeError."""
+def _load_from_to(
+    deploy: Path, to_arg: str | None, from_arg: str | None = None
+) -> tuple[dict, str, dict, str, dict]:
+    """(root, from_name, from_pins, to_name, to_pins) -- raises UpgradeError.
+
+    FROM is pins.yaml's pin unless `from_arg` names it, which is how an apply
+    whose first stage already moved the pin is resumed or finalised.
+    """
     root = load_versions_root()
     to_name, to_pins = resolve_stack(root, to_arg or current_stack(root))
-    from_name = read_deploy_pin(deploy)
-    _, from_pins = resolve_stack(root, from_name)
+    pinned = read_deploy_pin(deploy)
+    from_name, from_pins = resolve_stack(root, from_arg or pinned)
     return root, from_name, from_pins, to_name, to_pins
 
 
@@ -1010,11 +1433,12 @@ BEFORE_NOTES: dict[str, Callable[[Move], str]] = {
     STRIMZI_OPERATOR_KEY: conversion_tool_line,
 }
 
-# A finalise note this repo already has a program for, same shape as
-# BEFORE_CHECKS, keyed by the step's versions.yaml `key`. Empty today -- no
-# finalise note has an automated hook yet, so every one falls back to the
-# manual-confirm path a `before` note with no BEFORE_CHECKS entry already uses.
-FINALISE_HOOKS: dict[str, Callable[[str | None], tuple[bool, str]]] = {}
+# The program a finalise note runs once the operator confirms the soak is over,
+# keyed by the step's versions.yaml `key`. A note with no entry is confirmed by
+# the operator alone, who ran it by hand.
+FINALISE_HOOKS: dict[str, Callable[[Path, Move], tuple[bool, str]]] = {
+    KAFKA_VERSION_KEY: release_metadata_hold,
+}
 
 
 def _confirm(prompt: str, *, assume_yes: bool) -> bool:
@@ -1028,28 +1452,59 @@ def _confirm(prompt: str, *, assume_yes: bool) -> bool:
 
 
 def run_finalise_hook(
-    deploy: Path, move: Move, *, from_name: str, to_name: str, kubeconfig: str | None, assume_yes: bool
+    deploy: Path, move: Move, *, from_name: str, to_name: str, assume_yes: bool
 ) -> tuple[bool, str]:
-    """Run (or confirm) one finalise-bearing move's hook, and mark it when it
-    runs. `ran` is False only when an automated hook fails or the operator
-    declines -- the marker is written only when `ran` is True, so a decline
-    leaves the step exactly as reversible as it was before this call."""
-    check = FINALISE_HOOKS.get(move.step.key)
-    if check is not None:
-        ok, detail = check(kubeconfig)
-    else:
-        confirmed = _confirm(f"soak complete -- run finalise now: {move.step.finalise}", assume_yes=assume_yes)
-        ok, detail = confirmed, ("confirmed by operator" if confirmed else "declined by operator")
-    if ok:
-        marker = write_finalise_marker(deploy, from_name, to_name, move.step.key)
-        detail = f"{detail} -- marker written: {marker}"
-    return ok, detail
+    """Confirm the soak is over, run the step's FINALISE_HOOKS program if it has
+    one, and mark the step finalised. The marker is written only when both
+    succeed, so a decline or a failed hook leaves the step exactly as
+    reversible as it was before this call."""
+    if not _confirm(f"soak complete -- run finalise now: {move.step.finalise}", assume_yes=assume_yes):
+        return False, "declined by operator"
+    detail = "confirmed by operator"
+    hook = FINALISE_HOOKS.get(move.step.key)
+    if hook is not None:
+        ok, hook_detail = hook(deploy, move)
+        detail = f"{detail}; {hook_detail}"
+        if not ok:
+            return False, detail
+    marker = write_finalise_marker(deploy, from_name, to_name, move.step.key)
+    return True, f"{detail} -- marker written: {marker}"
+
+
+def _stage_failed(stage_index: int, reason: str, stage_moves: list[Move]) -> int:
+    print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: {reason}", file=sys.stderr)
+    _print_rollback(stage_moves)
+    return EXIT_BLOCKED
+
+
+def _chart_stage(grouped: list[tuple[str, list[Move]]]) -> str | None:
+    """The first stage moving a component Argo renders -- everything outside
+    the bootstrap section, which bootstrap.sh installs before Argo exists."""
+    return next(
+        (stage for stage, stage_moves in grouped if any(not m.step.key.startswith("bootstrap.") for m in stage_moves)),
+        None,
+    )
+
+
+def _write_holds(deploy: Path, hold: KafkaHold, *, hold_version: bool) -> list[str]:
+    """Write the planned holds into infra/kafka.yaml; the lines written."""
+    text = _read_overlay(deploy)
+    written = []
+    if hold.metadata:
+        text = set_overlay_hold(text, "metadataVersion", hold.metadata)
+        written.append(f"kafka.metadataVersion {hold.metadata}")
+    if hold_version and hold.version:
+        text = set_overlay_hold(text, "version", hold.version)
+        written.append(f"kafka.version {hold.version}")
+    if written:
+        _write_overlay(deploy, text)
+    return written
 
 
 def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
-        _root, from_name, from_pins, to_name, to_pins = _load_from_to(deploy, args.to)
+        _root, from_name, from_pins, to_name, to_pins = _load_from_to(deploy, args.to, args.from_stack)
     except UpgradeError as err:
         print(f"dfe-ops upgrade apply: {err}", file=sys.stderr)
         return EXIT_PREFLIGHT_FAILED
@@ -1098,6 +1553,36 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         commands.append(cmd)
         if args.dry_run:
             print(f"[dry-run] {cmd}", file=sys.stderr)
+
+    stage_names = [stage for stage, _ in grouped]
+    reached = stage_names[: stage_names.index(args.stop_before)] if args.stop_before else stage_names
+    chart_stage = _chart_stage(grouped)
+    kafka_move = next((m for m in moves if m.step.key == KAFKA_VERSION_KEY), None)
+    kafka_stage = kafka_move.step.stage if kafka_move else None
+
+    # Read before any stage moves, so a cluster in a state apply cannot move
+    # refuses with nothing half done.
+    current_ref = ""
+    retarget: str | None = None
+    hold: KafkaHold | None = None
+    if not args.dry_run and chart_stage in reached:
+        try:
+            current_ref = read_target_revision(args.kubeconfig, args.argocd_namespace)
+            retarget, retarget_why = decide_retarget(current_ref, from_name, to_name, args.target_revision)
+            hold, hold_why = plan_kafka_hold(args.kubeconfig, deploy, kafka_move, read_finalised_keys(deploy))
+        except UpgradeError as err:
+            print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
+            return EXIT_BLOCKED
+        print(f"  target_revision: {retarget_why}", file=sys.stderr)
+        print(f"  kafka holds: {hold_why}", file=sys.stderr)
+        if retarget and not args.push:
+            print(
+                f"dfe-ops upgrade apply: REFUSED -- moving {TARGET_REVISION_ANNOTATION} to {retarget} needs "
+                "--push: Argo reads the deploy repo's remote, so an unpushed stage would move the charts "
+                "with none of its holds in place",
+                file=sys.stderr,
+            )
+            return EXIT_BLOCKED
 
     for stage_index, (stage, stage_moves) in enumerate(grouped, start=1):
         if args.stop_before and stage == args.stop_before:
@@ -1169,13 +1654,30 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 )
                 print(f"  sizing: {detail}", file=sys.stderr)
                 if not ok:
-                    print(
-                        f"dfe-ops upgrade apply FAILED at stage {stage_index}: resolver did not accept the migration",
-                        file=sys.stderr,
-                    )
-                    _print_rollback(stage_moves)
-                    return EXIT_BLOCKED
+                    return _stage_failed(stage_index, "resolver did not accept the migration", stage_moves)
 
+        # The holds land in the stage commit, so Argo has them before the retarget moves any chart.
+        hold_version = kafka_stage is not None and kafka_stage != stage
+        if stage == chart_stage and kafka_move is not None:
+            emit(f"hold kafka.metadataVersion at the live status.kafkaMetadataVersion in {KAFKA_OVERLAY} (Strimzi only)")
+            if hold_version:
+                emit(f"hold kafka.version at {kafka_move.old} in {KAFKA_OVERLAY} until stage {kafka_stage}")
+            if not args.dry_run and hold is not None:
+                try:
+                    written = _write_holds(deploy, hold, hold_version=hold_version)
+                except UpgradeError as err:
+                    return _stage_failed(stage_index, str(err), stage_moves)
+                print(f"  kafka holds: {', '.join(written) or 'already in place'}", file=sys.stderr)
+        if stage == kafka_stage:
+            emit(f"drop the kafka.version hold from {KAFKA_OVERLAY}, so the brokers roll to {kafka_move.new}")
+            if not args.dry_run:
+                text = _read_overlay(deploy)
+                released = drop_overlay_hold(text, "version")
+                if released != text:
+                    _write_overlay(deploy, released)
+                    print(f"  kafka holds: dropped kafka.version {kafka_move.old}", file=sys.stderr)
+
+        metadata_released = False
         for move in stage_moves:
             if not move.step.finalise:
                 continue
@@ -1188,17 +1690,19 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             emit(f"finalise {move.step.key}: {move.step.finalise}")
             if args.dry_run:
                 continue
-            ok, detail = run_finalise_hook(
-                deploy, move, from_name=from_name, to_name=to_name, kubeconfig=args.kubeconfig, assume_yes=args.yes
-            )
+            was_held = (overlay_entry(_read_overlay(deploy), "metadataVersion") or ("", False))[1]
+            ok, detail = run_finalise_hook(deploy, move, from_name=from_name, to_name=to_name, assume_yes=args.yes)
             print(f"  [{'DONE' if ok else 'PENDING'}] finalise {move.step.key}: {detail}", file=sys.stderr)
+            metadata_released = metadata_released or (ok and was_held and move.step.key == KAFKA_VERSION_KEY)
 
         keys = ", ".join(move.step.key for move in stage_moves)
         message = f"chore(upgrade): {to_name} stage {stage_index} -- {keys}"
-        emit(f"git -C {deploy} add pins.yaml sizing upgrades")
+        emit(f"git -C {deploy} add {' '.join(STAGED_PATHS)} (those present)")
         emit(f"git -C {deploy} commit -m {message!r}")
         if not args.dry_run:
-            _git(deploy, "add", "pins.yaml", "sizing", "upgrades")
+            added, detail = _stage(deploy)
+            if not added:
+                return _stage_failed(stage_index, f"git add failed: {detail}", stage_moves)
             # A later stage's pin already matches an earlier stage's bump, so
             # this can stage nothing -- commit only when something is staged.
             staged = _git(deploy, "diff", "--cached", "--quiet")
@@ -1207,19 +1711,15 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             else:
                 commit = _git(deploy, "commit", "-m", message)
                 if commit.returncode != 0:
-                    print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: git commit failed", file=sys.stderr)
-                    print(_last_line(commit.stderr) or _last_line(commit.stdout), file=sys.stderr)
-                    _print_rollback(stage_moves)
-                    return EXIT_BLOCKED
+                    failure = _last_line(commit.stderr) or _last_line(commit.stdout)
+                    return _stage_failed(stage_index, f"git commit failed: {failure}", stage_moves)
 
         if args.push:
             emit(f"git -C {deploy} push")
             if not args.dry_run:
                 push = _git(deploy, "push")
                 if push.returncode != 0:
-                    print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: git push failed", file=sys.stderr)
-                    _print_rollback(stage_moves)
-                    return EXIT_BLOCKED
+                    return _stage_failed(stage_index, "git push failed", stage_moves)
 
         emit(f"wait for Argo Applications in {args.argocd_namespace} (timeout {args.timeout}s)")
         if not args.dry_run:
@@ -1228,9 +1728,24 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             )
             print(f"  argo: {detail}", file=sys.stderr)
             if not ok:
-                print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: Argo did not converge", file=sys.stderr)
-                _print_rollback(stage_moves)
-                return EXIT_BLOCKED
+                return _stage_failed(stage_index, "Argo did not converge", stage_moves)
+
+        if stage == chart_stage:
+            ref = args.target_revision or to_name
+            emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
+            emit(f"wait for Argo Applications to leave {from_name} (timeout {args.timeout}s)")
+            if not args.dry_run and retarget:
+                ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
+                print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
+                if not ok:
+                    return _stage_failed(stage_index, "the cluster secret did not take the new target_revision", stage_moves)
+                ok, detail = wait_for_argo(
+                    args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
+                    stale_revision=current_ref,
+                )
+                print(f"  argo: {detail}", file=sys.stderr)
+                if not ok:
+                    return _stage_failed(stage_index, f"Argo did not converge on {retarget}", stage_moves)
 
         # Argo calls the operator Application Healthy as soon as its Deployment
         # is up, which is well before the new operator has reconciled anything.
@@ -1246,13 +1761,29 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 )
                 print(f"  strimzi: {detail}", file=sys.stderr)
                 if not ok:
-                    print(
-                        f"dfe-ops upgrade apply FAILED at stage {stage_index}: the Strimzi operator "
-                        "did not reconcile every Kafka CR",
-                        file=sys.stderr,
-                    )
-                    _print_rollback(stage_moves)
-                    return EXIT_BLOCKED
+                    return _stage_failed(stage_index, "the Strimzi operator did not reconcile every Kafka CR", stage_moves)
+
+        # Unpushed, Argo has nothing new to roll, so these waits run only with --push.
+        if stage == kafka_stage:
+            emit(f"wait for every Kafka CR to report kafkaVersion {kafka_move.new} (timeout {args.timeout}s)")
+            if not args.dry_run and hold is not None and args.push:
+                ok, detail = _wait_until(
+                    lambda: check_kafka_version(args.kubeconfig, kafka_move.new),
+                    timeout=args.timeout, stuck="still rolling",
+                )
+                print(f"  kafka: {detail}", file=sys.stderr)
+                if not ok:
+                    return _stage_failed(stage_index, f"the brokers did not roll to {kafka_move.new}", stage_moves)
+        if metadata_released:
+            emit(f"wait for every Kafka CR's kafkaMetadataVersion to reach the {kafka_move.new} line")
+            if args.push:
+                ok, detail = _wait_until(
+                    lambda: check_kafka_metadata_moved(args.kubeconfig, kafka_move.new),
+                    timeout=args.timeout, stuck="metadata version still held",
+                )
+                print(f"  kafka: {detail}", file=sys.stderr)
+                if not ok:
+                    return _stage_failed(stage_index, "the metadata version did not move", stage_moves)
 
     if args.dry_run:
         print(f"\n[dry-run] {len(commands)} command(s) would run; nothing was executed", file=sys.stderr)
@@ -1316,15 +1847,38 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
         )
         return EXIT_BLOCKED
 
-    if args.check_cluster:
-        ok, detail = check_cluster_metadata_version(
-            args.kubeconfig, moves, kafka_name=args.kafka_name, kafka_namespace=args.kafka_namespace
+    # The reverse move's `old` is the rollback target's value.
+    kafka_move = next((m for m in moves if m.step.key == KAFKA_VERSION_KEY), None)
+    retarget: str | None = None
+    if args.skip_cluster_check:
+        print(
+            "[SKIP] cluster reads: --skip-cluster-check -- neither the live metadata version nor "
+            f"{TARGET_REVISION_ANNOTATION} was read, so only the pin moves",
+            file=sys.stderr,
         )
-        print(f"[{'PASS' if ok else 'FAIL'}] cluster metadata.version check: {detail}", file=sys.stderr)
-        if not ok:
+    else:
+        if kafka_move is not None:
+            ok, detail = check_rollback_metadata(args.kubeconfig, kafka_move.old)
+            print(f"[{'PASS' if ok else 'FAIL'}] live metadata version: {detail}", file=sys.stderr)
+            if not ok:
+                print(
+                    f"dfe-ops upgrade rollback: REFUSED -- the brokers cannot be shown able to go back to "
+                    f"Kafka {kafka_move.old}. --skip-cluster-check moves the pin without this read; it does "
+                    "not make a downgrade below the live metadata version possible",
+                    file=sys.stderr,
+                )
+                return EXIT_BLOCKED
+        try:
+            current_ref = read_target_revision(args.kubeconfig, args.argocd_namespace)
+            retarget, why = decide_retarget(current_ref, from_name, to_name, args.target_revision)
+        except UpgradeError as err:
+            print(f"dfe-ops upgrade rollback: REFUSED -- {err}", file=sys.stderr)
+            return EXIT_BLOCKED
+        print(f"  target_revision: {why}", file=sys.stderr)
+        if retarget and not args.push and not args.dry_run:
             print(
-                "dfe-ops upgrade rollback: REFUSED -- --check-cluster found the live cluster already past "
-                "this step (no marker was written for it)",
+                f"dfe-ops upgrade rollback: REFUSED -- moving {TARGET_REVISION_ANNOTATION} back to {retarget} "
+                "needs --push, so Argo reads the rollback commit with it",
                 file=sys.stderr,
             )
             return EXIT_BLOCKED
@@ -1342,12 +1896,17 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
         print(f"[dry-run] git -C {deploy} commit -m 'chore(upgrade): rollback to {to_name}'")
         if args.push:
             print(f"[dry-run] git -C {deploy} push")
+        if retarget:
+            print(f"[dry-run] {retarget_command(args.argocd_namespace, retarget, to_name)}")
         return EXIT_OK
 
     bump_pin_file(deploy, to_name)
     keys = ", ".join(move.step.key for move in moves) or "no pinned key moved"
     message = f"chore(upgrade): rollback to {to_name} -- {keys}"
-    _git(deploy, "add", "pins.yaml", "sizing", "upgrades")
+    added, detail = _stage(deploy)
+    if not added:
+        print(f"dfe-ops upgrade rollback: git add failed: {detail}", file=sys.stderr)
+        return EXIT_BLOCKED
     commit = _git(deploy, "commit", "-m", message)
     if commit.returncode != 0:
         print(f"dfe-ops upgrade rollback: git commit failed: {_last_line(commit.stderr)}", file=sys.stderr)
@@ -1356,6 +1915,12 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
         push = _git(deploy, "push")
         if push.returncode != 0:
             print(f"dfe-ops upgrade rollback: git push failed: {_last_line(push.stderr)}", file=sys.stderr)
+            return EXIT_BLOCKED
+    if retarget:
+        ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
+        print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
+        if not ok:
+            print("dfe-ops upgrade rollback: the cluster secret did not take the rollback ref", file=sys.stderr)
             return EXIT_BLOCKED
     print(f"dfe-ops upgrade rollback OK: {from_name} -> {to_name}", file=sys.stderr)
     return EXIT_OK
@@ -1445,6 +2010,15 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         metavar="<stage-key>",
         help="stop the run before this upgrade-order.yaml stage (e.g. 30-services), touching nothing in it or after",
     )
+    apply_.add_argument(
+        "--from",
+        dest="from_stack",
+        default=None,
+        metavar="<stack>",
+        help="the stack the deployment is moving FROM, when pins.yaml already names the target "
+        "(finalise after the soak, or resume an apply) (default: pins.yaml's base.dfe-infra)",
+    )
+    _add_target_revision_arg(apply_)
     apply_.set_defaults(func=cmd_upgrade_apply)
 
     rollback = verbs.add_parser(
@@ -1454,14 +2028,24 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     )
     _add_deploy_target_args(rollback, to_required=True)
     rollback.add_argument("--kubeconfig", default=None, help="kubeconfig for the target cluster")
+    rollback.add_argument("--argocd-namespace", default=DEFAULT_ARGOCD_NAMESPACE, help="namespace holding the cluster secret")
     rollback.add_argument("--push", action="store_true", help="git push after the rollback commit")
     rollback.add_argument("--dry-run", action="store_true", help="print what would happen without running it")
     rollback.add_argument(
-        "--check-cluster",
+        "--skip-cluster-check",
         action="store_true",
-        help="when kubectl is reachable, also refuse if the live Kafka CR already shows a bumped "
-        "status.kafkaMetadataVersion, even with no marker",
+        help="move only the pin: read neither the live Kafka metadata version nor the cluster secret, "
+        "and leave target_revision where it is",
     )
-    rollback.add_argument("--kafka-name", default=DEFAULT_KAFKA_NAME, help="Kafka CR name --check-cluster reads")
-    rollback.add_argument("--kafka-namespace", default=DEFAULT_KAFKA_NAMESPACE, help="namespace the Kafka CR runs in")
+    _add_target_revision_arg(rollback)
     rollback.set_defaults(func=cmd_upgrade_rollback)
+
+
+def _add_target_revision_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--target-revision",
+        default=None,
+        metavar="<ref>",
+        help=f"the dfe-infra ref to write as the cluster secret's {TARGET_REVISION_ANNOTATION} "
+        "(default: the target stack's tag, when the secret is pinned to the FROM stack's)",
+    )

@@ -19,6 +19,10 @@ metadata:
 spec:
   kafka:
     version: {{ .Values.kafka.version }}
+    {{- with .Values.kafka.metadataVersion }}
+    # Quoted: an unquoted 4.2 reaches Strimzi as a float.
+    metadataVersion: {{ . | quote }}
+    {{- end }}
     # Simple (ACL) authorization -- required for the KafkaUser's simple ACLs to
     # apply. Without it the User Operator rejects the user ("Simple authorization
     # ACL rules are configured but not supported") and never mints its secret.

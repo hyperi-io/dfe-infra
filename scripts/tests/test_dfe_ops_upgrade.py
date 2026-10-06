@@ -21,8 +21,7 @@ test_dfe_ops_bastion.py mocks for tofu/render_dial.py. No real cluster,
 repo or resolver is touched.
 """
 
-from __future__ import annotations
-
+import json
 import subprocess
 import sys
 from datetime import datetime
@@ -117,6 +116,21 @@ def deploy(tmp_path: Path) -> Path:
     d.mkdir()
     (d / "pins.yaml").write_text(PINS_YAML, encoding="utf-8")
     return d
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any test whose kubectl call reaches the real subprocess boundary,
+    which would read whatever cluster this host's kubeconfig names. git still
+    runs for real, for the tests built on a real deploy repo."""
+    real_run = u._run
+
+    def guarded(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        if cmd[:1] == ["kubectl"]:
+            raise AssertionError(f"test reached a real cluster: {cmd}")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(u, "_run", guarded)
 
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -732,6 +746,7 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
         clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
+        from_stack=None, target_revision=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -765,6 +780,7 @@ def test_cmd_upgrade_apply_nothing_to_apply(
         clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
+        from_stack=None, target_revision=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -783,6 +799,7 @@ def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
         clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
+        from_stack=None, target_revision=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_BLOCKED
@@ -797,6 +814,7 @@ def _apply_args(**overrides: object) -> _Args:
         clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
+        from_stack=None, target_revision=None,
     )
     base.update(overrides)
     return _Args(**base)
@@ -909,7 +927,8 @@ def test_cmd_upgrade_apply_dial_commits_the_refreshed_sizing(
     assert rc == u.EXIT_OK
     assert staged["resolved.yaml"] == RESOLVER_OUTPUT["sizing/resolved.yaml"]
     git_add = next(cmd for cmd in calls if cmd[:1] == ["git"] and "add" in cmd)
-    assert git_add[-3:] == ["pins.yaml", "sizing", "upgrades"]
+    # upgrades/ does not exist in this deploy, and naming it would make git stage nothing.
+    assert git_add[git_add.index("add") + 1 :] == ["pins.yaml", "sizing"]
     assert not (deploy / "sizing.auto.tfvars.json").exists()
 
 
@@ -946,8 +965,8 @@ def test_cmd_upgrade_apply_dry_run_dial_names_where_the_sizing_lands(
 def _rollback_args(**overrides: object) -> _Args:
     """The rollback _Args shape every test shares, with per-test overrides."""
     base = dict(
-        kubeconfig=None, push=False, dry_run=True,
-        check_cluster=False, kafka_name=u.DEFAULT_KAFKA_NAME, kafka_namespace=u.DEFAULT_KAFKA_NAMESPACE,
+        kubeconfig=None, push=False, dry_run=True, argocd_namespace="argocd",
+        skip_cluster_check=True, target_revision=None,
     )
     base.update(overrides)
     return _Args(**base)
@@ -1038,7 +1057,7 @@ stages:
 
 
 # ---------------------------------------------------------------------------
-# finalise markers -- read/write, and the rollback --check-cluster guard
+# finalise markers -- read/write, and the rollback's live metadata check
 # ---------------------------------------------------------------------------
 
 
@@ -1078,119 +1097,149 @@ def test_write_finalise_marker_keeps_sibling_keys(deploy: Path) -> None:
     assert finalised == {"services.kafka-version": "t1", "operators.strimzi-kafka-operator": "t2"}
 
 
+KAFKA_STEP = u.Step(
+    stage="30-services", order="10", key="services.kafka-version",
+    finalise="metadata.version bump after a soak; one way", rollback="none",
+)
+KAFKA_MOVE = u.Move(step=KAFKA_STEP, old="4.2.0", new="4.3.1")
+
+
 def test_run_finalise_hook_confirmed_writes_marker(deploy: Path) -> None:
-    step = u.Step(
-        stage="30-services", order="10", key="services.kafka-version",
-        finalise="metadata.version bump after a soak; one way", rollback="none",
-    )
-    move = u.Move(step=step, old="4.2.0", new="4.3.1")
-    ran, detail = u.run_finalise_hook(
-        deploy, move, from_name="1.0.0", to_name="2.0.0", kubeconfig=None, assume_yes=True
-    )
+    ran, detail = u.run_finalise_hook(deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=True)
     assert ran is True
     assert "marker written" in detail
+    assert "not held" in detail  # no infra/kafka.yaml, so there was no hold to drop
     finalised = u.read_finalised_keys(deploy)
     assert "services.kafka-version" in finalised
     assert datetime.fromisoformat(finalised["services.kafka-version"])
 
 
 def test_run_finalise_hook_declined_writes_no_marker(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
-    step = u.Step(
-        stage="30-services", order="10", key="services.kafka-version",
-        finalise="metadata.version bump after a soak; one way", rollback="none",
-    )
-    move = u.Move(step=step, old="4.2.0", new="4.3.1")
     monkeypatch.setattr("builtins.input", lambda *_a: "n")
-    ran, detail = u.run_finalise_hook(
-        deploy, move, from_name="1.0.0", to_name="2.0.0", kubeconfig=None, assume_yes=False
-    )
+    ran, detail = u.run_finalise_hook(deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=False)
     assert ran is False
     assert "declined" in detail
     assert u.read_finalised_keys(deploy) == {}
 
 
-def test_check_cluster_metadata_version_no_finalise_moves() -> None:
-    ok, detail = u.check_cluster_metadata_version(None, [])
-    assert ok is True
-    assert "nothing to check" in detail
+def _kafka_list(*statuses: dict) -> subprocess.CompletedProcess:
+    """`kubectl get kafkas -A -o json` carrying one Kafka CR per status dict."""
+    items = [
+        {"metadata": {"name": f"dfe-kafka-{i}", "namespace": "strimzi"}, "status": status}
+        for i, status in enumerate(statuses)
+    ]
+    return _proc(0, stdout=json.dumps({"items": items}))
 
 
-def test_check_cluster_metadata_version_refuses_when_bumped(monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-
-    step = u.Step(
-        stage="30-services", order="10", key="services.kafka-version",
-        finalise="metadata.version bump after a soak; one way", rollback="none",
-    )
-    move = u.Move(step=step, old="4.2.0", new="4.3.1")
-    doc = {"status": {"kafkaMetadataVersion": "4.3.1"}}
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
-    ok, detail = u.check_cluster_metadata_version("kc", [move])
+def test_check_rollback_metadata_refuses_a_metadata_version_above_the_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unpinned, Strimzi moved the metadata to 4.3-IV0 the moment the roll to
+    # 4.3.1 finished; Kafka 4.2.0 cannot run it, marker or no marker.
+    _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.3-IV0"}))
+    ok, detail = u.check_rollback_metadata("kc", "4.2.0")
     assert ok is False
-    assert "services.kafka-version" in detail
+    assert "strimzi/dfe-kafka-0 (kafkaMetadataVersion 4.3-IV0)" in detail
 
 
-def test_check_cluster_metadata_version_passes_when_not_yet_bumped(monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-
-    step = u.Step(
-        stage="30-services", order="10", key="services.kafka-version",
-        finalise="metadata.version bump after a soak; one way", rollback="none",
-    )
-    move = u.Move(step=step, old="4.2.0", new="4.3.1")
-    doc = {"status": {"kafkaMetadataVersion": "4.2.0"}}
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
-    ok, _detail = u.check_cluster_metadata_version("kc", [move])
+def test_check_rollback_metadata_passes_a_held_metadata_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}))
+    ok, detail = u.check_rollback_metadata("kc", "4.2.0")
     assert ok is True
+    assert "Kafka 4.2.0 runs" in detail
 
 
-def test_check_cluster_metadata_version_unreachable_is_a_clean_skip(monkeypatch: pytest.MonkeyPatch) -> None:
-    step = u.Step(
-        stage="30-services", order="10", key="services.kafka-version",
-        finalise="metadata.version bump after a soak; one way", rollback="none",
-    )
-    move = u.Move(step=step, old="4.2.0", new="4.3.1")
+def test_check_rollback_metadata_refuses_a_cr_with_no_metadata_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _kafka_list({"kafkaVersion": "4.3.1"}))
+    ok, detail = u.check_rollback_metadata("kc", "4.2.0")
+    assert ok is False
+    assert "unset" in detail
+
+
+def test_check_rollback_metadata_refuses_an_unreachable_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_run(monkeypatch, _proc(1, stderr="Unable to connect to the server\n"))
-    ok, detail = u.check_cluster_metadata_version("kc", [move])
+    ok, detail = u.check_rollback_metadata("kc", "4.2.0")
+    assert ok is False
+    assert "cannot list Kafka CRs" in detail
+
+
+def test_check_rollback_metadata_passes_with_no_strimzi_broker(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _proc(1, stderr='error: the server doesn\'t have a resource type "kafkas"'))
+    ok, detail = u.check_rollback_metadata("kc", "4.2.0")
     assert ok is True
-    assert "cannot read Kafka CR" in detail
+    assert "no Kafka CRD" in detail
 
 
-def test_cmd_upgrade_rollback_check_cluster_refuses_without_marker(
+def test_check_rollback_metadata_reads_every_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}))
+    u.check_rollback_metadata("kc", "4.2.0")
+    assert "-A" in calls[0]
+
+
+def test_cmd_upgrade_rollback_refuses_without_a_marker_when_the_metadata_moved(
     monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    import json
-
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     u.bump_pin_file(deploy, "2.0.0")
-    # No marker exists, but the live cluster already shows the bumped value --
-    # e.g. an operator ran the metadata.version bump by hand.
-    doc = {"status": {"kafkaMetadataVersion": "4.3.1"}}
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+    # No marker and no opt-in flag: the live read is the default.
+    calls = _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.3-IV0"}))
 
-    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", check_cluster=True)
+    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False)
     rc = u.cmd_upgrade_rollback(args)
     assert rc == u.EXIT_BLOCKED
     err = capsys.readouterr().err
     assert "REFUSED" in err
-    assert "check-cluster" in err
+    assert "Kafka 4.2.0" in err
+    assert len(calls) == 1  # refused before the cluster secret was read
+    assert u.read_deploy_pin(deploy) == "2.0.0"
 
 
-def test_cmd_upgrade_rollback_check_cluster_passes_when_not_bumped(
+def test_cmd_upgrade_rollback_passes_a_held_metadata_version_and_names_the_retarget(
     monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    import json
-
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     u.bump_pin_file(deploy, "2.0.0")
-    doc = {"status": {"kafkaMetadataVersion": "4.2.0"}}
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+    _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}), _proc(0, stdout="2.0.0"))
 
-    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", check_cluster=True)
+    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False)
     rc = u.cmd_upgrade_rollback(args)
     assert rc == u.EXIT_OK
+    out = capsys.readouterr().out
+    assert (
+        "[dry-run] kubectl -n argocd annotate --overwrite secret/dfe-cluster "
+        "dfe.hyperi.io/target_revision=1.0.0 dfe.hyperi.io/stack_version=1.0.0"
+    ) in out
+
+
+def test_cmd_upgrade_rollback_retarget_needs_push(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    u.bump_pin_file(deploy, "2.0.0")
+    _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}), _proc(0, stdout="2.0.0"))
+
+    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False, dry_run=False)
+    rc = u.cmd_upgrade_rollback(args)
+    assert rc == u.EXIT_BLOCKED
+    assert "needs --push" in capsys.readouterr().err
+    assert u.read_deploy_pin(deploy) == "2.0.0"
+
+
+def test_cmd_upgrade_rollback_skip_cluster_check_reads_nothing(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    u.bump_pin_file(deploy, "2.0.0")
+    calls = _mock_run(monkeypatch)
+
+    rc = u.cmd_upgrade_rollback(_rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc"))
+    assert rc == u.EXIT_OK
+    assert calls == []
+    assert "only the pin moves" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -1462,6 +1511,8 @@ def _stub_cluster_facing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
     monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
+    # A branch-tracking secret: nothing to retarget, so no --push is needed.
+    monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "main")
 
 
 def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
@@ -1489,3 +1540,525 @@ def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
     assert "stage 1 -- bootstrap.cert-manager" in log
     assert "stage 2 -- services.clickhouse-version" not in log
     assert (real_git_deploy / "pins.yaml").read_text(encoding="utf-8") == PINS_YAML.replace("1.0.0", "2.0.0")
+
+
+# ---------------------------------------------------------------------------
+# The Strimzi conversion preflight -- every CRD 1.x requires stored as v1
+# ---------------------------------------------------------------------------
+
+# CRD_NAMES in v1-api-conversion/.../cli/AbstractCommand.java at Strimzi tag
+# 1.0.0, the set the tool's crd-upgrade rewrites to store v1 only.
+CONVERSION_TOOL_CRDS = {
+    "kafkas.kafka.strimzi.io",
+    "kafkaconnects.kafka.strimzi.io",
+    "kafkabridges.kafka.strimzi.io",
+    "kafkamirrormaker2s.kafka.strimzi.io",
+    "kafkatopics.kafka.strimzi.io",
+    "kafkausers.kafka.strimzi.io",
+    "kafkaconnectors.kafka.strimzi.io",
+    "kafkarebalances.kafka.strimzi.io",
+    "kafkanodepools.kafka.strimzi.io",
+    "strimzipodsets.core.strimzi.io",
+}
+
+
+def test_strimzi_crds_is_the_conversion_tool_set() -> None:
+    assert len(u.STRIMZI_CRDS) == len(set(u.STRIMZI_CRDS)) == 10
+    assert set(u.STRIMZI_CRDS) == CONVERSION_TOOL_CRDS
+
+
+def _crd_responses(stale: str, stored: list[str]) -> list[subprocess.CompletedProcess]:
+    """One `kubectl get crd` answer per STRIMZI_CRDS entry, all v1 except `stale`."""
+    return [
+        _proc(0, stdout=json.dumps({"status": {"storedVersions": stored if crd == stale else ["v1"]}}))
+        for crd in u.STRIMZI_CRDS
+    ]
+
+
+@pytest.mark.parametrize("stale", ["kafkarebalances.kafka.strimzi.io", "strimzipodsets.core.strimzi.io"])
+def test_check_strimzi_conversion_refuses_the_crds_the_four_crd_list_missed(
+    monkeypatch: pytest.MonkeyPatch, stale: str
+) -> None:
+    # Rebalancing is on by default, so a 0.51 cluster carries both of these on v1beta2.
+    calls = _mock_run(monkeypatch, *_crd_responses(stale, ["v1beta2"]))
+    ok, detail = u.check_strimzi_conversion("kc")
+    assert ok is False
+    assert f"{stale} (stored: v1beta2)" in detail
+    assert [call[call.index("crd") + 1] for call in calls] == list(u.STRIMZI_CRDS)
+
+
+def test_check_strimzi_conversion_fails_a_crd_it_could_not_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = _crd_responses("", [])
+    responses[3] = _proc(1, stderr="Unable to connect to the server: dial tcp: i/o timeout")
+    _mock_run(monkeypatch, *responses)
+    ok, detail = u.check_strimzi_conversion("kc")
+    assert ok is False
+    assert f"cannot read 1 Strimzi CRD(s): {u.STRIMZI_CRDS[3]}" in detail
+
+
+def test_conversion_refusal_carries_the_exact_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, *_crd_responses("kafkarebalances.kafka.strimzi.io", ["v1beta2", "v1"]))
+    step = u.Step(stage="20-operators", order="50", key=u.STRIMZI_OPERATOR_KEY, before="stored-version conversion")
+    ok, detail = u.check_strimzi_conversion_before("kc", u.Move(step=step, old="0.51.0", new="1.2.0"))
+    assert ok is False
+    assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in detail
+    assert "`bin/v1-api-conversion.sh convert-resource --all-namespaces`" in detail
+    assert "`bin/v1-api-conversion.sh crd-upgrade`" in detail
+    assert detail.index("convert-resource") < detail.index("crd-upgrade")
+
+
+def test_preflight_runs_the_conversion_check_with_the_operator_move(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    seen: list[u.Move] = []
+
+    def fake_before(_kubeconfig: str | None, move: u.Move) -> tuple[bool, str]:
+        seen.append(move)
+        return False, "1 CRD(s) still store a pre-v1 version"
+
+    for name in ("check_deploy_clean", "check_cluster_reachable", "check_argo_apps", "check_no_kafka_rebalance",
+                 "check_clickhouse_merges", "check_node_capacity"):
+        monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(u, "check_strimzi_conversion_before", fake_before)
+    step = u.Step(stage="20-operators", order="50", key=u.STRIMZI_OPERATOR_KEY, before="x stored-version conversion y")
+    move = u.Move(step=step, old="0.51.0", new="1.2.0")
+    checks = u.run_preflight(deploy, [move], kubeconfig="kc")
+    assert ("strimzi stored-version conversion", False, "1 CRD(s) still store a pre-v1 version") in checks
+    assert seen == [move]
+
+
+def test_real_upgrade_order_names_the_conversion_commands() -> None:
+    steps = {s.key: s for s in u.load_steps()}
+    before = steps[u.STRIMZI_OPERATOR_KEY].before
+    assert "stored-version conversion" in before  # what run_preflight keys on
+    for command in u.CONVERSION_COMMANDS:
+        assert command in before
+
+
+# ---------------------------------------------------------------------------
+# The infra/kafka.yaml holds -- surgical, deployer values untouched
+# ---------------------------------------------------------------------------
+
+DEPLOYER_OVERLAY = """# the deployer's own Kafka shape
+kafka:
+    storageModel: tiered-object
+    tieredObject:
+        className: io.example.RemoteStorageManager
+"""
+
+
+def test_set_overlay_hold_creates_a_file_from_nothing() -> None:
+    text = u.set_overlay_hold("", "metadataVersion", "4.2-IV1")
+    assert text == f'kafka:\n  metadataVersion: "4.2-IV1"  {u.HOLD_MARK}\n'
+    assert u.overlay_entry(text, "metadataVersion") == ("4.2-IV1", True)
+
+
+def test_set_overlay_hold_keeps_the_deployers_block_and_its_indent() -> None:
+    text = u.set_overlay_hold(DEPLOYER_OVERLAY, "metadataVersion", "4.2-IV1")
+    text = u.set_overlay_hold(text, "version", "4.2.0")
+    assert f'    metadataVersion: "4.2-IV1"  {u.HOLD_MARK}' in text
+    assert f'    version: "4.2.0"  {u.HOLD_MARK}' in text
+    for line in DEPLOYER_OVERLAY.splitlines():
+        assert line in text.splitlines()
+    assert u.overlay_entry(text, "storageModel") == ("tiered-object", False)
+
+
+def test_set_overlay_hold_appends_a_kafka_block_after_other_keys() -> None:
+    text = u.set_overlay_hold("clickhouse:\n  mode: cluster\n", "metadataVersion", "4.2-IV1")
+    assert text == f'clickhouse:\n  mode: cluster\n\nkafka:\n  metadataVersion: "4.2-IV1"  {u.HOLD_MARK}\n'
+
+
+def test_set_overlay_hold_rewrites_its_own_hold_in_place() -> None:
+    text = u.set_overlay_hold(u.set_overlay_hold("", "version", "4.2.0"), "version", "4.2.1")
+    assert text.count("version:") == 1
+    assert u.overlay_entry(text, "version") == ("4.2.1", True)
+
+
+def test_set_overlay_hold_refuses_a_value_the_deployer_set() -> None:
+    with pytest.raises(u.UpgradeError, match=r"sets kafka\.metadataVersion itself"):
+        u.set_overlay_hold('kafka:\n  metadataVersion: "4.1-IV1"\n', "metadataVersion", "4.2-IV1")
+
+
+def test_set_overlay_hold_refuses_a_flow_style_kafka_key() -> None:
+    with pytest.raises(u.UpgradeError, match="not a block mapping"):
+        u.set_overlay_hold("kafka: {mode: cluster}\n", "metadataVersion", "4.2-IV1")
+
+
+def test_drop_overlay_hold_leaves_the_deployers_lines() -> None:
+    held = u.set_overlay_hold(DEPLOYER_OVERLAY, "metadataVersion", "4.2-IV1")
+    assert u.drop_overlay_hold(held, "metadataVersion") == DEPLOYER_OVERLAY
+
+
+def test_drop_overlay_hold_never_drops_a_deployer_value() -> None:
+    text = 'kafka:\n  metadataVersion: "4.1-IV1"\n'
+    assert u.drop_overlay_hold(text, "metadataVersion") == text
+
+
+def test_drop_overlay_hold_takes_an_emptied_kafka_key_with_it() -> None:
+    # A bare `kafka:` is null, and Helm reads a null as deleting every chart default under it.
+    held = u.set_overlay_hold("# holds only\n", "metadataVersion", "4.2-IV1")
+    assert u.drop_overlay_hold(held, "metadataVersion") == "# holds only\n\n"
+
+
+# ---------------------------------------------------------------------------
+# plan_kafka_hold -- decided from the live CRs before any stage moves
+# ---------------------------------------------------------------------------
+
+
+def _live_kafka(monkeypatch: pytest.MonkeyPatch, *statuses: dict) -> None:
+    _mock_run(monkeypatch, _kafka_list(*statuses))
+
+
+def test_plan_kafka_hold_pins_the_running_metadata_and_holds_the_brokers(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
+    _live_kafka(monkeypatch, {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"})
+    hold, detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
+    assert hold == u.KafkaHold(metadata="4.2-IV1", version="4.2.0")
+    assert "metadata held at 4.2-IV1" in detail
+
+
+def test_plan_kafka_hold_never_holds_brokers_that_already_rolled(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    (deploy / "infra").mkdir()
+    (deploy / "infra" / "kafka.yaml").write_text(u.set_overlay_hold("", "metadataVersion", "4.2-IV1"), encoding="utf-8")
+    _live_kafka(monkeypatch, {"kafkaVersion": "4.3.1", "kafkaMetadataVersion": "4.2-IV1"})
+    hold, detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
+    assert hold == u.KafkaHold(metadata="", version="")
+    assert "metadata held at 4.2-IV1" in detail
+
+
+def test_plan_kafka_hold_leaves_a_deployer_kafka_version_alone(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    (deploy / "infra").mkdir()
+    (deploy / "infra" / "kafka.yaml").write_text('kafka:\n  version: "4.2.0"\n', encoding="utf-8")
+    _live_kafka(monkeypatch, {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"})
+    hold, _detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
+    assert hold == u.KafkaHold(metadata="4.2-IV1", version="")
+
+
+def test_plan_kafka_hold_refuses_brokers_on_neither_version(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    _live_kafka(monkeypatch, {"kafkaVersion": "4.1.1", "kafkaMetadataVersion": "4.1-IV1"})
+    with pytest.raises(u.UpgradeError, match=r"neither 4\.2\.0 nor 4\.3\.1"):
+        u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
+
+
+def test_plan_kafka_hold_refuses_crs_that_disagree(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    _live_kafka(
+        monkeypatch,
+        {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"},
+        {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.1-IV1"},
+    )
+    with pytest.raises(u.UpgradeError, match="disagree"):
+        u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
+
+
+def test_plan_kafka_hold_refuses_a_cr_with_no_metadata_version(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    _live_kafka(monkeypatch, {"kafkaVersion": "4.2.0"})
+    with pytest.raises(u.UpgradeError, match=r"no status\.kafkaMetadataVersion"):
+        u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
+
+
+def test_plan_kafka_hold_reads_nothing_once_finalised_or_without_a_move(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
+    calls = _mock_run(monkeypatch)
+    assert u.plan_kafka_hold("kc", deploy, None, {})[0] is None
+    assert u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {"services.kafka-version": "t"})[0] is None
+    assert calls == []
+
+
+def test_plan_kafka_hold_holds_nothing_without_a_strimzi_broker(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    _live_kafka(monkeypatch)
+    hold, detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
+    assert hold is None
+    assert "no Strimzi Kafka CR" in detail
+
+
+def test_release_metadata_hold_drops_only_the_hold(deploy: Path) -> None:
+    (deploy / "infra").mkdir()
+    overlay = deploy / "infra" / "kafka.yaml"
+    overlay.write_text(u.set_overlay_hold(DEPLOYER_OVERLAY, "metadataVersion", "4.2-IV1"), encoding="utf-8")
+    ok, detail = u.release_metadata_hold(deploy, KAFKA_MOVE)
+    assert ok is True
+    assert "dropped the kafka.metadataVersion 4.2-IV1 hold" in detail
+    assert overlay.read_text(encoding="utf-8") == DEPLOYER_OVERLAY
+
+
+def test_release_metadata_hold_refuses_a_deployer_pin_and_finalise_writes_no_marker(deploy: Path) -> None:
+    (deploy / "infra").mkdir()
+    (deploy / "infra" / "kafka.yaml").write_text('kafka:\n  metadataVersion: "4.2-IV1"\n', encoding="utf-8")
+    ran, detail = u.run_finalise_hook(deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=True)
+    assert ran is False
+    assert "raise it to the 4.3.1 line by hand" in detail
+    assert u.read_finalised_keys(deploy) == {}
+
+
+# ---------------------------------------------------------------------------
+# The cluster secret's target_revision
+# ---------------------------------------------------------------------------
+
+
+def test_decide_retarget_moves_a_tag_pinned_secret() -> None:
+    assert u.decide_retarget("2.2.0-rc.13", "2.2.0-rc.13", "2.2.0-rc.14", None)[0] == "2.2.0-rc.14"
+    assert u.decide_retarget("v1.0.0", "1.0.0", "2.0.0", None)[0] == "2.0.0"
+
+
+def test_decide_retarget_leaves_a_branch_and_a_secret_already_there() -> None:
+    ref, why = u.decide_retarget("release-train-xyzzy", "1.0.0", "2.0.0", None)
+    assert ref is None
+    assert "tracks a branch the charts already follow -- left as it is" in why
+    assert u.decide_retarget("2.0.0", "1.0.0", "2.0.0", None)[0] is None
+
+
+def test_decide_retarget_never_repeats_the_value_it_read_from_the_secret() -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    for current in ("release-train-xyzzy", "1.0.0", "2.0.0", "v1.0.0"):
+        _ref, why = u.decide_retarget(current, "0.9.0" if current == "release-train-xyzzy" else "1.0.0", "2.0.0", None)
+        assert "secret/dfe-cluster dfe.hyperi.io/target_revision" in why
+        assert "release-train-xyzzy" not in why
+        assert "v1.0.0" not in why
+    with pytest.raises(u.UpgradeError) as refused:
+        u.decide_retarget(sha, "1.0.0", "2.0.0", None)
+    assert sha not in str(refused.value)
+
+
+def test_decide_retarget_refuses_a_commit_pin_without_an_explicit_ref() -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    with pytest.raises(u.UpgradeError, match="pins a commit"):
+        u.decide_retarget(sha, "1.0.0", "2.0.0", None)
+    assert u.decide_retarget(sha, "1.0.0", "2.0.0", "2.0.0")[0] == "2.0.0"
+
+
+def test_decide_retarget_refuses_an_unset_annotation() -> None:
+    with pytest.raises(u.UpgradeError, match="is unset"):
+        u.decide_retarget("", "1.0.0", "2.0.0", None)
+
+
+def test_read_target_revision_reads_only_the_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, _proc(0, stdout="2.2.0-rc.13\n"))
+    assert u.read_target_revision("kc", "argocd") == "2.2.0-rc.13"
+    assert calls[0][-2:] == ["-o", "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/target_revision}"]
+    assert ["secret", "dfe-cluster"] == calls[0][calls[0].index("get") + 1 : calls[0].index("get") + 3]
+
+
+def test_write_target_revision_moves_the_ref_and_the_stack_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, _proc(0))
+    ok, _detail = u.write_target_revision("kc", "argocd", "2.2.0-rc.14", "2.2.0-rc.14")
+    assert ok is True
+    assert calls[0][-5:] == [
+        "annotate", "--overwrite", "secret/dfe-cluster",
+        "dfe.hyperi.io/target_revision=2.2.0-rc.14", "dfe.hyperi.io/stack_version=2.2.0-rc.14",
+    ]
+
+
+def test_check_argo_apps_fails_an_app_still_on_the_old_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    synced = {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}
+    doc = {"items": [
+        {"metadata": {"name": "kafka-dfe"}, "spec": {"sources": [{"targetRevision": "1.0.0"}, {"targetRevision": "main"}]},
+         "status": synced},
+        {"metadata": {"name": "strimzi"}, "spec": {"source": {"targetRevision": "1.2.0"}}, "status": synced},
+    ]}
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+    ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
+    assert ok is False
+    assert "1 app(s) not Synced/Healthy: kafka-dfe (still renders from the previous" in detail
+    assert "1.0.0" not in detail  # the stale ref came out of the cluster Secret
+
+
+# ---------------------------------------------------------------------------
+# The in-place Strimzi 0.51 -> 1.2.0 path end to end, against a real deploy
+# repo pushed to a real (local) remote: holds, retarget order, version roll,
+# then a finalise after the soak.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def pushed_deploy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
+    """A deploy repo holding pins.yaml alone -- no sizing/ or upgrades/, the
+    dfe-deploy template's own shape -- tracking a bare local remote."""
+    for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(name, "Test")
+    for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(name, "test@example.invalid")
+    remote = tmp_path / "remote.git"
+    assert u._run(["git", "init", "-q", "--bare", str(remote)]).returncode == 0
+    d = tmp_path / "deploy-template"
+    d.mkdir()
+    (d / "pins.yaml").write_text(PINS_YAML, encoding="utf-8")
+    for args in (["init", "-q", "-b", "main"], ["add", "pins.yaml"], ["commit", "-q", "-m", "initial"],
+                 ["remote", "add", "origin", str(remote)], ["push", "-q", "-u", "origin", "main"]):
+        assert u._git(d, *args).returncode == 0, args
+    return d, remote
+
+
+def _remote_file(remote: Path, rev: str, path: str) -> str:
+    shown = u._run(["git", "--git-dir", str(remote), "show", f"{rev}:{path}"])
+    return shown.stdout if shown.returncode == 0 else ""
+
+
+def _ga_cluster(monkeypatch: pytest.MonkeyPatch, live: dict[str, str]) -> list[tuple[str, str]]:
+    """Stand in for the cluster: every cluster-facing call is recorded in order,
+    and the remote HEAD at each one is captured so the order can be checked
+    against what Argo could actually read."""
+    events: list[tuple[str, str]] = []
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [("strimzi stored-version conversion", True, "ok")])
+    monkeypatch.setattr(u, "check_strimzi_conversion", lambda *_a, **_k: (True, "10 Strimzi CRD(s) store v1 only"))
+    monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: live["target_revision"])
+    monkeypatch.setattr(
+        u, "read_kafka_state", lambda *_a, **_k: u.KafkaState(crs=1, version=live["kafka"], metadata=live["metadata"])
+    )
+
+    def argo(*_a: object, stale_revision: str = "", **_k: object) -> tuple[bool, str]:
+        events.append(("argo", stale_revision))
+        return True, "converged"
+
+    def retarget(_kc: object, _ns: str, ref: str, stack: str) -> tuple[bool, str]:
+        events.append(("retarget", ref))
+        live["target_revision"] = ref
+        return True, f"{ref} {stack}"
+
+    def operator(*_a: object, **_k: object) -> tuple[bool, str]:
+        events.append(("operator", ""))
+        return True, "reconciled"
+
+    def kafka_version(_kc: object, version: str) -> tuple[bool, str]:
+        events.append(("kafka-version", version))
+        live["kafka"] = version
+        return True, "rolled"
+
+    def metadata(_kc: object, version: str) -> tuple[bool, str]:
+        events.append(("metadata", version))
+        return True, "moved"
+
+    monkeypatch.setattr(u, "wait_for_argo", argo)
+    monkeypatch.setattr(u, "write_target_revision", retarget)
+    monkeypatch.setattr(u, "wait_for_kafka_operator_version", operator)
+    monkeypatch.setattr(u, "check_kafka_version", kafka_version)
+    monkeypatch.setattr(u, "check_kafka_metadata_moved", metadata)
+    return events
+
+
+def _commit_with(remote: Path, subject: str) -> str:
+    log = u._run(["git", "--git-dir", str(remote), "log", "--format=%H %s", "main"]).stdout
+    return next(line.split(" ", 1)[0] for line in log.splitlines() if subject in line)
+
+
+def test_apply_holds_the_metadata_then_retargets_then_rolls_the_brokers(
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_deploy: tuple[Path, Path],
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    deploy, remote = pushed_deploy
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    live = {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"}
+    events = _ga_cluster(monkeypatch, live)
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+
+    # Stage 1 (bootstrap) commits the pin; the pin alone moves no chart.
+    stage1 = _commit_with(remote, "stage 1 -- bootstrap.cert-manager")
+    assert _remote_file(remote, stage1, "infra/kafka.yaml") == ""
+    # Stage 2 (operators) pushes both holds BEFORE the retarget moves any chart.
+    stage2 = _commit_with(remote, "stage 2 -- operators.strimzi-kafka-operator")
+    held = _remote_file(remote, stage2, "infra/kafka.yaml")
+    assert u.overlay_entry(held, "metadataVersion") == ("4.2-IV1", True)
+    assert u.overlay_entry(held, "version") == ("4.2.0", True)
+    # Stage 3 (services) drops only the version hold, so the brokers roll under the held metadata.
+    stage3 = _commit_with(remote, "stage 3 -- services.kafka-version")
+    rolled = _remote_file(remote, stage3, "infra/kafka.yaml")
+    assert u.overlay_entry(rolled, "metadataVersion") == ("4.2-IV1", True)
+    assert u.overlay_entry(rolled, "version") is None
+
+    assert events == [
+        ("argo", ""),          # stage 1
+        ("argo", ""),          # stage 2, the holds applied on the old charts
+        ("retarget", "2.0.0"),
+        ("argo", "1.0.0"),     # until no Application renders from the old tag
+        ("operator", ""),
+        ("argo", ""),          # stage 3, the version hold dropped
+        ("kafka-version", "4.3.1"),
+    ]
+    assert "finalise pending (manual, after a soak): services.kafka-version" in err
+    assert u.read_finalised_keys(deploy) == {}
+
+    # After the soak: pins.yaml already names 2.0.0, so --from names the start.
+    live["kafka"] = "4.3.1"
+    events.clear()
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(deploy), to="2.0.0", from_stack="1.0.0", yes=True, dry_run=False, push=True, finalise=True,
+    ))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert ("retarget", "2.0.0") not in events  # already there
+    assert ("metadata", "4.3.1") in events
+    assert events.index(("metadata", "4.3.1")) > events.index(("kafka-version", "4.3.1"))
+    finalised = _remote_file(remote, "main", "infra/kafka.yaml")
+    assert u.overlay_entry(finalised, "metadataVersion") is None
+    assert "kafka:" not in finalised
+    assert "services.kafka-version" in u.read_finalised_keys(deploy)
+    assert _remote_file(remote, "main", "upgrades/1.0.0-to-2.0.0.finalised").startswith("services.kafka-version ")
+
+
+def test_apply_refuses_a_retarget_without_push_before_anything_moves(
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_deploy: tuple[Path, Path],
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    deploy, _remote = pushed_deploy
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    events = _ga_cluster(monkeypatch, {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"})
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=False))
+    assert rc == u.EXIT_BLOCKED
+    assert "needs --push" in capsys.readouterr().err
+    assert events == []
+    assert u.read_deploy_pin(deploy) == "1.0.0"
+    assert u._git(deploy, "rev-list", "--count", "HEAD").stdout.strip() == "1"
+
+
+def test_apply_refuses_brokers_in_an_unexpected_state_before_anything_moves(
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_deploy: tuple[Path, Path],
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    deploy, _remote = pushed_deploy
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _ga_cluster(monkeypatch, {"target_revision": "1.0.0", "kafka": "4.1.1", "metadata": "4.1-IV1"})
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    assert rc == u.EXIT_BLOCKED
+    assert "neither 4.2.0 nor 4.3.1" in capsys.readouterr().err
+    assert u.read_deploy_pin(deploy) == "1.0.0"
+
+
+def test_apply_dry_run_names_the_holds_and_the_retarget_in_order(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0")) == u.EXIT_OK
+    err = capsys.readouterr().err
+    order = [
+        "hold kafka.metadataVersion at the live status.kafkaMetadataVersion",
+        "hold kafka.version at 4.2.0 in infra/kafka.yaml until stage 30-services",
+        "chore(upgrade): 2.0.0 stage 2 -- operators.strimzi-kafka-operator",
+        "if secret/dfe-cluster targets 1.0.0: kubectl -n argocd annotate --overwrite secret/dfe-cluster "
+        "dfe.hyperi.io/target_revision=2.0.0",
+        "wait for every Kafka CR to report operatorLastSuccessfulVersion 1.2.0",
+        "drop the kafka.version hold from infra/kafka.yaml, so the brokers roll to 4.3.1",
+        "wait for every Kafka CR to report kafkaVersion 4.3.1",
+    ]
+    positions = [err.index(line) for line in order]
+    assert positions == sorted(positions)
+    assert len(calls) == 1

@@ -41,7 +41,7 @@ stages:
       key: operators.keda
     "50-strimzi-kafka-operator":
       key: operators.strimzi-kafka-operator
-      before: "kafka.strimzi.io stored-version conversion on the running cluster: bin/v1-api-conversion.sh convert-resource, then crd-upgrade"
+      before: "Strimzi stored-version conversion on the running cluster, with the RUNNING release's tool: bin/v1-api-conversion.sh convert-resource --all-namespaces, then bin/v1-api-conversion.sh crd-upgrade"
     "60-redpanda-operator":
       key: operators.redpanda-operator
       pair: services.redpanda-version
@@ -59,7 +59,7 @@ stages:
       rollback: "within the same LTS line only"
     "40-kafka-brokers":
       key: services.kafka-version
-      finalise: "metadata.version bump after a soak; one way"
+      finalise: "metadata.version bump after a soak (apply --finalise drops the kafka.metadataVersion hold); one way"
       rollback: "none"
     "50-redpanda-brokers":
       key: services.redpanda-version
