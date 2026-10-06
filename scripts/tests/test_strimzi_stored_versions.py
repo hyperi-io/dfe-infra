@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_strimzi_stored_versions.py
-#  Purpose:      Prove a fresh install refuses Strimzi CRDs stored at a version
-#                the 1.x operator no longer serves, and that a teardown removes
-#                the Strimzi CRDs once no Strimzi resource is left.
+#  Purpose:      Prove a fresh install (preflight and stack-deploy) refuses
+#                Strimzi CRDs stored at a version the 1.x operator no longer
+#                serves, and that a teardown removes the Strimzi CRDs once no
+#                Strimzi resource is left.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -15,9 +16,10 @@ listing v1beta2 in status.storedVersions. The 1.x operator chart cannot apply
 over them, so its Application goes Unknown, no broker starts and the readiness
 gate times out -- while the cluster preflight passed.
 
-The preflight half drives `dfe-ops preflight` through its one subprocess seam,
-`_run_text`. The teardown half runs bootstrap/destroy.sh against a fake
-`kubectl` first on PATH that logs every call. No cluster is involved.
+The preflight and stack-deploy halves drive `dfe-ops preflight` and `dfe-ops
+stack-deploy` through their one subprocess seam, `_run_text`. The teardown half
+runs bootstrap/destroy.sh against a fake `kubectl` first on PATH that logs every
+call. No cluster is involved.
 
     python3 scripts/tests/test_strimzi_stored_versions.py
 """
@@ -37,6 +39,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 from unittest import mock
 
 from _expect import expect, standalone, summary
@@ -156,6 +159,112 @@ def test_preflight_passes_when_every_stored_version_is_served() -> None:
 def test_preflight_passes_with_no_strimzi_crds() -> None:
     rc, out = run_preflight([_crd(OTHER_CRD, ["v1"])])
     expect("preflight passes on a cluster with no Strimzi", rc == 0, f"rc={rc}\n{out}")
+
+
+# --- stack-deploy -------------------------------------------------------------
+class StackDeploy(NamedTuple):
+    rc: int
+    out: str
+    bootstrap_ran: bool
+    kubectl: list[list[str]]
+    kubeconfig: str
+
+
+def run_stack_deploy(crds: list[dict] | None, *flags: str) -> StackDeploy:
+    """`dfe-ops stack-deploy` past its offline pre-flight, against a cluster carrying
+    `crds` (None: a cluster whose CRD list cannot be read). bootstrap.sh is a stub
+    that records it ran."""
+    kubectl: list[list[str]] = []
+    ran = {"bootstrap": False}
+    cluster = _cluster(crds or [])
+
+    def run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
+        kubectl.append(cmd)
+        if crds is None:
+            return 1, "", "connection refused"
+        return cluster(cmd, env)
+
+    def bootstrap(cmd: list[str], *, env: dict | None = None) -> int:
+        ran["bootstrap"] = True
+        return 0
+
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("DFE_")}
+    err = io.StringIO()
+    with tempfile.TemporaryDirectory() as tmp:
+        kubeconfig = Path(tmp) / "kubeconfig"
+        kubeconfig.write_text("", encoding="utf-8", newline="\n")
+        args = dfeops.build_parser().parse_args([
+            "stack-deploy", "--mode", "single", "--stack", "2.2.0-rc.99",
+            "--kubeconfig", str(kubeconfig), "--access-out", str(Path(tmp) / "access.md"),
+            *flags,
+        ])
+        with (
+            mock.patch.dict(os.environ, clean_env, clear=True),
+            mock.patch.object(dfeops, "_resolve_stack", return_value=0),
+            mock.patch.object(dfeops, "_offline_preflight", return_value=0),
+            mock.patch.object(dfeops, "_bootstrap_required", return_value=()),
+            mock.patch.object(dfeops, "_require_script", return_value=Path(tmp) / "bootstrap.sh"),
+            mock.patch.object(dfeops, "_run_streaming", bootstrap),
+            mock.patch.object(dfeops, "_run_text", run_text),
+            mock.patch.object(dfeops.shutil, "which", return_value="/usr/bin/kubectl"),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = dfeops.cmd_stack_deploy(args)
+    return StackDeploy(rc, err.getvalue(), ran["bootstrap"], kubectl, str(kubeconfig))
+
+
+def test_stack_deploy_stops_on_a_crd_stored_at_a_removed_version() -> None:
+    run = run_stack_deploy(_strimzi_crds(STALE, ["v1beta2"]))
+    expect("stack-deploy fails", run.rc == 1, f"rc={run.rc}\n{run.out}")
+    expect("bootstrap.sh never runs", not run.bootstrap_ran, run.out)
+    expect(
+        "it names the CRD and what it stores",
+        f"{STALE} (stored: v1beta2)" in run.out,
+        run.out,
+    )
+    expect(
+        "it gives the exact delete, aimed at the kubeconfig the deploy uses",
+        f"kubectl --kubeconfig {run.kubeconfig} delete crd {STALE}" in run.out,
+        run.out,
+    )
+    expect(
+        "the remedy deletes nothing outside Strimzi",
+        f"delete crd {OTHER_CRD}" not in run.out and "kafkas.kafka.strimzi.io (stored" not in run.out,
+        run.out,
+    )
+    expect(
+        "the check read the CRD list and changed nothing",
+        any(argv[3:5] == ["get", "crd"] for argv in run.kubectl)
+        and all("delete" not in argv for argv in run.kubectl),
+        f"{run.kubectl}",
+    )
+    expect(
+        "every read aims at the deploy's kubeconfig",
+        all(argv[1:3] == ["--kubeconfig", run.kubeconfig] for argv in run.kubectl),
+        f"{run.kubectl}",
+    )
+
+
+def test_stack_deploy_goes_on_when_every_stored_version_is_served() -> None:
+    run = run_stack_deploy(_strimzi_crds())
+    expect("stack-deploy passes", run.rc == 0, f"rc={run.rc}\n{run.out}")
+    expect("bootstrap.sh runs", run.bootstrap_ran, run.out)
+    expect("and the run says what it read", "Strimzi CRD(s) store v1 only" in run.out, run.out)
+
+
+def test_stack_deploy_warns_and_goes_on_when_the_crds_cannot_be_listed() -> None:
+    """bootstrap.sh fails on its own first kubectl call, and says why."""
+    run = run_stack_deploy(None)
+    expect("stack-deploy passes", run.rc == 0, f"rc={run.rc}\n{run.out}")
+    expect("bootstrap.sh runs", run.bootstrap_ran, run.out)
+    expect("the skipped check is said out loud", "Strimzi stored-version check skipped" in run.out, run.out)
+
+
+def test_stack_deploy_check_only_contacts_no_cluster() -> None:
+    run = run_stack_deploy(_strimzi_crds(STALE, ["v1beta2"]), "--check-only")
+    expect("check-only passes", run.rc == 0, f"rc={run.rc}\n{run.out}")
+    expect("no kubectl call is made", run.kubectl == [], f"{run.kubectl}")
+    expect("bootstrap.sh never runs", not run.bootstrap_ran, run.out)
 
 
 # --- the teardown -------------------------------------------------------------

@@ -147,6 +147,7 @@ def test_the_summary_directory_exists_before_bootstrap_writes_into_it(
     monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_bootstrap_required", lambda _env: ())
     monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(dfeops, "_strimzi_deploy_gate", lambda _kubeconfig: True)
     monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
     monkeypatch.delenv("DFE_VAULT_ADDR", raising=False)
     args = _no_terraform(tmp_path, access_out=str(out), check_only=False, mode="single")
@@ -239,6 +240,7 @@ def _deploy_without_a_secret_id(tmp_path: Path, monkeypatch, mode: str) -> tuple
     monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_bootstrap_required", lambda _env: ())
     monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(dfeops, "_strimzi_deploy_gate", lambda _kubeconfig: True)
     monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
     monkeypatch.setenv("DFE_VAULT_ADDR", "https://store.example.invalid:8200")
     monkeypatch.delenv("DFE_VAULT_SECRET_ID", raising=False)
@@ -309,6 +311,7 @@ def _outsider_deploy(
     monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(dfeops, "_strimzi_deploy_gate", lambda _kubeconfig: True)
     monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
     for key in [k for k in dfeops.os.environ if k.startswith("DFE_")]:
         monkeypatch.delenv(key)

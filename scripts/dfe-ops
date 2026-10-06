@@ -2829,6 +2829,29 @@ def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple
         return 1, {}, f"unparseable kubectl output: {exc}"
 
 
+def _strimzi_deploy_gate(kubeconfig: str) -> bool:
+    """False, with the remedy printed, when a Strimzi CRD on the target cluster blocks the install.
+
+    The same read and verdict as `dfe-ops preflight` step 5, aimed at the
+    cluster bootstrap.sh will use. A cluster that cannot be read passes with a
+    warning: bootstrap.sh fails on its own first kubectl call and names why.
+    """
+    if shutil.which("kubectl") is None:
+        print("  [warn] kubectl not on PATH -- Strimzi stored-version check skipped", file=sys.stderr)
+        return True
+    base = ["kubectl", *(["--kubeconfig", kubeconfig] if kubeconfig else [])]
+    rc, crd_json, err = _kubectl_json(base, "get", "crd")
+    if rc != 0:
+        print(
+            f"  [warn] cannot list CRDs ({err}) -- Strimzi stored-version check skipped",
+            file=sys.stderr,
+        )
+        return True
+    served, detail = _strimzi_stored_versions(crd_json.get("items", []), base)
+    print(f"{'  [ok]   ' if served else '  [FAIL] '}{detail}", file=sys.stderr)
+    return served
+
+
 def cmd_preflight(args: argparse.Namespace) -> int:
     """READ-ONLY cluster-contract check: is this cluster right for dfe-infra?
 
@@ -3402,6 +3425,14 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
             f"  [FAIL] --mode {args.mode} runs a broker whose credential comes from the "
             f"secrets store at {env['DFE_VAULT_ADDR']}, and DFE_VAULT_SECRET_ID (the ESO "
             "AppRole SecretID) is unset: pass it in an --env-file or via --from-terraform",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not _strimzi_deploy_gate(env.get("KUBECONFIG", "")):
+        print(
+            "\n=== stack-deploy REFUSED -- Strimzi CRDs on the cluster block the install (see "
+            "above); no cluster changes made. ===",
             file=sys.stderr,
         )
         return 1
