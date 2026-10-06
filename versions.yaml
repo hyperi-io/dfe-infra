@@ -2440,7 +2440,7 @@ stacks:
       dfe-transform-elastic: "sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
       # Keyed here rather than under content:, which carries versions and
       # not digests -- the renderer reads digests.dfe-hyperdx and found none.
-      dfe-hyperdx: "sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d"
+      dfe-hyperdx: "sha256:9ddfc727828b8b97e3aff347c22083a20e317adfa7c5621ec2c563e3b1a79ae6"
       # ghcr.io/hyperi-io/culvert:v2.1.15. Manifest-LIST digest (amd64 + arm64),
       # read via `oras manifest fetch --descriptor`.
       culvert: "sha256:6a791a4ba432e03a896a9c503be17f15facae1b49cb5eebf50cb416c8a4711df"
@@ -2491,7 +2491,7 @@ stacks:
       # immutable record of what ran a stack is the commit; `dfe-stack cut` re-resolves it.
       # This ref is dfe-docker main at the 2.2.0 GA cut (2026-10-06).
       dfe-docker: "79703851d9771be29382bff5e5515a1ce47a47f8"
-      dfe-hyperdx: "v0.2.7"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:7989490936fee5dae750202d0027d6a5e3dae4e63521f19776997b995335496d (an engine token still pending a password change is refused, members read their own team, the restore surface is gated, and the node base is pinned by digest; upstream 2.36.0); deployment tag pin lives in the deploy repo values
+      dfe-hyperdx: "v0.2.8"              # ghcr.io/hyperi-io/dfe-hyperdx@sha256:9ddfc727828b8b97e3aff347c22083a20e317adfa7c5621ec2c563e3b1a79ae6 (released 2026-09-29; the first multi-arch image, amd64 and arm64; the team comes from the engine's answer, node 24 on trixie); deployment tag pin lives in the deploy repo values
 
     # Stage toolbox: the dfe-toolbox ops shell image family (docker/dfe-toolbox/),
     # NOT a component of the deployed stack -- an operator convenience
