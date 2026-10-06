@@ -22,7 +22,7 @@ mismatch:
 
 | component | why | versions.yaml key |
 |---|---|---|
-| external-secrets 2.10.0 | generates the in-cluster secrets (dfe-engine JWT, ClickHouse admin, FerretDB, NextAuth) | `bootstrap.external-secrets` |
+| external-secrets 2.10.0 | generates the in-cluster secrets (dfe-engine JWT, ClickHouse admin, FerretDB, NextAuth, HyperDX session and token keys) | `bootstrap.external-secrets` |
 
 ```sh
 helm repo add external-secrets https://charts.external-secrets.io
