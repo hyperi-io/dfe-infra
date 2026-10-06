@@ -402,15 +402,20 @@ if [ -n "$KPOD" ]; then
     # seam underneath was fine (live-proven 2026-07-17: the same commands run by hand
     # listed main_land immediately). One layer of quoting, one place to get right.
     KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
+    # The props file holds the SCRAM password, so it is private to the pod user and
+    # removed before the shell exits.
     kafka_cli() {
       kubectl -n "$NS_KAFKA" exec -i "$KPOD" -- sh -s <<KSH 2>/dev/null
-P=/tmp/dfe-smoke.props
+P=\$(umask 077; mktemp)
 {
   echo 'security.protocol=SASL_PLAINTEXT'
   echo 'sasl.mechanism=SCRAM-SHA-512'
   printf 'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="%s" password="%s";\n' '${DFE_KAFKA_USER:-dfe-kafka-user}' '${KPW}'
 } > \$P
 $1
+rc=\$?
+rm -f \$P
+exit \$rc
 KSH
     }
     # Every assertion here captures kafka_cli's output before matching it. Piping
