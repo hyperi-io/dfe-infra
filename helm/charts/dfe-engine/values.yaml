@@ -22,7 +22,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:1a68bd0c0581f298a48cb96ebf5a21814bea24966c92778daac6d4d4596de248"
+  digest: "sha256:36f4e647053f3ddb6f1997bbbb6e99aaf6dc467ae09c7282639e7d1bc4c50044"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -45,7 +45,7 @@ profile: ""
 # names it. Helm cannot read a sibling chart's appVersion, so this is a second
 # copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
 # stops the two diverging.
-uiVersion: "v1.7.5"
+uiVersion: "v1.7.6"
 
 # The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
 # and dfe-common.transport reads a missing map as the bus default. On the bus
@@ -132,37 +132,37 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.41@sha256:c750b08c808cf3574a6a7a24d62064013aca18071cf2251df2e687b4cfb7465d"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.42@sha256:6b2da2ebe3b6ab0d38b6da8ac8709228bdd9a6e5af0f5f1cc2c855053078f6ae"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.45@sha256:26e3e438cafa1b3b3305299ce07d6040abbb829b123575f13e26ccb5463fd9a2"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.46@sha256:e5138a95c5714cc3cd9895f026db36ceb7908d5f58214c6f6f0bd9e9cf1b682a"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.27@sha256:1ccaa927a5a2398c3448b04ed8c6a608484218a4238ed3980fda365d7463f698"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.28@sha256:7293f3601aaac634ff187c50e47ed337f38c5eaa4134c067654527fc86e47458"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.31@sha256:dc3def6f4ba52b170ac6c42f35a80b8de5cc38ee03fb67abe3fdfc9666946d96"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.32@sha256:1cb24225a027aa06f9fb08289f8df4567e3202bd9c89fb789706c7d7d028bf7d"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.29@sha256:75d97417d09456fabc0931202cbcb7a13e015b1eae46ccde67b920e8a2514a2c"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.30@sha256:07455044dad76fbe7e2e305ea44d2ba071abd7f314f44f230568095c48df562e"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.44@sha256:f0e3ccfe6c4dac66e5256da1272c4c0dcfee97ef1b1dc2388fe9e1a4e299d465"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.45@sha256:baa9ccb150a743c2a0cac08d0fa2172a3238f51e980dea2e6de616be215572b1"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.9@sha256:60e0d6891283137d024a99434c4c4231e6271925d460247c0b78b0421151ada4"
     # The source catalogue the settings API offers, printed by the pinned image
     # itself (`dfe-transform-elastic emit-catalogue`, dfe-transform-elastic#92)
     # so the deployment needs no access to the app's repository. An image that
@@ -172,7 +172,7 @@ content:
       kind: emit
       role: catalogue
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.8@sha256:447ecd904de58c1c7bc209335e9b72c57e3a17eb3ea652bc1574239860d9fe8b"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.9@sha256:60e0d6891283137d024a99434c4c4231e6271925d460247c0b78b0421151ada4"
 
 config:
   mountPath: /config
@@ -467,13 +467,14 @@ keda:
 kedaShim:
   enabled: true
   port: 8080
+  # The full engine image: about 126Mi resident once booted, and a 100m CPU cap stretches its boot to about 40s.
   resources:
     requests:
       cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 100m
       memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 # dfe-hunt-runner -- the pull-based hunt executor, folded into the engine chart as its
 # OWN pod (engine image, `dfe-hunt-runner run`, DISTINCT labels). It coordinates every
@@ -486,6 +487,31 @@ huntRunner:
   enabled: true
   poll: 15          # seconds between runner ticks
   cap: 8            # global cap on concurrent hunt runs (protects ClickHouse)
+  # The runner's OWN ClickHouse user, in place of the admin account the engine and
+  # the keda shim use. Its worker runs INSERT ... SELECT built from rule text, and
+  # this user holds SELECT and INSERT on the data database and nothing else: no
+  # url(), s3() or remote(), no DDL.
+  #
+  # The engine creates the user (the dfe-schemas role catalogue), but a password it
+  # mints lands in its own store, which this separate pod cannot read. So the chart
+  # supplies the password: ESO's Password generator writes it ONCE (refreshPolicy
+  # CreatedOnce, the jwt-secret.yaml mechanism), the engine adopts it from
+  # DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD, and the runner dials with the same Secret.
+  #
+  # Needs a dfe-engine that adopts the provided password and a dfe-schemas that
+  # mints hunt_runner. On an older pair the user does not exist and the runner
+  # cannot connect.
+  clickhouse:
+    # The engine names the user dfe_<role>, so this has to stay dfe_hunt_runner.
+    user: dfe_hunt_runner
+    passwordSecretName: hunt-runner-clickhouse
+    passwordSecretKey: password
+    # false when the deployment supplies the Secret from its own sealed secret or
+    # ExternalSecret under passwordSecretName; the chart then creates nothing.
+    passwordSecretCreate: true
+    # Pin a known password (a restore, or a rotation run centrally). Set -> a
+    # plain Secret carrying it, and no generator.
+    password: ""
   autoscaling:
     enabled: false          # BETA opt-in; default 1 pod
     minReplicaCount: 1

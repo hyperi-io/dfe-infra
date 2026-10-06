@@ -46,8 +46,12 @@ def _parse(*extra: str) -> argparse.Namespace:
     )
 
 
-def _suite_run(monkeypatch, args: argparse.Namespace) -> tuple[list[str], dict[str, str]]:
-    """Run cmd_ui with the cluster and the browser stubbed out; return the suite's argv and env."""
+def _stub_cluster(monkeypatch, minted: str) -> dict[str, object]:
+    """Stub the cluster, the forwards and every subprocess; return what the run handed them.
+
+    ``minted`` is the admin password the deploy's Secret holds; empty is a Secret
+    this run cannot read.
+    """
     seen: dict[str, object] = {}
 
     class Done:
@@ -58,15 +62,29 @@ def _suite_run(monkeypatch, args: argparse.Namespace) -> tuple[list[str], dict[s
         seen["env"] = env
         return Done()
 
+    def credential(*_args, **_kwargs):
+        if not minted:
+            raise dfeops.CredentialNotFoundError("the admin Secret cannot be read")
+        return "admin", minted
+
     monkeypatch.setattr(dfeops, "_forward", lambda *_a, **_k: None)
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(dfeops, "_resolves", lambda *_a, **_k: True)
     monkeypatch.setattr(dfeops, "e2e_routes_mounted", lambda *_a, **_k: True)
+    monkeypatch.setattr(dfeops, "admin_credential", credential)
     # Forwards are stubbed, so the host's own port state has no bearing on these runs.
     monkeypatch.setattr(dfeops, "_taken_ports", lambda _ports: [])
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)
     for name in BUDGET_VARS:
         monkeypatch.delenv(name, raising=False)
+    return seen
+
+
+def _suite_run(
+    monkeypatch, args: argparse.Namespace, minted: str = "minted"
+) -> tuple[list[str], dict[str, str]]:
+    """Run cmd_ui with the cluster and the browser stubbed out; return the suite's argv and env."""
+    seen = _stub_cluster(monkeypatch, minted)
 
     assert dfeops.cmd_ui(args) == 0
     return seen["cmd"], seen["env"]
@@ -143,6 +161,30 @@ def test_the_suite_gets_a_password_for_the_forced_change(monkeypatch) -> None:
     assert env["E2E_ADMIN_PASSWORD"] == dfeops.E2E_SEED_PASSWORD
     assert len(env["E2E_ADMIN_NEW_PASSWORD"]) >= 12
     assert env["E2E_ADMIN_NEW_PASSWORD"] != dfeops.E2E_SEED_PASSWORD
+
+
+def test_the_suite_leaves_the_admin_on_the_password_the_next_root_step_holds(monkeypatch) -> None:
+    monkeypatch.delenv(dfeops.NEW_ADMIN_PASSWORD_VAR, raising=False)
+    env = _suite_env(monkeypatch, _parse())
+
+    assert env["E2E_ADMIN_NEW_PASSWORD"] == dfeops.ui_admin_password({}, "minted")
+
+
+def test_a_skipped_root_step_needs_no_readable_admin_secret(monkeypatch) -> None:
+    monkeypatch.delenv(dfeops.NEW_ADMIN_PASSWORD_VAR, raising=False)
+    _cmd, env = _suite_run(monkeypatch, _parse(), minted="")
+
+    assert len(env["E2E_ADMIN_NEW_PASSWORD"]) >= 12
+
+
+def test_the_root_step_does_not_start_without_the_minted_password(monkeypatch) -> None:
+    seen = _stub_cluster(monkeypatch, minted="")
+    args = dfeops.build_parser().parse_args(
+        ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--ui-url", "https://dfe.example"]
+    )
+
+    assert dfeops.cmd_ui(args) == 1
+    assert "cmd" not in seen
 
 
 def test_a_non_numeric_budget_is_refused_at_parse_time(capsys) -> None:

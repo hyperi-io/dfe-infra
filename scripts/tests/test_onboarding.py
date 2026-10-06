@@ -144,7 +144,7 @@ class _Control:
         self._page, self._label = page, label
 
     def count(self):
-        return 0
+        return 1 if self._label in self._page.offered else 0
 
     def wait_for(self, **_):
         pass
@@ -155,24 +155,30 @@ class _Control:
     def click(self, **_):
         self._page.clicked(self._label)
 
+    def check(self, **_):
+        self._page.checked.append(self._label)
+
 
 class _Page:
     """A console that lands each password on a scripted URL, or keeps it on the form."""
 
-    def __init__(self, ui, landings):
+    def __init__(self, ui, landings, after_change="/setup", offered=()):
         self.ui, self.landings, self.url, self.filled = ui, landings, f"{ui}/login", {}
+        self.after_change, self.logins = after_change, []
+        self.offered, self.checked = set(offered), []
 
     def goto(self, url, **_):
         self.url = url
 
-    def get_by_role(self, _role, **_):
-        return _Control(self)
+    def get_by_role(self, _role, name="", **_):
+        return _Control(self, name if isinstance(name, str) else "")
 
     def clicked(self, label):
         if label == "Login":
+            self.logins.append(self.filled["Password"])
             self.url = f"{self.ui}{self.landings.get(self.filled['Password'], '/login')}"
         elif label == "Set password":
-            self.url = f"{self.ui}/setup"
+            self.url = f"{self.ui}{self.after_change}"
 
     def wait_for_url(self, predicate, **_):
         if not predicate(self.url):
@@ -184,9 +190,9 @@ class _StubTimeoutError(Exception):
 
 
 class _Driver:
-    def __init__(self, landings):
+    def __init__(self, landings, after_change="/setup", offered=()):
         self.ui = "https://dfe.example"
-        self.page = _Page(self.ui, landings)
+        self.page = _Page(self.ui, landings, after_change, offered)
         self.records = []
 
     def textbox(self, *names):
@@ -211,7 +217,18 @@ class TestTheForcedChange:
         driver = _Driver({"issued": onboarding_run.CHANGE_PASSWORD_PATH})
 
         assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+        assert driver.page.filled["Current Password"] == "issued"
         assert driver.page.filled["New Password"] == "chosen"
+
+    def test_a_change_that_signs_the_admin_out_signs_back_in_with_the_new_password(self):
+        driver = _Driver(
+            {"issued": onboarding_run.CHANGE_PASSWORD_PATH, "chosen": "/setup"},
+            after_change="/login",
+        )
+
+        assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+        assert driver.page.logins == ["issued", "chosen"]
+        assert driver.page.url.endswith("/setup")
 
     def test_an_issued_password_let_straight_in_fails_the_run(self):
         driver = _Driver({"issued": "/setup"})
@@ -223,6 +240,128 @@ class TestTheForcedChange:
         driver = _Driver({"chosen": "/sources"})
 
         assert onboarding_run.sign_in_as_admin(driver, "admin", "issued", "chosen") == "chosen"
+
+    def test_a_second_ui_run_signs_in_with_what_the_first_changed_the_admin_to(self):
+        changed_to = ops.ui_admin_password({}, "minted")
+        first = _Driver(
+            {"minted": onboarding_run.CHANGE_PASSWORD_PATH, changed_to: "/setup"},
+            after_change="/login",
+        )
+        assert onboarding_run.sign_in_as_admin(first, "admin", "minted", changed_to) == changed_to
+        # The minted password is dead now, so only the one the first run chose opens the console.
+        second = _Driver({changed_to: "/setup"})
+
+        signed_in_with = onboarding_run.sign_in_as_admin(
+            second, "admin", "minted", ops.ui_admin_password({}, "minted")
+        )
+
+        assert signed_in_with == changed_to
+        assert second.page.logins == ["minted", changed_to]
+
+    def test_after_the_suites_reset_the_admin_changes_from_the_shipped_default(self):
+        issued = ops.issued_admin_password({"default_credentials": True}, "minted")
+        new = ops.ui_admin_password({}, "minted")
+        driver = _Driver(
+            {issued: onboarding_run.CHANGE_PASSWORD_PATH, new: "/setup"}, after_change="/login"
+        )
+
+        assert onboarding_run.sign_in_as_admin(driver, "admin", issued, new) == new
+        assert driver.page.filled["Current Password"] == ops.E2E_SEED_PASSWORD
+        assert driver.page.logins == [ops.E2E_SEED_PASSWORD, new]
+
+
+class TestTheAdminsNewPassword:
+    def test_every_run_against_one_deploy_picks_the_same_one(self):
+        assert ops.ui_admin_password({}, "minted") == ops.ui_admin_password({}, "minted")
+
+    def test_a_redeploy_with_a_new_minted_password_moves_it(self):
+        assert ops.ui_admin_password({}, "minted") != ops.ui_admin_password({}, "reminted")
+
+    def test_it_clears_the_engines_floor_and_is_never_the_minted_one(self):
+        password = ops.ui_admin_password({}, "minted")
+
+        assert len(password) >= 12
+        assert password != "minted"
+
+    def test_a_password_the_caller_set_wins(self):
+        settings = {ops.NEW_ADMIN_PASSWORD_VAR: "chosen-by-caller"}
+
+        assert ops.ui_admin_password(settings, "minted") == "chosen-by-caller"
+
+    def test_with_no_minted_password_it_still_clears_the_floor(self):
+        assert len(ops.ui_admin_password({}, "")) >= 12
+
+
+class _Response:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class TestWhichIssuedPasswordTheAdminIsOn:
+    def test_the_suites_reset_leaves_it_on_the_shipped_default(self):
+        assert ops.issued_admin_password({"default_credentials": True}, "minted") == ops.E2E_SEED_PASSWORD
+
+    def test_otherwise_it_is_the_minted_one(self):
+        assert ops.issued_admin_password({"default_credentials": False}, "minted") == "minted"
+
+    def test_a_status_that_could_not_be_read_falls_back_to_the_minted_one(self):
+        assert ops.issued_admin_password({}, "minted") == "minted"
+
+    def test_the_status_is_read_off_the_engine(self):
+        def opener(url, timeout):
+            assert url == "http://engine/api/v1/auth/setup-status"
+            return _Response(b'{"default_credentials": true}')
+
+        assert ops.engine_setup_status("http://engine", opener=opener) == {
+            "default_credentials": True
+        }
+
+    def test_an_engine_that_does_not_answer_gives_an_empty_status(self):
+        def opener(url, timeout):
+            raise ops.urllib.error.URLError("refused")
+
+        assert ops.engine_setup_status("http://engine", opener=opener) == {}
+
+    def test_a_body_that_is_not_a_document_gives_an_empty_status(self):
+        assert ops.engine_setup_status("http://engine", opener=lambda *_a, **_k: _Response(b"[]")) == {}
+
+
+class TestTheSourceTheConsoleCreates:
+    def test_a_console_that_offers_the_table_choice_gets_the_shared_table(self):
+        driver = _Driver({}, offered={onboarding_run.SHARED_TABLE})
+
+        onboarding_run.fill_source_form(driver, "onboard1")
+
+        assert driver.page.checked == [onboarding_run.SHARED_TABLE]
+        assert driver.page.filled["Source Name"] == "onboard1"
+        assert driver.page.filled["Value"] == "onboard1"
+
+    def test_a_console_without_the_choice_is_filled_as_before(self):
+        driver = _Driver({})
+
+        onboarding_run.fill_source_form(driver, "onboard1")
+
+        assert driver.page.checked == []
+        assert driver.page.filled["Field"] == "app"
+
+
+class TestTheFirstUsersPassword:
+    def test_it_never_inherits_an_issued_shipped_default(self):
+        password = onboarding_run.first_user_password(ops.E2E_SEED_PASSWORD, "the-admins-new-one")
+
+        assert password == "the-admins-new-one"
+
+    def test_without_a_new_admin_password_it_is_the_issued_one(self):
+        assert onboarding_run.first_user_password("minted", "") == "minted"
 
 
 class TestTheRunsVerdict:

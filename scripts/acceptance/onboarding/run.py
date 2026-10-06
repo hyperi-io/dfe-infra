@@ -63,6 +63,9 @@ LOCAL_LOGIN_TAB = "Login with Local"
 # The Add Source drawer's name field: "Source Name *" from ui v1.7.0, "Source" before it.
 SOURCE_NAME_LABELS = ("Source Name", "Source")
 
+# ui v1.7.6 opens the drawer on an own table, which needs a meta schema this run never makes.
+SHARED_TABLE = "Shared table"
+
 # Where the console holds an account on an issued password until it sets its own.
 CHANGE_PASSWORD_PATH = "/change-password"
 
@@ -147,6 +150,23 @@ def _left_login(url: str) -> bool:
     return "/login" not in url.split("?")[0]
 
 
+def first_user_password(issued: str, new_admin_password: str) -> str:
+    """The password the wizard's first user is created with: the admin's new one when given.
+
+    The issued password can be the shipped default, which is shorter than the 12
+    characters the engine and the console require of a new account.
+
+    Args:
+        issued: The admin's issued password.
+        new_admin_password: The password the run changes the admin to; empty when
+            the caller gave none.
+
+    Returns:
+        The first user's password.
+    """
+    return new_admin_password or issued
+
+
 def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str) -> str:
     """Sign the admin in, completing the forced change a fresh deployment's admin is due.
 
@@ -186,6 +206,8 @@ def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str
             f"the console holds '{user}' on its issued password until it sets its own. "
             "Set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
         )
+    # The console takes a new password only with the issued one entered as the current one.
+    driver.textbox("Current Password").fill(password)
     for label in ("New Password", "Confirm Password"):
         driver.textbox(label).fill(new_password)
     driver.button("Set password").click(timeout=STEP_TIMEOUT_MS)
@@ -193,6 +215,10 @@ def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str
         lambda url: CHANGE_PASSWORD_PATH not in url, timeout=STEP_TIMEOUT_MS * 2
     )
     driver.record("change-password", "done", f"'{user}' replaced its issued password")
+    # The console signs the admin out once the password changes.
+    if not _left_login(driver.page.url):
+        sign_in(driver, user, new_password)
+        driver.page.wait_for_url(_left_login, timeout=STEP_TIMEOUT_MS)
     return new_password
 
 
@@ -327,6 +353,24 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     return admin_password
 
 
+def fill_source_form(driver: Driver, name: str) -> None:
+    """Fill the open Add Source drawer for a receiver source that lands on the shared table.
+
+    A console with no table choice is filled exactly as before.
+
+    Args:
+        driver: The session, with the drawer open.
+        name: Source name, display name and match value.
+    """
+    driver.textbox(*SOURCE_NAME_LABELS).fill(name)
+    driver.textbox("Display Name").fill(name)
+    driver.textbox("Field").fill("app")
+    driver.textbox("Value").fill(name)
+    shared = driver.page.get_by_role("radio", name=SHARED_TABLE, exact=True)
+    if shared.count():
+        shared.check(timeout=STEP_TIMEOUT_MS)
+
+
 def check_console(driver: Driver, user: str, password: str, new_password: str = "") -> str:
     """Log in as the account the wizard made, and use the console once.
 
@@ -359,10 +403,7 @@ def check_console(driver: Driver, user: str, password: str, new_password: str = 
 
     name = f"onboard{uuid.uuid4().hex[:8]}"
     driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
-    driver.textbox(*SOURCE_NAME_LABELS).fill(name)
-    driver.textbox("Display Name").fill(name)
-    driver.textbox("Field").fill("app")
-    driver.textbox("Value").fill(name)
+    fill_source_form(driver, name)
     driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)
     driver.page.get_by_text("Source created successfully").wait_for(timeout=STEP_TIMEOUT_MS)
     driver.record("create-source", "done", f"created {name} through the console")
@@ -425,6 +466,7 @@ def run(args: argparse.Namespace) -> int:
     # A fresh deployment's admin is forced to replace the issued password first.
     new_admin_password = os.environ.get("DFE_E2E_ADMIN_NEW_PASSWORD", "")
     admin_password = password
+    first_password = first_user_password(password, new_admin_password)
     shots = Path(args.shots_dir)
     created = ""
     with sync_playwright() as play:
@@ -446,7 +488,7 @@ def run(args: argparse.Namespace) -> int:
         try:
             if not complete:
                 admin_password = walk_wizard(
-                    driver, expected, args.org, args.first_user, password, password,
+                    driver, expected, args.org, args.first_user, first_password, password,
                     admin_user, password, new_admin_password,
                 )
                 surplus = wizard.unexpected_screens(expected, driver.seen)
@@ -464,7 +506,7 @@ def run(args: argparse.Namespace) -> int:
             # otherwise the admin's.
             made_first_user = not complete and wizard.FIRST_USER in expected
             if made_first_user:
-                created = check_console(driver, args.first_user, password)
+                created = check_console(driver, args.first_user, first_password)
             else:
                 created = check_console(driver, admin_user, admin_password, new_admin_password)
         except Exception as exc:  # a Playwright timeout IS the finding

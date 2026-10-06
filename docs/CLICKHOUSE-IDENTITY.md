@@ -9,8 +9,8 @@
 
 # ClickHouse identity
 
-The deploy layer creates ONE credential. dfe-engine creates every role, grant,
-quota and row policy.
+The deploy layer creates ONE credential, and supplies ONE password. dfe-engine
+creates every user, role, grant, quota and row policy.
 
 That split is forced rather than chosen. Nothing inside a deployment can mint
 the first privileged account, so something outside must. Everything after that
@@ -37,22 +37,47 @@ inline in the `ClickHouseCluster` CR, which commits a credential to git.
 This account exists to bootstrap the engine and to break glass. Applications
 move off it and onto their service identity.
 
+## The one supplied password
+
+`dfe_hunt_runner`'s password comes from the deploy layer, because the hunt runner
+is a separate pod and cannot read the engine's secrets store. The engine still
+creates the user, adopts the supplied password from
+`DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD`, and re-asserts it on every reconcile; the
+runner connects with the same value.
+
+| target | mechanism |
+|---|---|
+| k8s (every tier) | `hunt-runner-clickhouse` Secret, minted once by ESO's Password generator (`huntRunner.clickhouse` in the dfe-engine chart) |
+| docker | `make init` mints it into `.env` |
+
+The runner's worker runs `INSERT ... SELECT` built from rule text, so this is the
+identity a crafted rule runs as: no `url()`, `s3()`, `remote()` or `file()`, and
+no DDL.
+
+It needs an engine that reads `DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD` and dfe-schemas
+role catalogue 1.1.0, which mints `hunt_runner`. On an older pair the user never
+exists and the runner cannot connect. The runner's `wait-for-engine` init container
+holds it until the engine answers ready, and the engine reconciles its service
+users before it does.
+
 ## The always-deployed set
 
 Seeded by dfe-engine on every deployment, non-destructive and operator-editable.
-Definitions: `dfe_engine/governance/ch/models.py`.
+Definitions: dfe-schemas `roles/clickhouse.yaml`.
 
 | identity | CH objects | used by | privilege |
 |---|---|---|---|
 | `dfe_loader` | user + `dfe_loader_role` + `dfe_loader_profile` | dfe-loader | `INSERT ON dfe.*`, async-insert settings |
-| `dfe_query_reader` | user + `dfe_query_reader_role` + profile | HyperDX connections | `SELECT ON dfe.*` plus `system` introspection, `readonly=2` |
-| `dfe_hunt_runner_role` | role only | hunt-runner | `SELECT`/`INSERT ON dfe.*` |
+| `dfe_query_reader` | user + `dfe_query_reader_role` + profile | HyperDX connections, the engine's parameterised views | `SELECT ON dfe.*` plus `system` introspection, `readonly=2` |
+| `dfe_hunt_runner` | user + `dfe_hunt_runner_role` | hunt-runner | `SELECT`/`INSERT ON dfe.*`, password supplied by the deploy layer |
 | `dfe_otel_reader_role` | role only | admin + infra-admin group users | `SELECT ON dfe.*` |
 | `dfe_tenant_role` | role + row policy | org-bound OIDC users | `SELECT` fenced by `_org_id` |
-| `dfe_org_<org>` | role per org | `org_viewer` users | pins one org's `_org_id` |
+| `dfe_org_<org>` | user per org | `org_viewer` users | pins one org's `_org_id` |
 
-A role with `mint_user` set also gets a user and a generated secret through the
-scalo secrets seam. The rest are granted to an identity that already exists.
+A role with `mint_user` set also gets a user, with a secret the engine mints
+through the scalo secrets seam unless the deploy layer supplies the password. The
+rest are granted to an identity that already exists. The service users are
+reconciled whether or not tenant isolation is on.
 
 `readonly=2` on the reader is deliberate, not a slack setting: HyperDX sends
 `date_time_output_format` with every query, and `readonly=1` rejects the whole
@@ -82,6 +107,7 @@ governance config holds, so a deployment can add its own.
 | concern | home | applies on |
 |---|---|---|
 | the one credential | dfe-infra chart values, dfe-docker `.env` | its own target |
+| the hunt runner's password | dfe-engine chart `huntRunner.clickhouse`, dfe-docker `.env` | its own target |
 | service roles | `governance/ch/service-roles` (engine, versioned) | every target |
 | quota tiers | `governance/ch/tiers` (engine, versioned) | every target |
 | group to tier/org binding | engine governance | every target |

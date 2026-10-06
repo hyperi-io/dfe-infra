@@ -215,6 +215,7 @@ import argparse
 import atexit
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -273,7 +274,7 @@ from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_kind import add_kind_subparser  # noqa: E402
-from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
+from dfe_ops_upgrade import STRIMZI_CRDS, add_upgrade_subparser, stale_strimzi_crds  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
@@ -2448,6 +2449,72 @@ DOCKER_ONLY_TAG = "@docker-only"
 # The engine's e2e seed scripts create or reset every account with this one
 # password (dfe-engine api/e2e/seed/accounts.py), so the suite signs in with it.
 E2E_SEED_PASSWORD = "changeme"
+# Keys the admin's new password to `ui`, so no other derivation from the minted one collides.
+UI_ADMIN_PASSWORD_CONTEXT = b"dfe-ops ui admin password"
+# A password-strength key derivation, since the input is the minted admin password.
+UI_ADMIN_PASSWORD_ROUNDS = 600_000
+
+
+def ui_admin_password(settings: Mapping[str, str], minted: str) -> str:
+    """The password `ui` changes the admin to, the same on every run against one deploy.
+
+    The root step and the suite both leave the admin on it, so the next run signs
+    in with it from any checkout or host without storing it anywhere. A redeploy
+    mints a new admin password and so moves this one too. In the e2e posture
+    `ui` runs in, it is exactly as secret as the minted password it comes from.
+
+    Args:
+        settings: Env-file values merged over os.environ; ``DFE_E2E_ADMIN_NEW_PASSWORD``
+            there wins.
+        minted: The admin password the deploy minted, or empty when it could not
+            be read.
+
+    Returns:
+        The password, longer than the engine's 12-character floor.
+    """
+    if settings.get(NEW_ADMIN_PASSWORD_VAR):
+        return settings[NEW_ADMIN_PASSWORD_VAR]
+    if not minted:
+        return secrets.token_urlsafe(24)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", minted.encode("utf-8"), UI_ADMIN_PASSWORD_CONTEXT, UI_ADMIN_PASSWORD_ROUNDS
+    )
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def engine_setup_status(engine_url: str, *, opener=urllib.request.urlopen) -> dict:
+    """The engine's public setup-status document, or empty when it cannot be read.
+
+    Args:
+        engine_url: Engine API base, with no path.
+        opener: urlopen-compatible callable.
+
+    Returns:
+        The document.
+    """
+    try:
+        with opener(f"{engine_url}/api/v1/auth/setup-status", timeout=15) as response:
+            body = json.loads(response.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def issued_admin_password(status: Mapping, minted: str) -> str:
+    """The issued password the admin must be signed in with to make its forced change.
+
+    The e2e seeders' reset_all, which the dfe-ui specs call in their hooks, puts the
+    admin back on E2E_SEED_PASSWORD due a change, and setup-status reports that
+    state as ``default_credentials``. Otherwise it is the password the deploy minted.
+
+    Args:
+        status: The engine's setup-status document.
+        minted: The admin password the deploy minted.
+
+    Returns:
+        The password to sign the admin in with first.
+    """
+    return E2E_SEED_PASSWORD if status.get("default_credentials") is True else minted
 
 
 def e2e_routes_mounted(engine_url: str, *, opener=urllib.request.urlopen) -> bool:
@@ -2493,7 +2560,10 @@ def cmd_ui(args: argparse.Namespace) -> int:
     The ROOT step signs in through the console with the admin password the deploy
     minted and completes every wizard screen the console shows, with the same
     runner `acceptance --suite onboarding` uses. A failed root step stops the run:
-    a deployment nobody could onboard has failed whatever the suite then says.
+    a deployment nobody could onboard has failed whatever the suite then says. On
+    a deployment an earlier run already used, the admin is on the shipped default
+    the suite's reset left it on, or on :func:`ui_admin_password`, and the root
+    step signs in with whichever it holds.
 
     Then every dfe-ui spec not tagged @docker-only, against the gateway URL the
     console is published on. The specs seed and reset through the engine's
@@ -2559,22 +2629,27 @@ def cmd_ui(args: argparse.Namespace) -> int:
         )
         return 1
 
+    try:
+        _, minted = admin_credential(
+            "k8s",
+            kube=kube,
+            namespace=namespace,
+            settings=settings,
+            access_summary=Path(args.access_summary) if args.access_summary else None,
+        )
+    except CredentialNotFoundError as exc:
+        if not args.skip_onboarding:
+            stop.set()
+            print(f"ui: {exc}", file=sys.stderr)
+            return 1
+        minted = ""
+    # The root step and the suite each leave the admin on this one.
+    new_admin_password = ui_admin_password(settings, minted)
+
     if args.skip_onboarding:
         print("  --skip-onboarding: the root step did not run, so the run proves less",
               file=sys.stderr)
     else:
-        try:
-            _, minted = admin_credential(
-                "k8s",
-                kube=kube,
-                namespace=namespace,
-                settings=settings,
-                access_summary=Path(args.access_summary) if args.access_summary else None,
-            )
-        except CredentialNotFoundError as exc:
-            stop.set()
-            print(f"ui: {exc}", file=sys.stderr)
-            return 1
         print("\n>>> ui root step: onboarding", file=sys.stderr)
         runner = [
             sys.executable, str(ONBOARDING_RUNNER),
@@ -2585,11 +2660,10 @@ def cmd_ui(args: argparse.Namespace) -> int:
         if args.insecure:
             runner.append("--insecure")
         onboarding_env = dict(os.environ)
-        onboarding_env[FED_ADMIN_PASSWORD_VAR] = minted
-        # The console holds the minted admin on a forced change before the wizard.
-        onboarding_env[NEW_ADMIN_PASSWORD_VAR] = (
-            settings.get(NEW_ADMIN_PASSWORD_VAR) or secrets.token_urlsafe(24)
+        onboarding_env[FED_ADMIN_PASSWORD_VAR] = issued_admin_password(
+            engine_setup_status(engine_url), minted
         )
+        onboarding_env[NEW_ADMIN_PASSWORD_VAR] = new_admin_password
         rc = subprocess.run(runner, env=onboarding_env).returncode
         if rc != 0:
             stop.set()
@@ -2605,7 +2679,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
         "NEXT_PUBLIC_API_URL": engine_url,
         "E2E_ADMIN_PASSWORD": E2E_SEED_PASSWORD,
         # The seeders issue the admin's password, so each spec's login makes the forced change.
-        "E2E_ADMIN_NEW_PASSWORD": settings.get(NEW_ADMIN_PASSWORD_VAR) or secrets.token_urlsafe(24),
+        "E2E_ADMIN_NEW_PASSWORD": new_admin_password,
         "E2E_TEST_TIMEOUT_MS": str(args.test_timeout_ms),
         "E2E_EXPECT_TIMEOUT_MS": str(args.expect_timeout_ms),
         "E2E_NAV_TIMEOUT_MS": str(args.nav_timeout_ms),
@@ -2792,6 +2866,32 @@ def _cloud_programs_loadbalancers(cloud: str) -> bool:
     return bool(found) and cloud in found.group(1).split()
 
 
+def _strimzi_stored_versions(crds: list[dict], base: list[str]) -> tuple[bool, str]:
+    """Whether the Strimzi CRDs already on the cluster let the 1.x operator chart install.
+
+    `crds` is `kubectl get crd`'s items, and `base` the kubectl argv this
+    preflight reads with, so the printed delete aims at the same cluster.
+    """
+    installed = {
+        name: crd
+        for crd in crds
+        if (name := (crd.get("metadata") or {}).get("name", "")) in STRIMZI_CRDS
+    }
+    if not installed:
+        return True, "strimzi: no Strimzi CRDs installed"
+    stale = stale_strimzi_crds(installed)
+    if not stale:
+        return True, f"strimzi: {len(installed)} Strimzi CRD(s) store v1 only"
+    delete = shlex.join([*base, "delete", "crd", *stale])
+    return False, (
+        f"strimzi: {len(stale)} CRD(s) store a version the 1.x operator no longer serves, "
+        f"so its chart cannot install over them: {', '.join(stale.values())}. "
+        f"Left by an earlier install, with no Kafka resource on them: `{delete}` "
+        "(bootstrap/destroy.sh removes them on teardown). Still carrying a live Kafka "
+        "cluster: `dfe-ops upgrade preflight` names the conversion to run instead."
+    )
+
+
 def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple[int, dict, str]:
     """Run kubectl ... -o json and parse. Returns (rc, parsed-or-{}, stderr)."""
     rc, out, err = _run_text([*base, *argv, "-o", "json"], env=env)
@@ -2801,6 +2901,61 @@ def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple
         return 0, json.loads(out), ""
     except json.JSONDecodeError as exc:
         return 1, {}, f"unparseable kubectl output: {exc}"
+
+
+def _strimzi_deploy_gate(kubeconfig: str) -> bool:
+    """False, with the remedy printed, when a Strimzi CRD on the target cluster blocks the install.
+
+    The same read and verdict as `dfe-ops preflight` step 5, aimed at the
+    cluster bootstrap.sh will use. A cluster that cannot be read passes with a
+    warning: bootstrap.sh fails on its own first kubectl call and names why.
+    """
+    if shutil.which("kubectl") is None:
+        print("  [warn] kubectl not on PATH -- Strimzi stored-version check skipped", file=sys.stderr)
+        return True
+    base = ["kubectl", *(["--kubeconfig", kubeconfig] if kubeconfig else [])]
+    rc, crd_json, err = _kubectl_json(base, "get", "crd")
+    if rc != 0:
+        print(
+            f"  [warn] cannot list CRDs ({err}) -- Strimzi stored-version check skipped",
+            file=sys.stderr,
+        )
+        return True
+    served, detail = _strimzi_stored_versions(crd_json.get("items", []), base)
+    print(f"{'  [ok]   ' if served else '  [FAIL] '}{detail}", file=sys.stderr)
+    return served
+
+
+def _kube_context_mismatch(env: Mapping[str, str]) -> str | None:
+    """Why the deploy would not land on the cluster the env names, or None when it will.
+
+    bootstrap.sh targets the kubeconfig's current context and never reads
+    DFE_KUBE_CONTEXT, which preflight does, so the two can aim at different clusters.
+    """
+    wanted = env.get("DFE_KUBE_CONTEXT", "")
+    if not wanted:
+        return None
+    if shutil.which("kubectl") is None:
+        return (
+            f"DFE_KUBE_CONTEXT is {wanted} and kubectl is not on PATH, "
+            "so the kubeconfig's current context cannot be confirmed"
+        )
+    kubeconfig = env.get("KUBECONFIG", "")
+    base = ["kubectl", *(["--kubeconfig", kubeconfig] if kubeconfig else [])]
+    rc, out, err = _run_text([*base, "config", "current-context"])
+    if rc != 0:
+        return (
+            f"DFE_KUBE_CONTEXT is {wanted} but `kubectl config current-context` "
+            f"failed: {_last_line(err)}"
+        )
+    current = out.strip()
+    if current == wanted:
+        return None
+    switch = shlex.join([*base, "config", "use-context", wanted])
+    return (
+        f"DFE_KUBE_CONTEXT is {wanted} but the kubeconfig's current context is {current}: "
+        f"switch with `{switch}` or fix DFE_KUBE_CONTEXT in the env file"
+    )
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:
@@ -3007,7 +3162,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     rc, crd_json, err = _kubectl_json(base, "get", "crd")
     crd_names = {c.get("metadata", {}).get("name", "") for c in crd_json.get("items", [])} if rc == 0 else set()
     if rc != 0:
-        warn(f"cannot list CRDs ({err}) -- adopt-or-install preview skipped")
+        warn(f"cannot list CRDs ({err}) -- adopt-or-install preview and Strimzi stored-version check skipped")
     else:
         for name, crd, deploy_hint in _ADOPT_OR_INSTALL:
             if name == "argocd":
@@ -3027,6 +3182,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
                 warn(f"{name}: CRD {crd} present but no running operator (lingering CRD) -> bootstrap re-adopts + INSTALLS")
             else:
                 ok(f"{name}: absent -> bootstrap INSTALLS DFE-owned")
+        served, detail = _strimzi_stored_versions(crd_json.get("items", []), base)
+        (ok if served else fail)(detail)
 
     # 6. RBAC: the verbs bootstrap needs. can-i is a SelfSubjectAccessReview --
     # read-only against the cluster.
@@ -3374,6 +3531,18 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
             f"  [FAIL] --mode {args.mode} runs a broker whose credential comes from the "
             f"secrets store at {env['DFE_VAULT_ADDR']}, and DFE_VAULT_SECRET_ID (the ESO "
             "AppRole SecretID) is unset: pass it in an --env-file or via --from-terraform",
+            file=sys.stderr,
+        )
+        return 1
+
+    if mismatch := _kube_context_mismatch(env):
+        print(f"ERROR: {mismatch}", file=sys.stderr)
+        return 1
+
+    if not _strimzi_deploy_gate(env.get("KUBECONFIG", "")):
+        print(
+            "\n=== stack-deploy REFUSED -- Strimzi CRDs on the cluster block the install (see "
+            "above); no cluster changes made. ===",
             file=sys.stderr,
         )
         return 1
