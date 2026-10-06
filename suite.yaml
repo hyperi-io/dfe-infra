@@ -612,6 +612,15 @@ non_members:
   dfe-toolbox: "Not a repo: the chart and the dfe-toolbox-{base,aws,gcp,azure} image family are built from Dockerfiles in THIS repo (docker/dfe-toolbox/) off the stack's own toolbox: pins, so it has no upstream to hold a build-cycle edge against. A member is a repo that releases something this repo consumes; dfe-toolbox releases with dfe-infra because it IS dfe-infra."
 
 # ---------------------------------------------------------------------------
+# PIN WAIVERS -- a member file allowed to pin a backing-service image other
+# than the current versions.yaml stack's, for scripts/check_member_pins.py.
+# Each names the member, the file, the image and the reason, and NO version:
+# the stack moves, and a waiver that pinned a version would go stale with it.
+# A waiver that excuses no finding fails the scan, so none outlives its pin.
+# ---------------------------------------------------------------------------
+pin_waivers: []
+
+# ---------------------------------------------------------------------------
 # EDGES -- build-cycle dependencies. Producer -> consumer. Every one cites the
 # consumer's own file at a line where a line is meaningful; a whole-file
 # vendored copy cites the file, and names the producer's copy as `source`.

@@ -2075,12 +2075,14 @@ stacks:
     # to avoid collision with services-digests and the ambiguous "data".
     services:
       postgresql: "17"               # PostgreSQL major of FerretDB's DocumentDB backend -- the 17 that services.documentdb-pg's tag opens with; move the two together. Nothing deploys from this key: scripts/render_dial.py reads it so the AWS toolbox installs psql at the server's major.
-      # image: apache/kafka -- operator-coupled: refresh-digests resolves the
+      # image: apache/kafka rejects=apache/kafka-native -- operator-coupled: refresh-digests resolves the
       # digest, but the VERSION moves by hand with the strimzi support matrix.
+      # The GraalVM build is a different image that testcontainers defaults to, not this one.
       kafka-version: "4.3.1"         # Kafka inside Strimzi. AT THE CEILING for strimzi 1.2.0 -- do not go higher while strimzi-kafka-operator is held at 1.2.0. VERIFIED 2026-09-13 against strimzi 1.2.0 kafka-versions.yaml: 4.3.1 is `supported: true` AND `default: true`; the Apache tag 4.3.1 is dated 2026-06-23, well clear of the cooldown. 4.4.0-rc1 is a tag and NOT GA -- do not pin it. Lifted from 4.2.0 WITH the operator, as one move: 0.51 could not run it. UNIFIED 2026-07-16: dfe-docker apache/kafka had drifted to 4.3.1, which strimzi 0.51 CANNOT run; both paths now move together, and the operator lift is what makes 4.3.1 the SUPPORTED pin rather than drift. The org Renovate preset bounds it at <=4.3.1, by package (operator-coupled). services-digests.kafka-version pins the apache/kafka:4.3.1 image the docker path, the single-mode broker and the MSK bootstrap Job run (helm/charts/kafka values kafka.imageDigest, drift-checked); strimzi resolves its own broker image in cluster mode.
       kafka-replicas: "3"            # Kafka broker count (cluster mode default; settable higher)
-      # image: docker.redpanda.com/redpandadata/redpanda -- operator-coupled:
+      # image: docker.redpanda.com/redpandadata/redpanda aliases=redpandadata/redpanda -- operator-coupled:
       # refresh-digests resolves the digest, the VERSION moves by hand.
+      # aliases: Docker Hub serves the same index digest under its own name.
       redpanda-version: "v26.2.3"    # redpanda broker image tag the operator chart 26.2.4 pairs with (tested pairing): charts/redpanda Chart.yaml at tag charts/redpanda/v26.2.4 carries appVersion v26.2.3, and the operator chart names docker.redpanda.com/redpandadata/redpanda:v26.2.3 in its artifacthub.io/images annotation. Image built 2026-09-17 (amd64 + arm64); upstream has cut no GitHub release for it. Used in the Redpanda CR spec.clusterSpec.image.tag when provider=redpanda. The org Renovate preset bounds it at <26.3, by package (operator-coupled). The same broker tag is held EQUAL outside this file -- dfe-loader's dev compose and its PGO script (dfe-infra#272). services-digests.redpanda-version pins it for the docker path and the single-mode StatefulSet (helm/charts/kafka values kafka.redpanda.image.digest, drift-checked). The cluster-mode Redpanda CR carries the tag alone: the operator's chart refuses any image.tag that is not bare semver (charts/redpanda helpers.go Tag()).
       # image: clickhouse/clickhouse-server -- operator-coupled: refresh-digests
       # resolves the digest, but the VERSION moves by hand with the operator.

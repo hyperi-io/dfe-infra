@@ -99,6 +99,8 @@ import profiles  # noqa: E402
 import registry_pins  # noqa: E402
 import suite_graph  # noqa: E402
 import version_range  # noqa: E402
+from stack_images import annotated_images  # noqa: E402
+from stack_images import block_span as _block_span  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/hyperi-io"
 
@@ -864,25 +866,6 @@ def _waiver_expired(w: dict) -> bool:
 # in place.
 # ---------------------------------------------------------------------------
 
-# `# renovate: ... depName=<ref>` or `# image: <ref>` above a services: key.
-# The annotation doubles as the image map, so there is no second table to drift.
-_ANNOTATION = re.compile(
-    r"^[^\S\n]*#[^\S\n]*(?:renovate:[^\n]*?depName=(?P<a>[^\s]+)"
-    r"|image:[^\S\n]*(?P<b>[^\s]+))[^\n]*\n"
-    r"(?:^[^\S\n]*#[^\n]*\n)*"  # further comment lines between annotation and key
-    r"^[^\S\n]*(?P<key>[A-Za-z0-9_.-]+):[^\S\n]*\"(?P<value>[^\"]+)\"",
-    re.MULTILINE,
-)
-
-
-def annotated_images(text: str) -> dict[str, tuple[str, str]]:
-    """services key -> (image ref, tag) for every annotated pin."""
-    found: dict[str, tuple[str, str]] = {}
-    for m in _ANNOTATION.finditer(text):
-        found[m.group("key")] = (m.group("a") or m.group("b"), m.group("value"))
-    return found
-
-
 def rewrite_digests(
     text: str, stack: str, changes: list[tuple[str, str]]
 ) -> tuple[str, list[str], list[tuple[str, str]]]:
@@ -1183,24 +1166,6 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         f"{len(findings)} image(s) carry {' and '.join(REQUIRED_PLATFORMS)}"
     )
     return 0
-
-
-def _block_span(lines: list[str], stack: str) -> tuple[int, int]:
-    """Line span [start, end) of a stack block inside `stacks:`.
-
-    The block runs from its `  <version>:` key to the next key at that indent, or
-    to end of file for the last one.
-    """
-    start = next(
-        (i for i, ln in enumerate(lines) if re.match(rf"^  {re.escape(stack)}:\s*$", ln)),
-        None,
-    )
-    if start is None:
-        raise SystemExit(f"error: no `{stack}:` block in versions.yaml")
-    for i in range(start + 1, len(lines)):
-        if re.match(r"^  \S", lines[i]):
-            return start, i
-    return start, len(lines)
 
 
 def _sub_block_span(lines: list[str], start: int, end: int, key: str) -> tuple[int, int]:
