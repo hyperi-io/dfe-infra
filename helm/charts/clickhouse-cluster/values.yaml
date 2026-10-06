@@ -29,10 +29,10 @@ clickhouse:
   # operator is NOT tested with this stack.
   mode: cluster
   name: dfe-clickhouse
-  version: "26.3.32.14"
+  version: "26.3.42.3"
   # The server image's digest at the version above, so an overlay moving one moves both.
   # == versions.yaml services-digests.clickhouse-version (drift-checked).
-  imageDigest: "sha256:456063a689194186633bb3db0862283068f4c2ee538852d3aaffa7eb66f1f841"
+  imageDigest: "sha256:21d572843e59539c7d100286b6f5a6053c341fe4b33c2d7b74b1ff7cb24c5399"
   # Cluster-mode node count. Defaults to 3; set higher for more nodes.
   # (single mode ignores this -- it is always 1 standalone pod.)
   replicas: 3
@@ -69,9 +69,9 @@ clickhouse:
     replicas: 3
     image:
       repository: docker.io/clickhouse/clickhouse-keeper
-      tag: "26.3.32.14"   # == versions.yaml services.clickhouse-keeper (drift-checked)
+      tag: "26.3.42.3"   # == versions.yaml services.clickhouse-keeper (drift-checked)
       # == versions.yaml services-digests.clickhouse-keeper (drift-checked).
-      digest: "sha256:8dd3ed81719ae9467ad659d86b7af53a9ec5be6b50320f9ca84cf9c31dc7ccc8"
+      digest: "sha256:8361ed78996d087f3e85622566f15517c502e169a63e70b44dafe6ddca6dd3f5"
     storage:
       size: 10Gi
       storageClass: ""
@@ -86,7 +86,7 @@ clickhouse:
         # waiting on load rather than a bound on it.
         memory: 3Gi
     # Replaces the operator's liveness probe (the CRD's containerTemplate.livenessProbe,
-    # v0.0.7), which opens 2181 and sends nothing, so Keeper logs a Warning on
+    # v0.0.8), which opens 2181 and sends nothing, so Keeper logs a Warning on
     # every probe. `ruok` is the four-letter command Keeper answers `imok` to while
     # the server runs, and it logs the request at Debug. Timings are the
     # operator's own. The keeper image carries busybox nc. Empty keeps the

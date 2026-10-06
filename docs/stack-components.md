@@ -77,35 +77,35 @@ set in the CR our chart templates. SSoT holds the LOGICAL service version; the
 operator chart is a SEPARATE, k8s-only pin on its own release line.
 
 ### ClickHouse
-- SSoT logical version: `services.clickhouse-version` (26.3.17.56, LTS line).
+- SSoT logical version: `services.clickhouse-version` (26.3.42.3, LTS line).
 - k8s: `helm/charts/clickhouse-cluster` values `clickhouse.version` ->
   ClickHouseCluster CR `spec.image`; keeper image tag mirrors it. Operator:
-  `operators.clickhouse-operator` (0.0.7, k8s-only, scale mode only).
+  `operators.clickhouse-operator` (0.0.8, k8s-only, scale mode only).
 - docker: `CLICKHOUSE_VERSION` -> `clickhouse/clickhouse-server:<ver>@digest`.
 - Cascade: SAME upstream image both sides (`clickhouse/clickhouse-server`). One
   number, both refs. Clean.
 
 ### Kafka
-- SSoT logical version: `services.kafka-version` (4.2.0 -- the strimzi 0.51 ceiling).
+- SSoT logical version: `services.kafka-version` (4.3.1 -- the strimzi 1.2 ceiling).
 - k8s: `helm/charts/kafka` values `kafka.version` -> Strimzi Kafka CR
   `spec.kafka.version`. Strimzi then pulls its OWN internal
-  `quay.io/strimzi/kafka:*-kafka-4.2.x` image - we never name that image.
-  Operator: `operators.strimzi-kafka-operator` (0.51.0, k8s-only).
+  `quay.io/strimzi/kafka:*-kafka-4.3.x` image - we never name that image.
+  Operator: `operators.strimzi-kafka-operator` (1.2.0, k8s-only).
 - docker: `APACHE_KAFKA_VERSION` -> `apache/kafka:<ver>@digest`.
 - Cascade: TWO IMAGES for one logical number (strimzi-internal vs apache/kafka).
   Same logical 4.x, two renderers each knowing their own image. Collapse the
   two into one image name and one of the two paths stops resolving, which is
   why the model is "logical version, two renderings".
-- OPERATOR CEILING (hard constraint): Strimzi 0.51 supports Kafka 4.1.x / 4.2.0
+- OPERATOR CEILING (hard constraint): Strimzi 1.2 supports Kafka 4.2.0 - 4.3.1
   ONLY. The logical `kafka-version` must never exceed what the pinned strimzi
   operator supports, or the k8s path breaks. Renovate is bounded to that ceiling
   by the org preset (see "Renovate and the operator ceilings") - bump it by hand,
   verified against strimzi's kafka-versions.yaml, in lockstep with the operator.
 
 ### Redpanda (opt-in, BSL)
-- SSoT logical version: `services.redpanda-version` (v26.1.8).
+- SSoT logical version: `services.redpanda-version` (v26.2.3).
 - k8s: `helm/charts/kafka` values `kafka.redpanda.image.tag` -> Redpanda CR
-  `spec.clusterSpec.image.tag`. Operator: `operators.redpanda-operator` (26.1.6,
+  `spec.clusterSpec.image.tag`. Operator: `operators.redpanda-operator` (26.2.4,
   k8s-only, opt-in). The broker tag is PAIRED with the operator chart - move them
   together (also bounded in the org preset, for the same reason as kafka).
 - docker: `REDPANDA_VERSION` -> `redpandadata/redpanda:<ver>@digest`.
@@ -154,7 +154,7 @@ image. One number, same image ref both sides.
 ## Class E - third-party plain image, docker-ONLY
 
 ### Envoy (dfe-proxy)
-- SSoT: `services.envoy-proxy` (v1.39.0@sha256:...). docker: `DFE_PROXY_VERSION`
+- SSoT: `services.envoy-proxy` (v1.39.2@sha256:...). docker: `DFE_PROXY_VERSION`
   -> `envoyproxy/envoy`. The compose stack's entrypoint, fronting dfe-ui and
   dfe-engine on one origin.
 - Docker-ONLY despite the name. k8s runs Envoy too, but installs it via
@@ -194,8 +194,8 @@ image. One number, same image ref both sides.
    values.yaml image digest to `services.ferretdb` / `services-digests.ferretdb`,
    matching the docker target. `check_versions_drift.py` asserts both, so
    ferretdb is no longer excluded from the loop-closer.
-3. **Kafka/Redpanda operator ceiling.** `kafka-version` <= strimzi 0.51's
-   supported set (4.2.0), `redpanda-version` paired with the redpanda operator
+3. **Kafka/Redpanda operator ceiling.** `kafka-version` <= strimzi 1.2's
+   supported set (4.3.1), `redpanda-version` paired with the redpanda operator
    chart. Both bounded in the org preset; bumped by hand with their operator.
 
 ## Renovate and the operator ceilings
@@ -211,8 +211,8 @@ preset, keyed by PACKAGE:
 | pin | bound | coupled to |
 |---|---|---|
 | `services.clickhouse-version` | `<26.4` | the 26.3 LTS line |
-| `services.kafka-version` | `<=4.2.0` | strimzi 0.51's supported set |
-| `services.redpanda-version` | `<26.2` | redpanda-operator 26.1.6's tested pairing |
+| `services.kafka-version` | `<=4.3.1` | strimzi 1.2's supported set |
+| `services.redpanda-version` | `<26.3` | redpanda-operator 26.2.4's tested pairing |
 
 CONSTRAINED, not disabled: patches within the line still flow, so gated does
 not mean unwatched. Gating by package rather than by file is the point --

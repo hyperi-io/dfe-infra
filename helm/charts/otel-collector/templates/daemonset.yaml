@@ -35,7 +35,11 @@ spec:
       containers:
         - name: {{ include "otel-collector.daemonsetContainerName" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
-          args: ["--config=/etc/otel/daemonset-config.yaml"]
+          # Keeps kubeletstats CPU usage read off the kubelet's UsageNanoCores; the gate, on by default
+          # since collector 0.161, derives it from cpu.time instead and drops the first scrape after a start.
+          args:
+            - --config=/etc/otel/daemonset-config.yaml
+            - --feature-gates=-receiver.kubeletstats.cpuUsageScrapeBased
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           env:
             # Consumed by the resource/node processor and, when enabled, by the

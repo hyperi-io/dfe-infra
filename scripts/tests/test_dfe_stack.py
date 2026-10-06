@@ -1166,16 +1166,16 @@ def test_a_gateway_bump_without_its_proxy_fails_strict() -> None:
     """The proxy image is the gateway's compiled default made explicit, so the
     two move as one: a gateway lift that leaves the proxy behind must not ship."""
     rule = _committed_rule("envoy-gateway-proxy-pairing")
-    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.2", "distroless-v1.39.1"), strict=True)
+    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.3", "distroless-v1.39.2"), strict=True)
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
     expect("because the pairing's guard went dead", "DEAD" in out, out)
 
 
 def test_a_proxy_bump_without_its_gateway_fails_strict() -> None:
     rule = _committed_rule("envoy-gateway-proxy-pairing")
-    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.1", "distroless-v1.39.2"), strict=True)
+    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.2", "distroless-v1.39.3"), strict=True)
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
-    expect("naming the proxy pin it rejects", "FAIL" in out and "distroless-v1.39.2" in out, out)
+    expect("naming the proxy pin it rejects", "FAIL" in out and "distroless-v1.39.3" in out, out)
 
 
 def _clickhouse_pins(server: str, keeper: str) -> str:
@@ -1189,16 +1189,16 @@ def test_a_clickhouse_bump_without_its_keeper_fails_strict() -> None:
     """Keeper ships in the server's release, so a server lift that leaves Keeper
     on the old one must not ship."""
     rule = _committed_rule("clickhouse-keeper-server-pairing")
-    rc, out = _compat_check_over(rule, _clickhouse_pins("26.3.33.1", "26.3.32.14"), strict=True)
+    rc, out = _compat_check_over(rule, _clickhouse_pins("26.3.43.1", "26.3.42.3"), strict=True)
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
     expect("because the pairing's guard went dead", "DEAD" in out, out)
 
 
 def test_a_keeper_bump_without_its_server_fails_strict() -> None:
     rule = _committed_rule("clickhouse-keeper-server-pairing")
-    rc, out = _compat_check_over(rule, _clickhouse_pins("26.3.32.14", "26.3.33.1"), strict=True)
+    rc, out = _compat_check_over(rule, _clickhouse_pins("26.3.42.3", "26.3.43.1"), strict=True)
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
-    expect("naming the keeper pin it rejects", "FAIL" in out and "26.3.33.1" in out, out)
+    expect("naming the keeper pin it rejects", "FAIL" in out and "26.3.43.1" in out, out)
 
 
 def test_the_committed_constraints_pass_strict() -> None:

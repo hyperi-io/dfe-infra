@@ -36,7 +36,7 @@ spec:
                 # declared DNS provider.
                 - chart: keda
                   repo: https://kedacore.github.io/charts
-                  version: "2.20.1"
+                  version: "2.21.0"
                   namespace: keda
                   wave: "3"
                   appProject: infra
@@ -61,14 +61,14 @@ spec:
                         value: keda
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
-                  version: "3.13.1"
+                  version: "3.14.0"
                   namespace: kube-system
                   wave: "3"
                   appProject: infra
                   chartValuesYaml: ""
                 - chart: reloader
                   repo: https://stakater.github.io/stakater-charts
-                  version: "2.2.14"
+                  version: "2.2.18"
                   namespace: reloader
                   wave: "3"
                   appProject: infra
@@ -100,7 +100,7 @@ spec:
               elements:
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
-                  version: "1.21.1"
+                  version: "1.23.0"
                   namespace: external-dns
                   wave: "2"
                   appProject: infra
@@ -137,7 +137,7 @@ spec:
               elements:
                 - chart: aws-load-balancer-controller
                   repo: https://aws.github.io/eks-charts
-                  version: "3.5.0"
+                  version: "3.6.0"
                   namespace: kube-system
                   wave: "1"
                   appProject: infra
@@ -202,6 +202,8 @@ spec:
             # so reading it here would fail goTemplate's missingkey=error on
             # the day a second cloud declares a dns-provider.
             policy: sync
+            # Held at the alpha prefix the gateway annotates with, so a sync cannot drop records.
+            annotationPrefix: external-dns.alpha.kubernetes.io/
             txtOwnerId: '{{ .name }}'
             # The HTTP plane is Gateway API: the gateway chart renders Gateways
             # and HTTPRoutes and never an Ingress, so the chart's own

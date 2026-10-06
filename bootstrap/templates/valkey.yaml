@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: valkey
-          image: valkey/valkey:8.1.9-alpine@sha256:4934d214fd7e091d4ee77b398945b3fd62c6dd0ac71d8b79e2e3cbad8364f3b1
+          image: valkey/valkey:8.1.10-alpine@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
           ports:
             - name: valkey
               containerPort: 6379

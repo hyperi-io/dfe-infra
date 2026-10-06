@@ -45,23 +45,24 @@ VERSIONS = REPO_ROOT / "versions.yaml"
 CLUSTER_PROFILES = ("scale", "mesh")
 
 # --- fixture: what the ClickHouse operator writes on the pods it builds -------
-# Recorded from github.com/ClickHouse/clickhouse-operator at tag v0.0.7, the
-# source behind the pinned OCI chart clickhouse-operator-helm 0.0.7.
-OPERATOR_VERSION = "0.0.7"
+# Recorded from github.com/ClickHouse/clickhouse-operator at tag v0.0.8, the
+# source behind the pinned OCI chart clickhouse-operator-helm 0.0.8.
+OPERATOR_VERSION = "0.0.8"
 
 
 def server_pod_labels(cluster: str, shard: int, replica: int) -> dict[str, str]:
     """Labels on a ClickHouseCluster server pod.
 
-    internal/controller/clickhouse/templates.go:246-251 merges spec.labels, the
-    replica id labels (api/v1alpha1/clickhousecluster_types.go:363-368) and these
-    four, later maps winning; SpecificName() is <name>-clickhouse (line 404-406).
+    internal/controller/clickhouse/templates.go:255-261 merges spec.labels, the
+    replica id labels (api/v1alpha1/clickhousecluster_types.go:406-411) and these
+    five, later maps winning; SpecificName() is <name>-clickhouse (line 447-449).
     """
     specific = f"{cluster}-clickhouse"
     return {
         "clickhouse.com/shard-id": str(shard),
         "clickhouse.com/replica-id": str(replica),
         "app": specific,
+        "clickhouse.com/cluster": cluster,
         "app.kubernetes.io/instance": specific,
         "clickhouse.com/role": "clickhouse-server",
         "app.kubernetes.io/name": "clickhouse-server",
@@ -71,10 +72,10 @@ def server_pod_labels(cluster: str, shard: int, replica: int) -> dict[str, str]:
 def keeper_pod_labels(keeper: str, replica: int) -> dict[str, str]:
     """Labels on a KeeperCluster pod.
 
-    internal/controller/keeper/templates.go:278-282 merges spec.labels,
-    replicaLabels() (line 337-341: the replica id from
-    api/v1alpha1/keepercluster_types.go:221-225, plus `app`) and these three;
-    SpecificName() is <name>-keeper (keepercluster_types.go:250-252).
+    internal/controller/keeper/templates.go:264-268 merges spec.labels,
+    replicaLabels() (line 317-321: the replica id from
+    api/v1alpha1/keepercluster_types.go:244-248, plus `app`) and these three;
+    SpecificName() is <name>-keeper (keepercluster_types.go:273-275).
     """
     specific = f"{keeper}-keeper"
     return {
@@ -116,7 +117,7 @@ def pods_of(docs: tuple[dict, ...]) -> list[Pod]:
 
     The constraints are the CR's podTemplate ones verbatim: the operator adds its
     own only when podTemplate.topologyZoneKey or nodeHostnameKey is set
-    (clickhouse/templates.go:356-426, keeper/templates.go:419-478), which
+    (clickhouse/templates.go:361-432, keeper/templates.go:400-460), which
     check_spread() refuses.
     """
     chc = one(docs, "ClickHouseCluster")
