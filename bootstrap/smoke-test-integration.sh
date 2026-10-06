@@ -20,7 +20,7 @@
 #                     receiver lands in dfe.main on ClickHouse. Proves the
 #                     customer-data ingest pipeline is live AND that structured
 #                     _json ingest works -- a typed sub-column read (_json.answer)
-#                     and a populated _raw are asserted, not just row presence.
+#                     and the _raw contract are asserted, not just row presence.
 #                  3. KAFKA SEAM (single/scale tiers only): the default landing
 #                     topic `main_land` is created, PRODUCED to (receiver) and
 #                     CONSUMED from (loader). Slim has no kafka -> skipped.
@@ -80,9 +80,8 @@ OTEL_LOGS_TABLE="${DFE_OTEL_LOGS_TABLE:-otel_logs}"
 FRESH_WINDOW="${DFE_FRESH_WINDOW:-600}"
 
 # How to find the marker row. TWO live-proven traps here:
-#   1. NOT _raw: the loader only fills _raw from `raw_source_fields` (logoriginal),
-#      so a plain JSON POST lands with _raw = NULL and the old `_raw LIKE` matched
-#      nothing -- a real, working pipeline would have reported FAIL.
+#   1. NOT _raw: a JSON POST lands with _raw = NULL unless the payload carries its
+#      own _raw field, so a `_raw LIKE` match finds nothing on a working pipeline.
 #   2. toString() is REQUIRED: _json is a ClickHouse JSON column, and LIKE on it
 #      errors "Illegal type JSON of argument of function like" (code 43) -- the check
 #      would have failed on a query error, not on the data.
@@ -208,6 +207,26 @@ marker_on_all_nodes() {
   [ "$node_count" -gt 0 ] && [ "$hit" -eq "$node_count" ]
 }
 
+# Name of a broker pod, a Running one in preference; non-zero when no broker pod exists.
+# Brokers are found by their provider's pod labels, because Strimzi's cruise-control and
+# entity-operator pods carry "kafka" in their names and sort ahead of the brokers.
+kafka_broker_pod() {
+  local sel pod
+  for sel in \
+    'strimzi.io/broker-role=true' \
+    'cluster.redpanda.com/broker=true' \
+    'app.kubernetes.io/name=dfe-kafka,!app.kubernetes.io/component'; do
+    pod="$(kubectl -n "$NS_KAFKA" get pods -l "$sel" --no-headers \
+             -o custom-columns=N:.metadata.name,P:.status.phase 2>/dev/null \
+           | awk '$2 == "Running" { print $1; found = 1; exit } !first { first = $1 } END { if (!found && first) print first }')"
+    if [ -n "$pod" ]; then
+      printf '%s\n' "$pod"
+      return 0
+    fi
+  done
+  return 1
+}
+
 echo "=== DFE VERTICAL-INTEGRATION smoke test (chains + freshness, not liveness) ==="
 
 # ---------------------------------------------------------------------------
@@ -291,12 +310,14 @@ echo "=== CORE 2: data path (receiver -> [kafka ->] loader -> ClickHouse) ==="
 MARK="smoke-$(tr -dc a-f0-9 </dev/urandom | head -c8)"
 # Post every fixture line with __MARK__ replaced by this run's marker. --data-binary
 # @- feeds the JSON on stdin so a payload containing quotes/apostrophes (the Vogon
-# poem) survives without shell-escaping. sent counts lines tried, posted counts 2xx.
-sent=0; posted=0
+# poem) survives without shell-escaping. sent counts lines tried, posted counts 2xx,
+# raw_sent counts the lines that carry a _raw field of their own.
+sent=0; posted=0; raw_sent=0
 if [ -r "$POST_FIXTURE" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     sent=$((sent+1))
+    case "$line" in *'"_raw"'*) raw_sent=$((raw_sent+1)) ;; esac
     if printf '%s' "${line//__MARK__/$MARK}" | kubectl -n "$NS_APP" exec -i deploy/dfe-receiver -- \
          curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- \
          http://localhost:8080/ingest >/dev/null 2>&1; then
@@ -307,10 +328,14 @@ else
   echo "  [WARN] POST fixture not readable at $POST_FIXTURE -- CORE 2 will FAIL loudly" >&2
 fi
 echo "  posted ${posted}/${sent} fixture events (marker ${MARK})"
+# Rows of this run on the first ClickHouse node.
+marker_rows() {
+  chq "SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK}"
+}
 # Poll until they land (flush interval + replication), then assert on EVERY node.
 if [ "$posted" -gt 0 ]; then
   for _ in $(seq 1 30); do
-    marker_on_all_nodes "$MARK" >/dev/null 2>&1 && break
+    marker_on_all_nodes "$MARK" >/dev/null 2>&1 && [ "$(marker_rows)" -ge "$posted" ] 2>/dev/null && break
     sleep 3
   done
 fi
@@ -327,21 +352,27 @@ check "fixture events posted to receiver land in ${CH_DATA_TABLE} on EVERY Click
 check "native JSON typed sub-column reads back (_json.answer = 42 for this run)" \
   "test \"\$(chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK} AND _json.answer.:Int64 = 42\")\" -gt 0 2>/dev/null"
 
-# _raw carries the full source payload on the API ingest path. The loader once
-# filled it only via the logoriginal->_raw rename, so a plain JSON POST landed with
-# _raw = NULL (dfe-engine#182); loader v1.18.22 (#113) writes the full payload to
-# _raw in Full mode, so an API-posted event now carries it regardless of logoriginal.
-check "_raw is populated on the API ingest path (full payload captured for this run)" \
-  "test \"\$(chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK} AND length(_raw) > 0\")\" -gt 0 2>/dev/null"
+# dfe-loader stores a JSON payload once, in _json, so _raw stays NULL unless the payload
+# carries a _raw field of its own, which is kept as sent. A value starting with "{" would
+# be the whole payload copied over it. The fixture's towel-check line carries one.
+if [ "$raw_sent" -gt 0 ]; then
+  check "a payload's own _raw is kept as sent (${raw_sent} of ${sent} fixture lines carry one)" \
+    "test \"\$(chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK} AND length(_raw) > 0 AND NOT startsWith(_raw, '{')\")\" -eq $raw_sent 2>/dev/null"
+else
+  skip "payload-supplied _raw -- no line of ${POST_FIXTURE} carries a _raw field"
+fi
+check "payloads without a _raw field land with _raw NULL (stored once, in _json)" \
+  "test $sent -gt $raw_sent && test \"\$(chq \"SELECT count() FROM ${CH_DATA_TABLE} WHERE ${MARK_PREDICATE//__MARK__/$MARK} AND _raw IS NULL\")\" -eq $((sent - raw_sent)) 2>/dev/null"
 
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== CORE 3: kafka seam (main_land created + produced + consumed) ==="
 # Only the kafka-based tiers (single/scale) run a broker. On slim and mesh the
 # receiver feeds the loader directly, so there is no topic to assert -> SKIP, not FAIL.
-if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods --no-headers 2>/dev/null | grep -qiE 'kafka|redpanda'; then
+KPOD=""
+kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && KPOD="$(kafka_broker_pod)"
+if [ -n "$KPOD" ]; then
   # Pick the broker CLI by image: redpanda -> rpk, apache/strimzi -> kafka CLI.
-  KPOD="$(kubectl -n "$NS_KAFKA" get pods --no-headers -o custom-columns=N:.metadata.name 2>/dev/null | grep -iE 'kafka|redpanda' | head -n1)"
   if kubectl -n "$NS_KAFKA" exec "$KPOD" -- sh -c 'command -v rpk' >/dev/null 2>&1; then
     # Redpanda standalone (single tier).
     check "topic ${KAFKA_TOPIC} exists (created)" \
@@ -349,7 +380,7 @@ if kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && kubectl -n "$NS_KAFKA" get pods
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
       "test \"\$(kubectl -n $NS_KAFKA exec $KPOD -- rpk topic describe ${KAFKA_TOPIC} -p 2>/dev/null | awk 'NR>1{s+=\$5} END{print s+0}')\" -gt 0"
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "kubectl -n $NS_KAFKA exec $KPOD -- rpk group list 2>/dev/null | grep -q ."
+      "kubectl -n $NS_KAFKA exec $KPOD -- rpk group list 2>/dev/null | awk 'NR > 1 && NF { n++ } END { exit !n }'"
   else
     # apache/kafka KRaft or Strimzi. Two things the first cut got wrong, both
     # live-proven broken on Strimzi 2026-07-17 (see scripts/deploy_matrix.py
@@ -394,8 +425,10 @@ KSH
     # being written to and drained. Output is topic:partition:offset.
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
       "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:9092 --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
+    # A row of --describe naming the topic with a numeric committed offset above 0:
+    # the tool prints its failures to stdout, so a non-empty reading proves nothing.
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "test -n \"\$(kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --list')\""
+      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --describe --all-groups')\" | awk -v t='${KAFKA_TOPIC}' '\$2 == t && \$4 ~ /^[0-9]+\$/ && \$4 > 0 { n++ } END { exit !n }'"
     # The DLQ standard's topics must exist BEFORE the first poisoned message:
     # a DLQ write happens at failure time, when nothing can be creating topics,
     # and the file backend is an EROFS no-op under the read-only rootfs.
@@ -424,9 +457,9 @@ elif profile_has_kafka; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would
   # report the brokerless-tier story for a broken kafka deploy -- the exact false
   # reassurance this gate exists to prevent.
-  check "kafka broker present in ns/$NS_KAFKA (required by the $PROFILE tier)" "false"
+  check "kafka broker pod present in ns/$NS_KAFKA (required by the $PROFILE tier)" "false"
 else
-  skip "kafka seam -- no broker in ns/$NS_KAFKA (brokerless tier: receiver feeds loader directly)"
+  skip "kafka seam -- no broker pod in ns/$NS_KAFKA (brokerless tier: receiver feeds loader directly)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -443,11 +476,15 @@ check "ClickHouse answers a query (dfe DB present)" \
 # Distinguish "HyperDX is broken" from "HyperDX is not in this profile" -- the two
 # need very different actions, and slim deliberately omits it while telemetry.mode
 # still names it the default OTLP destination.
+hyperdx_readyz() {
+  kubectl -n "$NS_HYPERDX" exec deploy/dfe-hyperdx -c hyperdx -- node -e \
+    "fetch('http://localhost:8000/readyz',{signal:AbortSignal.timeout(10000)}).then(async r=>{const b=await r.json();process.exit(r.status===200&&b.status==='ready'?0:1)}).catch(()=>process.exit(1))"
+}
 if kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then
   # /readyz on the api port (8000) is what the pod's own readiness probe uses, and
-  # it only answers once the ferretdb-backed API is up. The image ships no curl.
-  check "hyperdx API reaches its ferretdb backend" \
-    "printf '%s' \"\$(kubectl -n $NS_HYPERDX exec deploy/dfe-hyperdx -c hyperdx -- wget -qO- http://localhost:8000/readyz)\" | grep -qi 'ready'"
+  # it only answers once the ferretdb-backed API is up. The image ships neither wget
+  # nor curl, so node's fetch asks it and the exit code carries the verdict.
+  check "hyperdx API reaches its ferretdb backend" hyperdx_readyz
 else
   skip "hyperdx->ferretdb -- no dfe-hyperdx deployment in ns/$NS_HYPERDX, so this profile does not ship it. CORE 1 above says whether the OTel path still reaches ClickHouse without it."
 fi
