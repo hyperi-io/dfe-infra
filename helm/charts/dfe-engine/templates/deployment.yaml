@@ -282,9 +282,7 @@ spec:
             # What this deployment can carry a source's records on, from the one
             # deployment-wide kafka.mode the profile sets. Without it the engine
             # defaults to bus and accepts sources on a transport the brokerless
-            # profiles do not run. DFE_KAFKA_ENSURE_TOPICS is deliberately NOT
-            # set here: the engine derives topic creation from bus_present, and
-            # a second dial saying the same thing is a second thing to get wrong.
+            # profiles do not run.
             - name: DFE_TRANSPORT_DEFAULT
               value: {{ include "dfe-common.transport" . | quote }}
             - name: DFE_TRANSPORT_BUS_PRESENT
@@ -295,6 +293,10 @@ spec:
             # (settings.py: DFE_KAFKA_*; the provider derives the mechanism).
             - name: DFE_KAFKA_BOOTSTRAP_SERVERS
               value: {{ .Values.kafka.bootstrapServers | quote }}
+            # The boot pass that recreates every deployed source's topics runs
+            # only when this is explicitly true.
+            - name: DFE_KAFKA_ENSURE_TOPICS
+              value: "true"
             {{- with .Values.kafka.messageMaxBytes }}
             {{- if le (int64 .) 0 }}
             {{- fail (printf "kafka.messageMaxBytes must be a positive whole number of bytes, got %v" .) }}

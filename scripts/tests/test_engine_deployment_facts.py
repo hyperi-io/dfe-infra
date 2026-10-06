@@ -548,6 +548,47 @@ def test_a_topic_size_that_is_not_bytes_fails_the_render() -> None:
     )
 
 
+ENSURE_TOPICS_ENV = "DFE_KAFKA_ENSURE_TOPICS"
+
+
+def test_the_boot_topic_pass_is_turned_on_only_on_the_bus() -> None:
+    """The engine's boot pass runs only when the dial is explicitly true, so a bus
+    deployment left to the derived default loses every source's topics on a broker
+    rebuild, and a brokerless one has no broker to ask."""
+    for mode in ("single", "cluster", "external"):
+        got = engine_env("--set", f"kafka.mode={mode}").get(ENSURE_TOPICS_ENV)
+        expect(f"kafka.mode={mode} turns the boot pass on", got == "true", f"got {got!r}")
+    got = engine_env().get(ENSURE_TOPICS_ENV)
+    expect("an unset kafka.mode is the bus and turns it on", got == "true", f"got {got!r}")
+    got = engine_env("--set", "kafka.mode=disabled").get(ENSURE_TOPICS_ENV)
+    expect("a brokerless deployment renders no dial", got is None, f"got {got!r}")
+
+
+def test_each_profile_sets_the_boot_topic_pass_by_its_transport() -> None:
+    transports = set()
+    for profile in PROFILES:
+        env = engine_env(
+            "-f",
+            str(VALUES / "common.yaml"),
+            "-f",
+            str(VALUES / f"profile-{profile}.yaml"),
+            "--set",
+            f"profile={profile}",
+        )
+        transports.add(env.get("DFE_TRANSPORT_DEFAULT"))
+        expected = "true" if env.get("DFE_TRANSPORT_DEFAULT") == "bus" else None
+        expect(
+            f"{profile} sets the boot topic pass only when it carries a bus",
+            env.get(ENSURE_TOPICS_ENV) == expected,
+            f"transport={env.get('DFE_TRANSPORT_DEFAULT')!r} dial={env.get(ENSURE_TOPICS_ENV)!r}",
+        )
+    expect(
+        "the profiles cover both a bus and a brokerless transport",
+        transports == {"bus", "direct"},
+        f"got {sorted(transports, key=str)!r}",
+    )
+
+
 def test_every_profile_still_renders_with_the_real_overlays() -> None:
     for profile in PROFILES:
         env = engine_env(
@@ -597,6 +638,8 @@ def main() -> int:
         test_a_render_with_no_pod_range_keeps_the_engines_default()
         test_the_topic_size_reaches_the_engine_only_when_set()
         test_a_topic_size_that_is_not_bytes_fails_the_render()
+        test_the_boot_topic_pass_is_turned_on_only_on_the_bus()
+        test_each_profile_sets_the_boot_topic_pass_by_its_transport()
         test_every_profile_still_renders_with_the_real_overlays()
         return summary()
 
