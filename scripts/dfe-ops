@@ -216,7 +216,6 @@ import atexit
 import base64
 import contextlib
 import hashlib
-import hmac
 import io
 import json
 import os
@@ -2452,6 +2451,8 @@ DOCKER_ONLY_TAG = "@docker-only"
 E2E_SEED_PASSWORD = "changeme"
 # Keys the admin's new password to `ui`, so no other derivation from the minted one collides.
 UI_ADMIN_PASSWORD_CONTEXT = b"dfe-ops ui admin password"
+# A password-strength key derivation, since the input is the minted admin password.
+UI_ADMIN_PASSWORD_ROUNDS = 600_000
 
 
 def ui_admin_password(settings: Mapping[str, str], minted: str) -> str:
@@ -2475,8 +2476,10 @@ def ui_admin_password(settings: Mapping[str, str], minted: str) -> str:
         return settings[NEW_ADMIN_PASSWORD_VAR]
     if not minted:
         return secrets.token_urlsafe(24)
-    digest = hmac.new(minted.encode("utf-8"), UI_ADMIN_PASSWORD_CONTEXT, hashlib.sha256)
-    return base64.urlsafe_b64encode(digest.digest()).decode("ascii").rstrip("=")
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", minted.encode("utf-8"), UI_ADMIN_PASSWORD_CONTEXT, UI_ADMIN_PASSWORD_ROUNDS
+    )
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def engine_setup_status(engine_url: str, *, opener=urllib.request.urlopen) -> dict:
