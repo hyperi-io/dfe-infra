@@ -467,13 +467,14 @@ keda:
 kedaShim:
   enabled: true
   port: 8080
+  # The full engine image: about 126Mi resident once booted, and a 100m CPU cap stretches its boot to about 40s.
   resources:
     requests:
       cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 100m
       memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 # dfe-hunt-runner -- the pull-based hunt executor, folded into the engine chart as its
 # OWN pod (engine image, `dfe-hunt-runner run`, DISTINCT labels). It coordinates every

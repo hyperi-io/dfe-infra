@@ -285,6 +285,49 @@ def test_the_engine_gets_a_boot_budget() -> None:
         )
 
 
+def shim_container() -> dict:
+    deployment = next(
+        d
+        for d in documents()
+        if d.get("kind") == "Deployment" and d["metadata"]["name"] == "dfe-keda-shim"
+    )
+    return deployment["spec"]["template"]["spec"]["containers"][0]
+
+
+def mebibytes(quantity: str) -> int:
+    units = {"Mi": 1, "Gi": 1024}
+    return int(quantity[:-2]) * units[quantity[-2:]]
+
+
+def test_the_keda_shim_gets_a_boot_budget() -> None:
+    """The shim boots the full engine image, about 40s at a 100m CPU cap, and its
+    liveness gave up at about 28s, so every start was killed before it listened."""
+    container = shim_container()
+    probe = container.get("startupProbe")
+    expect("the keda-shim container has a startupProbe", probe is not None, "none rendered")
+    if probe:
+        expect(
+            "and it targets the liveness path on the shim's own port",
+            probe["httpGet"] == container["livenessProbe"]["httpGet"],
+            f"got {probe['httpGet']!r}",
+        )
+        expect(
+            "with a budget well past a throttled boot",
+            probe["failureThreshold"] * probe["periodSeconds"] >= 150,
+            f"got {probe['failureThreshold']} * {probe['periodSeconds']}s",
+        )
+
+
+def test_the_keda_shim_has_room_for_the_engine_image() -> None:
+    """The engine image sits at about 126Mi resident once booted, so a 128Mi
+    limit leaves the shim a few MiB from the OOM killer."""
+    resources = shim_container()["resources"]
+    limit = mebibytes(resources["limits"]["memory"])
+    request = mebibytes(resources["requests"]["memory"])
+    expect("the shim's memory limit is at least 256Mi", limit >= 256, f"got {limit}Mi")
+    expect("and its request covers the resident size", request >= 128, f"got {request}Mi")
+
+
 def test_an_external_tls_clickhouse_is_expressible() -> None:
     """The chart hardcoded secure false, so a deployment whose ClickHouse speaks
     TLS could not be rendered at all (#277). A render with no CA stays plaintext;
@@ -540,6 +583,8 @@ def main() -> int:
         test_an_auth_configmap_edit_can_reach_the_engine()
         test_an_unset_auth_configmap_renders_no_checksum()
         test_the_engine_gets_a_boot_budget()
+        test_the_keda_shim_gets_a_boot_budget()
+        test_the_keda_shim_has_room_for_the_engine_image()
         test_an_external_tls_clickhouse_is_expressible()
         test_the_token_lifetime_is_a_dial()
         test_an_unset_auth_dial_renders_no_variable()
