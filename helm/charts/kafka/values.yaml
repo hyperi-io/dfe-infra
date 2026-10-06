@@ -36,6 +36,8 @@ kafka:
   # The digest of apache/kafka at the version above, which single mode and the MSK
   # bootstrap Job run. == versions.yaml services-digests.kafka-version (drift-checked).
   imageDigest: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"
+  # Strimzi cluster mode only; empty lets Strimzi raise it, one way, as soon as a version roll finishes (docs/deployment/upgrades.md).
+  metadataVersion: ""
   # cluster node count. Defaults to 3; set higher for more brokers.
   # (single mode forces 1.)
   replicas: 3

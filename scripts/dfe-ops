@@ -120,8 +120,12 @@ Subcommands:
                (`--to`, default the `current` pointer) and runs compat-check
                + the sizing locked-change classifier; preflight is the gate
                apply refuses to run without; apply bumps pins.yaml through a
-               surgical field edit and commits per stage (never a hand edit);
-               rollback refuses by name any step with no reverse path.
+               surgical field edit and commits per stage (never a hand edit),
+               holds the Kafka metadata version through the soak, and moves
+               the cluster secret's target_revision after the Strimzi
+               conversion check passes; rollback refuses by name any step
+               with no reverse path, and a Kafka rollback the live metadata
+               version rules out.
   kind         up/status/down for a throwaway local kind cluster running one
                tier: up creates the cluster on a docker network of its own,
                adds the StorageClass the overlay asks for and the two
@@ -182,8 +186,13 @@ this file is committed publicly, so substitute your own node):
     # preflight, then apply stage by stage (asking before each one):
     python3 scripts/dfe-ops upgrade plan --deploy ../dfe-deploy --to 2.2.0-rc.13
     python3 scripts/dfe-ops upgrade preflight --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig
-    python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig
+    python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig --push
     python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --dry-run
+
+    # After the soak, finalise the Kafka metadata version (pins.yaml already
+    # names the target, so --from names where the upgrade started):
+    python3 scripts/dfe-ops upgrade apply --deploy ../dfe-deploy --kubeconfig .tmp/dfe.kubeconfig \
+        --from 2.2.0-rc.13 --finalise --push
 
     # Preview a teardown, then run it (also destroying terraform state):
     python3 scripts/dfe-ops teardown --dry-run

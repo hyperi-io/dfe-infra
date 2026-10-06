@@ -18,9 +18,22 @@ rolling update with `metadata.version` finalised after a soak; then the apps.
 `dfe-ops upgrade` (below) walks that file so the order is never applied by
 hand; see it for a deployment-repo driven upgrade.
 
-**Pointing Argo CD at a newer stack is not a supported upgrade.** Moving a running deployment's dfe-infra ref, the cluster secret's `dfe.hyperi.io/target_revision`, onto another stack syncs every Application to the new ref at once. None of the `before:` steps in `upgrade-order.yaml` runs, and nothing refuses the move today.
+**`dfe-ops upgrade apply` moves the Argo CD ref; moving it by hand is not a supported upgrade.** Every chart and operator Application renders from the cluster secret's `dfe.hyperi.io/target_revision`, and `pins.yaml` reaches only `dfe-stack resolve`, so bumping the pin alone leaves a tag-pinned deployment on its old charts. `apply` rewrites that annotation, with `dfe.hyperi.io/stack_version` beside it, at the first stage that moves an Argo-managed component: after that stage's `before:` checks pass and its commit is pushed. A hand edit of the annotation runs none of that.
 
-Across the Strimzi 0.x to 1.x lift that wedges Kafka. The 1.x CRDs fail Argo CD's server-side diff against CRDs still storing `v1beta2`, so the operator stays on 0.x while its Application reports Synced over a ComparisonError. The kafka chart applies cleanly and asks for a Kafka version the running operator rejects, and the Kafka CR goes NotReady and stops being reconciled. `dfe-ops upgrade preflight` and `apply` both refuse while a Strimzi CRD stores a pre-v1 version, and name the conversion tool to run first.
+Across the Strimzi 0.x to 1.x lift a hand retarget wedges Kafka. The 1.x CRDs fail Argo CD's server-side diff against CRDs still storing `v1beta2`, so the operator stays on 0.x while its Application reports Synced over a ComparisonError. The kafka chart applies cleanly and asks for a Kafka version the running operator rejects, and the Kafka CR goes NotReady and stops being reconciled. `dfe-ops upgrade preflight` and `apply` both refuse while any of the ten Strimzi CRDs stores a pre-v1 version, and print the conversion commands to run first.
+
+## In place from Strimzi 0.51
+
+2.2.0-rc.13 runs Strimzi 0.51.0 with Kafka 4.2.0, and 2.2.0-rc.14 runs Strimzi 1.2.0 with Kafka 4.3.1. 0.51 cannot run 4.3.1, and 1.x reads only resources stored as `v1`. `dfe-ops upgrade apply --push` runs steps 2 to 4 and checks step 1.
+
+1. **Convert**, on the running cluster, with the tool from the RUNNING release (`strimzi-v1-api-conversion-0.51.0.tar.gz`, never the target's): `bin/v1-api-conversion.sh convert-resource --all-namespaces`, then `bin/v1-api-conversion.sh crd-upgrade`. All ten Strimzi CRDs then store `v1` only, including `kafkarebalances.kafka.strimzi.io` and `strimzipodsets.core.strimzi.io`, which a 0.51 cluster with rebalancing on (the default) stores as `v1beta2`. `crd-upgrade` is one way and needs a JVM and CRD patch rights, so `apply` checks the result and never runs the tool.
+2. **Hold the metadata version.** `apply` writes `kafka.metadataVersion: "4.2-IV1"` (the live `status.kafkaMetadataVersion`) and `kafka.version: "4.2.0"` into the deploy repo's `infra/kafka.yaml`, each marked `# dfe-ops upgrade hold`. Unpinned, Strimzi raises the metadata version the moment the version roll finishes, which ends the soak before it starts.
+3. **Operator 1.2.0, Kafka still on 4.2.0.** With the holds pushed, `apply` moves `target_revision` to `2.2.0-rc.14`, waits until no Application renders from `2.2.0-rc.13`, then waits for every Kafka CR's `status.operatorLastSuccessfulVersion` to read `1.2.0`.
+4. **Kafka 4.3.1.** The `30-services` stage drops the version hold, the brokers roll under metadata 4.2-IV1, and `apply` waits for every `status.kafkaVersion` to read `4.3.1`.
+5. **Soak**, 24 hours by default ([upgrade-rollback.md](upgrade-rollback.md)). A rollback here takes the brokers back to 4.2.0, because the metadata version has not moved.
+6. **Finalise to 4.3-IV0.** `dfe-ops upgrade apply --deploy <dir> --from 2.2.0-rc.13 --finalise --push` asks whether the soak is over, drops the metadata hold, writes the finalise marker and waits for the 4.3 line. One way: Kafka 4.2.0 cannot run metadata 4.3-IV0.
+
+`apply` reads the brokers before it moves anything. Brokers on neither 4.2.0 nor 4.3.1, Kafka CRs that disagree, or a CR with no metadata version refuse the run with nothing committed.
 
 A Kafka version bump can hit a server-side-apply field-ownership conflict:
 the Strimzi operator's own client also writes fields like `KafkaNodePool`
@@ -53,55 +66,15 @@ stack upgrade from a deployment repo's own `pins.yaml`, walking
   LOCKED field moving without `--migrate` blocks the plan. Exit 0 clean, 1
   blocked (compat-check failed, or an unmigrated locked change), 2 the
   deploy repo or stack name do not resolve.
-- `preflight` is the gate `apply` will not run without: the deploy repo is
-  clean, the cluster answers, every Argo Application is Synced and Healthy,
-  no KafkaRebalance is running, ClickHouse carries no merge past
-  `--clickhouse-merge-threshold`, the Strimzi stored-version conversion
-  already ran (checked only when the plan crosses the 0.x -> 1.x boundary,
-  read from the CRD's `status.storedVersions`), the on-prem node capacity
-  holds the new sizing (`check_node_capacity.py`), and a backup marker exists
-  at `--backup-marker` when the plan carries a one-way step. Each check
-  prints `PASS`/`FAIL` with the evidence line that decided it.
-- `apply` runs preflight, then walks the plan stage by stage: bumps
-  `pins.yaml`'s `base.dfe-infra` via a surgical field edit (never a hand
-  rewrite), re-runs the resolver with `--migrate` when `--dial` is given (with
-  `--fixtures` or `--live`) and copies its `sizing/` output, never its
-  OpenTofu inputs, over `<deploy>/sizing/`,
-  commits the stage (`chore(upgrade): <stack> stage <n> -- <keys>`), pushes
-  only with `--push`, and waits for Argo to report every Application Synced
-  and Healthy, bounded by `--timeout`. Confirms before each stage unless
-  `--yes`; `--stop-before <stage-key>` halts before a named
-  `upgrade-order.yaml` stage, touching nothing in it or after. A `before`
-  note this repo already has a program for (today, only the Strimzi
-  conversion) runs automatically; any other needs a confirmed "I ran this by
-  hand". That check also names the conversion tarball to fetch at the version
-  the cluster is RUNNING (`strimzi-v1-api-conversion-<from>.tar.gz`), not the
-  target's, because the tool rewrites the CRs the running operator wrote. After
-  a stage that bumps the Strimzi operator, apply waits a second time on every
-  Kafka CR's `status.operatorLastSuccessfulVersion` reaching the new operator
-  version under the same `--timeout`, because the CR's own `Ready` condition
-  stays True and stale across the lift and a wait on it returns at once and
-  proves nothing. A reached `finalise` note prints and stays pending unless
-  `--finalise` is given, which asks whether the soak is over and, on yes,
-  writes `upgrades/<from>-to-<to>.finalised` -- the marker `rollback` reads.
-  `--dry-run` prints every command, finalise and stop-before included, and
-  touches nothing. Apply stops at the first failure and prints that step's
-  rollback note.
-- `rollback --to <stack>` is the reverse plan. It refuses by name a step
-  carrying `rollback: none` with no `finalise` (unconditionally one-way), or
-  a `finalise`-bearing step whose finalise has ALREADY run -- read from the
-  marker above, not the pin diff alone. A `finalise`-bearing step with no
-  marker yet reverses like any other step, noting the soak can be abandoned
-  safely. `--check-cluster` also reads the live Kafka CR's
-  `status.kafkaMetadataVersion` and refuses when it already shows the
-  bumped value even with no marker -- a finalise run by hand, outside this
-  tool.
+- `preflight` is the gate `apply` will not run without: the deploy repo is clean, the cluster answers, every Argo Application is Synced and Healthy, no KafkaRebalance is running, ClickHouse carries no merge past `--clickhouse-merge-threshold`, all ten Strimzi CRDs store `v1` only (checked only when the plan crosses the conversion; a CRD kubectl cannot read fails), the on-prem node capacity holds the new sizing (`check_node_capacity.py`), and a backup marker exists at `--backup-marker` when the plan carries a one-way step. Each check prints `PASS`/`FAIL` with the evidence line that decided it.
+- `apply` runs preflight, then reads the cluster secret and the Kafka CRs and refuses before anything moves if either is in a state it cannot move. It then walks the plan stage by stage: bumps `pins.yaml`'s `base.dfe-infra` via a surgical field edit, re-runs the resolver with `--migrate` when `--dial` is given and copies its `sizing/` output over `<deploy>/sizing/`, commits the stage (`chore(upgrade): <stack> stage <n> -- <keys>`), pushes only with `--push`, and waits for Argo, bounded by `--timeout`. The first stage moving an Argo-managed component writes the Kafka holds and moves `target_revision`, as [In place from Strimzi 0.51](#in-place-from-strimzi-051) describes; a secret tracking a branch is left alone, one pinned to a commit needs `--target-revision <ref>`, and a retarget refuses without `--push`. After a Strimzi operator bump apply waits on every Kafka CR's `status.operatorLastSuccessfulVersion`, because the CR's own `Ready` condition stays True and stale across the lift. A `before` note with no program needs a confirmed "I ran this by hand". Confirms before each stage unless `--yes`; `--stop-before <stage-key>` halts before a named stage. A reached `finalise` note stays pending unless `--finalise` is given, which asks whether the soak is over, runs the step's finalise program and writes `upgrades/<from>-to-<to>.finalised`, the marker `rollback` reads. `--from <stack>` names the FROM stack once `pins.yaml` already names the target, for a finalise after the soak or a resumed run. `--dry-run` prints every command and touches nothing.
+- `rollback --to <stack>` is the reverse plan. It refuses by name a step carrying `rollback: none` with no `finalise`, or a `finalise`-bearing step whose marker exists; with no marker yet the step reverses like any other. A rollback that moves `services.kafka-version` also reads every live Kafka CR and refuses when `status.kafkaMetadataVersion` is above the target's Kafka line, marker or not, which is what an unpinned metadata version leaves behind. It moves `target_revision` back the same way `apply` moves it forward, and needs `--push` to. `--skip-cluster-check` moves the pin alone, reading nothing.
 
 ### What a stage moves
 
-One pin, `base.dfe-infra`, selects the whole certified stack, and `apply` sets it to the target at every stage. So the first stage moves every component: its commit, named for that stage's keys alone, carries the whole pin move, and with `--push` Argo CD converges on the full target during that stage's wait. Later stages find the pin already moved and skip their commit unless they add something, such as a finalise marker under `upgrades/`.
+One pin, `base.dfe-infra`, selects the whole certified stack, and `apply` sets it to the target at every stage, so the first stage's commit carries the whole pin move. One ref, `target_revision`, selects every chart, and `apply` moves it once, at the first stage that moves an Argo-managed component; every chart and operator converges on the target during that stage's wait. Later stages skip their commit unless they add something, such as dropping a Kafka hold or writing a finalise marker.
 
-The work around the pin still runs in stage order: confirms, `before` checks, `finalise` notes and waits. Preflight still enforces the Strimzi conversion before anything moves. `--stop-before` skips a stage's hooks and waits, not its component versions. Staging the pin itself is open in https://github.com/hyperi-io/dfe-infra/issues/508.
+The work around the pin still runs in stage order: confirms, `before` checks, `finalise` notes and waits. The Kafka version hold is the one place a component waits for its own stage. `--stop-before` skips a stage's hooks and waits, not its component versions. Staging the pin itself is open in https://github.com/hyperi-io/dfe-infra/issues/508.
 
 ## Re-size
 
@@ -176,8 +149,7 @@ overlap against the deployment's own heaviest queries.
 
 ## What cannot be rolled back
 
-- Kafka's `metadata.version` bump is one way, so the roll and the finalise are
-  separate steps with a soak between them.
+- Kafka's `metadata.version` bump is one way, so the roll and the finalise are separate steps with a soak between them, and `apply` holds the metadata version so Strimzi cannot take that step on its own.
 - ClickHouse downgrades only within the same LTS line.
 - Kafka data is a buffer: an upgrade window shorter than the topic retention
   loses nothing. ClickHouse on `cached-object` keeps its parts in the object
@@ -186,17 +158,4 @@ overlap against the deployment's own heaviest queries.
 Pre-flight snapshots the Argo application versions, `sizing/resolved.yaml`
 and the tofu state, and prints the one-way steps before asking to continue.
 
-`dfe-ops upgrade rollback --to <stack>` (above) refuses by name a step whose
-finalise has already run -- read from the `upgrades/<from>-to-<to>.finalised`
-marker `apply --finalise` writes, never from the pin diff alone. Between the
-Kafka broker roll and its `metadata.version` finalise, soak the cluster
-under normal ingest for 24 hours by default, watching consumer lag,
-under-replicated partitions, ClickHouse's merge backlog and insert errors,
-and confirming KEDA and Cruise Control both stay quiet. A problem during the
-soak ends it early: `dfe-ops upgrade rollback --to <stack>` reverses the pin
-like any other step, because no marker exists yet -- no manual git revert
-needed. `--check-cluster` also refuses when the live Kafka CR already shows
-the bumped `status.kafkaMetadataVersion`, catching a finalise run by hand
-outside this tool. The full per-stage runbook, the sizing config-vs-data
-rule for a locked field, and what `apply --finalise`/`--stop-before` do at
-finalise time are in [upgrade-rollback.md](upgrade-rollback.md).
+`dfe-ops upgrade rollback --to <stack>` (above) refuses by name a step whose finalise has already run, read from the `upgrades/<from>-to-<to>.finalised` marker `apply --finalise` writes, and refuses a Kafka rollback whenever the live metadata version is above the target's line. Between the Kafka broker roll and its `metadata.version` finalise, soak the cluster under normal ingest for 24 hours by default, watching consumer lag, under-replicated partitions, ClickHouse's merge backlog and insert errors, and confirming KEDA and Cruise Control both stay quiet. A problem during the soak ends it early: `dfe-ops upgrade rollback --to <stack> --push` reverses the pin and `target_revision` like any other step, because the metadata version is still held. The full per-stage runbook, the sizing config-vs-data rule for a locked field, and what `apply --finalise`/`--stop-before` do at finalise time are in [upgrade-rollback.md](upgrade-rollback.md).
