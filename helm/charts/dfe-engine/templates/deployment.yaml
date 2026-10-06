@@ -380,6 +380,15 @@ spec:
             - name: DFE_CLICKHOUSE_DEFAULT_TTL_DAYS
               value: {{ .Values.retention.defaultTtlDays | quote }}
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
+            {{- if .Values.huntRunner.enabled }}
+            # The password the engine gives dfe_hunt_runner, from the Secret the
+            # runner connects with, so the two pods never hold different values.
+            - name: DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.huntRunner.clickhouse.passwordSecretName }}
+                  key: {{ .Values.huntRunner.clickhouse.passwordSecretKey }}
+            {{- end }}
             # Config-registry directories. WITHOUT these the engine leaves every
             # registry uninitialised and the config API returns 503 not_configured.
             # All live under the (writable) config mount; the engine seeds defaults

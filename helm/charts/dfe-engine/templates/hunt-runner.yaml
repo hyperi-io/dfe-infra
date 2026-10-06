@@ -135,9 +135,10 @@ spec:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
             # The ClickHouse the engine uses, over the same transport. The runner
-            # coordinates leases/watermarks and runs hunt queries here.
+            # coordinates leases/watermarks and runs hunt queries here, as its own
+            # user rather than the admin account (huntRunner.clickhouse).
             {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
-            {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
+            {{- include "dfe-engine.huntRunnerClickhouseAuthEnv" . | nindent 12 }}
             {{- if $gitSync }}
             # Through git-sync's link, which is swapped atomically, so a reload
             # never reads a half-written worktree.

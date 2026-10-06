@@ -1,8 +1,9 @@
 {{/*
-dfe-engine.clickhouseAuthEnv -- the account the engine and its sidecars connect
-to ClickHouse as.
+dfe-engine.clickhouseAuthEnv -- the account the engine and the keda shim connect
+to ClickHouse as. The hunt runner connects as its own user instead
+(huntRunnerClickhouseAuthEnv).
 
-Defined once because all three workloads talk to the same server and a partial
+Defined once because both workloads talk to the same server and a partial
 rollout is the failure mode this chart has already seen with the JWT key: the
 engine works, a sidecar does not, and it reads as two unrelated faults.
 
@@ -28,6 +29,26 @@ Usage:
       name: {{ . }}
       key: {{ $.Values.clickhouse.passwordSecretKey | default "password" }}
 {{- end }}
+{{- end }}
+
+{{/*
+dfe-engine.huntRunnerClickhouseAuthEnv -- the hunt runner's own ClickHouse user,
+in place of clickhouseAuthEnv. The password comes from the Secret
+hunt-runner-clickhouse.yaml renders, the one the engine adopts for that user.
+
+Usage:
+  env:
+    {{- include "dfe-engine.huntRunnerClickhouseAuthEnv" . | nindent 12 }}
+*/}}
+{{- define "dfe-engine.huntRunnerClickhouseAuthEnv" -}}
+{{- $hr := .Values.huntRunner.clickhouse -}}
+- name: DFE_CLICKHOUSE_USERNAME
+  value: {{ $hr.user | quote }}
+- name: DFE_CLICKHOUSE_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ $hr.passwordSecretName }}
+      key: {{ $hr.passwordSecretKey }}
 {{- end }}
 
 {{/*

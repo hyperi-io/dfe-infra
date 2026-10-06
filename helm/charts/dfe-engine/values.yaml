@@ -486,6 +486,31 @@ huntRunner:
   enabled: true
   poll: 15          # seconds between runner ticks
   cap: 8            # global cap on concurrent hunt runs (protects ClickHouse)
+  # The runner's OWN ClickHouse user, in place of the admin account the engine and
+  # the keda shim use. Its worker runs INSERT ... SELECT built from rule text, and
+  # this user holds SELECT and INSERT on the data database and nothing else: no
+  # url(), s3() or remote(), no DDL.
+  #
+  # The engine creates the user (the dfe-schemas role catalogue), but a password it
+  # mints lands in its own store, which this separate pod cannot read. So the chart
+  # supplies the password: ESO's Password generator writes it ONCE (refreshPolicy
+  # CreatedOnce, the jwt-secret.yaml mechanism), the engine adopts it from
+  # DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD, and the runner dials with the same Secret.
+  #
+  # Needs a dfe-engine that adopts the provided password and a dfe-schemas that
+  # mints hunt_runner. On an older pair the user does not exist and the runner
+  # cannot connect.
+  clickhouse:
+    # The engine names the user dfe_<role>, so this has to stay dfe_hunt_runner.
+    user: dfe_hunt_runner
+    passwordSecretName: hunt-runner-clickhouse
+    passwordSecretKey: password
+    # false when the deployment supplies the Secret from its own sealed secret or
+    # ExternalSecret under passwordSecretName; the chart then creates nothing.
+    passwordSecretCreate: true
+    # Pin a known password (a restore, or a rotation run centrally). Set -> a
+    # plain Secret carrying it, and no generator.
+    password: ""
   autoscaling:
     enabled: false          # BETA opt-in; default 1 pod
     minReplicaCount: 1
