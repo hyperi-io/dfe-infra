@@ -54,18 +54,55 @@ check() {
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 note() { echo "         $1"; }
 
-# curl OR wget: the fork's runtime image is slim and which one is present has
-# changed between base-image bumps. Trying both stops a green seam reading as red
-# for a purely cosmetic reason.
-hdx_exec() {
-  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c hyperdx -- sh -c "$1" 2>/dev/null
+# The fork's runtime image ships node and neither curl nor wget, so the probes run
+# in the pod's node with values passed as env vars, never spliced into the JS.
+# A probe prints nothing on any failure, so an error is never read as a response.
+IFS= read -r -d '' JS_PROBE <<'JS' || true
+const e = process.env;
+const headers = {};
+if (e.PROBE_CH_AUTH) {
+  headers["X-ClickHouse-User"] = e.CLICKHOUSE_USER;
+  headers["X-ClickHouse-Key"] = e.CLICKHOUSE_PASSWORD;
+}
+if (e.PROBE_BEARER) headers.Authorization = "Bearer " + e.PROBE_BEARER;
+fetch(e.PROBE_URL, {
+  method: e.PROBE_METHOD,
+  headers,
+  redirect: "manual",
+  signal: AbortSignal.timeout(10000),
+})
+  .then(async (r) => {
+    if (r.status >= 400) {
+      process.exitCode = 1;
+      return;
+    }
+    if (e.PROBE_METHOD === "HEAD") {
+      let out = "HTTP " + r.status + "\n";
+      for (const [k, v] of r.headers) out += k + ": " + v + "\n";
+      process.stdout.write(out);
+    } else {
+      process.stdout.write(await r.text());
+    }
+  })
+  .catch(() => {
+    process.exitCode = 1;
+  });
+JS
+
+# hdx_probe METHOD URL [VAR=value ...]: a GET prints the body and a HEAD the status
+# line and headers; PROBE_CH_AUTH=1 sends the pod's own ClickHouse credentials and
+# PROBE_BEARER=<jwt> a bearer token.
+hdx_probe() {
+  local method="$1" url="$2"
+  shift 2
+  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c hyperdx -- \
+    env "PROBE_METHOD=${method}" "PROBE_URL=${url}" "$@" node -e "$JS_PROBE" 2>/dev/null
 }
 
 # 127.0.0.1, never localhost: the frontend binds IPv4 only while the API binds
 # IPv6 too, so localhost resolves to ::1 and the frontend probe is refused.
 hdx_head() {
-  local path="$1"
-  hdx_exec "curl -fsSI http://127.0.0.1:${HYPERDX_PORT}${path} 2>/dev/null || wget -qS --spider http://127.0.0.1:${HYPERDX_PORT}${path} 2>&1"
+  hdx_probe HEAD "http://127.0.0.1:${HYPERDX_PORT}$1"
 }
 
 echo "=== DFE HyperDX seam smoke test (auth / data / embed) ==="
@@ -111,10 +148,12 @@ else
   # this seam dies quietly: every token then fails verification and the middleware
   # falls through to the route guard, so users see 401s with no auth error logged.
   if [ -n "$JWKS_URL" ]; then
+    # shellcheck disable=SC2034  # read inside the checks' eval.
+    JWKS_BODY="$(hdx_probe GET "$JWKS_URL")"
     check "HyperDX can fetch the engine JWKS (${JWKS_URL})" \
-      "hdx_exec \"curl -fsS '${JWKS_URL}' || wget -qO- '${JWKS_URL}'\" | grep -q '\"keys\"'"
+      "printf '%s' \"\$JWKS_BODY\" | grep -q '\"keys\"'"
     check "engine JWKS advertises an ES384 key" \
-      "hdx_exec \"curl -fsS '${JWKS_URL}' || wget -qO- '${JWKS_URL}'\" | grep -q 'ES384'"
+      "printf '%s' \"\$JWKS_BODY\" | grep -q 'ES384'"
   else
     skip "JWKS reachability -- no DFE_ENGINE_JWKS_URL to fetch"
   fi
@@ -127,7 +166,7 @@ else
       | sed -n 's/.*"\(access_token\|token\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p')"
     if [ -n "$TOKEN" ]; then
       check "HyperDX accepts an engine-issued token (auth seam closed)" \
-        "hdx_exec \"curl -fsS -H 'Authorization: Bearer ${TOKEN}' http://localhost:${HYPERDX_PORT}/api/v1/me\" | grep -q '\"'"
+        "hdx_probe GET 'http://127.0.0.1:${HYPERDX_PORT}/api/v1/me' 'PROBE_BEARER=${TOKEN}' | grep -q '\"'"
     else
       skip "engine-issued-token round trip -- the engine did not mint a smoke token."
       note "Config above is verified; the two halves AGREEING is not. Wire a service"
@@ -163,7 +202,7 @@ check "HyperDX has a ClickHouse connection configured" "[ -n '$CH_HOST' ]"
 CH_HOST_ONLY="$(hdx_env CLICKHOUSE_HOST)"
 CH_URL="${DFE_HYPERDX_CH_URL:-http://${CH_HOST_ONLY:-dfe-clickhouse.${NS_CH}.svc.cluster.local}:${DFE_CH_HTTP_PORT:-8123}}"
 check "HyperDX pod reaches ClickHouse over HTTP (${CH_URL})" \
-  "hdx_exec \"curl -fsS '${CH_URL}/ping' || wget -qO- '${CH_URL}/ping'\" | grep -qi ok"
+  "hdx_probe GET '${CH_URL}/ping' | grep -q '^Ok'"
 
 # The query side of the same tables the integration test writes to. Rows may be
 # legitimately absent on a just-provisioned cluster, so assert the table RESOLVES;
@@ -172,9 +211,7 @@ check "HyperDX pod reaches ClickHouse over HTTP (${CH_URL})" \
 # the credentials come from HyperDX's own environment inside the pod. One helper,
 # one layer of quoting: threading the headers through check's eval mangles them.
 hdx_ch_query() {
-  # shellcheck disable=SC2016  # $CLICKHOUSE_* must reach the pod's shell, not expand here.
-  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c hyperdx -- sh -c \
-    'curl -fsS -H "X-ClickHouse-User: $CLICKHOUSE_USER" -H "X-ClickHouse-Key: $CLICKHOUSE_PASSWORD" "'"${CH_URL}"'/?query='"$1"'" 2>/dev/null || wget -q --header="X-ClickHouse-User: $CLICKHOUSE_USER" --header="X-ClickHouse-Key: $CLICKHOUSE_PASSWORD" -O- "'"${CH_URL}"'/?query='"$1"'"' 2>/dev/null
+  hdx_probe GET "${CH_URL}/?query=$1" PROBE_CH_AUTH=1
 }
 check "otel table ${OTEL_DB}.${OTEL_LOGS_TABLE} is queryable from HyperDX" \
   "printf '%s' \"\$(hdx_ch_query 'SELECT+count()+FROM+${OTEL_DB}.${OTEL_LOGS_TABLE}')\" | grep -qE '^[0-9]+'"
@@ -187,9 +224,9 @@ echo "=== SEAM 3: embed (dfe-ui iframes HyperDX) ==="
 # every route and deliberately does NOT set X-Frame-Options -- the latter is
 # all-or-nothing and browsers that honour it block the embed whatever the CSP says.
 HEADERS="$(hdx_head '/')"
-if [ -z "$HEADERS" ]; then
+if [[ "$HEADERS" != HTTP* ]]; then
   skip "embed headers -- could not read response headers from the HyperDX pod"
-  note "(no curl and no wget in the image). The embed is UNVERIFIED, not proven."
+  note "(the in-pod node probe returned no status line). The embed is UNVERIFIED, not proven."
 else
   check "CSP frame-ancestors present (dfe-ui may frame HyperDX)" \
     "printf '%s' \"\$HEADERS\" | grep -qi 'content-security-policy.*frame-ancestors'"
