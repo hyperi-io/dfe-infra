@@ -1812,7 +1812,8 @@ def test_decide_retarget_never_repeats_the_value_it_read_from_the_secret() -> No
     for current in ("release-train-xyzzy", "1.0.0", "2.0.0", "v1.0.0"):
         _ref, why = u.decide_retarget(current, "0.9.0" if current == "release-train-xyzzy" else "1.0.0", "2.0.0", None)
         assert "secret/dfe-cluster dfe.hyperi.io/target_revision" in why
-        assert "release-train-xyzzy" not in why and "v1.0.0" not in why
+        assert "release-train-xyzzy" not in why
+        assert "v1.0.0" not in why
     with pytest.raises(u.UpgradeError) as refused:
         u.decide_retarget(sha, "1.0.0", "2.0.0", None)
     assert sha not in str(refused.value)
