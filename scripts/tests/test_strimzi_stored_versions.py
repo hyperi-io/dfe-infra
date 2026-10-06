@@ -3,8 +3,9 @@
 #  File:         test_strimzi_stored_versions.py
 #  Purpose:      Prove a fresh install (preflight and stack-deploy) refuses
 #                Strimzi CRDs stored at a version the 1.x operator no longer
-#                serves, and that a teardown removes the Strimzi CRDs once no
-#                Strimzi resource is left.
+#                serves, that a teardown removes the Strimzi CRDs once no
+#                Strimzi resource is left, and that stack-deploy refuses a kube
+#                context that differs from the env file's.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -166,20 +167,37 @@ class StackDeploy(NamedTuple):
     rc: int
     out: str
     bootstrap_ran: bool
+    gate_ran: bool
     kubectl: list[list[str]]
     kubeconfig: str
 
 
-def run_stack_deploy(crds: list[dict] | None, *flags: str) -> StackDeploy:
+def run_stack_deploy(
+    crds: list[dict] | None,
+    *flags: str,
+    env_file: str = "",
+    environ: dict[str, str] | None = None,
+    current_context: str | None = None,
+    kubectl_on_path: bool = True,
+) -> StackDeploy:
     """`dfe-ops stack-deploy` past its offline pre-flight, against a cluster carrying
     `crds` (None: a cluster whose CRD list cannot be read). bootstrap.sh is a stub
-    that records it ran."""
+    that records it ran.
+
+    `env_file` is the text of an --env-file and `environ` extra process environment.
+    `current_context` is what the kubeconfig's current context reads as (None: unset).
+    """
     kubectl: list[list[str]] = []
-    ran = {"bootstrap": False}
+    ran = {"bootstrap": False, "gate": False}
     cluster = _cluster(crds or [])
+    real_gate = dfeops._strimzi_deploy_gate
 
     def run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
         kubectl.append(cmd)
+        if cmd[-2:] == ["config", "current-context"]:
+            if current_context is None:
+                return 1, "", "error: current-context is not set"
+            return 0, f"{current_context}\n", ""
         if crds is None:
             return 1, "", "connection refused"
         return cluster(cmd, env)
@@ -188,29 +206,41 @@ def run_stack_deploy(crds: list[dict] | None, *flags: str) -> StackDeploy:
         ran["bootstrap"] = True
         return 0
 
+    def gate(kubeconfig: str) -> bool:
+        ran["gate"] = True
+        return real_gate(kubeconfig)
+
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith("DFE_")}
     err = io.StringIO()
     with tempfile.TemporaryDirectory() as tmp:
         kubeconfig = Path(tmp) / "kubeconfig"
         kubeconfig.write_text("", encoding="utf-8", newline="\n")
+        env_flags: list[str] = []
+        if env_file:
+            env_path = Path(tmp) / "deploy.env"
+            env_path.write_text(env_file, encoding="utf-8", newline="\n")
+            env_flags = ["--env-file", str(env_path)]
         args = dfeops.build_parser().parse_args([
             "stack-deploy", "--mode", "single", "--stack", "2.2.0-rc.99",
             "--kubeconfig", str(kubeconfig), "--access-out", str(Path(tmp) / "access.md"),
-            *flags,
+            *env_flags, *flags,
         ])
         with (
-            mock.patch.dict(os.environ, clean_env, clear=True),
+            mock.patch.dict(os.environ, {**clean_env, **(environ or {})}, clear=True),
             mock.patch.object(dfeops, "_resolve_stack", return_value=0),
             mock.patch.object(dfeops, "_offline_preflight", return_value=0),
             mock.patch.object(dfeops, "_bootstrap_required", return_value=()),
             mock.patch.object(dfeops, "_require_script", return_value=Path(tmp) / "bootstrap.sh"),
             mock.patch.object(dfeops, "_run_streaming", bootstrap),
             mock.patch.object(dfeops, "_run_text", run_text),
-            mock.patch.object(dfeops.shutil, "which", return_value="/usr/bin/kubectl"),
+            mock.patch.object(dfeops, "_strimzi_deploy_gate", gate),
+            mock.patch.object(
+                dfeops.shutil, "which", return_value="/usr/bin/kubectl" if kubectl_on_path else None
+            ),
             contextlib.redirect_stderr(err),
         ):
             rc = dfeops.cmd_stack_deploy(args)
-    return StackDeploy(rc, err.getvalue(), ran["bootstrap"], kubectl, str(kubeconfig))
+    return StackDeploy(rc, err.getvalue(), ran["bootstrap"], ran["gate"], kubectl, str(kubeconfig))
 
 
 def test_stack_deploy_stops_on_a_crd_stored_at_a_removed_version() -> None:
@@ -265,6 +295,100 @@ def test_stack_deploy_check_only_contacts_no_cluster() -> None:
     expect("check-only passes", run.rc == 0, f"rc={run.rc}\n{run.out}")
     expect("no kubectl call is made", run.kubectl == [], f"{run.kubectl}")
     expect("bootstrap.sh never runs", not run.bootstrap_ran, run.out)
+
+
+# --- stack-deploy: the kube context -------------------------------------------
+CONTEXT_FILE = 'DFE_KUBE_CONTEXT="ctx-a"\n'
+
+
+def _context_reads(run: StackDeploy) -> list[list[str]]:
+    return [argv for argv in run.kubectl if argv[-2:] == ["config", "current-context"]]
+
+
+def _deployed_nothing(run: StackDeploy) -> bool:
+    return not run.gate_ran and not run.bootstrap_ran
+
+
+def test_stack_deploy_refuses_a_context_other_than_the_env_files() -> None:
+    run = run_stack_deploy(_strimzi_crds(), env_file=CONTEXT_FILE, current_context="ctx-b")
+    expect("stack-deploy fails", run.rc == 1, f"rc={run.rc}\n{run.out}")
+    expect("it names the context the env wants", "DFE_KUBE_CONTEXT is ctx-a" in run.out, run.out)
+    expect("and the one the kubeconfig is on", "current context is ctx-b" in run.out, run.out)
+    expect(
+        "it gives the switch, aimed at the deploy's kubeconfig",
+        f"kubectl --kubeconfig {run.kubeconfig} config use-context ctx-a" in run.out
+        and "fix DFE_KUBE_CONTEXT in the env file" in run.out,
+        run.out,
+    )
+    expect("neither the Strimzi gate nor bootstrap.sh runs", _deployed_nothing(run), run.out)
+    expect(
+        "the one cluster call is a read of the deploy's kubeconfig, and nothing is switched",
+        run.kubectl == [["kubectl", "--kubeconfig", run.kubeconfig, "config", "current-context"]],
+        f"{run.kubectl}",
+    )
+
+
+def test_stack_deploy_refuses_a_context_other_than_the_environments() -> None:
+    run = run_stack_deploy(
+        _strimzi_crds(), environ={"DFE_KUBE_CONTEXT": "ctx-a"}, current_context="ctx-b"
+    )
+    expect("stack-deploy fails", run.rc == 1, f"rc={run.rc}\n{run.out}")
+    expect(
+        "it names both contexts",
+        "DFE_KUBE_CONTEXT is ctx-a" in run.out and "current context is ctx-b" in run.out,
+        run.out,
+    )
+    expect("neither the Strimzi gate nor bootstrap.sh runs", _deployed_nothing(run), run.out)
+
+
+def test_stack_deploy_goes_on_when_the_context_is_the_env_files() -> None:
+    run = run_stack_deploy(_strimzi_crds(), env_file=CONTEXT_FILE, current_context="ctx-a")
+    expect("stack-deploy passes", run.rc == 0, f"rc={run.rc}\n{run.out}")
+    expect("the context was read once", len(_context_reads(run)) == 1, f"{run.kubectl}")
+    expect("the Strimzi gate runs", run.gate_ran, run.out)
+    expect("bootstrap.sh runs", run.bootstrap_ran, run.out)
+
+
+def test_stack_deploy_reads_no_context_when_the_env_names_none() -> None:
+    """The shipped env template carries DFE_KUBE_CONTEXT="": unset, not a context named ""."""
+    for label, env_file in (
+        ("no DFE_KUBE_CONTEXT", ""),
+        ("an empty DFE_KUBE_CONTEXT", 'DFE_KUBE_CONTEXT=""\n'),
+    ):
+        run = run_stack_deploy(_strimzi_crds(), env_file=env_file, current_context="ctx-b")
+        expect(f"{label}: stack-deploy passes", run.rc == 0, f"rc={run.rc}\n{run.out}")
+        expect(f"{label}: no context is read", _context_reads(run) == [], f"{run.kubectl}")
+        expect(f"{label}: the gate runs", run.gate_ran, run.out)
+        expect(f"{label}: bootstrap.sh runs", run.bootstrap_ran, run.out)
+
+
+def test_stack_deploy_check_only_skips_the_context_check() -> None:
+    run = run_stack_deploy(
+        _strimzi_crds(), "--check-only", env_file=CONTEXT_FILE, current_context="ctx-b"
+    )
+    expect("check-only passes", run.rc == 0, f"rc={run.rc}\n{run.out}")
+    expect("no kubectl call is made", run.kubectl == [], f"{run.kubectl}")
+    expect("bootstrap.sh never runs", not run.bootstrap_ran, run.out)
+
+
+def test_stack_deploy_refuses_when_the_current_context_cannot_be_read() -> None:
+    """A guard that could not run has not passed."""
+    run = run_stack_deploy(_strimzi_crds(), env_file=CONTEXT_FILE, current_context=None)
+    expect("stack-deploy fails", run.rc == 1, f"rc={run.rc}\n{run.out}")
+    expect(
+        "it says what kubectl answered",
+        "DFE_KUBE_CONTEXT is ctx-a" in run.out and "error: current-context is not set" in run.out,
+        run.out,
+    )
+    expect("neither the Strimzi gate nor bootstrap.sh runs", _deployed_nothing(run), run.out)
+
+
+def test_stack_deploy_refuses_when_kubectl_is_missing_and_a_context_is_named() -> None:
+    run = run_stack_deploy(_strimzi_crds(), env_file=CONTEXT_FILE, kubectl_on_path=False)
+    expect("stack-deploy fails", run.rc == 1, f"rc={run.rc}\n{run.out}")
+    expect("it says kubectl is missing", "kubectl is not on PATH" in run.out, run.out)
+    expect("no kubectl call is attempted", run.kubectl == [], f"{run.kubectl}")
+    expect("neither the Strimzi gate nor bootstrap.sh runs", _deployed_nothing(run), run.out)
 
 
 # --- the teardown -------------------------------------------------------------
