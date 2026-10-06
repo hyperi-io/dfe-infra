@@ -2852,6 +2852,38 @@ def _strimzi_deploy_gate(kubeconfig: str) -> bool:
     return served
 
 
+def _kube_context_mismatch(env: Mapping[str, str]) -> str | None:
+    """Why the deploy would not land on the cluster the env names, or None when it will.
+
+    bootstrap.sh targets the kubeconfig's current context and never reads
+    DFE_KUBE_CONTEXT, which preflight does, so the two can aim at different clusters.
+    """
+    wanted = env.get("DFE_KUBE_CONTEXT", "")
+    if not wanted:
+        return None
+    if shutil.which("kubectl") is None:
+        return (
+            f"DFE_KUBE_CONTEXT is {wanted} and kubectl is not on PATH, "
+            "so the kubeconfig's current context cannot be confirmed"
+        )
+    kubeconfig = env.get("KUBECONFIG", "")
+    base = ["kubectl", *(["--kubeconfig", kubeconfig] if kubeconfig else [])]
+    rc, out, err = _run_text([*base, "config", "current-context"])
+    if rc != 0:
+        return (
+            f"DFE_KUBE_CONTEXT is {wanted} but `kubectl config current-context` "
+            f"failed: {_last_line(err)}"
+        )
+    current = out.strip()
+    if current == wanted:
+        return None
+    switch = shlex.join([*base, "config", "use-context", wanted])
+    return (
+        f"DFE_KUBE_CONTEXT is {wanted} but the kubeconfig's current context is {current}: "
+        f"switch with `{switch}` or fix DFE_KUBE_CONTEXT in the env file"
+    )
+
+
 def cmd_preflight(args: argparse.Namespace) -> int:
     """READ-ONLY cluster-contract check: is this cluster right for dfe-infra?
 
@@ -3427,6 +3459,10 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
             "AppRole SecretID) is unset: pass it in an --env-file or via --from-terraform",
             file=sys.stderr,
         )
+        return 1
+
+    if mismatch := _kube_context_mismatch(env):
+        print(f"ERROR: {mismatch}", file=sys.stderr)
         return 1
 
     if not _strimzi_deploy_gate(env.get("KUBECONFIG", "")):
