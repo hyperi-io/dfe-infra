@@ -29,7 +29,7 @@ if [[ "${DRY_RUN}" != "true" ]] && [[ "${1:-}" != "--force" ]]; then
     fi
 fi
 
-echo "==> [1/7] Deleting ArgoCD Applications + ApplicationSets"
+echo "==> [1/8] Deleting ArgoCD Applications + ApplicationSets"
 # KEDA scalers carry finalizer.keda.sh, which only the KEDA operator clears, so
 # they go before Argo's concurrent cascade can reap the operator ahead of them.
 run kubectl delete scaledobject --all -A 2>/dev/null || true
@@ -40,12 +40,12 @@ run kubectl -n argocd delete applicationset --all 2>/dev/null || true
 # app.catalog.cattle.io and every Argo Application survives the teardown.
 run kubectl -n argocd delete applications.argoproj.io --all 2>/dev/null || true
 
-echo "==> [2/7] Waiting for ArgoCD to clean up managed resources..."
+echo "==> [2/8] Waiting for ArgoCD to clean up managed resources..."
 if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 10
 fi
 
-echo "==> [3/7] Deleting DFE data resources (CRDs)"
+echo "==> [3/8] Deleting DFE data resources (CRDs)"
 run kubectl -n strimzi delete kafka --all 2>/dev/null || true
 # A CloudNativePG Cluster exists only on an install that predates its removal.
 run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all 2>/dev/null || true
@@ -59,7 +59,7 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 5
 fi
 
-echo "==> [4/7] Deleting DFE namespaces"
+echo "==> [4/8] Deleting DFE namespaces"
 # Data-plane + operator + bundled deploy-repo (Forgejo) namespaces. The operator
 # namespaces (clickhouse-operator-system/redpanda-operator) and kafka exist only in
 # some profiles; --ignore-not-found makes listing them harmless when a profile did
@@ -93,15 +93,43 @@ fi
 # Last, once no ScaledObject can still need its operator.
 run kubectl delete ns keda --ignore-not-found 2>/dev/null || true
 
-echo "==> [5/7] Uninstalling ArgoCD + Valkey"
+echo "==> [5/8] Deleting the Strimzi CRDs"
+# A leftover Strimzi CRD keeps every version it stored, and the next operator
+# release's chart refuses one it no longer serves.
+# Deleting a CRD deletes its resources cluster-wide, so all stay while any still
+# holds one or cannot be read.
+if [[ "${DRY_RUN}" != "true" ]]; then
+    strimzi_crds=""
+    strimzi_held=""
+    while read -r crd; do
+        crd="${crd#*/}"
+        strimzi_crds="${strimzi_crds} ${crd}"
+        if ! held="$(kubectl get "${crd}" -A -o name 2>/dev/null </dev/null)" || [[ -n "${held}" ]]; then
+            strimzi_held="${strimzi_held} ${crd}"
+        fi
+    done < <(kubectl get crd -o name 2>/dev/null | grep '\.strimzi\.io$' || true)
+    if [[ -z "${strimzi_crds}" ]]; then
+        echo "  no Strimzi CRD on this cluster"
+    elif [[ -n "${strimzi_held}" ]]; then
+        echo "  Strimzi CRDs left in place -- still holding a resource, or unreadable:${strimzi_held}"
+    else
+        # shellcheck disable=SC2086 # one word per CRD name
+        kubectl delete crd ${strimzi_crds} --ignore-not-found --timeout=120s 2>/dev/null \
+            || echo "  WARN: could not delete the Strimzi CRDs:${strimzi_crds}"
+    fi
+else
+    echo "[DRY-RUN] kubectl delete crd <every *.strimzi.io CRD, once none holds a resource>"
+fi
+
+echo "==> [6/8] Uninstalling ArgoCD + Valkey"
 run helm uninstall argocd -n argocd 2>/dev/null || true
 run helm uninstall dfe-valkey -n argocd 2>/dev/null || true
 
-echo "==> [6/7] Uninstalling Layer 1 (ESO, cert-manager)"
+echo "==> [7/8] Uninstalling Layer 1 (ESO, cert-manager)"
 run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
 run helm uninstall cert-manager -n cert-manager 2>/dev/null || true
 
-echo "==> [7/7] Cleaning up namespaces"
+echo "==> [8/8] Cleaning up namespaces"
 for ns in argocd cert-manager external-secrets envoy-gateway-system; do
     run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
 done

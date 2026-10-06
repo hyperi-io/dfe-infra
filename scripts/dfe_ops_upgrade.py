@@ -653,6 +653,21 @@ def check_clickhouse_merges(
     return True, f"no merge running longer than {threshold_seconds:.0f}s"
 
 
+def stale_strimzi_crds(installed: dict[str, dict]) -> dict[str, str]:
+    """Each CRD in `installed` (name -> CRD object) whose status.storedVersions
+    holds anything but v1, mapped to `<name> (stored: <versions>)`, in input order.
+
+    The 1.x operator serves v1 only, so its chart refuses to apply over such a
+    CRD. Shared by check_strimzi_conversion and `dfe-ops preflight`.
+    """
+    stale = {}
+    for name, doc in installed.items():
+        stored = (doc.get("status") or {}).get("storedVersions") or []
+        if any(v != "v1" for v in stored):
+            stale[name] = f"{name} (stored: {', '.join(stored)})"
+    return stale
+
+
 def check_strimzi_conversion(kubeconfig: str | None, crds: tuple[str, ...] = STRIMZI_CRDS) -> tuple[bool, str]:
     """Every Strimzi CRD the 1.x operator needs stores v1 only -- the sign
     `bin/v1-api-conversion.sh convert-resource` (then `crd-upgrade`) already
@@ -661,27 +676,23 @@ def check_strimzi_conversion(kubeconfig: str | None, crds: tuple[str, ...] = STR
     A CRD that is not installed has nothing stored to convert; a CRD kubectl
     could not read fails, because an unanswered read proves nothing.
     """
-    stale = []
+    installed: dict[str, dict] = {}
     unread = []
-    checked = 0
     for crd in crds:
         rc, doc, err = _kubectl_json(kubeconfig, "get", "crd", crd)
         if rc != 0:
             if not _absent(err):
                 unread.append(f"{crd} ({err or 'kubectl failed'})")
             continue
-        checked += 1
-        stored = (doc.get("status") or {}).get("storedVersions") or []
-        non_v1 = [v for v in stored if v != "v1"]
-        if non_v1:
-            stale.append(f"{crd} (stored: {', '.join(stored)})")
+        installed[crd] = doc
     if unread:
         return False, f"cannot read {len(unread)} Strimzi CRD(s): {', '.join(unread)}"
-    if checked == 0:
+    if not installed:
         return True, "no Strimzi CRDs installed -- nothing to convert"
+    stale = stale_strimzi_crds(installed)
     if stale:
-        return False, f"{len(stale)} CRD(s) still store a pre-v1 version: {', '.join(stale)}"
-    return True, f"{checked} Strimzi CRD(s) store v1 only"
+        return False, f"{len(stale)} CRD(s) still store a pre-v1 version: {', '.join(stale.values())}"
+    return True, f"{len(installed)} Strimzi CRD(s) store v1 only"
 
 
 def strimzi_conversion_tool(operator_version: str) -> str:

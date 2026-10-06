@@ -273,7 +273,7 @@ from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_kind import add_kind_subparser  # noqa: E402
-from dfe_ops_upgrade import add_upgrade_subparser  # noqa: E402
+from dfe_ops_upgrade import STRIMZI_CRDS, add_upgrade_subparser, stale_strimzi_crds  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
@@ -2792,6 +2792,32 @@ def _cloud_programs_loadbalancers(cloud: str) -> bool:
     return bool(found) and cloud in found.group(1).split()
 
 
+def _strimzi_stored_versions(crds: list[dict], base: list[str]) -> tuple[bool, str]:
+    """Whether the Strimzi CRDs already on the cluster let the 1.x operator chart install.
+
+    `crds` is `kubectl get crd`'s items, and `base` the kubectl argv this
+    preflight reads with, so the printed delete aims at the same cluster.
+    """
+    installed = {
+        name: crd
+        for crd in crds
+        if (name := (crd.get("metadata") or {}).get("name", "")) in STRIMZI_CRDS
+    }
+    if not installed:
+        return True, "strimzi: no Strimzi CRDs installed"
+    stale = stale_strimzi_crds(installed)
+    if not stale:
+        return True, f"strimzi: {len(installed)} Strimzi CRD(s) store v1 only"
+    delete = shlex.join([*base, "delete", "crd", *stale])
+    return False, (
+        f"strimzi: {len(stale)} CRD(s) store a version the 1.x operator no longer serves, "
+        f"so its chart cannot install over them: {', '.join(stale.values())}. "
+        f"Left by an earlier install, with no Kafka resource on them: `{delete}` "
+        "(bootstrap/destroy.sh removes them on teardown). Still carrying a live Kafka "
+        "cluster: `dfe-ops upgrade preflight` names the conversion to run instead."
+    )
+
+
 def _kubectl_json(base: list[str], *argv: str, env: dict | None = None) -> tuple[int, dict, str]:
     """Run kubectl ... -o json and parse. Returns (rc, parsed-or-{}, stderr)."""
     rc, out, err = _run_text([*base, *argv, "-o", "json"], env=env)
@@ -3007,7 +3033,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     rc, crd_json, err = _kubectl_json(base, "get", "crd")
     crd_names = {c.get("metadata", {}).get("name", "") for c in crd_json.get("items", [])} if rc == 0 else set()
     if rc != 0:
-        warn(f"cannot list CRDs ({err}) -- adopt-or-install preview skipped")
+        warn(f"cannot list CRDs ({err}) -- adopt-or-install preview and Strimzi stored-version check skipped")
     else:
         for name, crd, deploy_hint in _ADOPT_OR_INSTALL:
             if name == "argocd":
@@ -3027,6 +3053,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
                 warn(f"{name}: CRD {crd} present but no running operator (lingering CRD) -> bootstrap re-adopts + INSTALLS")
             else:
                 ok(f"{name}: absent -> bootstrap INSTALLS DFE-owned")
+        served, detail = _strimzi_stored_versions(crd_json.get("items", []), base)
+        (ok if served else fail)(detail)
 
     # 6. RBAC: the verbs bootstrap needs. can-i is a SelfSubjectAccessReview --
     # read-only against the cluster.
