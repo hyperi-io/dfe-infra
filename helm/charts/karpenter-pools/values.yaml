@@ -35,7 +35,7 @@ karpenter:
     # exactly the unwatched-drift failure mode every other pin in this repo
     # exists to avoid. A new release arrives as a versions.yaml bump through
     # the same 7-day cooldown gate, not silently.
-    amiAlias: al2023@v20260917
+    amiAlias: al2023@v20260930
     metadata:
       # IMDSv2 only, hop limit 1 -- a pod on the node cannot reach
       # 169.254.169.254 at all. Every AWS credential on this cluster is a Pod

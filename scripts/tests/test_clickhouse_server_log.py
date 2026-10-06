@@ -44,11 +44,11 @@ SINGLE_CASCADE = [VALUES / "common.yaml", VALUES / "local.yaml", VALUES / "profi
 CEILING_BYTES = 512 * 1024**2
 SHIPPED_LEVEL = "information"
 # What an unset logger means, per server, for the failure message.
-OPERATOR_DEFAULT = "the operator's applies: trace, 50 files of 1000M, on the data PVC"
+OPERATOR_DEFAULT = "the operator's applies: information, 10 files of 100M, on the data PVC"
 IMAGE_DEFAULT = "the image's config.xml applies: trace, 10 files of 1000M, on the node's disk"
 SINGLE_LOGGER_PATH = "/etc/clickhouse-server/config.d/dfe-logger.yaml"
 SINGLE_SYSTEM_LOGS_PATH = "/etc/clickhouse-server/config.d/dfe-system-logs.yaml"
-# The system log tables the pinned operator (0.0.7) switches on, from its
+# The system log tables the pinned operator (0.0.8) switches on, from its
 # internal/controller/clickhouse/templates/log_tables.yaml.tmpl, and their shipped days.
 SHIPPED_TTL_DAYS = {
     "asynchronous_metric_log": 7,

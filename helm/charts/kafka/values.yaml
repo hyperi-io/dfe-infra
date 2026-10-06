@@ -75,11 +75,11 @@ kafka:
     acceptLicense: false
     image:
       repository: docker.redpanda.com/redpandadata/redpanda
-      # Broker tag the operator chart 26.2.3 pairs with (see versions.yaml).
-      tag: "v26.2.2"
+      # Broker tag the operator chart 26.2.4 pairs with (see versions.yaml).
+      tag: "v26.2.3"
       # Single mode only; the operator's chart refuses a tag that is not bare semver.
       # == versions.yaml services-digests.redpanda-version (drift-checked).
-      digest: "sha256:468bd13a9f2bd24794cb7fddc867c767fb1008b9a07b297b89fde48c564d7d96"
+      digest: "sha256:9e83cfa99278f30d0133271c26bf670cd69c94ffa6ba0b42830dd0c3bd9dcfd9"
     auth:
       # Bootstrap superuser the operator creates + manages (its admin identity
       # for reconciling the User CR). Operator generates its password Secret.
@@ -169,11 +169,11 @@ kafka:
         # kafka-topics.sh but NOT this jar, so an init container fetches it and
         # verifies it before the CLI is ever asked to load it.
         iamAuth:
-          # Pinned to an aws/aws-msk-iam-auth release tag (v2.3.8, 2026-09-05).
-          version: "2.3.8"
+          # Pinned to an aws/aws-msk-iam-auth release tag (v2.3.9, 2026-09-24).
+          version: "2.3.9"
           # sha256 of aws-msk-iam-auth-<version>-all.jar as published beside the
           # jar; a download that does not match is refused and the Job fails.
-          sha256: "8c7b14f9fc4c9dc3f78837a970d84f9303b5bf849d272c6c414e5ee49f3e5ac4"
+          sha256: "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43"
           # Full download URL. Empty derives the GitHub release URL from the
           # version above; an air-gapped deploy points this at an internal mirror
           # holding the same jar, and the checksum still has to match.
@@ -440,7 +440,7 @@ kafka:
         repository: nginxinc/nginx-unprivileged
         tag: "1.31.6-alpine"   # == versions.yaml services.nginx-unprivileged (drift-checked)
         # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
-        digest: "sha256:26b0bf6fbf07297983cb341998d79c831508787de26627dd2a112321b9c3a4af"
+        digest: "sha256:b9241c6e7b8e9a862f129d8d4199ab64b10390949a78bdd5603379b32c844083"
         pullPolicy: IfNotPresent
       # A static file server in front of one upstream, read by a handful of
       # admins -- this is not a data path.

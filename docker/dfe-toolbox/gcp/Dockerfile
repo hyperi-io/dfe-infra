@@ -4,12 +4,12 @@
 #
 # ARG default mirrors versions.yaml's toolbox.gcloud pin (drift-checked); the
 # workflow overrides it at build time from the same source.
-ARG BASE_TAG="v1.0.1"
+ARG BASE_TAG="v1.0.2"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 
 ARG TARGETARCH
-ARG GCLOUD_VERSION="583.0.0"
+ARG GCLOUD_VERSION="587.0.0"
 
 USER 0
 
