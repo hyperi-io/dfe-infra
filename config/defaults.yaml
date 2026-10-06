@@ -1,0 +1,69 @@
+# config/defaults.yaml -- committed defaults for scalo's config cascade, read by
+# scripts/dfe-sweep, which loads its settings from the repository root wherever
+# it is started.
+#
+# This is the cascade's defaults.yaml layer, so everything above it wins, in
+# rising order: settings.yaml and settings.<env>.yaml (in the repository root,
+# its config/, or ~/.config/dfe-sweep/), a .env, DFE_SWEEP__<KEY> environment
+# variables, then the command line. Keys sit under `sweep:` so another scalo
+# tool run from this root reads none of them.
+#
+# Which repos are swept is NOT set here. Membership is derived from
+# versions.yaml and suite.yaml; include and exclude adjust that result.
+
+sweep:
+  # Owner of a suite name that suite.yaml gives no repo for, and of the org-wide
+  # alert lists --check-bridge reads.
+  org: hyperi-io
+  # The infra repo's suite name; it is always a member.
+  infra_repo: dfe-infra
+  # Relative paths are from the repository root.
+  versions_file: versions.yaml
+  # A checkout holding suite.yaml and scripts/dfe-stack, which reads it.
+  suite_dir: "."
+  # latest (falling back to current when latest is empty), current, or a stack key.
+  stack: latest
+  # Names or owner/name slugs, applied after the derived membership. The two
+  # libraries here are suite nodes held out of release passes by default_in_pass.
+  include: [factbook-rs, clickhouse-dfe]
+  exclude: []
+  tools:
+    dependabot: true
+    code_scanning: true
+    secret_scanning: true
+    advisories: true
+    bot_prs: true
+    renovate_dashboard: true
+    issues: true
+    backlog: true
+    ci_runs: true
+    ci_annotations: true
+  # Each repo's backlog is the org project titled as the repo, read the way hyperi-ai's
+  # `pm backlog` reads it.
+  backlog:
+    # Every open issue at the first status carries this label, and no other open issue does.
+    label: backlog
+    # Project Status options in workflow order; the first is the backlog.
+    statuses: [Backlog, Next, "In progress", Done]
+    # Priority options, highest first; an unprioritised item sorts last.
+    priorities: [P0, P1, P2, P3]
+    # Most org projects listed when looking a repo's project up by title.
+    project_limit: 500
+  # Pull request authors counted as bot PRs.
+  bot_logins:
+    - renovate[bot]
+    - dependabot[bot]
+  # text, json, or slack (JSON for a separate poster: summary, thread replies, stats).
+  format: text
+  # Where the full report is published, for the line that ends a cut-off Slack thread.
+  report_url: ""
+  slack:
+    # Most thread replies one group may take, so no group crowds a later one out.
+    group_replies: 2
+  # Repos read at once.
+  workers: 8
+  # Seconds one gh call may take; a call that runs over is reported unreadable.
+  gh_timeout_seconds: 120
+  # Recent completed runs searched for each workflow's latest on the default branch; GitHub
+  # serves at most 100 a page.
+  run_window: 100

@@ -11,13 +11,14 @@
 line-length = 100
 target-version = "py312"
 
-# The two CLIs carry no .py suffix, so without this ruff never reads them and an
+# These CLIs carry no .py suffix, so without this ruff never reads them and an
 # undefined name reaches a live run.
 extend-include = [
     "scripts/dfe-ops",
     "scripts/dfe-stack",
     "scripts/dfe-suite",
     "scripts/dfe-fleet",
+    "scripts/dfe-sweep",
 ]
 
 extend-exclude = [
@@ -60,6 +61,7 @@ known-first-party = ["_charts", "_expect", "_smoke", "_spread"]
 # the package, which is an import that cannot be at the top of the file.
 "scripts/dfe-suite" = ["E402"]
 "scripts/dfe-fleet" = ["E402"]
+"scripts/dfe-sweep" = ["E402"]
 "scripts/tests/test_suite_kinds.py" = ["S102", "E402", "N802"]
 "scripts/tests/test_dfe_suite_cli.py" = ["S102", "E402"]
 "scripts/tests/test_scalo_fleet.py" = ["S102", "E402"]

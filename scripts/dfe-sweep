@@ -1,0 +1,538 @@
+#!/usr/bin/env -S uv run --script
+#  Project:      dfe-infra
+#  File:         scripts/dfe-sweep
+#  Purpose:      One read-only sweep of the open findings and work items across the DFE suite.
+#  Language:     Python
+#
+#  License:      BUSL-1.1
+#  Copyright:    (c) 2026 HYPERI PTY LIMITED
+#
+# /// script
+# requires-python = ">=3.14"
+# dependencies = ["scalo>=2.31.1"]
+# ///
+"""Sweep every repo the DFE suite consists of for every open finding and work item on GitHub.
+
+    scripts/dfe-sweep                                       # text report
+    scripts/dfe-sweep --format json > sweep.json
+    scripts/dfe-sweep --members                             # membership only, no API calls
+    scripts/dfe-sweep --check-bridge                        # and prove the bridge is a subset
+    scripts/dfe-sweep --format slack --report-url https://example.com/r
+    scripts/dfe-sweep --exclude dfe-hyperdx --tools dependabot,code_scanning
+
+The shebang runs it through ``uv run --script``, which installs scalo from the block above; on
+a host whose env cannot take ``-S``, run ``uv run --script scripts/dfe-sweep``. It runs from any
+directory: settings, versions.yaml and suite.yaml are found from the script's own path.
+
+MEMBERSHIP is derived and never listed here. The stack the ``stack`` setting points at in
+versions.yaml (``latest``, falling back to ``current`` when ``latest`` is empty) names the repos
+under its ``apps:`` and ``content:`` maps; a commented-out pin is not a member, so uncommenting
+one is the whole change that brings a repo in. Every suite.yaml node is a member unless it is
+marked ``default_in_pass: false``. suite.yaml's build-cycle in-edges, walked transitively from
+the stack, add every repo it depends on; the infra repo is always in; then the ``include`` and
+``exclude`` settings apply. Each member is printed with every reason it is in.
+
+SEVERITY. Only a severity a security tool assigned is ever critical: a Dependabot or repository
+advisory's, or a code-scanning rule's security severity. A code-scanning rule without one takes
+its SARIF level (error high, warning medium, note low). A secret alert carries no severity, so it
+is high (medium once GitHub calls the secret inactive) and is counted on its own. A failed run
+of a main workflow is high, a cancelled one low; CI annotations are medium (failure) or low
+(warning); Renovate dashboard entries are medium (errored, repository problems) or low.
+
+FINDINGS, read per member at the head of its default branch through ``gh api`` as GET only and
+ranked by severity: open Dependabot, code-scanning and secret-scanning alerts (the secret value
+is never requested), repository security advisories in triage or draft, open bot PRs, the
+Renovate Dependency Dashboard's errored, rate-limited, pending and problem entries, and each
+workflow's latest completed run on the default branch with its warning and failure annotations.
+A tool GitHub refuses (403, 404), or a gh call that runs past ``gh_timeout_seconds``, is listed
+as not readable for that repo, never as zero.
+
+WORK ITEMS, listed and summarised per member but never severity-ranked: every open issue, and
+every open item on the repo's backlog project. The backlog follows hyperi-ai's ``pm backlog``
+model: the org project titled exactly as the repo, read with one GraphQL query joining its
+Status to the Priority and Effort issue fields, grouped by Status, highest priority first. A
+repo with no project is "no project"; a token that cannot list projects (it needs
+``read:project``) is unreadable. An open issue at the backlog Status without the ``backlog.label``
+label, or carrying that label anywhere else, is reported as label drift.
+
+``--check-bridge`` also reads the org's open Dependabot, code-scanning and secret-scanning
+alerts, the steady state of what the org webhook alert bridge forwards, and fails if one on a
+member is missing from the sweep. Open alerts on repos that are not members are listed too.
+
+SLACK. The sweep never posts to Slack and never reads a Slack token: ``--format slack`` prints
+one JSON object to stdout for a separate poster, which owns the channel and the credential.
+
+    {"summary": "<mrkdwn>", "detail": [{"group": "<name>", "text": "<mrkdwn>"}, ...],
+     "stats": {"secrets": 0, "critical": 0, "high": 0, "medium": 0, "low": 0,
+               "ci_failing": 0, "issues": 0, "backlog": 0, "bot_prs": 0, "drift": 0,
+               "unreadable": 0, "members": 0}}
+
+The poster posts ``summary`` as the parent message and each ``detail`` entry, in order, as a
+thread reply. ``summary`` is at most 8 lines: the headline, then secret scanning, critical and
+high security findings, failing main CI, the medium and low counts, the work items, what was
+not readable and the bridge check, each only when there is something to say. ``detail`` holds
+one reply or more per non-empty group (secret scanning, code scanning, Dependabot, security
+advisories, CI on main, bot PRs and Renovate, backlog drift, open issues, backlog items, not
+readable), each under 3,500 characters. A group that runs over continues under a ``(cont.)``
+header for at most ``slack.group_replies`` replies (2 by default), so a long group cannot crowd
+a later one out, and its last reply says how many of its lines were left out, pointing at
+``--report-url`` when one is given; the thread is capped at 20 replies the same way. ``stats``
+always carries every key above as an integer; critical to low count every finding at that
+severity. Every string that came from GitHub is escaped, so no title can mention a channel or
+inject a link.
+
+CONFIGURATION is scalo's cascade (scalo.config), with the committed defaults in
+config/defaults.yaml under ``sweep:``, which scalo reads as its defaults.yaml layer: the
+settings load with the repository root as the working directory, wherever the script was run
+from. settings.yaml and settings.<env>.yaml (in the repository root, its config/, or
+~/.config/dfe-sweep/), a .env, then ``DFE_SWEEP__<KEY>`` environment variables override it, and
+the flags below override those. Examples: ``DFE_SWEEP__EXCLUDE='["dfe-hyperdx"]'``,
+``DFE_SWEEP__TOOLS__ISSUES=false``, ``DFE_SWEEP__SLACK__GROUP_REPLIES=3``.
+
+gh is the only credential: the caller's own gh login or GH_TOKEN. scalo's .env layer exports
+every key of the .env it finds into the process environment, so the caller's environment is put
+back once the settings are read, before gh or anything else runs.
+
+Exit codes: 0 the sweep ran (findings are data, not failure), 1 a run error, 2 bad arguments,
+3 ``--check-bridge`` found an alert on a member that the sweep did not.
+"""
+
+import sys
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPTS.parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import argparse
+import functools
+import io
+import json
+import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+
+from dfe_suite import sweep
+from dfe_suite.graph import load_graph
+from dfe_suite.proc import FleetError
+
+TAG = "dfe-sweep"
+APP_NAME = "dfe-sweep"
+ENV_PREFIX = "DFE"
+SECTION = "sweep"
+FORMATS = ("text", "json", "slack")
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_BRIDGE_GAP = 3
+
+RATE_LIMIT_JQ = "{remaining: .resources.core.remaining, limit: .resources.core.limit} | tojson"
+
+
+@dataclass(frozen=True, slots=True)
+class Options:
+    """The settings after the command line is laid over the cascade.
+
+    Attributes:
+        org: Owner for unqualified names and for the org-wide alert lists.
+        infra: The infra repo's suite name.
+        versions_file: The versions.yaml membership is read from.
+        suite_dir: The checkout whose suite.yaml dfe-stack reads.
+        stack: The stack pointer.
+        include: Names or slugs added to the derived membership.
+        exclude: Names or slugs removed from it.
+        output: ``text``, ``json`` or ``slack``.
+        project_limit: Most org projects listed when finding each repo's backlog project.
+        report_url: Where the full report is published, for the Slack cut-off line, or empty.
+        group_replies: The most Slack thread replies one group may take.
+        gh_timeout: Seconds one gh call may take before its read is reported unreadable.
+        config: The collection settings.
+    """
+
+    org: str
+    infra: str
+    versions_file: Path
+    suite_dir: Path
+    stack: str
+    include: tuple[str, ...]
+    exclude: tuple[str, ...]
+    output: str
+    project_limit: int
+    group_replies: int
+    gh_timeout: int
+    report_url: str
+    config: sweep.SweepConfig
+
+
+def _fail(key: str, value: object, wanted: str) -> FleetError:
+    return FleetError(f"setting {SECTION}.{key} is {value!r}; it must be {wanted}")
+
+
+def _text(settings: dict, key: str, name: str | None = None) -> str:
+    value = settings.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise _fail(name or key, value, "a non-empty string")
+    return value.strip()
+
+
+def _names(value: object, key: str) -> tuple[str, ...]:
+    """A list setting; an env var or a repeated flag may also give comma-separated strings."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list | tuple):
+        raise _fail(key, value, "a list")
+    return tuple(sweep.split_names(value))
+
+
+def _count(value: object, key: str, maximum: int | None = None) -> int:
+    """A whole-number setting of at least 1, and at most ``maximum`` when one is given."""
+    wanted = "a whole number of at least 1" + (f" and at most {maximum}" if maximum else "")
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise _fail(key, value, wanted)
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise _fail(key, value, wanted) from exc
+    if number < 1 or (maximum is not None and number > maximum):
+        raise _fail(key, value, wanted)
+    return number
+
+
+def _path(value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _tools(value: object, cli: str | None) -> frozenset[str]:
+    """The enabled tools: the --tools list when given, else each one the settings switch on."""
+    if cli is not None:
+        chosen = set(_names(cli, "tools"))
+    elif isinstance(value, dict):
+        chosen = set()
+        for tool, on in value.items():
+            if not isinstance(on, bool):
+                raise _fail(f"tools.{tool}", on, "true or false")
+            if on:
+                chosen.add(tool)
+        unknown = set(value) - set(sweep.TOOLS)
+        if unknown:
+            raise _fail("tools", sorted(unknown), f"keys from {', '.join(sweep.TOOLS)}")
+    else:
+        raise _fail("tools", value, "a map of tool to true or false")
+    unknown = chosen - set(sweep.TOOLS)
+    if unknown:
+        raise FleetError(f"unknown tool(s) {', '.join(sorted(unknown))}; "
+                         f"known: {', '.join(sweep.TOOLS)}")
+    if not chosen:
+        raise FleetError("no tools are enabled, so there is nothing to sweep")
+    return frozenset(chosen)
+
+
+def effective(settings: dict, args: argparse.Namespace) -> Options:
+    """Lay the command line over the cascade's ``sweep`` settings and check every value.
+
+    Args:
+        settings: The resolved ``sweep:`` section, as plain data.
+        args: The parsed command line; a flag left unset defers to the settings.
+
+    Returns:
+        The options a run uses.
+
+    Raises:
+        FleetError: On a missing or malformed setting, naming the key.
+    """
+
+    def pick(flag: object, key: str) -> object:
+        return flag if flag is not None else settings.get(key)
+
+    output = str(pick(args.format, "format") or "").strip()
+    if output not in FORMATS:
+        raise _fail("format", output, f"one of {', '.join(FORMATS)}")
+    picked = {
+        "org": pick(args.org, "org"),
+        "stack": pick(args.stack, "stack"),
+        "versions_file": pick(args.versions_file, "versions_file"),
+        "suite_dir": pick(args.suite_dir, "suite_dir"),
+        "infra_repo": settings.get("infra_repo"),
+    }
+    org = _text(picked, "org")
+    bots = _names(settings.get("bot_logins"), "bot_logins")
+    if not bots:
+        raise _fail("bot_logins", settings.get("bot_logins"), "a non-empty list of logins")
+    backlog = _section(settings, "backlog")
+    statuses = _names(backlog.get("statuses"), "backlog.statuses")
+    if not statuses:
+        raise _fail("backlog.statuses", backlog.get("statuses"), "a non-empty list")
+    config = sweep.SweepConfig(
+        tools=_tools(settings.get("tools"), args.tools),
+        bot_logins=frozenset(bots),
+        workers=_count(pick(args.workers, "workers"), "workers"),
+        run_window=_count(settings.get("run_window"), "run_window", sweep.GH_PAGE_MAX),
+        org=org,
+        backlog=sweep.BacklogModel(
+            label=_text(backlog, "label", "backlog.label"),
+            statuses=statuses,
+            priorities=_names(backlog.get("priorities"), "backlog.priorities"),
+        ),
+    )
+    if args.check_bridge and not set(sweep.BRIDGED) <= config.tools:
+        raise FleetError(
+            f"--check-bridge compares against {', '.join(sweep.BRIDGED)}, so all three must "
+            f"be enabled"
+        )
+    return Options(
+        org=org,
+        infra=_text(picked, "infra_repo"),
+        versions_file=_path(_text(picked, "versions_file")),
+        suite_dir=_path(_text(picked, "suite_dir")),
+        stack=_text(picked, "stack"),
+        include=_names(args.include if args.include is not None else settings.get("include"),
+                       "include"),
+        exclude=_names(args.exclude if args.exclude is not None else settings.get("exclude"),
+                       "exclude"),
+        output=output,
+        project_limit=_count(backlog.get("project_limit"), "backlog.project_limit"),
+        report_url=_report_url(pick(args.report_url, "report_url")),
+        group_replies=_count(_section(settings, "slack").get("group_replies"),
+                             "slack.group_replies"),
+        gh_timeout=_count(settings.get("gh_timeout_seconds"), "gh_timeout_seconds"),
+        config=config,
+    )
+
+
+def _section(settings: dict, key: str) -> dict:
+    """A nested settings map, or a run error naming it."""
+    value = settings.get(key)
+    if not isinstance(value, dict):
+        raise _fail(key, value, "a map")
+    return value
+
+
+def _report_url(value: object) -> str:
+    """An https URL for the Slack cut-off line, or empty for none."""
+    url = str(value or "").strip()
+    if url and not sweep.safe_url(url):
+        raise _fail("report_url", value, "an https URL with no spaces, <, > or |")
+    return url
+
+
+@contextmanager
+def caller_state_kept(workdir: Path) -> Iterator[None]:
+    """Run the block in ``workdir``, then put the caller's directory and environment back.
+
+    scalo's .env layer exports every key of the .env it finds, so without this a token in
+    that file would become gh's identity for the rest of the run.
+    """
+    caller_env = dict(os.environ)
+    caller_cwd = os.getcwd()
+    os.chdir(workdir)
+    try:
+        yield
+    finally:
+        os.chdir(caller_cwd)
+        os.environ.clear()
+        os.environ.update(caller_env)
+
+
+def load_settings() -> tuple[dict, Callable[[str], None], Callable[[str], None]]:
+    """Read the ``sweep`` section through scalo's cascade and start scalo's logger.
+
+    Returns:
+        The section as plain data, and the logger's info and warning methods.
+
+    Raises:
+        FleetError: If scalo is not installed, or no ``sweep`` section resolves.
+    """
+    # scalo finds its files from the working directory when it is imported, so it is imported
+    # and read from the repository root, wherever the script was started.
+    with caller_state_kept(REPO_ROOT):
+        # Names the scalo app, so its user layer is ~/.config/dfe-sweep/, without scalo
+        # importing every installed distribution to guess the name.
+        os.environ.setdefault("APP_NAME", APP_NAME)
+        try:
+            from scalo.config import get_config
+            from scalo.logger import logger, setup
+        except ImportError as exc:
+            raise FleetError(
+                "scalo is not installed here; run `uv run --script scripts/dfe-sweep`"
+            ) from exc
+        section = get_config(env_prefix=ENV_PREFIX).get(SECTION)
+        settings = dict(section) if isinstance(section, dict) else section
+        setup(level="INFO", log_format="text", use_emojis=False, otel_tracing=False)
+    if not isinstance(settings, dict) or not settings:
+        raise FleetError(
+            f"no `{SECTION}:` settings resolved from {REPO_ROOT / 'config' / 'defaults.yaml'}"
+        )
+    return settings, logger.info, logger.warning
+
+
+def _members_report(stack: str, members: list[sweep.Member], output: str) -> str:
+    """The membership alone: text, or JSON for both machine formats."""
+    rows = [{"name": m.name, "repo": m.repo, "why": list(m.why)} for m in members]
+    if output in ("json", "slack"):
+        return json.dumps({"stack": stack, "members": rows}, indent=2)
+    return sweep.render_members(stack, rows)
+
+
+type Loader = Callable[[], tuple[dict, Callable[[str], None], Callable[[str], None]]]
+
+
+def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
+    """One sweep, end to end. Returns the exit code.
+
+    Args:
+        args: The parsed command line.
+        load: Where the settings and the progress log come from; scalo's cascade in a run.
+    """
+    settings, info, warning = load()
+    options = effective(settings, args)
+    root = sweep.read_versions(options.versions_file)
+    graph = load_graph(dfe_infra=options.suite_dir)
+    stack, members, notes = sweep.resolve_members(
+        root,
+        graph,
+        org=options.org,
+        pointer=options.stack,
+        infra=options.infra,
+        include=options.include,
+        exclude=options.exclude,
+    )
+    for note in notes:
+        warning(note)
+    if args.members:
+        print(_members_report(stack, members, options.output), flush=True)
+        return EXIT_OK
+
+    api = functools.partial(sweep.gh_api, timeout=options.gh_timeout)
+    graphql = functools.partial(sweep.gh_graphql, timeout=options.gh_timeout)
+    try:
+        (limit,) = api("rate_limit", RATE_LIMIT_JQ, False)
+    except (sweep.GhError, ValueError) as exc:
+        raise FleetError(f"gh cannot read the GitHub API: {exc}") from exc
+    info(
+        f"stack {stack}: {len(members)} member(s), tools {', '.join(sorted(options.config.tools))}"
+        f", API calls left {limit.get('remaining')}/{limit.get('limit')}"
+    )
+    projects = None
+    if "backlog" in options.config.tools:
+        projects = sweep.project_index(
+            options.org, options.project_limit, timeout=options.gh_timeout
+        )
+        if projects.error:
+            warning(f"backlog projects not readable, so every backlog is: {projects.error}")
+        elif len(projects.numbers) >= options.project_limit:
+            warning(
+                f"listed {len(projects.numbers)} projects, the backlog.project_limit; a repo "
+                f"whose project is past it reads as no project"
+            )
+    results = sweep.sweep(
+        members, api, options.config, progress=info, graphql=graphql, projects=projects
+    )
+
+    bridge = None
+    gap = False
+    if args.check_bridge:
+        try:
+            alerts = sweep.bridge_alerts(options.org, api)
+        except sweep.GhError as exc:
+            raise FleetError(f"cannot read the org alert lists for --check-bridge: {exc}") from exc
+        missing, outside = sweep.bridge_gap(alerts, results)
+        bridge = sweep.bridge_section(missing, outside, len(alerts))
+        gap = bool(missing)
+
+    report = sweep.build_report(stack, results, options.config.tools, bridge)
+    if options.output == "json":
+        print(json.dumps(report, indent=2), flush=True)
+    elif options.output == "slack":
+        slack = sweep.render_slack(
+            report, options.config.backlog, options.report_url, options.group_replies
+        )
+        print(json.dumps(slack, indent=2), flush=True)
+    else:
+        print(sweep.render_text(report, options.config.backlog), flush=True)
+    return EXIT_BRIDGE_GAP if gap else EXIT_OK
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Assemble the argument parser. An unset flag defers to the config cascade."""
+    parser = argparse.ArgumentParser(
+        prog=TAG,
+        description=(
+            "Collect every open GitHub-side finding on every repo the DFE suite consists of, "
+            "ranked by severity, and summarise each repo's open issues and backlog. Read-only."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  uv run --script scripts/dfe-sweep\n"
+            "  uv run --script scripts/dfe-sweep --members\n"
+            "  uv run --script scripts/dfe-sweep --format json --check-bridge\n"
+            "  uv run --script scripts/dfe-sweep --include vector-vrl --exclude dfe-hyperdx\n"
+            "  env DFE_SWEEP__TOOLS__ISSUES=false uv run --script scripts/dfe-sweep\n"
+        ),
+    )
+    parser.add_argument("--format", choices=FORMATS, help="report format (setting: format)")
+    parser.add_argument("--org", help="owner for unqualified names and the org alert lists")
+    parser.add_argument("--stack", help="latest, current, or a stack key in versions.yaml")
+    parser.add_argument("--versions-file", help="versions.yaml to read membership from")
+    parser.add_argument("--suite-dir", help="checkout holding suite.yaml and scripts/dfe-stack")
+    parser.add_argument(
+        "--include",
+        action="append",
+        metavar="NAME",
+        help="add a repo, by suite name or owner/name; repeat or comma-separate",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        metavar="NAME",
+        help="drop a repo, by suite name or owner/name; repeat or comma-separate",
+    )
+    parser.add_argument(
+        "--tools",
+        metavar="LIST",
+        help=f"comma-separated tools to run, instead of the settings; from {', '.join(sweep.TOOLS)}",
+    )
+    parser.add_argument("--workers", type=int, help="repos read at once")
+    parser.add_argument(
+        "--report-url",
+        help="where the full report is published, named by the Slack cut-off line",
+    )
+    parser.add_argument(
+        "--members", action="store_true", help="print the membership and stop, no API calls"
+    )
+    parser.add_argument(
+        "--check-bridge",
+        action="store_true",
+        help="fail when an open org alert on a member is missing from the sweep",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None, load: Loader = load_settings) -> int:
+    """Entry point. Returns the process exit code.
+
+    Args:
+        argv: The arguments, or None for the process's own.
+        load: Where the settings and the progress log come from; scalo's cascade in a run.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    args = build_parser().parse_args(argv)
+    try:
+        return run(args, load)
+    except FleetError as exc:
+        print(f"[{TAG}] ERROR: {exc}", file=sys.stderr, flush=True)
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        print(f"[{TAG}] interrupted", file=sys.stderr, flush=True)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
