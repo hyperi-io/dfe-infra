@@ -57,6 +57,9 @@ sweep:
   format: text
   # Where the full report is published, for the line that ends a cut-off Slack thread.
   report_url: ""
+  # A file the text report is also written to, whatever format prints; relative paths are
+  # from the working directory. Empty writes none.
+  report_file: ""
   slack:
     # Most thread replies one group may take, so no group crowds a later one out.
     group_replies: 2

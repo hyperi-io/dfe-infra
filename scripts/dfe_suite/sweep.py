@@ -1787,6 +1787,10 @@ SLACK_STATS = (
     "secrets", "critical", "high", "medium", "low", "ci_failing", "issues", "backlog",
     "bot_prs", "drift", "unreadable", "members",
 )
+# The stats keys counted from findings; slack_buckets fills one list per key.
+SLACK_FINDING_STATS = ("secrets", "critical", "high", "medium", "low", "ci_failing")
+# The only tools stats critical and high, and the summary's Security line, count.
+SECURITY_TOOLS = ("dependabot", "code_scanning", "advisories")
 # The finding groups, each with the tools it holds, in the order their thread replies are
 # posted; slack_groups follows them with drift, open issues, backlog items and not readable.
 SLACK_FINDING_GROUPS = (
@@ -1821,21 +1825,46 @@ def slack_link(url: object, label: object) -> str:
     return slack_escape(text)
 
 
-def slack_stats(report: dict) -> dict[str, int]:
-    """The fixed integer counts a poster routes on; every key is present, 0 when none."""
+type Buckets = dict[str, list[dict]]
+
+
+def slack_buckets(findings: Iterable[dict]) -> Buckets:
+    """The findings behind each finding count in the Slack summary and stats, by stats key.
+
+    critical and high hold SECURITY_TOOLS findings only, so a secret alert counts under secrets
+    and a failed main run under ci_failing alone. medium and low hold every tool's. The summary's
+    lines and the stats are both read off these lists, so the two cannot disagree.
+    """
+    buckets: Buckets = {key: [] for key in SLACK_FINDING_STATS}
+    for finding in findings:
+        tool, severity = finding["tool"], finding["severity"]
+        if tool == "secret_scanning":
+            buckets["secrets"].append(finding)
+        if tool == "ci_runs" and severity == "high":
+            buckets["ci_failing"].append(finding)
+        if severity in ("medium", "low"):
+            buckets[severity].append(finding)
+        elif severity in ("critical", "high") and tool in SECURITY_TOOLS:
+            buckets[severity].append(finding)
+    return buckets
+
+
+def slack_stats(report: dict, buckets: Buckets) -> dict[str, int]:
+    """The fixed integer counts a poster routes on; every key is present, 0 when none.
+
+    Args:
+        report: The report build_report made.
+        buckets: slack_buckets over the report's findings.
+
+    Returns:
+        One integer per SLACK_STATS key, in that order.
+    """
     totals = report["totals"]
-    findings = report["findings"]
-    severity = totals["by_severity"]
-    counts = {
-        "secrets": sum(f["tool"] == "secret_scanning" for f in findings),
-        "critical": severity.get("critical", 0),
-        "high": severity.get("high", 0),
-        "medium": severity.get("medium", 0),
-        "low": severity.get("low", 0),
-        "ci_failing": sum(f["tool"] == "ci_runs" and f["severity"] == "high" for f in findings),
+    counts = {key: len(buckets[key]) for key in SLACK_FINDING_STATS}
+    counts |= {
         "issues": totals["work_items"]["issues"],
         "backlog": totals["work_items"]["backlog"],
-        "bot_prs": sum(f["tool"] == "bot_prs" for f in findings),
+        "bot_prs": sum(f["tool"] == "bot_prs" for f in report["findings"]),
         "drift": totals["work_items"]["backlog_drift"],
         "unreadable": totals["unreadable"],
         "members": totals["members"],
@@ -1858,10 +1887,19 @@ def _repo_counts(rows: Iterable[dict], limit: int = 4) -> str:
     return f"{shown}, +{rest} more" if rest > 0 else shown
 
 
-def slack_summary(report: dict, model: BacklogModel) -> str:
-    """At most SLACK_SUMMARY_LINES lines of mrkdwn: the headline, then what matters most first."""
+def slack_summary(report: dict, model: BacklogModel, buckets: Buckets) -> str:
+    """At most SLACK_SUMMARY_LINES lines of mrkdwn: the headline, then what matters most first.
+
+    Args:
+        report: The report build_report made.
+        model: The backlog model, for the priority order.
+        buckets: slack_buckets over the report's findings, the same lists the stats count.
+
+    Returns:
+        The parent message.
+    """
     findings = report["findings"]
-    stats = slack_stats(report)
+    stats = slack_stats(report, buckets)
     lines = [
         f"*DFE suite sweep*: stack {slack_escape(report['stack'])}, {stats['members']} members, "
         f"{slack_escape(report['generated_at'])}"
@@ -1873,26 +1911,23 @@ def slack_summary(report: dict, model: BacklogModel) -> str:
         holds = "; the alert bridge is a subset" if bridge else ""
         lines.append(f"All clear: nothing open on any member{holds}.")
         return "\n".join(lines)
-    secrets = [f for f in findings if f["tool"] == "secret_scanning"]
-    if secrets:
+    if stats["secrets"]:
         lines.append(
-            f"*Secret scanning: {len(secrets)} open alert(s)* on {_repo_counts(secrets)}"
+            f"*Secret scanning: {stats['secrets']} open alert(s)* on "
+            f"{_repo_counts(buckets['secrets'])}"
         )
-    urgent = [
-        f for f in findings
-        if f["tool"] in ("dependabot", "code_scanning", "advisories")
-        and f["severity"] in ("critical", "high")
-    ]
-    if urgent:
-        critical = sum(f["severity"] == "critical" for f in urgent)
+    security = buckets["critical"] + buckets["high"]
+    if security:
         lines.append(
-            f"*Security: {critical} critical, {len(urgent) - critical} high* on "
-            f"{_repo_counts(urgent)}"
+            f"*Security: {stats['critical']} critical, {stats['high']} high* on "
+            f"{_repo_counts(security)}"
         )
-    failing = [f for f in findings if f["tool"] == "ci_runs" and f["severity"] == "high"]
-    if failing:
-        lines.append(f"*Failing main CI*: {len(failing)} workflow(s) on {_repo_counts(failing)}")
-    rest = [f for f in findings if f["severity"] in ("medium", "low")]
+    if stats["ci_failing"]:
+        lines.append(
+            f"*Failing main CI*: {stats['ci_failing']} workflow(s) on "
+            f"{_repo_counts(buckets['ci_failing'])}"
+        )
+    rest = buckets["medium"] + buckets["low"]
     if rest:
         groups = []
         for name, tools in SLACK_FINDING_GROUPS:
@@ -2146,8 +2181,9 @@ def render_slack(
         ``{"summary": str, "detail": [{"group", "text"}], "stats": {name: int}}``.
     """
     model = model or BacklogModel()
+    buckets = slack_buckets(report["findings"])
     return {
-        "summary": slack_summary(report, model),
+        "summary": slack_summary(report, model, buckets),
         "detail": slack_detail(report, model, report_url, group_replies),
-        "stats": slack_stats(report),
+        "stats": slack_stats(report, buckets),
     }
