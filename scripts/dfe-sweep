@@ -18,6 +18,7 @@
     scripts/dfe-sweep --members                             # membership only, no API calls
     scripts/dfe-sweep --check-bridge                        # and prove the bridge is a subset
     scripts/dfe-sweep --format slack --report-url https://example.com/r
+    scripts/dfe-sweep --format slack --report-file sweep-report.txt > sweep-slack.json
     scripts/dfe-sweep --exclude dfe-hyperdx --tools dependabot,code_scanning
 
 The shebang runs it through ``uv run --script``, which installs scalo from the block above; on
@@ -76,10 +77,26 @@ advisories, CI on main, bot PRs and Renovate, backlog drift, open issues, backlo
 readable), each under 3,500 characters. A group that runs over continues under a ``(cont.)``
 header for at most ``slack.group_replies`` replies (2 by default), so a long group cannot crowd
 a later one out, and its last reply says how many of its lines were left out, pointing at
-``--report-url`` when one is given; the thread is capped at 20 replies the same way. ``stats``
-always carries every key above as an integer; critical to low count every finding at that
-severity. Every string that came from GitHub is escaped, so no title can mention a channel or
-inject a link.
+``--report-url`` when one is given; the thread is capped at 20 replies the same way. Every
+string that came from GitHub is escaped, so no title can mention a channel or inject a link.
+
+``stats`` always carries every key above as an integer, counted from the same findings as the
+summary's lines. critical and high count code scanning, Dependabot and repository advisories
+only, the numbers on the Security line. A secret alert counts under ``secrets`` and a failed
+main run under ``ci_failing`` instead. medium and low count every tool, as the Medium line does.
+
+REPORT FILE. ``--report-file PATH`` (setting ``report_file``, empty for none) also writes the
+full text report to PATH, exactly what ``--format text`` prints, whatever ``--format`` sends to
+stdout. A relative PATH is from the working directory. One run then yields the Slack JSON and
+the report behind it, so a scheduled workflow can publish that report on the run
+``--report-url`` links to:
+
+    run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+    scripts/dfe-sweep --format slack --report-url "$run_url" \\
+        --report-file sweep-report.txt > sweep-slack.json
+    { echo '```text'; cat sweep-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+A later step uploads ``sweep-report.txt`` with actions/upload-artifact, pinned by SHA.
 
 CONFIGURATION is scalo's cascade (scalo.config), with the committed defaults in
 config/defaults.yaml under ``sweep:``, which scalo reads as its defaults.yaml layer: the
@@ -146,6 +163,7 @@ class Options:
         output: ``text``, ``json`` or ``slack``.
         project_limit: Most org projects listed when finding each repo's backlog project.
         report_url: Where the full report is published, for the Slack cut-off line, or empty.
+        report_file: Where the text report is also written, or None for nowhere.
         group_replies: The most Slack thread replies one group may take.
         gh_timeout: Seconds one gh call may take before its read is reported unreadable.
         config: The collection settings.
@@ -163,6 +181,7 @@ class Options:
     group_replies: int
     gh_timeout: int
     report_url: str
+    report_file: Path | None
     config: sweep.SweepConfig
 
 
@@ -297,6 +316,7 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
         output=output,
         project_limit=_count(backlog.get("project_limit"), "backlog.project_limit"),
         report_url=_report_url(pick(args.report_url, "report_url")),
+        report_file=_report_file(pick(args.report_file, "report_file")),
         group_replies=_count(_section(settings, "slack").get("group_replies"),
                              "slack.group_replies"),
         gh_timeout=_count(settings.get("gh_timeout_seconds"), "gh_timeout_seconds"),
@@ -318,6 +338,30 @@ def _report_url(value: object) -> str:
     if url and not sweep.safe_url(url):
         raise _fail("report_url", value, "an https URL with no spaces, <, > or |")
     return url
+
+
+def _report_file(value: object) -> Path | None:
+    """The file the text report is also written to, from the working directory, or None."""
+    if value is not None and not isinstance(value, str):
+        raise _fail("report_file", value, "a file path, or empty for none")
+    text = (value or "").strip()
+    if not text:
+        return None
+    # Checked before the sweep runs, so a bad path fails in a second rather than after it.
+    path = Path(text).expanduser().absolute()
+    if path.is_dir() or not path.parent.is_dir():
+        raise _fail("report_file", value, "a file path in a directory that exists")
+    return path
+
+
+def _write_report(path: Path | None, text: str) -> None:
+    """Write the text report to ``path`` when one is set, ending in a newline as stdout does."""
+    if path is None:
+        return
+    try:
+        path.write_text(text + "\n", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        raise FleetError(f"cannot write the report file {path}: {exc}") from exc
 
 
 @contextmanager
@@ -404,6 +448,7 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
     for note in notes:
         warning(note)
     if args.members:
+        _write_report(options.report_file, _members_report(stack, members, "text"))
         print(_members_report(stack, members, options.output), flush=True)
         return EXIT_OK
 
@@ -445,6 +490,9 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         gap = bool(missing)
 
     report = sweep.build_report(stack, results, options.config.tools, bridge)
+    text = sweep.render_text(report, options.config.backlog)
+    # Written before stdout, so a run that cannot write it prints nothing a poster would post.
+    _write_report(options.report_file, text)
     if options.output == "json":
         print(json.dumps(report, indent=2), flush=True)
     elif options.output == "slack":
@@ -453,7 +501,7 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         )
         print(json.dumps(slack, indent=2), flush=True)
     else:
-        print(sweep.render_text(report, options.config.backlog), flush=True)
+        print(text, flush=True)
     return EXIT_BRIDGE_GAP if gap else EXIT_OK
 
 
@@ -471,6 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  uv run --script scripts/dfe-sweep\n"
             "  uv run --script scripts/dfe-sweep --members\n"
             "  uv run --script scripts/dfe-sweep --format json --check-bridge\n"
+            "  uv run --script scripts/dfe-sweep --format slack --report-file report.txt\n"
             "  uv run --script scripts/dfe-sweep --include vector-vrl --exclude dfe-hyperdx\n"
             "  env DFE_SWEEP__TOOLS__ISSUES=false uv run --script scripts/dfe-sweep\n"
         ),
@@ -501,6 +550,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report-url",
         help="where the full report is published, named by the Slack cut-off line",
+    )
+    parser.add_argument(
+        "--report-file",
+        metavar="PATH",
+        help="also write the text report here, whatever --format prints (setting: report_file)",
     )
     parser.add_argument(
         "--members", action="store_true", help="print the membership and stop, no API calls"

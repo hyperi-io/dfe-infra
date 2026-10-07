@@ -942,9 +942,40 @@ def test_slack_stats_always_carry_every_key_as_an_integer() -> None:
     stats = sweep.render_slack(_slack_report(EVERYTHING, issues=3))["stats"]
     assert {k: stats[k] for k in ("secrets", "critical", "high", "ci_failing", "issues",
                                   "bot_prs")} == {
-        "secrets": 1, "critical": 1, "high": 4, "ci_failing": 1, "issues": 3, "bot_prs": 1,
+        "secrets": 1, "critical": 1, "high": 2, "ci_failing": 1, "issues": 3, "bot_prs": 1,
     }
     assert all(isinstance(value, int) for value in stats.values())
+
+
+def _summary_line(pattern: str, summary: str) -> re.Match:
+    match = re.search(pattern, summary, re.MULTILINE)
+    assert match, f"{pattern!r} not in:\n{summary}"
+    return match
+
+
+def test_stats_count_severity_exactly_as_the_summary_lines_do() -> None:
+    findings = [
+        *EVERYTHING,
+        _finding("scalo-py", "secret_scanning", 10, "high"),
+        _finding("scalo-rs", "secret_scanning", 11, "medium"),
+        _finding("dfe-ui", "ci_runs", 12, "high"),
+        _finding("dfe-ui", "ci_runs", 13, "low"),
+        _finding("dfe-loader", "code_scanning", 14, "high"),
+        _finding("dfe-loader", "code_scanning", 15, "critical"),
+        _finding("dfe-loader", "ci_annotations", 16, "medium"),
+    ]
+    slack = sweep.render_slack(_slack_report(findings))
+    stats, summary = slack["stats"], slack["summary"]
+    security = _summary_line(r"^\*Security: (\d+) critical, (\d+) high\* on ", summary)
+    rest = _summary_line(r"^Medium (\d+), low (\d+): (.*)$", summary)
+    secrets = _summary_line(r"^\*Secret scanning: (\d+) open alert\(s\)\*", summary)
+    failing = _summary_line(r"^\*Failing main CI\*: (\d+) workflow\(s\)", summary)
+    assert (stats["critical"], stats["high"]) == tuple(map(int, security.groups())) == (2, 3)
+    assert (stats["medium"], stats["low"]) == tuple(map(int, rest.groups()[:2])) == (3, 4)
+    assert stats["secrets"] == int(secrets.group(1)) == 3
+    assert stats["ci_failing"] == int(failing.group(1)) == 2
+    groups = [int(part.rsplit(" ", 1)[1]) for part in rest.group(3).split(", ")]
+    assert sum(groups) == stats["medium"] + stats["low"]
 
 
 def test_slack_detail_groups_come_in_order_and_empty_ones_are_left_out() -> None:
@@ -1120,6 +1151,17 @@ def test_the_slack_format_and_report_url_are_settings() -> None:
         _options([], slack={"group_replies": 0})
 
 
+def test_the_report_file_is_a_setting_checked_before_the_sweep(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _options([]).report_file is None
+    assert _options([], report_file="  ").report_file is None
+    assert _options(["--report-file", "r.txt"]).report_file == Path.cwd() / "r.txt"
+    assert _options([], report_file="s.txt").report_file == Path.cwd() / "s.txt"
+    for bad in (str(tmp_path), str(tmp_path / "missing" / "r.txt"), ["r.txt"]):
+        with pytest.raises(FleetError, match="report_file"):
+            _options([], report_file=bad)
+
+
 # ---------------------------------------------------------------------------
 # The bridge subset check
 # ---------------------------------------------------------------------------
@@ -1215,7 +1257,7 @@ def _fake_gh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, shebang: str = "#!/bin/sh"
 ) -> Path:
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(exist_ok=True)
     gh = bin_dir / "gh"
     gh.write_text(f"{shebang}\n{body}", encoding="utf-8")
     gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
@@ -1349,7 +1391,12 @@ for row in rows:
 """
 
 
-def _main(tmp_path: Path, monkeypatch, capsys, gap: str = "") -> tuple[int, dict]:
+BRIDGE_ARGV = ["--check-bridge", "--tools", "dependabot,code_scanning,secret_scanning"]
+
+
+def _run_cli(
+    tmp_path: Path, monkeypatch, capsys, argv: list[str], gap: str = ""
+) -> tuple[int, str]:
     _fake_gh(tmp_path, monkeypatch, FAKE_GH, shebang="#!/usr/bin/env python3")
     if gap:
         monkeypatch.setenv("FAKE_GH_GAP", gap)
@@ -1358,12 +1405,13 @@ def _main(tmp_path: Path, monkeypatch, capsys, gap: str = "") -> tuple[int, dict
     settings = {**SETTINGS, "versions_file": str(versions), "suite_dir": str(REPO_ROOT),
                 "include": [], "workers": 8}
     logged: list[str] = []
-    code = cli.main(
-        ["--format", "json", "--check-bridge", "--tools",
-         "dependabot,code_scanning,secret_scanning"],
-        load=lambda: (settings, logged.append, logged.append),
-    )
-    return code, json.loads(capsys.readouterr().out)
+    code = cli.main(argv, load=lambda: (settings, logged.append, logged.append))
+    return code, capsys.readouterr().out
+
+
+def _main(tmp_path: Path, monkeypatch, capsys, gap: str = "") -> tuple[int, dict]:
+    code, out = _run_cli(tmp_path, monkeypatch, capsys, ["--format", "json", *BRIDGE_ARGV], gap)
+    return code, json.loads(out)
 
 
 def test_a_clean_sweep_exits_zero(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1380,3 +1428,20 @@ def test_an_org_alert_the_sweep_missed_exits_three(tmp_path: Path, monkeypatch, 
     code, report = _main(tmp_path, monkeypatch, capsys, gap="hyperi-io/dfe-engine")
     assert code == cli.EXIT_BRIDGE_GAP == 3
     assert [a["url"] for a in report["bridge"]["missing"]] == ["https://example.com/missed"]
+
+
+def test_one_run_prints_the_slack_json_and_writes_the_text_report(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    gap = "hyperi-io/dfe-engine"
+    code, text = _run_cli(tmp_path, monkeypatch, capsys, ["--format", "text", *BRIDGE_ARGV], gap)
+    assert code == cli.EXIT_BRIDGE_GAP
+    assert "  MISSING hyperi-io/dfe-engine dependabot: https://example.com/missed" in text
+    written = tmp_path / "report.txt"
+    argv = ["--format", "slack", "--report-file", str(written), *BRIDGE_ARGV]
+    code, out = _run_cli(tmp_path, monkeypatch, capsys, argv, gap)
+    assert code == cli.EXIT_BRIDGE_GAP
+    slack = json.loads(out)
+    assert list(slack) == ["summary", "detail", "stats"]
+    assert "*Alert bridge gap*" in slack["summary"]
+    assert written.read_text(encoding="utf-8") == text
