@@ -174,6 +174,7 @@ BACKLOG_JQ = (
     "if .data.organization.projectV2 == null then {missing_project: true} | tojson"
     " else .data.organization.projectV2.items.nodes[] | tojson end"
 )
+WORKFLOWS_JQ = ".workflows[] | {id, path, state} | tojson"
 RUNS_JQ = (
     ".workflow_runs[] | {id, name, workflow_id, path, event, conclusion, html_url, head_sha,"
     " created_at, check_suite_id} | tojson"
@@ -382,7 +383,6 @@ class SweepConfig:
         tools: The tools to collect, each one of TOOLS.
         bot_logins: The PR authors counted as bots, e.g. ``renovate[bot]``.
         workers: How many repos are read at once.
-        run_window: How many recent completed runs to search for each workflow's latest.
         org: The owner of the repo projects.
         backlog: How the backlog is read.
     """
@@ -390,7 +390,6 @@ class SweepConfig:
     tools: frozenset[str]
     bot_logins: frozenset[str]
     workers: int
-    run_window: int
     org: str = ""
     backlog: BacklogModel = field(default_factory=BacklogModel)
 
@@ -1120,20 +1119,6 @@ def dashboard_findings(repo: str, row: dict) -> list[Finding]:
     ]
 
 
-def latest_runs(rows: list[dict]) -> list[dict]:
-    """The newest completed run of each workflow, newest first."""
-    ordered = sorted(rows, key=lambda row: _text(row.get("created_at")), reverse=True)
-    seen: set[object] = set()
-    latest = []
-    for row in ordered:
-        workflow = row.get("workflow_id") or row.get("path") or row.get("name")
-        if workflow in seen:
-            continue
-        seen.add(workflow)
-        latest.append(row)
-    return latest
-
-
 def run_findings(repo: str, runs: list[dict], head_sha: str) -> list[Finding]:
     """Each workflow's latest run on the default branch, where it did not succeed."""
     findings = []
@@ -1258,18 +1243,33 @@ def _ci(
     config: SweepConfig,
     unreadable: list[Unreadable],
 ) -> list[Finding]:
-    """The CI tools: each workflow's latest run, and that run's annotations."""
+    """The CI tools: each active workflow's latest completed run, and that run's annotations.
+
+    Each workflow is read through its own runs list. The repo-wide list holds only the newest
+    100 runs, so a workflow that runs rarely fell out of it, and it has answered one query with
+    different totals seconds apart.
+    """
     repo = member.repo
     wanted = [tool for tool in ("ci_runs", "ci_annotations") if tool in config.tools]
-    endpoint = (
-        f"repos/{repo}/actions/runs?branch={quote(branch, safe='')}&status=completed"
-        f"&per_page={min(config.run_window, GH_PAGE_MAX)}"
-    )
     try:
-        runs = latest_runs(api(endpoint, RUNS_JQ, False))
+        workflows = api(f"repos/{repo}/actions/workflows?per_page={GH_PAGE_MAX}",
+                        WORKFLOWS_JQ, True)
     except GhError as exc:
         unreadable.extend(Unreadable(repo, tool, exc.reason) for tool in wanted)
         return []
+    on_branch = f"branch={quote(branch, safe='')}&status=completed&per_page=1"
+    runs: list[dict] = []
+    for workflow in workflows:
+        ident = workflow.get("id")
+        # A disabled workflow's last run is history, not the state of the branch.
+        if workflow.get("state") != "active" or not ident:
+            continue
+        try:
+            runs += api(f"repos/{repo}/actions/workflows/{ident}/runs?{on_branch}",
+                        RUNS_JQ, False)[:1]
+        except GhError as exc:
+            reason = f"{workflow.get('path') or ident}: {exc.reason}"
+            unreadable.extend(Unreadable(repo, tool, reason) for tool in wanted)
     findings = run_findings(repo, runs, head_sha) if "ci_runs" in config.tools else []
     if "ci_annotations" not in config.tools:
         return findings

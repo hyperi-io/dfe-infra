@@ -18,6 +18,7 @@ on:
       # handful it runs.
       - 'scripts/**'
       - 'ruff.toml'
+      - '.python-version'
       - 'suite.yaml'
       - 'docs/suite-graph.md'
       - '.github/workflows/helm-lint.yml'
@@ -38,6 +39,7 @@ on:
       # handful it runs.
       - 'scripts/**'
       - 'ruff.toml'
+      - '.python-version'
       - 'suite.yaml'
       - 'docs/suite-graph.md'
       - '.github/workflows/helm-lint.yml'
@@ -60,10 +62,27 @@ env:
 jobs:
   lint:
     name: helm lint + yaml validate
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
+      # the tree reaches its site-packages. The install is a step of its own because
+      # `uv run --with-requirements` does not check hashes.
+      - name: Set up uv and the repo's Python
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/venv
+          enable-cache: false
+
+      # A python3 that is not the venv's would run every step below on the runner's own
+      # Python and still pass, so the version is checked before anything runs on it.
+      - name: Install the pinned test dependencies, hashes required
+        run: |
+          uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
+          python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
 
       # Nothing ran ruff on scripts/ until now, so six findings sat in files
       # nobody had reason to open. The version is pinned so a ruff release
@@ -184,8 +203,7 @@ jobs:
       # Every file under scripts/tests runs here, including the ones no step
       # above names; the named steps stay for the failure paths they document.
       - name: scripts/tests under pytest
-        run: python3 -m pip install --quiet --require-hashes -r scripts/tests/requirements-ci.txt
-      - run: python3 -m pytest scripts/tests -q -p no:cacheprovider
+        run: python3 -m pytest scripts/tests -q -p no:cacheprovider
 
       # A step of its own, not a pytest case: it fetches the engine's bundled
       # copy over the network (gh api), unlike --check-catalogue's pytest
@@ -373,6 +391,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
+      # the tree reaches its site-packages. The install is a step of its own because
+      # `uv run --with-requirements` does not check hashes.
+      - name: Set up uv and the repo's Python
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/venv
+          enable-cache: false
+
+      # A python3 that is not the venv's would run every step below on the runner's own
+      # Python and still pass, so the version is checked before anything runs on it.
+      - name: Install the pinned test dependencies, hashes required
+        run: |
+          uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
+          python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
+
       # The chart-installed add-ons take their image tags from their chart's
       # appVersion, which --resolve-charts reads with helm.
       - name: Install Helm
@@ -396,6 +431,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
+      # the tree reaches its site-packages. The install is a step of its own because
+      # `uv run --with-requirements` does not check hashes.
+      - name: Set up uv and the repo's Python
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/venv
+          enable-cache: false
+
+      # A python3 that is not the venv's would run every step below on the runner's own
+      # Python and still pass, so the version is checked before anything runs on it.
+      - name: Install the pinned test dependencies, hashes required
+        run: |
+          uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
+          python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
 
       - name: Mint a dfe-deploy read token
         id: deploy-token
