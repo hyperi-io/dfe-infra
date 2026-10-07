@@ -90,12 +90,27 @@ def warn(message: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+class CommandTimeoutError(FleetError):
+    """A command ``run`` stopped because it outlived its timeout."""
+
+    def __init__(self, argv: list[str], seconds: float) -> None:
+        """Record which command was stopped and after how long.
+
+        Args:
+            argv: The command that was stopped.
+            seconds: The timeout it outlived.
+        """
+        super().__init__(f"{argv[0] if argv else 'command'} timed out after {seconds:g}s")
+        self.seconds = seconds
+
+
 def run(
     argv: list[str],
     *,
     cwd: Path | None = None,
     check: bool = True,
     capture: bool = True,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command with no shell, decoding output as UTF-8.
 
@@ -104,22 +119,28 @@ def run(
         cwd: Working directory.
         check: Raise ``FleetError`` on a non-zero exit.
         capture: Capture stdout/stderr rather than letting them through.
+        timeout: Seconds before the command is killed, or None to wait for it.
 
     Returns:
         The completed process.
 
     Raises:
+        CommandTimeoutError: If the command outlives ``timeout``.
         FleetError: If ``check`` and the command exits non-zero.
     """
-    proc = subprocess.run(
-        argv,
-        cwd=str(cwd) if cwd else None,
-        capture_output=capture,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(cwd) if cwd else None,
+            capture_output=capture,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CommandTimeoutError(argv, timeout or 0) from exc
     if check and proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         raise FleetError(f"{' '.join(argv)} failed ({proc.returncode}): {detail}")
