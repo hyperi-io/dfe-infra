@@ -24,6 +24,7 @@ import re
 import stat
 import sys
 from importlib.machinery import SourceFileLoader
+from itertools import chain
 from pathlib import Path
 
 import pytest
@@ -1140,6 +1141,231 @@ def test_with_more_keeps_the_last_item_and_says_how_many_were_cut() -> None:
     assert sweep._with_more(reply[:3], 0, "") == "*G*\n*r*\n" + reply[2][1]
 
 
+# ---------------------------------------------------------------------------
+# --format slack keys
+# ---------------------------------------------------------------------------
+
+
+def _note(message: str, *, level: str = "warning", path: str = ".github", line: int = 1,
+          title: str = "") -> dict:
+    return {"annotation_level": level, "path": path, "start_line": line, "title": title,
+            "message": message}
+
+
+def _annotation_keys(run: int, notes: list[dict], *, job: str = "ci / test",
+                     workflow: str = ".github/workflows/ci.yml") -> list[str]:
+    """The keys of one run's annotations, its run and job ids drawn from ``run``."""
+    run_row = {"id": run, "name": f"CI #{run}", "path": workflow, "created_at": "2026-10-06"}
+    jobs = [({"name": job, "html_url": f"https://example.com/r/{run}/job/{run + 1}"}, notes)]
+    findings = sweep.annotation_findings("example-org/dfe-engine", run_row, jobs)
+    return [sweep.finding_key(dataclasses.asdict(f)) for f in findings]
+
+
+# Where uv unpacks a tool for one run; an annotation's path, never a file the tests open.
+UV_TOOL = "/tmp/.tmp{}/archive-v0/{}/site-packages/hyperi_ci/common.py"  # noqa: S108
+
+# The same annotations as two runs of one workflow on one commit raise them.
+FIRST_RUN = [
+    _note("Run 37415111799 took 1m 12s at 2026-10-06T04:44:13Z, see "
+          "https://github.com/o/r/actions/runs/37415111799/job/112126939388", line=40),
+    _note("[ERROR   ] hyperi_ci.common:error:389 - release-commit: GitHub refused the update",
+          level="failure", line=389,
+          path=UV_TOOL.format("0mtx6K", "utSTM5hRKd-Af4GC")),
+    _note("1 releasable commit sits unreleased since v1.1.9, tagged 0 days ago (1 patch)."),
+    _note("The self-hosted runner: arc-16cpu-x7k2p-runner-9fz4q lost communication with the "
+          "server.", level="failure"),
+    _note("Failed to save: Unable to reserve cache with key Linux-cargo-0a1b2c3d4e5f6a7b"),
+    _note("/home/runner/work/_temp/6b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e.sh: line 3: x: not found",
+          level="failure"),
+]
+SECOND_RUN = [
+    _note("Run 37498576073 took 48.2s at 2026-10-07T09:01:55Z, see "
+          "https://github.com/o/r/actions/runs/37498576073/job/112389570836", line=52),
+    _note("[ERROR   ] hyperi_ci.common:error:384 - release-commit: GitHub refused the update",
+          level="failure", line=384,
+          path=UV_TOOL.format("nultcQ", "V0ayI27J5vtroQxV")),
+    _note("1 releasable commit sits unreleased since v1.1.9, tagged 3 days ago (1 patch)."),
+    _note("The self-hosted runner: arc-16cpu-m4q8z-runner-2hd7c lost communication with the "
+          "server.", level="failure"),
+    _note("Failed to save: Unable to reserve cache with key Linux-cargo-9f8e7d6c5b4a3f2e"),
+    _note("/home/runner/work/_temp/0f9e8d7c-6b5a-4c3d-9e2f-1a0b9c8d7e6f.sh: line 3: x: not found",
+          level="failure"),
+]
+
+
+def test_two_runs_of_one_ci_annotation_give_one_key() -> None:
+    first = _annotation_keys(37415111799, FIRST_RUN)
+    assert first == _annotation_keys(37498576073, SECOND_RUN)
+    assert len(set(first)) == len(FIRST_RUN)
+    assert all(key.startswith("example-org/dfe-engine:.github/workflows/ci.yml:ci / test:")
+               for key in first)
+    assert not any("37415111799" in key or "/job/" in key for key in first)
+
+
+def test_different_ci_annotations_get_different_keys() -> None:
+    base = _note("vulture: issues found (non-blocking)")
+    variants = [
+        _annotation_keys(1, [base]),
+        _annotation_keys(1, [_note("ty: issues found (non-blocking)")]),
+        _annotation_keys(1, [{**base, "annotation_level": "failure"}]),
+        _annotation_keys(1, [{**base, "path": "docs/a.md"}]),
+        _annotation_keys(1, [{**base, "title": "lint"}]),
+        _annotation_keys(1, [base], job="ci / build"),
+        _annotation_keys(1, [base], workflow=".github/workflows/release.yml"),
+        _annotation_keys(1, [_note("cargo-deny: RUSTSEC-2026-0012 is unsound")]),
+        _annotation_keys(1, [_note("cargo-deny: RUSTSEC-2026-0034 is unsound")]),
+        _annotation_keys(1, [_note("pip-audit: CVE-2026-1111 in requests")]),
+        _annotation_keys(1, [_note("pip-audit: CVE-2026-2222 in requests")]),
+    ]
+    keys = [key for (key,) in variants]
+    assert len(set(keys)) == len(keys)
+
+
+def test_the_normaliser_keeps_advisory_ids_and_drops_what_varies() -> None:
+    text = "CVE-2026-12345 at 2026-10-07T01:02:03Z after 1m 30s on runner: arc-x7k2p, job 4471"
+    assert sweep.normalise_message(text) == (
+        "CVE-2026-12345 at <number>-<number>-<number>T<number>:<number>:<number>Z after "
+        "<duration> on <runner>, job <number>"
+    )
+    assert sweep.normalise_message("  two\n  lines  ") == "two lines"
+    assert sweep.normalise_message(None) == ""
+    assert sweep.normalise_message("to v1.2.3 digest a29215f", keep_numbers=True) == (
+        "to v1.2.3 digest <sha>"
+    )
+
+
+def test_a_failed_main_run_is_keyed_on_its_workflow_never_its_run() -> None:
+    def key(run: int, conclusion: str = "failure", path: str = ".github/workflows/ci.yml",
+            sha: str = HEAD) -> str:
+        row = {"id": run, "name": f"Update #{run}", "path": path, "conclusion": conclusion,
+               "head_sha": sha, "html_url": f"https://example.com/r/{run}"}
+        (finding,) = sweep.run_findings("example-org/dfe-engine", [row], HEAD)
+        return sweep.finding_key(dataclasses.asdict(finding))
+
+    assert key(100) == key(200) == key(300, sha="c" * 40)
+    assert key(100).startswith("example-org/dfe-engine:.github/workflows/ci.yml::")
+    assert len({key(100), key(100, "timed_out"), key(100, path="dynamic/x")}) == 3
+
+
+def test_dashboard_entries_keep_their_versions_and_lose_their_digests() -> None:
+    def key(text: str, section: str = "Pending Status Checks") -> str:
+        row = {"repo": "example-org/dfe-infra", "tool": "renovate_dashboard", "id": "9:b",
+               "title": f"{section}: {text}", "url": "https://example.com/i/9"}
+        return sweep.finding_key(row)
+
+    digest = "fix(deps): update debian:trixie-slim Docker digest to a29215f"
+    assert key(digest) == key(digest.replace("a29215f", "0b1c2d3"))
+    assert key("update foo to v1.2.4") != key("update foo to v2.0.0")
+    assert key("update foo to v1.2.4") != key("update foo to v1.2.4", "Errored")
+    assert key(digest).startswith("example-org/dfe-infra:renovate_dashboard:")
+
+
+def _keys_report() -> dict:
+    """A report with a row in every group, issue 1 open, on the backlog and drifting."""
+    ci_extra = {"workflow": ".github/workflows/ci.yml", "jobs": ["test"], "level": "warning",
+                "path": ".github", "title": "", "message": "Node.js 20 is deprecated"}
+    rebuilt = ("ci_runs", "ci_annotations", "renovate_dashboard")
+    findings = [f for f in EVERYTHING if f.tool not in rebuilt]
+    findings += [
+        dataclasses.replace(_finding("dfe-loader", "ci_annotations", 5, "low"), extra=ci_extra),
+        dataclasses.replace(_finding("logreducer", "ci_runs", 4, "high"),
+                            extra={"workflow": ".github/workflows/ci.yml",
+                                   "conclusion": "failure"}),
+        dataclasses.replace(_finding("dfe-infra", "renovate_dashboard", 7, "low"),
+                            title="Errored: update foo to v2"),
+    ]
+    unreadable = [sweep.Unreadable("example-org/dfe-engine", "backlog", "no scope"),
+                  sweep.Unreadable("example-org/dfe-engine", "backlog", "timed out")]
+    report = _slack_report(findings, issues=2, unreadable=unreadable)
+    row = {"repo": "example-org/dfe-engine", "number": 1, "title": "an issue 1",
+           "url": "https://example.com/i/1"}
+    report["backlog"] = [{**row, "project": 7, "status": "Next", "priority": "P1",
+                          "effort": "", "type": "Task"}]
+    report["backlog_drift"] = [{**row, "status": "Next",
+                                "problem": "labelled backlog but at Next"}]
+    return report
+
+
+def test_slack_keys_list_every_row_once_with_its_detail_line() -> None:
+    slack = sweep.render_slack(_keys_report())
+    keys, detail = slack["keys"], slack["detail"]
+    assert list(slack) == ["summary", "detail", "stats", "keys"]
+    assert len({entry["key"] for entry in keys}) == len(keys)
+    assert list(dict.fromkeys(entry["group"] for entry in keys)) == list(
+        dict.fromkeys(reply["group"] for reply in detail)
+    )
+    lines = list(chain.from_iterable(reply["text"].splitlines() for reply in detail))
+    assert all(entry["line"] in lines for entry in keys)
+    # Every item line in detail but the second not-readable line, whose key the first holds.
+    assert len(keys) == sum(text.startswith("- ") for text in lines) - 1
+    by_group: dict[str, list[str]] = {}
+    for entry in keys:
+        by_group.setdefault(entry["group"], []).append(entry["key"])
+    assert by_group["Dependabot"] == ["https://example.com/dfe-ui/dependabot/2",
+                                      "https://example.com/dfe-ui/dependabot/8"]
+    assert by_group["Open issues"] == ["https://example.com/i/1", "https://example.com/i/2"]
+    assert by_group["Backlog items"] == ["example-org/dfe-engine:backlog:https://example.com/i/1"]
+    assert by_group["Backlog drift"] == ["example-org/dfe-engine:drift:https://example.com/i/1"]
+    assert by_group["Not readable"] == ["example-org/dfe-engine:backlog"]
+    assert [key.rsplit(":", 1)[0] for key in by_group["CI on main"]] == [
+        "example-org/logreducer:.github/workflows/ci.yml:",
+        "example-org/dfe-loader:.github/workflows/ci.yml:test",
+    ]
+    assert by_group["Bot PRs and Renovate"][0] == "https://example.com/dfe-docker/bot_prs/6"
+    assert by_group["Bot PRs and Renovate"][1].startswith(
+        "example-org/dfe-infra:renovate_dashboard:"
+    )
+
+
+def test_rows_the_reply_budget_cut_are_still_keyed() -> None:
+    slack = sweep.render_slack(_slack_report(issues=2000, title="y" * 200))
+    assert _shown(slack["detail"]) < 2000
+    assert len(slack["keys"]) == 2000
+
+
+def test_a_key_line_is_clipped_exactly_as_detail_clips_it() -> None:
+    report = _slack_report(issues=1, title="<!channel> &")
+    report["issues"][0]["labels"] = [f"label-{n:02d}-" + "x" * 41 for n in range(100)]
+    slack = sweep.render_slack(report)
+    (entry,) = slack["keys"]
+    assert entry["line"].endswith("...")
+    assert "&lt;!channel&gt; &amp;" in entry["line"]
+    assert entry["line"] == slack["detail"][0]["text"].splitlines()[2]
+
+
+def _ci_answers(run: int, cache_key: str, took: str) -> dict:
+    """Main CI as one run shows it: its ids from ``run``, its annotation's volatile parts given."""
+    suite, job = run + 1, run + 2
+    return {
+        "repos/example-org/dfe-engine/actions/runs": [
+            {"id": run, "name": f"CI #{run}", "path": ".github/workflows/ci.yml",
+             "workflow_id": 1, "conclusion": "failure", "head_sha": HEAD,
+             "created_at": "2026-10-06T01:00:00Z", "check_suite_id": suite,
+             "html_url": f"https://example.com/r/{run}"},
+        ],
+        f"repos/example-org/dfe-engine/check-suites/{suite}/check-runs": [
+            {"id": job, "name": "test", "html_url": f"https://example.com/r/{run}/job/{job}",
+             "annotations": 1},
+        ],
+        f"repos/example-org/dfe-engine/check-runs/{job}/annotations": [
+            _note(f"Failed to save cache {cache_key} after {took}", line=run % 97),
+        ],
+    }
+
+
+def test_two_sweeps_a_run_apart_give_the_same_keys() -> None:
+    def keys(run: int, cache_key: str, took: str) -> list[str]:
+        api, _ = _answers(_ci_answers(run, cache_key, took))
+        report = sweep.build_report("2.2.0", [_collect(api)], CONFIG.tools, generated_at="t")
+        return [entry["key"] for entry in sweep.render_slack(report)["keys"]]
+
+    first = keys(37415111799, "Linux-cargo-0a1b2c3d4e5f", "1m 12s")
+    assert first == keys(37498576073, "Linux-cargo-9f8e7d6c5b4a", "48.2s")
+    ci = [key for key in first if ":.github/workflows/ci.yml:" in key]
+    assert len(ci) == 2
+    assert not any("37415111799" in key for key in first)
+
+
 def test_the_slack_format_and_report_url_are_settings() -> None:
     options = _options(["--format", "slack", "--report-url", "https://example.com/r"])
     assert (options.output, options.report_url) == ("slack", "https://example.com/r")
@@ -1442,6 +1668,6 @@ def test_one_run_prints_the_slack_json_and_writes_the_text_report(
     code, out = _run_cli(tmp_path, monkeypatch, capsys, argv, gap)
     assert code == cli.EXIT_BRIDGE_GAP
     slack = json.loads(out)
-    assert list(slack) == ["summary", "detail", "stats"]
+    assert list(slack) == ["summary", "detail", "stats", "keys"]
     assert "*Alert bridge gap*" in slack["summary"]
     assert written.read_text(encoding="utf-8") == text
