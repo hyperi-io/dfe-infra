@@ -43,7 +43,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from itertools import chain
+from itertools import chain, groupby
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import quote
@@ -1159,10 +1159,16 @@ def run_findings(repo: str, runs: list[dict], head_sha: str) -> list[Finding]:
                     "event": run.get("event"),
                     "head_sha": run.get("head_sha"),
                     "at_head": at_head,
+                    "conclusion": conclusion,
                 },
             )
         )
     return findings
+
+
+def _digest(*parts: object) -> str:
+    """The first 12 hex digits of a SHA-256 over the parts, one to a line."""
+    return hashlib.sha256("\n".join(map(_text, parts)).encode("utf-8")).hexdigest()[:12]
 
 
 def annotation_findings(
@@ -1196,7 +1202,7 @@ def annotation_findings(
             entry[2].append(_text(job.get("name")))
     findings = []
     for key, (note, job, names) in grouped.items():
-        digest = hashlib.sha256(repr(key).encode("utf-8")).hexdigest()[:12]
+        digest = _digest(repr(key))
         message = _text(note.get("message")).strip()
         first = message.splitlines()[0] if message else ""
         heading = _text(note.get("title")).strip()
@@ -1214,9 +1220,11 @@ def annotation_findings(
                     "level": note.get("annotation_level"),
                     "path": note.get("path"),
                     "line": note.get("start_line"),
+                    "title": note.get("title"),
                     "message": message,
                     "jobs": names,
                     "run": run.get("id"),
+                    "workflow": run.get("path"),
                 },
             )
         )
@@ -1803,10 +1811,55 @@ SLACK_FINDING_GROUPS = (
 )
 _SAFE_URL = re.compile(r"^https://[^\s<>|]+$")
 
+# What differs between two runs of one CI message, tried in this order. An advisory id matches
+# first and is kept whole, because its digits are what tell two advisories apart.
+_ADVISORY = r"\b(?:CVE|CWE|GHSA|GO|MAL|PYSEC|RUSTSEC)-[\w-]+"
+_SPAN = (
+    r"\d+(?:\.\d+)?\s?"
+    r"(?:ms|us|ns|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)(?![a-zA-Z])"
+)
+_VOLATILE = re.compile(
+    rf"(?P<keep>{_ADVISORY})"
+    r"|(?P<tmp>(?<![\w.-])/(?:[\w.-]+/)*?(?:tmp|_temp|folders)/\S*)"
+    r"|(?P<uuid>(?i:\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b))"
+    r"|(?P<sha>(?i:\b(?=[0-9a-f]*\d)[0-9a-f]{7,64}\b))"
+    r"|(?P<runner>(?i:\brunner\b):?\s+['\"]?[\w.]*[\d-][\w.-]*)"
+    rf"|(?P<duration>{_SPAN}(?:\s?{_SPAN})*)"
+    r"|(?P<number>\d+)"
+)
+# The fields a CI finding's key hashes: how its run concluded, or what its annotation says.
+CI_KEY_FIELDS = {
+    "ci_runs": ("conclusion",),
+    "ci_annotations": ("level", "path", "title", "message"),
+}
+
 
 def slack_escape(text: object) -> str:
     """Make a string inert in Slack mrkdwn: no link, mention or markup can come out of it."""
     return _text(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def normalise_message(text: object, *, keep_numbers: bool = False) -> str:
+    """Text with what differs between two runs of the same message replaced, for a stable key.
+
+    Temp paths, UUIDs, SHAs, runner names, durations and every other number, run and job ids
+    and timestamps among them, become placeholders, and whitespace collapses. An advisory id
+    such as CVE-2026-1234 is kept whole.
+
+    Args:
+        text: The message.
+        keep_numbers: Leave numbers and durations alone, for text whose numbers are versions.
+
+    Returns:
+        The normalised text.
+    """
+
+    def stable(match: re.Match[str]) -> str:
+        kind = match.lastgroup or ""
+        kept = kind == "keep" or (keep_numbers and kind in ("duration", "number"))
+        return match.group() if kept else f"<{kind}>"
+
+    return " ".join(_VOLATILE.sub(stable, _text(text)).split())
 
 
 def safe_url(url: object) -> bool:
@@ -1965,13 +2018,18 @@ def _severity_note(rows: list[dict]) -> str:
     return ", ".join(f"{n} {s}" for s, n in counts if n)
 
 
-def _by_repo_lines(rows: list[dict], line: Callable[[dict], str]) -> list[tuple[str, str]]:
-    """``(kind, text)`` lines: a bold repo header, then that repo's rows, in first-seen order."""
+def _by_repo(rows: list[dict]) -> list[dict]:
+    """The rows with each repo's together, repos in first-seen order, as the thread posts them."""
     grouped: dict[str, list[dict]] = {}
     for row in rows:
         grouped.setdefault(row["repo"], []).append(row)
+    return list(chain.from_iterable(grouped.values()))
+
+
+def _by_repo_lines(rows: list[dict], line: Callable[[dict], str]) -> list[tuple[str, str]]:
+    """``(kind, text)`` lines: a bold repo header before each run of one repo's rows."""
     lines: list[tuple[str, str]] = []
-    for repo, items in grouped.items():
+    for repo, items in groupby(rows, key=lambda row: row["repo"]):
         lines.append(("repo", f"*{slack_escape(_short(repo))}*"))
         lines.extend(("item", line(item)) for item in items)
     return lines
@@ -2014,31 +2072,111 @@ def _unreadable_line(row: dict) -> str:
     return f"- {slack_escape(row['tool'])}: {slack_escape(row['reason'])}"
 
 
-def slack_groups(report: dict, model: BacklogModel) -> list[tuple[str, str, list]]:
-    """Every non-empty group, in posting order: (name, count note, ``(kind, text)`` lines)."""
+def _ci_key(row: dict) -> str:
+    """A CI finding's key: repo, workflow file and jobs, then a hash of what it says."""
+    extra = row.get("extra") or {}
+    jobs = sorted({normalise_message(job) for job in extra.get("jobs") or ()})
+    said = _digest(*(normalise_message(extra.get(name)) for name in CI_KEY_FIELDS[row["tool"]]))
+    return f"{row['repo']}:{_text(extra.get('workflow'))}:{','.join(jobs)}:{said}"
+
+
+def finding_key(row: dict) -> str:
+    """A finding's stable key, by the ``keys`` contract scripts/dfe-sweep documents.
+
+    The run and job URLs of a CI finding, and the dashboard URL every Renovate entry shares,
+    say nothing about which finding it is, so those two are keyed on what they say instead.
+    """
+    tool = row["tool"]
+    if tool in CI_KEY_FIELDS:
+        return _ci_key(row)
+    if tool == "renovate_dashboard":
+        said = _digest(normalise_message(row["title"], keep_numbers=True))
+        return f"{row['repo']}:{tool}:{said}"
+    return row["url"] or f"{row['repo']}:{tool}:{row['id']}"
+
+
+def _issue_key(row: dict) -> str:
+    return row["url"] or f"{row['repo']}:issue:{row['number']}"
+
+
+def _relisted_key(kind: str) -> Callable[[dict], str]:
+    """The key of a row naming an issue another group may list too, so each group keys it."""
+    return lambda row: f"{row['repo']}:{kind}:{row['url'] or row['number']}"
+
+
+def _unreadable_key(row: dict) -> str:
+    return f"{row['repo']}:{row['tool']}"
+
+
+@dataclass(frozen=True, slots=True)
+class SlackGroup:
+    """One thread group, before its lines are packed into replies.
+
+    Attributes:
+        name: The name each of its replies and keys carries.
+        note: The count its first header gives after the name.
+        rows: Its report rows, each repo's together, in posting order.
+        line: One row's item line, escaped but not yet clipped.
+        key: One row's stable key.
+    """
+
+    name: str
+    note: str
+    rows: list[dict]
+    line: Callable[[dict], str]
+    key: Callable[[dict], str]
+
+
+def slack_groups(report: dict, model: BacklogModel) -> list[SlackGroup]:
+    """Every non-empty group, in posting order."""
     groups = []
     for name, tools in SLACK_FINDING_GROUPS:
         rows = [f for f in report["findings"] if f["tool"] in tools]
         if rows:
             note = f"{len(rows)} ({_severity_note(rows)})"
-            groups.append((name, note, _by_repo_lines(rows, _finding_line)))
+            groups.append(SlackGroup(name, note, _by_repo(rows), _finding_line, finding_key))
     issues, backlog = report["issues"], report["backlog"]
     priorities = _tally((r["priority"] for r in backlog), model.priorities, "unprioritised")
+    on_repos = f" on {len({r['repo'] for r in issues})} repo(s)"
     work = (
-        ("Backlog drift", report["backlog_drift"], "", _drift_line),
-        ("Open issues", issues, f" on {len({r['repo'] for r in issues})} repo(s)", _issue_line),
-        ("Backlog items", backlog, f" ({slack_escape(priorities)})", _backlog_line),
-        ("Not readable", report["unreadable"], "", _unreadable_line),
+        ("Backlog drift", report["backlog_drift"], "", _drift_line, _relisted_key("drift")),
+        ("Open issues", issues, on_repos, _issue_line, _issue_key),
+        ("Backlog items", backlog, f" ({slack_escape(priorities)})", _backlog_line,
+         _relisted_key("backlog")),
+        ("Not readable", report["unreadable"], "", _unreadable_line, _unreadable_key),
     )
-    for name, rows, note, line in work:
+    for name, rows, note, line, key in work:
         if rows:
-            groups.append((name, f"{len(rows)}{note}", _by_repo_lines(rows, line)))
+            groups.append(SlackGroup(name, f"{len(rows)}{note}", _by_repo(rows), line, key))
     return groups
 
 
+def slack_keys(groups: list[SlackGroup]) -> list[dict[str, str]]:
+    """Every row of every group under its stable key, for a poster that posts only what is new.
+
+    A row the reply budget cut from detail is keyed too, so a finding is new on the run it
+    first appears however much else is open. A key two rows share is listed once, for the first.
+
+    Args:
+        groups: The groups detail posts.
+
+    Returns:
+        ``{"key", "group", "line"}`` per row, in posting order; ``line`` is the row's item line
+        exactly as detail renders it.
+    """
+    keyed: dict[str, dict[str, str]] = {}
+    for group in groups:
+        *_, cap = _headers(group.name, group.note)
+        for row in group.rows:
+            key = group.key(row)
+            if key not in keyed:
+                line = _clip_line(group.line(row), cap)
+                keyed[key] = {"key": key, "group": group.name, "line": line}
+    return list(keyed.values())
+
+
 def slack_detail(
-    report: dict,
-    model: BacklogModel,
+    groups: list[SlackGroup],
     report_url: str = "",
     group_replies: int = SLACK_GROUP_REPLIES,
 ) -> list[dict[str, str]]:
@@ -2050,8 +2188,7 @@ def slack_detail(
     the groups that did not fit are counted into the thread's last reply.
 
     Args:
-        report: The report build_report made.
-        model: The backlog model, for the priority order.
+        groups: slack_groups over the report.
         report_url: Where the full report can be read, or empty.
         group_replies: The most replies one group may take.
 
@@ -2061,8 +2198,9 @@ def slack_detail(
     # (group, reply lines, item lines cut after this reply)
     replies: list[tuple[str, Reply, int]] = []
     left_out = 0
-    for name, note, lines in slack_groups(report, model):
-        packed = _pack(name, note, lines)
+    for group in groups:
+        name = group.name
+        packed = _pack(name, group.note, _by_repo_lines(group.rows, group.line))
         room = min(group_replies, SLACK_REPLIES - len(replies))
         if room <= 0:
             left_out += _items(packed)
@@ -2090,9 +2228,7 @@ def _pack(name: str, note: str, lines: list[tuple[str, str]]) -> list[Reply]:
     Every line passes through here, and each is clipped to _line_cap, so any reply can hold its
     header, a repo header, one item and the "N more" line; a reply is never only a header.
     """
-    first = f"*{slack_escape(name)}* -- {note}"
-    cont = f"*{slack_escape(name)} (cont.)*"
-    cap = _line_cap(max(first, cont, key=len))
+    first, cont, cap = _headers(name, note)
     replies: list[Reply] = []
     reply: Reply = [("header", first)]
     repo_header = ""
@@ -2109,6 +2245,13 @@ def _pack(name: str, note: str, lines: list[tuple[str, str]]) -> list[Reply]:
         reply.append((kind, text))
     replies.append(reply)
     return [reply for reply in replies if _has_items(reply)]
+
+
+def _headers(name: str, note: str) -> tuple[str, str, int]:
+    """A group's first and continuation headers, and the longest line a reply under either takes."""
+    first = f"*{slack_escape(name)}* -- {note}"
+    cont = f"*{slack_escape(name)} (cont.)*"
+    return first, cont, _line_cap(max(first, cont, key=len))
 
 
 def _has_items(reply: Reply) -> bool:
@@ -2169,7 +2312,7 @@ def render_slack(
     report_url: str = "",
     group_replies: int = SLACK_GROUP_REPLIES,
 ) -> dict:
-    """The report for a Slack poster: summary (parent message), detail (thread), stats.
+    """The report for a Slack poster: summary (parent message), detail (thread), stats, keys.
 
     Args:
         report: The report build_report made.
@@ -2178,12 +2321,15 @@ def render_slack(
         group_replies: The most thread replies one group may take.
 
     Returns:
-        ``{"summary": str, "detail": [{"group", "text"}], "stats": {name: int}}``.
+        ``{"summary": str, "detail": [{"group", "text"}], "stats": {name: int},
+        "keys": [{"key", "group", "line"}]}``.
     """
     model = model or BacklogModel()
     buckets = slack_buckets(report["findings"])
+    groups = slack_groups(report, model)
     return {
         "summary": slack_summary(report, model, buckets),
-        "detail": slack_detail(report, model, report_url, group_replies),
+        "detail": slack_detail(groups, report_url, group_replies),
         "stats": slack_stats(report, buckets),
+        "keys": slack_keys(groups),
     }

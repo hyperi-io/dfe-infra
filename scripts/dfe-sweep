@@ -66,7 +66,8 @@ one JSON object to stdout for a separate poster, which owns the channel and the 
     {"summary": "<mrkdwn>", "detail": [{"group": "<name>", "text": "<mrkdwn>"}, ...],
      "stats": {"secrets": 0, "critical": 0, "high": 0, "medium": 0, "low": 0,
                "ci_failing": 0, "issues": 0, "backlog": 0, "bot_prs": 0, "drift": 0,
-               "unreadable": 0, "members": 0}}
+               "unreadable": 0, "members": 0},
+     "keys": [{"key": "<stable id>", "group": "<name>", "line": "<mrkdwn>"}, ...]}
 
 The poster posts ``summary`` as the parent message and each ``detail`` entry, in order, as a
 thread reply. ``summary`` is at most 8 lines: the headline, then secret scanning, critical and
@@ -84,6 +85,27 @@ string that came from GitHub is escaped, so no title can mention a channel or in
 summary's lines. critical and high count code scanning, Dependabot and repository advisories
 only, the numbers on the Security line. A secret alert counts under ``secrets`` and a failed
 main run under ``ci_failing`` instead. medium and low count every tool, as the Medium line does.
+
+KEYS. ``keys`` is for a poster that posts only what is new: it diffs each run's keys against
+the set it last posted, and it stores hashes of the keys, never the lines. There is one entry
+per finding and work item in every group, in posting order, including a row the reply budget
+cut from ``detail``. ``group`` is the group's name in ``detail``, and ``line`` is the row's line
+exactly as ``detail`` renders it, escaped and clipped. A key appears once per output, for the
+first row that has it, and stays the same from run to run while the finding does:
+
+- an alert, a repository advisory, an open issue or a bot PR: its html_url.
+- a backlog item ``<repo>:backlog:<issue url>`` and label drift ``<repo>:drift:<issue url>``,
+  so an issue that is also open is keyed in each group it is listed in.
+- a failed main run ``<repo>:<workflow file>::<hash>`` of its conclusion, and a CI annotation
+  ``<repo>:<workflow file>:<jobs>:<hash>`` of its level, file, title and message. Never the run
+  or job URL, which changes every run.
+- a Renovate dashboard entry ``<repo>:renovate_dashboard:<hash>`` of its section and text.
+- a tool that was not readable: ``<repo>:<tool>``.
+
+A hash is the first 12 hex digits of a SHA-256 of normalised text. CI text loses temp paths,
+UUIDs, SHAs, runner names, durations and every other number, run ids and timestamps included,
+but keeps an advisory id such as CVE-2026-1234 whole. Dashboard text loses temp paths, UUIDs
+and SHAs only, so its version numbers still tell two updates apart.
 
 REPORT FILE. ``--report-file PATH`` (setting ``report_file``, empty for none) also writes the
 full text report to PATH, exactly what ``--format text`` prints, whatever ``--format`` sends to
