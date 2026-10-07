@@ -286,7 +286,6 @@ SETTINGS = {
     "bot_logins": ["renovate[bot]", "dependabot[bot]"],
     "format": "text",
     "workers": 4,
-    "run_window": 50,
     "gh_timeout_seconds": 120,
     "backlog": {
         "label": "backlog",
@@ -298,7 +297,7 @@ SETTINGS = {
 }
 
 
-def _options(argv: list[str], **overrides) -> "cli.Options":
+def _options(argv: list[str], **overrides) -> cli.Options:
     settings = {**SETTINGS, **overrides}
     return cli.effective(settings, cli.build_parser().parse_args(argv))
 
@@ -346,7 +345,6 @@ def test_the_backlog_label_is_a_setting() -> None:
         ([], {"backlog": {**SETTINGS["backlog"], "label": ""}}, "backlog.label"),
         ([], {"backlog": {**SETTINGS["backlog"], "statuses": []}}, "backlog.statuses"),
         ([], {"backlog": {**SETTINGS["backlog"], "project_limit": 0}}, "backlog.project_limit"),
-        ([], {"run_window": 101}, "at most 100"),
         ([], {"gh_timeout_seconds": 0}, "gh_timeout_seconds"),
     ],
 )
@@ -364,7 +362,6 @@ CONFIG = sweep.SweepConfig(
     tools=frozenset(sweep.TOOLS),
     bot_logins=frozenset({"renovate[bot]", "dependabot[bot]"}),
     workers=2,
-    run_window=50,
     org="example-org",
 )
 HEAD = "a" * 40
@@ -503,14 +500,23 @@ def _answers(overrides: dict | None = None):
             {"number": 20, "title": "chore(deps): bump", "user": "renovate[bot]",
              "is_pr": True},
         ],
-        "repos/example-org/dfe-engine/actions/runs": [
-            {"id": 100, "name": "CI", "workflow_id": 1, "conclusion": "failure",
-             "head_sha": HEAD, "created_at": "2026-10-06T01:00:00Z", "check_suite_id": 500,
-             "html_url": "https://example.com/r/100"},
-            {"id": 90, "name": "CI", "workflow_id": 1, "conclusion": "success",
-             "head_sha": "b" * 40, "created_at": "2026-10-05T01:00:00Z", "check_suite_id": 400},
-            {"id": 101, "name": "Release", "workflow_id": 2, "conclusion": "success",
-             "head_sha": HEAD, "created_at": "2026-10-06T02:00:00Z", "check_suite_id": 501},
+        # The repo-wide run list answers inconsistently, so no read may reach it.
+        "repos/example-org/dfe-engine/actions/runs": AssertionError("repo-wide run list read"),
+        # Workflow 3 is disabled and has no answer, so reading its runs fails the test.
+        "repos/example-org/dfe-engine/actions/workflows": [
+            {"id": 1, "path": ".github/workflows/ci.yml", "state": "active"},
+            {"id": 2, "path": ".github/workflows/release.yml", "state": "active"},
+            {"id": 3, "path": ".github/workflows/old.yml", "state": "disabled_manually"},
+        ],
+        "repos/example-org/dfe-engine/actions/workflows/1/runs": [
+            {"id": 100, "name": "CI", "path": ".github/workflows/ci.yml", "workflow_id": 1,
+             "conclusion": "failure", "head_sha": HEAD, "created_at": "2026-10-06T01:00:00Z",
+             "check_suite_id": 500, "html_url": "https://example.com/r/100"},
+        ],
+        "repos/example-org/dfe-engine/actions/workflows/2/runs": [
+            {"id": 101, "name": "Release", "path": ".github/workflows/release.yml",
+             "workflow_id": 2, "conclusion": "success", "head_sha": HEAD,
+             "created_at": "2026-10-06T02:00:00Z", "check_suite_id": 501},
         ],
         "repos/example-org/dfe-engine/check-suites/500/check-runs": [
             {"id": 7000, "name": "test", "html_url": "https://example.com/j/7000",
@@ -650,13 +656,66 @@ def test_annotations_are_one_finding_per_distinct_warning() -> None:
     assert annotations[0].extra["jobs"] == ["test", "lint"]
 
 
-def test_only_each_workflows_latest_run_counts() -> None:
-    runs = sweep.latest_runs([
-        {"id": 1, "workflow_id": 9, "conclusion": "failure", "created_at": "2026-10-01"},
-        {"id": 2, "workflow_id": 9, "conclusion": "success", "created_at": "2026-10-02"},
-    ])
-    assert [run["id"] for run in runs] == [2]
-    assert sweep.run_findings("r", runs, "") == []
+def test_each_active_workflow_is_read_once_on_the_default_branch() -> None:
+    api, calls = _answers()
+    _collect(api)
+    listed = [call for call in calls if call[0].startswith(
+        "repos/example-org/dfe-engine/actions/workflows?")]
+    assert [paginate for _, _, paginate in listed] == [True]
+    runs = [endpoint for endpoint, _, _ in calls if endpoint.endswith("&per_page=1")]
+    assert runs == [
+        f"repos/example-org/dfe-engine/actions/workflows/{n}/runs"
+        "?branch=main&status=completed&per_page=1"
+        for n in (1, 2)
+    ]
+
+
+def test_a_faked_inconsistent_repo_wide_list_cannot_change_the_result() -> None:
+    stale = [{"id": 90, "name": "CI", "workflow_id": 1, "conclusion": "failure",
+              "head_sha": "b" * 40, "created_at": "2026-09-23T02:33:04Z"}]
+    fresh = [{"id": 110, "name": "CI", "workflow_id": 1, "conclusion": "success",
+              "head_sha": HEAD, "created_at": "2026-10-07T01:00:00Z"}]
+    results = []
+    for answer in (stale, fresh, []):
+        api, calls = _answers({"repos/example-org/dfe-engine/actions/runs": answer})
+        results.append(_collect(api))
+        assert not any("/actions/runs" in endpoint for endpoint, _, _ in calls)
+    assert results[0] == results[1] == results[2]
+    assert [f.id for f in _by_tool(results[0])["ci_runs"]] == ["100"]
+
+
+def test_each_workflows_own_newest_run_wins() -> None:
+    newest = {"id": 120, "name": "CI", "path": ".github/workflows/ci.yml", "workflow_id": 1,
+              "conclusion": "success", "head_sha": HEAD, "created_at": "2026-10-07T03:00:00Z"}
+    older = {**newest, "id": 100, "conclusion": "failure", "created_at": "2026-10-06T01:00:00Z"}
+    for answer in ([newest], [newest, older]):
+        api, _ = _answers({"repos/example-org/dfe-engine/actions/workflows/1/runs": answer})
+        assert "ci_runs" not in _by_tool(_collect(api))
+    api, _ = _answers({"repos/example-org/dfe-engine/actions/workflows/1/runs": [older]})
+    assert [f.id for f in _by_tool(_collect(api))["ci_runs"]] == ["100"]
+
+
+def test_a_workflow_whose_runs_cannot_be_read_is_named_and_the_rest_still_count() -> None:
+    api, _ = _answers({
+        "repos/example-org/dfe-engine/actions/workflows/2/runs": sweep.GhError(
+            "x", None, "gh timed out after 120s"),
+    })
+    result = _collect(api)
+    assert [(u.tool, u.reason) for u in result.unreadable] == [
+        ("ci_runs", ".github/workflows/release.yml: gh timed out after 120s"),
+        ("ci_annotations", ".github/workflows/release.yml: gh timed out after 120s"),
+    ]
+    assert [f.id for f in _by_tool(result)["ci_runs"]] == ["100"]
+
+
+def test_a_refused_workflow_list_is_unreadable_and_never_zero() -> None:
+    api, _ = _answers({
+        "repos/example-org/dfe-engine/actions/workflows": sweep.GhError(
+            "x", 403, "Resource not accessible by integration (HTTP 403)"),
+    })
+    result = _collect(api)
+    assert [u.tool for u in result.unreadable] == ["ci_runs", "ci_annotations"]
+    assert not {"ci_runs", "ci_annotations"} & set(_by_tool(result))
 
 
 def test_a_failed_run_behind_the_head_says_so() -> None:
@@ -1337,7 +1396,10 @@ def _ci_answers(run: int, cache_key: str, took: str) -> dict:
     """Main CI as one run shows it: its ids from ``run``, its annotation's volatile parts given."""
     suite, job = run + 1, run + 2
     return {
-        "repos/example-org/dfe-engine/actions/runs": [
+        "repos/example-org/dfe-engine/actions/workflows": [
+            {"id": 1, "path": ".github/workflows/ci.yml", "state": "active"},
+        ],
+        "repos/example-org/dfe-engine/actions/workflows/1/runs": [
             {"id": run, "name": f"CI #{run}", "path": ".github/workflows/ci.yml",
              "workflow_id": 1, "conclusion": "failure", "head_sha": HEAD,
              "created_at": "2026-10-06T01:00:00Z", "check_suite_id": suite,
@@ -1559,13 +1621,6 @@ def test_a_hung_gh_is_reported_unreadable_not_waited_on(tmp_path: Path, monkeypa
     assert [(u.tool, u.reason) for u in result.unreadable] == [
         ("dependabot", "repo not readable: gh timed out after 0.3s")
     ]
-
-
-def test_run_window_never_asks_for_more_than_one_page() -> None:
-    api, calls = _answers()
-    _collect(api, config=dataclasses.replace(CONFIG, run_window=500))
-    endpoint = next(call[0] for call in calls if "/actions/runs" in call[0])
-    assert "per_page=100" in endpoint
 
 
 # ---------------------------------------------------------------------------

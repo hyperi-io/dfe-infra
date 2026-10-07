@@ -67,6 +67,3 @@ sweep:
   workers: 8
   # Seconds one gh call may take; a call that runs over is reported unreadable.
   gh_timeout_seconds: 120
-  # Recent completed runs searched for each workflow's latest on the default branch; GitHub
-  # serves at most 100 a page.
-  run_window: 100

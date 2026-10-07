@@ -45,8 +45,10 @@ ranked by severity: open Dependabot, code-scanning and secret-scanning alerts (t
 is never requested), repository security advisories in triage or draft, open bot PRs, the
 Renovate Dependency Dashboard's errored, rate-limited, pending and problem entries, and each
 workflow's latest completed run on the default branch with its warning and failure annotations.
-A tool GitHub refuses (403, 404), or a gh call that runs past ``gh_timeout_seconds``, is listed
-as not readable for that repo, never as zero.
+The workflows are listed once per repo and each active one's newest run is read from that
+workflow's own runs list, one call each; a disabled workflow is skipped. A tool GitHub refuses
+(403, 404), or a gh call that runs past ``gh_timeout_seconds``, is listed as not readable for
+that repo, never as zero; a workflow whose runs cannot be read is named in the reason.
 
 WORK ITEMS, listed and summarised per member but never severity-ranked: every open issue, and
 every open item on the repo's backlog project. The backlog follows hyperi-ai's ``pm backlog``
@@ -229,16 +231,16 @@ def _names(value: object, key: str) -> tuple[str, ...]:
     return tuple(sweep.split_names(value))
 
 
-def _count(value: object, key: str, maximum: int | None = None) -> int:
-    """A whole-number setting of at least 1, and at most ``maximum`` when one is given."""
-    wanted = "a whole number of at least 1" + (f" and at most {maximum}" if maximum else "")
+def _count(value: object, key: str) -> int:
+    """A whole-number setting of at least 1."""
+    wanted = "a whole number of at least 1"
     if isinstance(value, bool) or not isinstance(value, int | str):
         raise _fail(key, value, wanted)
     try:
         number = int(value)
     except ValueError as exc:
         raise _fail(key, value, wanted) from exc
-    if number < 1 or (maximum is not None and number > maximum):
+    if number < 1:
         raise _fail(key, value, wanted)
     return number
 
@@ -312,7 +314,6 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
         tools=_tools(settings.get("tools"), args.tools),
         bot_logins=frozenset(bots),
         workers=_count(pick(args.workers, "workers"), "workers"),
-        run_window=_count(settings.get("run_window"), "run_window", sweep.GH_PAGE_MAX),
         org=org,
         backlog=sweep.BacklogModel(
             label=_text(backlog, "label", "backlog.label"),

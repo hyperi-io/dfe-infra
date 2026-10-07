@@ -9,7 +9,7 @@
 # lines here exceed 100 against 84 that exceed 88.
 
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 # These CLIs carry no .py suffix, so without this ruff never reads them and an
 # undefined name reaches a live run.
