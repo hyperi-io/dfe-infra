@@ -2092,3 +2092,442 @@ apps:
         note: >-
           The engine, hunt runner and keda shim containers. The content and auth
           seed init containers carry their own block in apps/dfe-engine/values.yaml.
+
+  dfe-fetcher:
+    chart: helm/charts/dfe-fetcher
+    keys:
+      project:
+        dropped: >-
+          dfe-extras renders nothing for the fetcher, and the thin chart's name is
+          fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>: dfe-fetcher-<instance> for a
+          per-config instance, which also names the cursor claim
+          dfe-fetcher-<instance>-cursor as 2.2.0 did.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      config:
+        to: config
+        note: >-
+          The engine's config blob, written to /etc/dfe/fetcher.yaml as before, with
+          cursor.directory defaulted to the cursor path. The bus broker list reaches
+          the app as DFE_FETCHER_KAFKA_BROKERS rather than kafka.brokers in the
+          file. On the direct profiles an overlay's kafka block is no longer
+          stripped, and the gRPC output the engine compiles there reads none of it.
+      extraEnv:
+        to: extraEnv
+        note: >-
+          A name the integration values also set takes the overlay's value now,
+          where 2.2.0 let the chart's own value win.
+      otelServiceName:
+        to: otel.serviceName
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras fails the render where it runs another transport than the
+          profile's, whose apps/dfe-fetcher/profile-*.yaml carry the transport's
+          env and secrets.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+        note: >-
+          DFE_FETCHER_KAFKA_BROKERS on the bus profiles, through tpl, and empty where
+          the overlay's config names its own kafka.brokers.
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL references: set secrets.kafka.enabled to false instead.
+      kafka.securityProtocol:
+        to: kafka.securityProtocol
+        note: >-
+          DFE_FETCHER_KAFKA_SECURITY_PROTOCOL on the bus profiles for an SSL
+          listener, through tpl. Empty otherwise, which the app reads as unset.
+      credentials.secretName:
+        to: credentials.secretName
+        note: >-
+          The optional envFrom Secret in apps/dfe-fetcher/values.yaml, through tpl.
+          Empty no longer drops it: an overlay restates extraEnvFrom without it.
+      persistence.enabled:
+        to: writablePaths.cursor.persistence.enabled
+        note: >-
+          The contract's writable path `cursor`. Its claim is <fullname>-cursor, the
+          name 2.2.0 gave it, so a migrated overlay keeps its cursors.
+      persistence.size:
+        to: writablePaths.cursor.persistence.size
+      persistence.storageClass:
+        to: writablePaths.cursor.persistence.storageClass
+      dlq.topic:
+        to: dlq.topic
+        note: >-
+          DFE_FETCHER_DLQ_TOPIC on the bus profiles, through tpl, empty for an
+          instance whose config.output.type is grpc.
+      dlq.mode:
+        to: dlq.mode
+        note: DFE_FETCHER_DLQ_MODE, as dlq.topic.
+      waitForEngine.enabled:
+        to: initContainers
+        note: The wait-for-engine block in apps/dfe-fetcher/values.yaml. Off is an initContainers list without it.
+      waitForEngine.service:
+        to: waitForEngine.service
+      waitForEngine.namespace:
+        to: waitForEngine.namespace
+      waitForEngine.port:
+        to: waitForEngine.port
+      waitForEngine.timeoutSeconds:
+        to: waitForEngine.timeoutSeconds
+      waitForEngine.intervalSeconds:
+        to: waitForEngine.intervalSeconds
+      waitForEngine.resources:
+        to: initContainers
+        note: The init container sits whole in apps/dfe-fetcher/values.yaml, so an overlay restates the list.
+      otel.endpoint:
+        to: otel.endpoint
+        note: Exported as written with otel.protocol grpc, so it carries its scheme.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      versionCheck:
+        to: versionCheck
+        note: DFE_FETCHER_VERSION_CHECK__*, the names 2.2.0 wrote.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name. scalo-service names the image after the
+          contract's app_name, and image.repository replaces it whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        dropped: >-
+          2.2.0 read it only to decide the disruption budget and ran one pod
+          whatever it said. apps/dfe-fetcher/values.yaml sets it to 1 over the
+          profile's value. An overlay that sets it now runs that many pods, each
+          polling the same source.
+      resources:
+        to: resources
+      terminationGracePeriodSeconds:
+        to: terminationGracePeriodSeconds
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: The app container only. The wait-for-engine init container's sits in its block.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      serviceAccount.mountToken:
+        to: serviceAccount.mountToken
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      keda.enabled:
+        to: keda.enabled
+        note: >-
+          The contract declares no autoscaler, so KEDA runs only where an overlay
+          turns it on, as in 2.2.0, for a source whose fetch has competing consumers.
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+        note: apps/dfe-fetcher/values.yaml sets 2.2.0's 70, where scalo-service defaults to 80.
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure.enabled:
+        to: keda.extraTriggers
+        note: >-
+          No layer turned the fetcher's pressure trigger on in 2.2.0, and
+          apps/dfe-fetcher carries none. An overlay that wants it adds the
+          pressure-trigger fragment under keda.extraTriggers.
+      keda.pressure.service:
+        to: keda.pressure.service
+      keda.pressure.shimAddress:
+        to: keda.pressure.shimAddress
+      keda.pressure.targetValue:
+        to: keda.pressure.targetValue
+
+  culvert:
+    chart: helm/edge/culvert
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names the tunnel NetworkPolicy and dfe-culvert-env from it. The
+          thin chart's own name is fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>. apps/culvert/values.yaml sets
+          dfe-culvert, so only a renamed instance sets it.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      domain:
+        to: domain
+        note: dfe-extras derives CULVERT_SERVER_CN from it, as 2.2.0 did.
+      hostnames.vpn:
+        to: hostnames.vpn
+      global.registry:
+        dropped: image.repository names culvert's image whole, as it did in 2.2.0.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, and layer2-edge.yaml hands it none.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name. image.repository in apps/culvert/values.yaml
+          names culvert's image whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicas:
+        to: replicas
+        note: >-
+          Read only by dfe-extras' refusal of a second replica. The contract marks
+          culvert a singleton, so the thin chart runs one pod whatever it says.
+      listeners:
+        to: listeners
+        note: >-
+          dfe-extras reads it for dfe-culvert-env, the tunnel NetworkPolicy and the
+          refusals, and apps/culvert/values.yaml for the public Services, with
+          defaultListeners where no layer sets it. The pod declares the contract's
+          wireguard and openvpn-udp ports, so a further listener also goes in
+          extraPorts to be declared on the pod and the in-cluster Service.
+      vpn.clientCIDR:
+        to: vpn.clientCIDR
+      vpn.serverCN:
+        to: vpn.serverCN
+      vpn.fullTunnel:
+        to: vpn.fullTunnel
+      vpn.dns:
+        to: vpn.dns
+      vpn.httpsTunnel:
+        to: vpn.httpsTunnel
+      vpn.oidc.enabled:
+        to: vpn.oidc.enabled
+      vpn.oidc.issuer:
+        to: vpn.oidc.issuer
+      vpn.oidc.clientId:
+        to: vpn.oidc.clientId
+      vpn.oidc.validateGroups:
+        to: vpn.oidc.validateGroups
+      vpn.oidc.existingSecret:
+        to: vpn.oidc.existingSecret
+        note: >-
+          secrets.oauth2.existingSecret takes it through tpl, for the contract's
+          optional oauth2 group, where 2.2.0 loaded the Secret whole through envFrom.
+      oidc.issuer:
+        to: oidc.issuer
+        note: Read only by dfe-extras' refusal of the retired top-level OIDC fields.
+      oidc.clientId:
+        to: oidc.clientId
+      oidc.existingSecret:
+        to: oidc.existingSecret
+      oidc.validateGroups:
+        to: oidc.validateGroups
+      tuning:
+        to: config
+        note: culvert's profile file, /etc/vpn/profiles/culvert.yaml, is the thin chart's config file.
+      routes.destinations:
+        to: routes.destinations
+      peers.classes.appliance.isolation:
+        to: peers.classes.appliance.isolation
+      peers.classes.admin.enabled:
+        to: peers.classes.admin.enabled
+      peers.classes.admin.adminCIDRs:
+        to: peers.classes.admin.adminCIDRs
+      peers.classes.admin.peerCIDR:
+        to: peers.classes.admin.peerCIDR
+      peers.classes.admin.reach:
+        to: peers.classes.admin.reach
+      networkModel.serviceCIDR:
+        to: networkModel.serviceCIDR
+      ingest.podLabel:
+        to: ingest.podLabel
+      ingest.ports:
+        to: ingest.ports
+      exposure.serviceType:
+        to: exposure.serviceType
+        note: >-
+          The public Services in apps/culvert/values.yaml read every exposure key
+          through tpl, nodePorts from the listeners included, which scalo-service's
+          publicService cannot pin.
+      exposure.loadBalancerIP:
+        to: exposure.loadBalancerIP
+      exposure.loadBalancerClass:
+        to: exposure.loadBalancerClass
+      exposure.annotations:
+        to: exposure.annotations
+      exposure.loadBalancerSourceRanges:
+        to: exposure.loadBalancerSourceRanges
+      exposure.externalTrafficPolicy:
+        to: exposure.externalTrafficPolicy
+        note: Unset is Local, the culvert chart's default.
+      networkPolicy.enabled:
+        to: networkPolicy.enabled
+      networkPolicy.otelNamespace:
+        to: networkPolicy.otelNamespace
+      networkPolicy.otelPort:
+        to: networkPolicy.otelPort
+      networkPolicy.extraEgress:
+        to: networkPolicy.extraEgress
+      pki.mode:
+        to: pki.mode
+      pki.existingSecret:
+        to: pki.existingSecret
+        note: >-
+          dfe-extras sets CULVERT_SECRETS_* from it, and the optional pki-external
+          volume in apps/culvert/values.yaml mounts it.
+      pki.mountPath:
+        to: pki.mountPath
+      persistence.enabled:
+        to: writablePaths.pki.persistence.enabled
+        note: >-
+          The contract's writable path `pki`, persistent by default, off in
+          apps/culvert/local.yaml and rancher.yaml. Its claim is dfe-culvert-pki,
+          the name 2.2.0 gave it, so a migrated overlay keeps its CA.
+      persistence.size:
+        to: writablePaths.pki.persistence.size
+      persistence.storageClass:
+        to: writablePaths.pki.persistence.storageClass
+      persistence.accessMode:
+        to: writablePaths.pki.persistence.accessModes
+        note: A list now, of the one access mode.
+      ipForward.enabled:
+        to: initContainers
+        note: The enable-ip-forward block in apps/culvert/values.yaml. Off is an initContainers list without it.
+      tunDevice.enabled:
+        to: extraVolumes
+        note: >-
+          The tun volume and its mount in apps/culvert/values.yaml. Off is
+          extraVolumes and extraVolumeMounts restated without them.
+      tunDevice.hostPath:
+        to: tunDevice.hostPath
+      otel.endpoint:
+        to: otel.endpoint
+        note: CULVERT_OTEL_ENDPOINT and OTEL_EXPORTER_OTLP_ENDPOINT, as written, so it carries its scheme.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      resources:
+        to: resources
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+        note: layer2-edge.yaml pins the AWS tunnel zone here, and moves it to nodeSelector with the appset.
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+        note: The contract runs culvert as uid 0, the value 2.2.0 set here.
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: >-
+          The contract adds NET_ADMIN, SETPCAP, SETGID and SETUID and leaves the root
+          filesystem writable, as 2.2.0 set here. A value merges over it.

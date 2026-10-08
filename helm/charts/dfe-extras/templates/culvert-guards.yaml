@@ -1,0 +1,66 @@
+{{/*
+dfe-extras.culvertGuards -- culvert's render-time refusals, as the culvert chart
+made them: a second replica, OIDC with no callback listener or no Secret, the
+retired top-level OIDC fields, external PKI with no Secret, the admin peer beside
+appliance isolation switched off or with nothing to reach, an admin range that
+names a peer source or the whole internet, no exposed listener, and an allow-list
+on a Service type that does not filter. This file emits no object.
+*/}}
+{{- define "dfe-extras.culvertGuards" -}}
+{{- if gt (int (.Values.replicas | default 1)) 1 }}
+{{- fail (printf "culvert: replicas is %d. WireGuard mints its server key in the pod, so a second replica issues client configs the first rejects and allocates the same tunnel addresses. Hold at one replica." (int .Values.replicas)) }}
+{{- end }}
+{{- if and .Values.vpn.oidc.enabled (not (fromYaml (include "dfe-extras.culvert.listener" (dict "ctx" . "name" "oauth2-udp")))) }}
+{{- fail "culvert: vpn.oidc.enabled with no listener named oauth2-udp. The client completes the login against the server's callback port, so add { name: oauth2-udp, port: 9000, protocol: TCP, exposed: true } to listeners." }}
+{{- end }}
+{{- $oldOidc := .Values.oidc | default dict }}
+{{- if or $oldOidc.issuer $oldOidc.clientId $oldOidc.existingSecret $oldOidc.validateGroups }}
+{{- fail "culvert: oidc.issuer/oidc.clientId/oidc.existingSecret/oidc.validateGroups is set, and this chart no longer reads it -- move the tunnel's own OIDC client-auth fields to vpn.oidc.issuer/vpn.oidc.clientId (and vpn.oidc.enabled/vpn.oidc.existingSecret/vpn.oidc.validateGroups). oidc.enabled and oidc.providers belong to envoy-gateway-config's edge OIDC, not this chart." }}
+{{- end }}
+{{- if and .Values.vpn.oidc.enabled (not .Values.vpn.oidc.existingSecret) }}
+{{- fail "culvert: vpn.oidc.enabled with no vpn.oidc.existingSecret. Name the Secret carrying CULVERT_OAUTH2_CLIENT_SECRET and CULVERT_OAUTH2_HTTP_SECRET, or set vpn.oidc.enabled: false." }}
+{{- end }}
+{{- if and (eq .Values.pki.mode "external") (not .Values.pki.existingSecret) }}
+{{- fail "culvert: pki.mode is external with no pki.existingSecret. Name the Secret carrying ca.crt, server.crt and server.key, or set pki.mode: local." }}
+{{- end }}
+{{- $admin := .Values.peers.classes.admin }}
+{{- if and $admin.enabled (not .Values.peers.classes.appliance.isolation) }}
+{{- fail "culvert: peers.classes.admin.enabled is true with peers.classes.appliance.isolation false. That reaches an appliance by opening every appliance to every other one -- keep isolation true, or turn the admin class off." }}
+{{- end }}
+{{- if and $admin.enabled (not $admin.reach) }}
+{{- fail "culvert: peers.classes.admin.enabled is true with an empty peers.classes.admin.reach. Name the appliance ports the admin peer may initiate to (22 and 443 by default), or turn the admin class off." }}
+{{- end }}
+{{- if $admin.peerCIDR }}
+{{- $adminParts := splitList "/" $admin.peerCIDR }}
+{{- $adminOctets := splitList "." (index $adminParts 0) }}
+{{- if or (ne (len $adminParts) 2) (ne (len $adminOctets) 4) }}
+{{- fail (printf "culvert: peers.classes.admin.peerCIDR %q is not an IPv4 CIDR." $admin.peerCIDR) }}
+{{- end }}
+{{- if ne (printf "%s.%s" (index $adminOctets 0) (index $adminOctets 1)) (include "dfe-extras.culvert.clientPrefix" .) }}
+{{- fail (printf "culvert: peers.classes.admin.peerCIDR %q sits outside vpn.clientCIDR %q, so no peer is ever issued an address in it." $admin.peerCIDR .Values.vpn.clientCIDR) }}
+{{- end }}
+{{- end }}
+{{- range $cidr := $admin.adminCIDRs }}
+{{- $parts := splitList "/" $cidr }}
+{{- $octets := splitList "." (index $parts 0) }}
+{{- if or (ne (len $parts) 2) (ne (len $octets) 4) }}
+{{- fail (printf "culvert: peers.classes.admin.adminCIDRs entry %q is not an IPv4 CIDR." $cidr) }}
+{{- end }}
+{{- if eq $cidr "0.0.0.0/0" }}
+{{- fail "culvert: peers.classes.admin.adminCIDRs carries 0.0.0.0/0, which reaches every appliance from anywhere that can route the client range at this pod. Name the subnet the admin machine sits in." }}
+{{- end }}
+{{- if eq (printf "%s.%s" (index $octets 0) (index $octets 1)) (include "dfe-extras.culvert.clientPrefix" $) }}
+{{- fail (printf "culvert: peers.classes.admin.adminCIDRs entry %q sits inside vpn.clientCIDR %q, so it names a peer source -- culvert drops peer-to-peer traffic before the admin exception, and hyperi-io/culvert#40 is what would carry it." $cidr $.Values.vpn.clientCIDR) }}
+{{- end }}
+{{- end }}
+{{- $exposed := list }}
+{{- range .Values.listeners }}{{ if .exposed }}{{ $exposed = append $exposed .name }}{{ end }}{{ end }}
+{{- if not $exposed }}
+{{- fail "culvert: no listener is exposed, so no client could ever reach the tunnel. Mark at least one of wireguard / openvpn-udp exposed: true." }}
+{{- end }}
+{{- $pub := .Values.exposure | default dict }}
+{{- if and (ne ($pub.serviceType | default "LoadBalancer") "LoadBalancer") $pub.loadBalancerSourceRanges }}
+{{- fail (printf "culvert: exposure.loadBalancerSourceRanges is set with exposure.serviceType %q. Kubernetes only filters on that field for a LoadBalancer, so it would do nothing here -- put the allow-list on the node security group, or set serviceType: LoadBalancer." ($pub.serviceType | default "LoadBalancer")) }}
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "culvert") "body" "dfe-extras.culvertGuards") -}}

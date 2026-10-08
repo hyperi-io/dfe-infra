@@ -185,11 +185,10 @@ ingest:
   # Selector label of the receiver pods -- dfe-common.selectorLabels on that
   # chart, i.e. {project}-{component}.
   podLabel: dfe-receiver
-  # The receiver ports a tunnelled client is allowed to reach: its ingest
-  # listeners. NOT the Push door on 6000, which is east-west only.
+  # The receiver ports a tunnelled client is allowed to reach: its http ingest
+  # listener. NOT the Push door on 6000, which is east-west only.
   ports:
     - { port: 8080, protocol: TCP }
-    - { port: 8443, protocol: TCP }
 
 # Public exposure. A VPN nobody can dial is pointless, so the chart's OWN
 # default is a LoadBalancer -- the dial is WHO may reach it, not whether. A

@@ -95,7 +95,7 @@ which is why both are there.
 flowchart LR
     A[appliance] -->|WireGuard or OpenVPN| LB[public LoadBalancer<br/>loadBalancerSourceRanges]
     LB --> C[culvert pod<br/>iptables FORWARD chain]
-    C -->|8080, 8443| R[dfe-receiver]
+    C -->|8080| R[dfe-receiver]
     C -.->|denied| E[dfe-engine]
     C -.->|denied| CH[ClickHouse]
 ```

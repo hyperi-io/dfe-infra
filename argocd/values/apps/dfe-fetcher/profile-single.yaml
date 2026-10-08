@@ -1,0 +1,12 @@
+# The bus: the fetcher's own flat env contract (DFE_FETCHER_*), empty where the
+# 2.2.0 chart left a variable out, which the app reads as unset.
+extraEnv:
+  # The deployment's broker, unless the overlay's config names its own.
+  DFE_FETCHER_KAFKA_BROKERS: '{{ if not (dig "kafka" "brokers" "" (.Values.config | default dict)) }}{{ .Values.kafka.bootstrapServers }}{{ end }}'
+  # A TLS listener only: the app sets kafka.tls from this in both directions.
+  DFE_FETCHER_KAFKA_SECURITY_PROTOCOL: '{{ if contains "SSL" (upper (.Values.kafka.securityProtocol | default "")) }}{{ .Values.kafka.securityProtocol }}{{ end }}'
+  # The DLQ follows the instance's compiled output: an instance the engine sends
+  # straight to the next stage over gRPC has no kafka output to dead-letter into.
+  DFE_FETCHER_DLQ_TOPIC: '{{ if ne (toString (dig "output" "type" "kafka" (.Values.config | default dict))) "grpc" }}{{ .Values.dlq.topic }}{{ end }}'
+  DFE_FETCHER_DLQ_MODE: '{{ if ne (toString (dig "output" "type" "kafka" (.Values.config | default dict))) "grpc" }}{{ .Values.dlq.mode }}{{ end }}'
+  DFE_FETCHER_DLQ_ENABLED: '{{ if eq (toString (dig "output" "type" "kafka" (.Values.config | default dict))) "grpc" }}false{{ end }}'

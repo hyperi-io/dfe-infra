@@ -102,7 +102,7 @@ DFE_ONLY_TEMPLATES: dict[str, tuple[str, ...]] = {
 }
 
 # The components whose env dfe-extras carries in a <fullname>-env ConfigMap.
-ENV_CONFIGMAP = ("dfe-engine", "dfe-hyperdx", "dfe-receiver", "dfe-loader")
+ENV_CONFIGMAP = ("dfe-engine", "dfe-hyperdx", "dfe-receiver", "dfe-loader", "culvert")
 
 # The env scalo-service sets on every thin chart's container itself.
 LIBRARY_ENV = ("OTEL_SERVICE_NAME", "POD_NAMESPACE")
@@ -657,6 +657,47 @@ SCENARIOS = [
         {"absent": [("NetworkPolicy", "dfe-culvert")]},
         id="culvert-policy-off",
     ),
+    pytest.param(
+        "culvert", "single", "aws",
+        {"pki": {"mode": "external", "existingSecret": "culvert-pki-example"}, "vpn": {"dns": ["192.0.2.53"]}},
+        {
+            "env": {
+                "CULVERT_PKI_MODE": "external",
+                "CULVERT_SECRETS_PROVIDER": "file",
+                "CULVERT_SECRETS_CA_CERT_PATH": "/etc/vpn/pki-external/ca.crt",
+                "CULVERT_DNS1": "192.0.2.53",
+            },
+            "unset": ["CULVERT_DNS2"],
+        },
+        id="culvert-external-pki",
+    ),
+    pytest.param(
+        "culvert", "scale", "local",
+        {
+            "listeners": [
+                *CULVERT_LISTENERS["listeners"],
+                {"name": "openvpn-tcp", "port": 1194, "protocol": "TCP", "exposed": True},
+                {"name": "oauth2-udp", "port": 9000, "protocol": "TCP", "exposed": True},
+            ],
+            "vpn": {
+                "oidc": {
+                    "enabled": True,
+                    "issuer": "https://idp.example.com",
+                    "clientId": "culvert",
+                    "existingSecret": "culvert-oidc-example",
+                }
+            },
+        },
+        {
+            "env": {
+                "CULVERT_TCP_ENABLED": "true",
+                "CULVERT_TCP_NETWORK": "100.64.1.0",
+                "CULVERT_OAUTH2_ENABLED": "true",
+                "CULVERT_OAUTH2_ISSUER": "https://idp.example.com",
+            },
+        },
+        id="culvert-oidc-and-tcp",
+    ),
 ]
 
 
@@ -671,7 +712,8 @@ def test_dfe_extras_follows_2_2_0_through_each_conditional(
         assert tuple(key) in pair.extras, f"the scenario renders no {key}"
     for key in expect.get("absent", []):
         assert tuple(key) not in pair.extras, f"the scenario still renders {key}"
-    env = pair.extras.get(("ConfigMap", f"{chart_name(service)}-env"), {}).get("data") or {}
+    fullname = pair.workload()["metadata"]["name"]
+    env = pair.extras.get(("ConfigMap", f"{fullname}-env"), {}).get("data") or {}
     for name, value in expect.get("env", {}).items():
         assert env.get(name) == value, f"{name} is {env.get(name)!r}"
     for name in expect.get("unset", []):
@@ -769,6 +811,38 @@ def test_a_culvert_on_the_receivers_listeners_is_refused(old: bool, extras: bool
     """local.yaml's list is the receiver's, so a culvert that does not restate its own has no tunnel."""
     with pytest.raises(RenderError, match="neither wireguard nor openvpn-udp"):
         render_pair("culvert", "slim", "local", old=old, extras=extras)
+
+
+@pytest.mark.parametrize(("old", "extras"), [(True, False), (False, True)], ids=["2.2.0", "dfe-extras"])
+@pytest.mark.parametrize(
+    ("overlay", "message"),
+    [
+        ({"replicas": 2}, "replicas is 2"),
+        ({"pki": {"mode": "external"}}, "pki.mode is external with no pki.existingSecret"),
+        ({"vpn": {"oidc": {"enabled": True, "existingSecret": "x"}}}, "no listener named oauth2-udp"),
+        ({"oidc": {"issuer": "https://idp.example.com"}}, "this chart no longer reads it"),
+        (
+            {"peers": {"classes": {"admin": {"enabled": True}, "appliance": {"isolation": False}}}},
+            "opening every appliance to every other one",
+        ),
+        (
+            {"peers": {"classes": {"admin": {"enabled": True, "adminCIDRs": ["0.0.0.0/0"]}}}},
+            "carries 0.0.0.0/0",
+        ),
+        (
+            {"peers": {"classes": {"admin": {"enabled": True, "adminCIDRs": ["100.64.9.0/24"]}}}},
+            "names a peer source",
+        ),
+        (
+            {"exposure": {"serviceType": "NodePort", "loadBalancerSourceRanges": ["198.51.100.0/24"]}},
+            "only filters on that field for a LoadBalancer",
+        ),
+    ],
+)
+def test_culverts_refusals_move_with_it(overlay: dict, message: str, old: bool, extras: bool) -> None:
+    """The thin chart cannot refuse a value, so dfe-extras makes each refusal the culvert chart made."""
+    with pytest.raises(RenderError, match=re.escape(message)):
+        render_pair("culvert", "scale", "aws", overlay=overlay, old=old, extras=extras)
 
 
 @pytest.mark.parametrize(

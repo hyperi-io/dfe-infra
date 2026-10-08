@@ -30,10 +30,7 @@ the per-IP rate limiter are the only other limits. A public deployment
 needs `loadBalancerSourceRanges`, or `server.auth.mode: bearer` with tokens
 in the engine's overlay, or both.
 
-The two listeners a fresh deploy exposes are `http` 8080 (the documented
-core data path -- `POST /ingest` -- plus OTLP/HTTP) and `grpc` 8443
-(OTLP/gRPC). `/livez` and `/readyz` share the http listener, so exposing
-ingest exposes both probe paths.
+A fresh deploy exposes one listener, `http` 8080, the documented core data path (`POST /ingest`). OTLP/gRPC 4317 and OTLP/HTTP 4318 are a separate pair that opens with `config.otlp.enabled`. `/livez` and `/readyz` share the http listener, so exposing ingest exposes both probe paths.
 
 Client-CIDR filtering is the LoadBalancer's job, not the NetworkPolicy's:
 under the default `externalTrafficPolicy` kube-proxy SNATs external traffic

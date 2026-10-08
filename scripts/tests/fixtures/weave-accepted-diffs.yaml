@@ -913,3 +913,175 @@ dfe-engine:
         no Kubernetes client, and DFE_DEPLOYMENT_TARGET names the target it would
         otherwise detect from the mount.
     - *scalo-prometheus-endpoint
+
+dfe-fetcher:
+  added:
+    Service/dfe-fetcher: >-
+      scalo-service fronts the metrics port, and the ingest and vector-grpc ports
+      where the instance's config turns them on. 2.2.0 rendered no Service, so a
+      Vector agent had no address to push to.
+  removed:
+    PodDisruptionBudget/dfe-fetcher: >-
+      2.2.0 budgeted on the profile's replicaCount of 2 while it pinned the
+      Deployment at one pod, so minAvailable 1 blocked every node drain on scale
+      and mesh. One pod takes no budget. With KEDA on at a floor of two the
+      library budgets it again.
+  diffs:
+    - *scalo-checksum-config
+    - *scalo-liveness-delay
+    - *scalo-liveness-period
+    - *scalo-readiness-delay
+    - *scalo-startup-probe
+    - *scalo-tmp-volume
+    - *scalo-prometheus-endpoint
+    - object: ConfigMap/dfe-fetcher*-config
+      path: data[fetcher.yaml]
+      old: "cursor:\n  directory: /var/lib/dfe-fetcher\nkafka:\n  brokers:\n  - *:9092\n"
+      new: "cursor:\n  directory: /var/lib/dfe-fetcher\n"
+      reason: >-
+        On the bus the broker list reaches the app as DFE_FETCHER_KAFKA_BROKERS,
+        where 2.2.0 wrote it into the file. The config file takes no template, so
+        it cannot carry kafka.bootstrapServers.
+    - object: Deployment/dfe-fetcher*
+      path: spec.template.spec.containers[main].env[DFE_FETCHER_KAFKA_BROKERS]
+      old: <absent>
+      reason: >-
+        The broker list from kafka.bootstrapServers, applied after the file is
+        read. Empty where the overlay's config names its own brokers, which the
+        app reads as unset, so the overlay still wins.
+    - object: Deployment/dfe-fetcher*
+      path: spec.template.spec.containers[main].env[DFE_FETCHER_KAFKA_SECURITY_PROTOCOL]
+      old: <absent>
+      new: ""
+      reason: >-
+        Empty on a plaintext listener, where 2.2.0 left it out. The app's flat env
+        reads an empty value as unset (scalo flat_env_string).
+    - object: Deployment/dfe-fetcher*
+      path: spec.template.spec.containers[main].env[DFE_FETCHER_DLQ_ENABLED]
+      old: <absent>
+      new: ""
+      reason: >-
+        Empty on the bus while the instance writes to kafka, where 2.2.0 left it
+        out. The app reads an empty value as unset.
+    - object: Deployment/dfe-fetcher*
+      path: spec.template.spec.volumes[cursor].emptyDir
+      old: {}
+      new: <absent>
+      reason: The cursor store is the contract's writable path `cursor` now, mounted as writable-cursor.
+    - object: Deployment/dfe-fetcher*
+      path: spec.template.spec.volumes[writable-cursor].emptyDir
+      old: <absent>
+      new: {}
+      reason: The same emptyDir under scalo-service's volume name, while the claim is off.
+    - object: Deployment/dfe-fetcher*
+      path: spec.template.spec.containers[main].volumeMounts[/var/lib/dfe-fetcher].name
+      old: cursor
+      new: writable-cursor
+      reason: The cursor store's mount, at the same path.
+
+culvert:
+  added:
+    ConfigMap/dfe-culvert-env: >-
+      dfe-extras carries the CULVERT_* env the culvert chart built under
+      conditionals, read through extraEnvFrom, so a variable stays absent where
+      2.2.0 left it out.
+  diffs:
+    - *scalo-checksum-config
+    - *scalo-prometheus-endpoint
+    - object: Deployment/dfe-culvert
+      path: metadata.annotations[reloader.stakater.com/auto]
+      old: <absent>
+      new: "true"
+      reason: >-
+        apps/_common.yaml turns Reloader on fleet-wide, so a rotated PKI or OIDC
+        Secret restarts the tunnel with it.
+    - object: Deployment/dfe-culvert
+      path: metadata.annotations[configmap.reloader.stakater.com/reload]
+      old: <absent>
+      new: dfe-culvert-env
+      reason: A changed dfe-culvert-env restarts the pod, as a changed 2.2.0 env did by rolling it.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].envFrom
+      old: <absent>
+      reason: The pod reads dfe-culvert-env, whose content the env leaves are held to.
+    - object: Deployment/dfe-culvert
+      path: spec.strategy.type
+      old: RollingUpdate
+      new: Recreate
+      reason: >-
+        The contract marks culvert a singleton, so its replacement starts only
+        once the old pod has stopped. 2.2.0 surged a second pod beside it where
+        the PKI claim was off, and two pods mint two WireGuard keys behind one
+        load balancer.
+    - object: Deployment/dfe-culvert
+      path: spec.strategy.rollingUpdate.*
+      new: <absent>
+      reason: Recreate takes no surge settings.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].env[CULVERT_OAUTH2_*_SECRET].valueFrom.secretKeyRef.*
+      old: <absent>
+      reason: >-
+        The contract's oauth2 group, optional: the tunnel's OIDC secrets come from
+        the Secret vpn.oidc.existingSecret names, else dfe-culvert-oauth2, where
+        2.2.0 loaded that Secret whole through envFrom with OIDC on. With OIDC off
+        culvert reads neither.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].env[OTEL_EXPORTER_OTLP_ENDPOINT]
+      old: <absent>
+      new: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
+      reason: >-
+        apps/_common.yaml's telemetry.mode endpoint, the one CULVERT_OTEL_ENDPOINT
+        carries. scalo-py's OTLP exporter reads it ahead of the endpoint culvert
+        hands it, so both name the same collector.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].env[OTEL_SERVICE_NAME]
+      old: <absent>
+      new: dfe-culvert
+      reason: scalo-service names every app's telemetry after its chart.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].env[CULVERT_OTEL_*]
+      old: <absent>
+      scenarios: [prometheus]
+      reason: >-
+        Prometheus mode renders CULVERT_OTEL_ENABLED false beside an empty
+        endpoint, where 2.2.0 left all three out. culvert exports nothing either way.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.enableServiceLinks
+      old: true
+      new: false
+      reason: >-
+        scalo-service turns off the per-Service env links Kubernetes injects, as
+        every other DFE pod already had. culvert reads only CULVERT_* names.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.volumes[pki-external].secret.*
+      old: <absent>
+      reason: >-
+        The external PKI Secret is mounted on every pod, optional, because a static
+        volume cannot follow pki.existingSecret. culvert reads it only where
+        dfe-culvert-env sets CULVERT_SECRETS_*, which is where 2.2.0 mounted it.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].volumeMounts[/etc/vpn/pki-external].*
+      old: <absent>
+      reason: That Secret's read-only mount, at pki.mountPath.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.volumes[writable-pki].emptyDir
+      old: <absent>
+      new: {}
+      reason: >-
+        The contract's writable path `pki`, an emptyDir where its claim is off
+        (local and rancher). 2.2.0 left culvert writing the container's own
+        filesystem there, which a restart loses the same way.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.volumes[pki].persistentVolumeClaim.claimName
+      old: dfe-culvert-pki
+      new: <absent>
+      reason: The PKI claim is the contract's writable path `pki` now, mounted as writable-pki.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.volumes[writable-pki].persistentVolumeClaim.claimName
+      old: <absent>
+      new: dfe-culvert-pki
+      reason: The same claim, under scalo-service's volume name.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].volumeMounts[/etc/vpn/pki].name
+      new: writable-pki
+      reason: The PKI directory's mount, at the same path.

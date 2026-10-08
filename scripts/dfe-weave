@@ -19,7 +19,9 @@ layers them, beside ``helm/charts/dfe-extras`` as the Application's second sourc
 (chartName the thin chart's name). Both take their value files, parameters,
 inline values, release name and namespace from the appset itself
 (``argocd/appsets/layer2-apps.yaml``), expanded by helm against the cluster facts
-given here, so an appset change moves both renders with it.
+given here, so an appset change moves both renders with it. ``--appset`` names
+another file. Of a file holding several ApplicationSets (``layer2-edge.yaml``),
+the one whose git-files generator matches the app's instance file is read.
 
 Subcommands:
   assemble     Build a thin chart from a contract and the library, by the
@@ -65,6 +67,7 @@ installed, validates the contract.
 import argparse
 import contextlib
 import copy
+import fnmatch
 import json
 import os
 import re
@@ -649,16 +652,51 @@ def expand_template(template: dict, params: dict, helm: str) -> dict:
     return _substitute(template, rendered)
 
 
-def load_appset(tree: Path, appset: Path) -> dict:
-    """The ApplicationSet at ``tree/appset``.
+def _git_file_patterns(generators: list[dict]) -> Iterator[tuple[list[str], list[str]]]:
+    """Each git-files generator's include and exclude globs, through nested generators."""
+    for generator in generators or []:
+        files = (generator.get("git") or {}).get("files") or []
+        if files:
+            yield (
+                [f["path"] for f in files if not f.get("exclude")],
+                [f["path"] for f in files if f.get("exclude")],
+            )
+        for nested in ("matrix", "merge"):
+            yield from _git_file_patterns((generator.get(nested) or {}).get("generators") or [])
+
+
+def generates(appset: dict, instance_path: str) -> bool:
+    """Whether one of the appset's git-files generators matches a deploy-repo file."""
+    return any(
+        any(fnmatch.fnmatchcase(instance_path, p) for p in include)
+        and not any(fnmatch.fnmatchcase(instance_path, p) for p in exclude)
+        for include, exclude in _git_file_patterns(appset["spec"].get("generators") or [])
+    )
+
+
+def load_appset(tree: Path, appset: Path, target: Target | None = None) -> dict:
+    """The ApplicationSet at ``tree/appset``, or of several there the one generating ``target``.
+
+    A file holding more than one ApplicationSet is resolved by the git-files
+    generator that matches the target's instance file.
 
     Raises:
-        WeaveError: The file is not a goTemplate ApplicationSet.
+        WeaveError: The file holds no goTemplate ApplicationSet, or not exactly
+            one of several generates the target.
     """
     path = tree / appset
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(doc, dict) or doc.get("kind") != "ApplicationSet":
+    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(d, dict)]
+    sets = [d for d in docs if d.get("kind") == "ApplicationSet"]
+    if not sets:
         raise WeaveError(f"{path} is not an ApplicationSet")
+    if len(sets) > 1:
+        if target is None:
+            raise WeaveError(f"{path} holds {len(sets)} ApplicationSets: name the target")
+        instance_path = f"values/{target.instance_file}"
+        sets = [d for d in sets if generates(d, instance_path)]
+        if len(sets) != 1:
+            raise WeaveError(f"{path}: {len(sets)} ApplicationSets generate {instance_path}")
+    doc = sets[0]
     if not doc["spec"].get("goTemplate"):
         raise WeaveError(f"{path} does not use goTemplate, which is the only engine read here")
     return doc
@@ -668,7 +706,7 @@ def application(
     tree: Path, appset: Path, target: Target, deploy_repo: Path | None, helm: str
 ) -> dict:
     """The Application the appset generates for ``target``, every field rendered."""
-    template = load_appset(tree, appset)["spec"]["template"]
+    template = load_appset(tree, appset, target)["spec"]["template"]
     return expand_template(template, generator_params(target, deploy_repo), helm)
 
 

@@ -12,8 +12,9 @@
     python3 -m pytest scripts/tests/test_weave_exposure.py -q
 
 A Service of type LoadBalancer or NodePort is reachable from outside the cluster.
-Only dfe-receiver takes untrusted input from there (docs/THREAT-MODEL.md), so its
-row of EXPOSURE is the only one that may hold any. A contract can mark a port
+Only dfe-receiver takes untrusted input from there (docs/THREAT-MODEL.md), beside
+culvert, the opt-in edge tunnel that delivers its clients to the receiver alone,
+so their rows of EXPOSURE are the only ones that may hold any. A contract can mark a port
 public (dfe-hyperdx marks 8080), and scalo-service renders its load balancer only
 where `publicService.enabled` is set, so this holds the integration values to it.
 
@@ -54,10 +55,27 @@ EXPOSURE: dict[str, dict[str, dict]] = {
     "dfe-transform-vrl": {"local": {}, "aws": {}},
     "dfe-transform-vector": {"local": {}, "aws": {}},
     "dfe-transform-elastic": {"local": {}, "aws": {}},
+    "dfe-fetcher": {"local": {}, "aws": {}},
+    # The tunnel door: MetalLB's load balancer on-prem, a NodePort behind the
+    # deployer's own address on aws (edge-aws.yaml).
+    "culvert": {
+        "local": {
+            "Service/dfe-culvert-public-udp": {
+                "type": "LoadBalancer",
+                "ports": ["1194/UDP", "51820/UDP"],
+            }
+        },
+        "aws": {
+            "Service/dfe-culvert-public-udp": {
+                "type": "NodePort",
+                "ports": ["1194/UDP", "51820/UDP"],
+            }
+        },
+    },
     # Reachable by operators, not by the public (docs/THREAT-MODEL.md).
     "dfe-engine": {"local": {}, "aws": {}},
 }
-INTERNET_FACING = {"dfe-receiver"}
+INTERNET_FACING = {"dfe-receiver", "culvert"}
 
 # Every cloud values file under argocd/values; local-dfe is the one that leaves the
 # receiver on its public default.

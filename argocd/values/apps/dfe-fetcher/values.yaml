@@ -1,0 +1,95 @@
+# dfe-fetcher's integration values over its thin chart, layered after
+# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
+# scalo-service library reads. What depends on the transport sits in the
+# profile files beside this one.
+
+# One pod per fetcher config: N replicas of one config poll the same source N
+# times. The profile files set replicaCount for every app and this file layers
+# after them. A source whose fetch supports competing consumers opts KEDA in,
+# with its own triggers or this CPU target.
+replicaCount: 1
+keda:
+  cpu:
+    targetUtilization: 70
+
+# The cursor store is the contract's writable path `cursor`. Its claim is off by
+# default: a lost cursor re-fetches the default window rather than losing data,
+# and the slim tier is not guaranteed a StorageClass. The claim is
+# <fullname>-cursor, the name 2.2.0 gave it.
+writablePaths:
+  cursor:
+    persistence:
+      enabled: false
+
+# The cursor store's directory, on that writable path. An overlay that names its
+# own still wins.
+config:
+  cursor:
+    directory: /var/lib/dfe-fetcher
+
+# The upstream's credentials by env: the source's stanza names them as env:NAME
+# references, so the Secret's keys are the variable names. Optional, so a source
+# needing none creates nothing.
+extraEnvFrom:
+  - secretRef:
+      name: '{{ .Values.credentials.secretName }}'
+      optional: true
+
+# The contract's secret group, on the Secret the 2.2.0 chart named.
+secrets:
+  kafka:
+    existingSecret: '{{ .Values.kafka.saslSecretName }}'
+
+initContainers:
+  # BEGIN fragment wait-for-engine -- rendered by `python3 scripts/composition.py --write-fragments`
+  - name: wait-for-engine
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        URL="http://{{ .Values.waitForEngine.service }}.{{ .Values.waitForEngine.namespace | default .Release.Namespace }}.svc.cluster.local:{{ .Values.waitForEngine.port }}/readyz"
+        DEADLINE=$(( $(date +%s) + {{ .Values.waitForEngine.timeoutSeconds }} ))
+        echo "waiting for ${URL}"
+        until curl -fsS -o /dev/null --max-time 5 "$URL"; do
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "dfe-engine did not report ready at ${URL} within {{ .Values.waitForEngine.timeoutSeconds }}s -- GET /api/v1/system/schema on the engine says why" >&2
+            exit 1
+          fi
+          sleep {{ .Values.waitForEngine.intervalSeconds }}
+        done
+        echo "dfe-engine is ready"
+  # END fragment wait-for-engine
+
+waitForEngine:
+  service: dfe-engine
+  # Empty is the release's own namespace.
+  namespace: ""
+  port: 8000
+  timeoutSeconds: 600
+  intervalSeconds: 5
+
+# The 2.2.0 chart's keys, read above and in the profile files through tpl.
+kafka:
+  saslSecretName: dfe-kafka-user
+credentials:
+  secretName: dfe-fetcher-credentials
+# The app's pre-created DLQ topic on the kafka backend.
+dlq:
+  topic: dfe_fetcher_dlq
+  mode: kafka_only
