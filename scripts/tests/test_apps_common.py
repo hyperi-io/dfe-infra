@@ -19,8 +19,13 @@ Three tiers. The placement check reads the values files and needs nothing else. 
 endpoint checks need helm: a stand-in chart renders extraEnv through tpl as the
 library does, over the value files exactly as scripts/dfe-weave layers them, and the
 result is compared with what dfe-common.otelEndpoint renders from the same settings.
-The thin-chart checks render the real chart and need the scalo-service chart in
-DFE_WEAVE_LIBRARY, and skip without it.
+The thin-chart checks render the real chart and need the scalo-service library
+(_weave.library). dfe-extras is left out of these renders: test_dfe_extras.py
+holds it.
+
+dfe-ui and dfe-hyperdx export over OTLP/HTTP, so their own integration values move
+the resolved endpoint from the collector's 4317 to its 4318, and dfe-ui names the
+protocol (OTLP_HTTP).
 
 Telemetry settings and `cloud` reach each render through a deploy repo's infra/common.yaml,
 the layer after the app files. An appset parameter would beat that file, so the label test
@@ -28,6 +33,7 @@ passes the same cloud to the Target.
 """
 
 import json
+import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -49,6 +55,13 @@ VALUE_FILES = sorted(VALUES.glob("*.yaml"))
 DIGEST = "sha256:" + "ab" * 32
 ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
 PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
+# The apps that export over OTLP/HTTP, and the protocol their integration values name.
+OTLP_HTTP: dict[str, list[str]] = {"dfe-ui": ["http/protobuf"], "hyperdx": []}
+
+
+def _for(service: str, endpoint: str) -> str:
+    """The endpoint an app exports to: the collector's HTTP port for an OTLP/HTTP app."""
+    return re.sub(r":4317$", ":4318", endpoint) if service in OTLP_HTTP else endpoint
 
 # What each telemetry.mode needs beyond common.yaml, as a deployment's infra/common.yaml sets it.
 MODES = {
@@ -206,7 +219,8 @@ def thin_charts(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 
 def _render(chart: Path, deploy: Path, service: str, cloud: str = "local") -> list[dict]:
     target = w.Target(service, "slim", cloud)
-    return w.render_app(target, "new", w.Inputs(chart=chart, deploy_repo=deploy, helm=helm())).docs
+    inputs = w.Inputs(chart=chart, deploy_repo=deploy, extras=False, helm=helm())
+    return w.render_app(target, "new", inputs).docs
 
 
 def _stand_in_env(chart: Path, deploy: Path, service: str) -> dict[str, str]:
@@ -260,7 +274,7 @@ def test_every_app_resolves_the_endpoint_dfe_common_does(
 ) -> None:
     overlay = _overlay(mode, tls)
     env = _stand_in_env(stand_in, deploy_for(overlay), service)
-    assert env[ENDPOINT] == expected(overlay)
+    assert env[ENDPOINT] == _for(service, expected(overlay))
 
 
 @pytest.mark.parametrize(("mode", "wrong"), [(m, o) for m in MODES for o in MODES if m != o])
@@ -315,9 +329,10 @@ def test_the_thin_chart_exports_the_endpoint_dfe_common_resolves(
 ) -> None:
     overlay = _overlay(mode, tls)
     docs = _render(thin_charts[service], deploy_for(overlay), service)
-    assert _env_values(docs, ENDPOINT) == [expected(overlay)]
-    # The app's own default protocol applies: only an otel.endpoint override sets one.
-    assert _env_values(docs, PROTOCOL) == []
+    assert _env_values(docs, ENDPOINT) == [_for(service, expected(overlay))]
+    # The app's own default protocol applies unless its integration values name one;
+    # otherwise only an otel.endpoint override sets one.
+    assert _env_values(docs, PROTOCOL) == OTLP_HTTP.get(service, [])
 
 
 @MODE

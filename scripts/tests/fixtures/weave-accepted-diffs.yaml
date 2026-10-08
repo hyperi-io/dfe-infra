@@ -1,0 +1,243 @@
+# Every difference the chart-switch gate accepts between a component's 2.2.0
+# render and its thin chart beside dfe-extras, each with its reason. Read by
+# scripts/tests/_gate.py for test_weave_identity.py and test_weave_runtime.py,
+# and by test_dfe_extras.py for the env its ConfigMaps leave out.
+#
+# A section is a deploy.service, or "*" for every component.
+#   added:  objects only the new render holds, Kind/name -> reason.
+#   diffs:  leaf differences in an object both renders hold. `object` and `path`
+#           are globs where `*` matches anything; `old` and `new`, when given,
+#           pin the value (a string with `*` is a glob), and "<absent>" is a
+#           leaf one render does not have. `scenarios` limits an entry to the
+#           named _gate.SCENARIOS. A path reads as _gate.runtime_view writes it:
+#           the main container is containers[main], env is the effective env.
+# test_weave_runtime.py fails on an entry that no longer matches any diff.
+
+"*":
+  diffs:
+    - object: "*"
+      path: "*labels[app.kubernetes.io/managed-by]"
+      old: helm
+      new: Helm
+      reason: scalo-service writes .Release.Service where dfe-common wrote a literal.
+    - object: "*"
+      path: "*labels[helm.sh/chart]"
+      old: <absent>
+      reason: scalo-service labels each object with its chart's name and version.
+    - object: "*"
+      path: "*labels[dfe.hyperi.io/cloud]"
+      old: local
+      new: aws
+      reason: >-
+        2.2.0 labelled every layer 2 app cloud=local, a chart default no layer set.
+        apps/_common.yaml takes the cloud from the cloud file's global.cloud.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].name
+      reason: >-
+        Every main container takes the chart's name. bootstrap/smoke-test-hyperdx.sh
+        and smoke-test-integration.sh still address the old names.
+    - object: Deployment/*
+      path: spec.template.spec.serviceAccountName
+      old: default
+      reason: The pod runs on its own ServiceAccount, where 2.2.0 left it on the namespace default.
+    - object: Deployment/*
+      path: spec.template.spec.automountServiceAccountToken
+      old: true
+      new: false
+      reason: >-
+        scalo-service leaves the token unmounted unless asked. Neither dfe-ui nor
+        dfe-hyperdx calls the Kubernetes API.
+    - object: Deployment/*
+      path: spec.template.spec.volumes[serviceaccount-files].projected.sources
+      old: <absent>
+      reason: >-
+        With the token unmounted, scalo-service still mounts the cluster CA and the
+        namespace, from kube-root-ca.crt and the downward API.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].volumeMounts[/var/run/secrets/kubernetes.io/serviceaccount].*
+      old: <absent>
+      reason: The mount of that serviceaccount-files volume, read-only.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].env[POD_NAMESPACE].valueFrom.fieldRef.fieldPath
+      old: <absent>
+      new: metadata.namespace
+      reason: scalo-service sets POD_NAMESPACE on every pod.
+    - object: Deployment/*
+      path: spec.template.spec.volumes[writable-tmp].emptyDir
+      old: <absent>
+      new: {}
+      reason: scalo-service mounts a scratch /tmp on every pod, named writable-tmp.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].volumeMounts[/tmp].name
+      new: writable-tmp
+      reason: The mount of that scratch /tmp.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].livenessProbe.timeoutSeconds
+      old: 1
+      new: 3
+      reason: scalo-service probes time out at 3 s.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].readinessProbe.timeoutSeconds
+      old: 1
+      new: 3
+      reason: scalo-service probes time out at 3 s.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].readinessProbe.failureThreshold
+      old: 3
+      new: 2
+      reason: scalo-service takes a pod out of its Service after two failed readiness checks.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].startupProbe.periodSeconds
+      old: 2
+      new: 5
+      reason: scalo-service runs the startup probe every 5 s over the contract's budget.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].startupProbe.failureThreshold
+      old: 30
+      new: 12
+      reason: The contract's 60 s startup budget at a 5 s period, the 30 x 2 s 2.2.0 gave.
+    - object: Deployment/*
+      path: spec.template.spec.containers[main].startupProbe.timeoutSeconds
+      old: 1
+      new: 3
+      reason: scalo-service probes time out at 3 s.
+
+dfe-ui:
+  diffs:
+    - object: Deployment/dfe-ui
+      path: metadata.annotations[reloader.stakater.com/auto]
+      old: <absent>
+      new: "true"
+      reason: apps/_common.yaml turns Reloader on fleet-wide, so a rotated NextAuth secret restarts the pod.
+    - object: Deployment/dfe-ui
+      path: spec.template.spec.securityContext.*
+      old: 1000
+      new: 1001
+      reason: >-
+        The contract runs the pod as uid and gid 1001, the image's USER on both
+        arches, where 2.2.0 ran it as 1000.
+    - object: "*/dfe-ui"
+      path: "*ports[3000/TCP].name"
+      old: http
+      new: metrics
+      reason: scalo-service names the metrics port `metrics`. Next.js serves traffic and /metrics on 3000.
+    - object: Deployment/dfe-ui
+      path: spec.template.spec.volumes[tmp].emptyDir
+      old: {}
+      new: <absent>
+      reason: The /tmp emptyDir is scalo-service's writable-tmp now.
+    - object: ServiceAccount/dfe-ui
+      path: automountServiceAccountToken
+      old: <absent>
+      new: false
+      reason: scalo-service's ServiceAccount carries no token by default.
+    - object: Deployment/dfe-ui
+      path: spec.template.spec.containers[main].env[NEXTAUTH_URL]
+      old: <absent>
+      new: ""
+      scenarios: [no-domain]
+      reason: >-
+        With no domain extraEnv renders NEXTAUTH_URL empty where 2.2.0 left it
+        out. next-auth reads an empty NEXTAUTH_URL as unset (not verified on a
+        live pod).
+    - object: Deployment/dfe-ui
+      path: spec.template.spec.containers[main].env[OTEL_EXPORTER_OTLP_ENDPOINT]
+      old: <absent>
+      new: ""
+      scenarios: [prometheus]
+      reason: Prometheus mode renders the endpoint empty, which the stack reads as "export nothing".
+    - object: Deployment/dfe-ui
+      path: spec.template.spec.containers[main].env[OTEL_EXPORTER_OTLP_PROTOCOL]
+      old: <absent>
+      new: http/protobuf
+      scenarios: [prometheus]
+      reason: The protocol rides beside the empty endpoint, which exports nothing.
+
+hyperdx:
+  added:
+    ConfigMap/dfe-hyperdx-env: >-
+      dfe-extras carries the env 2.2.0 wrote under conditionals, read through
+      extraEnvFrom, so a variable stays absent where 2.2.0 left it out.
+    ServiceAccount/dfe-hyperdx: The pod's own ServiceAccount, where 2.2.0 used the namespace default.
+    PodDisruptionBudget/dfe-hyperdx: >-
+      scalo-service budgets any workload of two or more replicas (scale and
+      mesh). 2.2.0 hyperdx carried no budget.
+  diffs:
+    - object: Deployment/dfe-hyperdx
+      path: metadata.annotations[configmap.reloader.stakater.com/reload]
+      old: <absent>
+      new: dfe-hyperdx-env
+      reason: A changed dfe-hyperdx-env restarts the pod, as a changed 2.2.0 env did by rolling it.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].envFrom
+      old: <absent>
+      reason: The pod reads dfe-hyperdx-env, whose content the env leaves are held to.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].env[CLICKHOUSE_PORT]
+      old: "8123"
+      new: <absent>
+      reason: HyperDX reads only CLICKHOUSE_HOST, which carries the port (dfe-hyperdx packages/api/src/config.ts).
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].env[CLICKHOUSE_DB]
+      old: dfe
+      new: <absent>
+      reason: HyperDX never reads it (packages/api/src/config.ts reads CLICKHOUSE_HOST, _USER and _PASSWORD).
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].env[CLICKHOUSE_PASSWORD].valueFrom.secretKeyRef.optional
+      old: <absent>
+      new: true
+      reason: The contract marks the clickhouse group optional, because the app starts without it.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].env[OTEL_SERVICE_NAME]
+      old: <absent>
+      new: dfe-hyperdx
+      reason: scalo-service names every app's telemetry after its chart.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].env[OTEL_EXPORTER_OTLP_ENDPOINT]
+      old: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318
+      new: ""
+      scenarios: [prometheus]
+      reason: >-
+        2.2.0 hard-coded the collector in every mode. The endpoint follows
+        telemetry.mode now, and prometheus mode exports nothing.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].image
+      old: ghcr.io/hyperi-io/dfe-hyperdx:*
+      new: registry.example.com/dfe/dfe-hyperdx:*
+      reason: >-
+        2.2.0 hard-coded ghcr.io for this image alone. It follows global.registry
+        like every other dfe-* image; the tag and digest are held equal.
+    - object: Deployment/dfe-hyperdx
+      path: spec.strategy.rollingUpdate.maxSurge
+      old: 25%
+      new: 1
+      reason: >-
+        Surge first, so the new pod passes readiness before the old one goes.
+        2.2.0 took Kubernetes' 25% default.
+    - object: Deployment/dfe-hyperdx
+      path: spec.strategy.rollingUpdate.maxUnavailable
+      old: 25%
+      new: 0
+      reason: Surge first, as above.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.metadata.annotations[prometheus.io/*]
+      old: <absent>
+      reason: Scrape annotations on the contract's metrics port, 8000 /metrics, which 2.2.0 hyperdx never carried.
+    - object: "*/dfe-hyperdx"
+      path: "*ports[8000/TCP].name"
+      old: api
+      new: metrics
+      reason: >-
+        scalo-service names the metrics port `metrics`. The API, its probes and
+        /metrics share 8000, and callers dial it by number.
+    - object: "*/dfe-hyperdx"
+      path: "*ports[431*/TCP].*"
+      new: <absent>
+      reason: OTLP ports 4317 and 4318 are dropped. The fork image runs no OTLP receiver.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.volumes[clickhouse-ca].secret.optional
+      old: <absent>
+      new: true
+      reason: >-
+        Mounted on every pod, optional, because a static volume cannot follow
+        clickhouse.tls. NODE_EXTRA_CA_CERTS still follows it.
