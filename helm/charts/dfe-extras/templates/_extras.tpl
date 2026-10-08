@@ -73,6 +73,20 @@ its value, which is how Helm coalesces a chart's values.yaml under a layer.
 {{- end -}}
 
 {{/*
+dfe-extras.otelEndpoint -- the OTLP endpoint a DFE-only workload exports to, the
+one its component's thin chart exports to: otel.endpoint as written, else
+apps/_common.yaml's telemetry.otlpEndpointTemplate. Empty means export nothing.
+*/}}
+{{- define "dfe-extras.otelEndpoint" -}}
+{{- $override := toString (dig "endpoint" "" (.Values.otel | default dict)) -}}
+{{- if $override -}}
+{{- $override -}}
+{{- else -}}
+{{- tpl (toString (dig "otlpEndpointTemplate" "" (.Values.telemetry | default dict))) . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 dfe-extras.envConfigMap -- the <fullname>-env ConfigMap: every literal entry of
 an env list, as data. Takes (dict "ctx" <component context> "env" <env list YAML>).
 

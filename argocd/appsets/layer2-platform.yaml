@@ -42,8 +42,8 @@ spec:
                   namespace: default
                   wave: "2"
                   appProject: infra
-    # envoy-gateway-config, for THIS RELEASE ONLY -- it moves to
-    # appsets/layer2-edge.yaml at rc.15 (dfe-infra#342).
+    # envoy-gateway-config, until dfe-infra#342 moves it to
+    # appsets/layer2-edge.yaml.
     #
     # The edge module gates on the cluster secret's own dfe.hyperi.io/edge, and a
     # secret written before that module carries no such key -- so layer2-edge

@@ -63,7 +63,7 @@ spec:
             {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
             - name: DFE_KEDA_SHIM_PORT
               value: {{ .Values.kedaShim.port | quote }}
-            {{- with (include "dfe-common.otelEndpoint" .) }}
+            {{- with (include "dfe-extras.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; whole stack -> HyperDX
               value: {{ . | quote }}
             {{- end }}
