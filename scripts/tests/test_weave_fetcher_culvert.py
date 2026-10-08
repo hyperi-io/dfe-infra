@@ -23,6 +23,8 @@
   to, from one default listener list held equal to the others
 - culvert renders from layer2-edge.yaml, whose tunnel ApplicationSet is told
   from the gateway's by the instance file its git generator matches
+- culvert's image, and its init container's, follow global.registry like the
+  dfe-* images, and fall back to the contract's registry where none is set
 
 Render (b) needs the scalo-service library (_weave.library).
 """
@@ -260,6 +262,28 @@ def test_culvert_renders_from_the_edge_appset_with_its_flavour_file() -> None:
     assert app["metadata"]["name"] == "culvert-default-in-cluster"
     assert source["path"] == "helm/edge/culvert"
     assert "../../../argocd/values/edge-aws.yaml" in source["helm"]["valueFiles"]
+
+
+@pytest.mark.parametrize(
+    ("registry", "repository"),
+    [
+        ({}, "ghcr.io/hyperi-io/culvert"),
+        ({"registry": "mirror.example.net/dfe"}, "mirror.example.net/dfe/culvert"),
+    ],
+    ids=["contract-registry", "global-registry"],
+)
+def test_culverts_image_follows_global_registry(registry: dict, repository: str) -> None:
+    """The tunnel and its sysctl init container pull <registry>/culvert, so a mirror moves them too."""
+    pod = _pod(_render("culvert", "slim", "local", "new", {"global": registry}))
+    images = [c["image"] for c in [*pod["initContainers"], *pod["containers"]]]
+    assert len(images) == 2
+    assert all(image.startswith(f"{repository}:") for image in images), images
+
+
+def test_an_image_repository_still_replaces_culverts_whole_image() -> None:
+    overlay = {"global": {"registry": "mirror.example.net/dfe"}, "image": {"repository": "r/c"}}
+    pod = _pod(_render("culvert", "slim", "local", "new", overlay))
+    assert all(c["image"].startswith("r/c:") for c in [*pod["initContainers"], *pod["containers"]])
 
 
 def _two_appsets(root: Path, *patterns: str) -> Path:

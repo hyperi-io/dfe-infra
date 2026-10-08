@@ -27,6 +27,11 @@ dfe-ui and dfe-hyperdx export over OTLP/HTTP, so their own integration values mo
 the resolved endpoint from the collector's 4317 to its 4318, and dfe-ui names the
 protocol (OTLP_HTTP).
 
+Receiver mode with no receiverEndpoint is the one place the thin charts derive what the
+2.2.0 helper does not: the receiver's OTLP port from its contract, in the release
+namespace. The parity checks name an endpoint for that mode, and the derived default
+is held against fixtures/contracts/dfe-receiver.json.
+
 Telemetry settings and `cloud` reach each render through a deploy repo's infra/common.yaml,
 the layer after the app files. An appset parameter would beat that file, so the label test
 passes the same cloud to the Target.
@@ -63,10 +68,13 @@ def _for(service: str, endpoint: str) -> str:
     """The endpoint an app exports to: the collector's HTTP port for an OTLP/HTTP app."""
     return re.sub(r":4317$", ":4318", endpoint) if service in OTLP_HTTP else endpoint
 
+
 # What each telemetry.mode needs beyond common.yaml, as a deployment's infra/common.yaml sets it.
+# The 2.2.0 helper derives no receiver endpoint, so the parity checks name one, as they name
+# the external one. The thin charts' derived default has its own tests below.
 MODES = {
     "hyperdx": {},
-    "receiver": {},
+    "receiver": {"receiverEndpoint": "dfe-receiver.dfe.svc.cluster.local:4317"},
     "external": {"externalEndpoint": "otlp.example.net:4317"},
     "prometheus": {},
 }
@@ -217,14 +225,18 @@ def thin_charts(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     return charts
 
 
-def _render(chart: Path, deploy: Path, service: str, cloud: str = "local") -> list[dict]:
-    target = w.Target(service, "slim", cloud)
+def _render(
+    chart: Path, deploy: Path, service: str, cloud: str = "local", namespace: str = "dfe"
+) -> list[dict]:
+    target = w.Target(service, "slim", cloud, namespace=namespace)
     inputs = w.Inputs(chart=chart, deploy_repo=deploy, extras=False, helm=helm())
     return w.render_app(target, "new", inputs).docs
 
 
-def _stand_in_env(chart: Path, deploy: Path, service: str) -> dict[str, str]:
-    docs = _render(chart, deploy, service)
+def _stand_in_env(
+    chart: Path, deploy: Path, service: str, namespace: str = "dfe"
+) -> dict[str, str]:
+    docs = _render(chart, deploy, service, namespace=namespace)
     return next(d for d in docs if d["kind"] == "ConfigMap")["data"]
 
 
@@ -252,8 +264,8 @@ def test_dfe_common_resolves_each_mode_to_its_known_endpoint(
     } == {
         ("hyperdx", False): f"http://{host}",
         ("hyperdx", True): f"https://{host}",
-        ("receiver", False): "http://dfe-receiver.dfe.svc.cluster.local:8443",
-        ("receiver", True): "https://dfe-receiver.dfe.svc.cluster.local:8443",
+        ("receiver", False): "http://dfe-receiver.dfe.svc.cluster.local:4317",
+        ("receiver", True): "https://dfe-receiver.dfe.svc.cluster.local:4317",
         ("external", False): "http://otlp.example.net:4317",
         ("external", True): "https://otlp.example.net:4317",
         ("prometheus", False): "",
@@ -313,6 +325,50 @@ def test_an_endpoint_that_carries_a_scheme_is_left_as_written(
     assert expected(_overlay(mode, tls, telemetry)) == "https://otlp.example.net:4318"
 
 
+# ------------------------------- receiver mode, with no endpoint named, through a stand-in
+
+
+def _receiver_port(name: str) -> int:
+    """A server port of the receiver's committed contract."""
+    contract = json.loads(_contract_for("dfe-receiver"))
+    (port,) = (p["port"] for p in contract["extra_ports"] if p["name"] == name)
+    return port
+
+
+def _derived(service: str, tls: bool, namespace: str = "dfe") -> str:
+    """The receiver endpoint an app exports to when none is named.
+
+    The receiver's OTLP/gRPC port, or its OTLP/HTTP port for an app that exports over HTTP.
+    """
+    port = _receiver_port("otlp-http" if service in OTLP_HTTP else "otlp-grpc")
+    return f"{'https' if tls else 'http'}://dfe-receiver.{namespace}.svc.cluster.local:{port}"
+
+
+def test_common_yaml_names_no_receiver_endpoint() -> None:
+    """A literal would pin a port and a namespace; empty derives both."""
+    common = yaml.safe_load(COMMON.read_text(encoding="utf-8"))
+    assert common["telemetry"]["receiverEndpoint"] == ""
+
+
+@SERVICE
+@TLS
+def test_receiver_mode_with_no_endpoint_derives_the_receivers_otlp_port(
+    service: str, tls: bool, stand_in: Path, deploy_for: Callable[[dict], Path]
+) -> None:
+    overlay = _overlay("receiver", tls, {"receiverEndpoint": ""})
+    env = _stand_in_env(stand_in, deploy_for(overlay), service)
+    assert env[ENDPOINT] == _derived(service, tls)
+
+
+@pytest.mark.parametrize("namespace", ["acme", "tenant-a"])
+def test_receiver_mode_follows_the_release_namespace(
+    namespace: str, stand_in: Path, deploy_for: Callable[[dict], Path]
+) -> None:
+    overlay = _overlay("receiver", False, {"receiverEndpoint": ""})
+    env = _stand_in_env(stand_in, deploy_for(overlay), "dfe-engine", namespace)
+    assert env[ENDPOINT] == _derived("dfe-engine", False, namespace)
+
+
 # ------------------------------------------------ the OTLP endpoint, in the thin chart
 
 
@@ -348,6 +404,36 @@ def test_an_otel_endpoint_override_wins_over_every_mode(
     assert expected(overlay) == override
     assert _env_values(docs, ENDPOINT) == [override]
     assert _env_values(docs, PROTOCOL) == ["grpc"]
+
+
+@TLS
+def test_the_thin_receiver_exports_to_its_own_otlp_port_in_the_release_namespace(
+    tls: bool, thin_charts: dict[str, Path], deploy_for: Callable[[dict], Path]
+) -> None:
+    overlay = _overlay("receiver", tls, {"receiverEndpoint": ""})
+    docs = _render(
+        thin_charts["dfe-receiver"], deploy_for(overlay), "dfe-receiver", namespace="acme"
+    )
+    assert _env_values(docs, ENDPOINT) == [_derived("dfe-receiver", tls, "acme")]
+
+
+def test_the_derived_endpoint_names_a_service_port_the_receiver_serves_once_otlp_is_on(
+    thin_charts: dict[str, Path], deploy_for: Callable[[dict], Path]
+) -> None:
+    """The listener is the receiver's config.otlp.enabled, which the derived endpoint does not turn on."""
+    overlay = _overlay(
+        "receiver", False, {"receiverEndpoint": ""}, config={"otlp": {"enabled": True}}
+    )
+    docs = _render(
+        thin_charts["dfe-receiver"], deploy_for(overlay), "dfe-receiver", namespace="acme"
+    )
+    service = next(
+        d for d in docs if d["kind"] == "Service" and not d["metadata"]["name"].endswith("-public")
+    )
+    (endpoint,) = _env_values(docs, ENDPOINT)
+    host, _, port = endpoint.removeprefix("http://").rpartition(":")
+    assert host == f"{service['metadata']['name']}.acme.svc.cluster.local"
+    assert int(port) in {p["port"] for p in service["spec"]["ports"]}
 
 
 def test_an_override_without_a_scheme_is_exported_as_written(

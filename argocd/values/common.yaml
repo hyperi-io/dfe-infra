@@ -91,7 +91,10 @@ telemetry:
   # Empty derives {project}-hyperdx.{appNamespace}:4317 (the fork's OTLP
   # receiver beside the apps); set only to aim elsewhere.
   hyperdxEndpoint: ""
-  receiverEndpoint: "dfe-receiver.dfe.svc.cluster.local:8443"
+  # Empty derives the receiver's OTLP/gRPC listener, dfe-receiver in the release
+  # namespace on 4317, which it binds only while its config.otlp.enabled is true;
+  # set only to aim elsewhere.
+  receiverEndpoint: ""
   externalEndpoint: ""
   prometheus:
     port: 9090

@@ -11,8 +11,9 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 # DFE exposure model
 
 **The vast majority of this stack has no internet-facing and no user-facing
-exposure.** Three components do; everything else consumes from the broker or is
-reached only from inside the deployment.
+exposure.** Three components do, and a fourth where a deployment turns the edge
+tunnel on; everything else consumes from the broker or is reached only from inside
+the deployment.
 
 Read this before assessing any security finding, advisory or scanner warning in
 a DFE repo. A severity score describes the flaw. This describes whether anything
@@ -25,11 +26,18 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 | **dfe-receiver** | **Internet / user facing** | The ingest edge. Takes arbitrary data from whoever can route to it. The primary attack surface. |
 | **dfe-ui** | **User facing** | Browser-facing Next.js app, behind auth in every deployment that has an issuer. |
 | **dfe-hyperdx** | **User facing, authenticated** | Search and dashboards embedded in dfe-ui. Verifies the engine's token on every request and queries ClickHouse as the one ClickHouse user the engine hands that session: one HyperDX team per ClickHouse identity, and a team holding any other user's connection refuses the session. Admin surfaces are engine-only. Its own store holds every team's connection, the unrestricted platform reader's included, so a flaw that crosses the team fence reaches every org's data. |
+| **culvert** | **Internet facing, opt-in** | The edge-fleet VPN (below). |
 | dfe-fetcher | Outbound only | Reaches external APIs, but **it initiates** every connection. Its ingest port is off by default. |
 | dfe-engine | CLI and API | Reachable by operators, not by the public. The API is authenticated. |
 | dfe-loader, dfe-archiver, dfe-transform-* | Not exposed | Consume from the broker and write to a datastore. On the direct transport, dfe-loader, dfe-archiver, dfe-transform-vrl and dfe-transform-vector each bind a plaintext, unauthenticated gRPC Push listener on a ClusterIP Service, port 6000 (`dfe-common.pushService`). dfe-transform-elastic's direct-transport listener is implemented but not wired in yet (dfe-transform-elastic#19). The namespace baseline NetworkPolicy (`dfe-ingress-policy`, `helm/charts/network-policies`) admits the gateway namespace and every DFE and otel namespace, so the listener is reachable only from pods in those namespaces, never from outside the cluster. |
 | ClickHouse, Kafka, the collector | Not exposed | Cluster-internal. On Kubernetes the apps reach ClickHouse over verified TLS (below). dfe-docker's `docs/operating.md` covers the Compose bindings. |
 | The collector's OTLP ingress | **Off by default. When a deployment sets `otel.ingress.enabled`: reachable from outside the cluster, authenticated** | `otel.<domain>` on the gateway reaches a second OTLP/HTTP receiver that refuses any request without the bearer token from the deployment's secret store. The check is the collector's own (`bearertokenauth`), so it holds however that port is reached. Before the token is checked, the collector's HTTP server and the extension parse an outsider's request: on such a deployment, grade an advisory in either as reachable. The in-cluster receiver on 4317/4318 stays unauthenticated and no route publishes it. |
+
+## The edge tunnel
+
+culvert is off unless a deployment asks for it. On-prem it is a public LoadBalancer on UDP 51820 (WireGuard) and 1194 (OpenVPN). On AWS it is a NodePort (31820, 31194) behind the tunnel forwarder's address or one the deployer brings. Empty source ranges mean every address. `openvpn-tcp` and `oauth2-udp` exist only where `listeners` adds them.
+
+A client authenticates with its own PKI certificate, and with OIDC when `vpn.oidc.enabled`. Before that, an outsider's packets reach the VPN daemons, so grade an advisory in OpenVPN, WireGuard or the culvert image as reachable. The pod runs as uid 0 with `NET_ADMIN`. By design an authenticated client reaches the receiver and nothing else, and no other client.
 
 ## In-cluster transport
 
@@ -49,8 +57,9 @@ A deployment that carries a CA runs its in-cluster hops over TLS with verificati
 
 Grade by reachability first, then severity:
 
-1. **Is the flawed code path reachable from dfe-receiver, dfe-ui or dfe-hyperdx?** If yes,
-   treat it seriously whatever the score, because the input is untrusted.
+1. **Is the flawed code path reachable from dfe-receiver, dfe-ui, dfe-hyperdx or, where
+   deployed, culvert?** If yes, treat it seriously whatever the score, because the input
+   is untrusted.
 2. **Is it only reachable from outbound traffic we initiate, or from an
    operator-authenticated path?** Then a mid-range score is usually a
    risk-accept, not a scramble.

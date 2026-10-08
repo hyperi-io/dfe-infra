@@ -57,6 +57,7 @@ CELLS = [(*m, "default") for m in MATRIX] + [
 ]
 RECEIVER_CELLS = [c for c in CELLS if c[0] == "dfe-receiver"]
 LOADER_CELLS = [c for c in CELLS if c[0] == "dfe-loader"]
+ENGINE_CELLS = [c for c in CELLS if c[0] == "dfe-engine"]
 BUS_PROFILES = ("single", "scale")
 MAIN = "spec.template.spec.containers[main]"
 
@@ -188,6 +189,21 @@ def test_the_loader_contract_keeps_keda_out_of_its_config() -> None:
     loader = json.loads(contract("dfe-loader").read_text(encoding="utf-8"))
     assert "keda" not in loader["default_config"]
     assert loader["keda"]["cooldown_period"] == 300
+
+
+# ------------------------------------------------------------------- the engine
+
+
+@pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), ENGINE_CELLS)
+def test_the_engine_keeps_its_service_account_token(
+    service: str, profile: str, cloud: str, scenario: str
+) -> None:
+    """A deployment may log the engine in to OpenBao with the pod's token, as 2.2.0 allowed."""
+    view = runtime_view(cell(service, profile, cloud, scenario).new)
+    pod = view["Deployment/dfe-engine"]
+    assert pod["spec.template.spec.automountServiceAccountToken"] is True
+    assert view["ServiceAccount/dfe-engine"]["automountServiceAccountToken"] is True
+    assert [k for k in pod if "serviceaccount-files" in k] == []
 
 
 def test_every_accepted_diff_still_matches_one() -> None:
@@ -332,6 +348,14 @@ def test_a_receiver_render_with_no_delivery_path_is_caught() -> None:
     del config["loader"]
     configmap["data"]["config.yaml"] = yaml.safe_dump(config)
     assert delivery_paths(c.new) == []
+
+
+def test_an_engine_service_account_with_its_token_off_is_caught() -> None:
+    c = cell("dfe-engine", "scale", "aws").mutable()
+    account = next(d for d in c.new if object_id(d) == "ServiceAccount/dfe-engine")
+    account["automountServiceAccountToken"] = False
+    found = unaccepted(runtime_diffs(c.old, c.new), accepts("dfe-engine").diffs, "default")
+    assert found == ['ServiceAccount/dfe-engine automountServiceAccountToken: "<absent>" -> false']
 
 
 def test_a_loader_config_file_with_a_keda_block_is_caught() -> None:

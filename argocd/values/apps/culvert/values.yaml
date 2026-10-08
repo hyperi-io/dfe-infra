@@ -9,11 +9,6 @@
 # The objects keep the culvert chart's names.
 fullnameOverride: dfe-culvert
 
-# culvert is published at ghcr.io/hyperi-io/culvert, outside the dfe-* images
-# global.registry moves.
-image:
-  repository: ghcr.io/hyperi-io/culvert
-
 # Opts the pods out of the namespace-wide egress baseline, so the tunnel
 # NetworkPolicy is their whole egress surface.
 podLabels:

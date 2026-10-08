@@ -24,7 +24,11 @@ telemetry:
   # by extraEnv. prometheus mode resolves to an empty string, which the stack rule
   # reads as "export nothing" (_telemetry.tpl), where the 2.2.0 charts leave the
   # variable out.
-  # scripts/tests/test_apps_common.py holds the two equal for every mode and app.
+  # receiver mode with no receiverEndpoint derives the receiver's OTLP/gRPC port (the
+  # otlp-grpc port of its contract, 4317) in the release namespace. The receiver
+  # binds it only while its config.otlp.enabled is true, and the 2.2.0 helper derives
+  # nothing there.
+  # scripts/tests/test_apps_common.py holds the two equal for every other mode and app.
   otlpEndpointTemplate: |-
     {{- $t := .Values.telemetry | default dict -}}
     {{- $mode := $t.mode | default "hyperdx" -}}
@@ -32,7 +36,7 @@ telemetry:
     {{- if eq $mode "hyperdx" -}}
     {{- $ep = $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:4317" .Values.global.project ($t.collectorNamespace | default "otel")) -}}
     {{- else if eq $mode "receiver" -}}
-    {{- $ep = $t.receiverEndpoint | default "" -}}
+    {{- $ep = $t.receiverEndpoint | default (printf "dfe-receiver.%s.svc.cluster.local:4317" .Release.Namespace) -}}
     {{- else if eq $mode "external" -}}
     {{- $ep = $t.externalEndpoint | default "" -}}
     {{- end -}}
