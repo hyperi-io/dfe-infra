@@ -28,11 +28,12 @@ GENERATED block, because Helm cannot read apps.yaml:
     python3 scripts/composition.py --write-seed
 
 Helm reads only files inside the chart directory, so the manifest the engine
-mounts and reflects is a copy the engine chart carries:
+mounts and reflects is a copy each chart that mounts it carries -- dfe-extras,
+and the dfe-engine chart until it is deleted:
 
     python3 scripts/composition.py --write-catalogue
 
-`scripts/tests/test_composition.py` fails when a committed block or the chart's
+`scripts/tests/test_composition.py` fails when a committed block or a chart's
 copy and this manifest disagree, so neither can quietly drift.
 
 Helm replaces a list rather than merging it, so a list item several apps share
@@ -60,6 +61,12 @@ MANIFEST = REPO_ROOT / "apps.yaml"
 
 # The engine chart's copy, mounted into the engine pod as the app catalogue.
 CHART_MANIFEST = REPO_ROOT / "helm" / "charts" / "dfe-engine" / "files" / "apps.yaml"
+
+# dfe-extras' copy, which its app-catalogue ConfigMap mounts beside the thin chart.
+EXTRAS_MANIFEST = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "files" / "apps.yaml"
+
+# Every chart copy --write-catalogue renders and --check-catalogue holds.
+CATALOGUE_COPIES = (CHART_MANIFEST, EXTRAS_MANIFEST)
 
 # The third copy: the snapshot bundled in the engine image, which answers when
 # no chart mount is present. dfe-infra holds the SSoT and already owns the
@@ -307,7 +314,7 @@ def write_seed(check_only: bool = False) -> int:
 
 
 def catalogue_copy() -> str:
-    """The engine chart's copy of the manifest: the banner, then apps.yaml verbatim.
+    """A chart's copy of the manifest: the banner, then apps.yaml verbatim.
 
     Returns:
         The whole file body, newline-terminated.
@@ -323,29 +330,34 @@ def catalogue_copy() -> str:
 
 
 def write_catalogue(check_only: bool = False) -> int:
-    """Render the manifest into the engine chart, which is what mounts it.
+    """Render the manifest into every chart that mounts it.
 
     Args:
         check_only: Report drift and change nothing.
 
     Returns:
-        Process exit status: 1 when the committed copy is stale.
+        Process exit status: 1 when a committed copy is stale.
     """
     fresh = catalogue_copy()
-    current = CHART_MANIFEST.read_text(encoding="utf-8") if CHART_MANIFEST.is_file() else ""
-    if current == fresh:
-        return 0
-    where = CHART_MANIFEST.relative_to(REPO_ROOT)
-    if check_only:
+    stale: list[str] = []
+    for path in CATALOGUE_COPIES:
+        current = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if current == fresh:
+            continue
+        where = str(path.relative_to(REPO_ROOT))
+        if check_only:
+            stale.append(where)
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(fresh, encoding="utf-8", newline="\n")
+        print(f"wrote the app manifest into {where}", file=sys.stderr)
+    if stale:
         print(
             "STALE against apps.yaml -- run `python3 scripts/composition.py "
-            f"--write-catalogue`: {where}",
+            f"--write-catalogue`: {', '.join(stale)}",
             file=sys.stderr,
         )
         return 1
-    CHART_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    CHART_MANIFEST.write_text(fresh, encoding="utf-8", newline="\n")
-    print(f"wrote the app manifest into {where}", file=sys.stderr)
     return 0
 
 
@@ -612,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write-catalogue",
         action="store_true",
-        help="render the manifest into the engine chart, which mounts it into the engine pod",
+        help="render the manifest into every chart that mounts it into the engine pod",
     )
     parser.add_argument(
         "--check-catalogue",
