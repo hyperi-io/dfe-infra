@@ -1,0 +1,90 @@
+# dfe-archiver's integration values over its thin chart, layered after
+# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
+# scalo-service library reads. What depends on the transport sits in the
+# profile files beside this one.
+
+# The app spools under ARCHIVER_SPOOL_DIR. An image that spools to a path relative
+# to the working directory still finds a writable one here.
+workingDir: /tmp
+
+extraEnv:
+  # The contract's writable path `spool` mounts here.
+  ARCHIVER_SPOOL_DIR: /var/spool/dfe/archiver
+  # Env beats the config file. The app reads an empty value as unset, so the
+  # engine's destination stands unless the deployment names one here.
+  ARCHIVER_DESTINATION: '{{ with (.Values.archive | default dict).localPath }}file://{{ . }}{{ end }}'
+  S3_ENDPOINT: '{{ .Values.s3.endpoint }}'
+  S3_BUCKET: '{{ .Values.s3.bucket }}'
+
+# The contract's secret groups, on the Secrets the 2.2.0 chart named.
+secrets:
+  kafka:
+    existingSecret: '{{ .Values.kafka.saslSecretName }}'
+  s3:
+    existingSecret: '{{ .Values.s3.secretName }}'
+
+keda:
+  cpu:
+    targetUtilization: 70
+
+initContainers:
+  # BEGIN fragment wait-for-engine -- rendered by `python3 scripts/composition.py --write-fragments`
+  - name: wait-for-engine
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        URL="http://{{ .Values.waitForEngine.service }}.{{ .Values.waitForEngine.namespace | default .Release.Namespace }}.svc.cluster.local:{{ .Values.waitForEngine.port }}/readyz"
+        DEADLINE=$(( $(date +%s) + {{ .Values.waitForEngine.timeoutSeconds }} ))
+        echo "waiting for ${URL}"
+        until curl -fsS -o /dev/null --max-time 5 "$URL"; do
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "dfe-engine did not report ready at ${URL} within {{ .Values.waitForEngine.timeoutSeconds }}s -- GET /api/v1/system/schema on the engine says why" >&2
+            exit 1
+          fi
+          sleep {{ .Values.waitForEngine.intervalSeconds }}
+        done
+        echo "dfe-engine is ready"
+  # END fragment wait-for-engine
+
+waitForEngine:
+  service: dfe-engine
+  # Empty is the release's own namespace.
+  namespace: ""
+  port: 8000
+  timeoutSeconds: 600
+  intervalSeconds: 5
+
+# The 2.2.0 chart's keys, read above and in the profile files through tpl.
+kafka:
+  saslSecretName: dfe-kafka-user
+# archive.localPath comes from the cloud file or the overlay, beside a volume at
+# that path (apps/dfe-archiver/local-dfe.yaml). This file layers after the cloud
+# file, so a default here would beat it.
+archive: {}
+s3:
+  endpoint: ""
+  bucket: ""
+  # Static keys for a store with no workload identity. The references are
+  # optional, so the SDK's own credential chain runs without the Secret.
+  secretName: dfe-archiver-s3
+# The app's pre-created DLQ topic on the kafka backend.
+dlq:
+  topic: dfe_archiver_dlq
+  mode: kafka_only

@@ -1,0 +1,25 @@
+# Direct transport: the archiver takes records on its Push listener, no broker.
+extraEnv:
+  ARCHIVER_TRANSPORT: grpc
+  ARCHIVER_GRPC_LISTEN: "0.0.0.0:6000"
+  # No broker, so no kafka DLQ backend to write to.
+  DLQ_ENABLED: "false"
+
+# The contract's push port opens on config.transport, so the file carries it too.
+configOverrides:
+  transport: grpc
+
+secrets:
+  kafka:
+    enabled: false
+
+keda:
+  extraTriggers:
+    # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+        url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+        valueLocation: value
+    # END fragment pressure-trigger

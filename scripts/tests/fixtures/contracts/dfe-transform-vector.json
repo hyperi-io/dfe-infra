@@ -1,0 +1,103 @@
+{
+  "schema_version": 4,
+  "app_name": "dfe-transform-vector",
+  "description": "Vector subprocess wrapper for Kafka-to-Kafka transform pipelines",
+  "metrics_port": 9090,
+  "health": {
+    "liveness_path": "/livez",
+    "readiness_path": "/readyz",
+    "metrics_path": "/metrics",
+    "startup_budget_seconds": 120
+  },
+  "env_prefix": "DFE_TRANSFORM",
+  "metric_prefix": "transform_vector",
+  "config_mount_path": "/etc/dfe-transform-vector/config.yaml",
+  "image_registry": "ghcr.io/hyperi-io",
+  "extra_ports": [
+    {
+      "name": "push",
+      "port": 6000,
+      "protocol": "TCP",
+      "when": {
+        "kind": "equals",
+        "path": "config.source.transport",
+        "value": "direct"
+      },
+      "bound_from": "source.listen",
+      "app_protocol": "kubernetes.io/h2c"
+    }
+  ],
+  "entrypoint_args": [
+    "--config",
+    "/etc/dfe-transform-vector/config.yaml"
+  ],
+  "secrets": [
+    {
+      "group_name": "kafka",
+      "env_vars": [
+        {
+          "env_var": "DFE_TRANSFORM_SOURCE_SASL_USERNAME",
+          "key_name": "source-username",
+          "secret_key": "username"
+        },
+        {
+          "env_var": "DFE_TRANSFORM_SOURCE_SASL_PASSWORD",
+          "key_name": "source-password",
+          "secret_key": "password"
+        },
+        {
+          "env_var": "DFE_TRANSFORM_SINK_SASL_USERNAME",
+          "key_name": "sink-username",
+          "secret_key": "username"
+        },
+        {
+          "env_var": "DFE_TRANSFORM_SINK_SASL_PASSWORD",
+          "key_name": "sink-password",
+          "secret_key": "password"
+        }
+      ]
+    }
+  ],
+  "keda": {
+    "enabled": true,
+    "min_replicas": 1,
+    "max_replicas": 10,
+    "polling_interval": 15,
+    "cooldown_period": 300,
+    "kafka_lag_threshold": 1000,
+    "activation_lag_threshold": 0,
+    "cpu_enabled": true,
+    "cpu_threshold": 80,
+    "kafka_trigger": {
+      "enabled": false
+    }
+  },
+  "writable_paths": [
+    {
+      "name": "data",
+      "path": "/var/lib/vector"
+    },
+    {
+      "name": "run",
+      "path": "/var/run/vector"
+    }
+  ],
+  "termination_grace_seconds": 90,
+  "resources": {
+    "requests": {
+      "cpu": "100m",
+      "memory": "128Mi"
+    },
+    "limits": {
+      "cpu": "500m",
+      "memory": "512Mi"
+    }
+  },
+  "security": {
+    "run_as_user": 1000,
+    "run_as_group": 1000,
+    "fs_group": 1000,
+    "read_only_root_filesystem": true
+  },
+  "singleton": false
+}

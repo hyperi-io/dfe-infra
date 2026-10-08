@@ -1,0 +1,17 @@
+# The bus: the archiver's own flat env contract, bare KAFKA_* and DLQ_*.
+extraEnv:
+  KAFKA_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
+  DLQ_TOPIC: '{{ .Values.dlq.topic }}'
+  DLQ_MODE: '{{ .Values.dlq.mode }}'
+
+keda:
+  extraTriggers:
+    # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+        url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+        valueLocation: value
+    # END fragment pressure-trigger

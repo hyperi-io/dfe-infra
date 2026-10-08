@@ -364,3 +364,881 @@ apps:
         note: >-
           The app container only. The dashboards init container's securityContext
           sits in apps/hyperdx/values.yaml.
+
+  dfe-archiver:
+    chart: helm/charts/dfe-archiver
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names the mesh route from it. The thin chart's own name is
+          fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>. The default renders
+          dfe-archiver, the chart's name, so only a renamed instance sets it.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      config:
+        to: config
+        note: >-
+          The engine's config blob, written to /etc/dfe/archiver.yaml as before.
+          On the direct profiles configOverrides.transport carries grpc beside it.
+      extraEnv:
+        to: extraEnv
+        note: >-
+          A name the integration values also set takes the overlay's value now,
+          where 2.2.0 let the chart's own value win.
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras fails the render where it runs another transport than the
+          profile's, whose apps/dfe-archiver/profile-*.yaml carry the transport's
+          env and secrets.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+        note: KAFKA_BROKERS on the bus profiles, through tpl.
+      kafka.securityProtocol:
+        to: kafka.securityProtocol
+        note: >-
+          KAFKA_SECURITY_PROTOCOL on the bus profiles, through tpl. Empty renders
+          the variable empty, which the app reads as unset, where 2.2.0 left it out.
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL references: set secrets.kafka.enabled to false instead.
+      archive.localPath:
+        to: archive.localPath
+        note: >-
+          ARCHIVER_DESTINATION is file://<localPath>, through tpl. The writable
+          directory at that path comes from extraVolumes and extraVolumeMounts,
+          which apps/dfe-archiver/local-dfe.yaml sets. Another cloud restates both.
+      s3.endpoint:
+        to: s3.endpoint
+        note: S3_ENDPOINT, through tpl. Empty renders it empty, which the app reads as unset.
+      s3.bucket:
+        to: s3.bucket
+        note: S3_BUCKET, through tpl. Empty renders it empty, which the app reads as unset.
+      s3.secretName:
+        to: s3.secretName
+        note: >-
+          secrets.s3.existingSecret takes it through tpl. The references stay
+          optional. Empty no longer drops them: set secrets.s3.enabled to false.
+      spool.path:
+        dropped: >-
+          The spool is the contract's writable path `spool`, at
+          /var/spool/dfe/archiver, and ARCHIVER_SPOOL_DIR names the same path.
+      spool.sizeLimit:
+        to: writablePaths.spool.sizeLimit
+      dlq.topic:
+        to: dlq.topic
+        note: DLQ_TOPIC on the bus profiles, through tpl.
+      dlq.mode:
+        to: dlq.mode
+        note: DLQ_MODE on the bus profiles, through tpl.
+      service.pushPort:
+        to: service.pushPort
+        note: >-
+          dfe-extras' mesh route reads it. The listener is the contract's push
+          port and ARCHIVER_GRPC_LISTEN, both 6000, so moving it is a contract change.
+      waitForEngine.enabled:
+        to: initContainers
+        note: The wait-for-engine block in apps/dfe-archiver/values.yaml. Off is an initContainers list without it.
+      waitForEngine.service:
+        to: waitForEngine.service
+      waitForEngine.namespace:
+        to: waitForEngine.namespace
+      waitForEngine.port:
+        to: waitForEngine.port
+      waitForEngine.timeoutSeconds:
+        to: waitForEngine.timeoutSeconds
+      waitForEngine.intervalSeconds:
+        to: waitForEngine.intervalSeconds
+      waitForEngine.resources:
+        to: initContainers
+        note: The init container sits whole in apps/dfe-archiver/values.yaml, so an overlay restates the list.
+      otel.endpoint:
+        to: otel.endpoint
+        note: Exported as written with otel.protocol grpc, so it carries its scheme.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      versionCheck:
+        to: versionCheck
+        note: ARCHIVER_VERSION_CHECK__*, the names 2.2.0 wrote.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name. scalo-service names the image after the
+          contract's app_name, and image.repository replaces it whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      terminationGracePeriodSeconds:
+        to: terminationGracePeriodSeconds
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: The app container only. The wait-for-engine init container's sits in its block.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      serviceAccount.mountToken:
+        to: serviceAccount.mountToken
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      keda.enabled:
+        to: keda.enabled
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure.enabled:
+        to: keda.extraTriggers
+        note: >-
+          The pressure trigger block in apps/dfe-archiver/profile-*.yaml, on every
+          profile but slim. Off is an extraTriggers list without it.
+      keda.pressure.service:
+        to: keda.pressure.service
+      keda.pressure.shimAddress:
+        to: keda.pressure.shimAddress
+      keda.pressure.targetValue:
+        to: keda.pressure.targetValue
+      mesh.enabled:
+        to: mesh.enabled
+        note: dfe-extras reads every mesh key for the pool route, as the 2.2.0 chart did.
+      mesh.port:
+        to: mesh.port
+      mesh.gateway:
+        to: mesh.gateway
+      mesh.routePolicy:
+        to: mesh.routePolicy
+
+  dfe-transform-vrl:
+    chart: helm/charts/dfe-transform-vrl
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names the mesh route from it. The thin chart's own name is
+          fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>, which dfe-engine makes unique
+          per instance. It also names the default consumer group and telemetry.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      config:
+        to: config
+        note: >-
+          The engine's config blob. source.transport, sink.transport and, on the
+          direct profiles, source.listen come from configOverrides and win over it.
+      extraEnv:
+        to: extraEnv
+        note: >-
+          A name the integration values also set takes the overlay's value now,
+          where 2.2.0 let the chart's own value win.
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras fails the render where it runs another transport than the
+          profile's, whose apps/dfe-transform-vrl/profile-*.yaml carry the transport.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+        note: DFE_TRANSFORM_SOURCE_BROKERS and _SINK_BROKERS on the bus profiles, through tpl.
+      kafka.securityProtocol:
+        to: [configOverrides.source.tls.enabled, configOverrides.sink.tls.enabled]
+        note: >-
+          2.2.0 turned source.tls and sink.tls on for a protocol carrying SSL. The
+          config file takes no template, so a TLS listener sets both to true.
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL references: set secrets.kafka.enabled to false instead.
+      kafka.sourceTopic:
+        to: kafka.sourceTopic
+        note: DFE_TRANSFORM_SOURCE_TOPICS on the bus profiles. Empty renders it empty, which the app reads as unset.
+      kafka.destTopic:
+        to: kafka.destTopic
+        note: DFE_TRANSFORM_SINK_TOPIC on the bus profiles. Empty renders it empty, which the app reads as unset.
+      kafka.consumerGroup:
+        to: kafka.consumerGroup
+        note: DFE_TRANSFORM_SOURCE_GROUP_ID on the bus profiles. Empty is the instance's fullname.
+      kafka.autoOffsetReset:
+        to: config.source.auto_offset_reset
+        note: The bus profiles default it to earliest, and an overlay value wins as before.
+      loaderPort:
+        to: config.sink.endpoint
+        note: >-
+          The direct profiles' default endpoint names port 6000, so a loader on
+          another port is a config.sink.endpoint.
+      service.pushPort:
+        to: service.pushPort
+        note: >-
+          dfe-extras' mesh route reads it. The listener is the contract's push
+          port and configOverrides.source.listen, both 6000.
+      transformFiles:
+        to: fileSets.transforms.files
+      transformFilesDir:
+        to: fileSets.transforms.mountPath
+        note: DFE_TRANSFORM_TRANSFORMS_DIR names the mount whenever there are files.
+      enrichmentTables:
+        to: fileSets.enrichment.files
+        note: >-
+          2.2.0 derived a config.enrichment_tables entry per mounted table. The
+          config file takes no template, so whoever writes the files names each
+          table there, under fileSets.enrichment.mountPath.
+      enrichmentTablesDir:
+        to: fileSets.enrichment.mountPath
+      otelServiceName:
+        to: otel.serviceName
+        note: Empty is the fullname, as 2.2.0's dfe-<component>.
+      waitForEngine.enabled:
+        to: initContainers
+        note: The wait-for-engine block in apps/dfe-transform-vrl/values.yaml. Off is an initContainers list without it.
+      waitForEngine.service:
+        to: waitForEngine.service
+      waitForEngine.namespace:
+        to: waitForEngine.namespace
+      waitForEngine.port:
+        to: waitForEngine.port
+      waitForEngine.timeoutSeconds:
+        to: waitForEngine.timeoutSeconds
+      waitForEngine.intervalSeconds:
+        to: waitForEngine.intervalSeconds
+      waitForEngine.resources:
+        to: initContainers
+        note: The init container sits whole in apps/dfe-transform-vrl/values.yaml, so an overlay restates the list.
+      otel.endpoint:
+        to: otel.endpoint
+        note: Exported as written with otel.protocol grpc, so it carries its scheme.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      versionCheck:
+        to: versionCheck
+        note: DFE_TRANSFORM_VERSION_CHECK__*, the names 2.2.0 wrote.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name, kept apart from the instance's component.
+          scalo-service names the image after the contract's app_name.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      terminationGracePeriodSeconds:
+        to: terminationGracePeriodSeconds
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: The app container only. The wait-for-engine init container's sits in its block.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      serviceAccount.mountToken:
+        to: serviceAccount.mountToken
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      keda.enabled:
+        to: keda.enabled
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure.enabled:
+        to: keda.extraTriggers
+        note: >-
+          The pressure trigger block in apps/dfe-transform-vrl/profile-*.yaml, on
+          every profile but slim. Off is an extraTriggers list without it.
+      keda.pressure.service:
+        to: keda.pressure.service
+      keda.pressure.shimAddress:
+        to: keda.pressure.shimAddress
+      keda.pressure.targetValue:
+        to: keda.pressure.targetValue
+      mesh.enabled:
+        to: mesh.enabled
+        note: dfe-extras reads every mesh key for the pool route, as the 2.2.0 chart did.
+      mesh.port:
+        to: mesh.port
+      mesh.gateway:
+        to: mesh.gateway
+        note: >-
+          The mesh profile's default loader endpoint names the gateway namespace
+          envoy-gateway-system, so another namespace is a config.sink.endpoint too.
+      mesh.routePolicy:
+        to: mesh.routePolicy
+
+  dfe-transform-vector:
+    chart: helm/charts/dfe-transform-vector
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names the mesh route from it. The thin chart's own name is
+          fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>, which dfe-engine makes unique
+          per instance. It also names the default consumer group and telemetry.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      config:
+        to: config
+        note: >-
+          The engine's config blob, mounted as the one file (configMount.subPath).
+          source.transport, sink.transport and, on the direct profiles,
+          source.listen come from configOverrides and win over it.
+      extraEnv:
+        to: extraEnv
+        note: >-
+          A name the integration values also set takes the overlay's value now,
+          where 2.2.0 let the chart's own value win.
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras fails the render where it runs another transport than the
+          profile's, whose apps/dfe-transform-vector/profile-*.yaml carry the transport.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+        note: DFE_TRANSFORM_SOURCE_BROKERS and _SINK_BROKERS on the bus profiles, through tpl.
+      kafka.securityProtocol:
+        to: [configOverrides.source.tls.enabled, configOverrides.sink.tls.enabled]
+        note: >-
+          2.2.0 turned source.tls and sink.tls on for a protocol carrying SSL. The
+          config file takes no template, so a TLS listener sets both to true.
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL references: set secrets.kafka.enabled to false instead.
+      kafka.sourceTopic:
+        to: kafka.sourceTopic
+        note: DFE_TRANSFORM_SOURCE_TOPICS on the bus profiles. Empty renders it empty, which the app reads as unset.
+      kafka.destTopic:
+        to: kafka.destTopic
+        note: DFE_TRANSFORM_SINK_TOPIC on the bus profiles. Empty renders it empty, which the app reads as unset.
+      kafka.consumerGroup:
+        to: kafka.consumerGroup
+        note: DFE_TRANSFORM_SOURCE_GROUP_ID on the bus profiles. Empty is the instance's fullname.
+      kafka.autoOffsetReset:
+        to: config.source.auto_offset_reset
+        note: The bus profiles default it to smallest, Vector's spelling, and an overlay value wins as before.
+      loaderPort:
+        to: config.sink.endpoint
+        note: >-
+          The direct profiles' default endpoint names port 6000, so a loader on
+          another port is a config.sink.endpoint.
+      service.pushPort:
+        to: service.pushPort
+        note: >-
+          dfe-extras' mesh route reads it. The listener is the contract's push
+          port and configOverrides.source.listen, both 6000.
+      transformFiles:
+        to: fileSets.transforms.files
+      transformFilesDir:
+        to: fileSets.transforms.mountPath
+        note: DFE_TRANSFORM_TRANSFORMS_DIR names the mount whenever there are files.
+      enrichmentTables:
+        to: fileSets.enrichment.files
+        note: >-
+          Mounted at /etc/dfe-transform-vector/data, the path a transform file's
+          own enrichment_tables names, as in 2.2.0.
+      enrichmentTablesDir:
+        to: fileSets.enrichment.mountPath
+      otelServiceName:
+        to: otel.serviceName
+        note: Empty is the fullname, as 2.2.0's dfe-<component>.
+      waitForEngine.enabled:
+        to: initContainers
+        note: The wait-for-engine block in apps/dfe-transform-vector/values.yaml. Off is an initContainers list without it.
+      waitForEngine.service:
+        to: waitForEngine.service
+      waitForEngine.namespace:
+        to: waitForEngine.namespace
+      waitForEngine.port:
+        to: waitForEngine.port
+      waitForEngine.timeoutSeconds:
+        to: waitForEngine.timeoutSeconds
+      waitForEngine.intervalSeconds:
+        to: waitForEngine.intervalSeconds
+      waitForEngine.resources:
+        to: initContainers
+        note: The init container sits whole in apps/dfe-transform-vector/values.yaml, so an overlay restates the list.
+      otel.endpoint:
+        to: otel.endpoint
+        note: Exported as written with otel.protocol grpc, so it carries its scheme.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      versionCheck:
+        to: versionCheck
+        note: DFE_TRANSFORM_VERSION_CHECK__*, the names 2.2.0 wrote.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name, kept apart from the instance's component.
+          scalo-service names the image after the contract's app_name.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      terminationGracePeriodSeconds:
+        to: terminationGracePeriodSeconds
+        note: The contract's 90 s is the default, as 2.2.0's chart value was.
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: The app container only. The wait-for-engine init container's sits in its block.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      serviceAccount.mountToken:
+        to: serviceAccount.mountToken
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      keda.enabled:
+        to: keda.enabled
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure.enabled:
+        to: keda.extraTriggers
+        note: >-
+          Off in 2.2.0: this app sets no scaling_pressure gauge. Turning it on is
+          a keda.extraTriggers list holding argocd/values/apps/_fragments/pressure-trigger.yaml.
+      keda.pressure.service:
+        to: keda.pressure.service
+      keda.pressure.shimAddress:
+        to: keda.pressure.shimAddress
+      keda.pressure.targetValue:
+        to: keda.pressure.targetValue
+      mesh.enabled:
+        to: mesh.enabled
+        note: dfe-extras reads every mesh key for the pool route, as the 2.2.0 chart did.
+      mesh.port:
+        to: mesh.port
+      mesh.gateway:
+        to: mesh.gateway
+        note: >-
+          The mesh profile's default loader endpoint names the gateway namespace
+          envoy-gateway-system, so another namespace is a config.sink.endpoint too.
+      mesh.routePolicy:
+        to: mesh.routePolicy
+
+  dfe-transform-elastic:
+    chart: helm/charts/dfe-transform-elastic
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names the mesh route from it. The thin chart's own name is
+          fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>, which dfe-engine makes unique
+          per instance. It also names the instance's telemetry.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      config:
+        to: config
+        note: >-
+          The engine's config blob. On the bus profiles it merges over the app's
+          idle source defaults, so a named source block parses before
+          DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS supplies its brokers.
+      configMountPath:
+        dropped: The contract's config_mount_path, /etc/dfe-transform-elastic/config.yaml.
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras fails the render where it runs another transport than the
+          profile's, whose apps/dfe-transform-elastic/profile-*.yaml carry the transport.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+        note: >-
+          KAFKA_BOOTSTRAP_SERVERS and DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS on the bus
+          profiles, through tpl. The second replaces 2.2.0's source.brokers in the
+          file, and beats an overlay's source.brokers.
+      kafka.securityProtocol:
+        to: kafka.securityProtocol
+        note: >-
+          KAFKA_SECURITY_PROTOCOL on the bus profiles, through tpl, beside the SASL
+          references. Empty renders it empty where 2.2.0 dropped all four: set
+          secrets.kafka.enabled to false as well.
+      kafka.saslMechanism:
+        to: kafka.saslMechanism
+        note: KAFKA_SASL_MECHANISM on the bus profiles, through tpl.
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL references: set secrets.kafka.enabled to false instead.
+      kafka.consumerProtocol:
+        to: kafka.consumerProtocol
+        note: KAFKA_CONSUMER_PROTOCOL on the bus profiles, through tpl.
+      service.pushPort:
+        to: service.pushPort
+        note: >-
+          dfe-extras' mesh route reads it. The listener is the contract's push
+          port, 6000, open only where the config names the direct transport.
+      otelServiceName:
+        to: otel.serviceName
+        note: Empty is the fullname, as 2.2.0's dfe-<component>.
+      otel.endpoint:
+        to: otel.endpoint
+        note: Exported as written with otel.protocol grpc, so it carries its scheme.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      versionCheck:
+        to: versionCheck
+        note: DFE_TRANSFORM_ELASTIC_VERSION_CHECK__*, the names 2.2.0 wrote.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name, kept apart from the instance's component.
+          scalo-service names the image after the contract's app_name.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      terminationGracePeriodSeconds:
+        to: terminationGracePeriodSeconds
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: The app container only. The wait-for-engine init container's sits in its block.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      serviceAccount.mountToken:
+        to: serviceAccount.mountToken
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      keda.enabled:
+        to: keda.enabled
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure.enabled:
+        to: keda.extraTriggers
+        note: >-
+          The pressure trigger block in apps/dfe-transform-elastic/profile-*.yaml,
+          on every profile but slim. Off is an extraTriggers list without it.
+      keda.pressure.service:
+        to: keda.pressure.service
+      keda.pressure.shimAddress:
+        to: keda.pressure.shimAddress
+      keda.pressure.targetValue:
+        to: keda.pressure.targetValue
+      mesh.enabled:
+        to: mesh.enabled
+        note: dfe-extras reads every mesh key for the pool route, as the 2.2.0 chart did.
+      mesh.port:
+        to: mesh.port
+      mesh.gateway:
+        to: mesh.gateway
+      mesh.routePolicy:
+        to: mesh.routePolicy

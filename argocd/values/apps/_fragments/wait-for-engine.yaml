@@ -1,0 +1,37 @@
+# An init container holding the app back until dfe-engine reports ready, which is
+# when every ClickHouse object and bootstrap topic exists. It runs the app's own
+# image and reads waitForEngine.* from the app's values.yaml. Bounded: on expiry
+# it exits non-zero and the pod waits in Init:CrashLoopBackOff.
+# scripts/composition.py copies it into each app file's marked block.
+- name: wait-for-engine
+  image: '{{ include "scalo-service.image" . }}'
+  imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  command:
+    - /bin/sh
+    - -c
+    - |
+      set -eu
+      URL="http://{{ .Values.waitForEngine.service }}.{{ .Values.waitForEngine.namespace | default .Release.Namespace }}.svc.cluster.local:{{ .Values.waitForEngine.port }}/readyz"
+      DEADLINE=$(( $(date +%s) + {{ .Values.waitForEngine.timeoutSeconds }} ))
+      echo "waiting for ${URL}"
+      until curl -fsS -o /dev/null --max-time 5 "$URL"; do
+        if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+          echo "dfe-engine did not report ready at ${URL} within {{ .Values.waitForEngine.timeoutSeconds }}s -- GET /api/v1/system/schema on the engine says why" >&2
+          exit 1
+        fi
+        sleep {{ .Values.waitForEngine.intervalSeconds }}
+      done
+      echo "dfe-engine is ready"

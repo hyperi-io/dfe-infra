@@ -1,0 +1,28 @@
+# The bus. Bare KAFKA_* names, which scalo's KafkaConfig::from_env reads.
+extraEnv:
+  KAFKA_BOOTSTRAP_SERVERS: '{{ .Values.kafka.bootstrapServers }}'
+  KAFKA_CONSUMER_PROTOCOL: '{{ .Values.kafka.consumerProtocol }}'
+  KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
+  KAFKA_SASL_MECHANISM: '{{ .Values.kafka.saslMechanism }}'
+  # The source's broker list, applied after the file is read.
+  DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+
+# A named source block must carry every required key before env applies. These
+# are the app's idle defaults, which the engine's overlay replaces key by key.
+config:
+  source:
+    name: ""
+    topics: []
+    group_id: ""
+    brokers: []
+
+keda:
+  extraTriggers:
+    # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+        url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+        valueLocation: value
+    # END fragment pressure-trigger

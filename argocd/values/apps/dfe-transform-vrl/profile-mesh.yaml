@@ -1,0 +1,29 @@
+# Direct transport: records arrive on the Push listener and go to the loader's.
+# Which transport carries them is this profile's, never the engine's.
+configOverrides:
+  source:
+    transport: direct
+    listen: "0.0.0.0:6000"
+  sink:
+    transport: direct
+
+# The loader pool's mesh alias: a Service balances per connection and gRPC holds
+# one. The engine's compiled endpoint wins.
+config:
+  sink:
+    endpoint: http://dfe-loader-mesh.envoy-gateway-system.svc.cluster.local:6000
+
+secrets:
+  kafka:
+    enabled: false
+
+keda:
+  extraTriggers:
+    # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+        url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+        valueLocation: value
+    # END fragment pressure-trigger

@@ -1,0 +1,21 @@
+# The bus: brokers, topics and group through the DFE_TRANSFORM_* flat env, which
+# outranks the config file. The app reads an empty value as unset.
+extraEnv:
+  DFE_TRANSFORM_SOURCE_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  DFE_TRANSFORM_SINK_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  DFE_TRANSFORM_SOURCE_TOPICS: '{{ .Values.kafka.sourceTopic }}'
+  DFE_TRANSFORM_SINK_TOPIC: '{{ .Values.kafka.destTopic }}'
+  DFE_TRANSFORM_SOURCE_GROUP_ID: '{{ .Values.kafka.consumerGroup | default (.Values.fullnameOverride | default .Chart.Name) }}'
+
+# Which transport carries the records is this profile's, never the engine's.
+configOverrides:
+  source:
+    transport: bus
+  sink:
+    transport: bus
+
+# A group born with its source starts at the oldest record, in Vector's own
+# spelling. An overlay value wins.
+config:
+  source:
+    auto_offset_reset: smallest

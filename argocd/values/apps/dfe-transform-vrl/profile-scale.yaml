@@ -1,0 +1,31 @@
+# The bus: brokers, topics and group through the DFE_TRANSFORM_* flat env, which
+# outranks the config file. The app reads an empty value as unset.
+extraEnv:
+  DFE_TRANSFORM_SOURCE_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  DFE_TRANSFORM_SINK_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  DFE_TRANSFORM_SOURCE_TOPICS: '{{ .Values.kafka.sourceTopic }}'
+  DFE_TRANSFORM_SINK_TOPIC: '{{ .Values.kafka.destTopic }}'
+  DFE_TRANSFORM_SOURCE_GROUP_ID: '{{ .Values.kafka.consumerGroup | default (.Values.fullnameOverride | default .Chart.Name) }}'
+
+# Which transport carries the records is this profile's, never the engine's.
+configOverrides:
+  source:
+    transport: bus
+  sink:
+    transport: bus
+
+# A group born with its source starts at the oldest record. An overlay value wins.
+config:
+  source:
+    auto_offset_reset: earliest
+
+keda:
+  extraTriggers:
+    # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+        url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+        valueLocation: value
+    # END fragment pressure-trigger

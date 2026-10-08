@@ -1,0 +1,14 @@
+# Direct transport: the archiver takes records on its Push listener, no broker.
+extraEnv:
+  ARCHIVER_TRANSPORT: grpc
+  ARCHIVER_GRPC_LISTEN: "0.0.0.0:6000"
+  # No broker, so no kafka DLQ backend to write to.
+  DLQ_ENABLED: "false"
+
+# The contract's push port opens on config.transport, so the file carries it too.
+configOverrides:
+  transport: grpc
+
+secrets:
+  kafka:
+    enabled: false

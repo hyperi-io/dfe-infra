@@ -34,12 +34,21 @@ mounts and reflects is a copy the engine chart carries:
 
 `scripts/tests/test_composition.py` fails when a committed block or the chart's
 copy and this manifest disagree, so neither can quietly drift.
-"""
 
-from __future__ import annotations
+Helm replaces a list rather than merging it, so a list item several apps share
+(the wait-for-engine init container, the pressure trigger) sits whole in each
+app's integration values. Each copy is a GENERATED block, between markers, of
+its source under argocd/values/apps/_fragments:
+
+    python3 scripts/composition.py --write-fragments
+
+`scripts/tests/test_composition_fragments.py` fails on a block that differs from
+its source.
+"""
 
 import argparse
 import base64
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -74,6 +83,15 @@ SEED_BANNER = (
     "# `default_in`, which is where the default composition is declared; edit\n"
     "# the manifest, then re-render. A Helm list is replaced rather than merged,\n"
     "# so this states the whole set.\n"
+)
+
+# The apps' integration values, and the shared fragments their marked blocks copy.
+APPS_VALUES = REPO_ROOT / "argocd" / "values" / "apps"
+FRAGMENTS = APPS_VALUES / "_fragments"
+FRAGMENT_BEGIN = re.compile(
+    r"^(?P<indent> *)# BEGIN fragment (?P<name>[a-z0-9-]+)"
+    r" -- rendered by `python3 scripts/composition.py --write-fragments`\n",
+    re.MULTILINE,
 )
 
 
@@ -331,6 +349,104 @@ def write_catalogue(check_only: bool = False) -> int:
     return 0
 
 
+def fragment(name: str) -> str:
+    """A shared fragment's body: its source file less the leading comment block.
+
+    Args:
+        name: The fragment, a file name under argocd/values/apps/_fragments
+            without its .yaml suffix.
+
+    Returns:
+        The body, newline-terminated, as written at column 0.
+
+    Raises:
+        CompositionError: There is no fragment of that name.
+    """
+    path = FRAGMENTS / f"{name}.yaml"
+    if not path.is_file():
+        raise CompositionError(f"no fragment {name!r} under {FRAGMENTS.relative_to(REPO_ROOT)}")
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    start = 0
+    while start < len(lines) and (lines[start].startswith("#") or not lines[start].strip()):
+        start += 1
+    return "".join(lines[start:])
+
+
+def render_fragments(text: str, where: str = "") -> str:
+    """``text`` with each marked block holding its fragment, indented to its marker.
+
+    A block runs from a BEGIN marker to the first END marker of the same name at
+    the same indentation.
+
+    Args:
+        text: A values file's text.
+        where: The file, for an error message.
+
+    Returns:
+        The text with every block rewritten, unchanged when every block is current.
+
+    Raises:
+        CompositionError: A block has no END marker, or names no fragment.
+    """
+    out: list[str] = []
+    pos = 0
+    for begin in FRAGMENT_BEGIN.finditer(text):
+        if begin.start() < pos:
+            continue
+        indent, name = begin["indent"], begin["name"]
+        end_marker = re.compile(rf"^{indent}# END fragment {re.escape(name)}\n", re.MULTILINE)
+        end = end_marker.search(text, begin.end())
+        if end is None:
+            raise CompositionError(f"{where}: BEGIN fragment {name} has no END marker below it")
+        body = [
+            f"{indent}{line}" if line.strip() else "\n"
+            for line in fragment(name).splitlines(keepends=True)
+        ]
+        out += [text[pos : begin.end()], *body, end.group(0)]
+        pos = end.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _app_values_files() -> list[Path]:
+    """Every app's integration values file, the fragment sources aside."""
+    return sorted(p for p in APPS_VALUES.glob("*/*.yaml") if p.parent != FRAGMENTS)
+
+
+def write_fragments(check_only: bool = False) -> int:
+    """Copy each shared fragment into every block that names it.
+
+    Args:
+        check_only: Report drift and change nothing.
+
+    Returns:
+        Process exit status: 1 when a committed block is stale.
+
+    Raises:
+        CompositionError: A block has no END marker, or names no fragment.
+    """
+    stale: list[str] = []
+    for path in _app_values_files():
+        where = str(path.relative_to(REPO_ROOT))
+        text = path.read_text(encoding="utf-8")
+        fresh = render_fragments(text, where)
+        if fresh == text:
+            continue
+        if check_only:
+            stale.append(where)
+            continue
+        path.write_text(fresh, encoding="utf-8", newline="\n")
+        print(f"wrote the shared fragments into {where}", file=sys.stderr)
+    if stale:
+        print(
+            f"STALE against {FRAGMENTS.relative_to(REPO_ROOT)} -- run `python3 "
+            f"scripts/composition.py --write-fragments`: {', '.join(stale)}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def _declarations(text: str) -> dict:
     """The declaration blocks a snapshot comparison cares about.
 
@@ -504,6 +620,16 @@ def main(argv: list[str] | None = None) -> int:
         help="report a stale committed chart copy of the manifest and exit 1 (for CI)",
     )
     parser.add_argument(
+        "--write-fragments",
+        action="store_true",
+        help="copy each shared fragment into every app values block that names it",
+    )
+    parser.add_argument(
+        "--check-fragments",
+        action="store_true",
+        help="report an app values block that differs from its fragment and exit 1 (for CI)",
+    )
+    parser.add_argument(
         "--check-engine-snapshot",
         nargs="?",
         const="",
@@ -524,6 +650,8 @@ def main(argv: list[str] | None = None) -> int:
             return write_catalogue(check_only=args.check_catalogue)
         if args.write_seed or args.check_seed:
             return write_seed(check_only=args.check_seed)
+        if args.write_fragments or args.check_fragments:
+            return write_fragments(check_only=args.check_fragments)
         if args.profile:
             sys.stdout.write("".join(f"{a}\n" for a in default_apps(args.profile)))
             return 0
