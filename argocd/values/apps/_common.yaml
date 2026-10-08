@@ -10,11 +10,11 @@ reload:
   enabled: true
 
 # Values go through tpl in scalo-service. env comes from the layer 2 appset's env
-# parameter and cloud from a cloud parameter of the same kind, so a render without
-# either labels the objects with an empty value.
+# parameter. cloud comes from a cloud parameter when the appset passes one, else
+# from global.cloud in the cloud values file.
 commonLabels:
   dfe.hyperi.io/env: '{{ .Values.env }}'
-  dfe.hyperi.io/cloud: '{{ .Values.cloud }}'
+  dfe.hyperi.io/cloud: '{{ .Values.cloud | default .Values.global.cloud }}'
 
 telemetry:
   # The endpoint dfe-common.otelEndpoint (helm/library/dfe-common/templates/

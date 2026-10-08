@@ -370,6 +370,15 @@ def test_every_app_is_labelled_part_of_dfe_with_its_env_and_cloud(
     assert deployment["metadata"]["annotations"]["reloader.stakater.com/auto"] == "true"
 
 
+@pytest.mark.parametrize("cloud", ["aws", "local"])
+def test_without_a_cloud_parameter_the_label_is_the_cloud_files_global_cloud(
+    cloud: str, thin_charts: dict[str, Path], deploy_for: Callable[[dict], Path]
+) -> None:
+    service = sorted(thin_charts)[0]
+    docs = _render(thin_charts[service], deploy_for(_overlay("hyperdx", False)), service, cloud)
+    assert _deployment(docs)["metadata"]["labels"]["dfe.hyperi.io/cloud"] == cloud
+
+
 # ----------------------------------------------------------------------- placement
 
 
