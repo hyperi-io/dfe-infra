@@ -1,0 +1,246 @@
+# dfe-hyperdx's integration values over its thin chart, laid out as
+# argocd/values/apps/ will hold them: the DFE wiring the 2.2.0 chart derives,
+# under the keys the scalo-service library reads. test_weave.py renders it
+# against helm/charts/hyperdx.
+
+partOf: dfe
+commonLabels:
+  dfe.hyperi.io/env: '{{ .Values.env }}'
+  dfe.hyperi.io/cloud: '{{ .Values.global.cloud }}'
+
+reload:
+  enabled: true
+
+# The contract's clickhouse group, on the deploy layer's one account.
+secrets:
+  clickhouse:
+    existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
+
+extraEnv:
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
+  MONGO_PASSWORD:
+    valueFrom:
+      secretKeyRef:
+        name: dfe-ferretdb-password
+        key: password
+  # The kubelet expands $(MONGO_PASSWORD) because extraEnv renders in name order.
+  MONGO_URI: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authSource=admin"
+
+extraEnvFrom:
+  - configMapRef:
+      name: '{{ include "scalo-service.fullname" . }}-env'
+
+initContainers:
+  - name: dashboards
+    image: "{{ .Values.global.registry }}/dfe-engine:v1.22.14@sha256:36f4e647053f3ddb6f1997bbbb6e99aaf6dc467ae09c7282639e7d1bc4c50044"
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop:
+          - ALL
+    command:
+      - python
+      - -m
+      - dfe_engine.hyperdx.dashboards
+      - --out
+      - /etc/hyperdx/dashboards
+    volumeMounts:
+      - name: dashboards
+        mountPath: /etc/hyperdx/dashboards
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+extraVolumes:
+  - name: dashboards
+    emptyDir: {}
+  # Optional: a static volume cannot follow clickhouse.tls.enabled, and a
+  # deployment on plaintext has no CA Secret to mount.
+  - name: clickhouse-ca
+    secret:
+      secretName: "{{ .Values.clickhouse.tls.ca.secretName }}"
+      optional: true
+      items:
+        - key: ca.crt
+          path: ca.crt
+
+extraVolumeMounts:
+  - name: dashboards
+    mountPath: /etc/hyperdx/dashboards
+    readOnly: true
+  - name: clickhouse-ca
+    mountPath: /etc/dfe/clickhouse-ca
+    readOnly: true
+
+# Read by the templates in extraObjects below.
+usageStats:
+  enabled: false
+dashboards:
+  enabled: true
+  mountPath: /etc/hyperdx/dashboards
+  allTeams: true
+  requireRefs: true
+dfeAuth:
+  enabled: true
+  mode: oidc-proxy
+  engineService: dfe-engine
+  engineNamespace: ""
+  enginePort: 8000
+  engineJwksUrl: ""
+  engineIssuer: ""
+  headerEmail: x-oidc-subject
+  headerGroups: x-oidc-groups
+  defaultTeam: dfe
+localAuthPages:
+  enabled: false
+frontendUrl: ""
+sessionSecret:
+  name: dfe-hyperdx-session
+  key: session-secret
+  create: true
+tokenEncryption:
+  name: dfe-hyperdx-token-encryption
+  key: token-encryption-key
+  create: true
+
+extraObjects:
+  # Env derived from other values, which extraEnv cannot carry.
+  - |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ include "scalo-service.fullname" . }}-env
+      labels:
+        {{- include "scalo-service.labelSet" . | fromJson | toYaml | nindent 4 }}
+    data:
+      USAGE_STATS_ENABLED: {{ .Values.usageStats.enabled | default false | quote }}
+      # A URL: HyperDX refuses webhooks aimed at this host:port only when the value parses as one.
+      CLICKHOUSE_HOST: {{ printf "http://%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
+      CLICKHOUSE_PORT: {{ .Values.clickhouse.port | quote }}
+      CLICKHOUSE_DB: {{ .Values.clickhouse.database | quote }}
+      {{- with .Values.clickhouse.user }}
+      CLICKHOUSE_USER: {{ . | quote }}
+      {{- end }}
+      {{- $tls := .Values.clickhouse.tls | default dict }}
+      {{- $signed := or (eq (toString .Values.clickhouse.mode) "external") (dig "issuerRef" "name" "" $tls) (eq (toString (dig "internalCA" "present" false $tls)) "true") }}
+      {{- if and (eq (toString $tls.enabled) "true") $signed (or $tls.ca.secretName $tls.ca.configMapName) }}
+      NODE_EXTRA_CA_CERTS: {{ printf "/etc/dfe/clickhouse-ca/%s" ($tls.ca.dataKey | default "ca.crt") | quote }}
+      {{- end }}
+      {{- if .Values.dashboards.enabled }}
+      DASHBOARD_PROVISIONER_DIR: {{ .Values.dashboards.mountPath | quote }}
+      {{- if .Values.dashboards.allTeams }}
+      DASHBOARD_PROVISIONER_ALL_TEAMS: "true"
+      {{- end }}
+      {{- if .Values.dashboards.requireRefs }}
+      DASHBOARD_PROVISIONER_REQUIRE_REFS: "true"
+      {{- end }}
+      {{- end }}
+      {{- if .Values.dfeAuth.enabled }}
+      DFE_AUTH_MODE: {{ .Values.dfeAuth.mode | quote }}
+      {{- if eq .Values.dfeAuth.mode "oidc-proxy" }}
+      DFE_ENGINE_JWKS_URL: {{ .Values.dfeAuth.engineJwksUrl | default (printf "http://%s.%s.svc.cluster.local:%v/.well-known/jwks.json" .Values.dfeAuth.engineService (.Values.dfeAuth.engineNamespace | default .Release.Namespace) .Values.dfeAuth.enginePort) | quote }}
+      {{- with .Values.dfeAuth.engineIssuer }}
+      DFE_ENGINE_ISSUER: {{ . | quote }}
+      {{- end }}
+      {{- else }}
+      DFE_AUTH_HEADER_EMAIL: {{ .Values.dfeAuth.headerEmail | quote }}
+      DFE_AUTH_HEADER_GROUPS: {{ .Values.dfeAuth.headerGroups | quote }}
+      {{- end }}
+      DFE_AUTH_DEFAULT_TEAM: {{ .Values.dfeAuth.defaultTeam | quote }}
+      {{- end }}
+      {{- if .Values.localAuthPages.enabled }}
+      DFE_LOCAL_AUTH_PAGES: "true"
+      {{- end }}
+      FRONTEND_URL: {{ .Values.frontendUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.hyperdxHostname (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict))) .Values.domain)) | quote }}
+      NEXT_PUBLIC_DFE_UI_BASE_URL: {{ .Values.dfeUiBaseUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.dfeHostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain)) | quote }}
+  # The two generated keys, as generated-keys.yaml writes them.
+  - |
+    {{- if .Values.sessionSecret.create }}
+    apiVersion: generators.external-secrets.io/v1alpha1
+    kind: Password
+    metadata:
+      name: {{ .Values.sessionSecret.name }}-gen
+      labels:
+        {{- include "scalo-service.labelSet" . | fromJson | toYaml | nindent 4 }}
+    spec:
+      length: 48
+      digits: 6
+      symbols: 0
+      noUpper: false
+      allowRepeat: true
+    {{- end }}
+  - |
+    {{- if .Values.sessionSecret.create }}
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: {{ .Values.sessionSecret.name }}
+      labels:
+        {{- include "scalo-service.labelSet" . | fromJson | toYaml | nindent 4 }}
+      annotations:
+        helm.sh/resource-policy: keep
+    spec:
+      refreshPolicy: CreatedOnce
+      refreshInterval: "0"
+      target:
+        name: {{ .Values.sessionSecret.name }}
+        creationPolicy: Owner
+        template:
+          engineVersion: v2
+          data:
+            {{ .Values.sessionSecret.key }}: "{{ "{{ .password }}" }}"
+      dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: {{ .Values.sessionSecret.name }}-gen
+    {{- end }}
+  - |
+    {{- if .Values.tokenEncryption.create }}
+    apiVersion: generators.external-secrets.io/v1alpha1
+    kind: Password
+    metadata:
+      name: {{ .Values.tokenEncryption.name }}-gen
+      labels:
+        {{- include "scalo-service.labelSet" . | fromJson | toYaml | nindent 4 }}
+    spec:
+      length: 48
+      digits: 6
+      symbols: 0
+      noUpper: false
+      allowRepeat: true
+    {{- end }}
+  - |
+    {{- if .Values.tokenEncryption.create }}
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: {{ .Values.tokenEncryption.name }}
+      labels:
+        {{- include "scalo-service.labelSet" . | fromJson | toYaml | nindent 4 }}
+      annotations:
+        helm.sh/resource-policy: keep
+    spec:
+      refreshPolicy: CreatedOnce
+      refreshInterval: "0"
+      target:
+        name: {{ .Values.tokenEncryption.name }}
+        creationPolicy: Owner
+        template:
+          engineVersion: v2
+          data:
+            {{ .Values.tokenEncryption.key }}: "{{ "{{ .password | sha256sum }}" }}"
+      dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: {{ .Values.tokenEncryption.name }}-gen
+    {{- end }}
