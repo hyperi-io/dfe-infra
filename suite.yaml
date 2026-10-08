@@ -646,30 +646,30 @@ edges:
     to: dfe-fetcher
     kind: cargo-dep
     type: potential
-    evidence: "dfe-fetcher/Cargo.toml:42"
+    evidence: "dfe-fetcher/Cargo.toml:43"
   - from: scalo-rs
     to: dfe-archiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-archiver/Cargo.toml:50"
+    evidence: "dfe-archiver/Cargo.toml:49"
     note: "Workspace root; the three crates inherit it via workspace = true."
   - from: scalo-rs
     to: dfe-transform-vrl
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vrl/Cargo.toml:67"
-    note: "A second range for the dev dependency sits at Cargo.toml:180."
+    evidence: "dfe-transform-vrl/Cargo.toml:68"
+    note: "A second range for the dev dependency sits at Cargo.toml:181."
   - from: scalo-rs
     to: dfe-transform-vector
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vector/Cargo.toml:65"
-    note: "A second range for the dev dependency sits at Cargo.toml:142."
+    evidence: "dfe-transform-vector/Cargo.toml:67"
+    note: "A second range for the dev dependency sits at Cargo.toml:144."
   - from: scalo-rs
     to: dfe-transform-elastic
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-elastic/Cargo.toml:148"
+    evidence: "dfe-transform-elastic/Cargo.toml:149"
     note: "The range sits in the workspace dependencies, and the service package inherits it."
 
   # --- scalo-rs: the generated Dockerfile ----------------------------------
@@ -747,7 +747,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:51"
+    evidence: "dfe-engine/pyproject.toml:50"
     note: "Package data replaced the git submodule. The range stops below 1, so the first 1.x needs a deliberate bump here."
   - from: dfe-schemas
     to: dfe-infra
