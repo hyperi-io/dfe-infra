@@ -173,7 +173,8 @@ def run_smoke(
                 "env": {
                     "DFE_AUTH_MODE": "oidc-proxy",
                     "DFE_ENGINE_JWKS_URL": f"{base}/.well-known/jwks.json",
-                    "CLICKHOUSE_HOST": "127.0.0.1",
+                    # The chart's form: the ClickHouse HTTP URL, which the script dials as is.
+                    "CLICKHOUSE_HOST": base,
                 },
                 "pod_env": {
                     "CLICKHOUSE_USER": CH_USER,
@@ -193,7 +194,6 @@ def run_smoke(
                 FAKE_POD_BIN=str(podbin),
                 DFE_NS="dfe",
                 DFE_HYPERDX_PORT=base.rsplit(":", 1)[1],
-                DFE_HYPERDX_CH_URL=base,
             )
             out = subprocess.run(
                 ["bash", str(SMOKE)],

@@ -197,10 +197,10 @@ check "HyperDX has a ClickHouse connection configured" "[ -n '$CH_HOST' ]"
 # Reaching ClickHouse FROM the HyperDX pod is the seam. Doing it from a CH pod (as
 # the integration test does) proves ClickHouse works, not that HyperDX can get to it
 # -- different NetworkPolicy, different service DNS, different credentials.
-# Built from the host HyperDX is configured with: the Service name differs per
+# The URL HyperDX is configured with, dialled as is: the Service name differs per
 # mode, so a literal resolves to no such host on the mode it was not written for.
-CH_HOST_ONLY="$(hdx_env CLICKHOUSE_HOST)"
-CH_URL="${DFE_HYPERDX_CH_URL:-http://${CH_HOST_ONLY:-dfe-clickhouse.${NS_CH}.svc.cluster.local}:${DFE_CH_HTTP_PORT:-8123}}"
+CH_URL="$(hdx_env CLICKHOUSE_HOST)"
+CH_URL="${DFE_HYPERDX_CH_URL:-${CH_URL:-http://dfe-clickhouse.${NS_CH}.svc.cluster.local:${DFE_CH_HTTP_PORT:-8123}}}"
 check "HyperDX pod reaches ClickHouse over HTTP (${CH_URL})" \
   "hdx_probe GET '${CH_URL}/ping' | grep -q '^Ok'"
 
