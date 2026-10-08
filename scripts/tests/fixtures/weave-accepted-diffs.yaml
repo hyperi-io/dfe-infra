@@ -241,3 +241,249 @@ hyperdx:
       reason: >-
         Mounted on every pod, optional, because a static volume cannot follow
         clickhouse.tls. NODE_EXTRA_CA_CERTS still follows it.
+
+dfe-archiver:
+  diffs:
+    - &scalo-checksum-config
+      object: Deployment/*
+      path: spec.template.metadata.annotations[checksum/config]
+      reason: >-
+        scalo-service hashes the config file it renders, where 2.2.0 hashed the
+        whole ConfigMap template. A config change rolls the pods either way.
+    - &scalo-liveness-delay
+      object: Deployment/*
+      path: spec.template.spec.containers[main].livenessProbe.initialDelaySeconds
+      old: 10
+      new: 0
+      reason: The startup probe holds liveness off until the app first answers, in place of a fixed delay.
+    - &scalo-liveness-period
+      object: Deployment/*
+      path: spec.template.spec.containers[main].livenessProbe.periodSeconds
+      old: 30
+      new: 10
+      reason: scalo-service checks liveness every 10 s once the startup probe has passed.
+    - &scalo-readiness-delay
+      object: Deployment/*
+      path: spec.template.spec.containers[main].readinessProbe.initialDelaySeconds
+      old: 5
+      new: 0
+      reason: Readiness is checked from the start, so the pod joins its Service on its first pass.
+    - &scalo-startup-probe
+      object: Deployment/*
+      path: spec.template.spec.containers[main].startupProbe.*
+      old: <absent>
+      reason: >-
+        scalo-service adds a startup probe on /livez over the contract's 120 s
+        budget (24 x 5 s). 2.2.0 gave a starting pod 100 s: a 10 s delay, then
+        three 30 s liveness periods.
+    - &scalo-tmp-volume
+      object: Deployment/*
+      path: spec.template.spec.volumes[tmp].emptyDir
+      old: {}
+      new: <absent>
+      reason: The /tmp emptyDir is scalo-service's writable-tmp now.
+    - &scalo-prometheus-endpoint
+      object: Deployment/*
+      path: spec.template.spec.containers[main].env[OTEL_EXPORTER_OTLP_ENDPOINT]
+      old: <absent>
+      new: ""
+      scenarios: [prometheus]
+      reason: Prometheus mode renders the endpoint empty, which the stack reads as "export nothing".
+    - object: Deployment/dfe-archiver
+      path: spec.template.spec.containers[main].env[ARCHIVER_DESTINATION]
+      old: <absent>
+      new: ""
+      reason: >-
+        Rendered empty with no archive.localPath, where 2.2.0 left it out. The
+        app's flat env reads an empty value as unset (scalo flat_env_string).
+    - object: Deployment/dfe-archiver
+      path: spec.template.spec.containers[main].env[S3_*]
+      old: <absent>
+      new: ""
+      reason: >-
+        S3_ENDPOINT and S3_BUCKET render empty with no s3.endpoint or s3.bucket,
+        where 2.2.0 left them out. The app reads an empty value as unset.
+    - object: ConfigMap/dfe-archiver-config
+      path: data[archiver.yaml]
+      old: "{}\n"
+      new: "transport: grpc\n"
+      reason: >-
+        On the direct profiles the file names the transport ARCHIVER_TRANSPORT
+        already selects, because the contract's push port opens on
+        config.transport.
+    - object: Deployment/dfe-archiver
+      path: spec.template.spec.volumes[spool].emptyDir.sizeLimit
+      old: 10Gi
+      new: <absent>
+      reason: The spool is the contract's writable path `spool` now, mounted as writable-spool.
+    - object: Deployment/dfe-archiver
+      path: spec.template.spec.volumes[writable-spool].emptyDir.sizeLimit
+      old: <absent>
+      new: 10Gi
+      reason: The same spool and the same 10Gi cap, under scalo-service's volume name.
+    - object: Deployment/dfe-archiver
+      path: spec.template.spec.containers[main].volumeMounts[/var/spool/dfe/archiver].name
+      old: spool
+      new: writable-spool
+      reason: The spool's mount, at the same path.
+
+dfe-transform-vrl:
+  added:
+    ConfigMap/dfe-transform-vrl-transforms: &scalo-fileset-transforms >-
+      scalo-service renders a file set's ConfigMap with or without files, where
+      2.2.0 rendered it only with some. The app reads the empty mount only when
+      DFE_TRANSFORM_TRANSFORMS_DIR names it, which it does only with files.
+    ConfigMap/dfe-transform-vrl-enrichment: &scalo-fileset-enrichment >-
+      scalo-service renders a file set's ConfigMap with or without files. A
+      table is read only where config.enrichment_tables names it.
+    Service/dfe-transform-vrl: &scalo-bus-service >-
+      scalo-service fronts the metrics port on every profile, where 2.2.0
+      rendered the Service on the direct transport only, for its push port.
+  diffs:
+    - *scalo-checksum-config
+    - *scalo-liveness-delay
+    - *scalo-liveness-period
+    - *scalo-readiness-delay
+    - *scalo-startup-probe
+    - *scalo-tmp-volume
+    - *scalo-prometheus-endpoint
+    - &scalo-transform-checksums
+      object: Deployment/*
+      path: spec.template.metadata.annotations[checksum/*]
+      new: <absent>
+      reason: >-
+        One checksum/files annotation over every file set replaces checksum/transforms
+        and checksum/enrichment.
+    - &scalo-files-checksum
+      object: Deployment/*
+      path: spec.template.metadata.annotations[checksum/files]
+      old: <absent>
+      reason: A change to either file set rolls the pods, as each set's own checksum did.
+    - &scalo-fileset-volumes
+      object: Deployment/*
+      path: spec.template.spec.volumes[fileset-*].configMap.name
+      old: <absent>
+      reason: The two file sets' ConfigMaps, mounted whether or not they hold files.
+    - &scalo-fileset-mounts
+      object: Deployment/*
+      path: spec.template.spec.containers[main].volumeMounts[/etc/dfe-transform-*].*
+      old: <absent>
+      reason: The file sets' read-only mounts, at the directories 2.2.0 mounted them at.
+    - &scalo-push-service-metrics
+      object: Service/*
+      path: spec.ports[9090/TCP].*
+      old: <absent>
+      reason: >-
+        scalo-service puts the metrics port on every Service it renders. The 2.2.0
+        Service of a transform carried the push port alone.
+    - &scalo-transform-dir
+      object: Deployment/*
+      path: spec.template.spec.containers[main].env[DFE_TRANSFORM_TRANSFORMS_DIR]
+      old: <absent>
+      new: ""
+      reason: >-
+        Empty with no transform files, where 2.2.0 left it out. The app's flat
+        env reads an empty value as unset, so its own config decides.
+    - &scalo-source-topics
+      object: Deployment/*
+      path: spec.template.spec.containers[main].env[DFE_TRANSFORM_SOURCE_TOPICS]
+      old: <absent>
+      new: ""
+      reason: >-
+        Empty with no kafka.sourceTopic, where 2.2.0 left it out. The app reads
+        an empty value as unset, so the engine's routing stands.
+    - &scalo-sink-topic
+      object: Deployment/*
+      path: spec.template.spec.containers[main].env[DFE_TRANSFORM_SINK_TOPIC]
+      old: <absent>
+      new: ""
+      reason: >-
+        Empty with no kafka.destTopic, where 2.2.0 left it out. The app reads an
+        empty value as unset, so the engine's routing stands.
+    - &scalo-slim-loader-endpoint
+      object: ConfigMap/*-config
+      path: data[config.yaml]
+      old: "sink:\n  endpoint: http://dfe-loader.dfe.svc.cluster.local:6000\n  transport: direct\nsource:\n  listen: 0.0.0.0:6000\n  transport: direct\n"
+      new: "sink:\n  endpoint: http://dfe-loader:6000\n  transport: direct\nsource:\n  listen: 0.0.0.0:6000\n  transport: direct\n"
+      reason: >-
+        The default loader endpoint on the slim profile is the Service's short
+        name, which resolves in the pod's own namespace. The config file takes no
+        template, so it cannot name the namespace. The engine's endpoint wins.
+
+dfe-transform-vector:
+  added:
+    ConfigMap/dfe-transform-vector-transforms: *scalo-fileset-transforms
+    ConfigMap/dfe-transform-vector-enrichment: *scalo-fileset-enrichment
+    Service/dfe-transform-vector: *scalo-bus-service
+  diffs:
+    - *scalo-checksum-config
+    - *scalo-liveness-delay
+    - *scalo-liveness-period
+    - *scalo-readiness-delay
+    - *scalo-startup-probe
+    - *scalo-tmp-volume
+    - *scalo-prometheus-endpoint
+    - *scalo-transform-checksums
+    - *scalo-files-checksum
+    - *scalo-fileset-volumes
+    - *scalo-fileset-mounts
+    - *scalo-push-service-metrics
+    - *scalo-transform-dir
+    - *scalo-source-topics
+    - *scalo-sink-topic
+    - *scalo-slim-loader-endpoint
+    - object: Deployment/dfe-transform-vector*
+      path: spec.template.spec.volumes[vector-*].emptyDir
+      old: {}
+      new: <absent>
+      reason: >-
+        Vector's data and run directories are the contract's writable paths `data`
+        and `run` now.
+    - object: Deployment/dfe-transform-vector*
+      path: spec.template.spec.volumes[writable-*].emptyDir
+      old: <absent>
+      new: {}
+      reason: The same two emptyDirs, under scalo-service's volume names.
+    - object: Deployment/dfe-transform-vector*
+      path: spec.template.spec.containers[main].volumeMounts[/var/*/vector].name
+      reason: The mounts of those two directories, at the same paths.
+
+dfe-transform-elastic:
+  added:
+    Service/dfe-transform-elastic: *scalo-bus-service
+  diffs:
+    - *scalo-checksum-config
+    - *scalo-liveness-delay
+    - *scalo-liveness-period
+    - *scalo-readiness-delay
+    - *scalo-startup-probe
+    - *scalo-tmp-volume
+    - *scalo-prometheus-endpoint
+    - object: Deployment/dfe-transform-elastic*
+      path: spec.template.spec.initContainers[wait-for-engine].*
+      old: <absent>
+      reason: >-
+        The pod waits for dfe-engine like every other stage. The 2.2.0 chart
+        started it before the engine had created its topics.
+    - object: ConfigMap/dfe-transform-elastic*-config
+      path: data[config.yaml]
+      old: "{}\n"
+      new: "source:\n  brokers: []\n  group_id: \"\"\n  name: \"\"\n  topics: []\n"
+      reason: >-
+        The app's own idle defaults on the bus, so the engine's source block
+        parses with brokers present: the thin chart cannot add a key only when
+        the overlay names a source, as 2.2.0 did. An empty name idles the app.
+    - object: Deployment/dfe-transform-elastic*
+      path: spec.template.spec.containers[main].env[DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS]
+      old: <absent>
+      reason: >-
+        The source's broker list from kafka.bootstrapServers, applied after the
+        file is read, where 2.2.0 wrote it into the file.
+    - object: "*/dfe-transform-elastic*"
+      path: "*ports[6000/TCP].*"
+      new: <absent>
+      reason: >-
+        The push port opens only where the instance's config names the direct
+        transport. apps.yaml declares this app bus-only, so no source sends it
+        that config, where 2.2.0 published the port on every direct profile.
+    - *scalo-push-service-metrics

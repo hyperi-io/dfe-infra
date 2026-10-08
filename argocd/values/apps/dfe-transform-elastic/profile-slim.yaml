@@ -1,0 +1,4 @@
+# Direct transport: no broker, so no Kafka credentials.
+secrets:
+  kafka:
+    enabled: false

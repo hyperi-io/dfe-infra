@@ -34,7 +34,14 @@ import yaml
 from _weave import TESTS, render_app, weave
 
 # The deploy.service of each component the gate covers, in the order they switch.
-COMPONENTS = ("dfe-ui", "hyperdx")
+COMPONENTS = (
+    "dfe-ui",
+    "hyperdx",
+    "dfe-archiver",
+    "dfe-transform-vrl",
+    "dfe-transform-vector",
+    "dfe-transform-elastic",
+)
 PROFILES = ("slim", "single", "scale", "mesh")
 CLOUDS = ("local", "aws")
 MATRIX = [(c, p, k) for c in COMPONENTS for p in PROFILES for k in CLOUDS]

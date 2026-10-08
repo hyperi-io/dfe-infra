@@ -1,0 +1,9 @@
+# This cloud archives to local disk in the pod (argocd/values/local-dfe.yaml sets
+# archive.localPath), and the root filesystem is read-only, so the pod mounts a
+# writable directory at that path.
+extraVolumes:
+  - name: archive
+    emptyDir: {}
+extraVolumeMounts:
+  - name: archive
+    mountPath: '{{ .Values.archive.localPath }}'

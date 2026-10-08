@@ -1,0 +1,18 @@
+# Direct transport: records arrive on the supervisor's Push listener and go to the
+# loader's. Which transport carries them is this profile's, never the engine's.
+configOverrides:
+  source:
+    transport: direct
+    listen: "0.0.0.0:6000"
+  sink:
+    transport: direct
+
+# The loader pool's mesh alias: a Service balances per connection and gRPC holds
+# one. The engine's compiled endpoint wins.
+config:
+  sink:
+    endpoint: http://dfe-loader-mesh.envoy-gateway-system.svc.cluster.local:6000
+
+secrets:
+  kafka:
+    enabled: false

@@ -33,6 +33,10 @@ from _weave import render_app
 EXPOSURE: dict[str, dict[str, dict]] = {
     "dfe-ui": {"local": {}, "aws": {}},
     "hyperdx": {"local": {}, "aws": {}},
+    "dfe-archiver": {"local": {}, "aws": {}},
+    "dfe-transform-vrl": {"local": {}, "aws": {}},
+    "dfe-transform-vector": {"local": {}, "aws": {}},
+    "dfe-transform-elastic": {"local": {}, "aws": {}},
 }
 INTERNET_FACING = {"dfe-receiver"}
 

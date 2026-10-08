@@ -1,0 +1,11 @@
+# The scalo ScalingPressure trigger (0-100), read through the fail-safe
+# dfe-keda-shim, so a metric outage freezes scaling rather than running replicas
+# up. KEDA takes the higher of it and the CPU trigger. Value, not AverageValue:
+# the gauge is already per workload. keda.pressure.* keep their 2.2.0 meaning.
+# scripts/composition.py copies it into each app file's marked block.
+- type: metrics-api
+  metricType: Value
+  metadata:
+    targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+    url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+    valueLocation: value
