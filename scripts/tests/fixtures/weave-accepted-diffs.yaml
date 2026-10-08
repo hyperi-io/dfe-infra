@@ -907,11 +907,12 @@ dfe-engine:
     - object: ServiceAccount/dfe-engine
       path: automountServiceAccountToken
       old: <absent>
-      new: false
+      new: true
       reason: >-
-        scalo-service's ServiceAccount carries no token by default. The engine runs
-        no Kubernetes client, and DFE_DEPLOYMENT_TARGET names the target it would
-        otherwise detect from the mount.
+        scalo-service writes the field where 2.2.0 left it to Kubernetes' default,
+        which is true. The engine keeps its token (serviceAccount.mountToken in
+        apps/dfe-engine/values.yaml), so a deployment may log it in to OpenBao with
+        Kubernetes auth. Pinned to true so an unmounted engine is not accepted.
     - *scalo-prometheus-endpoint
 
 dfe-fetcher:

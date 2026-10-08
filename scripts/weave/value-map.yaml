@@ -2336,9 +2336,13 @@ apps:
       hostnames.vpn:
         to: hostnames.vpn
       global.registry:
-        dropped: image.repository names culvert's image whole, as it did in 2.2.0.
+        to: global.registry
+        note: >-
+          The image is <registry>/culvert, so a mirrored deployment moves it with the
+          dfe-* images. 2.2.0 named ghcr.io/hyperi-io/culvert whole and ignored it.
       image.repository:
         to: image.repository
+        note: Replaces the whole repository, as in 2.2.0; left unset the image follows global.registry.
       image.tag:
         to: image.tag
       image.digest:
@@ -2351,8 +2355,8 @@ apps:
           renders imagePullSecrets as given, and layer2-edge.yaml hands it none.
       imageComponent:
         dropped: >-
-          dfe-common's image name. image.repository in apps/culvert/values.yaml
-          names culvert's image whole.
+          dfe-common's image name. The contract's app_name (culvert) names the image
+          under global.registry.
       imagePullSecrets:
         to: imagePullSecrets
       replicas:
