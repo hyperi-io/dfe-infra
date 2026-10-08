@@ -74,10 +74,14 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                stage runs just before that first stage: every values/*-values.yaml
                in the deploy repo takes the keys scripts/weave/value-map.yaml
                moves its values to, beside the 2.2.0 keys it keeps, so the 2.2.0
-               charts render as before. A key already set is never overwritten,
-               and what needs a hand edit is printed, as `plan` prints it.
-               --stop-before <that first stage> leaves the stage committed and
-               nothing else moved. A second run writes and commits nothing.
+               charts render as before. A 2.2.0 key the thin chart would render
+               verbatim into a Kubernetes object moves out instead. A key already
+               set is never overwritten, and what needs a hand edit is printed,
+               as `plan` prints it. --stop-before <that first stage> leaves the
+               stage committed and nothing else moved. A second run writes and
+               commits nothing. An `enrichment-tables` stage runs just after that
+               first stage, once the thin charts render, and writes the config
+               entry for each table file an apps.yaml set names table by table.
 
                When the plan moves services.kafka-version on a Strimzi
                cluster, that same stage first writes two holds into the
@@ -115,7 +119,10 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                rollback target's Kafka version runs, marker or not;
                --skip-cluster-check rolls the pin back without that read and
                without the retarget. Like apply, it moves the cluster secret's
-               target_revision back to the rollback target's tag.
+               target_revision back to the rollback target's tag. Off the thin
+               charts, onto a stack without chart-digests, its commit first
+               strips the table entries `enrichment-tables` derived, which name
+               a directory the 2.2.0 chart does not mount.
 
 Nothing here executes a `before` or `finalise` note as a shell command -- they
 are runbook prose, not argv. `apply` checks the one `before` note this repo
@@ -1364,7 +1371,8 @@ MIGRATION_STAGE = "overlay-vocabulary"
 # Every 2.2.0 app chart's values.yaml default, the last resort once the chart is gone.
 DEFAULT_PROJECT = "dfe"
 BY_HAND = "by-hand"
-MIGRATIONS = ("fullname", "list", "tls", "public", "oidc", BY_HAND)
+MOVE = "move"
+MIGRATIONS = ("fullname", "list", "tls", "public", "oidc", MOVE, BY_HAND)
 _MISSING = object()
 _SKIP = object()
 
@@ -1379,6 +1387,7 @@ class MapEntry:
     note: str = ""
     migrate: str = ""
     when_off: dict | str = field(default_factory=dict)
+    default: str = ""
 
     @property
     def targets(self) -> tuple[str, ...]:
@@ -1403,6 +1412,7 @@ class OverlayPlan:
     service: str = ""
     skipped: str = ""
     writes: list[tuple[str, object, str]] = field(default_factory=list)
+    removes: list[tuple[str, str]] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     by_hand: list[str] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)
@@ -1419,7 +1429,7 @@ class OverlayMigration:
     @property
     def changed(self) -> list[str]:
         """The overlay files the migration writes, relative to the deploy repo."""
-        return [plan.path for plan in self.plans if plan.writes]
+        return [plan.path for plan in self.plans if plan.writes or plan.removes]
 
 
 def _ruamel() -> object:
@@ -1481,6 +1491,8 @@ def _entry(service: str, key: str, raw: object) -> MapEntry:
     paths = isinstance(when_off, dict) and all(isinstance(k, str) for k in when_off)
     if when_off != BY_HAND and not paths:
         raise UpgradeError(f"{where}: when-off is {BY_HAND} or a mapping of path to value")
+    if migrate == MOVE and "default" not in raw:
+        raise UpgradeError(f"{where}: migrate {MOVE} needs the default 2.2.0 renders without it")
     return MapEntry(
         key=key,
         to=to,
@@ -1488,6 +1500,7 @@ def _entry(service: str, key: str, raw: object) -> MapEntry:
         note=" ".join(str(raw.get("note") or "").split()),
         migrate=migrate,
         when_off=when_off,
+        default=str(raw.get("default") or ""),
     )
 
 
@@ -1684,6 +1697,20 @@ class _Planner:
             case _:
                 return _detach(value)
 
+    def move(self, entry: MapEntry, value: object) -> None:
+        """Write the value to `to` and take the old key out, which the thin chart would
+        otherwise render verbatim into a Kubernetes object that has no such field."""
+        where = ", ".join(entry.targets)
+        if _is_set(value):
+            for target in entry.targets:
+                self.propose(target, value, entry.key)
+            if str(_plain(value)) != entry.default:
+                self.plan.by_hand.append(
+                    f"{entry.key} {_shown(value)} -> {where}: a rollback to 2.2.0 renders "
+                    f"{json.dumps(entry.default)} in its place, so restore it there by hand"
+                )
+        self.plan.removes.append((entry.key, f"moved to {where}"))
+
     def run(self) -> None:
         handled: set[str] = set()
         for entry in self.app.entries:
@@ -1694,6 +1721,9 @@ class _Planner:
                 continue
             value = _at(self.doc, entry.key)
             if value is _MISSING:
+                continue
+            if entry.migrate == MOVE:
+                self.move(entry, value)
                 continue
             if entry.dropped:
                 if _is_set(value):
@@ -1758,16 +1788,34 @@ def _strip_writes(data: dict, writes: list[tuple[str, object, str]], before: dic
     return data
 
 
-def rewrite_overlay(text: str, writes: list[tuple[str, object, str]], source: str) -> str:
-    """The overlay's text with `writes` added and nothing else changed.
+def _remove(data: dict, path: str, *, prune: bool = False) -> None:
+    """Take one key out of a loaded document, and with `prune` every map it leaves empty."""
+    parts = path.split(".")
+    chain = [data]
+    for part in parts[:-1]:
+        chain.append(chain[-1].get(part) if isinstance(chain[-1], dict) else None)
+    if isinstance(chain[-1], dict):
+        chain[-1].pop(parts[-1], None)
+    for depth in range(len(parts) - 1, 0, -1) if prune else ():
+        if isinstance(chain[depth], dict) and not chain[depth]:
+            chain[depth - 1].pop(parts[depth - 1], None)
+
+
+def rewrite_overlay(
+    text: str,
+    writes: list[tuple[str, object, str]],
+    source: str,
+    removes: list[tuple[str, str]] | None = None,
+) -> str:
+    """The overlay's text with `writes` added, `removes` taken out, and nothing else changed.
 
     The rewrite is read back before it is returned: with the written keys taken out
-    again it must be the overlay as it was, which is what keeps the 2.2.0 render
-    unchanged.
+    again it must be the overlay as it was less the removed keys, which is what keeps
+    the 2.2.0 render unchanged.
 
     Raises:
         UpgradeError: The text does not load as a mapping, or the rewrite does not read
-            back as the overlay plus its writes.
+            back as the overlay plus its writes and less its removals.
     """
     yaml = _round_trip()
     doc = _load(text, source, round_trip=True)
@@ -1782,15 +1830,20 @@ def rewrite_overlay(text: str, writes: list[tuple[str, object, str]], source: st
                 node[part] = comments.CommentedMap()
             node = node[part]
         node[leaf] = _detach(value)
+    for path, _why in removes or []:
+        _remove(doc, path)
     out = io.StringIO()
     yaml.dump(doc, out)
     rewritten = out.getvalue()
     before = _plain(_load(text, source))
     after = _plain(_load(rewritten, source))
     missing = [t for t, _v, _w in writes if _at(after, t) is _MISSING]
-    if missing or _strip_writes(after, writes, before) != before:
+    kept = [p for p, _why in removes or [] if _at(after, p) is not _MISSING]
+    for path, _why in removes or []:
+        _remove(before, path)
+    if missing or kept or _strip_writes(after, writes, before) != before:
         raise UpgradeError(
-            f"{source}: the rewrite does not read back as the overlay plus its new keys"
+            f"{source}: the rewrite does not read back as the overlay with its keys moved"
         )
     return rewritten
 
@@ -1865,8 +1918,8 @@ def migrate_overlays(
         if app.service not in defaults:
             defaults[app.service] = _chart_defaults(app.chart, root)
         plan_overlay(doc, app, plan, defaults=defaults[app.service], common=common)
-        if plan.writes:
-            rewrites.append((path, rewrite_overlay(text, plan.writes, rel)))
+        if plan.writes or plan.removes:
+            rewrites.append((path, rewrite_overlay(text, plan.writes, rel, plan.removes)))
     # Nothing is written until every overlay has planned and rewritten cleanly.
     for path, rewritten in rewrites if write else ():
         path.write_text(rewritten, encoding="utf-8", newline="\n")
@@ -1878,9 +1931,10 @@ def render_overlay_report(result: OverlayMigration) -> list[str]:
     notes for the keys the overlays set, once per service and key."""
     lines: list[str] = []
     writes = sum(len(plan.writes) for plan in result.plans)
+    removes = sum(len(plan.removes) for plan in result.plans)
     lines.append(
-        f"{len(result.changed)} of {len(result.plans)} overlay(s) take {writes} key(s) -- "
-        "every 2.2.0 key stays where it is, so the 2.2.0 charts render as before"
+        f"{len(result.changed)} of {len(result.plans)} overlay(s) take {writes} key(s) and "
+        f"lose {removes} moved key(s) -- every other 2.2.0 key stays where it is"
     )
     notes: dict[tuple[str, str, str], int] = {}
     for plan in result.plans:
@@ -1888,6 +1942,7 @@ def render_overlay_report(result: OverlayMigration) -> list[str]:
             lines.append(f"{plan.path}: left as it is -- {plan.skipped}")
             continue
         body = [f"  write    {t} = {_shown(value)}  (from {why})" for t, value, why in plan.writes]
+        body += [f"  remove   {path}  ({why})" for path, why in plan.removes]
         body += [f"  conflict {line}" for line in plan.conflicts]
         body += [f"  by hand  {line}" for line in plan.by_hand]
         body += [f"  dropped  {line}" for line in plan.dropped]
@@ -1916,20 +1971,225 @@ def overlay_plan_section(deploy: Path, chart_stage: str | None) -> tuple[str, bo
         result = migrate_overlays(deploy, write=False)
     except UpgradeError as err:
         return f"{title}\n\nBLOCKED: {err}\n", True
-    return f"{title}\n\n" + "\n".join(render_overlay_report(result)) + "\n", False
+    tables = (
+        f"Stage {TABLES_STAGE} runs after {chart_stage}, once the thin charts render, and "
+        "names each table file the overlays carry in its app's config."
+    )
+    return f"{title}\n\n" + "\n".join([*render_overlay_report(result), "", tables]) + "\n", False
 
 
 def _with_migration(
     grouped: list[tuple[str, list[Move]]], chart_stage: str | None, migrate: bool
 ) -> list[tuple[str, list[Move]]]:
     """The stages apply walks: the overlay migration goes in just before the first one that
-    moves an Argo-managed component, so --stop-before that stage leaves it committed."""
+    moves an Argo-managed component, so --stop-before that stage leaves it committed, and
+    the enrichment-table entries go in just after it, once the thin charts render."""
     if not migrate or chart_stage is None:
         return list(grouped)
     walk = list(grouped)
     index = [stage for stage, _ in walk].index(chart_stage)
+    walk.insert(index + 1, (TABLES_STAGE, []))
     walk.insert(index, (MIGRATION_STAGE, []))
     return walk
+
+
+# --- the enrichment-table entries -------------------------------------------------
+# A set an app reads table by table needs one {name, path} entry per file in its config,
+# under the thin chart's mount. The 2.2.0 chart derives its own entries under another
+# directory and renders any declared one verbatim, so the entries are written only once
+# the thin charts render, and a rollback to a 2.2.0 stack takes them out first.
+
+APPS_MANIFEST = REPO_ROOT / "apps.yaml"
+TABLES_STAGE = "enrichment-tables"
+
+
+@dataclass(frozen=True, slots=True)
+class TableSet:
+    """An apps.yaml file set the app names table by table, and where the thin chart mounts it."""
+
+    service: str
+    name: str
+    values_path: str
+    entries_path: str
+    mount_path: str
+
+
+@dataclass(slots=True)
+class TableNaming:
+    """What the entries step writes or strips, per overlay, and the files it changes."""
+
+    changed: list[str] = field(default_factory=list)
+    lines: list[str] = field(default_factory=list)
+
+
+def load_table_sets(manifest: Path | None = None) -> tuple[list[TableSet], list[str]]:
+    """Every apps.yaml file set carrying an entries_path, and those it names no mount_path for.
+
+    See load_steps() for why `manifest` is looked up at call time.
+    """
+    path = manifest if manifest is not None else APPS_MANIFEST
+    data = _load(path.read_text(encoding="utf-8"), str(path))
+    apps = data.get("apps") if isinstance(data, dict) else None
+    sets: list[TableSet] = []
+    unmounted: list[str] = []
+    for service, body in (apps or {}).items():
+        for raw in (body or {}).get("files") or []:
+            if not isinstance(raw, dict) or not raw.get("entries_path"):
+                continue
+            if not raw.get("mount_path"):
+                unmounted.append(f"{service} {raw.get('name')}")
+                continue
+            sets.append(
+                TableSet(
+                    service=str(service),
+                    name=str(raw.get("name")),
+                    values_path=str(raw["values_path"]),
+                    entries_path=str(raw["entries_path"]),
+                    mount_path=str(raw["mount_path"]).rstrip("/"),
+                )
+            )
+    return sets, unmounted
+
+
+def table_name(filename: str) -> str:
+    """The name a program looks a mounted table up by: the file name less its extension."""
+    return filename.rsplit(".", 1)[0]
+
+
+def derived_entry(table_set: TableSet, filename: str) -> dict[str, str]:
+    """The entry naming one file of the set where the thin chart mounts it."""
+    return {"name": table_name(filename), "path": f"{table_set.mount_path}/{filename}"}
+
+
+def _is_derived(entry: object, table_set: TableSet) -> bool:
+    """Whether an entry is exactly the one derived for a file under the set's mount."""
+    plain = _plain(entry)
+    if not isinstance(plain, dict) or set(plain) != {"name", "path"}:
+        return False
+    path = str(plain["path"])
+    prefix = f"{table_set.mount_path}/"
+    return path.startswith(prefix) and plain == derived_entry(table_set, path.removeprefix(prefix))
+
+
+def _edit_list(text: str, path: str, edit: Callable[[list], list], source: str) -> str | None:
+    """The overlay's text with the list at `path` passed through `edit`, or None where that
+    changes nothing. An emptied list takes the key out. Every other key reads back as it was.
+
+    Raises:
+        UpgradeError: The text is not a mapping, `path` holds something other than a list,
+            or the rewrite does not read back as the overlay with only that list changed.
+    """
+    yaml = _round_trip()
+    doc = _load(text, source, round_trip=True)
+    if not isinstance(doc, dict):
+        raise UpgradeError(f"{source} is not a YAML mapping")
+    current = _at(doc, path)
+    if current not in (_MISSING, None) and not isinstance(current, list):
+        raise UpgradeError(f"{source}: {path} holds {_shown(current)}, not a list of entries")
+    old = list(current) if isinstance(current, list) else []
+    new = edit(old)
+    if _plain(new) == _plain(old):
+        return None
+    *parents, leaf = path.split(".")
+    if not new:
+        _remove(doc, path, prune=True)
+    elif isinstance(current, list):
+        current[:] = [item if item in old else _detach(item) for item in new]
+    else:
+        node = doc
+        for part in parents:
+            if part not in node:
+                node[part] = _ruamel().comments.CommentedMap()
+            node = node[part]
+        node[leaf] = _detach(new)
+    out = io.StringIO()
+    yaml.dump(doc, out)
+    rewritten = out.getvalue()
+    before = _plain(_load(text, source))
+    after = _plain(_load(rewritten, source))
+    landed = _at(after, path)
+    _remove(before, path, prune=not new)
+    unchanged = _strip_writes(after, [(path, None, "")], before) == before
+    if not unchanged or (_plain(new) if new else _MISSING) != landed:
+        raise UpgradeError(f"{source}: the rewrite changes more than {path}")
+    return rewritten
+
+
+def _entries_shown(entries: object) -> set[str]:
+    if not isinstance(entries, list):
+        return set()
+    return {json.dumps(e, sort_keys=True) for e in _plain(entries)}
+
+
+def _name_tables(
+    deploy: Path, *, write: bool, strip: bool, manifest: Path | None
+) -> TableNaming:
+    sets, unmounted = load_table_sets(manifest)
+    by_service: dict[str, list[TableSet]] = {}
+    for table_set in sets:
+        by_service.setdefault(table_set.service, []).append(table_set)
+    result = TableNaming()
+    result.lines += [
+        f"apps.yaml names no mount_path for {name}, so its entries are left as they are"
+        for name in unmounted
+    ]
+    rewrites: list[tuple[Path, str]] = []
+    for path in sorted(deploy.glob(OVERLAY_GLOB)):
+        rel = path.relative_to(deploy).as_posix()
+        text = path.read_text(encoding="utf-8")
+        doc = _load(text, rel)
+        service = _at(doc, "deploy.service") if isinstance(doc, dict) else _MISSING
+        if not _is_set(service):
+            continue
+        for table_set in by_service.get(str(_plain(service)), []):
+            files = _at(doc, table_set.values_path)
+            files = files if isinstance(files, list) else []
+            names = [str(f["name"]) for f in files if isinstance(f, dict) and f.get("name")]
+
+            def edit(entries: list, table_set: TableSet = table_set, names: list = names) -> list:
+                if strip:
+                    return [e for e in entries if not _is_derived(e, table_set)]
+                named = {_plain(e).get("name") for e in entries if isinstance(e, dict)}
+                added = [derived_entry(table_set, n) for n in names if table_name(n) not in named]
+                return entries + added
+
+            before = _entries_shown(_at(doc, table_set.entries_path))
+            rewritten = _edit_list(text, table_set.entries_path, edit, rel)
+            if rewritten is not None:
+                after = _entries_shown(_at(_load(rewritten, rel), table_set.entries_path))
+                verb, changed = ("strip", before - after) if strip else ("write", after - before)
+                result.lines += [
+                    f"{rel}: {verb} {table_set.entries_path} {entry}" for entry in sorted(changed)
+                ]
+                text = rewritten
+                doc = _load(text, rel)
+            if strip:
+                prefix = f"{table_set.mount_path}/"
+                kept = _at(doc, table_set.entries_path)
+                for entry in kept if isinstance(kept, list) else []:
+                    if isinstance(entry, dict) and str(entry.get("path", "")).startswith(prefix):
+                        result.lines.append(
+                            f"{rel}: by hand {table_set.entries_path} {entry.get('name')} names "
+                            f"{entry.get('path')}, which the 2.2.0 chart does not mount"
+                        )
+        if text != path.read_text(encoding="utf-8"):
+            rewrites.append((path, text))
+            result.changed.append(rel)
+    for path, rewritten in rewrites if write else ():
+        path.write_text(rewritten, encoding="utf-8", newline="\n")
+    return result
+
+
+def name_tables(deploy: Path, *, write: bool, manifest: Path | None = None) -> TableNaming:
+    """Write the entry for every table file a thin-chart overlay carries and its config does
+    not already name. An entry already there is never touched."""
+    return _name_tables(deploy, write=write, strip=False, manifest=manifest)
+
+
+def unname_tables(deploy: Path, *, write: bool, manifest: Path | None = None) -> TableNaming:
+    """Take out every entry exactly as name_tables derives it, so a 2.2.0 chart derives its own
+    under its own mount again. Any other entry under the thin mount is printed for a hand edit."""
+    return _name_tables(deploy, write=write, strip=True, manifest=manifest)
 
 
 # --- plan ----------------------------------------------------------------------
@@ -2139,22 +2399,66 @@ def _apply_overlay_migration(
         return _stage_failed(stage_index, str(err), [])
     for line in render_overlay_report(result):
         print(f"  {line}", file=sys.stderr)
-
-    message = f"chore(upgrade): {to_name} stage {stage_index} -- overlay vocabulary"
     emit(f"write the thin-chart keys into {len(result.changed)} overlay(s), keeping the 2.2.0 ones")
-    emit(f"git -C {deploy} add {' '.join(result.changed) or '(nothing changed)'}")
+    return _commit_overlays(
+        args, deploy, stage_index, MIGRATION_STAGE, to_name, result.changed, emit,
+        unchanged="every overlay already carries its thin-chart keys",
+    )
+
+
+def _apply_table_naming(
+    args: argparse.Namespace,
+    deploy: Path,
+    stage_index: int,
+    to_name: str,
+    emit: Callable[[str], None],
+) -> int | None:
+    """The enrichment-tables stage, once the thin charts render: name each table file in
+    its app's config, then commit, push and wait as any stage does.
+
+    Returns:
+        None when the stage is done, else apply's exit code.
+    """
+    print("  the thin charts render, so each table file is named in its app's config", file=sys.stderr)
+    prompt = f"apply stage {stage_index} ({TABLES_STAGE})?"
+    if not args.dry_run and not _confirm(prompt, assume_yes=args.yes):
+        print("dfe-ops upgrade apply: aborted by operator", file=sys.stderr)
+        return EXIT_BLOCKED
+    try:
+        result = name_tables(deploy, write=not args.dry_run)
+    except UpgradeError as err:
+        return _stage_failed(stage_index, str(err), [])
+    for line in result.lines:
+        print(f"  {line}", file=sys.stderr)
+    emit(f"name the table files of {len(result.changed)} overlay(s) in their config")
+    return _commit_overlays(
+        args, deploy, stage_index, TABLES_STAGE, to_name, result.changed, emit,
+        unchanged="every table file is already named",
+    )
+
+
+def _commit_overlays(
+    args: argparse.Namespace,
+    deploy: Path,
+    stage_index: int,
+    stage: str,
+    to_name: str,
+    changed: list[str],
+    emit: Callable[[str], None],
+    *,
+    unchanged: str,
+) -> int | None:
+    """Commit the overlays a stage rewrote, push with --push, and wait for Argo."""
+    message = f"chore(upgrade): {to_name} stage {stage_index} -- {stage.replace('-', ' ')}"
+    emit(f"git -C {deploy} add {' '.join(changed) or '(nothing changed)'}")
     emit(f"git -C {deploy} commit -m {message!r}")
     if not args.dry_run:
-        if result.changed:
-            added = _git(deploy, "add", "--", *result.changed)
+        if changed:
+            added = _git(deploy, "add", "--", *changed)
             if added.returncode != 0:
                 return _stage_failed(stage_index, f"git add failed: {_last_line(added.stderr)}", [])
         if _git(deploy, "diff", "--cached", "--quiet").returncode == 0:
-            print(
-                f"  stage {stage_index} ({MIGRATION_STAGE}) changed nothing -- every overlay "
-                "already carries its thin-chart keys",
-                file=sys.stderr,
-            )
+            print(f"  stage {stage_index} ({stage}) changed nothing -- {unchanged}", file=sys.stderr)
         else:
             commit = _git(deploy, "commit", "-m", message)
             if commit.returncode != 0:
@@ -2270,8 +2574,9 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             )
             return EXIT_OK
         print(f"\n=== stage {stage_index}/{len(walk)}: {stage} ===", file=sys.stderr)
-        if stage == MIGRATION_STAGE:
-            failed = _apply_overlay_migration(args, deploy, stage_index, to_name, emit)
+        if stage in (MIGRATION_STAGE, TABLES_STAGE):
+            step = _apply_overlay_migration if stage == MIGRATION_STAGE else _apply_table_naming
+            failed = step(args, deploy, stage_index, to_name, emit)
             if failed is not None:
                 return failed
             continue
@@ -2573,7 +2878,19 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
         )
 
     print(render_plan(moves, from_stack=from_name, to_stack=to_name))
+    # Leaving the thin charts: a derived entry names their mount, which 2.2.0 does not mount.
+    naming = TableNaming()
+    if needs_overlay_migration(to_pins, from_pins):
+        try:
+            naming = unname_tables(deploy, write=not args.dry_run)
+        except UpgradeError as err:
+            print(f"dfe-ops upgrade rollback: REFUSED -- {err}", file=sys.stderr)
+            return EXIT_BLOCKED
+        for line in naming.lines:
+            print(f"  {line}", file=sys.stderr)
     if args.dry_run:
+        if naming.changed:
+            print(f"[dry-run] strip the derived table entries from {' '.join(naming.changed)}")
         print(f"[dry-run] set pins.yaml base.dfe-infra = \"{to_name}\"")
         print(f"[dry-run] git -C {deploy} commit -m 'chore(upgrade): rollback to {to_name}'")
         if args.push:
@@ -2586,6 +2903,9 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
     keys = ", ".join(move.step.key for move in moves) or "no pinned key moved"
     message = f"chore(upgrade): rollback to {to_name} -- {keys}"
     added, detail = _stage(deploy)
+    if added and naming.changed:
+        overlays = _git(deploy, "add", "--", *naming.changed)
+        added, detail = overlays.returncode == 0, _last_line(overlays.stderr)
     if not added:
         print(f"dfe-ops upgrade rollback: git add failed: {detail}", file=sys.stderr)
         return EXIT_BLOCKED
@@ -2690,8 +3010,8 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         "--stop-before",
         default=None,
         metavar="<stage-key>",
-        help="stop the run before this stage, an upgrade-order.yaml one (e.g. 30-services) or "
-        f"{MIGRATION_STAGE}, touching nothing in it or after",
+        help="stop the run before this stage, an upgrade-order.yaml one (e.g. 30-services), "
+        f"{MIGRATION_STAGE} or {TABLES_STAGE}, touching nothing in it or after",
     )
     apply_.add_argument(
         "--from",

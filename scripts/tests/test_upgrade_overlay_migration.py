@@ -74,6 +74,10 @@ apps:
       accessMode:
         to: wp.accessModes
         migrate: list
+      sec.profileType:
+        to: sec.profile.type
+        migrate: move
+        default: RuntimeDefault
 """
 
 CHART_VALUES = "project: dfe\ncomponent: svc\n"
@@ -145,6 +149,7 @@ def test_the_real_value_map_loads_and_covers_every_gated_component() -> None:
         ({"dropped": "x", "migrate": "list"}, "there is no `to`"),
         ({"to": "a", "when-off": "later"}, "when-off is by-hand or a mapping"),
         ({"to": "a", "when-off": [1]}, "when-off is by-hand or a mapping"),
+        ({"to": "a", "migrate": "move"}, "needs the default 2.2.0 renders without it"),
     ],
 )
 def test_a_malformed_migration_field_is_refused(tmp_path: Path, entry: dict, message: str) -> None:
@@ -266,6 +271,57 @@ def test_list_wraps_the_one_value(tmp_path: Path, value_map: Path) -> None:
     plan, doc, _ = _migrate(tmp_path, value_map, "accessMode: ReadWriteOnce\n")
     assert _written(plan) == {"wp.accessModes": ["ReadWriteOnce"]}
     assert doc["accessMode"] == "ReadWriteOnce"
+
+
+def test_move_writes_the_new_key_and_takes_the_old_one_out(tmp_path: Path, value_map: Path) -> None:
+    plan, doc, _ = _migrate(tmp_path, value_map, "sec:\n  runAs: 1\n  profileType: RuntimeDefault\n")
+    assert _written(plan) == {"sec.profile.type": "RuntimeDefault"}
+    assert plan.removes == [("sec.profileType", "moved to sec.profile.type")]
+    assert plan.by_hand == []
+    assert doc["sec"] == {"runAs": 1, "profile": {"type": "RuntimeDefault"}}
+
+
+def test_move_of_a_value_2_2_0_would_not_render_on_rollback_asks_for_a_hand_edit(
+    tmp_path: Path, value_map: Path
+) -> None:
+    plan, doc, _ = _migrate(tmp_path, value_map, "sec:\n  profileType: Unconfined\n")
+    assert _written(plan) == {"sec.profile.type": "Unconfined"}
+    assert doc["sec"] == {"profile": {"type": "Unconfined"}}
+    assert plan.by_hand == [
+        'sec.profileType "Unconfined" -> sec.profile.type: a rollback to 2.2.0 renders '
+        '"RuntimeDefault" in its place, so restore it there by hand'
+    ]
+
+
+@pytest.mark.parametrize("empty", ['""', "null"])
+def test_move_takes_an_empty_old_key_out_and_writes_nothing(
+    tmp_path: Path, value_map: Path, empty: str
+) -> None:
+    plan, doc, _ = _migrate(tmp_path, value_map, f"sec:\n  profileType: {empty}\n")
+    assert plan.writes == []
+    assert plan.removes == [("sec.profileType", "moved to sec.profile.type")]
+    assert doc["sec"] == {}
+
+
+def test_move_keeps_a_new_key_already_set_and_still_takes_the_old_one_out(
+    tmp_path: Path, value_map: Path
+) -> None:
+    body = "sec:\n  profileType: RuntimeDefault\n  profile:\n    type: Localhost\n"
+    plan, doc, _ = _migrate(tmp_path, value_map, body)
+    assert plan.writes == []
+    assert doc["sec"] == {"profile": {"type": "Localhost"}}
+    assert plan.conflicts == [
+        'sec.profile.type holds "Localhost", kept over "RuntimeDefault" from sec.profileType'
+    ]
+
+
+def test_a_second_move_run_changes_nothing(tmp_path: Path, value_map: Path) -> None:
+    deploy = _deploy(tmp_path, "sec:\n  profileType: RuntimeDefault\n")
+    first = u.migrate_overlays(deploy, write=True, value_map=value_map, root=tmp_path)
+    after = (deploy / OVERLAY).read_bytes()
+    second = u.migrate_overlays(deploy, write=True, value_map=value_map, root=tmp_path)
+    assert (first.changed, second.changed) == ([OVERLAY], [])
+    assert (deploy / OVERLAY).read_bytes() == after
 
 
 # ---------------------------------------------------------------------- fullname
@@ -634,6 +690,34 @@ FETCHER_OVERLAY = (
     "component: fetcher-acme\n"
     "persistence:\n  enabled: true\n"
 )
+VRL = "values/dfe-transform-vrl-acme-values.yaml"
+VRL_OVERLAY = (
+    "deploy:\n  service: dfe-transform-vrl\n  instance: acme\n"
+    "component: transform-vrl-acme\n"
+    "enrichmentTables:\n  - name: geo.csv\n    content: 'a,b'\n"
+    "config:\n  enrichment_tables:\n    - name: zones\n      path: /srv/zones.csv\n"
+    "      key_columns: [id]\n"
+)
+TABLE_MOUNT = "/etc/dfe-transform-vrl-enrichment"
+# The apps.yaml file sets for the two transforms, each naming where its thin chart mounts it.
+MANIFEST_YAML = f"""
+apps:
+  dfe-transform-vrl:
+    files:
+      - name: transforms
+        values_path: fileSets.transforms.files
+        mount_path: /etc/dfe-transform-vrl-transforms
+        dir_setting: config.transforms.dir
+      - name: enrichment
+        values_path: fileSets.enrichment.files
+        mount_path: {TABLE_MOUNT}
+        entries_path: config.enrichment_tables
+  dfe-transform-vector:
+    files:
+      - name: enrichment
+        values_path: fileSets.enrichment.files
+        mount_path: /etc/dfe-transform-vector/data
+"""
 
 
 @pytest.fixture(autouse=True)
@@ -666,10 +750,14 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
     monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
     monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "main")
+    manifest = tmp_path / "apps.yaml"
+    manifest.write_text(MANIFEST_YAML, encoding="utf-8")
+    monkeypatch.setattr(u, "APPS_MANIFEST", manifest)
     deploy = tmp_path / "deploy"
     (deploy / "values").mkdir(parents=True)
     (deploy / "pins.yaml").write_text(PINS_YAML, encoding="utf-8")
     (deploy / FETCHER).write_text(FETCHER_OVERLAY, encoding="utf-8")
+    (deploy / VRL).write_text(VRL_OVERLAY, encoding="utf-8")
     for args in (["init", "-q"], ["add", "pins.yaml", "values"], ["commit", "-q", "-m", "initial"]):
         assert u._git(deploy, *args).returncode == 0
     return deploy
@@ -703,8 +791,8 @@ def test_stop_before_the_switch_stage_leaves_the_migration_committed_and_nothing
     rc = u.cmd_upgrade_apply(_apply_args(stack, stop_before="40-apps"))
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
-    assert "stage 2/3: overlay-vocabulary" in err
-    assert "stopping before stage 3/3 (40-apps)" in err
+    assert "stage 2/4: overlay-vocabulary" in err
+    assert "stopping before stage 3/4 (40-apps)" in err
     assert _log(stack) == [
         "chore(upgrade): 2.0.0 stage 2 -- overlay vocabulary",
         "chore(upgrade): 2.0.0 stage 1 -- bootstrap.cert-manager",
@@ -714,6 +802,9 @@ def test_stop_before_the_switch_stage_leaves_the_migration_committed_and_nothing
     assert doc["fullnameOverride"] == "dfe-fetcher-acme"
     assert doc["writablePaths"] == {"cursor": {"persistence": {"enabled": True}}}
     assert doc["component"] == "fetcher-acme"
+    vrl = yaml.safe_load((stack / VRL).read_text(encoding="utf-8"))
+    assert vrl["fileSets"]["enrichment"]["files"] == [{"name": "geo.csv", "content": "a,b"}]
+    assert [e["name"] for e in vrl["config"]["enrichment_tables"]] == ["zones"]
     assert u._git(stack, "status", "--porcelain").stdout == ""
 
 
@@ -733,14 +824,17 @@ def test_the_dry_run_orders_the_stage_before_the_switch_and_touches_nothing(
     rc = u.cmd_upgrade_apply(_apply_args(stack, dry_run=True, yes=False))
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
-    first = err.index("stage 1/3: 10-bootstrap")
-    migration = err.index("stage 2/3: overlay-vocabulary")
-    switch = err.index("stage 3/3: 40-apps")
-    assert first < migration < switch
+    first = err.index("stage 1/4: 10-bootstrap")
+    migration = err.index("stage 2/4: overlay-vocabulary")
+    switch = err.index("stage 3/4: 40-apps")
+    tables = err.index("stage 4/4: enrichment-tables")
+    assert first < migration < switch < tables
     assert 'write    fullnameOverride = "dfe-fetcher-acme"' in err
-    assert f"[dry-run] git -C {stack} add {FETCHER}" in err
+    assert f"[dry-run] git -C {stack} add {FETCHER} {VRL}" in err
     assert "commit -m 'chore(upgrade): 2.0.0 stage 2 -- overlay vocabulary'" in err
+    assert "commit -m 'chore(upgrade): 2.0.0 stage 4 -- enrichment tables'" in err
     assert (stack / FETCHER).read_text(encoding="utf-8") == FETCHER_OVERLAY
+    assert (stack / VRL).read_text(encoding="utf-8") == VRL_OVERLAY
     assert _log(stack) == ["initial"]
 
 
@@ -750,7 +844,7 @@ def test_stop_before_the_migration_itself_leaves_the_overlays_alone(
     rc = u.cmd_upgrade_apply(_apply_args(stack, stop_before=u.MIGRATION_STAGE))
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
-    assert "stopping before stage 2/3 (overlay-vocabulary)" in err
+    assert "stopping before stage 2/4 (overlay-vocabulary)" in err
     assert (stack / FETCHER).read_text(encoding="utf-8") == FETCHER_OVERLAY
     assert _log(stack)[0] == "chore(upgrade): 2.0.0 stage 1 -- bootstrap.cert-manager"
 
@@ -765,6 +859,7 @@ def test_no_stage_unless_only_the_target_carries_chart_digests(
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     assert "overlay-vocabulary" not in err
+    assert "enrichment-tables" not in err
     assert "stage 2/2: 40-apps" in err
 
 
@@ -787,6 +882,7 @@ def test_plan_lists_the_stage_where_apply_runs_it(stack: Path, capsys: pytest.Ca
     assert u.cmd_upgrade_plan(args) == u.EXIT_OK
     written = (stack / "upgrades" / "1.0.0-to-2.0.0.md").read_text(encoding="utf-8")
     assert "## overlay vocabulary (stage overlay-vocabulary, before 40-apps)" in written
+    assert "Stage enrichment-tables runs after 40-apps" in written
     assert f"{FETCHER} (dfe-fetcher)" in written
     assert "  write    fullnameOverride = \"dfe-fetcher-acme\"" in written
     assert (stack / FETCHER).read_text(encoding="utf-8") == FETCHER_OVERLAY
@@ -806,3 +902,193 @@ def test_plan_is_blocked_by_an_overlay_the_migration_cannot_read(
     args = _Args(deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False)
     assert u.cmd_upgrade_plan(args) == u.EXIT_BLOCKED
     assert "BLOCKED: values/dfe-fetcher-bad-values.yaml is not YAML" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------ the enrichment tables
+
+
+def _thin_vrl(tmp_path: Path, files: list[str], entries: list[dict] | None = None) -> Path:
+    """A deploy repo whose one vrl overlay already carries the thin-chart keys."""
+    deploy = tmp_path / "tables"
+    (deploy / "values").mkdir(parents=True)
+    doc: dict = {
+        "deploy": {"service": "dfe-transform-vrl", "instance": "acme"},
+        "fileSets": {"enrichment": {"files": [{"name": n, "content": "a,b"} for n in files]}},
+        "config": {"source": {"transport": "kafka"}},
+    }
+    if entries is not None:
+        doc["config"]["enrichment_tables"] = entries
+    (deploy / VRL).write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    return deploy
+
+
+@pytest.fixture
+def manifest(tmp_path: Path) -> Path:
+    path = tmp_path / "apps.yaml"
+    path.write_text(MANIFEST_YAML, encoding="utf-8")
+    return path
+
+
+def _entries(deploy: Path) -> list[dict] | None:
+    doc = yaml.safe_load((deploy / VRL).read_text(encoding="utf-8"))
+    return doc["config"].get("enrichment_tables")
+
+
+def test_each_table_file_is_named_under_the_thin_mount(tmp_path: Path, manifest: Path) -> None:
+    deploy = _thin_vrl(tmp_path, ["geo.csv", "asn.v2.json"])
+    result = u.name_tables(deploy, write=True, manifest=manifest)
+    assert result.changed == [VRL]
+    assert _entries(deploy) == [
+        {"name": "geo", "path": f"{TABLE_MOUNT}/geo.csv"},
+        {"name": "asn.v2", "path": f"{TABLE_MOUNT}/asn.v2.json"},
+    ]
+    doc = yaml.safe_load((deploy / VRL).read_text(encoding="utf-8"))
+    assert doc["config"]["source"] == {"transport": "kafka"}
+
+
+def test_an_authors_entry_is_never_touched(tmp_path: Path, manifest: Path) -> None:
+    own = {"name": "geo", "path": "/srv/geo.csv", "key_columns": ["ip"]}
+    deploy = _thin_vrl(tmp_path, ["geo.csv", "zones.csv"], [own])
+    u.name_tables(deploy, write=True, manifest=manifest)
+    assert _entries(deploy) == [own, {"name": "zones", "path": f"{TABLE_MOUNT}/zones.csv"}]
+
+
+def test_a_second_naming_run_changes_nothing(tmp_path: Path, manifest: Path) -> None:
+    deploy = _thin_vrl(tmp_path, ["geo.csv"])
+    u.name_tables(deploy, write=True, manifest=manifest)
+    after = (deploy / VRL).read_bytes()
+    assert u.name_tables(deploy, write=True, manifest=manifest).changed == []
+    assert (deploy / VRL).read_bytes() == after
+
+
+def test_a_read_only_naming_run_writes_nothing(tmp_path: Path, manifest: Path) -> None:
+    deploy = _thin_vrl(tmp_path, ["geo.csv"])
+    before = (deploy / VRL).read_bytes()
+    result = u.name_tables(deploy, write=False, manifest=manifest)
+    assert result.changed == [VRL]
+    assert (deploy / VRL).read_bytes() == before
+
+
+def test_a_set_with_no_entries_path_is_never_named(tmp_path: Path, manifest: Path) -> None:
+    deploy = tmp_path / "vector"
+    (deploy / "values").mkdir(parents=True)
+    doc = {
+        "deploy": {"service": "dfe-transform-vector", "instance": "acme"},
+        "fileSets": {"enrichment": {"files": [{"name": "geo.csv", "content": "a"}]}},
+    }
+    path = deploy / "values" / "dfe-transform-vector-acme-values.yaml"
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    assert u.name_tables(deploy, write=True, manifest=manifest).changed == []
+
+
+def test_a_set_apps_yaml_names_no_mount_for_is_reported(tmp_path: Path) -> None:
+    path = tmp_path / "apps.yaml"
+    unmounted = MANIFEST_YAML.replace(f"        mount_path: {TABLE_MOUNT}\n", "")
+    path.write_text(unmounted, encoding="utf-8")
+    deploy = _thin_vrl(tmp_path, ["geo.csv"])
+    result = u.name_tables(deploy, write=True, manifest=path)
+    assert result.changed == []
+    assert result.lines == [
+        "apps.yaml names no mount_path for dfe-transform-vrl enrichment, so its entries are "
+        "left as they are"
+    ]
+
+
+def test_unnaming_strips_only_the_derived_entries(tmp_path: Path, manifest: Path) -> None:
+    own = {"name": "zones", "path": "/srv/zones.csv", "key_columns": ["id"]}
+    pinned = {"name": "asn", "path": f"{TABLE_MOUNT}/asn.csv", "key_columns": ["n"]}
+    deploy = _thin_vrl(tmp_path, ["geo.csv", "asn.csv"], [own, pinned])
+    u.name_tables(deploy, write=True, manifest=manifest)
+    assert _entries(deploy) == [own, pinned, {"name": "geo", "path": f"{TABLE_MOUNT}/geo.csv"}]
+    result = u.unname_tables(deploy, write=True, manifest=manifest)
+    assert _entries(deploy) == [own, pinned]
+    assert result.lines == [
+        f'{VRL}: strip config.enrichment_tables {{"name": "geo", "path": "{TABLE_MOUNT}/geo.csv"}}',
+        f"{VRL}: by hand config.enrichment_tables asn names {TABLE_MOUNT}/asn.csv, which the "
+        "2.2.0 chart does not mount",
+    ]
+
+
+def test_unnaming_the_last_entry_takes_the_list_out(tmp_path: Path, manifest: Path) -> None:
+    deploy = _thin_vrl(tmp_path, ["geo.csv"])
+    before = yaml.safe_load((deploy / VRL).read_text(encoding="utf-8"))
+    u.name_tables(deploy, write=True, manifest=manifest)
+    u.unname_tables(deploy, write=True, manifest=manifest)
+    assert yaml.safe_load((deploy / VRL).read_text(encoding="utf-8")) == before
+
+
+def test_the_tables_stage_names_the_files_once_the_charts_have_moved(
+    stack: Path, capsys: pytest.CaptureFixture
+) -> None:
+    rc = u.cmd_upgrade_apply(_apply_args(stack))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    # Stage 1 moved the whole pin, so stage 3 has nothing of its own to commit.
+    assert _log(stack)[:2] == [
+        "chore(upgrade): 2.0.0 stage 4 -- enrichment tables",
+        "chore(upgrade): 2.0.0 stage 2 -- overlay vocabulary",
+    ]
+    assert _entries(stack)[-1] == {"name": "geo", "path": f"{TABLE_MOUNT}/geo.csv"}
+    assert _entries(stack)[0]["name"] == "zones"
+
+
+def test_stop_before_the_tables_stage_leaves_the_entries_unwritten(
+    stack: Path, capsys: pytest.CaptureFixture
+) -> None:
+    rc = u.cmd_upgrade_apply(_apply_args(stack, stop_before=u.TABLES_STAGE))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert "stopping before stage 4/4 (enrichment-tables)" in err
+    assert [e["name"] for e in _entries(stack)] == ["zones"]
+
+
+def test_a_rollback_off_the_thin_charts_strips_the_derived_entries_in_its_commit(
+    stack: Path, capsys: pytest.CaptureFixture
+) -> None:
+    assert u.cmd_upgrade_apply(_apply_args(stack)) == u.EXIT_OK
+    migrated = yaml.safe_load(u._git(stack, "show", f"HEAD~1:{VRL}").stdout)
+    args = _Args(
+        deploy=str(stack), to="1.0.0", kubeconfig=None, push=False, dry_run=False,
+        argocd_namespace="argocd", skip_cluster_check=True, target_revision=None,
+    )
+    rc = u.cmd_upgrade_rollback(args)
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert 'strip config.enrichment_tables {"name": "geo"' in err
+    assert yaml.safe_load((stack / VRL).read_text(encoding="utf-8")) == migrated
+    assert u._git(stack, "show", "--name-only", "--format=", "HEAD").stdout.split() == [
+        "pins.yaml",
+        VRL,
+    ]
+
+
+def test_a_rollback_strips_the_entries_before_it_moves_the_charts_back(
+    stack: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert u.cmd_upgrade_apply(_apply_args(stack)) == u.EXIT_OK
+    capsys.readouterr()
+    monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "2.0.0")
+    args = _Args(
+        deploy=str(stack), to="1.0.0", kubeconfig=None, push=False, dry_run=True,
+        argocd_namespace="argocd", skip_cluster_check=False, target_revision=None,
+    )
+    assert u.cmd_upgrade_rollback(args) == u.EXIT_OK
+    out = capsys.readouterr().out
+    strip = out.index(f"[dry-run] strip the derived table entries from {VRL}")
+    retarget = out.index("secret/dfe-cluster dfe.hyperi.io/target_revision=1.0.0")
+    assert strip < retarget
+    assert _entries(stack)[-1] == {"name": "geo", "path": f"{TABLE_MOUNT}/geo.csv"}
+
+
+def test_a_rollback_between_thin_stacks_keeps_the_entries(
+    stack: Path, capsys: pytest.CaptureFixture
+) -> None:
+    assert u.cmd_upgrade_apply(_apply_args(stack)) == u.EXIT_OK
+    assert u.cmd_upgrade_apply(_apply_args(stack, to="3.0.0", from_stack="2.0.0")) == u.EXIT_OK
+    args = _Args(
+        deploy=str(stack), to="2.0.0", kubeconfig=None, push=False, dry_run=False,
+        argocd_namespace="argocd", skip_cluster_check=True, target_revision=None,
+    )
+    assert u.cmd_upgrade_rollback(args) == u.EXIT_OK
+    capsys.readouterr()
+    assert _entries(stack)[-1] == {"name": "geo", "path": f"{TABLE_MOUNT}/geo.csv"}

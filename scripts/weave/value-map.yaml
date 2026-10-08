@@ -18,12 +18,16 @@
 #                                          list (a list of the one value), tls (true
 #                                          for a protocol carrying SSL), public
 #                                          (whether the mode is public), oidc (an
-#                                          extraEnv entry per envMappings row), or
-#                                          by-hand (nothing, and the plan prints the
-#                                          note)
+#                                          extraEnv entry per envMappings row), move
+#                                          (a copy, and the old key taken out, where
+#                                          the thin chart would render it verbatim
+#                                          into a Kubernetes object), or by-hand
+#                                          (nothing, and the plan prints the note)
 #         when-off: {<path>: <value>}      what the migration writes where the key
 #                                          is set empty, null or false, which 2.2.0
 #                                          read as off, or by-hand to print the note
+#         default: <value>                 for move, what 2.2.0 renders without the
+#                                          key, so the plan prints any other value
 #
 # An entry covers the keys beneath it. The 2.2.0 charts read every moved key
 # through `default`, so an empty or null value there meant "derive it": the
@@ -157,6 +161,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: Merged over the contract's security block, under the same field names.
@@ -273,10 +279,10 @@ apps:
         to: mongodb.uri
       mongodb.passwordSecretName:
         to: mongodb.passwordSecretName
-        when-off: by-hand
+        when-off: {extraEnv.MONGO_PASSWORD: ""}
         note: >-
           Empty no longer drops MONGO_PASSWORD: an external endpoint with inline
-          credentials sets extraEnv.MONGO_PASSWORD to null as well.
+          credentials sets extraEnv.MONGO_PASSWORD to an empty string as well.
       mongodb.passwordSecretKey:
         to: mongodb.passwordSecretKey
       sessionSecret.name:
@@ -376,6 +382,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-
@@ -552,6 +560,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -788,6 +798,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -1028,6 +1040,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -1224,6 +1238,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -1462,6 +1478,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-
@@ -1711,6 +1729,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-
@@ -2153,6 +2173,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
         note: >-
           The engine pod only. The hunt runner and keda shim keep RuntimeDefault:
           scalo-service merges the whole block into the engine pod, so the 2.2.0
@@ -2332,6 +2354,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -2612,6 +2636,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-

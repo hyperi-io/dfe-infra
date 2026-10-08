@@ -60,6 +60,8 @@ The rollback then reads the cluster secret's `dfe.hyperi.io/target_revision` and
 
 That commit moves the one `base.dfe-infra` pin, so every stage reverses at once; the per-stage notes above say what each stage's components need around it.
 
+A rollback off the thin charts, to a stack without `chart-digests:`, takes out every `config.enrichment_tables` entry the `enrichment-tables` stage derived, in the same commit, before `target_revision` moves back. Those entries name a directory the 2.2.0 chart does not mount, and without them it derives its own again. Any other entry under that directory is printed for a hand edit. The keys `overlay-vocabulary` wrote stay, since no 2.2.0 chart reads them, and a moved `seccompProfileType` renders as the 2.2.0 default, `RuntimeDefault`.
+
 ## Backup marker and restore points
 
 `dfe-ops upgrade preflight` (which `apply` runs first) checks a backup

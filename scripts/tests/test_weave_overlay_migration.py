@@ -22,6 +22,11 @@ map moves. migrate_overlays rewrites it in a scratch deploy repo, and then:
 - a per-config instance's thin render loses objects without the migration, so the
   migration is what keeps them
 - the keys a note derives reach the thin chart where it reads them
+- every pod and container securityContext the thin chart renders holds only
+  Kubernetes fields, so no 2.2.0 key lands verbatim in a pod spec
+- the enrichment-table entries written once the thin charts render reach the thin
+  config file under the mounted set, and stripping them again gives the 2.2.0
+  render back
 
 No old key the migration keeps sits under a thin-chart schema object that refuses
 it. Render (b) needs the scalo-service library (_weave.library).
@@ -46,6 +51,39 @@ import dfe_ops_upgrade as u
 
 DOMAIN = "dfe.example.com"
 TOLERATION = {"key": "dfe.example.com/pool", "operator": "Exists", "effect": "NoSchedule"}
+
+# The PodSecurityContext and SecurityContext fields of the Kubernetes 1.34 API, the
+# platform floor versions.yaml declares.
+POD_SECURITY_FIELDS = {
+    "appArmorProfile", "fsGroup", "fsGroupChangePolicy", "runAsGroup", "runAsNonRoot",
+    "runAsUser", "seLinuxChangePolicy", "seLinuxOptions", "seccompProfile",
+    "supplementalGroups", "supplementalGroupsPolicy", "sysctls", "windowsOptions",
+}
+CONTAINER_SECURITY_FIELDS = {
+    "allowPrivilegeEscalation", "appArmorProfile", "capabilities", "privileged", "procMount",
+    "readOnlyRootFilesystem", "runAsGroup", "runAsNonRoot", "runAsUser", "seLinuxOptions",
+    "seccompProfile", "windowsOptions",
+}
+
+# The table-by-table file set apps.yaml declares for dfe-transform-vrl, and where its thin
+# chart mounts it.
+TABLE_MOUNT = "/etc/dfe-transform-vrl-enrichment"
+TABLES_MANIFEST = f"""
+apps:
+  dfe-transform-vrl:
+    files:
+      - name: enrichment
+        values_path: fileSets.enrichment.files
+        mount_path: {TABLE_MOUNT}
+        entries_path: config.enrichment_tables
+  dfe-transform-vector:
+    files:
+      - name: enrichment
+        values_path: fileSets.enrichment.files
+        mount_path: /etc/dfe-transform-vector/data
+"""
+# Each state a fixture's deploy repo passes through, and the step that makes it from the last.
+STATES = ("original", "migrated", "named", "unnamed")
 
 
 @dataclass(frozen=True)
@@ -87,6 +125,7 @@ def _hyperdx(docs: list[dict]) -> None:
     assert TOLERATION in _pod(docs)["tolerations"]
     session = _env(docs)["EXPRESS_SESSION_SECRET"]["valueFrom"]["secretKeyRef"]
     assert session["key"] == "session"
+    assert _env(docs)["MONGO_PASSWORD"] == {"name": "MONGO_PASSWORD", "value": ""}
 
 
 def _receiver(docs: list[dict]) -> None:
@@ -99,6 +138,9 @@ def _receiver(docs: list[dict]) -> None:
 def _loader(docs: list[dict]) -> None:
     assert _env(docs)["DFE_LOADER__CLICKHOUSE__PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "pw"
     assert _pod(docs)["nodeSelector"]["dfe.example.com/pool"] == "loader"
+    assert _pod(docs)["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+    container = _pod(docs)["containers"][0]["securityContext"]
+    assert container["capabilities"]["add"] == ["NET_BIND_SERVICE"]
 
 
 def _archiver(docs: list[dict]) -> None:
@@ -189,6 +231,7 @@ FIXTURES = [
         {
             "sessionSecret": {"key": "session"},
             "tokenEncryption": {"key": "encryption"},
+            "mongodb": {"passwordSecretName": "", "uri": "mongodb://u:p@mongo.example.com/hyperdx"},
             "dashboards": {"enabled": False},
             "nodeScheduling": {"tolerations": [TOLERATION]},
         },
@@ -216,6 +259,20 @@ FIXTURES = [
             "clickhouse": {"passwordSecretKey": "pw"},
             "keda": {"pressure": {"enabled": False}},
             "nodeScheduling": {"nodeSelector": {"dfe.example.com/pool": "loader"}},
+            # Every podSecurityContext and containerSecurityContext key a 2.2.0 chart reads.
+            "podSecurityContext": {
+                "enabled": True,
+                "runAsNonRoot": True,
+                "runAsUser": 10001,
+                "runAsGroup": 10001,
+                "fsGroup": 10001,
+                "seccompProfileType": "RuntimeDefault",
+            },
+            "containerSecurityContext": {
+                "allowPrivilegeEscalation": False,
+                "readOnlyRootFilesystem": True,
+                "capabilities": {"add": ["NET_BIND_SERVICE"]},
+            },
         },
         expect=(_loader,),
     ),
@@ -354,41 +411,60 @@ BY_NAME = {f.name: f for f in FIXTURES}
 
 
 class Renders:
-    """Each fixture's deploy repo before and after the migration, and their renders, made once."""
+    """Each fixture's deploy repo in every state of STATES, and their renders, made once.
+
+    `migrated` is the overlay-vocabulary stage's work, `named` the enrichment-tables
+    stage's after it, and `unnamed` a rollback's strip of those entries.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.cache: dict[tuple[str, str, bool], list[dict]] = {}
+        self.manifest = root / "apps.yaml"
+        self.manifest.write_text(TABLES_MANIFEST, encoding="utf-8")
+        self.cache: dict[tuple[str, str, str], list[dict]] = {}
 
-    def repo(self, name: str, migrated: bool) -> Path:
-        """The fixture's deploy repo, written on first use, and migrated where `migrated` says."""
+    def _file(self, name: str, state: str) -> Path:
         fixture = BY_NAME[name]
-        repo = self.root / name / ("migrated" if migrated else "original")
-        path = repo / "values" / f"{fixture.service}-{fixture.instance}-values.yaml"
-        if not path.is_file():
+        return self.root / name / state / "values" / f"{fixture.service}-{fixture.instance}-values.yaml"
+
+    def repo(self, name: str, state: str) -> Path:
+        """The fixture's deploy repo in one state, made from the state before it on first use."""
+        path = self._file(name, state)
+        repo = path.parent.parent
+        if path.is_file():
+            return repo
+        path.parent.mkdir(parents=True)
+        if state == "original":
+            fixture = BY_NAME[name]
             body = {
                 "deploy": {"service": fixture.service, "instance": fixture.instance},
                 **INSTANCE.get(fixture.service, {}).get(fixture.cloud, {}),
                 **copy.deepcopy(fixture.overlay),
             }
-            path.parent.mkdir(parents=True)
             path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8", newline="\n")
-            if migrated:
-                plan = u.migrate_overlays(repo, write=True).plans[0]
-                assert plan.conflicts == [], plan.conflicts
+            return repo
+        previous = STATES[STATES.index(state) - 1]
+        self.repo(name, previous)
+        path.write_bytes(self._file(name, previous).read_bytes())
+        if state == "migrated":
+            plan = u.migrate_overlays(repo, write=True).plans[0]
+            assert plan.conflicts == [], plan.conflicts
+        elif state == "named":
+            u.name_tables(repo, write=True, manifest=self.manifest)
+        else:
+            u.unname_tables(repo, write=True, manifest=self.manifest)
         return repo
 
-    def overlay(self, name: str, migrated: bool) -> str:
-        fixture = BY_NAME[name]
-        values = self.repo(name, migrated) / "values"
-        return (values / f"{fixture.service}-{fixture.instance}-values.yaml").read_text(encoding="utf-8")
+    def overlay(self, name: str, state: str) -> str:
+        self.repo(name, state)
+        return self._file(name, state).read_text(encoding="utf-8")
 
-    def render(self, name: str, which: str, migrated: bool) -> list[dict]:
-        """One render of the original or migrated overlay: ``old`` (2.2.0) or ``new`` (thin)."""
-        key = (name, which, migrated)
+    def render(self, name: str, which: str, state: str) -> list[dict]:
+        """One render of the overlay in one state: ``old`` (2.2.0) or ``new`` (thin)."""
+        key = (name, which, state)
         if key not in self.cache:
             fixture = BY_NAME[name]
-            options: dict = {"deploy_repo": self.repo(name, migrated), "instance": fixture.instance}
+            options: dict = {"deploy_repo": self.repo(name, state), "instance": fixture.instance}
             if fixture.service in APPSETS:
                 options["appset"] = APPSETS[fixture.service]
             self.cache[key] = render_app(
@@ -421,7 +497,7 @@ def _accepted(renders: Renders, fixture: Fixture) -> tuple[dict[str, str], dict[
     found = accepts(fixture.service)
     if not fixture.per_config:
         return found.added, found.removed
-    doc = yaml.safe_load(renders.overlay(fixture.name, migrated=True))
+    doc = yaml.safe_load(renders.overlay(fixture.name, "migrated"))
     default = _default_name(fixture.service)
     fullname = doc["fullnameOverride"]
     return (
@@ -435,16 +511,16 @@ def _accepted(renders: Renders, fixture: Fixture) -> tuple[dict[str, str], dict[
 
 @pytest.mark.parametrize("name", list(BY_NAME))
 def test_the_2_2_0_chart_renders_the_migrated_overlay_as_before(renders: Renders, name: str) -> None:
-    assert renders.overlay(name, migrated=True) != renders.overlay(name, migrated=False)
-    assert renders.render(name, "old", migrated=True) == renders.render(name, "old", migrated=False)
+    assert renders.overlay(name, "migrated") != renders.overlay(name, "original")
+    assert renders.render(name, "old", "migrated") == renders.render(name, "old", "original")
 
 
 @pytest.mark.parametrize("name", list(BY_NAME))
 def test_the_thin_chart_adopts_every_2_2_0_object_from_the_migrated_overlay(
     renders: Renders, name: str
 ) -> None:
-    old = renders.render(name, "old", migrated=False)
-    new = renders.render(name, "new", migrated=True)
+    old = renders.render(name, "old", "original")
+    new = renders.render(name, "new", "named")
     added, removed = _accepted(renders, BY_NAME[name])
     assert identity_problems(old, new, added, removed) == []
     assert weave()._claims(new) == weave()._claims(old)
@@ -454,15 +530,15 @@ def test_the_thin_chart_adopts_every_2_2_0_object_from_the_migrated_overlay(
 def test_a_per_config_instance_loses_its_objects_without_the_migration(
     renders: Renders, name: str
 ) -> None:
-    old = renders.render(name, "old", migrated=False)
-    unmigrated = renders.render(name, "new", migrated=False)
+    old = renders.render(name, "old", "original")
+    unmigrated = renders.render(name, "new", "original")
     added, removed = _accepted(renders, BY_NAME[name])
     assert identity_problems(old, unmigrated, added, removed) != []
 
 
 @pytest.mark.parametrize("name", [f.name for f in FIXTURES if f.expect])
 def test_the_thin_chart_reads_what_the_migration_wrote(renders: Renders, name: str) -> None:
-    new = renders.render(name, "new", migrated=True)
+    new = renders.render(name, "new", "named")
     for check in BY_NAME[name].expect:
         check(new)
 
@@ -473,9 +549,107 @@ def test_every_component_has_a_fixture() -> None:
 
 def test_the_fetcher_fixture_is_the_gates_own_hand_migrated_pair(renders: Renders) -> None:
     """test_weave_fetcher_culvert.py renders this overlay pair, and the migration reproduces it."""
-    doc = yaml.safe_load(renders.overlay("fetcher-single", migrated=True))
+    doc = yaml.safe_load(renders.overlay("fetcher-single", "migrated"))
     assert doc["fullnameOverride"] == "dfe-fetcher-acme"
     assert doc["writablePaths"] == {"cursor": {"persistence": {"enabled": True, "size": "2Gi"}}}
+
+
+# ------------------------------------------------------------ security contexts
+
+
+def unknown_security_fields(docs: list[dict]) -> list[str]:
+    """Each pod or container securityContext key that is not a Kubernetes field; empty is a pass."""
+    found = []
+    for doc in docs:
+        template = (doc.get("spec") or {}).get("template") or {}
+        pod = template.get("spec") or {}
+        where = f"{doc.get('kind')}/{doc.get('metadata', {}).get('name')}"
+        pod_context = pod.get("securityContext") or {}
+        found += [f"{where} {key}" for key in pod_context if key not in POD_SECURITY_FIELDS]
+        for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
+            context = container.get("securityContext") or {}
+            found += [
+                f"{where} {container.get('name')} {key}"
+                for key in context
+                if key not in CONTAINER_SECURITY_FIELDS
+            ]
+    return found
+
+
+@pytest.mark.parametrize("name", list(BY_NAME))
+def test_no_2_2_0_key_lands_in_a_thin_pod_spec(renders: Renders, name: str) -> None:
+    assert unknown_security_fields(renders.render(name, "new", "named")) == []
+
+
+def test_every_2_2_0_security_key_is_a_kubernetes_field_or_moves_out() -> None:
+    """scalo-service merges both blocks into the pod whole, less podSecurityContext.enabled,
+    which it reads and takes out first."""
+    blocks = {
+        "podSecurityContext": POD_SECURITY_FIELDS | {"enabled"},
+        "containerSecurityContext": CONTAINER_SECURITY_FIELDS,
+    }
+    kept = []
+    for service, app in u.load_value_map().items():
+        for entry in app.entries:
+            block, _, rest = entry.key.partition(".")
+            fields = blocks.get(block)
+            if fields and rest and rest.split(".")[0] not in fields and entry.migrate != u.MOVE:
+                kept.append(f"{service} {entry.key}")
+    assert kept == []
+
+
+def test_a_2_2_0_key_left_in_place_is_seen(renders: Renders) -> None:
+    """The original dfe-ui overlay keeps podSecurityContext.seccompProfileType, which the
+    thin chart merges into the pod verbatim."""
+    found = unknown_security_fields(renders.render("ui-single-aws", "new", "original"))
+    assert found == ["Deployment/dfe-ui seccompProfileType"]
+
+
+# ------------------------------------------------------------- enrichment tables
+
+
+def _table_entries(docs: list[dict]) -> list[dict]:
+    files = [f for f in _config_files(docs) if "source" in f and "sink" in f]
+    assert len(files) == 1
+    return files[0].get("enrichment_tables") or []
+
+
+def _mounts(docs: list[dict]) -> set[str]:
+    return {m["mountPath"] for m in _pod(docs)["containers"][0].get("volumeMounts") or []}
+
+
+def test_the_table_entries_name_each_file_where_the_thin_chart_mounts_it(renders: Renders) -> None:
+    new = renders.render("vrl-bus", "new", "named")
+    assert _table_entries(new) == [{"name": "geo", "path": f"{TABLE_MOUNT}/geo.csv"}]
+    assert TABLE_MOUNT in _mounts(new)
+    assert _table_entries(renders.render("vrl-bus", "new", "migrated")) == []
+
+
+def test_the_table_entries_wait_for_the_switch_because_2_2_0_reads_them(renders: Renders) -> None:
+    """2.2.0 renders a declared entry as written and derives none of its own beside it."""
+    original = renders.render("vrl-bus", "old", "original")
+    named = renders.render("vrl-bus", "old", "named")
+    assert _table_entries(original) == [
+        {"name": "geo", "path": "/etc/dfe-transform-vrl-acme-enrichment/geo.csv"}
+    ]
+    assert _table_entries(named) == [{"name": "geo", "path": f"{TABLE_MOUNT}/geo.csv"}]
+
+
+def test_a_rollback_strip_gives_the_2_2_0_render_back(renders: Renders) -> None:
+    assert yaml.safe_load(renders.overlay("vrl-bus", "unnamed")) == yaml.safe_load(
+        renders.overlay("vrl-bus", "migrated")
+    )
+    assert renders.render("vrl-bus", "old", "unnamed") == renders.render("vrl-bus", "old", "original")
+
+
+def test_a_set_with_no_entries_path_is_left_alone(renders: Renders) -> None:
+    assert renders.overlay("vector", "named") == renders.overlay("vector", "migrated")
+
+
+def test_the_table_mount_is_the_one_the_integration_values_mount() -> None:
+    values = REPO_ROOT / "argocd" / "values" / "apps" / "dfe-transform-vrl" / "values.yaml"
+    integration = yaml.safe_load(values.read_text(encoding="utf-8"))
+    assert integration["fileSets"]["enrichment"]["mountPath"] == TABLE_MOUNT
 
 
 # ---------------------------------------------------------- old keys, thin schema

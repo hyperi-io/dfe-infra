@@ -87,7 +87,7 @@ extraVolumeMounts:
     readOnly: true
 
 # Mongo-protocol metadata store: the bundled FerretDB. An external endpoint sets
-# uri with its credentials inline and extraEnv.MONGO_PASSWORD to null.
+# uri with its credentials inline and extraEnv.MONGO_PASSWORD to an empty string.
 mongodb:
   uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authSource=admin"
   passwordSecretName: dfe-ferretdb-password

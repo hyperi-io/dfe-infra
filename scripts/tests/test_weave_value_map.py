@@ -273,8 +273,8 @@ class MapError(Exception):
     """scripts/weave/value-map.yaml does not have the shape the gate reads."""
 
 
-# migrate and when-off are the dfe-ops upgrade migration's, which checks their values.
-ENTRY_FIELDS = {"to", "dropped", "note", "migrate", "when-off"}
+# migrate, when-off and default are the dfe-ops upgrade migration's, which checks their values.
+ENTRY_FIELDS = {"to", "dropped", "note", "migrate", "when-off", "default"}
 
 
 def load_map(path: Path = VALUE_MAP) -> dict[str, dict]:
@@ -294,7 +294,8 @@ def load_map(path: Path = VALUE_MAP) -> dict[str, dict]:
         for key, entry in (body["keys"] or {}).items():
             if not isinstance(entry, dict) or set(entry) - ENTRY_FIELDS:
                 raise MapError(
-                    f"{service} {key}: an entry takes to, dropped, note, migrate and when-off"
+                    f"{service} {key}: an entry takes to, dropped, note, migrate, when-off "
+                    "and default"
                 )
             if ("to" in entry) == ("dropped" in entry):
                 raise MapError(f"{service} {key}: needs exactly one of `to` and `dropped`")
@@ -442,7 +443,7 @@ def test_a_helper_the_chart_includes_is_read(tmp_path: Path) -> None:
         ({"to": "a", "dropped": "b"}, "exactly one"),
         ({}, "exactly one"),
         ({"dropped": ""}, "a reason"),
-        ({"to": "a", "why": "b"}, "takes to, dropped, note, migrate and when-off"),
+        ({"to": "a", "why": "b"}, "takes to, dropped, note, migrate, when-off and default"),
     ],
 )
 def test_a_malformed_entry_is_refused(tmp_path: Path, entry: dict, message: str) -> None:
