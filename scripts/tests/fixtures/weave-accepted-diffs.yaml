@@ -469,6 +469,14 @@ dfe-transform-vector:
     - object: Deployment/dfe-transform-vector*
       path: spec.template.spec.containers[main].volumeMounts[/var/*/vector].name
       reason: The mounts of those two directories, at the same paths.
+    - object: Deployment/dfe-transform-vector*
+      path: spec.template.spec.containers[main].env[DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL]
+      old: <absent>
+      reason: >-
+        The bus listener's protocol, from which 2.2.0 derived source.tls.enabled
+        and sink.tls.enabled into the config file. The app turns TLS on for both
+        endpoints when the protocol names SSL, and otherwise leaves the file's
+        setting alone, as 2.2.0 never wrote it false.
 
 dfe-transform-elastic:
   added:

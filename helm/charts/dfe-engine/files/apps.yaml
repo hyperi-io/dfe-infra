@@ -711,6 +711,9 @@ apps:
       config.sink.sasl.password: DFE_TRANSFORM_SINK_SASL_PASSWORD
       config.transforms.dir: DFE_TRANSFORM_TRANSFORMS_DIR
       config.vector.data_dir: DFE_TRANSFORM_VECTOR_DATA_DIR
+      # One env var sets both: a protocol naming SSL turns TLS on for both endpoints.
+      config.source.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+      config.sink.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
     # Each of these renders empty, which the app reads as unset, until the
     # overlay value beside it is set.
     deployment_owned_when:
