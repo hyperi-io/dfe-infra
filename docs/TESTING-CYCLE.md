@@ -42,6 +42,10 @@ moment it reports ACTIVE. Proofs needing only the Kubernetes side run during its
 waits. A broker-count change runs one direction only. Teardown starts the moment
 the last proof lands.
 
+## Unattended cloud runs
+
+An unattended cloud cycle runs through `dfe-ops cloud-cycle --tf-dir <root> --run-length 3h -- <cycle args>`. It creates nothing unless `dfe-ops cloud-preflight` passes: the account's guardrails are readable, the credential outlives the run plus its teardown, and no expired run resources remain. The run gets its own state key and `dfe-e2e`/`expires-at` tags (`scripts/cloud_run.py`), and every exit short of SIGKILL tears it down. `.github/workflows/cloud-reaper.yml` removes what an expired run left, every 15 minutes, and does nothing while `vars.DFE_REAPER_AWS_ROLE` is unset. Flags, variables and refusals: `scripts/dfe_ops_cloud_guard.py` and `scripts/cloud_reaper.py`.
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not

@@ -20,8 +20,10 @@ locals {
 }
 
 resource "aws_iam_role" "bootstrap" {
-  name               = "${var.name}-kafka-bootstrap"
-  assume_role_policy = var.pod_identity_trust_policy_json
+  name                 = "${var.name}-kafka-bootstrap"
+  path                 = var.iam_path
+  assume_role_policy   = var.pod_identity_trust_policy_json
+  permissions_boundary = var.permissions_boundary
 }
 
 data "aws_iam_policy_document" "bootstrap" {

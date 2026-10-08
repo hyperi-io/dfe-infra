@@ -151,6 +151,33 @@ def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
     expect("the pool map parses back at that indent", parsed["karpenter"]["pools"] == pools, parsed)
 
 
+def render_nodeclass(tags: dict[str, str] | None) -> dict:
+    """The rendered EC2NodeClass for one pool, with karpenter.tags set when given."""
+    cmd = ["helm", "template", "t", str(CHART), "--show-only", "templates/ec2nodeclass.yaml"]
+    for s in BASE_SETS:
+        cmd += ["--set", s]
+    cmd += ["--set-json", f"karpenter.pools={json.dumps({'clickhouse': BASE_POOL})}"]
+    if tags is not None:
+        cmd += ["--set-json", f"karpenter.tags={json.dumps(tags)}"]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if out.returncode != 0:
+        raise SystemExit(f"helm template failed:\n{out.stderr}")
+    return yaml.safe_load(out.stdout)
+
+
+def test_run_tags_reach_every_instance_karpenter_launches() -> None:
+    """default_tags never reaches what Karpenter creates, so a guardrail that
+    refuses an untagged RunInstances needs the run's tags on the node class."""
+    tags = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"}
+    spec = render_nodeclass(tags)["spec"]
+    expect("the node class carries karpenter.tags", spec.get("tags") == tags, spec.get("tags"))
+
+
+def test_no_run_tags_render_no_tags_field() -> None:
+    spec = render_nodeclass(None)["spec"]
+    expect("an empty karpenter.tags renders no tags field", "tags" not in spec, spec.get("tags"))
+
+
 def main() -> int:
     with standalone():
         test_no_floor_set_adds_no_requirement()
@@ -159,6 +186,8 @@ def main() -> int:
         test_both_floors_render_together_without_disturbing_family_or_generation()
         test_a_dedicated_pool_renders_its_taint_and_a_shared_one_renders_none()
         test_the_appset_carries_the_pools_through_from_the_cluster_secret()
+        test_run_tags_reach_every_instance_karpenter_launches()
+        test_no_run_tags_render_no_tags_field()
         return summary()
 
 

@@ -96,8 +96,13 @@ output "DFE_KAFKA_BROKER_LOG_BUCKET" {
 }
 
 output "DFE_CLOUDTRAIL_BUCKET" {
-  description = "The S3 bucket CloudTrail delivers to, under both telemetry sinks. The fetcher's aws source reads it regardless of which sink is chosen."
-  value       = aws_s3_bucket.cloudtrail.bucket
+  description = "The S3 bucket CloudTrail delivers to, under both telemetry sinks. The fetcher's aws source reads it regardless of which sink is chosen. Empty when cloudtrail.enabled is false."
+  value       = join("", aws_s3_bucket.cloudtrail[*].bucket)
+}
+
+output "DFE_RUN_TAGS" {
+  description = "A test run's id and expiry tags, plus Inspector's exclusion tag when inspector_ec2_exclusion is on, as one line of JSON; empty when there are none. Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/run_tags annotation, which carries the same tags onto what Karpenter and the load balancer controller create -- resources default_tags never sees."
+  value       = length(local.run_tags) == 0 ? "" : jsonencode(local.run_tags)
 }
 
 output "DFE_EKS_AUDIT_LOG_GROUP" {

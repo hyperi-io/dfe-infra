@@ -26,17 +26,27 @@ locals {
   secret_recovery_window_days       = local.ephemeral ? 0 : 30
   kafka_secret_recovery_window_days = local.ephemeral ? 0 : 30
 
+  // A test run's id and expiry, plus Inspector's scan exclusion when asked for.
+  // These are the tags the controllers need explicitly, beyond default_tags.
+  run_tags = merge(
+    module.run_tags.tags,
+    var.inspector_ec2_exclusion ? tomap({ InspectorEc2Exclusion = "true" }) : tomap({}),
+  )
+
+  // What every resource is tagged with: the governance set plus the above.
+  tags = merge(var.tags, local.run_tags)
+
   // Every service principal the deployment's KMS key must grant, beyond the
   // account root -- collected here because the cluster module is the key's
   // ONE policy owner (aws_kms_key_policy replaces the whole policy) and
   // cloudtrail.tf's bucket and msk's broker-log delivery are both this root's
-  // to know about. CloudTrail is unconditional: cloudtrail.tf's bucket is
-  // SSE-KMS on this key regardless of which way telemetry.sink points. The
-  // MSK grant is conditional on the otel sink actually creating a log-
+  // to know about. The CloudTrail grants follow cloudtrail.enabled, and hold
+  // under either telemetry.sink, because the trail's bucket is SSE-KMS on this
+  // key. The MSK grant is conditional on the otel sink actually creating a log-
   // delivery target -- confluent-cloud and redpanda-cloud emit no
   // CloudWatch-shaped broker log for anything to deliver.
   key_policy_grants = concat(
-    [
+    var.cloudtrail.enabled ? [
       // AWS's documented CloudTrail-to-KMS statements: GenerateDataKey* needs
       // both the trail-ARN and EncryptionContext conditions, Decrypt/
       // DescribeKey need only the trail ARN. See
@@ -62,7 +72,7 @@ locals {
           { test = "StringEquals", variable = "aws:SourceArn", values = [local.cloudtrail_arn] },
         ]
       },
-    ],
+    ] : [],
     var.kafka.provider == "msk" && var.telemetry.sink == "otel" ? [
       {
         sid        = "AllowMSKBrokerLogDeliveryToUseTheKey"
@@ -96,6 +106,13 @@ module "naming" {
   region    = var.provision.region
 }
 
+// No resources: validates var.run and renders its two tags, empty when null.
+module "run_tags" {
+  source = "../../modules/tf-run-tags"
+
+  run = var.run
+}
+
 module "cluster" {
   source = "../../modules/kubernetes-cluster/aws"
 
@@ -114,7 +131,15 @@ module "cluster" {
   endpoint           = var.endpoint
   dns                = { private_zone = var.dns.private_zone }
   telemetry          = var.telemetry
-  tags               = var.tags
+  tags               = local.tags
+
+  // The run's tags alone, for what the EKS add-ons create (EBS volumes, pod
+  // ENIs) where default_tags cannot reach. Empty outside a test run, which
+  // leaves the add-ons' configuration exactly as it was.
+  controller_tags      = local.run_tags
+  permissions_boundary = var.permissions_boundary
+  iam_path             = var.iam_path
+  s3_bucket_prefix     = var.s3_bucket_prefix
 
   key_policy_grants = local.key_policy_grants
 
@@ -163,7 +188,10 @@ module "edge" {
   dns    = { public_zone = var.dns.public_zone }
   tunnel = var.edge.tunnel
 
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary
+  iam_path             = var.iam_path
+
+  tags = local.tags
 }
 
 // The one Kafka password of the deployment, generated HERE rather than in the
@@ -224,6 +252,10 @@ module "kafka" {
 
   autoscaling = var.kafka.msk.autoscaling
   telemetry   = var.telemetry
+
+  permissions_boundary = var.permissions_boundary
+  iam_path             = var.iam_path
+  s3_bucket_prefix     = var.s3_bucket_prefix
 
   // NO module-wide depends_on. The grant ordering this module needs now rides
   // on kms_key_arn itself, which the cluster module declares against its own
@@ -346,6 +378,9 @@ module "secrets" {
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
 
   recovery_window_days = local.secret_recovery_window_days
+
+  permissions_boundary = var.permissions_boundary
+  iam_path             = var.iam_path
 }
 
 // ---------------------------------------------------------------------------
@@ -519,7 +554,11 @@ module "toolbox" {
   // the fast teardown; a persistent one keeps the safer default.
   force_destroy_session_logs = local.ephemeral
 
-  tags = var.tags
+  permissions_boundary = var.permissions_boundary
+  iam_path             = var.iam_path
+  s3_bucket_prefix     = var.s3_bucket_prefix
+
+  tags = local.tags
 }
 
 // The toolbox operator's read-only EKS access entry (AmazonEKSViewPolicy)

@@ -144,7 +144,17 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
     to collide on node_pools (the correctness review's P1-3), so this render emits neither
     variable at all rather than risk the same collision on resolved_shapes too."""
     declared = set(_VARIABLE_RE.findall(AWS_VARIABLES.read_text(encoding="utf-8")))
-    assert set(render()) == declared - {"node_pools", "resolved_shapes"}
+    # These default in the root and are set by a guarded test run's own overlay,
+    # never by the dial.
+    guarded_run_only = {
+        "run",
+        "permissions_boundary",
+        "iam_path",
+        "s3_bucket_prefix",
+        "inspector_ec2_exclusion",
+        "cloudtrail",
+    }
+    assert set(render()) == declared - {"node_pools", "resolved_shapes"} - guarded_run_only
 
 
 def test_provision_carries_the_account_the_root_asserts() -> None:

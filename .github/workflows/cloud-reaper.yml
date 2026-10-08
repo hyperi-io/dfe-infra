@@ -1,0 +1,102 @@
+# Every 15 minutes, removes what an expired cloud test run left behind:
+# `tofu destroy` per expired run with per-run state, then cloud_sweep.py
+# --expired --grace 0 --delete in every region. scripts/cloud_reaper.py holds
+# the logic and documents every variable.
+#
+# Configured by repository variables only, with no secret: the job assumes
+# vars.DFE_REAPER_AWS_ROLE by OIDC. With that variable unset the gate job
+# prints a notice and the run is green, so a fork or another organisation's
+# copy of this repository does nothing.
+name: Cloud reaper
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One reaper at a time, and a running destroy is never cancelled by the next tick.
+concurrency:
+  group: cloud-reaper
+  cancel-in-progress: false
+
+# Held equal to tf-validate.yml's, so the reaper destroys with the OpenTofu CI validates on.
+env:
+  TOFU_VERSION: "1.12.6"
+
+jobs:
+  gate:
+    name: is a reaper configured?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    steps:
+      - name: Read the reaper's role variable
+        id: gate
+        env:
+          DFE_REAPER_AWS_ROLE: ${{ vars.DFE_REAPER_AWS_ROLE }}
+        run: |
+          if [[ -z "${DFE_REAPER_AWS_ROLE:-}" ]]; then
+            echo "::notice::cloud reaper not configured for this repository (DFE_REAPER_AWS_ROLE is unset); nothing to do."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  reap:
+    name: reap expired cloud test runs
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    # The reaper role's OIDC trust names this environment, so no other job can assume it.
+    environment: e2e-reaper
+    # A destroy that runs past this resumes on the next schedule from the same state.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DFE_REAPER_AWS_ROLE: ${{ vars.DFE_REAPER_AWS_ROLE }}
+      DFE_REAPER_AWS_REGIONS: ${{ vars.DFE_REAPER_AWS_REGIONS }}
+      DFE_REAPER_AWS_ACCOUNT: ${{ vars.DFE_REAPER_AWS_ACCOUNT }}
+      DFE_REAPER_STATE_BUCKET: ${{ vars.DFE_REAPER_STATE_BUCKET }}
+      DFE_REAPER_STATE_REGION: ${{ vars.DFE_REAPER_STATE_REGION }}
+      DFE_RUN_STATE_PREFIX: ${{ vars.DFE_RUN_STATE_PREFIX }}
+      DFE_RUN_TAG_KEY: ${{ vars.DFE_RUN_TAG_KEY }}
+      DFE_RUN_EXPIRY_KEY: ${{ vars.DFE_RUN_EXPIRY_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The repo's Python, from .python-version; the reaper is stdlib only.
+      - name: Set up uv and the repo's Python
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/venv
+          enable-cache: false
+
+      - name: Validate the reaper's configuration
+        id: plan
+        run: python3 scripts/cloud_reaper.py plan
+
+      - name: Assume the reaper role by OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.DFE_REAPER_AWS_ROLE }}
+          role-session-name: dfe-cloud-reaper
+          aws-region: ${{ steps.plan.outputs.region }}
+          allowed-account-ids: ${{ steps.plan.outputs.account }}
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Destroy expired runs, then sweep expired resources
+        run: python3 scripts/cloud_reaper.py reap

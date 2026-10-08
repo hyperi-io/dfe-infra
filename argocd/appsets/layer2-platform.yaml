@@ -229,6 +229,12 @@ spec:
                 pools:
                   {{- $pools | fromJson | toYaml | nindent 4 }}
                 {{- end }}
+                # A test run's id and expiry, parsed for the same reason the pools
+                # are and re-emitted as JSON so an ISO expiry stays a string; the
+                # annotation is absent outside a run.
+                {{- with index .metadata.annotations "dfe.hyperi.io/run_tags" }}
+                tags: {{ . | fromJson | toJson }}
+                {{- end }}
               {{- end }}
               {{- $pullSecret := "ghcr-pull-secret" }}
               {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}

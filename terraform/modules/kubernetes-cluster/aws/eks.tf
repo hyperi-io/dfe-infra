@@ -49,8 +49,10 @@ data "aws_iam_policy_document" "eks_assume" {
 }
 
 resource "aws_iam_role" "cluster" {
-  name               = "${var.name}-cluster"
-  assume_role_policy = data.aws_iam_policy_document.eks_assume.json
+  name                 = "${var.name}-cluster"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.eks_assume.json
+  permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy_attachment" "cluster" {
@@ -166,8 +168,10 @@ data "aws_iam_policy_document" "ec2_assume" {
 }
 
 resource "aws_iam_role" "nodes" {
-  name               = "${var.name}-nodes"
-  assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
+  name                 = "${var.name}-nodes"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.ec2_assume.json
+  permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy_attachment" "nodes" {
@@ -253,6 +257,29 @@ locals {
   // this cloud; eks-pod-identity-agent is what makes every role below work
   // without a credential in a pod.
   addons = ["coredns", "kube-proxy", "vpc-cni", "eks-pod-identity-agent", "aws-ebs-csi-driver"]
+
+  // vpc-cni's own configuration schema (aws eks describe-addon-configuration)
+  // takes enableNetworkPolicy as a top-level STRING "true"/"false", not a JSON
+  // boolean -- confirmed against AWS's own worked example
+  // (https://aws.amazon.com/blogs/containers/amazon-vpc-cni-now-supports-kubernetes-network-policies/).
+  // With no config, network-policies' whole chart is decorative on this
+  // cluster: the add-on is created with no configuration_values at all
+  // otherwise, so nothing enforces a NetworkPolicy object. See
+  // helm/charts/network-policies and the toolbox pod's own fence.
+  //
+  // var.controller_tags reaches what the two add-ons create themselves, which
+  // default_tags never sees: ADDITIONAL_ENI_TAGS on the pod network interfaces,
+  // extraVolumeTags on every volume the CSI driver provisions. Empty leaves both
+  // configurations exactly as they were.
+  addon_configuration = {
+    "vpc-cni" = length(var.controller_tags) == 0 ? jsonencode({ enableNetworkPolicy = "true" }) : jsonencode({
+      enableNetworkPolicy = "true"
+      env                 = { ADDITIONAL_ENI_TAGS = jsonencode(var.controller_tags) }
+    })
+    "aws-ebs-csi-driver" = length(var.controller_tags) == 0 ? null : jsonencode({
+      controller = { extraVolumeTags = var.controller_tags }
+    })
+  }
 }
 
 // Resolve each add-on's version for this cluster version rather than pinning
@@ -272,15 +299,7 @@ resource "aws_eks_addon" "this" {
   addon_name    = each.key
   addon_version = data.aws_eks_addon_version.this[each.key].version
 
-  // vpc-cni's own configuration schema (aws eks describe-addon-configuration)
-  // takes enableNetworkPolicy as a top-level STRING "true"/"false", not a JSON
-  // boolean -- confirmed against AWS's own worked example
-  // (https://aws.amazon.com/blogs/containers/amazon-vpc-cni-now-supports-kubernetes-network-policies/).
-  // With no config, network-policies' whole chart is decorative on this
-  // cluster: the add-on is created with no configuration_values at all
-  // otherwise, so nothing enforces a NetworkPolicy object. See
-  // helm/charts/network-policies and the toolbox pod's own fence.
-  configuration_values = each.key == "vpc-cni" ? jsonencode({ enableNetworkPolicy = "true" }) : null
+  configuration_values = lookup(local.addon_configuration, each.key, null)
 
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
@@ -308,8 +327,10 @@ data "aws_iam_policy_document" "pod_identity_trust" {
 }
 
 resource "aws_iam_role" "ebs_csi" {
-  name               = "${var.name}-ebs-csi"
-  assume_role_policy = data.aws_iam_policy_document.pod_identity_trust.json
+  name                 = "${var.name}-ebs-csi"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.pod_identity_trust.json
+  permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy_attachment" "ebs_csi" {

@@ -91,8 +91,10 @@ resource "aws_secretsmanager_secret_version" "seed" {
 // ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "eso" {
-  name               = "${var.cluster_name}-external-secrets"
-  assume_role_policy = var.pod_identity_trust_policy_json
+  name                 = "${var.cluster_name}-external-secrets"
+  path                 = var.iam_path
+  assume_role_policy   = var.pod_identity_trust_policy_json
+  permissions_boundary = var.permissions_boundary
 }
 
 data "aws_iam_policy_document" "eso" {

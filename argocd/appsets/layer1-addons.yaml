@@ -247,6 +247,13 @@ spec:
             # controller is down no LoadBalancer Service can be created at all.
             # Off: the Services that want it say so by annotation.
             enableServiceMutatorWebhook: false
+            # A test run's id and expiry on every load balancer, target group and
+            # security group the controller creates, which default_tags never
+            # reaches; the annotation is absent outside a run. JSON keeps an
+            # ISO expiry a quoted string rather than a YAML timestamp.
+            {{- with index .metadata.annotations "dfe.hyperi.io/run_tags" }}
+            defaultTags: {{ . | fromJson | toJson }}
+            {{- end }}
             {{- end }}
             {{- if eq .chart "karpenter" }}
             settings:

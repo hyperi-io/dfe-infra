@@ -38,6 +38,15 @@ code, and the named --exclude-bucket (the tofu state bucket) is never
 touched. Exit 0 means the tagged set is empty; exit 1 means resources
 remain, printed for cleanup.
 
+--expired switches the selection to the run convention in cloud_run.py: a
+resource is eligible ONLY when it carries the run tag (default `dfe-e2e`) and
+its `expires-at` plus --grace is in the past. A resource without the run tag,
+with a future expiry, or with an expiry that does not parse is never selected,
+whatever else it carries; --tag-filter still decides the tagged/untagged
+column but not eligibility. --grace defaults to 1h, the margin a last-resort
+hand run gives a run that is still tearing itself down; the scheduled reaper
+passes 0. --now previews a later moment and is refused with --delete.
+
 --delete refuses to run without --account, checked against
 `aws sts get-caller-identity` before anything is touched -- a 12-digit id
 matched against the live session, never a name, because a name describes
@@ -54,16 +63,20 @@ subnets, Route 53 zones, log groups, Secrets Manager secrets (with
 --force-delete-without-recovery), KMS aliases and S3 buckets (with
 --exclude-bucket the only exemption). Reach for it only when the sweep is
 meant to clear a region entirely, never as a way to speed up an ordinary
-cleanup.
+cleanup. It is refused beside --expired.
+
+--provider picks the cloud. aws is the one with listers; gcp and azure are
+the same interface with nothing behind it yet, and say so rather than
+reporting an empty sweep.
 
 Stdlib only: every AWS call shells out to the `aws` CLI with --output json.
 
     python3 scripts/cloud_sweep.py --region us-west-2
     python3 scripts/cloud_sweep.py --region us-west-2 --delete \\
         --account 000000000000 --exclude-bucket example-tfstate-bucket
+    python3 scripts/cloud_sweep.py --region us-west-2 --expired --grace 0 --delete \\
+        --account 000000000000 --yes
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -72,14 +85,18 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import NoReturn, Protocol
 
 import aws_cli
+import cloud_run
 
 AWS_TIMEOUT = 60  # seconds allowed for one aws CLI call before it is a hang, not a slow API
 POLL_TIMEOUT = 300  # seconds to wait for an async delete (NAT gateway, EKS, MSK) to finish
 POLL_INTERVAL = 10
+ROUTE53_BATCH = 100  # changes per ChangeResourceRecordSets call, well inside the API's 1000
 
 DEFAULT_TAG_FILTER = "service-name=dfe,environment=test"
+DEFAULT_EXPIRED_GRACE = "1h"
 
 
 class CloudSweepError(RuntimeError):
@@ -96,6 +113,20 @@ class Resource:
     created: str | None  # ISO-8601 or an AWS epoch-millis timestamp; None when the API omits it
     tagged: bool
     extra: dict[str, str] = field(default_factory=dict)
+    tags: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ExpirySelection:
+    """What --expired judges a resource against: the run convention, a clock and a grace."""
+
+    keys: cloud_run.RunTagKeys
+    now: float
+    grace: int
+
+    def state(self, resource: Resource) -> cloud_run.ExpiryState:
+        """Say whether this resource's run is over."""
+        return cloud_run.classify(resource.tags, now=self.now, grace=self.grace, keys=self.keys)
 
 
 # ---------------------------------------------------------------------------
@@ -160,11 +191,18 @@ def _name_from_arn(arn: str) -> str:
     return tail.rsplit(":", 1)[-1]
 
 
-def list_tagged(region: str, tag_filter: dict[str, str]) -> list[Resource]:
-    """Everything the tagging API returns for `tag_filter`, kind-labelled by ARN service."""
+def list_tagged(
+    region: str, server_filter: dict[str, str | None], tag_filter: dict[str, str]
+) -> list[Resource]:
+    """Everything the tagging API returns for `server_filter`, kind-labelled by ARN service.
+
+    A None value in `server_filter` asks for the key with any value, which is how
+    --expired finds every run-tagged resource whatever its run id. `tagged` is
+    judged against `tag_filter` from the tags the API returns.
+    """
     filters: list[str] = []
-    for key, value in tag_filter.items():
-        filters += ["--tag-filters", f"Key={key},Values={value}"]
+    for key, value in server_filter.items():
+        filters += ["--tag-filters", f"Key={key}" if value is None else f"Key={key},Values={value}"]
     resources: list[Resource] = []
     token: str | None = None
     while True:
@@ -174,8 +212,16 @@ def list_tagged(region: str, tag_filter: dict[str, str]) -> list[Resource]:
         data = run_aws(args, region)
         for mapping in data.get("ResourceTagMappingList", []):
             arn = mapping["ResourceARN"]
+            tags = _tags_from_list(mapping.get("Tags"))
             resources.append(
-                Resource(kind=_kind_from_arn(arn), id=arn, name=_name_from_arn(arn), created=None, tagged=True)
+                Resource(
+                    kind=_kind_from_arn(arn),
+                    id=arn,
+                    name=_name_from_arn(arn),
+                    created=None,
+                    tagged=_matches(tags, tag_filter),
+                    tags=tags,
+                )
             )
         token = data.get("PaginationToken") or None
         if not token:
@@ -216,7 +262,9 @@ def _list_ec2(
         rid = item[id_field]
         name = item.get(name_field, rid) if name_field else rid
         created = item.get(created_field) if created_field else None
-        out.append(Resource(kind=kind, id=rid, name=name, created=created, tagged=_matches(tags, tag_filter)))
+        out.append(
+            Resource(kind=kind, id=rid, name=name, created=created, tagged=_matches(tags, tag_filter), tags=tags)
+        )
     return out
 
 
@@ -235,6 +283,7 @@ def list_ec2_instances(region: str, tag_filter: dict[str, str]) -> list[Resource
                     name=inst["InstanceId"],
                     created=inst.get("LaunchTime"),
                     tagged=_matches(tags, tag_filter),
+                    tags=tags,
                 )
             )
     return out
@@ -253,6 +302,7 @@ def list_ebs_volumes(region: str, tag_filter: dict[str, str]) -> list[Resource]:
                 created=vol.get("CreateTime"),
                 tagged=_matches(tags, tag_filter),
                 extra={"state": vol.get("State", "")},
+                tags=tags,
             )
         )
     return out
@@ -371,6 +421,7 @@ def list_internet_gateways(region: str, tag_filter: dict[str, str]) -> list[Reso
                 created=None,
                 tagged=_matches(tags, tag_filter),
                 extra={"vpc_id": vpc_id},
+                tags=tags,
             )
         )
     return out
@@ -399,31 +450,39 @@ def _elbv2_tags(arns: list[str], region: str) -> dict[str, dict]:
 def list_load_balancers(region: str, tag_filter: dict[str, str]) -> list[Resource]:
     lbs = run_aws(["elbv2", "describe-load-balancers"], region).get("LoadBalancers", [])
     tags_by_arn = _elbv2_tags([lb["LoadBalancerArn"] for lb in lbs], region)
-    return [
-        Resource(
-            kind="load-balancer",
-            id=lb["LoadBalancerArn"],
-            name=lb["LoadBalancerName"],
-            created=lb.get("CreatedTime"),
-            tagged=_matches(tags_by_arn.get(lb["LoadBalancerArn"], {}), tag_filter),
+    out: list[Resource] = []
+    for lb in lbs:
+        tags = tags_by_arn.get(lb["LoadBalancerArn"], {})
+        out.append(
+            Resource(
+                kind="load-balancer",
+                id=lb["LoadBalancerArn"],
+                name=lb["LoadBalancerName"],
+                created=lb.get("CreatedTime"),
+                tagged=_matches(tags, tag_filter),
+                tags=tags,
+            )
         )
-        for lb in lbs
-    ]
+    return out
 
 
 def list_target_groups(region: str, tag_filter: dict[str, str]) -> list[Resource]:
     tgs = run_aws(["elbv2", "describe-target-groups"], region).get("TargetGroups", [])
     tags_by_arn = _elbv2_tags([tg["TargetGroupArn"] for tg in tgs], region)
-    return [
-        Resource(
-            kind="target-group",
-            id=tg["TargetGroupArn"],
-            name=tg["TargetGroupName"],
-            created=None,  # the API exposes no creation time for a target group
-            tagged=_matches(tags_by_arn.get(tg["TargetGroupArn"], {}), tag_filter),
+    out: list[Resource] = []
+    for tg in tgs:
+        tags = tags_by_arn.get(tg["TargetGroupArn"], {})
+        out.append(
+            Resource(
+                kind="target-group",
+                id=tg["TargetGroupArn"],
+                name=tg["TargetGroupName"],
+                created=None,  # the API exposes no creation time for a target group
+                tagged=_matches(tags, tag_filter),
+                tags=tags,
+            )
         )
-        for tg in tgs
-    ]
+    return out
 
 
 def list_route53_zones(region: str, tag_filter: dict[str, str]) -> list[Resource]:
@@ -441,7 +500,14 @@ def list_route53_zones(region: str, tag_filter: dict[str, str]) -> list[Resource
         except CloudSweepError:
             pass  # a zone with no tags is still a finding, just an untagged one
         out.append(
-            Resource(kind="route53-zone", id=zone_id, name=zone["Name"], created=None, tagged=_matches(tags, tag_filter))
+            Resource(
+                kind="route53-zone",
+                id=zone_id,
+                name=zone["Name"],
+                created=None,
+                tagged=_matches(tags, tag_filter),
+                tags=tags,
+            )
         )
     return out
 
@@ -460,7 +526,11 @@ def list_log_groups(region: str, tag_filter: dict[str, str]) -> list[Resource]:
         millis = group.get("creationTime")
         if millis:
             created = datetime.fromtimestamp(millis / 1000, tz=UTC).isoformat()
-        out.append(Resource(kind="log-group", id=name, name=name, created=created, tagged=_matches(tags, tag_filter)))
+        out.append(
+            Resource(
+                kind="log-group", id=name, name=name, created=created, tagged=_matches(tags, tag_filter), tags=tags
+            )
+        )
     return out
 
 
@@ -477,6 +547,7 @@ def list_secrets(region: str, tag_filter: dict[str, str]) -> list[Resource]:
                 created=secret.get("CreatedDate"),
                 tagged=_matches(tags, tag_filter),
                 extra={"scheduled_deletion": str("DeletedDate" in secret)},
+                tags=tags,
             )
         )
     return out
@@ -489,16 +560,23 @@ def list_kms_aliases(region: str, tag_filter: dict[str, str]) -> list[Resource]:
         name = alias["AliasName"]
         if name.startswith("alias/aws/"):
             continue  # AWS-managed, present in every account, never a proof's own
-        tagged = False
+        tags: dict[str, str] = {}
         key_id = alias.get("TargetKeyId")
         if key_id:
             try:
                 key_tags = run_aws(["kms", "list-resource-tags", "--key-id", key_id], region).get("Tags", [])
-                tagged = _matches({t["TagKey"]: t["TagValue"] for t in key_tags}, tag_filter)
+                tags = {t["TagKey"]: t["TagValue"] for t in key_tags}
             except CloudSweepError:
                 pass
         out.append(
-            Resource(kind="kms-alias", id=name, name=name, created=alias.get("CreationDate"), tagged=tagged)
+            Resource(
+                kind="kms-alias",
+                id=name,
+                name=name,
+                created=alias.get("CreationDate"),
+                tagged=_matches(tags, tag_filter),
+                tags=tags,
+            )
         )
     return out
 
@@ -510,7 +588,14 @@ def list_eks_clusters(region: str, tag_filter: dict[str, str]) -> list[Resource]
         detail = run_aws(["eks", "describe-cluster", "--name", name], region).get("cluster", {})
         tags = detail.get("tags", {})
         out.append(
-            Resource(kind="eks-cluster", id=name, name=name, created=detail.get("createdAt"), tagged=_matches(tags, tag_filter))
+            Resource(
+                kind="eks-cluster",
+                id=name,
+                name=name,
+                created=detail.get("createdAt"),
+                tagged=_matches(tags, tag_filter),
+                tags=tags,
+            )
         )
     return out
 
@@ -529,6 +614,7 @@ def list_msk_clusters(region: str, tag_filter: dict[str, str]) -> list[Resource]
                 name=cluster["ClusterName"],
                 created=cluster.get("CreationTime"),
                 tagged=_matches(tags, tag_filter),
+                tags=tags,
             )
         )
     return out
@@ -553,6 +639,7 @@ def list_s3_buckets(region: str, tag_filter: dict[str, str], exclude_bucket: str
                 created=bucket.get("CreationDate"),
                 tagged=_matches(tags, tag_filter),
                 extra={"excluded": str(name == exclude_bucket)},
+                tags=tags,
             )
         )
     return out
@@ -582,20 +669,30 @@ PER_SERVICE_COLLECTORS: list[Callable[[str, dict], list[Resource]]] = [
 ]
 
 
-def collect(region: str, tag_filter: dict[str, str], exclude_bucket: str | None) -> list[Resource]:
+def collect(
+    region: str,
+    tag_filter: dict[str, str],
+    exclude_bucket: str | None,
+    *,
+    route1_filter: dict[str, str | None] | None = None,
+) -> list[Resource]:
     """Run every dedicated lister, then fold in anything the tagging API alone caught.
 
     A tagging-API hit is skipped when its bare id already matches a resource the
     dedicated listers found -- the two routes overlap by design, and de-duplicating
     on id (rather than a full ARN<->kind mapping) is enough to avoid double-counting
     the common case without needing a parser for every AWS ARN shape.
+
+    `route1_filter` is what the tagging API is asked for; it defaults to
+    `tag_filter`, and --expired passes the run key with any value.
     """
     resources: list[Resource] = []
     for collector in PER_SERVICE_COLLECTORS:
         resources.extend(collector(region, tag_filter))
     resources.extend(list_s3_buckets(region, tag_filter, exclude_bucket))
     known_ids = {r.id for r in resources}
-    for tagged in list_tagged(region, tag_filter):
+    server_filter: dict[str, str | None] = dict(tag_filter) if route1_filter is None else route1_filter
+    for tagged in list_tagged(region, server_filter, tag_filter):
         bare = tagged.id.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
         if tagged.id in known_ids or bare in known_ids:
             continue
@@ -623,13 +720,29 @@ def filter_for_delete(
     return eligible
 
 
-def print_report(resources: list[Resource]) -> None:
+def filter_expired(
+    resources: list[Resource], *, expiry: ExpirySelection, exclude_bucket: str | None
+) -> list[Resource]:
+    """The subset --expired --delete would remove: run-tagged and past expiry plus grace, only."""
+    return [
+        r
+        for r in resources
+        if not (r.kind == "s3-bucket" and r.id == exclude_bucket)
+        and expiry.state(r) is cloud_run.ExpiryState.EXPIRED
+    ]
+
+
+def print_report(resources: list[Resource], expiry: ExpirySelection | None = None) -> None:
     if not resources:
         print("no resources found")
         return
     for r in resources:
         tag_state = "dfe-tagged" if r.tagged else "untagged"
-        print(f"{r.kind:16s} {r.name:44s} age={_age(r.created):8s} {tag_state}")
+        line = f"{r.kind:16s} {r.name:44s} age={_age(r.created):8s} {tag_state}"
+        if expiry is not None:
+            run_id = r.tags.get(expiry.keys.run) or "-"
+            line += f" run={run_id} {expiry.state(r)}"
+        print(line)
 
 
 # ---------------------------------------------------------------------------
@@ -698,8 +811,23 @@ def _delete_security_group(r: Resource, region: str) -> None:
     run_aws(["ec2", "delete-security-group", "--group-id", r.id], region)
 
 
+def _vpc_endpoint_gone(r: Resource, region: str) -> bool:
+    """True once an interface endpoint has released the network interfaces it holds."""
+    try:
+        endpoints = run_aws(["ec2", "describe-vpc-endpoints", "--vpc-endpoint-ids", r.id], region).get(
+            "VpcEndpoints", []
+        )
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    return all(e.get("State", "").lower() == "deleted" for e in endpoints)
+
+
 def _delete_vpc_endpoint(r: Resource, region: str) -> None:
+    """An interface endpoint's ENIs hold its security groups, so the security group tier waits on this."""
     run_aws(["ec2", "delete-vpc-endpoints", "--vpc-endpoint-ids", r.id], region)
+    _wait_until(lambda: _vpc_endpoint_gone(r, region))
 
 
 def _delete_route_table(r: Resource, region: str) -> None:
@@ -731,7 +859,28 @@ def _delete_ebs_snapshot(r: Resource, region: str) -> None:
     run_aws(["ec2", "delete-snapshot", "--snapshot-id", r.id], region)
 
 
+def _zone_apex_record(record: dict, zone_name: str) -> bool:
+    """The zone's own SOA and NS sets, which Route 53 refuses to delete and removes with the zone."""
+    name = record.get("Name", "").rstrip(".").lower()
+    return record.get("Type") in ("SOA", "NS") and name == zone_name.rstrip(".").lower()
+
+
 def _delete_route53_zone(r: Resource, region: str) -> None:
+    """DeleteHostedZone refuses a zone holding any record but its apex SOA and NS, so those go first."""
+    records = run_aws(["route53", "list-resource-record-sets", "--hosted-zone-id", r.id], region).get(
+        "ResourceRecordSets", []
+    )
+    changes = [
+        {"Action": "DELETE", "ResourceRecordSet": record}
+        for record in records
+        if not _zone_apex_record(record, r.name)
+    ]
+    for start in range(0, len(changes), ROUTE53_BATCH):
+        batch = {"Changes": changes[start : start + ROUTE53_BATCH]}
+        run_aws(
+            ["route53", "change-resource-record-sets", "--hosted-zone-id", r.id, "--change-batch", json.dumps(batch)],
+            region,
+        )
     run_aws(["route53", "delete-hosted-zone", "--id", r.id], region)
 
 
@@ -760,12 +909,12 @@ DELETE_ORDER: list[str] = [
     # Tier 2: clusters -- they own ENIs and security groups the network tier needs gone.
     "eks-cluster",
     "msk-cluster",
-    # Tier 3: network.
+    # Tier 3: network. An endpoint's ENIs hold security groups, so endpoints go first.
     "nat-gateway",
     "eip",
+    "vpc-endpoint",
     "eni",
     "security-group",
-    "vpc-endpoint",
     "route-table",
     "internet-gateway",
     "subnet",
@@ -826,6 +975,107 @@ def delete_resources(resources: list[Resource], region: str) -> list[str]:
     return failures
 
 
+def verify_account(region: str, expected_account: str) -> None:
+    """Refuse to delete unless the live session's account matches --account.
+
+    A name describes intent; only the id `aws sts get-caller-identity` returns
+    describes which account the delete calls actually land against.
+    """
+    identity = run_aws(["sts", "get-caller-identity"], region)
+    actual = identity.get("Account", "")
+    if actual != expected_account:
+        raise CloudSweepError(
+            f"--account {expected_account} does not match the authenticated account "
+            f"{actual or 'unknown'} -- re-authenticate, or correct --account. Refusing to delete."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Providers: one interface, so GCP and Azure listers slot in beside AWS's
+# ---------------------------------------------------------------------------
+
+
+class SweepProvider(Protocol):
+    """What main() needs from a cloud: prove the account, list, delete in order."""
+
+    name: str
+
+    def verify_account(self, expected: str) -> None:
+        """Raise CloudSweepError unless the live session is in `expected`."""
+        ...
+
+    def collect(self, tag_filter: dict[str, str], exclude_bucket: str | None, *, run_key: str | None) -> list[Resource]:
+        """Every resource found; `run_key` widens the catch-all to every run-tagged one."""
+        ...
+
+    def delete(self, resources: list[Resource]) -> list[str]:
+        """Delete in dependency order, returning one message per failure."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class AwsProvider:
+    """The AWS listers and deletes above, in one region."""
+
+    region: str
+    name: str = "aws"
+
+    def verify_account(self, expected: str) -> None:
+        verify_account(self.region, expected)
+
+    def collect(self, tag_filter: dict[str, str], exclude_bucket: str | None, *, run_key: str | None) -> list[Resource]:
+        route1: dict[str, str | None] | None = {run_key: None} if run_key else None
+        return collect(self.region, tag_filter, exclude_bucket, route1_filter=route1)
+
+    def delete(self, resources: list[Resource]) -> list[str]:
+        return delete_resources(resources, self.region)
+
+
+@dataclass(frozen=True, slots=True)
+class _UnbuiltProvider:
+    """A cloud with the interface and no listers, which refuses rather than reporting clean."""
+
+    region: str
+    name: str = "unbuilt"
+
+    def _refuse(self) -> NoReturn:
+        raise NotImplementedError(
+            f"cloud_sweep has no {self.name} listers yet: an empty {self.name} sweep would read as "
+            "clean when nothing was looked at. Remove leftovers through the console or CLI until "
+            f"{self.name} listers and deletes are added beside AwsProvider."
+        )
+
+    def verify_account(self, expected: str) -> None:
+        self._refuse()
+
+    def collect(self, tag_filter: dict[str, str], exclude_bucket: str | None, *, run_key: str | None) -> list[Resource]:
+        self._refuse()
+
+    def delete(self, resources: list[Resource]) -> list[str]:
+        self._refuse()
+
+
+@dataclass(frozen=True, slots=True)
+class GcpProvider(_UnbuiltProvider):
+    """GCP: run labels follow the same convention, with the epoch expiry format."""
+
+    name: str = "gcp"
+
+
+@dataclass(frozen=True, slots=True)
+class AzureProvider(_UnbuiltProvider):
+    """Azure: run tags follow the same convention."""
+
+    name: str = "azure"
+
+
+PROVIDERS: dict[str, Callable[[str], SweepProvider]] = {
+    "aws": AwsProvider,
+    "gcp": GcpProvider,
+    "azure": AzureProvider,
+}
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -842,21 +1092,6 @@ def parse_tag_filter(raw: str) -> dict[str, str]:
     return pairs
 
 
-def verify_account(region: str, expected_account: str) -> None:
-    """Refuse to delete unless the live session's account matches --account.
-
-    A name describes intent; only the id `aws sts get-caller-identity` returns
-    describes which account the delete calls actually land against.
-    """
-    identity = run_aws(["sts", "get-caller-identity"], region)
-    actual = identity.get("Account", "")
-    if actual != expected_account:
-        raise CloudSweepError(
-            f"--account {expected_account} does not match the authenticated account "
-            f"{actual or 'unknown'} -- re-authenticate, or correct --account. Refusing to delete."
-        )
-
-
 def confirm_delete(eligible: list[Resource], *, skip_prompt: bool) -> bool:
     """Print the full eligible list and get an explicit "yes", unless --yes skips the prompt."""
     print(f"About to delete {len(eligible)} resource(s):")
@@ -870,9 +1105,15 @@ def confirm_delete(eligible: list[Resource], *, skip_prompt: bool) -> bool:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="List, and on --delete remove, leftover AWS resources from a DFE cloud proof."
+        description="List, and on --delete remove, leftover cloud resources from a DFE cloud proof."
     )
-    parser.add_argument("--region", required=True, help="AWS region to sweep, e.g. us-west-2")
+    parser.add_argument(
+        "--provider",
+        choices=sorted(PROVIDERS),
+        default="aws",
+        help="cloud to sweep; gcp and azure have the interface and no listers yet, and refuse by name",
+    )
+    parser.add_argument("--region", required=True, help="region to sweep, e.g. us-west-2")
     parser.add_argument("--delete", action="store_true", help="delete what is found instead of only listing it")
     parser.add_argument(
         "--account",
@@ -901,41 +1142,98 @@ def build_parser() -> argparse.ArgumentParser:
         "tags -- turns --delete into a region-wide wipe of everything the listers found in --account, "
         "tagged or not (--exclude-bucket is the one exemption). See the module docstring.",
     )
+    parser.add_argument(
+        "--expired",
+        action="store_true",
+        help="select ONLY resources carrying the run tag (DFE_RUN_TAG_KEY, default dfe-e2e) whose "
+        "expires-at plus --grace is in the past; nothing without the run tag is ever selected",
+    )
+    parser.add_argument(
+        "--grace",
+        default=None,
+        help=f"with --expired: how long past expires-at before a resource counts (default "
+        f"{DEFAULT_EXPIRED_GRACE}; the scheduled reaper passes 0). N, Ns, Nm, Nh or Nd",
+    )
+    parser.add_argument(
+        "--now",
+        type=int,
+        default=None,
+        help="with --expired: judge expiry at this epoch second instead of the current time, to preview "
+        "what a later sweep would select. Refused with --delete",
+    )
     return parser
+
+
+def _refuse(message: str) -> int:
+    print(message, file=sys.stderr)
+    return 2
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     tag_filter = parse_tag_filter(args.tag_filter)
 
+    expiry: ExpirySelection | None = None
+    if args.expired:
+        if args.include_untagged:
+            return _refuse("--expired selects run-tagged resources only; --include-untagged contradicts it.")
+        if args.now is not None and args.delete:
+            return _refuse("--now previews a later moment and cannot be combined with --delete.")
+        try:
+            keys = cloud_run.RunTagKeys.from_env()
+            grace = cloud_run.parse_duration(args.grace or DEFAULT_EXPIRED_GRACE)
+        except cloud_run.RunTagError as exc:
+            return _refuse(f"--expired: {exc}")
+        now = float(args.now) if args.now is not None else time.time()
+        expiry = ExpirySelection(keys=keys, now=now, grace=grace)
+    elif args.grace is not None or args.now is not None:
+        return _refuse("--grace and --now only apply with --expired.")
+
+    provider = PROVIDERS[args.provider](args.region)
+    try:
+        return _sweep(args, provider, tag_filter, expiry)
+    except NotImplementedError as exc:
+        return _refuse(str(exc))
+
+
+def _eligible(
+    resources: list[Resource], args: argparse.Namespace, expiry: ExpirySelection | None
+) -> list[Resource]:
+    if expiry is not None:
+        return filter_expired(resources, expiry=expiry, exclude_bucket=args.exclude_bucket)
+    return filter_for_delete(resources, include_untagged=args.include_untagged, exclude_bucket=args.exclude_bucket)
+
+
+def _sweep(
+    args: argparse.Namespace,
+    provider: SweepProvider,
+    tag_filter: dict[str, str],
+    expiry: ExpirySelection | None,
+) -> int:
     if args.delete:
         if not args.account:
-            print(
+            return _refuse(
                 "--delete needs --account <12-digit-id>, checked against the live session -- "
-                "refusing to delete against whatever account happens to be authenticated.",
-                file=sys.stderr,
+                "refusing to delete against whatever account happens to be authenticated."
             )
-            return 2
         try:
-            verify_account(args.region, args.account)
+            provider.verify_account(args.account)
         except CloudSweepError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
+            return _refuse(str(exc))
 
-    resources = collect(args.region, tag_filter, args.exclude_bucket)
-    print_report(resources)
-    eligible = filter_for_delete(resources, include_untagged=args.include_untagged, exclude_bucket=args.exclude_bucket)
+    run_key = expiry.keys.run if expiry else None
+    resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key)
+    print_report(resources, expiry)
+    eligible = _eligible(resources, args, expiry)
 
     if args.delete and eligible:
         if not confirm_delete(eligible, skip_prompt=args.yes):
             print("delete cancelled: no 'yes' received", file=sys.stderr)
             return 1
 
-        failures = delete_resources(eligible, args.region)
-        resources = collect(args.region, tag_filter, args.exclude_bucket)
-        eligible = filter_for_delete(
-            resources, include_untagged=args.include_untagged, exclude_bucket=args.exclude_bucket
-        )
+        failures = provider.delete(eligible)
+        resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key)
+        eligible = _eligible(resources, args, expiry)
         if failures:
             print("failed to delete:", file=sys.stderr)
             for failure in failures:
@@ -948,7 +1246,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {r.kind} {r.name}")
         return 1
 
-    print("sweep clean: nothing left to delete")
+    if expiry is not None:
+        print("sweep clean: no expired run resources left")
+    else:
+        print("sweep clean: nothing left to delete")
     return 0
 
 

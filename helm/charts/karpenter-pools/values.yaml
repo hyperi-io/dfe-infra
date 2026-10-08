@@ -24,6 +24,12 @@ karpenter:
     # encrypted with.
     kmsKeyId: ""
 
+  # Extra tags on every instance, volume and launch template Karpenter creates,
+  # on top of its own. A test run's id and expiry arrive here from the cluster
+  # secret, because the provider's default_tags never reaches what Karpenter
+  # launches and an account guardrail may refuse an untagged create.
+  tags: {}
+
   # What every EC2NodeClass inherits. A pool overrides only what its workload
   # forces -- ClickHouse and CI take the instance store, everything else does not.
   nodeClass:

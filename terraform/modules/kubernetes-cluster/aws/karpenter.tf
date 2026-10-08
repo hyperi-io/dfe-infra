@@ -154,8 +154,10 @@ resource "aws_cloudwatch_event_target" "karpenter" {
 // ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "karpenter_node" {
-  name               = "${var.name}-karpenter-node"
-  assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
+  name                 = "${var.name}-karpenter-node"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.ec2_assume.json
+  permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy_attachment" "karpenter_node" {
@@ -179,6 +181,7 @@ resource "aws_iam_role_policy_attachment" "karpenter_node" {
 // endpoint can still launch nodes.
 resource "aws_iam_instance_profile" "karpenter_node" {
   name = "${var.name}-karpenter-node"
+  path = var.iam_path
   role = aws_iam_role.karpenter_node.name
 }
 
@@ -199,8 +202,10 @@ resource "aws_eks_access_entry" "karpenter_node" {
 // ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "karpenter" {
-  name               = "${var.name}-karpenter"
-  assume_role_policy = data.aws_iam_policy_document.pod_identity_trust.json
+  name                 = "${var.name}-karpenter"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.pod_identity_trust.json
+  permissions_boundary = var.permissions_boundary
 }
 
 data "aws_iam_policy_document" "karpenter_lifecycle" {

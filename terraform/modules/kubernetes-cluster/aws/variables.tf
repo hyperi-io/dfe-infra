@@ -251,3 +251,27 @@ variable "tags" {
     error_message = "tags must carry service-name, service-namespace, environment, owner, cost-center, lifecycle and iac-source, each non-empty."
   }
 }
+
+variable "permissions_boundary" {
+  description = "IAM policy ARN set as the permissions boundary on every role this module creates, or null for none."
+  type        = string
+  default     = null
+}
+
+variable "iam_path" {
+  description = "IAM path for every role and instance profile this module creates, or null for the default \"/\"."
+  type        = string
+  default     = null
+}
+
+variable "s3_bucket_prefix" {
+  description = "Prepended to the name of every bucket this module creates. Empty by default; an account that scopes S3 writes to a name prefix sets it."
+  type        = string
+  default     = ""
+}
+
+variable "controller_tags" {
+  description = "Tags the EKS add-ons put on what they create themselves -- the EBS CSI driver's volumes and the VPC CNI's pod network interfaces -- which the provider's default_tags never sees. Empty (the default) leaves both add-ons' configuration exactly as it was. The aws root passes a test run's id and expiry here."
+  type        = map(string)
+  default     = {}
+}

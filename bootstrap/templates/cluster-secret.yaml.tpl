@@ -66,6 +66,11 @@ metadata:
     # it into karpenter.pools, which JSON is valid YAML flow style for. Blank
     # renders no NodePool at all, so a pending workload stays pending.
     ${DFE_KARPENTER_POOLS_ANNOTATION}
+    # A test run's id and expiry as one line of JSON, which layer1-addons.yaml
+    # and layer2-platform.yaml hand to the load balancer controller and
+    # Karpenter -- what they create never sees the provider's default_tags.
+    # Blank on every deployment that is not a test run.
+    ${DFE_RUN_TAGS_ANNOTATION}
     # Front-door addresses this deployment's DNS already names. Empty leaves the
     # choice to the LB pool, which is what re-rolls them on a rebuild.
     dfe.hyperi.io/gateway_address: "${DFE_GATEWAY_IP}"

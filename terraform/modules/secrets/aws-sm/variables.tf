@@ -73,3 +73,15 @@ variable "pod_identity_trust_policy_json" {
   description = "From the cluster module, so this module mints a role without restating how EKS expresses cluster trust."
   type        = string
 }
+
+variable "permissions_boundary" {
+  description = "IAM policy ARN set as the permissions boundary on every role this module creates, or null for none."
+  type        = string
+  default     = null
+}
+
+variable "iam_path" {
+  description = "IAM path for every role this module creates, or null for the default \"/\"."
+  type        = string
+  default     = null
+}

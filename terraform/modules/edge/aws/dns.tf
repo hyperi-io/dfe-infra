@@ -29,8 +29,10 @@ locals {
 }
 
 resource "aws_iam_role" "external_dns" {
-  name               = "${var.name}-external-dns"
-  assume_role_policy = var.pod_identity_trust_policy_json
+  name                 = "${var.name}-external-dns"
+  path                 = var.iam_path
+  assume_role_policy   = var.pod_identity_trust_policy_json
+  permissions_boundary = var.permissions_boundary
 }
 
 data "aws_iam_policy_document" "external_dns" {
@@ -102,8 +104,10 @@ data "aws_iam_policy_document" "cert_manager" {
 resource "aws_iam_role" "cert_manager" {
   count = var.dns.public_zone == "" ? 0 : 1
 
-  name               = "${var.name}-cert-manager"
-  assume_role_policy = var.pod_identity_trust_policy_json
+  name                 = "${var.name}-cert-manager"
+  path                 = var.iam_path
+  assume_role_policy   = var.pod_identity_trust_policy_json
+  permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy" "cert_manager" {

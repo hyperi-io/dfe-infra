@@ -726,3 +726,32 @@ run "rejects_ttl_minutes_outside_15_to_480" {
     var.ttl_minutes,
   ]
 }
+
+// --- permissions boundary
+
+// An account guardrail that refuses CreateRole without a boundary refuses the
+// toolbox's role without one.
+run "the_instance_role_carries_the_permissions_boundary" {
+  command = plan
+
+  variables {
+    permissions_boundary = "arn:aws:iam::000000000000:policy/contract-boundary"
+    iam_path             = "/dfe-e2e/"
+    s3_bucket_prefix     = "dfe-e2e-"
+  }
+
+  assert {
+    condition     = aws_iam_role.this[0].permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"
+    error_message = "the toolbox's aws_iam_role must carry var.permissions_boundary"
+  }
+
+  assert {
+    condition     = aws_iam_role.this[0].path == "/dfe-e2e/" && aws_iam_instance_profile.this[0].path == "/dfe-e2e/"
+    error_message = "the toolbox's role and instance profile must sit under var.iam_path"
+  }
+
+  assert {
+    condition     = startswith(aws_s3_bucket.session_logs.bucket, "dfe-e2e-")
+    error_message = "the session-log bucket must carry var.s3_bucket_prefix"
+  }
+}
