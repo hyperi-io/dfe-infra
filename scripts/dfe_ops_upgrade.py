@@ -31,11 +31,14 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                `dfe-stack compat-check --strict` for TO, and -- only when
                `--dial` is given -- resolve_sizing.py's locked-change
                classifier against the deploy's committed sizing/resolved.yaml.
-               Writes the plan to <deploy>/upgrades/<from>-to-<to>.md.
+               Where apply runs the overlay-vocabulary stage, lists what it
+               writes into each overlay, what it keeps, and what needs a hand
+               edit. Writes the plan to <deploy>/upgrades/<from>-to-<to>.md.
                Exit 0 nothing moves (or the plan is clean), 1 the plan is
-               BLOCKED (a compat-check failure, or a locked sizing change
-               with no --migrate evidence), 2 a pre-flight failure (the
-               deploy repo or the stack name do not resolve).
+               BLOCKED (a compat-check failure, a locked sizing change with
+               no --migrate evidence, or an overlay the migration cannot
+               read), 2 a pre-flight failure (the deploy repo or the stack
+               name do not resolve).
 
     preflight  The checks `apply` refuses to run without: the deploy repo is
                clean, the cluster answers, every Argo Application is Synced
@@ -65,6 +68,16 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                operator Application renders from. A secret tracking a branch is
                left alone, and one pinned to a commit refuses unless
                --target-revision names the ref. A retarget needs --push.
+
+               When the TO stack carries chart-digests and the FROM stack does
+               not, the apps move onto thin charts, and an `overlay-vocabulary`
+               stage runs just before that first stage: every values/*-values.yaml
+               in the deploy repo takes the keys scripts/weave/value-map.yaml
+               moves its values to, beside the 2.2.0 keys it keeps, so the 2.2.0
+               charts render as before. A key already set is never overwritten,
+               and what needs a hand edit is printed, as `plan` prints it.
+               --stop-before <that first stage> leaves the stage committed and
+               nothing else moved. A second run writes and commits nothing.
 
                When the plan moves services.kafka-version on a Strimzi
                cluster, that same stage first writes two holds into the
@@ -118,6 +131,7 @@ both succeed.
 """
 
 import argparse
+import io
 import json
 import re
 import shutil
@@ -126,7 +140,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1334,6 +1348,590 @@ def wait_for_kafka_operator_version(
     )
 
 
+# --- the overlay vocabulary migration -------------------------------------------
+# A stack on thin charts reads each overlay under the keys scripts/weave/value-map.yaml
+# names. The migration writes a set value to its new key and keeps the old one, so the
+# 2.2.0 charts render exactly as before and a rollback needs no reverse step.
+
+VALUE_MAP = SCRIPTS / "weave" / "value-map.yaml"
+# The instance files layer2-apps.yaml and layer2-edge.yaml generate an Application from.
+OVERLAY_GLOB = "values/*-values.yaml"
+# The deployer's own values, which every appset layers under each instance file.
+DEPLOY_COMMON = Path("infra") / "common.yaml"
+# The versions.yaml stack section only a stack on thin charts carries.
+CHART_DIGESTS = "chart-digests"
+MIGRATION_STAGE = "overlay-vocabulary"
+# Every 2.2.0 app chart's values.yaml default, the last resort once the chart is gone.
+DEFAULT_PROJECT = "dfe"
+BY_HAND = "by-hand"
+MIGRATIONS = ("fullname", "list", "tls", "public", "oidc", BY_HAND)
+_MISSING = object()
+_SKIP = object()
+
+
+@dataclass(frozen=True, slots=True)
+class MapEntry:
+    """One value-map entry: a 2.2.0 key, where its value goes, and how."""
+
+    key: str
+    to: tuple[str, ...] = ()
+    dropped: str = ""
+    note: str = ""
+    migrate: str = ""
+    when_off: dict | str = field(default_factory=dict)
+
+    @property
+    def targets(self) -> tuple[str, ...]:
+        """The `to` paths besides the key itself, which keeps its value where it is."""
+        return tuple(t for t in self.to if t != self.key)
+
+
+@dataclass(frozen=True, slots=True)
+class AppMap:
+    """One deploy.service's entries, and the 2.2.0 chart they were read from."""
+
+    service: str
+    chart: str
+    entries: tuple[MapEntry, ...]
+
+
+@dataclass(slots=True)
+class OverlayPlan:
+    """What the migration does to one overlay file, and what it leaves to the deployer."""
+
+    path: str
+    service: str = ""
+    skipped: str = ""
+    writes: list[tuple[str, object, str]] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+    by_hand: list[str] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
+    notes: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class OverlayMigration:
+    """Every overlay's plan, and what infra/common.yaml sets that the thin charts read elsewhere."""
+
+    plans: list[OverlayPlan] = field(default_factory=list)
+    common: list[str] = field(default_factory=list)
+
+    @property
+    def changed(self) -> list[str]:
+        """The overlay files the migration writes, relative to the deploy repo."""
+        return [plan.path for plan in self.plans if plan.writes]
+
+
+def _ruamel() -> object:
+    """ruamel.yaml, imported only by the stage that rewrites overlays."""
+    try:
+        import ruamel.yaml
+    except ModuleNotFoundError as err:
+        raise UpgradeError(
+            "the overlay migration needs ruamel.yaml (scripts/tests/requirements-ci.txt pins it)"
+        ) from err
+    return ruamel.yaml
+
+
+def _round_trip() -> object:
+    """A loader and dumper set as dfe-engine's own overlay writer is, so a rewrite keeps its layout.
+
+    Quotes are kept because Helm reads YAML 1.1: a copied 'yes' or '1.10' written
+    bare would reach the chart as a boolean or a float.
+    """
+    yaml = _ruamel().YAML()
+    yaml.default_flow_style = False
+    yaml.preserve_quotes = True
+    # A folded scalar reads back with a space where the line broke, so nothing is folded.
+    yaml.width = 1 << 30
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    return yaml
+
+
+def _load(text: str, source: str, *, round_trip: bool = False) -> object:
+    yaml = _round_trip() if round_trip else _ruamel().YAML(typ="safe")
+    try:
+        return yaml.load(text)
+    except _ruamel().YAMLError as err:
+        raise UpgradeError(f"{source} is not YAML the migration can read: {err}") from err
+
+
+def needs_overlay_migration(from_pins: dict, to_pins: dict) -> bool:
+    """Whether the move puts the apps on thin charts: TO carries chart-digests and FROM does not."""
+
+    def carries(stack: dict) -> bool:
+        section = stack.get(CHART_DIGESTS)
+        return isinstance(section, dict) and bool(section)
+
+    return carries(to_pins) and not carries(from_pins)
+
+
+def _entry(service: str, key: str, raw: object) -> MapEntry:
+    where = f"{VALUE_MAP.name} {service} {key}"
+    if not isinstance(raw, dict):
+        raise UpgradeError(f"{where}: an entry is a mapping")
+    to = raw.get("to", ())
+    to = tuple(str(t) for t in to) if isinstance(to, list) else ((str(to),) if to else ())
+    migrate = str(raw.get("migrate") or "")
+    if migrate and migrate not in MIGRATIONS:
+        raise UpgradeError(f"{where}: migrate is one of {', '.join(MIGRATIONS)}, not {migrate!r}")
+    if migrate and not to:
+        raise UpgradeError(f"{where}: migrate names how `to` is written, and there is no `to`")
+    when_off = raw.get("when-off") or {}
+    paths = isinstance(when_off, dict) and all(isinstance(k, str) for k in when_off)
+    if when_off != BY_HAND and not paths:
+        raise UpgradeError(f"{where}: when-off is {BY_HAND} or a mapping of path to value")
+    return MapEntry(
+        key=key,
+        to=to,
+        dropped=str(raw.get("dropped") or ""),
+        note=" ".join(str(raw.get("note") or "").split()),
+        migrate=migrate,
+        when_off=when_off,
+    )
+
+
+def load_value_map(path: Path | None = None) -> dict[str, AppMap]:
+    """scripts/weave/value-map.yaml by deploy.service. See load_steps() for why
+    `path` is looked up at call time.
+
+    Raises:
+        UpgradeError: The file, an app or an entry is not in the shape the migration reads.
+    """
+    path = path if path is not None else VALUE_MAP
+    data = _load(path.read_text(encoding="utf-8"), str(path))
+    apps = data.get("apps") if isinstance(data, dict) else None
+    if not isinstance(apps, dict):
+        raise UpgradeError(f"{path}: no `apps` mapping")
+    found: dict[str, AppMap] = {}
+    for service, body in apps.items():
+        if not isinstance(body, dict) or not isinstance(body.get("keys"), dict):
+            raise UpgradeError(f"{path}: {service} carries no `keys` mapping")
+        entries = tuple(_entry(service, str(k), raw) for k, raw in body["keys"].items())
+        chart = str(body.get("chart") or "")
+        found[str(service)] = AppMap(service=str(service), chart=chart, entries=entries)
+    return found
+
+
+def _plain(node: object) -> object:
+    """A loaded node as plain dicts, lists and scalars, so values compare by content."""
+    if isinstance(node, dict):
+        return {str(k): _plain(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_plain(v) for v in node]
+    if type(node).__name__ == "ScalarBoolean":
+        return bool(node)
+    if isinstance(node, bool) or node is None:
+        return node
+    for kind in (str, int, float):
+        if isinstance(node, kind):
+            return kind(node)
+    return node
+
+
+def _at(doc: object, path: str) -> object:
+    node = doc
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return _MISSING
+        node = node[part]
+    return node
+
+
+def _is_set(value: object) -> bool:
+    """A value the migration moves: present, and neither null nor an empty string."""
+    return value is not _MISSING and value is not None and _plain(value) != ""
+
+
+def _is_off(value: object) -> bool:
+    """A value 2.2.0 read as off: null, an empty string or false."""
+    if value is _MISSING:
+        return False
+    plain = _plain(value)
+    return plain is None or plain is False or plain == ""
+
+
+def _shown(value: object) -> str:
+    """A value as a plan line shows it: whole when short, else summarised, never printed whole."""
+    text = json.dumps(_plain(value), sort_keys=True, default=str)
+    if len(text) <= 80:
+        return text
+    plain = _plain(value)
+    if isinstance(plain, dict):
+        return f"<a map of {len(plain)} keys>"
+    if isinstance(plain, list):
+        return f"<a list of {len(plain)}>"
+    return f"<{len(text)} characters>"
+
+
+def _detach(node: object) -> object:
+    """A copy of a loaded node without the comments its source carried."""
+    comments = _ruamel().comments
+    if isinstance(node, dict):
+        out = comments.CommentedMap()
+        for key, value in node.items():
+            out[key] = _detach(value)
+        return out
+    if isinstance(node, list):
+        seq = comments.CommentedSeq()
+        seq.extend(_detach(v) for v in node)
+        return seq
+    return node
+
+
+def _chart_defaults(chart: str, root: Path) -> dict:
+    """The 2.2.0 chart's own values.yaml, or nothing once the chart has left the tree."""
+    values = root / chart / "values.yaml"
+    if not chart or not values.is_file():
+        return {}
+    data = _load(values.read_text(encoding="utf-8"), str(values))
+    return data if isinstance(data, dict) else {}
+
+
+class _Planner:
+    """Plans one overlay against one app's entries, never overwriting a value already there."""
+
+    def __init__(
+        self, doc: dict, app: AppMap, plan: OverlayPlan, *, defaults: dict, common: dict
+    ) -> None:
+        self.doc = doc
+        self.app = app
+        self.plan = plan
+        self.defaults = defaults
+        self.common = common
+        self.planned: dict[str, object] = {}
+
+    def propose(self, target: str, value: object, why: str) -> None:
+        if target in self.planned:
+            if _plain(self.planned[target]) != _plain(value):
+                self.plan.conflicts.append(
+                    f"{target}: {why} derives {_shown(value)}, and another key already wrote "
+                    f"{_shown(self.planned[target])} -- the first is kept"
+                )
+            return
+        parts = target.split(".")
+        for depth in range(1, len(parts)):
+            parent = _at(self.doc, ".".join(parts[:depth]))
+            if parent is not _MISSING and not isinstance(parent, dict):
+                self.plan.conflicts.append(
+                    f"{target}: {'.'.join(parts[:depth])} holds {_shown(parent)}, not a map, so "
+                    f"{why} cannot be written beneath it"
+                )
+                return
+        existing = _at(self.doc, target)
+        if existing is _MISSING:
+            self.planned[target] = value
+            self.plan.writes.append((target, value, why))
+        elif _plain(existing) != _plain(value):
+            self.plan.conflicts.append(
+                f"{target} holds {_shown(existing)}, kept over {_shown(value)} from {why}"
+            )
+
+    def fullname(self) -> None:
+        """fullnameOverride is the 2.2.0 fullname, <project>-<component>, wherever that is not
+        the name the thin chart renders anyway. A project other than dfe is printed too, because
+        dfe-extras refuses it and the way out renames the deployment's objects."""
+        component = _at(self.doc, "component")
+        project = _at(self.doc, "project")
+        sources = [k for k, v in (("component", component), ("project", project)) if _is_set(v)]
+        if not _is_set(project):
+            project = _at(self.common, "project")
+            if _is_set(project):
+                sources.append(str(DEPLOY_COMMON))
+        default_project = str(self.defaults.get("project") or DEFAULT_PROJECT)
+        project = str(_plain(project)) if _is_set(project) else default_project
+        if project != DEFAULT_PROJECT:
+            self.plan.by_hand.append(
+                f'project is "{project}", but the thin charts accept only "{DEFAULT_PROJECT}" '
+                f"(the dfe-extras guard). Unsetting it renames every object from {project}-* to "
+                f"{DEFAULT_PROJECT}-* and prunes the old ones, PVCs and fetcher cursors included, "
+                "so it is a planned migration, not a hand edit."
+            )
+        if not _is_set(component) and project == default_project:
+            return
+        if not _is_set(component):
+            component = self.defaults.get("component")
+            if not _is_set(component):
+                self.plan.by_hand.append(
+                    f"fullnameOverride: {project} names the objects, and the 2.2.0 chart that "
+                    "held the component default is gone -- set <project>-<component> by hand"
+                )
+                return
+        name = f"{project}-{_plain(component)}"[:63].removesuffix("-")
+        self.propose("fullnameOverride", name, f"{', '.join(sources)}, as <project>-<component>")
+
+    def oidc(self) -> None:
+        """One extraEnv valueFrom per envMappings row, where 2.2.0 rendered them: oidc.enabled."""
+        if _plain(_at(self.doc, "oidc.enabled")) is not True:
+            return
+        providers = _at(self.doc, "oidc.providers")
+        for provider in providers if isinstance(providers, list) else []:
+            if not isinstance(provider, dict) or not isinstance(provider.get("envMappings"), dict):
+                continue
+            for name, key in provider["envMappings"].items():
+                ref = {"name": _plain(provider.get("secretName")), "key": _plain(key)}
+                env = {"valueFrom": {"secretKeyRef": ref}}
+                self.propose(f"extraEnv.{name}", env, "oidc.providers")
+
+    def derive(self, entry: MapEntry, value: object) -> object:
+        match entry.migrate:
+            case "list":
+                return _detach(value) if isinstance(value, list) else [_detach(value)]
+            case "tls":
+                return True if "SSL" in str(_plain(value)).upper() else _SKIP
+            case "public":
+                return str(_plain(value)) == "public"
+            case _:
+                return _detach(value)
+
+    def run(self) -> None:
+        handled: set[str] = set()
+        for entry in self.app.entries:
+            if entry.migrate in ("fullname", "oidc"):
+                if entry.migrate not in handled:
+                    handled.add(entry.migrate)
+                    getattr(self, entry.migrate)()
+                continue
+            value = _at(self.doc, entry.key)
+            if value is _MISSING:
+                continue
+            if entry.dropped:
+                if _is_set(value):
+                    self.plan.dropped.append(f"{entry.key}: {' '.join(entry.dropped.split())}")
+                continue
+            if entry.when_off and _is_off(value):
+                if entry.when_off == BY_HAND:
+                    self.plan.by_hand.append(f"{entry.key} is {_shown(value)}: {entry.note}")
+                else:
+                    for target, written in entry.when_off.items():
+                        self.propose(target, written, f"{entry.key} {_shown(value)}")
+                continue
+            if not _is_set(value):
+                continue
+            if entry.migrate == BY_HAND:
+                where = ", ".join(entry.targets) or entry.key
+                self.plan.by_hand.append(f"{entry.key} -> {where}: {entry.note}")
+                continue
+            derived = self.derive(entry, value)
+            if derived is _SKIP:
+                continue
+            for target in entry.targets:
+                self.propose(target, derived, entry.key)
+            if entry.note and not entry.migrate:
+                self.plan.notes.append((entry.key, entry.note))
+
+
+def plan_overlay(
+    doc: object, app: AppMap, plan: OverlayPlan, *, defaults: dict, common: dict
+) -> OverlayPlan:
+    """Fill `plan` with what the migration writes into `doc` for `app`, reading nothing else.
+
+    Args:
+        doc: The overlay, as loaded.
+        app: The value map's entries for the overlay's deploy.service.
+        plan: Where the writes, conflicts and notes go.
+        defaults: The 2.2.0 chart's values.yaml, for the project and component it defaults.
+        common: The deploy repo's infra/common.yaml, layered under every overlay.
+
+    Returns:
+        `plan`, filled in.
+    """
+    overlay = doc if isinstance(doc, dict) else {}
+    _Planner(overlay, app, plan, defaults=defaults, common=common).run()
+    return plan
+
+
+def _strip_writes(data: dict, writes: list[tuple[str, object, str]], before: dict) -> dict:
+    """`data` with every written leaf removed, and every map the writes created with it."""
+    for target, _value, _why in writes:
+        parts = target.split(".")
+        chain = [data]
+        for part in parts[:-1]:
+            chain.append(chain[-1].get(part) if isinstance(chain[-1], dict) else None)
+        if isinstance(chain[-1], dict):
+            chain[-1].pop(parts[-1], None)
+        for depth in range(len(parts) - 1, 0, -1):
+            node, parent = chain[depth], chain[depth - 1]
+            created = _at(before, ".".join(parts[:depth])) is _MISSING
+            if isinstance(node, dict) and not node and created:
+                parent.pop(parts[depth - 1], None)
+    return data
+
+
+def rewrite_overlay(text: str, writes: list[tuple[str, object, str]], source: str) -> str:
+    """The overlay's text with `writes` added and nothing else changed.
+
+    The rewrite is read back before it is returned: with the written keys taken out
+    again it must be the overlay as it was, which is what keeps the 2.2.0 render
+    unchanged.
+
+    Raises:
+        UpgradeError: The text does not load as a mapping, or the rewrite does not read
+            back as the overlay plus its writes.
+    """
+    yaml = _round_trip()
+    doc = _load(text, source, round_trip=True)
+    if not isinstance(doc, dict):
+        raise UpgradeError(f"{source} is not a YAML mapping")
+    comments = _ruamel().comments
+    for target, value, _why in writes:
+        *parents, leaf = target.split(".")
+        node = doc
+        for part in parents:
+            if part not in node:
+                node[part] = comments.CommentedMap()
+            node = node[part]
+        node[leaf] = _detach(value)
+    out = io.StringIO()
+    yaml.dump(doc, out)
+    rewritten = out.getvalue()
+    before = _plain(_load(text, source))
+    after = _plain(_load(rewritten, source))
+    missing = [t for t, _v, _w in writes if _at(after, t) is _MISSING]
+    if missing or _strip_writes(after, writes, before) != before:
+        raise UpgradeError(
+            f"{source}: the rewrite does not read back as the overlay plus its new keys"
+        )
+    return rewritten
+
+
+def _common_report(common: dict, maps: dict[str, AppMap]) -> list[str]:
+    """What infra/common.yaml sets that a thin chart reads under another key.
+
+    The file reaches every chart the appsets render, not only the apps, so the
+    migration reports it for a hand edit rather than writing it.
+    """
+    found: dict[str, list[str]] = {}
+    for service, app in maps.items():
+        plan = OverlayPlan(path=str(DEPLOY_COMMON), service=service)
+        entries = tuple(e for e in app.entries if e.migrate not in ("fullname", "oidc"))
+        plan_overlay(common, AppMap(service, app.chart, entries), plan, defaults={}, common={})
+        lines = [f"{why} -> {target} = {_shown(value)}" for target, value, why in plan.writes]
+        for line in lines + plan.by_hand:
+            found.setdefault(line, []).append(service)
+    return [f"{line} ({', '.join(services)})" for line, services in found.items()]
+
+
+def migrate_overlays(
+    deploy: Path, *, write: bool, value_map: Path | None = None, root: Path | None = None
+) -> OverlayMigration:
+    """Plan, and with `write` apply, the migration of every overlay in a deploy repo.
+
+    Args:
+        deploy: The deploy repo checkout.
+        write: Write each changed overlay, where False only reads.
+        value_map: The value map, default scripts/weave/value-map.yaml.
+        root: The tree the map's 2.2.0 chart paths are read from, default this repo.
+
+    Returns:
+        Each overlay's plan, in path order, and the infra/common.yaml report.
+
+    Raises:
+        UpgradeError: The value map, infra/common.yaml or an overlay cannot be read, or a
+            rewrite does not read back as its overlay plus the new keys. Nothing has
+            been written when it is raised.
+    """
+    root = root if root is not None else REPO_ROOT
+    maps = load_value_map(value_map)
+    common_path = deploy / DEPLOY_COMMON
+    common = {}
+    if common_path.is_file():
+        common = _load(common_path.read_text(encoding="utf-8"), str(DEPLOY_COMMON)) or {}
+    if not isinstance(common, dict):
+        raise UpgradeError(f"{DEPLOY_COMMON} is not a YAML mapping")
+    result = OverlayMigration(common=_common_report(common, maps) if common else [])
+    defaults: dict[str, dict] = {}
+    rewrites: list[tuple[Path, str]] = []
+    for path in sorted(deploy.glob(OVERLAY_GLOB)):
+        rel = path.relative_to(deploy).as_posix()
+        text = path.read_text(encoding="utf-8")
+        doc = _load(text, rel, round_trip=True)
+        plan = OverlayPlan(path=rel)
+        result.plans.append(plan)
+        if doc is None:
+            plan.skipped = "empty, so no Application renders from it"
+            continue
+        if not isinstance(doc, dict):
+            raise UpgradeError(f"{rel} is not a YAML mapping")
+        service = _at(doc, "deploy.service")
+        if not _is_set(service):
+            plan.skipped = "carries no deploy.service, so no Application renders from it"
+            continue
+        plan.service = str(_plain(service))
+        app = maps.get(plan.service)
+        if app is None:
+            plan.skipped = f"{VALUE_MAP.name} holds no {plan.service}, so it stays as it is"
+            continue
+        if app.service not in defaults:
+            defaults[app.service] = _chart_defaults(app.chart, root)
+        plan_overlay(doc, app, plan, defaults=defaults[app.service], common=common)
+        if plan.writes:
+            rewrites.append((path, rewrite_overlay(text, plan.writes, rel)))
+    # Nothing is written until every overlay has planned and rewritten cleanly.
+    for path, rewritten in rewrites if write else ():
+        path.write_text(rewritten, encoding="utf-8", newline="\n")
+    return result
+
+
+def render_overlay_report(result: OverlayMigration) -> list[str]:
+    """The migration as plan lines: per overlay what is written, kept and left by hand, then the
+    notes for the keys the overlays set, once per service and key."""
+    lines: list[str] = []
+    writes = sum(len(plan.writes) for plan in result.plans)
+    lines.append(
+        f"{len(result.changed)} of {len(result.plans)} overlay(s) take {writes} key(s) -- "
+        "every 2.2.0 key stays where it is, so the 2.2.0 charts render as before"
+    )
+    notes: dict[tuple[str, str, str], int] = {}
+    for plan in result.plans:
+        if plan.skipped:
+            lines.append(f"{plan.path}: left as it is -- {plan.skipped}")
+            continue
+        body = [f"  write    {t} = {_shown(value)}  (from {why})" for t, value, why in plan.writes]
+        body += [f"  conflict {line}" for line in plan.conflicts]
+        body += [f"  by hand  {line}" for line in plan.by_hand]
+        body += [f"  dropped  {line}" for line in plan.dropped]
+        if body:
+            lines.append(f"{plan.path} ({plan.service})")
+            lines += body
+        for key, note in plan.notes:
+            notes[(plan.service, key, note)] = notes.get((plan.service, key, note), 0) + 1
+    if result.common:
+        lines.append(f"{DEPLOY_COMMON} sets keys the thin charts read elsewhere, to move by hand:")
+        lines += [f"  {line}" for line in result.common]
+    if notes:
+        lines.append("notes on keys the overlays set:")
+        for (service, key, note), count in notes.items():
+            lines.append(f"  {service} {key} ({count} file(s)): {note}")
+    return lines
+
+
+def overlay_plan_section(deploy: Path, chart_stage: str | None) -> tuple[str, bool]:
+    """The plan's overlay section, and whether it blocks the plan."""
+    title = f"## overlay vocabulary (stage {MIGRATION_STAGE}, before {chart_stage})"
+    if chart_stage is None:
+        body = "Nothing in this plan moves an Argo-managed component, so the overlays stay as is."
+        return f"## overlay vocabulary\n\n{body}\n", False
+    try:
+        result = migrate_overlays(deploy, write=False)
+    except UpgradeError as err:
+        return f"{title}\n\nBLOCKED: {err}\n", True
+    return f"{title}\n\n" + "\n".join(render_overlay_report(result)) + "\n", False
+
+
+def _with_migration(
+    grouped: list[tuple[str, list[Move]]], chart_stage: str | None, migrate: bool
+) -> list[tuple[str, list[Move]]]:
+    """The stages apply walks: the overlay migration goes in just before the first one that
+    moves an Argo-managed component, so --stop-before that stage leaves it committed."""
+    if not migrate or chart_stage is None:
+        return list(grouped)
+    walk = list(grouped)
+    index = [stage for stage, _ in walk].index(chart_stage)
+    walk.insert(index, (MIGRATION_STAGE, []))
+    return walk
+
+
 # --- plan ----------------------------------------------------------------------
 
 
@@ -1365,6 +1963,12 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     blocked = False
 
     sections = [render_plan(moves, from_stack=from_name, to_stack=to_name)]
+
+    if needs_overlay_migration(from_pins, to_pins):
+        chart_stage = _chart_stage(moves_by_stage(moves))
+        section, migration_blocked = overlay_plan_section(deploy, chart_stage)
+        sections.append(section)
+        blocked = blocked or migration_blocked
 
     compat_ok, compat_out = run_compat_check(to_name)
     sections.append(f"## compat-check ({to_name}, --strict)\n\n```\n{compat_out}\n```\n")
@@ -1512,6 +2116,67 @@ def _write_holds(deploy: Path, hold: KafkaHold, *, hold_version: bool) -> list[s
     return written
 
 
+def _apply_overlay_migration(
+    args: argparse.Namespace,
+    deploy: Path,
+    stage_index: int,
+    to_name: str,
+    emit: Callable[[str], None],
+) -> int | None:
+    """The overlay-vocabulary stage: rewrite, commit, push and wait as any stage does.
+
+    Returns:
+        None when the stage is done, else apply's exit code.
+    """
+    print("  the overlays take the thin-chart keys beside the 2.2.0 ones", file=sys.stderr)
+    prompt = f"apply stage {stage_index} ({MIGRATION_STAGE})?"
+    if not args.dry_run and not _confirm(prompt, assume_yes=args.yes):
+        print("dfe-ops upgrade apply: aborted by operator", file=sys.stderr)
+        return EXIT_BLOCKED
+    try:
+        result = migrate_overlays(deploy, write=not args.dry_run)
+    except UpgradeError as err:
+        return _stage_failed(stage_index, str(err), [])
+    for line in render_overlay_report(result):
+        print(f"  {line}", file=sys.stderr)
+
+    message = f"chore(upgrade): {to_name} stage {stage_index} -- overlay vocabulary"
+    emit(f"write the thin-chart keys into {len(result.changed)} overlay(s), keeping the 2.2.0 ones")
+    emit(f"git -C {deploy} add {' '.join(result.changed) or '(nothing changed)'}")
+    emit(f"git -C {deploy} commit -m {message!r}")
+    if not args.dry_run:
+        if result.changed:
+            added = _git(deploy, "add", "--", *result.changed)
+            if added.returncode != 0:
+                return _stage_failed(stage_index, f"git add failed: {_last_line(added.stderr)}", [])
+        if _git(deploy, "diff", "--cached", "--quiet").returncode == 0:
+            print(
+                f"  stage {stage_index} ({MIGRATION_STAGE}) changed nothing -- every overlay "
+                "already carries its thin-chart keys",
+                file=sys.stderr,
+            )
+        else:
+            commit = _git(deploy, "commit", "-m", message)
+            if commit.returncode != 0:
+                failure = _last_line(commit.stderr) or _last_line(commit.stdout)
+                return _stage_failed(stage_index, f"git commit failed: {failure}", [])
+
+    if args.push:
+        emit(f"git -C {deploy} push")
+        if not args.dry_run and _git(deploy, "push").returncode != 0:
+            return _stage_failed(stage_index, "git push failed", [])
+
+    emit(f"wait for Argo Applications in {args.argocd_namespace} (timeout {args.timeout}s)")
+    if not args.dry_run:
+        ok, detail = wait_for_argo(
+            args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout
+        )
+        print(f"  argo: {detail}", file=sys.stderr)
+        if not ok:
+            return _stage_failed(stage_index, "Argo did not converge", [])
+    return None
+
+
 def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
@@ -1550,8 +2215,11 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             return EXIT_BLOCKED
 
     grouped = moves_by_stage(moves)
-    if args.stop_before and args.stop_before not in [stage for stage, _ in grouped]:
-        have = ", ".join(stage for stage, _ in grouped) or "none"
+    chart_stage = _chart_stage(grouped)
+    walk = _with_migration(grouped, chart_stage, needs_overlay_migration(from_pins, to_pins))
+    stage_names = [stage for stage, _ in walk]
+    if args.stop_before and args.stop_before not in stage_names:
+        have = ", ".join(stage_names) or "none"
         print(
             f"dfe-ops upgrade apply: --stop-before {args.stop_before!r} does not match any stage this "
             f"plan reaches (have: {have})",
@@ -1565,9 +2233,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         if args.dry_run:
             print(f"[dry-run] {cmd}", file=sys.stderr)
 
-    stage_names = [stage for stage, _ in grouped]
     reached = stage_names[: stage_names.index(args.stop_before)] if args.stop_before else stage_names
-    chart_stage = _chart_stage(grouped)
     kafka_move = next((m for m in moves if m.step.key == KAFKA_VERSION_KEY), None)
     kafka_stage = kafka_move.step.stage if kafka_move else None
 
@@ -1595,15 +2261,20 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             )
             return EXIT_BLOCKED
 
-    for stage_index, (stage, stage_moves) in enumerate(grouped, start=1):
+    for stage_index, (stage, stage_moves) in enumerate(walk, start=1):
         if args.stop_before and stage == args.stop_before:
             print(
-                f"\ndfe-ops upgrade apply: stopping before stage {stage_index}/{len(grouped)} ({stage}) "
+                f"\ndfe-ops upgrade apply: stopping before stage {stage_index}/{len(walk)} ({stage}) "
                 "-- --stop-before",
                 file=sys.stderr,
             )
             return EXIT_OK
-        print(f"\n=== stage {stage_index}/{len(grouped)}: {stage} ===", file=sys.stderr)
+        print(f"\n=== stage {stage_index}/{len(walk)}: {stage} ===", file=sys.stderr)
+        if stage == MIGRATION_STAGE:
+            failed = _apply_overlay_migration(args, deploy, stage_index, to_name, emit)
+            if failed is not None:
+                return failed
+            continue
         for move in stage_moves:
             print(f"  {move.step.key}: {move.old} -> {move.new}", file=sys.stderr)
 
@@ -1799,7 +2470,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(f"\n[dry-run] {len(commands)} command(s) would run; nothing was executed", file=sys.stderr)
     else:
-        print(f"\ndfe-ops upgrade apply OK: {from_name} -> {to_name} ({len(grouped)} stage(s))", file=sys.stderr)
+        print(f"\ndfe-ops upgrade apply OK: {from_name} -> {to_name} ({len(walk)} stage(s))", file=sys.stderr)
     return EXIT_OK
 
 
@@ -2019,7 +2690,8 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         "--stop-before",
         default=None,
         metavar="<stage-key>",
-        help="stop the run before this upgrade-order.yaml stage (e.g. 30-services), touching nothing in it or after",
+        help="stop the run before this stage, an upgrade-order.yaml one (e.g. 30-services) or "
+        f"{MIGRATION_STAGE}, touching nothing in it or after",
     )
     apply_.add_argument(
         "--from",
