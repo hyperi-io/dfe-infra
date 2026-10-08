@@ -163,8 +163,10 @@ data "aws_iam_policy_document" "broker_scaler_assume" {
 resource "aws_iam_role" "broker_scaler" {
   count = local.autoscaling_enabled ? 1 : 0
 
-  name               = "${var.name}-msk-broker-scaler"
-  assume_role_policy = data.aws_iam_policy_document.broker_scaler_assume[0].json
+  name                 = "${var.name}-msk-broker-scaler"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.broker_scaler_assume[0].json
+  permissions_boundary = var.permissions_boundary
 }
 
 // Least privilege: describe and update THIS cluster alone, and write to

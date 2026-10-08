@@ -129,3 +129,15 @@ variable "tags" {
   description = "The governance tag set, applied to every taggable resource through the provider's default_tags. Merged here only where a resource takes a Name of its own."
   type        = map(string)
 }
+
+variable "permissions_boundary" {
+  description = "IAM policy ARN set as the permissions boundary on every role this module creates, or null for none."
+  type        = string
+  default     = null
+}
+
+variable "iam_path" {
+  description = "IAM path for every role, policy and instance profile this module creates, or null for the default \"/\"."
+  type        = string
+  default     = null
+}

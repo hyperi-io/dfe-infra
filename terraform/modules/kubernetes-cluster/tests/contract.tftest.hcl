@@ -1232,3 +1232,76 @@ run "aws_clickhouse_object_store_endpoint_shape" {
     error_message = "the endpoint must carry the dfe/ prefix every other derived object-store path uses"
   }
 }
+
+// An account guardrail that refuses CreateRole without a boundary, outside one
+// IAM path, or an S3 write outside one bucket prefix refuses the first resource
+// that misses, so EVERY role, instance profile and bucket carries all three.
+run "aws_guardrail_inputs_reach_every_role_profile_and_bucket" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    permissions_boundary = "arn:aws:iam::000000000000:policy/contract-boundary"
+    iam_path             = "/dfe-e2e/"
+    s3_bucket_prefix     = "dfe-e2e-"
+  }
+
+  assert {
+    condition = alltrue([
+      for role in [
+        aws_iam_role.cluster,
+        aws_iam_role.nodes,
+        aws_iam_role.ebs_csi,
+        aws_iam_role.karpenter_node,
+        aws_iam_role.karpenter,
+        aws_iam_role.clickhouse_object_store,
+      ] : role.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary" && role.path == "/dfe-e2e/"
+    ])
+    error_message = "every aws_iam_role in this module must carry var.permissions_boundary and var.iam_path"
+  }
+
+  assert {
+    condition     = aws_iam_instance_profile.karpenter_node.path == "/dfe-e2e/"
+    error_message = "Karpenter's node instance profile must sit under var.iam_path"
+  }
+
+  assert {
+    condition     = startswith(aws_s3_bucket.clickhouse_object_store.bucket, "dfe-e2e-")
+    error_message = "the object-store bucket must carry var.s3_bucket_prefix"
+  }
+}
+
+// What the add-ons create themselves never sees default_tags, so a guardrail
+// that refuses an untagged create needs the run's tags in their configuration.
+run "aws_controller_tags_reach_the_addons" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    controller_tags = {
+      "dfe-e2e"    = "run-1"
+      "expires-at" = "2026-10-08T12:00:00Z"
+    }
+  }
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.this["aws-ebs-csi-driver"].configuration_values).controller.extraVolumeTags["dfe-e2e"] == "run-1"
+    error_message = "the EBS CSI driver must tag every volume it provisions with controller_tags"
+  }
+
+  assert {
+    condition     = jsondecode(jsondecode(aws_eks_addon.this["vpc-cni"].configuration_values).env.ADDITIONAL_ENI_TAGS)["expires-at"] == "2026-10-08T12:00:00Z"
+    error_message = "the VPC CNI must tag every pod network interface it creates with controller_tags"
+  }
+
+  assert {
+    condition     = jsondecode(aws_eks_addon.this["vpc-cni"].configuration_values).enableNetworkPolicy == "true"
+    error_message = "adding controller_tags must not drop enableNetworkPolicy"
+  }
+}

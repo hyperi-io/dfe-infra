@@ -164,7 +164,7 @@ resource "aws_cloudwatch_log_group" "brokers" {
 resource "aws_s3_bucket" "broker_logs" {
   count = var.telemetry.sink == "otel" ? 1 : 0
 
-  bucket        = "${var.name}-msk-broker-logs"
+  bucket        = "${var.s3_bucket_prefix}${var.name}-msk-broker-logs"
   force_destroy = true
 
   tags = { Name = "${var.name}-msk-broker-logs" }

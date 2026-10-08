@@ -44,11 +44,13 @@ terraform {
 
 // ONE provider for the deployment. The modules declare what they need and this
 // block configures it, so a tag policy or a region change lands in one place.
+// local.tags is the governance set plus a test run's id and expiry, so a
+// guardrail that refuses an untagged create sees both on the create call.
 provider "aws" {
   region = var.provision.region
 
   default_tags {
-    tags = var.tags
+    tags = local.tags
   }
 }
 

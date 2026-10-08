@@ -337,3 +337,62 @@ variable "tags" {
     error_message = "tags must carry service-name, service-namespace, environment, owner, cost-center, lifecycle and iac-source, each non-empty."
   }
 }
+
+// ---------------------------------------------------------------------------
+// Test runs and account guardrails -- none of these is a dial field. A guarded
+// test run (`dfe-ops cloud-cycle`) sets them in its own overlay tfvars file;
+// every other deployment leaves them at their defaults and changes nothing.
+// ---------------------------------------------------------------------------
+
+variable "run" {
+  description = "The test run this apply belongs to, or null. Its id and expiry are added to every resource's tags at create, so a reaper can remove what a stalled run left behind. Shape and validation: terraform/modules/tf-run-tags."
+  type        = any
+  default     = null
+}
+
+variable "permissions_boundary" {
+  description = "IAM policy ARN set as the permissions boundary on EVERY role this root and its modules create, or null for none. An account whose guardrail denies CreateRole without a boundary needs it; any other leaves it null."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.permissions_boundary == null || can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:policy/.+$", var.permissions_boundary))
+    error_message = "permissions_boundary must be an IAM policy ARN (arn:<partition>:iam::<account>:policy/<name>) or null."
+  }
+}
+
+variable "iam_path" {
+  description = "IAM path for EVERY role, policy and instance profile this root and its modules create, or null for the default \"/\". An account whose guardrail lets a runner create, pass or modify IAM only under one path needs it; changing it on an existing deployment replaces every role."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.iam_path == null || can(regex("^/([A-Za-z0-9+=,.@_-]+/)*$", var.iam_path))
+    error_message = "iam_path must begin and end with '/' and hold only letters, digits and + = , . @ _ - between them (e.g. /dfe-e2e/), or be null."
+  }
+}
+
+variable "s3_bucket_prefix" {
+  description = "Prepended to the name of EVERY bucket this root and its modules create. Empty by default; an account whose guardrail scopes S3 writes to a name prefix sets it. Changing it on an existing deployment replaces every bucket."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.s3_bucket_prefix == "" || can(regex("^[a-z0-9][a-z0-9.-]*$", var.s3_bucket_prefix))
+    error_message = "s3_bucket_prefix must start with a lowercase letter or digit and hold only lowercase letters, digits, '.' and '-', or be empty."
+  }
+}
+
+variable "inspector_ec2_exclusion" {
+  description = "Adds Amazon Inspector's InspectorEc2Exclusion tag to everything the run tags reach, so a short-lived deployment's instances, and volumes under its key, are not scanned and not charged for. Off by default."
+  type        = bool
+  default     = false
+}
+
+variable "cloudtrail" {
+  description = "enabled builds the deployment's own trail, its bucket and its CloudWatch half. On by default, because a real deployment wants its audit record; a short-lived test run turns it off, since every apply would otherwise create one more trail in the account."
+  type = object({
+    enabled = optional(bool, true)
+  })
+  default = {}
+}

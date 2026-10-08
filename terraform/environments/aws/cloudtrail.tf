@@ -15,10 +15,17 @@ locals {
   // access, so the policy cannot depend on the resource it authorises.
   // Constructing it from account, region and name breaks that cycle.
   cloudtrail_arn = "arn:${data.aws_partition.current.partition}:cloudtrail:${var.provision.region}:${data.aws_caller_identity.current.account_id}:trail/${local.cloudtrail_name}"
+
+  // var.cloudtrail.enabled gates everything in this file; the sink gates the
+  // CloudWatch half inside it.
+  cloudtrail_count            = var.cloudtrail.enabled ? 1 : 0
+  cloudtrail_cloudwatch_count = var.cloudtrail.enabled && var.telemetry.sink == "cloudwatch" ? 1 : 0
 }
 
 resource "aws_s3_bucket" "cloudtrail" {
-  bucket = local.cloudtrail_name
+  count = local.cloudtrail_count
+
+  bucket = "${var.s3_bucket_prefix}${local.cloudtrail_name}"
 
   // Same rule as the KMS deletion window (kubernetes-cluster/aws/kms.tf) and
   // the secret recovery windows above: only an ephemeral deployment gets the
@@ -31,7 +38,9 @@ resource "aws_s3_bucket" "cloudtrail" {
 }
 
 resource "aws_s3_bucket_public_access_block" "cloudtrail" {
-  bucket = aws_s3_bucket.cloudtrail.id
+  count = local.cloudtrail_count
+
+  bucket = aws_s3_bucket.cloudtrail[0].id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -48,7 +57,9 @@ resource "aws_s3_bucket_public_access_block" "cloudtrail" {
 // design question for whoever owns the tamper-evident-audit story, not a
 // same-shaped fix as this one.
 resource "aws_s3_bucket_versioning" "cloudtrail" {
-  bucket = aws_s3_bucket.cloudtrail.id
+  count = local.cloudtrail_count
+
+  bucket = aws_s3_bucket.cloudtrail[0].id
 
   versioning_configuration {
     status = "Enabled"
@@ -56,7 +67,9 @@ resource "aws_s3_bucket_versioning" "cloudtrail" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
-  bucket = aws_s3_bucket.cloudtrail.id
+  count = local.cloudtrail_count
+
+  bucket = aws_s3_bucket.cloudtrail[0].id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -69,7 +82,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
-  bucket = aws_s3_bucket.cloudtrail.id
+  count = local.cloudtrail_count
+
+  bucket = aws_s3_bucket.cloudtrail[0].id
 
   rule {
     id     = "expire-cloudtrail-logs"
@@ -95,6 +110,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
 // plus the write, both scoped to this one trail via aws:SourceArn so a
 // second trail elsewhere in the account cannot write here.
 data "aws_iam_policy_document" "cloudtrail_bucket" {
+  count = local.cloudtrail_count
+
   statement {
     sid    = "AWSCloudTrailAclCheck20150319"
     effect = "Allow"
@@ -105,7 +122,7 @@ data "aws_iam_policy_document" "cloudtrail_bucket" {
     }
 
     actions   = ["s3:GetBucketAcl"]
-    resources = [aws_s3_bucket.cloudtrail.arn]
+    resources = [aws_s3_bucket.cloudtrail[0].arn]
 
     condition {
       test     = "StringEquals"
@@ -124,7 +141,7 @@ data "aws_iam_policy_document" "cloudtrail_bucket" {
     }
 
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.cloudtrail.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
+    resources = ["${aws_s3_bucket.cloudtrail[0].arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
 
     condition {
       test     = "StringEquals"
@@ -141,8 +158,10 @@ data "aws_iam_policy_document" "cloudtrail_bucket" {
 }
 
 resource "aws_s3_bucket_policy" "cloudtrail" {
-  bucket = aws_s3_bucket.cloudtrail.id
-  policy = data.aws_iam_policy_document.cloudtrail_bucket.json
+  count = local.cloudtrail_count
+
+  bucket = aws_s3_bucket.cloudtrail[0].id
+  policy = data.aws_iam_policy_document.cloudtrail_bucket[0].json
 }
 
 // ---------------------------------------------------------------------------
@@ -153,14 +172,14 @@ resource "aws_s3_bucket_policy" "cloudtrail" {
 // ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "cloudtrail" {
-  count = var.telemetry.sink == "cloudwatch" ? 1 : 0
+  count = local.cloudtrail_cloudwatch_count
 
   name              = "/aws/cloudtrail/${local.cloudtrail_name}"
   retention_in_days = var.telemetry.retention_days
 }
 
 data "aws_iam_policy_document" "cloudtrail_assume" {
-  count = var.telemetry.sink == "cloudwatch" ? 1 : 0
+  count = local.cloudtrail_cloudwatch_count
 
   statement {
     effect  = "Allow"
@@ -174,15 +193,17 @@ data "aws_iam_policy_document" "cloudtrail_assume" {
 }
 
 resource "aws_iam_role" "cloudtrail_cloudwatch" {
-  count = var.telemetry.sink == "cloudwatch" ? 1 : 0
+  count = local.cloudtrail_cloudwatch_count
 
-  name               = "${var.name}-cloudtrail-cloudwatch"
-  assume_role_policy = data.aws_iam_policy_document.cloudtrail_assume[0].json
+  name                 = "${var.name}-cloudtrail-cloudwatch"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.cloudtrail_assume[0].json
+  permissions_boundary = var.permissions_boundary
 }
 
 // AWS's own documented role policy for CloudTrail-to-CloudWatch-Logs delivery.
 data "aws_iam_policy_document" "cloudtrail_cloudwatch" {
-  count = var.telemetry.sink == "cloudwatch" ? 1 : 0
+  count = local.cloudtrail_cloudwatch_count
 
   statement {
     effect = "Allow"
@@ -197,7 +218,7 @@ data "aws_iam_policy_document" "cloudtrail_cloudwatch" {
 }
 
 resource "aws_iam_role_policy" "cloudtrail_cloudwatch" {
-  count = var.telemetry.sink == "cloudwatch" ? 1 : 0
+  count = local.cloudtrail_cloudwatch_count
 
   name   = "${var.name}-cloudtrail-cloudwatch"
   role   = aws_iam_role.cloudtrail_cloudwatch[0].name
@@ -205,8 +226,10 @@ resource "aws_iam_role_policy" "cloudtrail_cloudwatch" {
 }
 
 resource "aws_cloudtrail" "this" {
+  count = local.cloudtrail_count
+
   name           = local.cloudtrail_name
-  s3_bucket_name = aws_s3_bucket.cloudtrail.id
+  s3_bucket_name = aws_s3_bucket.cloudtrail[0].id
 
   include_global_service_events = true
   is_multi_region_trail         = false
@@ -219,9 +242,49 @@ resource "aws_cloudtrail" "this" {
     include_management_events = true
   }
 
-  cloud_watch_logs_group_arn = var.telemetry.sink == "cloudwatch" ? "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*" : null
-  cloud_watch_logs_role_arn  = var.telemetry.sink == "cloudwatch" ? aws_iam_role.cloudtrail_cloudwatch[0].arn : null
+  cloud_watch_logs_group_arn = local.cloudtrail_cloudwatch_count == 1 ? "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*" : null
+  cloud_watch_logs_role_arn  = local.cloudtrail_cloudwatch_count == 1 ? aws_iam_role.cloudtrail_cloudwatch[0].arn : null
 
   // The bucket policy has to exist before CreateTrail validates against it.
   depends_on = [aws_s3_bucket_policy.cloudtrail]
+}
+
+// The resources above gained `count` for cloudtrail.enabled. Without these a
+// deployment applied before it reads its trail as one destroy and one create,
+// and the destroy takes the audit bucket's history with it. moved.tf holds the
+// edge module's move alone, which scripts/tests/test_edge_moved_blocks.py asserts.
+
+moved {
+  from = aws_s3_bucket.cloudtrail
+  to   = aws_s3_bucket.cloudtrail[0]
+}
+
+moved {
+  from = aws_s3_bucket_public_access_block.cloudtrail
+  to   = aws_s3_bucket_public_access_block.cloudtrail[0]
+}
+
+moved {
+  from = aws_s3_bucket_versioning.cloudtrail
+  to   = aws_s3_bucket_versioning.cloudtrail[0]
+}
+
+moved {
+  from = aws_s3_bucket_server_side_encryption_configuration.cloudtrail
+  to   = aws_s3_bucket_server_side_encryption_configuration.cloudtrail[0]
+}
+
+moved {
+  from = aws_s3_bucket_lifecycle_configuration.cloudtrail
+  to   = aws_s3_bucket_lifecycle_configuration.cloudtrail[0]
+}
+
+moved {
+  from = aws_s3_bucket_policy.cloudtrail
+  to   = aws_s3_bucket_policy.cloudtrail[0]
+}
+
+moved {
+  from = aws_cloudtrail.this
+  to   = aws_cloudtrail.this[0]
 }

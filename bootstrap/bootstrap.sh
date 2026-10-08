@@ -120,6 +120,10 @@
 #                            encrypted with, for
 #                            karpenter-pools' karpenter.cluster.kmsKeyId; empty
 #                            omits the annotation (non-AWS clouds)
+#   DFE_RUN_TAGS             a test run's id and expiry tags as one line of JSON,
+#                            for karpenter-pools' karpenter.tags and the load
+#                            balancer controller's defaultTags; empty omits the
+#                            annotation (every deployment that is not a test run)
 #   DFE_KAFKA_BROKER_HOSTS   derived, not set by the caller: every broker's bare
 #                            host (no port), comma separated, from
 #                            DFE_KAFKA_BOOTSTRAP. Empty on every provider but msk.
@@ -576,6 +580,12 @@ fi
 DFE_KARPENTER_POOLS_YAML="${DFE_KARPENTER_POOLS//\'/\'\'}"
 # shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
 export DFE_KARPENTER_POOLS_ANNOTATION="${DFE_KARPENTER_POOLS:+dfe.hyperi.io/karpenter_pools: '${DFE_KARPENTER_POOLS_YAML}'}"
+# A test run's id and expiry as one line of JSON, quoted the same way as the pools.
+export DFE_RUN_TAGS="${DFE_RUN_TAGS:-}"
+# shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion
+DFE_RUN_TAGS_YAML="${DFE_RUN_TAGS//\'/\'\'}"
+# shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
+export DFE_RUN_TAGS_ANNOTATION="${DFE_RUN_TAGS:+dfe.hyperi.io/run_tags: '${DFE_RUN_TAGS_YAML}'}"
 
 echo "==> [0a/7] On-prem node-capacity preflight"
 # DFE_CLOUD=local is this script's own token for "we do not create these

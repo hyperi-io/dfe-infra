@@ -14,12 +14,15 @@
 
 resource "aws_iam_policy" "lbc" {
   name   = "${var.name}-lbc"
+  path   = var.iam_path
   policy = file("${path.module}/iam/aws-load-balancer-controller.json")
 }
 
 resource "aws_iam_role" "lbc" {
-  name               = "${var.name}-lbc"
-  assume_role_policy = var.pod_identity_trust_policy_json
+  name                 = "${var.name}-lbc"
+  path                 = var.iam_path
+  assume_role_policy   = var.pod_identity_trust_policy_json
+  permissions_boundary = var.permissions_boundary
 }
 
 resource "aws_iam_role_policy_attachment" "lbc" {

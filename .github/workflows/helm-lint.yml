@@ -24,6 +24,8 @@ on:
       - '.github/workflows/helm-lint.yml'
       # Its HELM_VERSION is held equal to this file's by check_versions_drift.py.
       - '.github/workflows/release.yml'
+      # scripts/tests/test_cloud_reaper.py asserts its gate, pins and environment.
+      - '.github/workflows/cloud-reaper.yml'
   pull_request:
     paths:
       - 'helm/**'
@@ -45,6 +47,8 @@ on:
       - '.github/workflows/helm-lint.yml'
       # Its HELM_VERSION is held equal to this file's by check_versions_drift.py.
       - '.github/workflows/release.yml'
+      # scripts/tests/test_cloud_reaper.py asserts its gate, pins and environment.
+      - '.github/workflows/cloud-reaper.yml'
   # A push made with GITHUB_TOKEN triggers no workflow, so the propagate job's
   # write-back leaves its own head commit unchecked. workflow_dispatch is the
   # documented exception to that rule and is how it asks for this run.

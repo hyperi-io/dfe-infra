@@ -791,3 +791,42 @@ run "a_changed_port_map_rebuilds_the_instance_rather_than_restarting_it" {
     error_message = "the address must attach by association, not as an argument on the instance"
   }
 }
+
+// An account guardrail that refuses CreateRole without a boundary refuses the
+// first role this module creates without one, so EVERY role carries it.
+run "every_role_carries_the_permissions_boundary" {
+  command = plan
+
+  variables {
+    permissions_boundary = "arn:aws:iam::000000000000:policy/contract-boundary"
+    iam_path             = "/dfe-e2e/"
+    tunnel               = { address = { mode = "forwarder" } }
+  }
+
+  assert {
+    condition = alltrue(concat(
+      [aws_iam_role.lbc.path == "/dfe-e2e/", aws_iam_role.external_dns.path == "/dfe-e2e/", aws_iam_policy.lbc.path == "/dfe-e2e/"],
+      [for role in aws_iam_role.cert_manager : role.path == "/dfe-e2e/"],
+      [for role in aws_iam_role.forwarder : role.path == "/dfe-e2e/"],
+      [for profile in aws_iam_instance_profile.forwarder : profile.path == "/dfe-e2e/"],
+    ))
+    error_message = "every role, policy and instance profile in this module must sit under var.iam_path"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.cert_manager) == 1 && length(aws_iam_role.forwarder) == 1
+    error_message = "this case must build both conditional roles, or the assertion below proves nothing about them"
+  }
+
+  assert {
+    condition = alltrue(concat(
+      [
+        aws_iam_role.lbc.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary",
+        aws_iam_role.external_dns.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary",
+      ],
+      [for role in aws_iam_role.cert_manager : role.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"],
+      [for role in aws_iam_role.forwarder : role.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"],
+    ))
+    error_message = "every aws_iam_role in this module must carry var.permissions_boundary"
+  }
+}

@@ -24,8 +24,6 @@ guard; these are the ones whose key lives in bootstrap.sh instead.
 No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -72,12 +70,19 @@ CONDITIONAL_FACTS = (
         "layer2-platform.yaml",
         "pools",
     ),
+    # One annotation, two readers: Karpenter's instances and the load balancer
+    # controller's resources both carry a test run's tags.
+    ("DFE_RUN_TAGS", "dfe.hyperi.io/run_tags", "layer2-platform.yaml", "tags"),
+    ("DFE_RUN_TAGS", "dfe.hyperi.io/run_tags", "layer1-addons.yaml", "defaultTags"),
 )
 
-# The JSON pool map carries double quotes of its own, so its annotation is
+# A JSON map carries double quotes of its own, so its annotation is
 # single-quoted where every other one here is double-quoted, and it is the
 # escaped copy that goes in the scalar rather than the raw value.
-SINGLE_QUOTED = {"DFE_KARPENTER_POOLS": "DFE_KARPENTER_POOLS_YAML"}
+SINGLE_QUOTED = {
+    "DFE_KARPENTER_POOLS": "DFE_KARPENTER_POOLS_YAML",
+    "DFE_RUN_TAGS": "DFE_RUN_TAGS_YAML",
+}
 
 
 def test_bootstrap_composes_each_annotation_under_its_own_key() -> None:
@@ -117,14 +122,20 @@ def test_each_appset_reads_the_annotation_bootstrap_writes() -> None:
         body = (APPSETS / appset).read_text()
         read = f'.metadata.annotations "{annotation}"'
         expect(f"{appset} reads {annotation}", read in body, f"not found in {appset}")
-        # The key sits on the line that reads the annotation, or the one above:
-        # a nested `key: {{ index ... }}` is one line, a parameter block's
-        # `- name: <key>` / `value: {{ index ... }}` is two. Asserting only that
-        # both strings appear somewhere would prove nothing about the pairing.
+        # The key sits on the line that reads the annotation, the one above, or
+        # the one below: a nested `key: {{ index ... }}` is one line, a parameter
+        # block's `- name: <key>` / `value: {{ index ... }}` is two, and a
+        # `{{- with index ... }}` block opens on the line before its `key:`.
+        # Asserting only that both strings appear somewhere would prove nothing
+        # about the pairing.
         lines = body.splitlines()
         paired = [
             i for i, ln in enumerate(lines)
-            if read in ln and (chart_key in ln or (i and chart_key in lines[i - 1]))
+            if read in ln and (
+                chart_key in ln
+                or (i and chart_key in lines[i - 1])
+                or (i + 1 < len(lines) and lines[i + 1].strip().startswith(f"{chart_key}:"))
+            )
         ]
         expect(f"{appset} lands {annotation} on {chart_key}",
                paired != [], f"no line in {appset} pairs them")

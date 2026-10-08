@@ -169,6 +169,7 @@ resource "aws_iam_role" "this" {
   count = var.enabled ? 1 : 0
 
   name = "${var.name}-toolbox"
+  path = var.iam_path
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -178,6 +179,8 @@ resource "aws_iam_role" "this" {
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
+
+  permissions_boundary = var.permissions_boundary
 
   tags = var.tags
 }
@@ -231,6 +234,7 @@ resource "aws_iam_instance_profile" "this" {
   count = var.enabled ? 1 : 0
 
   name = "${var.name}-toolbox"
+  path = var.iam_path
   role = aws_iam_role.this[0].name
 }
 
@@ -299,7 +303,7 @@ resource "aws_instance" "this" {
 // ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "session_logs" {
-  bucket        = "${var.name}-toolbox-session-logs"
+  bucket        = "${var.s3_bucket_prefix}${var.name}-toolbox-session-logs"
   force_destroy = var.force_destroy_session_logs
 
   tags = merge(var.tags, { Name = "${var.name}-toolbox-session-logs" })

@@ -19,6 +19,10 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: {{ $k.cluster.instanceProfile | quote }}
+  {{- with $k.tags }}
+  tags:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   # Private subnets only -- the tag is written on those and on nothing else.
   subnetSelectorTerms:
     - tags:

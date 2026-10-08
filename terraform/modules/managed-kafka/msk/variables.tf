@@ -324,3 +324,21 @@ variable "autoscaling" {
     error_message = "autoscaling.headroom must be greater than 1 -- it is a margin ABOVE full utilisation, not a fraction of it."
   }
 }
+
+variable "permissions_boundary" {
+  description = "IAM policy ARN set as the permissions boundary on every role this module creates, or null for none."
+  type        = string
+  default     = null
+}
+
+variable "iam_path" {
+  description = "IAM path for every role this module creates, or null for the default \"/\"."
+  type        = string
+  default     = null
+}
+
+variable "s3_bucket_prefix" {
+  description = "Prepended to the name of every bucket this module creates. Empty by default; an account that scopes S3 writes to a name prefix sets it."
+  type        = string
+  default     = ""
+}

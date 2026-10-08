@@ -170,3 +170,21 @@ variable "tags" {
   description = "The governance tag set. Merged with dfe.hyperi.io/component = toolbox on every resource this module tags -- the key every IAM policy example in CONTRACT.md scopes ssm:StartSession against, so an unconditioned grant elsewhere in the account cannot reach this instance and this instance's own tag cannot be renamed without also being the thing every relevant condition matches on."
   type        = map(string)
 }
+
+variable "permissions_boundary" {
+  description = "IAM policy ARN set as the permissions boundary on every role this module creates, or null for none."
+  type        = string
+  default     = null
+}
+
+variable "iam_path" {
+  description = "IAM path for every role and instance profile this module creates, or null for the default \"/\"."
+  type        = string
+  default     = null
+}
+
+variable "s3_bucket_prefix" {
+  description = "Prepended to the name of every bucket this module creates. Empty by default; an account that scopes S3 writes to a name prefix sets it."
+  type        = string
+  default     = ""
+}

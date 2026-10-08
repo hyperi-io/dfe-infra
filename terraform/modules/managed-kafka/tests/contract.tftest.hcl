@@ -723,3 +723,45 @@ run "msk_autoscaler_disabled_renders_nothing" {
     error_message = "enabled = false must render no scaler IAM role"
   }
 }
+
+// An account guardrail that refuses CreateRole without a boundary refuses the
+// first role this body creates without one, so EVERY role carries it.
+run "msk_every_role_carries_the_permissions_boundary" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    permissions_boundary = "arn:aws:iam::000000000000:policy/contract-boundary"
+    iam_path             = "/dfe-e2e/"
+    s3_bucket_prefix     = "dfe-e2e-"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.broker_scaler) == 1 && length(aws_s3_bucket.broker_logs) == 1
+    error_message = "this case must build the scaler role and the broker-log bucket, or the assertions below prove nothing about them"
+  }
+
+  assert {
+    condition = alltrue(concat(
+      [aws_iam_role.bootstrap.path == "/dfe-e2e/"],
+      [for role in aws_iam_role.broker_scaler : role.path == "/dfe-e2e/"],
+    ))
+    error_message = "every aws_iam_role in the msk body must sit under var.iam_path"
+  }
+
+  assert {
+    condition     = alltrue([for bucket in aws_s3_bucket.broker_logs : startswith(bucket.bucket, "dfe-e2e-")])
+    error_message = "the broker-log bucket must carry var.s3_bucket_prefix"
+  }
+
+  assert {
+    condition = alltrue(concat(
+      [aws_iam_role.bootstrap.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"],
+      [for role in aws_iam_role.broker_scaler : role.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"],
+    ))
+    error_message = "every aws_iam_role in the msk body must carry var.permissions_boundary"
+  }
+}

@@ -154,3 +154,28 @@ run "an_out_of_range_window_is_refused" {
 
   expect_failures = [var.recovery_window_days]
 }
+
+// An account guardrail that refuses CreateRole without a boundary refuses the
+// external-secrets role without one.
+run "the_eso_role_carries_the_permissions_boundary" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    permissions_boundary = "arn:aws:iam::000000000000:policy/contract-boundary"
+    iam_path             = "/dfe-e2e/"
+  }
+
+  assert {
+    condition     = aws_iam_role.eso.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"
+    error_message = "the external-secrets aws_iam_role must carry var.permissions_boundary"
+  }
+
+  assert {
+    condition     = aws_iam_role.eso.path == "/dfe-e2e/"
+    error_message = "the external-secrets aws_iam_role must sit under var.iam_path"
+  }
+}

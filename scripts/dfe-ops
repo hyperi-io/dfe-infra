@@ -44,6 +44,13 @@ Subcommands:
                stack-deploy (+ the 2 default E2E tests) -> full smoke suite ->
                destroy. Every estate-specific value comes from --env-file;
                --keep skips the destroy for dev-cluster debugging.
+  cloud-preflight  READ-ONLY refusal check for an unattended cloud run: the
+               account guardrails are readable, the credential outlives the
+               run plus its teardown, and no expired run resources remain.
+  cloud-cycle  The guarded cloud cycle: cloud-preflight, then a per-run state
+               key and run tags, tofu apply, `cycle`, and a destroy on every
+               exit including SIGINT/SIGTERM/SIGHUP. Registered from
+               dfe_ops_cloud_guard.
   creds        Print the fetch command for every login this deploy carries --
                admin, break-glass, Argo CD, the deploy-repo git host,
                ClickHouse, Kafbat -- and mark any secret the cluster does not
@@ -271,6 +278,7 @@ import private_file  # noqa: E402
 import profiles  # noqa: E402
 import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
+from dfe_ops_cloud_guard import add_cloud_guard_subparsers  # noqa: E402
 from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_kind import add_kind_subparser  # noqa: E402
@@ -4229,6 +4237,11 @@ def build_parser() -> argparse.ArgumentParser:
     # kind -- up/status/down for a local kind cluster running one tier from a
     # named git ref. Registered from dfe_ops_kind.
     add_kind_subparser(sub)
+
+    # cloud-preflight / cloud-cycle -- an unattended cloud run that refuses to
+    # start unguarded and tears down on every exit. Registered from
+    # dfe_ops_cloud_guard.
+    add_cloud_guard_subparsers(sub)
 
     return ap
 

@@ -27,7 +27,7 @@
 // ships as "dfe", so an unqualified name would be a bucket anyone could have
 // taken and the first apply would fail BucketAlreadyExists.
 resource "aws_s3_bucket" "clickhouse_object_store" {
-  bucket = "${var.name}-clickhouse-${var.provision.account}"
+  bucket = "${var.s3_bucket_prefix}${var.name}-clickhouse-${var.provision.account}"
 
   // Same rule as the KMS deletion window above and the root's CloudTrail
   // bucket: only an ephemeral deployment gets the fast, no-confirmation
@@ -136,8 +136,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "clickhouse_object_store" {
 // ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "clickhouse_object_store" {
-  name               = "${var.name}-clickhouse-object-store"
-  assume_role_policy = data.aws_iam_policy_document.pod_identity_trust.json
+  name                 = "${var.name}-clickhouse-object-store"
+  path                 = var.iam_path
+  assume_role_policy   = data.aws_iam_policy_document.pod_identity_trust.json
+  permissions_boundary = var.permissions_boundary
 }
 
 // Built with jsonencode() directly rather than a data "aws_iam_policy_document"

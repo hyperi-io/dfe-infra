@@ -4,7 +4,8 @@
 #  Purpose:      Guard the post-proof AWS sweep: each class parses the aws CLI
 #                shape it actually returns, deletion runs in dependency order,
 #                the excluded bucket and untagged resources are never touched
-#                without --include-untagged, and the exit code tracks what
+#                without --include-untagged, --expired selects only run-tagged
+#                resources past their expiry, and the exit code tracks what
 #                remains.
 #  Language:     Python
 #
@@ -14,12 +15,10 @@
 
     python3 -m pytest scripts/tests/test_cloud_sweep.py -q
 
-Every test mocks `aws_cli.run_aws` with fixture JSON lifted from the real aws
-CLI shapes (list-of-Key/Value tags for EC2, TagSet for ENIs, a plain dict for
-EKS/MSK) -- no network call and no real account is touched.
+Every test replaces `aws_cli.run_aws` with a fake answering fixture JSON lifted
+from the real aws CLI shapes (list-of-Key/Value tags for EC2, TagSet for ENIs,
+a plain dict for EKS/MSK) -- no network call and no real account is touched.
 """
-
-from __future__ import annotations
 
 import json
 import subprocess
@@ -32,11 +31,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 
 sys.path.insert(0, str(SCRIPTS))
+import cloud_run  # noqa: E402
 import cloud_sweep  # noqa: E402
 
 REGION = "us-west-2"
 TAG_FILTER = {"service-name": "dfe", "environment": "test"}
 DFE_TAGS = [{"Key": "service-name", "Value": "dfe"}, {"Key": "environment", "Value": "test"}]
+# 1791460800 is 2026-10-08T12:00:00Z; every expiry case below is judged against it.
+NOW = 1791460800
 
 
 def _ok(stdout_obj: object) -> subprocess.CompletedProcess:
@@ -293,9 +295,44 @@ def test_the_tagging_api_paginates_and_labels_kind_by_arn_service(monkeypatch: p
         ),
         _ok({"ResourceTagMappingList": [{"ResourceARN": "arn:aws:rds:us-west-2:0:db:dfe-db-2", "Tags": DFE_TAGS}]}),
     )
-    found = cloud_sweep.list_tagged(REGION, TAG_FILTER)
+    found = cloud_sweep.list_tagged(REGION, TAG_FILTER, TAG_FILTER)
     assert [r.name for r in found] == ["dfe-db", "dfe-db-2"]
     assert all(r.kind == "tagged:rds" for r in found)
+    assert all(r.tagged for r in found)
+
+
+def test_the_tagging_api_asks_for_a_bare_key_when_the_value_is_any(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--expired finds every run-tagged resource whatever its run id, so the
+    filter names the key alone -- Values= would match only one run."""
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return _ok({"ResourceTagMappingList": []})
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    cloud_sweep.list_tagged(REGION, {"dfe-e2e": None}, TAG_FILTER)
+    assert "Key=dfe-e2e" in calls[0]
+    assert not any(arg.startswith("Key=dfe-e2e,Values") for arg in calls[0])
+
+
+def test_the_tagging_api_carries_each_resources_own_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(
+        monkeypatch,
+        _ok(
+            {
+                "ResourceTagMappingList": [
+                    {
+                        "ResourceARN": "arn:aws:rds:us-west-2:0:db:run-db",
+                        "Tags": [{"Key": "dfe-e2e", "Value": "run-1"}, {"Key": "expires-at", "Value": "1"}],
+                    }
+                ]
+            }
+        ),
+    )
+    found = cloud_sweep.list_tagged(REGION, {"dfe-e2e": None}, TAG_FILTER)
+    assert found[0].tags == {"dfe-e2e": "run-1", "expires-at": "1"}
+    assert found[0].tagged is False  # it carries the run tag, not the governance filter
 
 
 # ---------------------------------------------------------------------------
@@ -306,11 +343,11 @@ def test_the_tagging_api_paginates_and_labels_kind_by_arn_service(monkeypatch: p
 def test_collect_drops_a_tagging_api_hit_already_found_by_a_dedicated_lister(monkeypatch: pytest.MonkeyPatch) -> None:
     resource = cloud_sweep.Resource(kind="ec2-instance", id="i-dupe", name="i-dupe", created=None, tagged=True)
     monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [lambda region, tf: [resource]])
-    monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket: [])
+    monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
     monkeypatch.setattr(
         cloud_sweep,
         "list_tagged",
-        lambda region, tf: [
+        lambda region, sf, tf: [
             cloud_sweep.Resource(kind="tagged:ec2", id="arn:aws:ec2:us-west-2:0:instance/i-dupe", name="i-dupe", created=None, tagged=True)
         ],
     )
@@ -320,14 +357,24 @@ def test_collect_drops_a_tagging_api_hit_already_found_by_a_dedicated_lister(mon
 
 def test_collect_keeps_a_tagging_api_hit_no_lister_covers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [])
-    monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket: [])
+    monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
     monkeypatch.setattr(
         cloud_sweep,
         "list_tagged",
-        lambda region, tf: [cloud_sweep.Resource(kind="tagged:rds", id="arn:aws:rds:us-west-2:0:db:dfe-db", name="dfe-db", created=None, tagged=True)],
+        lambda region, sf, tf: [cloud_sweep.Resource(kind="tagged:rds", id="arn:aws:rds:us-west-2:0:db:dfe-db", name="dfe-db", created=None, tagged=True)],
     )
     found = cloud_sweep.collect(REGION, TAG_FILTER, None)
     assert [r.name for r in found] == ["dfe-db"]
+
+
+def test_collect_asks_the_tagging_api_for_the_route1_filter_when_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict] = []
+    monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [])
+    monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
+    monkeypatch.setattr(cloud_sweep, "list_tagged", lambda region, sf, tf: seen.append(sf) or [])
+    cloud_sweep.collect(REGION, TAG_FILTER, None)
+    cloud_sweep.collect(REGION, TAG_FILTER, None, route1_filter={"dfe-e2e": None})
+    assert seen == [TAG_FILTER, {"dfe-e2e": None}]
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +412,87 @@ def test_delete_order_runs_workloads_and_lbs_before_clusters_before_network_befo
     assert order.index("msk-cluster") < order.index("vpc")
     assert order.index("nat-gateway") < order.index("vpc")
     assert order.index("vpc") < order.index("s3-bucket")
+
+
+def test_delete_order_removes_vpc_endpoints_before_the_security_groups_their_enis_hold() -> None:
+    """An interface endpoint's network interfaces hold its security groups, so a
+    group deleted first fails with DependencyViolation."""
+    order = cloud_sweep.DELETE_ORDER
+    assert order.index("vpc-endpoint") < order.index("security-group")
+    assert order.index("vpc-endpoint") < order.index("eni")
+
+
+def test_every_kind_in_delete_order_has_a_delete_and_every_delete_has_a_place() -> None:
+    assert set(cloud_sweep.DELETE_ORDER) == set(cloud_sweep.DELETE_FNS)
+
+
+def test_a_vpc_endpoint_delete_waits_until_the_endpoint_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    responses = [
+        _ok({}),  # delete-vpc-endpoints
+        _ok({"VpcEndpoints": [{"VpcEndpointId": "vpce-1", "State": "Deleting"}]}),
+        _fail("An error occurred (InvalidVpcEndpointId.NotFound)"),
+    ]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return responses.pop(0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
+    cloud_sweep._delete_vpc_endpoint(_resource("vpc-endpoint", "vpce-1", tagged=True), REGION)
+    assert [c[1] for c in calls] == ["delete-vpc-endpoints", "describe-vpc-endpoints", "describe-vpc-endpoints"]
+
+
+def test_a_route53_zone_loses_every_record_but_its_apex_soa_and_ns_before_the_zone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DeleteHostedZone refuses a populated zone, and Route 53 refuses to delete
+    the apex SOA and NS itself -- so everything else goes first, and only that."""
+    records = [
+        {"Name": "run.example.com.", "Type": "SOA", "TTL": 900, "ResourceRecords": [{"Value": "soa"}]},
+        {"Name": "run.example.com.", "Type": "NS", "TTL": 172800, "ResourceRecords": [{"Value": "ns-1."}]},
+        {"Name": "ui.run.example.com.", "Type": "A", "TTL": 60, "ResourceRecords": [{"Value": "192.0.2.10"}]},
+        {"Name": "sub.run.example.com.", "Type": "NS", "TTL": 300, "ResourceRecords": [{"Value": "ns-9."}]},
+    ]
+    calls: list[list[str]] = []
+    responses = [_ok({"ResourceRecordSets": records}), _ok({}), _ok({})]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return responses.pop(0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    zone = cloud_sweep.Resource(kind="route53-zone", id="Z123", name="run.example.com.", created=None, tagged=True)
+    cloud_sweep._delete_route53_zone(zone, REGION)
+
+    assert [c[1] for c in calls] == [
+        "list-resource-record-sets",
+        "change-resource-record-sets",
+        "delete-hosted-zone",
+    ]
+    batch = json.loads(calls[1][calls[1].index("--change-batch") + 1])
+    deleted = [(c["ResourceRecordSet"]["Name"], c["ResourceRecordSet"]["Type"]) for c in batch["Changes"]]
+    assert deleted == [("ui.run.example.com.", "A"), ("sub.run.example.com.", "NS")]
+    assert all(c["Action"] == "DELETE" for c in batch["Changes"])
+
+
+def test_an_empty_route53_zone_is_deleted_with_no_change_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    apex = [
+        {"Name": "run.example.com.", "Type": "SOA", "ResourceRecords": []},
+        {"Name": "RUN.example.com", "Type": "NS", "ResourceRecords": []},
+    ]
+    responses = [_ok({"ResourceRecordSets": apex}), _ok({})]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return responses.pop(0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    zone = cloud_sweep.Resource(kind="route53-zone", id="Z123", name="run.example.com.", created=None, tagged=True)
+    cloud_sweep._delete_route53_zone(zone, REGION)
+    assert [c[1] for c in calls] == ["list-resource-record-sets", "delete-hosted-zone"]
 
 
 def test_delete_resources_calls_each_kind_in_delete_order(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -410,7 +538,7 @@ def test_main_exits_zero_when_nothing_is_eligible(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         cloud_sweep,
         "collect",
-        lambda region, tf, bucket: [_resource("s3-bucket", "example-tfstate-bucket", tagged=False)],
+        lambda region, tf, bucket, **_: [_resource("s3-bucket", "example-tfstate-bucket", tagged=False)],
     )
     code = cloud_sweep.main(["--region", REGION])
     assert code == 0
@@ -418,7 +546,7 @@ def test_main_exits_zero_when_nothing_is_eligible(monkeypatch: pytest.MonkeyPatc
 
 
 def test_main_exits_one_when_a_tagged_resource_remains(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket: [_resource("ec2-instance", "i-1", tagged=True)])
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: [_resource("ec2-instance", "i-1", tagged=True)])
     code = cloud_sweep.main(["--region", REGION])
     assert code == 1
     assert "eligible for --delete" in capsys.readouterr().out
@@ -429,7 +557,7 @@ def test_main_with_delete_recollects_and_reports_what_survived(monkeypatch: pyte
     second: list[cloud_sweep.Resource] = []
     responses = iter([first, second])
     monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
-    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket: next(responses))
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: next(responses))
     monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region: [])
     code = cloud_sweep.main(["--region", REGION, "--delete", "--account", "000000000000", "--yes"])
     assert code == 0
@@ -479,7 +607,7 @@ def test_delete_without_yes_prompts_and_cancels_on_anything_but_yes(
 ) -> None:
     monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
     monkeypatch.setattr(
-        cloud_sweep, "collect", lambda region, tf, bucket: [_resource("ec2-instance", "i-1", tagged=True)]
+        cloud_sweep, "collect", lambda region, tf, bucket, **_: [_resource("ec2-instance", "i-1", tagged=True)]
     )
     monkeypatch.setattr("builtins.input", lambda prompt: "no")
     code = cloud_sweep.main(["--region", REGION, "--delete", "--account", "000000000000"])
@@ -494,7 +622,7 @@ def test_delete_with_yes_skips_the_prompt_and_deletes(
     first = [_resource("ec2-instance", "i-1", tagged=True)]
     second: list[cloud_sweep.Resource] = []
     responses = iter([first, second])
-    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket: next(responses))
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: next(responses))
     monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region: [])
 
     def refuse_to_prompt(prompt: str) -> str:
@@ -511,3 +639,202 @@ def test_parse_tag_filter_splits_comma_separated_pairs() -> None:
         "service-name": "dfe",
         "environment": "test",
     }
+
+
+# ---------------------------------------------------------------------------
+# --expired: only run-tagged resources past expiry plus grace
+# ---------------------------------------------------------------------------
+
+
+def _run_resource(rid: str, tags: dict[str, str], kind: str = "ec2-instance") -> cloud_sweep.Resource:
+    return cloud_sweep.Resource(kind=kind, id=rid, name=rid, created=None, tagged=True, tags=tags)
+
+
+def _expiry(grace: int = 0) -> cloud_sweep.ExpirySelection:
+    return cloud_sweep.ExpirySelection(keys=cloud_run.RunTagKeys(), now=NOW, grace=grace)
+
+
+def _expired_ids(resources: list[cloud_sweep.Resource], grace: int = 0) -> list[str]:
+    return [r.id for r in cloud_sweep.filter_expired(resources, expiry=_expiry(grace), exclude_bucket=None)]
+
+
+def test_expired_selects_a_run_resource_whose_expiry_is_in_the_past() -> None:
+    past = _run_resource("i-past", {"dfe-e2e": "run-1", "expires-at": "2026-10-08T11:00:00Z"})
+    assert _expired_ids([past]) == ["i-past"]
+
+
+def test_expired_reads_an_epoch_expiry_as_well_as_iso8601() -> None:
+    epoch = _run_resource("i-epoch", {"dfe-e2e": "run-1", "expires-at": str(NOW - 60)})
+    assert _expired_ids([epoch]) == ["i-epoch"]
+
+
+def test_expected_fail_a_future_expiry_is_never_selected() -> None:
+    future = _run_resource("i-future", {"dfe-e2e": "run-1", "expires-at": "2026-10-08T13:00:00Z"})
+    assert _expired_ids([future]) == []
+
+
+def test_expected_fail_a_resource_without_the_run_tag_is_never_selected() -> None:
+    """Untagged, governance-tagged only, or carrying just an expiry: none is a run's."""
+    resources = [
+        _run_resource("i-bare", {}),
+        _run_resource("i-governance", {"service-name": "dfe", "environment": "test"}),
+        _run_resource("i-expiry-only", {"expires-at": "2026-10-08T11:00:00Z"}),
+        _run_resource("i-empty-run", {"dfe-e2e": "", "expires-at": "2026-10-08T11:00:00Z"}),
+    ]
+    assert _expired_ids(resources) == []
+
+
+def test_expected_fail_a_malformed_or_missing_expiry_is_never_selected() -> None:
+    resources = [
+        _run_resource("i-no-expiry", {"dfe-e2e": "run-1"}),
+        _run_resource("i-words", {"dfe-e2e": "run-1", "expires-at": "yesterday"}),
+        _run_resource("i-naive", {"dfe-e2e": "run-1", "expires-at": "2026-10-08T11:00:00"}),
+        _run_resource("i-negative", {"dfe-e2e": "run-1", "expires-at": "-5"}),
+        _run_resource("i-fraction", {"dfe-e2e": "run-1", "expires-at": "1.5"}),
+    ]
+    assert _expired_ids(resources) == []
+
+
+def test_the_grace_boundary_selects_only_strictly_after_expiry_plus_grace() -> None:
+    grace = 3600
+    at_boundary = _run_resource("i-at", {"dfe-e2e": "run-1", "expires-at": str(NOW - grace)})
+    past_boundary = _run_resource("i-past", {"dfe-e2e": "run-1", "expires-at": str(NOW - grace - 1)})
+    inside_grace = _run_resource("i-inside", {"dfe-e2e": "run-1", "expires-at": str(NOW - grace + 1)})
+    assert _expired_ids([at_boundary, past_boundary, inside_grace], grace=grace) == ["i-past"]
+
+
+def test_expired_never_selects_the_excluded_bucket() -> None:
+    bucket = _run_resource("example-tfstate", {"dfe-e2e": "run-1", "expires-at": "1"}, kind="s3-bucket")
+    found = cloud_sweep.filter_expired([bucket], expiry=_expiry(), exclude_bucket="example-tfstate")
+    assert found == []
+
+
+def test_renamed_run_keys_from_the_environment_select_by_the_new_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DFE_RUN_TAG_KEY", "ci-run")
+    monkeypatch.setenv("DFE_RUN_EXPIRY_KEY", "ci-expiry")
+    renamed = _run_resource("i-renamed", {"ci-run": "run-1", "ci-expiry": "1"})
+    default_keys = _run_resource("i-default", {"dfe-e2e": "run-1", "expires-at": "1"})
+    expiry = cloud_sweep.ExpirySelection(keys=cloud_run.RunTagKeys.from_env(), now=NOW, grace=0)
+    found = cloud_sweep.filter_expired([renamed, default_keys], expiry=expiry, exclude_bucket=None)
+    assert [r.id for r in found] == ["i-renamed"]
+
+
+def test_main_expired_lists_only_expired_and_exits_one_while_any_remain(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    seen_run_keys: list[str | None] = []
+    resources = [
+        _run_resource("i-past", {"dfe-e2e": "run-1", "expires-at": str(NOW - 10)}),
+        _run_resource("i-future", {"dfe-e2e": "run-2", "expires-at": str(NOW + 10)}),
+        _run_resource("i-bare", {}),
+    ]
+
+    def fake_collect(region: str, tf: dict, bucket: str | None, *, route1_filter: dict | None = None) -> list:
+        seen_run_keys.append(next(iter(route1_filter)) if route1_filter else None)
+        return resources
+
+    monkeypatch.setattr(cloud_sweep, "collect", fake_collect)
+    code = cloud_sweep.main(["--region", REGION, "--expired", "--grace", "0", "--now", str(NOW)])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert seen_run_keys == ["dfe-e2e"]
+    eligible = out.split("eligible for --delete:", 1)[1]
+    assert "i-past" in eligible
+    assert "i-future" not in eligible
+    assert "i-bare" not in eligible
+
+
+def test_main_expired_with_delete_removes_only_the_expired_set(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    deleted: list[str] = []
+    past = _run_resource("i-past", {"dfe-e2e": "run-1", "expires-at": "1"})
+    live = _run_resource("i-live", {"dfe-e2e": "run-2", "expires-at": "9999999999"})
+    responses = iter([[past, live], [live]])
+    monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: next(responses))
+    monkeypatch.setattr(
+        cloud_sweep, "delete_resources", lambda resources, region: deleted.extend(r.id for r in resources) or []
+    )
+    code = cloud_sweep.main(
+        ["--region", REGION, "--expired", "--grace", "0", "--delete", "--account", "000000000000", "--yes"]
+    )
+    assert code == 0
+    assert deleted == ["i-past"]
+    assert "sweep clean: no expired run resources left" in capsys.readouterr().out
+
+
+def test_main_expired_refuses_include_untagged(capsys: pytest.CaptureFixture) -> None:
+    code = cloud_sweep.main(["--region", REGION, "--expired", "--include-untagged"])
+    assert code == 2
+    assert "--include-untagged" in capsys.readouterr().err
+
+
+def test_main_refuses_now_with_delete(capsys: pytest.CaptureFixture) -> None:
+    code = cloud_sweep.main(
+        ["--region", REGION, "--expired", "--now", str(NOW), "--delete", "--account", "000000000000"]
+    )
+    assert code == 2
+    assert "--now" in capsys.readouterr().err
+
+
+def test_main_refuses_grace_without_expired(capsys: pytest.CaptureFixture) -> None:
+    code = cloud_sweep.main(["--region", REGION, "--grace", "0"])
+    assert code == 2
+    assert "--expired" in capsys.readouterr().err
+
+
+def test_main_refuses_a_malformed_grace(capsys: pytest.CaptureFixture) -> None:
+    code = cloud_sweep.main(["--region", REGION, "--expired", "--grace", "an hour"])
+    assert code == 2
+    assert "duration" in capsys.readouterr().err
+
+
+def test_the_default_grace_for_a_hand_run_is_one_hour(monkeypatch: pytest.MonkeyPatch) -> None:
+    within_hour = _run_resource("i-recent", {"dfe-e2e": "run-1", "expires-at": str(NOW - 1800)})
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: [within_hour])
+    assert cloud_sweep.main(["--region", REGION, "--expired", "--now", str(NOW)]) == 0
+    assert cloud_sweep.main(["--region", REGION, "--expired", "--grace", "0", "--now", str(NOW)]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Providers: GCP and Azure have the interface and refuse rather than report clean
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("provider", ["gcp", "azure"])
+def test_an_unbuilt_provider_refuses_by_name_and_touches_no_aws(
+    provider: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("an unbuilt provider must not reach the aws CLI")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    code = cloud_sweep.main(["--provider", provider, "--region", "example-region", "--expired"])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert f"no {provider} listers" in err
+
+
+@pytest.mark.parametrize("provider_cls", [cloud_sweep.GcpProvider, cloud_sweep.AzureProvider])
+def test_every_unbuilt_provider_method_raises_not_implemented(provider_cls: type) -> None:
+    provider = provider_cls("example-region")
+    with pytest.raises(NotImplementedError, match=provider.name):
+        provider.verify_account("0")
+    with pytest.raises(NotImplementedError):
+        provider.collect({}, None, run_key="dfe-e2e")
+    with pytest.raises(NotImplementedError):
+        provider.delete([])
+
+
+def test_the_aws_provider_widens_the_catch_all_to_the_run_key_only_in_expired_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict | None] = []
+    monkeypatch.setattr(
+        cloud_sweep, "collect", lambda region, tf, bucket, *, route1_filter=None: seen.append(route1_filter) or []
+    )
+    provider = cloud_sweep.AwsProvider(REGION)
+    provider.collect(TAG_FILTER, None, run_key=None)
+    provider.collect(TAG_FILTER, None, run_key="dfe-e2e")
+    assert seen == [None, {"dfe-e2e": None}]

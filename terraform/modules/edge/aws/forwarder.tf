@@ -174,6 +174,7 @@ resource "aws_iam_role" "forwarder" {
   count = local.forwarder_enabled ? 1 : 0
 
   name = "${var.name}-tunnel-forwarder"
+  path = var.iam_path
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -183,6 +184,8 @@ resource "aws_iam_role" "forwarder" {
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
+
+  permissions_boundary = var.permissions_boundary
 
   tags = var.tags
 }
@@ -217,6 +220,7 @@ resource "aws_iam_instance_profile" "forwarder" {
   count = local.forwarder_enabled ? 1 : 0
 
   name = "${var.name}-tunnel-forwarder"
+  path = var.iam_path
   role = aws_iam_role.forwarder[0].name
 }
 

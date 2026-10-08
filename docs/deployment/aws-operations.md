@@ -138,6 +138,7 @@ tier, by which dial key. What is AWS's own:
   the tag filter. The AWS
   account defaults -- the default VPC and everything that comes with it,
   AWS-managed KMS aliases -- are never listed or touched.
+- `--expired` selects only resources whose `dfe-e2e` run tag carries an `expires-at` past `--grace` (default 1h); unattended runs and their reaper: [TESTING-CYCLE.md](../TESTING-CYCLE.md).
 - Stack, re-size and platform upgrades follow
   [upgrades.md](upgrades.md); the operator order across charts is data,
   not judgement -- `upgrade-order.yaml` at the repo root.
