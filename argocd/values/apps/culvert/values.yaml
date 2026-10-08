@@ -1,0 +1,145 @@
+# culvert's integration values over its thin chart, layered after
+# apps/_common.yaml: the wiring the 2.2.0 culvert chart derived, under the keys the
+# scalo-service library reads. dfe-extras renders the CULVERT_* environment
+# (dfe-culvert-env), the tunnel NetworkPolicy and the refusals from the culvert
+# chart's own keys. This file layers after the cloud, edge and profile files, so
+# the keys they set -- exposure, pki.mode, peers, local.yaml's receiver
+# `listeners` -- have no default here.
+
+# The objects keep the culvert chart's names.
+fullnameOverride: dfe-culvert
+
+# culvert is published at ghcr.io/hyperi-io/culvert, outside the dfe-* images
+# global.registry moves.
+image:
+  repository: ghcr.io/hyperi-io/culvert
+
+# Opts the pods out of the namespace-wide egress baseline, so the tunnel
+# NetworkPolicy is their whole egress surface.
+podLabels:
+  dfe.hyperi.io/egress-scoped: "true"
+
+# The environment the culvert chart built under conditionals, so a variable stays
+# absent where it left one out. Reloader restarts the pod when it changes.
+extraEnvFrom:
+  - configMapRef:
+      name: '{{ include "scalo-service.fullname" . }}-env'
+reload:
+  configmaps:
+    - dfe-culvert-env
+
+extraEnv:
+  # culvert switches its telemetry on from these, with the telemetry.mode endpoint
+  # (apps/_common.yaml) or otel.endpoint. scalo-py's OTLP exporter prefers
+  # OTEL_EXPORTER_OTLP_ENDPOINT, which carries the same endpoint.
+  CULVERT_OTEL_ENABLED: '{{ ternary "true" "false" (not (empty ((.Values.otel | default dict).endpoint | default (tpl .Values.telemetry.otlpEndpointTemplate .)))) }}'
+  CULVERT_OTEL_ENDPOINT: '{{ (.Values.otel | default dict).endpoint | default (tpl .Values.telemetry.otlpEndpointTemplate .) }}'
+  CULVERT_OTEL_PROTOCOL: grpc
+
+# The tunnel's own OIDC secrets, from the Secret vpn.oidc.existingSecret names.
+# Optional, so a tunnel with OIDC off starts without it.
+secrets:
+  oauth2:
+    existingSecret: '{{ .Values.vpn.oidc.existingSecret | default (printf "%s-oauth2" (include "scalo-service.fullname" .)) }}'
+
+# The CA, the CRL and the WireGuard peer allocations. Argo neither prunes the claim
+# on a sync nor deletes it with the Application, so turning the edge module off
+# keeps every issued client config.
+writablePaths:
+  pki:
+    persistence:
+      annotations:
+        helm.sh/resource-policy: keep
+        argocd.argoproj.io/sync-options: Prune=false,Delete=false
+
+initContainers:
+  # net.ipv4.ip_forward in the pod's own network namespace: /proc/sys is read-only
+  # in the server container whatever capabilities it holds.
+  - name: enable-ip-forward
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    command:
+      - sysctl
+      - -w
+      - net.ipv4.ip_forward=1
+    securityContext:
+      privileged: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+
+extraVolumes:
+  # OpenVPN and WireGuard both open the tun device.
+  - name: tun
+    hostPath:
+      path: '{{ .Values.tunDevice.hostPath }}'
+      type: CharDevice
+  # External PKI, mounted on every pod because a static volume cannot follow
+  # pki.existingSecret. Optional, and read only where dfe-culvert-env points
+  # culvert at it.
+  - name: pki-external
+    secret:
+      secretName: '{{ .Values.pki.existingSecret | default "dfe-culvert-pki" }}'
+      defaultMode: 256
+      optional: true
+extraVolumeMounts:
+  - name: tun
+    mountPath: /dev/net/tun
+  - name: pki-external
+    mountPath: '{{ .Values.pki.mountPath }}'
+    readOnly: true
+
+# The public Services: one per protocol family with an exposed listener, since a
+# cloud load balancer takes one family each. scalo-service's publicService cannot
+# pin a nodePort, and terraform/modules/edge/aws DNATs to the pinned one.
+extraObjects:
+  - |
+    {{- $listeners := .Values.listeners | default .Values.defaultListeners -}}
+    {{- $pub := .Values.exposure | default dict -}}
+    {{- $type := $pub.serviceType | default "LoadBalancer" -}}
+    {{- $labels := merge (dict "dfe.hyperi.io/exposure" "public") (include "scalo-service.labelSet" . | fromJson) -}}
+    {{- range $family := list "udp" "tcp" -}}
+    {{- $ports := list -}}
+    {{- range $listeners -}}
+    {{- if and .exposed (eq (eq (.protocol | default "TCP") "UDP") (eq $family "udp")) -}}
+    {{- $port := dict "name" .name "port" (int .port) "targetPort" (int .port) "protocol" (.protocol | default "TCP") -}}
+    {{- if and (eq $type "NodePort") .nodePort -}}{{- $_ := set $port "nodePort" (int .nodePort) -}}{{- end -}}
+    {{- $ports = append $ports $port -}}
+    {{- end -}}
+    {{- end -}}
+    {{- if $ports -}}
+    {{- $spec := dict "type" $type "ports" $ports "selector" (include "scalo-service.selectorLabelSet" $ | fromJson) -}}
+    {{- if eq $type "LoadBalancer" -}}
+    {{- if and (eq $family "udp") $pub.loadBalancerIP }}{{ $_ := set $spec "loadBalancerIP" $pub.loadBalancerIP }}{{ end -}}
+    {{- with $pub.loadBalancerClass }}{{ $_ := set $spec "loadBalancerClass" . }}{{ end -}}
+    {{- with $pub.loadBalancerSourceRanges }}{{ $_ := set $spec "loadBalancerSourceRanges" . }}{{ end -}}
+    {{- end -}}
+    {{- $_ := set $spec "externalTrafficPolicy" ($pub.externalTrafficPolicy | default "Local") -}}
+    {{- $name := printf "%s-%s" (include "scalo-service.fullname" $) (ternary "public-udp" "public" (eq $family "udp")) -}}
+    {{- $meta := dict "name" $name "namespace" $.Release.Namespace "labels" $labels -}}
+    {{- with $pub.annotations }}{{ $_ := set $meta "annotations" . }}{{ end }}
+    ---
+    {{ dict "apiVersion" "v1" "kind" "Service" "metadata" $meta "spec" $spec | toYaml }}
+    {{- end -}}
+    {{- end -}}
+
+# The tunnel listeners where no layer names its own, the culvert chart's default.
+# local.yaml's `listeners` is the receiver's, so a culvert there restates its own
+# and dfe-extras refuses a list with no tunnel in it. The nodePorts are the ones
+# terraform/modules/edge/aws forwards to.
+defaultListeners:
+  - { name: wireguard, port: 51820, protocol: UDP, exposed: true, nodePort: 31820 }
+  - { name: openvpn-udp, port: 1194, protocol: UDP, exposed: true, nodePort: 31194 }
+  - { name: metrics, port: 9090, protocol: TCP, exposed: false }
+
+# The culvert chart's keys, read above through tpl. pki.existingSecret is the
+# instance file's, layered after this one.
+tunDevice:
+  hostPath: /dev/net/tun
+pki:
+  existingSecret: ""
+  mountPath: /etc/vpn/pki-external
+vpn:
+  oidc:
+    existingSecret: ""

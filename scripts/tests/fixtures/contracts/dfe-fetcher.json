@@ -1,0 +1,92 @@
+{
+  "schema_version": 4,
+  "app_name": "dfe-fetcher",
+  "description": "Data fetcher for external services (AWS, Azure, M365, GCP)",
+  "metrics_port": 9090,
+  "health": {
+    "liveness_path": "/livez",
+    "readiness_path": "/readyz",
+    "metrics_path": "/metrics",
+    "startup_budget_seconds": 120
+  },
+  "env_prefix": "DFE_FETCHER",
+  "metric_prefix": "fetcher",
+  "config_mount_path": "/etc/dfe/fetcher.yaml",
+  "image_registry": "ghcr.io/hyperi-io",
+  "extra_ports": [
+    {
+      "name": "ingest",
+      "port": 8080,
+      "protocol": "TCP",
+      "when": {
+        "kind": "enabled",
+        "path": "config.ingest.enabled"
+      },
+      "bound_from": "ingest.bind_address"
+    },
+    {
+      "name": "vector-grpc",
+      "port": 6000,
+      "protocol": "TCP",
+      "when": {
+        "kind": "enabled",
+        "path": "config.extractors.vector.enabled"
+      },
+      "bound_from": "extractors.vector.grpc_bind_address",
+      "app_protocol": "kubernetes.io/h2c"
+    }
+  ],
+  "entrypoint_args": [
+    "--config",
+    "/etc/dfe/fetcher.yaml"
+  ],
+  "secrets": [
+    {
+      "group_name": "kafka",
+      "env_vars": [
+        {
+          "env_var": "DFE_FETCHER_KAFKA_SASL_USER",
+          "key_name": "username",
+          "secret_key": "username"
+        },
+        {
+          "env_var": "DFE_FETCHER_KAFKA_SASL_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        },
+        {
+          "env_var": "DFE_FETCHER_KAFKA_SASL_MECHANISM",
+          "key_name": "mechanism",
+          "secret_key": "sasl.mechanism"
+        }
+      ]
+    }
+  ],
+  "keda": null,
+  "writable_paths": [
+    {
+      "name": "cursor",
+      "path": "/var/lib/dfe-fetcher",
+      "persistent": true,
+      "size": "1Gi"
+    }
+  ],
+  "termination_grace_seconds": 45,
+  "resources": {
+    "requests": {
+      "cpu": "100m",
+      "memory": "128Mi"
+    },
+    "limits": {
+      "cpu": "500m",
+      "memory": "256Mi"
+    }
+  },
+  "security": {
+    "run_as_user": 1000,
+    "run_as_group": 1000,
+    "fs_group": 1000,
+    "read_only_root_filesystem": true
+  },
+  "singleton": false
+}

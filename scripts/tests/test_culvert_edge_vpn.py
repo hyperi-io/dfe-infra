@@ -57,9 +57,9 @@ import profiles  # noqa: E402
 # never collide with the cluster's pod or service ranges.
 RESERVED = ipaddress.ip_network("100.64.0.0/10")
 
-# The receiver's ingest listeners. The Push door on 6000 is east-west only and
+# The receiver's http ingest listener. The Push door on 6000 is east-west only and
 # must NOT appear in the VPN's egress.
-INGEST_PORTS = {8080, 8443}
+INGEST_PORTS = {8080}
 PUSH_PORT = 6000
 
 
@@ -455,9 +455,11 @@ def test_the_receiver_gains_a_third_exposure_rendering() -> None:
     expect("and admits the tunnel pods by label",
            rule["from"] == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}}}],
            f"got {rule.get('from')!r}")
-    expect("on the exposed ingest ports",
-           {p["port"] for p in rule["ports"]} == INGEST_PORTS,
-           f"got {[p['port'] for p in rule['ports']]}")
+    receiver = yaml.safe_load((chart_dir("dfe-receiver") / "values.yaml").read_text(encoding="utf-8"))
+    exposed = {listener["port"] for listener in receiver["listeners"] if listener.get("exposed")}
+    expect("on the receiver chart's exposed listeners",
+           {p["port"] for p in rule["ports"]} == exposed,
+           f"got {[p['port'] for p in rule['ports']]}, exposed {sorted(exposed)}")
     public = one(render("dfe-receiver"), "NetworkPolicy", "dfe-receiver-ingest")
     expect("public mode still names no source",
            "from" not in public["spec"]["ingress"][0], f"got {public['spec']['ingress'][0]!r}")

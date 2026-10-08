@@ -1,0 +1,8 @@
+# Direct transport: the engine compiles each instance's output to the next stage's
+# gRPC endpoint, and no broker carries a DLQ.
+extraEnv:
+  DFE_FETCHER_DLQ_ENABLED: "false"
+
+secrets:
+  kafka:
+    enabled: false

@@ -602,7 +602,7 @@ def test_receiver_skips_rather_than_passing_on_the_gateways_own_address(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The gateway carries the HTTP plane's listeners only, so its refusal on
-    8080 and 8443 is true in every configuration and proves nothing."""
+    8080 is true in every configuration and proves nothing."""
     monkeypatch.setattr(
         probe, "_resolved", _resolving(dfe="203.0.113.10", receiver="203.0.113.10")
     )
@@ -622,18 +622,17 @@ def test_receiver_passes_when_its_own_load_balancer_refuses_every_ingest_port(
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway, closed))
     check = probe.check_receiver_private(_settings(), "203.0.113.10")
     assert check.verdict == probe.PASS
-    assert "8080, 8443" in check.evidence
+    assert "refused 8080 --" in check.evidence
 
 
 def test_receiver_fails_when_its_own_load_balancer_accepts_a_connection(
-    gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One open port is the whole finding: the tunnel is not the only way in."""
     monkeypatch.setattr(
         probe, "_resolved", _resolving(dfe="203.0.113.10", receiver="203.0.113.11")
     )
-    closed = {probe.RECEIVER_INGEST_PORTS[1]: closed_port}
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, closed))
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {}))
     check = probe.check_receiver_private(_settings(), "203.0.113.10")
     assert check.verdict == probe.FAIL
     assert "8080" in check.evidence

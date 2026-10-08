@@ -1,0 +1,81 @@
+{
+  "schema_version": 4,
+  "app_name": "culvert",
+  "description": "OpenVPN + WireGuard VPN server, optionally tunnelled over HTTPS, with OIDC SSO and external PKI",
+  "metrics_port": 9090,
+  "health": {
+    "liveness_path": "/livez",
+    "readiness_path": "/readyz",
+    "metrics_path": "/metrics",
+    "startup_budget_seconds": 150
+  },
+  "env_prefix": "CULVERT",
+  "metric_prefix": "culvert",
+  "config_mount_path": "/etc/vpn/profiles/culvert.yaml",
+  "image_registry": "ghcr.io/hyperi-io",
+  "extra_ports": [
+    {
+      "name": "wireguard",
+      "port": 51820,
+      "protocol": "UDP",
+      "public": true
+    },
+    {
+      "name": "openvpn-udp",
+      "port": 1194,
+      "protocol": "UDP",
+      "public": true
+    }
+  ],
+  "secrets": [
+    {
+      "group_name": "oauth2",
+      "env_vars": [
+        {
+          "env_var": "CULVERT_OAUTH2_CLIENT_SECRET",
+          "key_name": "client-secret",
+          "secret_key": "CULVERT_OAUTH2_CLIENT_SECRET"
+        },
+        {
+          "env_var": "CULVERT_OAUTH2_HTTP_SECRET",
+          "key_name": "http-secret",
+          "secret_key": "CULVERT_OAUTH2_HTTP_SECRET"
+        }
+      ],
+      "optional": true
+    }
+  ],
+  "keda": null,
+  "writable_paths": [
+    {
+      "name": "pki",
+      "path": "/etc/vpn/pki",
+      "persistent": true,
+      "size": "1Gi"
+    }
+  ],
+  "termination_grace_seconds": 30,
+  "resources": {
+    "requests": {
+      "cpu": "250m",
+      "memory": "256Mi"
+    },
+    "limits": {
+      "cpu": "2",
+      "memory": "1Gi"
+    }
+  },
+  "security": {
+    "run_as_user": 0,
+    "run_as_group": 0,
+    "fs_group": 0,
+    "read_only_root_filesystem": false,
+    "capabilities_add": [
+      "NET_ADMIN",
+      "SETPCAP",
+      "SETGID",
+      "SETUID"
+    ]
+  },
+  "singleton": true
+}

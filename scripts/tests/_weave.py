@@ -125,6 +125,7 @@ def _inputs(service: str, which: str, options: dict) -> object:
         chart_library = library()
     return weave().Inputs(
         repo=options.pop("repo", REPO_ROOT),
+        appset=options.pop("appset", weave().APPSET),
         old_ref=options.pop("old_ref", None),
         deploy_repo=options.pop("deploy_repo", None),
         apps_dir=options.pop("apps_dir", None),
@@ -146,8 +147,8 @@ def _target(service: str, profile: str, cloud: str, options: dict) -> object:
 def render_app(service: str, profile: str, cloud: str, which: str, **options: object) -> list[dict]:
     """One render's objects: ``which`` is ``old`` (the 2.2.0 chart) or ``new`` (the thin chart).
 
-    Options are the dfe-weave inputs (``apps_dir``, ``deploy_repo``, ``old_ref``,
-    ``contract``, ``library``, ``chart``, ``extras``, ``helm``) and the cluster
+    Options are the dfe-weave inputs (``appset``, ``apps_dir``, ``deploy_repo``,
+    ``old_ref``, ``contract``, ``library``, ``chart``, ``extras``, ``helm``) and the cluster
     facts (``instance``, ``namespace``, ``registry``, ``domain``, ``env``, and
     dicts ``annotations`` and ``labels``).
     """

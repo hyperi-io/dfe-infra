@@ -1,0 +1,6 @@
+# Not every on-prem cluster has a StorageClass, so the PKI directory is an
+# emptyDir here unless the instance turns its claim on.
+writablePaths:
+  pki:
+    persistence:
+      enabled: false

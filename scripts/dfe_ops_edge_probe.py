@@ -82,10 +82,10 @@ DEFAULT_TIMEOUT = 8.0
 HTTPS_PORT = 443
 HTTP_PORT = 80
 
-# The receiver's own exposed listeners (helm/charts/dfe-receiver/values.yaml):
-# http carries JSON ingest and OTLP/HTTP, grpc carries OTLP/gRPC. The pushgrpc
-# listener is never exposed, so a probe of it would prove nothing about the door.
-RECEIVER_INGEST_PORTS = (8080, 8443)
+# The receiver's exposed listener on a fresh deploy: http, the JSON ingest door.
+# Its push listener is never exposed, so a probe of it would prove nothing about
+# the door.
+RECEIVER_INGEST_PORTS = (8080,)
 
 # The admin UIs the edge module offers a public hostname, in the order
 # render_dial.py's ADMIN_UIS reports them, against the subdomain label each one

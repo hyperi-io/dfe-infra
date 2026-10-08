@@ -140,12 +140,12 @@ extras:
             reach:
               - 22
               - 443
-      # The receiver pods and ports a tunnelled client may reach.
+      # The receiver pods and ports a tunnelled client may reach: its http ingest
+      # listener, the one the receiver's ingest NetworkPolicy admits the tunnel on.
       ingest:
         podLabel: dfe-receiver
         ports:
           - { port: 8080, protocol: TCP }
-          - { port: 8443, protocol: TCP }
       # The tunnel pods' whole egress surface: the receiver, DNS and telemetry. Set
       # enabled false in a layer to drop it; never true, which also switches on the
       # culvert chart's own policy of the same name.
@@ -157,6 +157,33 @@ extras:
         extraEgress: []
       otel:
         endpoint: ""
+      # The dfe-culvert-env ConfigMap and the refusals read these. One replica only:
+      # WireGuard mints its server key in the pod.
+      replicas: 1
+      vpn:
+        clientCIDR: "100.64.0.0/10"
+        serverCN: ""
+        fullTunnel: false
+        dns:
+          - "1.1.1.1"
+          - "1.0.0.1"
+        httpsTunnel: false
+        oidc:
+          enabled: false
+          issuer: ""
+          clientId: ""
+          existingSecret: ""
+          validateGroups: ""
+      # Unset destinations are the networkModel service range (argocd/values/common.yaml).
+      routes:
+        destinations: ~
+      pki:
+        mode: local
+        existingSecret: ""
+        mountPath: /etc/vpn/pki-external
+      exposure:
+        serviceType: LoadBalancer
+        loadBalancerSourceRanges: []
     dfe-ui:
       project: dfe
       component: ui

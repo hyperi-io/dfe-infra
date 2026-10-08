@@ -16,6 +16,8 @@ through scripts/dfe-weave: its 2.2.0 chart, and its thin chart beside dfe-extras
 with the integration values under argocd/values/apps. A component joins the gate
 as a row of COMPONENTS, an entry in fixtures/weave-accepted-diffs.yaml and an
 entry in scripts/weave/value-map.yaml; every test parametrises over COMPONENTS.
+A component another appset deploys names it in APPSETS, and instance values its
+2.2.0 chart refuses to render without go in INSTANCE.
 
 Renders are cached for the run, so the four files share them. A test that
 changes one works on a copy.
@@ -43,11 +45,32 @@ COMPONENTS = (
     "dfe-transform-vrl",
     "dfe-transform-vector",
     "dfe-transform-elastic",
+    "dfe-fetcher",
+    "culvert",
     "dfe-engine",
 )
 PROFILES = ("slim", "single", "scale", "mesh")
 CLOUDS = ("local", "aws")
 MATRIX = [(c, p, k) for c in COMPONENTS for p in PROFILES for k in CLOUDS]
+
+# The appset a component's Application comes from, where it is not layer2-apps.yaml.
+APPSETS: dict[str, Path] = {"culvert": Path("argocd/appsets/layer2-edge.yaml")}
+
+# The instance values a deployer has to write before a component's 2.2.0 chart renders
+# at all, per cloud. culvert reads local.yaml's receiver `listeners` unless it restates
+# its own, and edge-aws.yaml's external PKI needs its Secret named.
+INSTANCE: dict[str, dict[str, dict]] = {
+    "culvert": {
+        "local": {
+            "listeners": [
+                {"name": "wireguard", "port": 51820, "protocol": "UDP", "exposed": True},
+                {"name": "openvpn-udp", "port": 1194, "protocol": "UDP", "exposed": True},
+                {"name": "metrics", "port": 9090, "protocol": "TCP", "exposed": False},
+            ]
+        },
+        "aws": {"pki": {"existingSecret": "dfe-culvert-pki"}},
+    },
+}
 
 # Deployment shapes the profile matrix does not reach, each rendered on slim/local:
 # the cluster facts it changes, and the deploy repo's infra/common.yaml.
@@ -115,13 +138,24 @@ class Cell:
 def cell(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> Cell:
     """Both renders of one component, cached for the run."""
     shape = SCENARIOS.get(scenario, {"facts": {}, "infra": None})
+    instance = INSTANCE.get(service, {}).get(cloud)
     with tempfile.TemporaryDirectory(prefix="dfe-gate-deploy-") as tmp:
         options: dict = dict(shape["facts"])
+        if service in APPSETS:
+            options["appset"] = APPSETS[service]
         if shape["infra"] is not None:
             infra = Path(tmp) / "infra"
             infra.mkdir()
             (infra / "common.yaml").write_text(
                 yaml.safe_dump(shape["infra"]), encoding="utf-8", newline="\n"
+            )
+            options["deploy_repo"] = Path(tmp)
+        if instance is not None:
+            body = {"deploy": {"service": service, "instance": "default"}, **instance}
+            values = Path(tmp) / "values"
+            values.mkdir()
+            (values / f"{service}-default-values.yaml").write_text(
+                yaml.safe_dump(body), encoding="utf-8", newline="\n"
             )
             options["deploy_repo"] = Path(tmp)
         old = render_app(service, profile, cloud, "old", **options)
