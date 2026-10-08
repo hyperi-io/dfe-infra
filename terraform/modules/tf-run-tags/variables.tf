@@ -3,7 +3,7 @@
 // holds the two equal.
 
 variable "run" {
-  description = "The test run this apply belongs to, or null for a deployment that is not one. id is the run id (lowercase letters, digits, '_' or '-', at most 63 characters, so a GCP label accepts it); expires_at is epoch seconds after which a reaper may remove what the run left behind. keys renames the two tags for an organisation whose tag policy reserves the defaults, and keys.format writes the expiry as iso8601 (UTC, the default, what an AWS account guardrail reads) or epoch (plain seconds, the only form a GCP label can hold)."
+  description = "The test run this apply belongs to, or null for a deployment that is not one. id is the run id (lowercase letters, digits, '_' or '-', at most 63 characters, so a GCP label accepts it); expires_at is epoch seconds after which a reaper may remove what the run left behind. keys renames the two tags for an organisation whose tag policy reserves the defaults, and keys.format writes the expiry as iso8601 (UTC, the default, what an AWS account guardrail reads) or epoch-seconds (plain seconds, the only form a GCP label can hold)."
   type = object({
     id         = string
     expires_at = number
@@ -33,7 +33,7 @@ variable "run" {
   }
 
   validation {
-    condition     = var.run == null || try(contains(["iso8601", "epoch"], var.run.keys.format), false)
-    error_message = "run.keys.format must be iso8601 or epoch."
+    condition     = var.run == null || try(contains(["iso8601", "epoch-seconds"], var.run.keys.format), false)
+    error_message = "run.keys.format must be iso8601 or epoch-seconds."
   }
 }

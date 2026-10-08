@@ -22,7 +22,8 @@ cloud-preflight reads and never writes. It REFUSES (exit 2) when:
       role, the in-cloud sweeper and the budget action (and the permissions
       boundary, when one is configured), each a configured identifier;
   (b) the active credential expires before now + run length + teardown margin,
-      so the run could lose the identity its own teardown needs;
+      so the run could lose the identity its own teardown needs, or it is a
+      session credential (AWS_SESSION_TOKEN) whose expiry cannot be read;
   (c) run-tagged resources whose expiry has already passed exist in the region
       -- a previous run left them, and it prints the cloud_sweep command that
       removes them.
@@ -42,7 +43,9 @@ SIGHUP -- tears the run down: the in-flight child is stopped, the cluster's
 workloads go if the cycle did not reach its own destroy, then `tofu destroy`.
 Only a destroy that succeeds removes the overlay and the run record; a failed
 one leaves both, and the run's tags, for the reaper. SIGKILL skips all of
-this, which is what the reaper is for.
+this, which is what the reaper is for. Every child runs with AWS_REGION and
+AWS_DEFAULT_REGION set to the dial's region, so a call that names no region
+lands in the run's region rather than the shell's.
 
 Every value is a flag or an environment variable: DFE_GUARD_ROLE,
 DFE_GUARD_SWEEPER, DFE_GUARD_BUDGET_ACTION (`<budget-name>:<action-id>`),
@@ -126,7 +129,8 @@ def load_tfvars(tf_dir: Path) -> dict[str, object]:
 
 
 def _setting(flag: str | None, env: Mapping[str, str], name: str, default: str = "") -> str:
-    return flag if flag is not None else env.get(name, default)
+    # A workflow passes an unset variable as an empty string, which means unset here too.
+    return flag if flag is not None else (env.get(name, "").strip() or default)
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,12 +285,13 @@ class AwsGuard:
         """When the active credential expires, and where that reading came from.
 
         AWS_CREDENTIAL_EXPIRATION wins when set. Otherwise the CLI's own resolver
-        answers; its output carries the secret, so only Expiration is kept and
-        nothing it printed reaches an error message. None means a credential
-        with no expiry.
+        answers. Its output carries the secret, so only Expiration and whether a
+        SessionToken is present are kept, and nothing it printed reaches an
+        error message. None means a long-term credential with no expiry.
 
         Raises:
-            GuardError: The expiry cannot be read, so the check cannot pass.
+            GuardError: The expiry cannot be read, or the credential is a session
+                credential that names none, so the check cannot pass.
         """
         raw = env.get("AWS_CREDENTIAL_EXPIRATION")
         if raw:
@@ -298,10 +303,17 @@ class AwsGuard:
         if result.returncode != 0:
             raise GuardError(f"could not resolve the active credential: {result.stderr.strip()}")
         try:
-            expiration = json.loads(result.stdout).get("Expiration")
+            body = json.loads(result.stdout)
+            expiration = body.get("Expiration")
+            session = bool(body.get("SessionToken"))
         except (json.JSONDecodeError, AttributeError) as exc:
             raise GuardError("aws configure export-credentials returned no JSON object") from exc
         if not expiration:
+            if session:
+                raise GuardError(
+                    "the active credential is a session credential with no expiry the CLI can read: set "
+                    "AWS_CREDENTIAL_EXPIRATION to its expiry"
+                )
             return None, "a credential with no expiry"
         try:
             return _parse_instant(str(expiration)), "aws configure export-credentials"
@@ -428,7 +440,15 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
     needed_until = now + config.window
     try:
         expires, source = guard.credential_expiry(env)
-        if expires is None:
+        if expires is None and env.get("AWS_SESSION_TOKEN"):
+            # A session credential always expires, so one whose expiry is unread would end the run unannounced.
+            report.add(
+                "(b) credential",
+                False,
+                "AWS_SESSION_TOKEN is set and no expiry is known: set AWS_CREDENTIAL_EXPIRATION to the "
+                "credential's expiry",
+            )
+        elif expires is None:
             report.add("(b) credential", True, f"{source}")
         else:
             left = int(expires - now)
@@ -481,6 +501,15 @@ def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str
     if config.inspector_exclusion:
         overlay["inspector_ec2_exclusion"] = True
     return overlay
+
+
+def run_env(config: GuardConfig, **extra: str) -> dict[str, str]:
+    """The environment every child of a run gets: the shell's, with the run's region pinned.
+
+    A call that names no region goes wherever AWS_REGION or AWS_DEFAULT_REGION
+    points, which in an operator's shell can be outside the run's region.
+    """
+    return {**os.environ, "AWS_REGION": config.region, "AWS_DEFAULT_REGION": config.region, **extra}
 
 
 class Runner:
@@ -541,10 +570,12 @@ class Teardown:
         tofu = shutil.which("tofu") or "tofu"
         if not self.cycle_finished and self.kubeconfig.is_file():
             # Controllers own load balancers and volumes tofu cannot see, so the workloads go first.
-            env = {**os.environ, "KUBECONFIG": str(self.kubeconfig)}
+            env = run_env(self.config, KUBECONFIG=str(self.kubeconfig))
             self.runner.run([sys.executable, str(DFE_OPS), "teardown", "--force"], env=env, new_session=True)
         destroyed = self.runner.run(
-            [tofu, f"-chdir={self.config.tf_dir}", "destroy", "-auto-approve", "-input=false"], new_session=True
+            [tofu, f"-chdir={self.config.tf_dir}", "destroy", "-auto-approve", "-input=false"],
+            env=run_env(self.config),
+            new_session=True,
         )
         if destroyed == 0:
             overlay.unlink(missing_ok=True)
@@ -665,20 +696,26 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
     tofu = shutil.which("tofu") or "tofu"
     print(f"run {run_id}: expires at {cloud_run.format_expiry(expires_at)}", file=sys.stderr)
 
+    child_env = run_env(config)
     returncode = 1
     try:
         with teardown_on_exit(teardown):
             private_file.write_private(config.tf_dir / OVERLAY_NAME, json.dumps(overlay, indent=2) + "\n")
             guard.put_record(config.state_bucket, config.state_region, record_key, json.dumps(record))
             teardown.provisioning_started = True
-            returncode = runner.run([tofu, f"-chdir={config.tf_dir}", "init", "-input=false", "-reconfigure"])
+            returncode = runner.run(
+                [tofu, f"-chdir={config.tf_dir}", "init", "-input=false", "-reconfigure"], env=child_env
+            )
             if returncode == 0:
-                returncode = runner.run([tofu, f"-chdir={config.tf_dir}", "apply", "-auto-approve", "-input=false"])
+                returncode = runner.run(
+                    [tofu, f"-chdir={config.tf_dir}", "apply", "-auto-approve", "-input=false"], env=child_env
+                )
             if returncode == 0:
                 guard.write_kubeconfig(_tofu_output(config.tf_dir, "cluster_name"), kubeconfig)
                 returncode = runner.run(
                     [sys.executable, str(DFE_OPS), "cycle", "--from-terraform", str(config.tf_dir),
-                     "--kubeconfig", str(kubeconfig), *cycle_args]
+                     "--kubeconfig", str(kubeconfig), *cycle_args],
+                    env=child_env,
                 )
                 teardown.cycle_finished = True
     except _Interrupted as exc:

@@ -3,7 +3,8 @@
 #  File:         test_karpenter_pools.py
 #  Purpose:      Prove the optional minVcpu/minMemoryGib pool floor renders the
 #                right Karpenter requirement, and that omitting it changes
-#                nothing for every pool that does not set it.
+#                nothing for every pool that does not set it, and that a test
+#                run's tags hold every pool to the run's instance sizes.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -19,8 +20,6 @@ Karpenter's own bin-packing looks at. minVcpu/minMemoryGib close that gap.
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
-
-from __future__ import annotations
 
 import json
 import subprocess
@@ -57,12 +56,16 @@ BASE_POOL = {
 }
 
 
-def render(pool: dict) -> dict:
-    """The rendered NodePool for one pool named `clickhouse`."""
+def render(pool: dict, tags: dict[str, str] | None = None, sizes: list[str] | None = None) -> dict:
+    """The rendered NodePool for one pool named `clickhouse`, with run tags and sizes when given."""
     cmd = ["helm", "template", "t", str(CHART), "--show-only", "templates/nodepool.yaml"]
     for s in BASE_SETS:
         cmd += ["--set", s]
     cmd += ["--set-json", f"karpenter.pools={json.dumps({'clickhouse': pool})}"]
+    if tags is not None:
+        cmd += ["--set-json", f"karpenter.tags={json.dumps(tags)}"]
+    if sizes is not None:
+        cmd += ["--set-json", f"karpenter.runInstanceSizes={json.dumps(sizes)}"]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode != 0:
         raise SystemExit(f"helm template failed:\n{out.stderr}")
@@ -178,6 +181,38 @@ def test_no_run_tags_render_no_tags_field() -> None:
     expect("an empty karpenter.tags renders no tags field", "tags" not in spec, spec.get("tags"))
 
 
+RUN_TAGS = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"}
+SIZE_KEY = "karpenter.k8s.aws/instance-size"
+
+
+def test_a_test_run_holds_every_pool_to_the_run_sizes() -> None:
+    """families + generation never bound the size, so without this Karpenter can
+    pick one a test account's boundary denies at RunInstances."""
+    reqs = requirements(render(BASE_POOL, tags=RUN_TAGS))
+    sizes = [r for r in reqs if r["key"] == SIZE_KEY]
+    expect("one instance-size requirement during a run", len(sizes) == 1, reqs)
+    expect("it admits only the listed sizes", sizes[0]["operator"] == "In", sizes[0])
+    expect("the chart default is medium to 2xlarge",
+           sizes[0]["values"] == ["medium", "large", "xlarge", "2xlarge"], sizes[0])
+    keys = {r["key"] for r in reqs}
+    expect("family and generation still render beside it",
+           {"karpenter.k8s.aws/instance-family", "karpenter.k8s.aws/instance-generation"} <= keys, keys)
+
+
+def test_expected_fail_no_run_tags_bound_no_size() -> None:
+    """Every deployment that is not a test run keeps the unbounded pool it had."""
+    keys = {r["key"] for r in requirements(render(BASE_POOL))}
+    expect("no instance-size requirement outside a run", SIZE_KEY not in keys, keys)
+
+
+def test_a_deployment_overrides_the_run_sizes_or_turns_them_off() -> None:
+    reqs = requirements(render(BASE_POOL, tags=RUN_TAGS, sizes=["large", "4xlarge"]))
+    sizes = next(r for r in reqs if r["key"] == SIZE_KEY)
+    expect("an overridden list reaches the requirement", sizes["values"] == ["large", "4xlarge"], sizes)
+    keys = {r["key"] for r in requirements(render(BASE_POOL, tags=RUN_TAGS, sizes=[]))}
+    expect("an empty list renders no instance-size requirement", SIZE_KEY not in keys, keys)
+
+
 def main() -> int:
     with standalone():
         test_no_floor_set_adds_no_requirement()
@@ -188,6 +223,9 @@ def main() -> int:
         test_the_appset_carries_the_pools_through_from_the_cluster_secret()
         test_run_tags_reach_every_instance_karpenter_launches()
         test_no_run_tags_render_no_tags_field()
+        test_a_test_run_holds_every_pool_to_the_run_sizes()
+        test_expected_fail_no_run_tags_bound_no_size()
+        test_a_deployment_overrides_the_run_sizes_or_turns_them_off()
         return summary()
 
 

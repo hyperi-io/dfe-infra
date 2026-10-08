@@ -284,6 +284,34 @@ def test_s3_buckets_treat_a_tagging_error_as_untagged(monkeypatch: pytest.Monkey
     assert found[0].extra["excluded"] == "True"
 
 
+def test_the_s3_listing_is_sent_to_the_swept_region_not_the_shells(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ListBuckets is a global call, so without --region the CLI sends it wherever the
+    shell's region points -- which an account fenced to one region denies."""
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-southeast-2")
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return _ok({"Buckets": []}) if args[:2] == ["s3api", "list-buckets"] else _ok({})
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    assert cloud_sweep.list_s3_buckets(REGION, TAG_FILTER, exclude_bucket=None) == []
+    assert calls[0][:2] == ["s3api", "list-buckets"]
+    assert calls[0][calls[0].index("--region") + 1] == REGION
+
+
+@pytest.mark.parametrize("call", [cloud_sweep.run_aws, cloud_sweep.run_aws_text])
+def test_expected_fail_a_call_with_no_region_is_refused_before_the_cli_runs(
+    monkeypatch: pytest.MonkeyPatch, call: object
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("a call with no region must never reach the aws CLI")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    with pytest.raises(cloud_sweep.CloudSweepError, match="names no region"):
+        call(["s3api", "list-buckets"], "")
+
+
 def test_the_tagging_api_paginates_and_labels_kind_by_arn_service(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_run(
         monkeypatch,

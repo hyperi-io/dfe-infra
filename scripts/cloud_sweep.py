@@ -69,7 +69,9 @@ cleanup. It is refused beside --expired.
 the same interface with nothing behind it yet, and say so rather than
 reporting an empty sweep.
 
-Stdlib only: every AWS call shells out to the `aws` CLI with --output json.
+Stdlib only: every AWS call shells out to the `aws` CLI with --output json and
+--region, so a global call such as ListBuckets lands in the swept region and
+never in whatever region the shell defaults to.
 
     python3 scripts/cloud_sweep.py --region us-west-2
     python3 scripts/cloud_sweep.py --region us-west-2 --delete \\
@@ -134,9 +136,16 @@ class ExpirySelection:
 # ---------------------------------------------------------------------------
 
 
+def _region_args(args: list[str], region: str) -> list[str]:
+    """`--region <region>`, never omitted: a call without it goes wherever the shell's region points."""
+    if not region:
+        raise CloudSweepError(f"aws {' '.join(args)} names no region: refusing to let the CLI pick one")
+    return ["--region", region]
+
+
 def run_aws(args: list[str], region: str) -> dict:
-    """Run one `aws ... --output json` call and return its parsed body."""
-    result = aws_cli.run_aws([*args, "--region", region, "--output", "json"], timeout=AWS_TIMEOUT)
+    """Run one `aws ... --output json` call in `region` and return its parsed body."""
+    result = aws_cli.run_aws([*args, *_region_args(args, region), "--output", "json"], timeout=AWS_TIMEOUT)
     if result.returncode != 0:
         raise CloudSweepError(f"aws {' '.join(args)} failed: {result.stderr.strip()}")
     text = result.stdout.strip()
@@ -145,7 +154,7 @@ def run_aws(args: list[str], region: str) -> dict:
 
 def run_aws_text(args: list[str], region: str) -> None:
     """Run one `aws` call whose output is not JSON (e.g. `s3 rm`), for its side effect."""
-    result = aws_cli.run_aws([*args, "--region", region], timeout=AWS_TIMEOUT)
+    result = aws_cli.run_aws([*args, *_region_args(args, region)], timeout=AWS_TIMEOUT)
     if result.returncode != 0:
         raise CloudSweepError(f"aws {' '.join(args)} failed: {result.stderr.strip()}")
 
@@ -1057,7 +1066,7 @@ class _UnbuiltProvider:
 
 @dataclass(frozen=True, slots=True)
 class GcpProvider(_UnbuiltProvider):
-    """GCP: run labels follow the same convention, with the epoch expiry format."""
+    """GCP: run labels follow the same convention, with the epoch-seconds expiry format."""
 
     name: str = "gcp"
 

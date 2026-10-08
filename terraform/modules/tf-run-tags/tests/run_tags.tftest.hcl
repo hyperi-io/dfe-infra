@@ -36,20 +36,20 @@ run "a_run_carries_its_id_and_an_iso8601_expiry_by_default" {
   }
 }
 
-run "the_epoch_format_writes_plain_seconds" {
+run "the_epoch_seconds_format_writes_plain_seconds" {
   command = plan
 
   variables {
     run = {
       id         = "run-1"
       expires_at = 1791460800
-      keys       = { format = "epoch" }
+      keys       = { format = "epoch-seconds" }
     }
   }
 
   assert {
     condition     = output.tags["expires-at"] == "1791460800"
-    error_message = "the epoch format must write plain seconds, the only form a GCP label holds"
+    error_message = "the epoch-seconds format must write plain seconds, the only form a GCP label holds"
   }
 }
 
@@ -60,7 +60,7 @@ run "renamed_keys_replace_the_defaults" {
     run = {
       id         = "run-1"
       expires_at = 1791460800
-      keys       = { run = "ci-run", expiry = "ci-expiry", format = "epoch" }
+      keys       = { run = "ci-run", expiry = "ci-expiry", format = "epoch-seconds" }
     }
   }
 
@@ -104,6 +104,21 @@ run "a_key_starting_with_a_digit_is_refused" {
       id         = "run-1"
       expires_at = 1791460800
       keys       = { run = "1run" }
+    }
+  }
+
+  expect_failures = [var.run]
+}
+
+// A bare "epoch" is not a format the account guardrails or their sweeper read.
+run "the_bare_epoch_name_is_refused" {
+  command = plan
+
+  variables {
+    run = {
+      id         = "run-1"
+      expires_at = 1791460800
+      keys       = { format = "epoch" }
     }
   }
 

@@ -46,6 +46,8 @@ the last proof lands.
 
 An unattended cloud cycle runs through `dfe-ops cloud-cycle --tf-dir <root> --run-length 3h -- <cycle args>`. It creates nothing unless `dfe-ops cloud-preflight` passes: the account's guardrails are readable, the credential outlives the run plus its teardown, and no expired run resources remain. The run gets its own state key and `dfe-e2e`/`expires-at` tags (`scripts/cloud_run.py`), and every exit short of SIGKILL tears it down. `.github/workflows/cloud-reaper.yml` removes what an expired run left, every 15 minutes, and does nothing while `vars.DFE_REAPER_AWS_ROLE` is unset. Flags, variables and refusals: `scripts/dfe_ops_cloud_guard.py` and `scripts/cloud_reaper.py`.
 
+Preflight also refuses a session credential (`AWS_SESSION_TOKEN`) whose expiry it cannot read, and every child of a run gets the dial's region as `AWS_REGION`, so a call that names no region never lands outside the run's. `.github/workflows/cloud-cycle.yml` dispatches one run from the `e2e-runner` environment: the runner role by OIDC for 4h, with the dial and bootstrap env file taken from that environment's variables and secrets, and it refuses at its first step when any is missing.
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not

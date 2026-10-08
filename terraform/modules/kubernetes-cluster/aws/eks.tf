@@ -194,6 +194,50 @@ resource "aws_iam_role_policy_attachment" "nodes" {
   policy_arn = "${local.managed_policy_prefix}/${each.value}"
 }
 
+locals {
+  // A test run's tags, when there are any. EKS copies no node group tag onto the
+  // instances and volumes it launches, so a launch template is the only way they
+  // carry them. Outside a run there is no template and no node group changes.
+  node_launch_template = length(var.controller_tags) > 0
+}
+
+resource "aws_launch_template" "nodes" {
+  for_each = local.node_launch_template ? var.node_pools : {}
+
+  name_prefix = "${var.name}-${each.key}-"
+  description = "Tags node group ${each.key}'s instances and root volumes with the run's tags."
+
+  // EKS refuses a node group's disk_size beside a launch template, so the root
+  // volume is sized here. /dev/xvda is the root device AL2023 exposes.
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      volume_size           = each.value.disk_gb
+      volume_type           = "gp3"
+      delete_on_termination = true
+    }
+  }
+
+  // IMDSv2 only, hop limit 1, as the Karpenter nodes run: a launch template's
+  // EKS default is hop limit 2, which lets a pod reach the node role.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags          = var.controller_tags
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags          = var.controller_tags
+  }
+}
+
 resource "aws_eks_node_group" "this" {
   for_each = var.node_pools
 
@@ -212,8 +256,19 @@ resource "aws_eks_node_group" "this" {
 
   instance_types = var.resolved_shapes[each.value.shape_ref].instance_types
   capacity_type  = each.value.capacity_type
-  disk_size      = each.value.disk_gb
+  disk_size      = local.node_launch_template ? null : each.value.disk_gb
   labels         = each.value.labels
+
+  // Only during a test run. Adding a launch template to a node group that has
+  // none replaces it, which is why every other deployment gets no block at all.
+  dynamic "launch_template" {
+    for_each = local.node_launch_template ? [aws_launch_template.nodes[each.key]] : []
+
+    content {
+      id      = launch_template.value.id
+      version = launch_template.value.latest_version
+    }
+  }
 
   scaling_config {
     min_size     = each.value.min_size

@@ -109,12 +109,14 @@ class FakeRunner:
 
     def __init__(self, codes: dict[str, int] | None = None, on_run: dict | None = None) -> None:
         self.commands: list[list[str]] = []
+        self.envs: list[dict | None] = []
         self.codes = codes or {}
         self.on_run = on_run or {}
         self.current = None
 
-    def run(self, cmd: list[str], *, env: object = None, new_session: bool = False) -> int:
+    def run(self, cmd: list[str], *, env: dict | None = None, new_session: bool = False) -> int:
         self.commands.append(cmd)
+        self.envs.append(env)
         for word, action in self.on_run.items():
             if word in cmd:
                 action()
@@ -216,6 +218,15 @@ def test_tfvars_load_in_opentofus_order_and_skip_the_runs_own_overlay(root: Path
     assert guard_mod.load_tfvars(root)["name"] == "later"
 
 
+def test_an_empty_environment_variable_reads_as_unset(root: Path) -> None:
+    """A workflow hands an unset repository variable over as an empty string. Read
+    as a value, an empty state prefix would refuse every run."""
+    env = {cloud_run.STATE_PREFIX_ENV: "", "DFE_GUARD_IAM_PATH": "", "DFE_GUARD_PERMISSIONS_BOUNDARY": " "}
+    config = guard_mod.resolve_config(_args(root), env)
+    assert config.state_prefix == cloud_run.DEFAULT_STATE_PREFIX
+    assert (config.iam_path, config.permissions_boundary) == ("", "")
+
+
 def test_flags_win_over_the_environment(root: Path) -> None:
     config = guard_mod.resolve_config(_args(root), {"DFE_GUARD_ROLE": "from-env"})
     assert config.role == "e2e-runner"
@@ -291,6 +302,42 @@ def test_refusal_b_an_unreadable_credential_fails_rather_than_passing(root: Path
     guard = FakeGuard()
     guard.expiry_error = "could not resolve the active credential"
     assert _failed(_preflight(root, guard)) == ["(b) credential"]
+
+
+def test_expected_fail_a_session_credential_with_no_known_expiry_is_refused(root: Path) -> None:
+    """A session credential always expires, so passing one whose expiry is unread
+    lets an unattended run lose its identity mid-apply."""
+    guard = FakeGuard()
+    guard.expiry = None
+    report = guard_mod.run_preflight(_config(root), guard, now=NOW, env={"AWS_SESSION_TOKEN": "not-a-real-token"})
+    assert _failed(report) == ["(b) credential"]
+    detail = next(c.detail for c in report.checks if c.name == "(b) credential")
+    assert "AWS_CREDENTIAL_EXPIRATION" in detail
+    assert "not-a-real-token" not in detail
+
+
+def test_expected_fail_the_cli_resolving_a_session_credential_with_no_expiry_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"Version": 1, "AccessKeyId": "AKIDEXAMPLE", "SecretAccessKey": "not-a-real-secret",
+            "SessionToken": "not-a-real-token"}
+    monkeypatch.setattr(
+        guard_mod.aws_cli, "run_aws",
+        lambda args, **_: subprocess.CompletedProcess(args, 0, stdout=json.dumps(body), stderr=""),
+    )
+    with pytest.raises(guard_mod.GuardError, match="session credential") as excinfo:
+        guard_mod.AwsGuard("us-west-2").credential_expiry({})
+    assert "not-a-real-token" not in str(excinfo.value)
+    assert "not-a-real-secret" not in str(excinfo.value)
+
+
+def test_a_long_term_key_with_no_expiry_still_reads_as_no_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = {"Version": 1, "AccessKeyId": "AKIDEXAMPLE", "SecretAccessKey": "not-a-real-secret"}
+    monkeypatch.setattr(
+        guard_mod.aws_cli, "run_aws",
+        lambda args, **_: subprocess.CompletedProcess(args, 0, stdout=json.dumps(body), stderr=""),
+    )
+    assert guard_mod.AwsGuard("us-west-2").credential_expiry({}) == (None, "a credential with no expiry")
 
 
 def test_credential_expiry_reads_the_environment_first(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -440,6 +487,41 @@ def test_sigterm_during_the_cycle_removes_workloads_then_destroys(root: Path, mo
     assert _cycle(root, monkeypatch, FakeGuard(), runner) == 143
     assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
     assert signal.getsignal(signal.SIGTERM) is not guard_mod._raise_interrupted
+
+
+def test_every_child_of_a_run_lands_in_the_dials_region_not_the_shells(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A call that names no region follows the shell's default, and an account
+    fenced to one region denies it there."""
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-southeast-2")
+    runner = FakeRunner(on_run={"cycle": lambda: os.kill(os.getpid(), signal.SIGTERM)})
+    assert _cycle(root, monkeypatch, FakeGuard(), runner) == 143
+    assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
+    for cmd, env in zip(runner.commands, runner.envs, strict=True):
+        assert env is not None, cmd
+        assert (env["AWS_REGION"], env["AWS_DEFAULT_REGION"]) == ("us-west-2", "us-west-2"), cmd
+    assert runner.envs[3]["KUBECONFIG"].endswith("kubeconfig")
+
+
+def test_the_preflight_s3_listing_is_sent_to_the_dials_region(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The S3 client the sweep makes for check (c) names the run's region, whatever
+    the shell's default -- the org fence denies ListBuckets sent anywhere else."""
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-southeast-2")
+    calls: list[list[str]] = []
+
+    def record(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", record)
+    config = _config(root)
+    assert guard_mod.AwsGuard(config.region).expired_resources(config.keys, NOW, config.state_bucket) == []
+    list_buckets = [c for c in calls if c[:2] == ["s3api", "list-buckets"]]
+    assert len(list_buckets) == 1
+    assert list_buckets[0][list_buckets[0].index("--region") + 1] == "us-west-2"
+    assert all(c[c.index("--region") + 1] == "us-west-2" for c in calls)
 
 
 def test_a_failed_destroy_keeps_the_record_and_overlay_for_the_reaper(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

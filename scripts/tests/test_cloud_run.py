@@ -54,8 +54,20 @@ def test_run_tags_write_what_the_opentofu_module_writes() -> None:
     assert cloud_run.run_tags("run-1", NOW) == {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"}
 
 
-def test_the_epoch_format_writes_plain_seconds() -> None:
-    keys = cloud_run.RunTagKeys(expiry_format="epoch")
+def test_the_expiry_formats_are_exactly_the_names_the_guardrails_use() -> None:
+    """The account guardrails and their sweeper name the formats iso8601 and
+    epoch-seconds. tf-run-tags validates and branches on the same two names."""
+    assert cloud_run.EXPIRY_FORMATS == ("iso8601", "epoch-seconds")
+    variables = RUN_TAGS_VARIABLES.read_text(encoding="utf-8")
+    listed = re.search(r"contains\(\[([^\]]*)\],\s*var\.run\.keys\.format\)", variables)
+    assert listed is not None
+    assert tuple(re.findall(r'"([^"]+)"', listed[1])) == cloud_run.EXPIRY_FORMATS
+    outputs = RUN_TAGS_VARIABLES.with_name("outputs.tf").read_text(encoding="utf-8")
+    assert 'var.run.keys.format == "epoch-seconds"' in outputs
+
+
+def test_the_epoch_seconds_format_writes_plain_seconds() -> None:
+    keys = cloud_run.RunTagKeys(expiry_format="epoch-seconds")
     assert cloud_run.run_tags("run-1", NOW, keys) == {"dfe-e2e": "run-1", "expires-at": str(NOW)}
 
 
@@ -146,7 +158,7 @@ def test_a_minted_run_id_is_portable_and_unique() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"run": "1run"}, {"run": "Run"}, {"expiry": "dfe-e2e"}, {"expiry_format": "rfc2822"}],
+    [{"run": "1run"}, {"run": "Run"}, {"expiry": "dfe-e2e"}, {"expiry_format": "rfc2822"}, {"expiry_format": "epoch"}],
 )
 def test_expected_fail_unportable_keys_or_formats_are_refused(kwargs: dict) -> None:
     with pytest.raises(cloud_run.RunTagError):
@@ -155,9 +167,9 @@ def test_expected_fail_unportable_keys_or_formats_are_refused(kwargs: dict) -> N
 
 def test_keys_and_format_come_from_the_environment() -> None:
     keys = cloud_run.RunTagKeys.from_env(
-        {"DFE_RUN_TAG_KEY": "ci-run", "DFE_RUN_EXPIRY_KEY": "ci-expiry", "DFE_RUN_EXPIRY_FORMAT": "epoch"}
+        {"DFE_RUN_TAG_KEY": "ci-run", "DFE_RUN_EXPIRY_KEY": "ci-expiry", "DFE_RUN_EXPIRY_FORMAT": "epoch-seconds"}
     )
-    assert (keys.run, keys.expiry, keys.expiry_format) == ("ci-run", "ci-expiry", "epoch")
+    assert (keys.run, keys.expiry, keys.expiry_format) == ("ci-run", "ci-expiry", "epoch-seconds")
     assert cloud_run.RunTagKeys.from_env({}) == cloud_run.RunTagKeys()
 
 

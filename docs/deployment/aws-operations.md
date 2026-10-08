@@ -139,6 +139,7 @@ tier, by which dial key. What is AWS's own:
   account defaults -- the default VPC and everything that comes with it,
   AWS-managed KMS aliases -- are never listed or touched.
 - `--expired` selects only resources whose `dfe-e2e` run tag carries an `expires-at` past `--grace` (default 1h); unattended runs and their reaper: [TESTING-CYCLE.md](../TESTING-CYCLE.md).
+- During a test run (`controller_tags` set) each managed node group launches through a launch template that puts the run's tags on its instances and root volumes, and every Karpenter pool is held to `karpenter.runInstanceSizes`. Outside a run there is no template, because adding one to an existing node group replaces the group.
 - Stack, re-size and platform upgrades follow
   [upgrades.md](upgrades.md); the operator order across charts is data,
   not judgement -- `upgrade-order.yaml` at the repo root.
