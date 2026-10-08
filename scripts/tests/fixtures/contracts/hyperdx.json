@@ -1,0 +1,75 @@
+{
+  "schema_version": 4,
+  "app_name": "dfe-hyperdx",
+  "description": "HyperDX search and dashboards for DFE: the API and the web app in one image",
+  "metrics_port": 8000,
+  "health": {
+    "liveness_path": "/livez",
+    "readiness_path": "/readyz",
+    "metrics_path": "/metrics",
+    "startup_budget_seconds": 60
+  },
+  "env_prefix": "",
+  "metric_prefix": "",
+  "config_mount_path": "",
+  "image_registry": "ghcr.io/hyperi-io",
+  "extra_ports": [
+    {
+      "name": "http",
+      "port": 8080,
+      "protocol": "TCP",
+      "public": true
+    }
+  ],
+  "secrets": [
+    {
+      "group_name": "session",
+      "env_vars": [
+        {
+          "env_var": "EXPRESS_SESSION_SECRET",
+          "key_name": "secret",
+          "secret_key": "session-secret"
+        }
+      ]
+    },
+    {
+      "group_name": "token-encryption",
+      "env_vars": [
+        {
+          "env_var": "TOKEN_ENCRYPTION_KEY",
+          "key_name": "key",
+          "secret_key": "token-encryption-key"
+        }
+      ]
+    },
+    {
+      "group_name": "clickhouse",
+      "env_vars": [
+        {
+          "env_var": "CLICKHOUSE_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        }
+      ],
+      "optional": true
+    }
+  ],
+  "termination_grace_seconds": 30,
+  "resources": {
+    "requests": {
+      "cpu": "200m",
+      "memory": "512Mi"
+    },
+    "limits": {
+      "cpu": "1",
+      "memory": "2Gi"
+    }
+  },
+  "security": {
+    "run_as_user": 1000,
+    "run_as_group": 1000,
+    "fs_group": 1000,
+    "read_only_root_filesystem": false
+  },
+  "singleton": false
+}

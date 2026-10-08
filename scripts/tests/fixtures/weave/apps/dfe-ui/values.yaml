@@ -1,0 +1,80 @@
+# dfe-ui's integration values over its thin chart, laid out as argocd/values/apps/
+# will hold them: the DFE wiring the 2.2.0 chart derives, under the keys the
+# scalo-service library reads. test_weave.py renders it against helm/charts/dfe-ui.
+
+partOf: dfe
+commonLabels:
+  dfe.hyperi.io/env: '{{ .Values.env }}'
+  dfe.hyperi.io/cloud: '{{ .Values.global.cloud }}'
+
+# telemetry.mode hyperdx, resolved, on the OTLP/HTTP port @vercel/otel exports to.
+otel:
+  endpoint: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318
+  protocol: http/protobuf
+
+extraEnv:
+  NODE_OPTIONS: "--max-old-space-size-percentage=70"
+  NEXT_PUBLIC_API_URL: ""
+  INTERNAL_API_URL: 'http://dfe-engine.{{ .Release.Namespace }}.svc.cluster.local:8000'
+  HYPERDX_URL: '{{ with .Values.domain }}https://{{ $.Values.hostnames.hyperdx }}.{{ . }}{{ end }}'
+  DFE_COOKIE_DOMAIN: '{{ .Values.domain }}'
+  NEXTAUTH_URL: '{{ with .Values.domain }}https://{{ $.Values.hostnames.dfe }}.{{ . }}{{ end }}'
+
+# Read by the ExternalSecret below: empty generates the key in-cluster.
+nextauth:
+  secretStoreName: ""
+
+extraObjects:
+  - |
+    {{- if not .Values.nextauth.secretStoreName }}
+    apiVersion: generators.external-secrets.io/v1alpha1
+    kind: Password
+    metadata:
+      name: {{ include "scalo-service.fullname" . }}-nextauth-gen
+      labels:
+        {{- include "scalo-service.labelSet" . | fromJson | toYaml | nindent 4 }}
+    spec:
+      length: 48
+      digits: 6
+      symbols: 0
+      noUpper: false
+      allowRepeat: true
+    {{- end }}
+  - |
+    apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: {{ include "scalo-service.fullname" . }}-nextauth
+      labels:
+        {{- include "scalo-service.labelSet" . | fromJson | toYaml | nindent 4 }}
+    spec:
+    {{- if .Values.nextauth.secretStoreName }}
+      refreshInterval: 1h
+      secretStoreRef:
+        name: {{ .Values.nextauth.secretStoreName }}
+        kind: ClusterSecretStore
+      target:
+        name: {{ include "scalo-service.fullname" . }}-nextauth
+        creationPolicy: Owner
+      data:
+        - secretKey: secret
+          remoteRef:
+            key: {{ .Values.global.project }}/{{ .Values.env }}/ui/nextauth
+            property: secret
+    {{- else }}
+      refreshPolicy: CreatedOnce
+      refreshInterval: "0"
+      target:
+        name: {{ include "scalo-service.fullname" . }}-nextauth
+        creationPolicy: Owner
+        template:
+          engineVersion: v2
+          data:
+            secret: "{{ `{{ .password }}` }}"
+      dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: {{ include "scalo-service.fullname" . }}-nextauth-gen
+    {{- end }}

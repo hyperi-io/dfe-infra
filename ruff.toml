@@ -19,6 +19,7 @@ extend-include = [
     "scripts/dfe-suite",
     "scripts/dfe-fleet",
     "scripts/dfe-sweep",
+    "scripts/dfe-weave",
 ]
 
 extend-exclude = [
@@ -51,7 +52,7 @@ ignore = [
 # _expect, _charts, _smoke and _spread are the shared test helpers sitting
 # beside the tests that import them, so they belong in the first-party group
 # rather than beside PyPI packages.
-known-first-party = ["_charts", "_expect", "_smoke", "_spread"]
+known-first-party = ["_charts", "_expect", "_smoke", "_spread", "_weave"]
 
 [lint.per-file-ignores]
 # Test helpers load the script under test by path, which needs the import
