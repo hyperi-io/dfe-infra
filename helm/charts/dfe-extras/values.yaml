@@ -1,6 +1,7 @@
 # The component whose DFE-only objects render: its deploy.service, or dfe-hyperdx
-# for hyperdx. Empty, or a component with no DFE-only objects (dfe-fetcher),
-# renders nothing, so every component's Application can carry this chart.
+# for hyperdx. Empty, or a component with no DFE-only objects (dfe-fetcher,
+# dfe-transform-elastic), renders nothing, so every component's Application can
+# carry this chart.
 chartName: ""
 
 # This chart's own settings. Every other key is a value the component reads: the
@@ -112,13 +113,6 @@ extras:
     dfe-transform-vector:
       project: dfe
       component: transform-vector
-      env: local
-      cloud: local
-      service:
-        pushPort: 6000
-    dfe-transform-elastic:
-      project: dfe
-      component: transform-elastic
       env: local
       cloud: local
       service:

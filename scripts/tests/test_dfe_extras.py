@@ -21,9 +21,10 @@ that Application's dfe-extras source, or, where the appset has none, its chart
 source re-pointed at helm/charts/dfe-extras with the per-app layers added and
 chartName set. The gate:
 
-- dfe-extras renders the objects the 2.2.0 DFE_ONLY_TEMPLATES render, byte for
-  byte once parsed or apart from the diffs fixtures/weave-accepted-diffs.yaml
-  accepts, plus the <fullname>-env ConfigMap for a component whose env the thin
+- dfe-extras renders the objects the 2.2.0 DFE_ONLY_TEMPLATES render, less those
+  fixtures/weave-accepted-diffs.yaml lists removed, byte for byte once parsed or
+  apart from the diffs that fixture accepts, plus the <fullname>-env ConfigMap for
+  a component whose env the thin
   chart reads through envFrom, holding the 2.2.0 container's literal env less the
   names the thin chart's own env sets and the drops that fixture accepts
 - every other 2.2.0 object carries a name the thin chart renders (THIN_SUFFIXES),
@@ -415,7 +416,8 @@ def gate(pair: Pair) -> list[str]:
             problems.append(
                 f"{fullname}-env " + first_difference(wanted, env.get("data") or {}, ".data")
             )
-    missing = sorted(set(want) - set(got))
+    removed = {tuple(obj.split("/", 1)) for obj in accepts(pair.service).removed}
+    missing = sorted(set(want) - set(got) - removed)
     added = sorted(set(got) - set(want))
     if missing:
         problems.append(f"2.2.0 renders, dfe-extras does not: {missing}")
@@ -841,7 +843,9 @@ def test_the_app_catalogue_is_the_manifest_at_the_repo_root() -> None:
 # --------------------------------------------------- against a real thin chart
 
 
-@pytest.mark.parametrize("service", ["dfe-ui", "hyperdx", "dfe-receiver", "dfe-loader"])
+@pytest.mark.parametrize(
+    "service", ["dfe-ui", "hyperdx", "dfe-receiver", "dfe-loader", "dfe-engine"]
+)
 @pytest.mark.parametrize("profile", PROFILES)
 def test_no_object_is_rendered_by_both_charts(service: str, profile: str) -> None:
     """The thin chart assembled from the committed contract, beside dfe-extras."""

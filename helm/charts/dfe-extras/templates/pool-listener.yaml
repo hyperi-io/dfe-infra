@@ -1,9 +1,9 @@
 {{- /* Gated on the direct transport plus mesh.enabled -- see dfe-common.poolListener. */ -}}
+{{- /* dfe-transform-elastic is bus-only (apps.yaml), so it opens no push port for a route to reach. */ -}}
 {{- include "dfe-extras.render" (dict "root" . "body" "dfe-common.poolListener" "charts" (list
   "dfe-receiver"
   "dfe-loader"
   "dfe-archiver"
   "dfe-transform-vrl"
   "dfe-transform-vector"
-  "dfe-transform-elastic"
 )) }}

@@ -723,6 +723,19 @@ CHECKS += [
     for app in apps
     for half in ("tag", "digest")
 ]
+# The same entries in dfe-engine's thin-chart integration values, whose content
+# init containers read each ref from there.
+CHECKS += [
+    Check(
+        f"engine thin-chart {app} {role} ref {half}",
+        f"{'apps' if half == 'tag' else 'digests'}.{app}",
+        Path("argocd/values/apps/dfe-engine/values.yaml"),
+        content_ref_pattern(role, app, half),
+    )
+    for role, apps in (("contract", _CONTRACT_ENTRIES), ("catalogue", _CATALOGUE_ENTRIES))
+    for app in apps
+    for half in ("tag", "digest")
+]
 
 # The hyperdx chart runs an init container on the ENGINE image to materialise the
 # dashboards the engine owns. Helm cannot read a sibling chart's appVersion, so

@@ -56,8 +56,11 @@ POOLS = {
     "dfe-archiver": 6000,
     "dfe-transform-vrl": 6000,
     "dfe-transform-vector": 6000,
-    "dfe-transform-elastic": 6000,
 }
+
+# Stages apps.yaml declares bus-only: no sender is compiled to them on the direct
+# transport, so a route would send to a push port they never open.
+BUS_ONLY = ("dfe-transform-elastic",)
 
 # The one profile that balances between pools. The other three either run a
 # broker (which balances its own consumers) or one pod per stage.
@@ -256,6 +259,12 @@ def test_no_listener_on_a_profile_that_did_not_ask() -> None:
             expect(f"{chart} has no alias on {profile}", aliases == [], f"got {aliases!r}")
 
 
+def test_no_listener_for_a_bus_only_stage() -> None:
+    for chart in BUS_ONLY:
+        docs = listener(chart, MESH_PROFILE)
+        expect(f"{chart} gets no mesh objects on {MESH_PROFILE}", docs == [], f"got {docs!r}")
+
+
 def test_the_gateway_the_listeners_attach_to() -> None:
     docs = render("envoy-gateway-config", MESH_PROFILE)
     mesh = [g for g in of_kind(docs, "Gateway") if g["metadata"]["name"] == MESH_GATEWAY]
@@ -358,6 +367,7 @@ def main() -> int:
         test_the_duration_reader_reads_what_the_policy_writes()
         test_another_gateway_can_leave_the_route_policy_out()
         test_no_listener_on_a_profile_that_did_not_ask()
+        test_no_listener_for_a_bus_only_stage()
         test_the_gateway_the_listeners_attach_to()
         test_the_senders_are_allowed_to_reach_the_listener()
         test_the_receiver_buffers_what_the_profile_says()

@@ -1,7 +1,9 @@
 {{/*
 dfe-engine.env -- the engine container's env list, as the 2.2.0 deployment wrote
-it. dfe-engine-env carries its literal entries; the secret, ConfigMap and
-downward-API references stay in the thin chart's env.
+it, less the OTLP endpoint and service name the thin chart's own env carries
+(apps/_common.yaml and scalo-service). dfe-engine-env carries its literal
+entries; the secret, ConfigMap and downward-API references stay in the thin
+chart's env.
 */}}
 {{- define "dfe-engine.env" -}}
             {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "") | nindent 12 }}
@@ -320,12 +322,6 @@ downward-API references stay in the thin chart's env.
                   name: {{ .Values.auth.breakglassSecretName }}
                   key: {{ .Values.auth.breakglassSecretKey }}
             {{- end }}
-            {{- with (include "dfe-common.otelEndpoint" .) }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
-              value: {{ . | quote }}
-            {{- end }}
-            - name: OTEL_SERVICE_NAME
-              value: dfe-engine
           {{- if .Values.gitops.enabled }}
             - name: DFE_GITOPS_ENABLED
               value: "true"

@@ -1,0 +1,155 @@
+{
+  "schema_version": 4,
+  "app_name": "dfe-engine",
+  "binary_name": "dfe-engine",
+  "description": "DFE Engine -- REST API and config control plane for the Data Fusion Engine",
+  "metrics_port": 9090,
+  "health": {
+    "liveness_path": "/livez",
+    "readiness_path": "/readyz",
+    "metrics_path": "/metrics",
+    "startup_budget_seconds": 300
+  },
+  "env_prefix": "DFE",
+  "metric_prefix": "dfe",
+  "config_mount_path": "",
+  "image_registry": "ghcr.io/hyperi-io",
+  "extra_ports": [
+    {
+      "name": "http",
+      "port": 8000,
+      "protocol": "TCP"
+    }
+  ],
+  "entrypoint_args": [
+    "run"
+  ],
+  "secrets": [
+    {
+      "group_name": "clickhouse",
+      "env_vars": [
+        {
+          "env_var": "DFE_CLICKHOUSE_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        }
+      ]
+    },
+    {
+      "group_name": "jwt",
+      "env_vars": [
+        {
+          "env_var": "DFE_API_JWT_SECRET",
+          "key_name": "secret",
+          "secret_key": "jwt-secret"
+        }
+      ]
+    },
+    {
+      "group_name": "admin",
+      "env_vars": [
+        {
+          "env_var": "DFE_AUTH_LOCAL_ADMIN_PASSWORD",
+          "key_name": "password",
+          "secret_key": "admin-password"
+        }
+      ]
+    },
+    {
+      "group_name": "breakglass",
+      "env_vars": [
+        {
+          "env_var": "DFE_AUTH_BREAKGLASS_PASSWORD",
+          "key_name": "password",
+          "secret_key": "breakglass-password"
+        }
+      ]
+    },
+    {
+      "group_name": "hunt-runner",
+      "env_vars": [
+        {
+          "env_var": "DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        }
+      ]
+    },
+    {
+      "group_name": "kafka",
+      "env_vars": [
+        {
+          "env_var": "DFE_KAFKA_SASL_MECHANISM",
+          "key_name": "mechanism",
+          "secret_key": "sasl.mechanism"
+        },
+        {
+          "env_var": "DFE_KAFKA_SASL_USERNAME",
+          "key_name": "username",
+          "secret_key": "username"
+        },
+        {
+          "env_var": "DFE_KAFKA_SASL_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        }
+      ]
+    },
+    {
+      "group_name": "gitops",
+      "env_vars": [
+        {
+          "env_var": "DFE_GITOPS_USERNAME",
+          "key_name": "username",
+          "secret_key": "username"
+        },
+        {
+          "env_var": "DFE_GITOPS_TOKEN",
+          "key_name": "token",
+          "secret_key": "password"
+        }
+      ]
+    },
+    {
+      "group_name": "seed-accounts",
+      "env_vars": [
+        {
+          "env_var": "DFE_AUTH_LOCAL_SEED_ACCOUNTS",
+          "key_name": "accounts",
+          "secret_key": "seed-accounts"
+        }
+      ],
+      "optional": true
+    }
+  ],
+  "depends_on": [
+    "clickhouse"
+  ],
+  "keda": null,
+  "writable_paths": [
+    {
+      "name": "config",
+      "path": "/config",
+      "persistent": true,
+      "size": "1Gi"
+    }
+  ],
+  "termination_grace_seconds": 30,
+  "resources": {
+    "requests": {
+      "cpu": "200m",
+      "memory": "256Mi"
+    },
+    "limits": {
+      "cpu": "1",
+      "memory": "1Gi"
+    }
+  },
+  "security": {
+    "run_as_user": 1000,
+    "run_as_group": 1000,
+    "fs_group": 1000,
+    "read_only_root_filesystem": true
+  },
+  "singleton": true
+}
