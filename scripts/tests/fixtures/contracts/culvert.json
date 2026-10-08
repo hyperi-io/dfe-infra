@@ -18,6 +18,14 @@
       "name": "wireguard",
       "port": 51820,
       "protocol": "UDP",
+      "when": {
+        "kind": "one_of",
+        "path": "config.protocol",
+        "values": [
+          "wireguard",
+          "both"
+        ]
+      },
       "public": true
     },
     {

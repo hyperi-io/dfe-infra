@@ -9,6 +9,17 @@
 # The objects keep the culvert chart's names.
 fullnameOverride: dfe-culvert
 
+# The profile file alone, not its directory, so the profiles the image ships in
+# /etc/vpn/profiles stay beside it. CULVERT_PROFILE=culvert selects it.
+configMount:
+  subPath: true
+
+# The default listeners carry WireGuard, which dfe-extras turns on through
+# CULVERT_PROTOCOL in dfe-culvert-env. The contract opens its wireguard port only
+# where config.protocol starts WireGuard, and that env var never reaches it.
+extraPorts:
+  - { name: wireguard, port: 51820, protocol: UDP, public: true }
+
 # Opts the pods out of the namespace-wide egress baseline, so the tunnel
 # NetworkPolicy is their whole egress surface.
 podLabels:

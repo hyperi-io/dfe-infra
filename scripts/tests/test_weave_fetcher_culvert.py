@@ -25,6 +25,8 @@
   from the gateway's by the instance file its git generator matches
 - culvert's image, and its init container's, follow global.registry like the
   dfe-* images, and fall back to the contract's registry where none is set
+- culvert's contract opens its WireGuard port only where config.protocol starts
+  WireGuard, and its profile mounts as one file beside the image's own
 
 Render (b) needs the scalo-service library (_weave.library).
 """
@@ -377,6 +379,36 @@ def test_culverts_nodeports_are_the_ones_the_forwarder_dials() -> None:
 def test_one_default_listener_list_for_culvert() -> None:
     """The thin chart's default, dfe-extras' and the culvert chart's own are the same list."""
     assert drifted(listener_lists()) == []
+
+
+@pytest.mark.parametrize(
+    ("protocol", "opened"),
+    [(None, False), ("openvpn", False), ("wireguard", True), ("both", True)],
+    ids=["unset", "openvpn", "wireguard", "both"],
+)
+def test_the_contract_opens_wireguard_only_where_the_profile_starts_it(
+    protocol: str | None, opened: bool
+) -> None:
+    """A server on the default OpenVPN has no WireGuard port, so none reaches a balancer.
+
+    apps/culvert/values.yaml declares the port for the default listeners itself,
+    so the overlay clears that to read the contract's gate alone.
+    """
+    overlay: dict = {"extraPorts": []}
+    if protocol is not None:
+        overlay["config"] = {"protocol": protocol}
+    new = _render("culvert", "single", "aws", "new", overlay)
+    assert ("wireguard" in _ports(_deployment(new))) is opened
+    assert ("wireguard" in _ports(_named(new, "Service")["dfe-culvert"])) is opened
+    assert "openvpn-udp" in _ports(_deployment(new))
+
+
+def test_the_profile_mounts_beside_the_shipped_ones() -> None:
+    """The ConfigMap mounts as culvert.yaml alone, so /etc/vpn/profiles keeps the image's profiles."""
+    container = _pod(cell("culvert", "single", "aws").new)["containers"][0]
+    mounts = {m["mountPath"]: m for m in container["volumeMounts"]}
+    assert "/etc/vpn/profiles" not in mounts
+    assert mounts["/etc/vpn/profiles/culvert.yaml"]["subPath"] == "culvert.yaml"
 
 
 def test_culvert_runs_as_the_contract_says() -> None:
