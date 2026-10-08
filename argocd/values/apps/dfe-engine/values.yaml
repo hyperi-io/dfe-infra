@@ -1,0 +1,411 @@
+# dfe-engine's integration values over its thin chart, layered after
+# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
+# scalo-service library reads. The keys below them are the 2.2.0 chart's own,
+# read here through tpl and by dfe-extras, which renders the hunt runner, the keda
+# shim, the minted Secrets, the app catalogue and the dfe-engine-env ConfigMap.
+
+# The env the 2.2.0 chart wrote under conditionals, so a variable stays absent
+# where 2.2.0 left it out. Reloader restarts the pod when either ConfigMap
+# changes, as the 2.2.0 catalogue checksum rolled it.
+extraEnvFrom:
+  - configMapRef:
+      name: '{{ include "scalo-service.fullname" . }}-env'
+reload:
+  configmaps:
+    - dfe-engine-env
+    - dfe-engine-app-catalogue
+
+# The contract's secret groups, on the Secrets the 2.2.0 chart named.
+secrets:
+  clickhouse:
+    existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
+  jwt:
+    existingSecret: '{{ .Values.auth.jwtSecretName }}'
+  admin:
+    existingSecret: '{{ .Values.auth.adminSecretName }}'
+  breakglass:
+    existingSecret: '{{ .Values.auth.breakglassSecretName }}'
+  hunt-runner:
+    existingSecret: '{{ .Values.huntRunner.clickhouse.passwordSecretName }}'
+  kafka:
+    existingSecret: '{{ .Values.kafka.saslSecretName }}'
+  gitops:
+    existingSecret: '{{ .Values.gitops.credentialsSecret }}'
+  seed-accounts:
+    existingSecret: '{{ .Values.seedAuth.secretName }}'
+
+extraEnv:
+  # Rendered by the gateway chart beside the engine, and optional, so an engine
+  # with no gateway starts with no admin links rather than not at all.
+  DFE_ADMIN_LINKS:
+    valueFrom:
+      configMapKeyRef:
+        name: dfe-admin-links
+        key: admin_links.json
+        optional: true
+  # The engine composes the login page's credential-fetch command from it.
+  DFE_DEPLOYMENT_NAMESPACE:
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+
+# One init container per content pin in content.entries, each reading its pin by
+# name, so the ref has one copy. An overlay that adds or drops an entry restates
+# this list.
+initContainers:
+  - name: content-dfe-receiver-contract
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-receiver-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: &pull-policy '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext: &init-security
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dir="{{ .Values.content.mountPath }}/contract/dfe-receiver"
+        # An image that carries no contract must not wedge the engine's
+        # pod: the app exits non-zero on a write failure.
+        if dfe-receiver config-schema --dir "$dir"; then
+          # The contract names no image, so the writer records itself --
+          # without this the engine cannot report which pin it read.
+          printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+            "dfe-receiver" "{{ range .Values.content.entries }}{{ if eq .name "dfe-receiver-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$dir/source.json"
+          echo "content: dfe-receiver emitted its contract to $dir"
+        else
+          echo "content: dfe-receiver emitted no contract; the mount stays empty" >&2
+        fi
+    volumeMounts: &content-mounts
+      - name: content
+        mountPath: '{{ .Values.content.mountPath }}'
+  - name: content-dfe-loader-contract
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-loader-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dir="{{ .Values.content.mountPath }}/contract/dfe-loader"
+        # An image that carries no contract must not wedge the engine's
+        # pod: the app exits non-zero on a write failure.
+        if dfe-loader config-schema --dir "$dir"; then
+          # The contract names no image, so the writer records itself --
+          # without this the engine cannot report which pin it read.
+          printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+            "dfe-loader" "{{ range .Values.content.entries }}{{ if eq .name "dfe-loader-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$dir/source.json"
+          echo "content: dfe-loader emitted its contract to $dir"
+        else
+          echo "content: dfe-loader emitted no contract; the mount stays empty" >&2
+        fi
+    volumeMounts: *content-mounts
+  - name: content-dfe-archiver-contract
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-archiver-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dir="{{ .Values.content.mountPath }}/contract/dfe-archiver"
+        # An image that carries no contract must not wedge the engine's
+        # pod: the app exits non-zero on a write failure.
+        if dfe-archiver config-schema --dir "$dir"; then
+          # The contract names no image, so the writer records itself --
+          # without this the engine cannot report which pin it read.
+          printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+            "dfe-archiver" "{{ range .Values.content.entries }}{{ if eq .name "dfe-archiver-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$dir/source.json"
+          echo "content: dfe-archiver emitted its contract to $dir"
+        else
+          echo "content: dfe-archiver emitted no contract; the mount stays empty" >&2
+        fi
+    volumeMounts: *content-mounts
+  - name: content-dfe-fetcher-contract
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-fetcher-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dir="{{ .Values.content.mountPath }}/contract/dfe-fetcher"
+        # An image that carries no contract must not wedge the engine's
+        # pod: the app exits non-zero on a write failure.
+        if dfe-fetcher config-schema --dir "$dir"; then
+          # The contract names no image, so the writer records itself --
+          # without this the engine cannot report which pin it read.
+          printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+            "dfe-fetcher" "{{ range .Values.content.entries }}{{ if eq .name "dfe-fetcher-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$dir/source.json"
+          echo "content: dfe-fetcher emitted its contract to $dir"
+        else
+          echo "content: dfe-fetcher emitted no contract; the mount stays empty" >&2
+        fi
+    volumeMounts: *content-mounts
+  - name: content-dfe-transform-vrl-contract
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vrl-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vrl"
+        # An image that carries no contract must not wedge the engine's
+        # pod: the app exits non-zero on a write failure.
+        if dfe-transform-vrl config-schema --dir "$dir"; then
+          # The contract names no image, so the writer records itself --
+          # without this the engine cannot report which pin it read.
+          printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+            "dfe-transform-vrl" "{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vrl-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$dir/source.json"
+          echo "content: dfe-transform-vrl emitted its contract to $dir"
+        else
+          echo "content: dfe-transform-vrl emitted no contract; the mount stays empty" >&2
+        fi
+    volumeMounts: *content-mounts
+  - name: content-dfe-transform-vector-contract
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vector-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vector"
+        # An image that carries no contract must not wedge the engine's
+        # pod: the app exits non-zero on a write failure.
+        if dfe-transform-vector config-schema --dir "$dir"; then
+          # The contract names no image, so the writer records itself --
+          # without this the engine cannot report which pin it read.
+          printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+            "dfe-transform-vector" "{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vector-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$dir/source.json"
+          echo "content: dfe-transform-vector emitted its contract to $dir"
+        else
+          echo "content: dfe-transform-vector emitted no contract; the mount stays empty" >&2
+        fi
+    volumeMounts: *content-mounts
+  - name: content-dfe-transform-elastic-contract
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dir="{{ .Values.content.mountPath }}/contract/dfe-transform-elastic"
+        # An image that carries no contract must not wedge the engine's
+        # pod: the app exits non-zero on a write failure.
+        if dfe-transform-elastic config-schema --dir "$dir"; then
+          # The contract names no image, so the writer records itself --
+          # without this the engine cannot report which pin it read.
+          printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
+            "dfe-transform-elastic" "{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$dir/source.json"
+          echo "content: dfe-transform-elastic emitted its contract to $dir"
+        else
+          echo "content: dfe-transform-elastic emitted no contract; the mount stays empty" >&2
+        fi
+    volumeMounts: *content-mounts
+  - name: content-dfe-transform-elastic-catalogue
+    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-catalogue" }}{{ .ref }}{{ end }}{{ end }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        dst="{{ .Values.content.mountPath }}/catalogue/{{ .Values.content.catalogueFile }}"
+        mkdir -p "{{ .Values.content.mountPath }}/catalogue"
+        # An image that predates emit-catalogue exits non-zero; the engine
+        # still starts, and its catalogue API reports the file as missing.
+        if dfe-transform-elastic emit-catalogue > "$dst.tmp"; then
+          mv "$dst.tmp" "$dst"
+          echo "content: dfe-transform-elastic emitted its catalogue to $dst"
+        else
+          rm -f "$dst.tmp"
+          echo "content: dfe-transform-elastic emitted no catalogue; the engine reports it missing" >&2
+        fi
+    volumeMounts: *content-mounts
+  # Seeds the auth ConfigMaps authConfig names into the writable config volume.
+  # It runs on every pod because a list item cannot follow authConfig, and it
+  # copies nothing where authConfig names no ConfigMap.
+  - name: auth-config-seed
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: *pull-policy
+    securityContext: *init-security
+    command:
+      - python3
+      - -c
+      - |
+        import shutil
+        import ssl
+        from pathlib import Path
+        # An unnamed ConfigMap mounts as an empty directory, which seeds nothing.
+        for src, dst in (
+            ("/seed/oidc-providers", "{{ .Values.config.mountPath }}/auth/oidc-providers"),
+            ("/seed/groups", "{{ .Values.config.mountPath }}/auth/groups"),
+        ):
+            files = [f for f in Path(src).iterdir() if f.is_file()]
+            if not files:
+                continue
+            d = Path(dst)
+            d.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                shutil.copyfile(f, d / f.name)
+                print("seeded", d / f.name)
+        # SSL_CERT_FILE REPLACES the trust store, it does not add to it, so a
+        # private-CA bundle on its own fails every PUBLIC TLS peer -- a hosted
+        # IdP's discovery fetch dies on certificate_verify_failed. Merge the
+        # image's own roots in and point SSL_CERT_FILE at the result.
+        ca = Path("/seed/ca/ca-bundle.pem")
+        if ca.is_file():
+            merged = Path("{{ .Values.config.mountPath }}/auth/ca-bundle.pem")
+            merged.parent.mkdir(parents=True, exist_ok=True)
+            text = ca.read_text(encoding="utf-8")
+            roots = Path(ssl.get_default_verify_paths().openssl_cafile or "")
+            if roots.is_file():
+                text += "\n" + roots.read_text(encoding="utf-8")
+            merged.write_text(text, encoding="utf-8", newline="\n")
+            print("merged", merged)
+    volumeMounts:
+      - name: writable-config
+        mountPath: '{{ .Values.config.mountPath }}'
+      - name: oidc-providers
+        mountPath: /seed/oidc-providers
+        readOnly: true
+      - name: auth-groups
+        mountPath: /seed/groups
+        readOnly: true
+      - name: ca-bundle
+        mountPath: /seed/ca
+        readOnly: true
+
+extraVolumes:
+  - name: app-catalogue
+    configMap:
+      name: '{{ include "scalo-service.fullname" . }}-app-catalogue'
+  # Pod-local: the content is materialised from the pins on every start.
+  - name: content
+    emptyDir: {}
+  - name: deploy-repo
+    emptyDir: {}
+  # Optional: a deployment on plaintext ClickHouse has no CA object, and
+  # DFE_CLICKHOUSE_CA_CERT (dfe-engine-env) is set only where it has one. The
+  # 2.2.0 chart mounted the CA from a Secret, else a ConfigMap, and tpl picks the
+  # volume type the same way.
+  - name: clickhouse-ca
+    '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':
+      '{{ if .Values.clickhouse.tls.ca.secretName }}secretName{{ else }}name{{ end }}': '{{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName | default "dfe-clickhouse-ca" }}'
+      optional: true
+      items:
+        - key: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
+          path: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
+  # The auth seed's sources: each ConfigMap authConfig names, else a small empty
+  # directory, as a list item cannot be left out.
+  - name: oidc-providers
+    '{{ if .Values.authConfig.providersConfigMap }}configMap{{ else }}emptyDir{{ end }}':
+      '{{ if .Values.authConfig.providersConfigMap }}name{{ else }}sizeLimit{{ end }}': '{{ .Values.authConfig.providersConfigMap | default "1Mi" }}'
+  - name: auth-groups
+    '{{ if .Values.authConfig.groupsConfigMap }}configMap{{ else }}emptyDir{{ end }}':
+      '{{ if .Values.authConfig.groupsConfigMap }}name{{ else }}sizeLimit{{ end }}': '{{ .Values.authConfig.groupsConfigMap | default "1Mi" }}'
+  - name: ca-bundle
+    '{{ if .Values.authConfig.caBundleConfigMap }}configMap{{ else }}emptyDir{{ end }}':
+      '{{ if .Values.authConfig.caBundleConfigMap }}name{{ else }}sizeLimit{{ end }}': '{{ .Values.authConfig.caBundleConfigMap | default "1Mi" }}'
+
+extraVolumeMounts:
+  - name: app-catalogue
+    mountPath: /etc/dfe-engine/catalogue
+    readOnly: true
+  # Read-only here, writable in the init containers that fill it.
+  - name: content
+    mountPath: '{{ .Values.content.mountPath }}'
+    readOnly: true
+  - name: deploy-repo
+    mountPath: '{{ dir .Values.gitops.localPath }}'
+  - name: clickhouse-ca
+    mountPath: /etc/dfe/clickhouse-ca
+    readOnly: true
+
+# The 2.2.0 chart's keys, read above through tpl and by dfe-extras. Keys
+# common.yaml sets (clickhouse.*) are not restated, as this file layers after it.
+content:
+  mountPath: /etc/dfe-engine/content
+  catalogueFile: sources.yaml
+  entries:
+    - name: dfe-receiver-contract
+      kind: emit
+      role: contract
+      app: dfe-receiver
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.42@sha256:6b2da2ebe3b6ab0d38b6da8ac8709228bdd9a6e5af0f5f1cc2c855053078f6ae"
+    - name: dfe-loader-contract
+      kind: emit
+      role: contract
+      app: dfe-loader
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.46@sha256:e5138a95c5714cc3cd9895f026db36ceb7908d5f58214c6f6f0bd9e9cf1b682a"
+    - name: dfe-archiver-contract
+      kind: emit
+      role: contract
+      app: dfe-archiver
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.28@sha256:7293f3601aaac634ff187c50e47ed337f38c5eaa4134c067654527fc86e47458"
+    - name: dfe-fetcher-contract
+      kind: emit
+      role: contract
+      app: dfe-fetcher
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.32@sha256:1cb24225a027aa06f9fb08289f8df4567e3202bd9c89fb789706c7d7d028bf7d"
+    - name: dfe-transform-vrl-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vrl
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.30@sha256:07455044dad76fbe7e2e305ea44d2ba071abd7f314f44f230568095c48df562e"
+    - name: dfe-transform-vector-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-vector
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.45@sha256:baa9ccb150a743c2a0cac08d0fa2172a3238f51e980dea2e6de616be215572b1"
+    - name: dfe-transform-elastic-contract
+      kind: emit
+      role: contract
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.9@sha256:60e0d6891283137d024a99434c4c4231e6271925d460247c0b78b0421151ada4"
+    - name: dfe-transform-elastic-catalogue
+      kind: emit
+      role: catalogue
+      app: dfe-transform-elastic
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.9@sha256:60e0d6891283137d024a99434c4c4231e6271925d460247c0b78b0421151ada4"
+# The env names this mount; the contract's writable path `config` mounts at /config.
+config:
+  mountPath: /config
+authConfig:
+  providersConfigMap: ""
+  groupsConfigMap: ""
+  caBundleConfigMap: ""
+gitops:
+  localPath: /var/run/dfe/deploy-repo
+  credentialsSecret: dfe-deploy-repo-auth
+auth:
+  jwtSecretName: dfe-engine-jwt
+  adminSecretName: dfe-engine-admin
+  breakglassSecretName: dfe-engine-breakglass
+huntRunner:
+  clickhouse:
+    passwordSecretName: hunt-runner-clickhouse
+kafka:
+  saslSecretName: dfe-kafka-user
+seedAuth:
+  secretName: dfe-engine-seed-accounts

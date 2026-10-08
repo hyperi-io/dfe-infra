@@ -1056,10 +1056,9 @@ apps:
     chart: helm/charts/dfe-transform-elastic
     keys:
       project:
-        to: project
-        note: >-
-          dfe-extras names the mesh route from it. The thin chart's own name is
-          fullnameOverride, see component.
+        dropped: >-
+          It named the mesh route, which dfe-extras no longer renders for this
+          bus-only app. The thin chart's own name is fullnameOverride, see component.
       component:
         to: fullnameOverride
         note: >-
@@ -1108,10 +1107,10 @@ apps:
         to: kafka.consumerProtocol
         note: KAFKA_CONSUMER_PROTOCOL on the bus profiles, through tpl.
       service.pushPort:
-        to: service.pushPort
-        note: >-
-          dfe-extras' mesh route reads it. The listener is the contract's push
-          port, 6000, open only where the config names the direct transport.
+        dropped: >-
+          It moved the push port and the mesh route's backend. The listener is the
+          contract's push port, 6000, open only where the config names the direct
+          transport, and dfe-extras renders no mesh route for this bus-only app.
       otelServiceName:
         to: otel.serviceName
         note: Empty is the fullname, as 2.2.0's dfe-<component>.
@@ -1232,15 +1231,11 @@ apps:
         to: keda.pressure.shimAddress
       keda.pressure.targetValue:
         to: keda.pressure.targetValue
-      mesh.enabled:
-        to: mesh.enabled
-        note: dfe-extras reads every mesh key for the pool route, as the 2.2.0 chart did.
-      mesh.port:
-        to: mesh.port
-      mesh.gateway:
-        to: mesh.gateway
-      mesh.routePolicy:
-        to: mesh.routePolicy
+      mesh:
+        dropped: >-
+          The 2.2.0 chart routed the mesh to a push port this bus-only app never
+          opens on the mesh profile. When apps.yaml declares its direct transport
+          (dfe-transform-elastic#19), dfe-extras' pool listener lists it again.
 
   dfe-receiver:
     chart: helm/charts/dfe-receiver
@@ -1731,3 +1726,369 @@ apps:
       waitForEngine.resources:
         to: initContainers
         note: The init container sits whole in apps/dfe-loader/values.yaml; an overlay restates the list.
+
+  # Most keys stay where they were: dfe-extras renders the hunt runner, the keda
+  # shim, the minted Secrets, the app catalogue and dfe-engine-env from them.
+  dfe-engine:
+    chart: helm/charts/dfe-engine
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names its objects from it. The thin chart's own name is
+          fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>, and dfe-extras derives the
+          component from it. The default renders dfe-engine, the chart's name.
+      env:
+        to: env
+        note: The appset's env parameter; dfe-extras writes DFE_ENV from it.
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      e2eServer:
+        to: e2eServer
+      profile:
+        to: profile
+      stackVersion:
+        to: stackVersion
+      uiVersion:
+        to: uiVersion
+        note: dfe-extras' default is the drift-checked copy of versions.yaml apps.dfe-ui.
+      tenantIsolation.enabled:
+        to: tenantIsolation.enabled
+      retention.defaultTtlDays:
+        to: retention.defaultTtlDays
+      api:
+        to: api
+      networkModel.podCIDR:
+        to: networkModel.podCIDR
+      hyperdx:
+        to: hyperdx
+      mesh.enabled:
+        to: mesh.enabled
+      mesh.gateway.namespace:
+        to: mesh.gateway.namespace
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras writes DFE_TRANSPORT_* from it and fails the render where it
+          runs another transport than the profile's. apps/dfe-engine/profile-slim.yaml
+          and profile-mesh.yaml switch the kafka secret group off.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+      kafka.securityProtocol:
+        to: kafka.securityProtocol
+      kafka.messageMaxBytes:
+        to: kafka.messageMaxBytes
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL references: set secrets.kafka.enabled to false as well.
+      kafka.provider:
+        dropped: A values.yaml leaf no engine template read.
+      clickhouse.host:
+        to: clickhouse.host
+      clickhouse.port:
+        to: clickhouse.port
+      clickhouse.database:
+        to: clickhouse.database
+      clickhouse.user:
+        to: clickhouse.user
+      clickhouse.mode:
+        to: clickhouse.mode
+      clickhouse.passwordSecretName:
+        to: clickhouse.passwordSecretName
+        note: >-
+          secrets.clickhouse.existingSecret takes it through tpl, and the keda shim
+          reads it. Empty no longer drops DFE_CLICKHOUSE_PASSWORD: set
+          secrets.clickhouse.enabled to false as well.
+      clickhouse.passwordSecretKey:
+        to: [clickhouse.passwordSecretKey, secrets.clickhouse.keys.password]
+        note: The keda shim reads the first, and the library's key names take no tpl.
+      clickhouse.tls.enabled:
+        to: clickhouse.tls.enabled
+      clickhouse.tls.port:
+        to: clickhouse.tls.port
+      clickhouse.tls.verify:
+        to: clickhouse.tls.verify
+      clickhouse.tls.issuerRef.name:
+        to: clickhouse.tls.issuerRef.name
+      clickhouse.tls.internalCA.present:
+        to: clickhouse.tls.internalCA.present
+      clickhouse.tls.ca.secretName:
+        to: clickhouse.tls.ca.secretName
+        note: >-
+          apps/dfe-engine/values.yaml mounts the CA from this Secret, else from
+          configMapName, optional on every pod; dfe-extras sets DFE_CLICKHOUSE_CA_CERT.
+      clickhouse.tls.ca.configMapName:
+        to: clickhouse.tls.ca.configMapName
+      clickhouse.tls.ca.dataKey:
+        to: clickhouse.tls.ca.dataKey
+      config.mountPath:
+        to: config.mountPath
+        note: >-
+          dfe-extras names every DFE_*_DIR under it and the auth seed copies there,
+          but the claim mounts at the contract's writable path, /config, which a
+          value cannot move. An overlay leaves it at /config.
+      config.persistence.enabled:
+        to: writablePaths.config.persistence.enabled
+        note: >-
+          false mounts an emptyDir. The singleton still replaces the pod with
+          Recreate, where 2.2.0 surged a second engine pod.
+      config.persistence.size:
+        to: writablePaths.config.persistence.size
+      config.persistence.storageClass:
+        to: writablePaths.config.persistence.storageClass
+      content.mountPath:
+        to: content.mountPath
+      content.catalogueFile:
+        to: content.catalogueFile
+      content.entries:
+        to: content.entries
+        note: >-
+          dfe-extras sets DFE_SOURCE_CATALOGUE_FILE from the roles, and each content
+          init container in apps/dfe-engine/values.yaml reads its ref by name. An
+          overlay that adds or drops an entry restates initContainers whole.
+      authConfig.providersConfigMap:
+        to: authConfig.providersConfigMap
+        note: >-
+          The auth seed mounts the named ConfigMap, else an empty directory it
+          skips. Reloader restarts the pod on a change, in place of 2.2.0's
+          lookup checksum, which read empty under Argo.
+      authConfig.groupsConfigMap:
+        to: authConfig.groupsConfigMap
+        note: The same as providersConfigMap.
+      authConfig.caBundleConfigMap:
+        to: authConfig.caBundleConfigMap
+        note: >-
+          dfe-extras sets SSL_CERT_FILE from it. The seed mounts the whole
+          ConfigMap, where 2.2.0 projected ca-bundle.pem alone.
+      gitops.enabled:
+        to: gitops.enabled
+        note: >-
+          dfe-extras drops DFE_GITOPS_* and the hunt runner's git-sync on false.
+          Set secrets.gitops.enabled to false as well; the deploy-repo emptyDir
+          stays mounted.
+      gitops.repoUrl:
+        to: gitops.repoUrl
+      gitops.branch:
+        to: gitops.branch
+      gitops.localPath:
+        to: gitops.localPath
+        note: DFE_GITOPS_LOCAL_PATH, and the deploy-repo emptyDir mounts at its directory.
+      gitops.credentialsSecret:
+        to: gitops.credentialsSecret
+        note: secrets.gitops.existingSecret takes it through tpl, and the hunt runner's git-sync reads it.
+      auth.jwtSecretName:
+        to: auth.jwtSecretName
+        note: >-
+          dfe-extras mints it, the hunt runner and keda shim read it, and
+          secrets.jwt.existingSecret takes it through tpl.
+      auth.jwtSecretKey:
+        to: [auth.jwtSecretKey, secrets.jwt.keys.secret]
+        note: dfe-extras writes the key and the thin chart reads it, and the library's key names take no tpl.
+      auth.jwtSecretCreate:
+        to: auth.jwtSecretCreate
+      auth.jwtSecret:
+        to: auth.jwtSecret
+      auth.adminSecretName:
+        to: auth.adminSecretName
+        note: >-
+          dfe-extras mints it and names it in DFE_AUTH_LOCAL_ADMIN_SECRET_NAME, and
+          secrets.admin.existingSecret takes it through tpl. Empty no longer drops
+          DFE_AUTH_LOCAL_ADMIN_PASSWORD: set secrets.admin.enabled to false as well.
+      auth.adminSecretKey:
+        to: [auth.adminSecretKey, secrets.admin.keys.password]
+        note: dfe-extras writes the key and the thin chart reads it, and the library's key names take no tpl.
+      auth.adminSecretCreate:
+        to: auth.adminSecretCreate
+      auth.adminPassword:
+        to: auth.adminPassword
+      auth.adminSecretPath:
+        to: auth.adminSecretPath
+      auth.breakglassSecretName:
+        to: auth.breakglassSecretName
+        note: >-
+          dfe-extras mints it, and secrets.breakglass.existingSecret takes it
+          through tpl. Empty no longer drops DFE_AUTH_BREAKGLASS_PASSWORD: set
+          secrets.breakglass.enabled to false as well.
+      auth.breakglassSecretKey:
+        to: [auth.breakglassSecretKey, secrets.breakglass.keys.password]
+        note: dfe-extras writes the key and the thin chart reads it, and the library's key names take no tpl.
+      auth.breakglassSecretCreate:
+        to: auth.breakglassSecretCreate
+      auth.breakglassPassword:
+        to: auth.breakglassPassword
+      auth.trustProxyHeaders:
+        to: auth.trustProxyHeaders
+      auth.proxyProvider:
+        to: auth.proxyProvider
+      auth.apiKeyDefaultTtlDays:
+        to: auth.apiKeyDefaultTtlDays
+      auth.loginThrottle:
+        to: auth.loginThrottle
+      seedAuth.secretName:
+        to: seedAuth.secretName
+        note: secrets.seed-accounts.existingSecret takes it through tpl.
+      seedAuth.seedAccounts:
+        to: seedAuth.seedAccounts
+        note: >-
+          dfe-extras renders the Secret from it. The contract's reference is
+          optional, so the variable stays unset with no accounts, as 2.2.0 left it.
+      seedAuth.adminPassword:
+        to: seedAuth.adminPassword
+      oidc.enabled:
+        to: extraEnv
+        note: >-
+          Where true, one extraEnv entry per providers[].envMappings row: the
+          variable, as a secretKeyRef on that provider's secretName and key.
+      oidc.providers:
+        to: extraEnv
+        note: The same rows as oidc.enabled; the thin chart reads no oidc block.
+      huntRunner.enabled:
+        to: huntRunner.enabled
+        note: >-
+          dfe-extras renders the hunt runner and its Secret from it. false also
+          needs secrets.hunt-runner.enabled false, or the engine pod waits on a
+          Secret nothing mints.
+      huntRunner.clickhouse.passwordSecretName:
+        to: huntRunner.clickhouse.passwordSecretName
+        note: secrets.hunt-runner.existingSecret takes it through tpl.
+      huntRunner.clickhouse.passwordSecretKey:
+        to: [huntRunner.clickhouse.passwordSecretKey, secrets.hunt-runner.keys.password]
+        note: dfe-extras writes the key and the thin chart reads it, and the library's key names take no tpl.
+      huntRunner.clickhouse.user:
+        to: huntRunner.clickhouse.user
+      huntRunner.clickhouse.password:
+        to: huntRunner.clickhouse.password
+      huntRunner.clickhouse.passwordSecretCreate:
+        to: huntRunner.clickhouse.passwordSecretCreate
+      huntRunner.poll:
+        to: huntRunner.poll
+      huntRunner.cap:
+        to: huntRunner.cap
+      huntRunner.resources:
+        to: huntRunner.resources
+      huntRunner.autoscaling:
+        to: huntRunner.autoscaling
+      huntRunner.gitSync:
+        to: huntRunner.gitSync
+      kedaShim:
+        to: kedaShim
+      waitForEngine:
+        to: waitForEngine
+        note: The hunt runner's init container, in dfe-extras.
+      otel.endpoint:
+        to: otel.endpoint
+        note: >-
+          The engine exports to it as written with otel.protocol grpc, so it
+          carries its scheme. The hunt runner and keda shim resolve it as 2.2.0 did.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      versionCheck:
+        to: versionCheck
+        note: >-
+          dfe-engine-env carries the bare VERSION_CHECK__* names 2.2.0 wrote, and
+          scalo-service adds the contract-prefixed DFE_VERSION_CHECK__* beside them.
+      image.repository:
+        to: image.repository
+        note: The engine and, through dfe-common.image, the hunt runner and keda shim.
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+        note: The engine, its content and auth-seed init containers, the hunt runner and keda shim.
+      image.public:
+        to: image.public
+        note: >-
+          The hunt runner and keda shim only. scalo-service renders the engine pod's
+          imagePullSecrets as given, so an overlay sets it empty there instead.
+      imageComponent:
+        to: imageComponent
+        note: >-
+          The hunt runner's and keda shim's image name. The engine's own image is
+          the contract's app_name, and image.repository replaces it whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        dropped: >-
+          The contract's singleton pins one replica. 2.2.0 hard-coded 1 and read it
+          only to budget the pod, which blocked node drains on scale and mesh.
+      pdb:
+        dropped: The engine is a singleton, and scalo-service budgets no singleton.
+      keda:
+        dropped: >-
+          The engine is a singleton: scalo-service fails the render on
+          keda.enabled true, and the rest drives nothing.
+      resources:
+        to: resources
+      service.type:
+        to: service.type
+      service.port:
+        dropped: The contract's http port (8000) sets the Service port, beside metrics on 9090.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+        note: >-
+          apps/dfe-engine/values.yaml lists dfe-engine-env and
+          dfe-engine-app-catalogue, and an overlay's list replaces it.
+      nodeScheduling.nodeSelector:
+        to: [nodeSelector, nodeScheduling.nodeSelector]
+        note: The engine reads the first, the hunt runner and keda shim the second.
+      nodeScheduling.tolerations:
+        to: [tolerations, nodeScheduling.tolerations]
+        note: The engine reads the first, the hunt runner and keda shim the second.
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+        note: >-
+          The engine pod only. The hunt runner and keda shim keep RuntimeDefault:
+          scalo-service merges the whole block into the engine pod, so the 2.2.0
+          key cannot sit beside it.
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: >-
+          The engine, hunt runner and keda shim containers. The content and auth
+          seed init containers carry their own block in apps/dfe-engine/values.yaml.

@@ -26,7 +26,7 @@ import functools
 import json
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -43,6 +43,7 @@ COMPONENTS = (
     "dfe-transform-vrl",
     "dfe-transform-vector",
     "dfe-transform-elastic",
+    "dfe-engine",
 )
 PROFILES = ("slim", "single", "scale", "mesh")
 CLOUDS = ("local", "aws")
@@ -202,10 +203,12 @@ class Accepted:
 
 @dataclass(frozen=True, slots=True)
 class Accepts:
-    """A component's accepted diffs: objects only the new render has, and leaf diffs."""
+    """A component's accepted diffs: objects only the new render has, objects only the
+    2.2.0 render has, and leaf diffs."""
 
     added: dict[str, str]
     diffs: tuple[Accepted, ...]
+    removed: dict[str, str] = field(default_factory=dict)
 
 
 class AcceptedError(Exception):
@@ -252,13 +255,21 @@ def accepted() -> dict[str, Accepts]:
         raise AcceptedError(f"{ACCEPTED} is not a mapping of component to its diffs")
     found = {}
     for service, body in data.items():
-        if not isinstance(body, dict) or set(body) - {"added", "diffs"}:
-            raise AcceptedError(f"{service}: takes `added` and `diffs` only")
+        if not isinstance(body, dict) or set(body) - {"added", "removed", "diffs"}:
+            raise AcceptedError(f"{service}: takes `added`, `removed` and `diffs` only")
         added = body.get("added") or {}
-        if not all(isinstance(r, str) and r.strip() for r in added.values()):
-            raise AcceptedError(f"{service}: every added object needs its reason")
+        removed = body.get("removed") or {}
+        for kind, objects in (("added", added), ("removed", removed)):
+            if not all(isinstance(r, str) and r.strip() for r in objects.values()):
+                raise AcceptedError(f"{service}: every {kind} object needs its reason")
+        # A pruned claim comes back empty, so no reason accepts one.
+        claims = sorted(o for o in removed if o.startswith("PersistentVolumeClaim/"))
+        if claims:
+            raise AcceptedError(f"{service}: a claim cannot be accepted as removed: {claims}")
         found[service] = Accepts(
-            added=dict(added), diffs=tuple(_entry(service, e) for e in body.get("diffs") or [])
+            added=dict(added),
+            diffs=tuple(_entry(service, e) for e in body.get("diffs") or []),
+            removed=dict(removed),
         )
     return found
 
@@ -267,27 +278,42 @@ def accepts(service: str) -> Accepts:
     """One component's accepted diffs, its own section after the ``*`` one."""
     none = Accepts(added={}, diffs=())
     every, own = accepted().get(EVERY, none), accepted().get(service, none)
-    return Accepts(added={**every.added, **own.added}, diffs=every.diffs + own.diffs)
+    return Accepts(
+        added={**every.added, **own.added},
+        diffs=every.diffs + own.diffs,
+        removed={**every.removed, **own.removed},
+    )
 
 
 # --------------------------------------------------------------------- identity
 
 
-def identity_problems(old: list[dict], new: list[dict], added: dict[str, str]) -> list[str]:
+def identity_problems(
+    old: list[dict],
+    new: list[dict],
+    added: dict[str, str],
+    removed: dict[str, str] | None = None,
+) -> list[str]:
     """How the new render fails to adopt every 2.2.0 object; empty is a pass.
 
     Argo adopts a live object by (kind, name), so a lost or renamed object is
     pruned and recreated, and a renamed claim comes back empty. A selector is
-    immutable. An object only the new render has must be in ``added``, and no
-    (kind, name) may render twice across the Application's two sources.
+    immutable. An object only the new render has must be in ``added``, an object
+    only the 2.2.0 render has must be in ``removed``, which Argo then prunes, and
+    no (kind, name) may render twice across the Application's two sources. A
+    claim is held whatever ``removed`` says.
     """
+    gone = set(removed or {})
     facets = weave().diff_docs(old, new)
     problems = []
-    if facets["objects"]["only_old"]:
-        problems.append(f"lost or renamed: {facets['objects']['only_old']}")
+    lost = [o for o in facets["objects"]["only_old"] if o not in gone]
+    if lost:
+        problems.append(f"lost or renamed: {lost}")
     if facets["pvcs"]["only_old"]:
         problems.append(f"claims lost or renamed: {facets['pvcs']['only_old']}")
     for key in facets["selector"]["differ"]:
+        if key in gone:
+            continue
         old_selector = facets["selector"]["old"][key]
         problems.append(f"{key} selector {old_selector} -> {facets['selector']['new'][key]}")
     unlisted = sorted(set(facets["objects"]["only_new"]) - set(added))
@@ -604,6 +630,39 @@ def unresolved_refs(old: list[dict], new: list[dict]) -> list[str]:
         for kind, name, optional, where in _refs(new)
         if not optional and (kind, name) not in provided and (kind, name) not in before
     ]
+
+
+def route_problems(docs: list[dict]) -> list[str]:
+    """Each GRPCRoute backend that names a Service port the render does not serve; empty is a pass.
+
+    The mesh trio's route comes from dfe-extras and its backend Service from the
+    thin chart, so a port the contract gates off leaves the route sending to
+    nothing, with both objects present and applied.
+    """
+    served: dict[tuple[str, str], set[object]] = {}
+    for doc in docs:
+        if doc.get("kind") == "Service":
+            meta = doc.get("metadata") or {}
+            ports = {p.get("port") for p in (doc.get("spec") or {}).get("ports") or []}
+            served[(meta.get("namespace") or NAMESPACE, meta.get("name"))] = ports
+    found = []
+    for doc in docs:
+        if doc.get("kind") != "GRPCRoute":
+            continue
+        namespace = (doc.get("metadata") or {}).get("namespace") or NAMESPACE
+        for rule in (doc.get("spec") or {}).get("rules") or []:
+            for ref in rule.get("backendRefs") or []:
+                if ref.get("group", "") != "" or ref.get("kind", "Service") != "Service":
+                    continue
+                target = (ref.get("namespace") or namespace, ref.get("name"))
+                if target not in served:
+                    found.append(f"{object_id(doc)} -> Service {target[1]}, which the render lacks")
+                elif ref.get("port") not in served[target]:
+                    found.append(
+                        f"{object_id(doc)} -> Service {target[1]} port {ref.get('port')}, "
+                        f"which it does not serve"
+                    )
+    return found
 
 
 # --------------------------------------------------------------------- exposure

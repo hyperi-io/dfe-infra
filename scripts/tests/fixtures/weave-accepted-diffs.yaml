@@ -5,6 +5,8 @@
 #
 # A section is a deploy.service, or "*" for every component.
 #   added:  objects only the new render holds, Kind/name -> reason.
+#   removed: objects only the 2.2.0 render holds, which Argo prunes, Kind/name ->
+#           reason. A PersistentVolumeClaim is refused here.
 #   diffs:  leaf differences in an object both renders hold. `object` and `path`
 #           are globs where `*` matches anything; `old` and `new`, when given,
 #           pin the value (a string with `*` is a glob), and "<absent>" is a
@@ -463,6 +465,14 @@ dfe-transform-vector:
 dfe-transform-elastic:
   added:
     Service/dfe-transform-elastic: *scalo-bus-service
+  removed:
+    Service/dfe-transform-elastic-mesh: &elastic-no-mesh >-
+      The mesh trio routed to port 6000, which the thin render opens only where the
+      instance's config names the direct transport. apps.yaml declares this app
+      bus-only until dfe-transform-elastic#19, so the engine compiles no sender to
+      the mesh alias and no config opens the port.
+    GRPCRoute/dfe-transform-elastic-mesh: *elastic-no-mesh
+    BackendTrafficPolicy/dfe-transform-elastic-mesh: *elastic-no-mesh
   diffs:
     - *scalo-checksum-config
     - *scalo-liveness-delay
@@ -774,3 +784,132 @@ dfe-loader:
       old: <absent>
       scenarios: [clickhouse-plaintext]
       reason: The empty bundle directory, which nothing reads without SSL_CERT_FILE.
+
+dfe-engine:
+  added:
+    ConfigMap/dfe-engine-env: >-
+      dfe-extras carries the env 2.2.0 wrote under conditionals, read through
+      extraEnvFrom, so a variable stays absent where 2.2.0 left it out.
+  removed:
+    PodDisruptionBudget/dfe-engine: >-
+      The contract marks the engine a singleton, and scalo-service budgets no
+      singleton. 2.2.0 rendered minAvailable 1 over the engine's one pod on scale
+      and mesh, which blocked every voluntary eviction, a node drain included.
+  diffs:
+    - object: Deployment/dfe-engine
+      path: metadata.annotations[configmap.reloader.stakater.com/reload]
+      old: <absent>
+      new: dfe-engine-env,dfe-engine-app-catalogue
+      reason: >-
+        A changed dfe-engine-env or app catalogue restarts the pod, as a changed
+        2.2.0 env or the catalogue checksum rolled it.
+    - object: Deployment/dfe-engine
+      path: spec.template.metadata.annotations[checksum/app-catalogue]
+      new: <absent>
+      reason: >-
+        Reloader restarts the pod on a change to dfe-engine-app-catalogue
+        (reload.configmaps), in place of the checksum 2.2.0 took over its own
+        copy of the template.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].envFrom
+      old: <absent>
+      reason: The pod reads dfe-engine-env, whose content the env leaves are held to.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].args
+      old: <absent>
+      new: [run]
+      reason: The contract's entrypoint args, which equal the image's own CMD ["run"].
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].env[DFE_AUTH_LOCAL_SEED_ACCOUNTS].valueFrom.secretKeyRef.*
+      old: <absent>
+      reason: >-
+        The contract's seed-accounts group is optional, so the reference leaves the
+        variable unset, as 2.2.0 did, until seedAuth.seedAccounts makes dfe-extras
+        render dfe-engine-seed-accounts.
+    - *scalo-liveness-delay
+    - *scalo-readiness-delay
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].ports[9090/TCP].name
+      old: obs
+      new: metrics
+      reason: >-
+        scalo-service names the metrics port `metrics`. Health and /metrics stay on
+        9090, and the probes resolve to the same number.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].startupProbe.periodSeconds
+      old: 10
+      new: 5
+      reason: scalo-service runs the startup probe every 5 s over the contract's budget.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].startupProbe.failureThreshold
+      old: 30
+      new: 60
+      reason: The contract's 300 s startup budget at a 5 s period, the 30 x 10 s 2.2.0 gave.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].volumeMounts[/config].name
+      old: config
+      new: writable-config
+      reason: >-
+        The config claim is the contract's writable path `config`, which
+        scalo-service mounts as writable-config at the same path.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.volumes[config].persistentVolumeClaim.claimName
+      old: dfe-engine-config
+      new: <absent>
+      reason: The same claim, under scalo-service's volume name below.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.volumes[writable-config].persistentVolumeClaim.claimName
+      old: <absent>
+      new: dfe-engine-config
+      reason: >-
+        The claim keeps its 2.2.0 name: scalo-service names it <fullname>-<path
+        name>, and the writable path is named config.
+    - *scalo-tmp-volume
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.initContainers[auth-config-seed].*
+      old: <absent>
+      reason: >-
+        The auth seed runs on every pod, because a list item cannot follow
+        authConfig. With no ConfigMap named its sources are empty directories, and
+        it copies nothing.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.volumes[*].emptyDir.sizeLimit
+      old: <absent>
+      new: 1Mi
+      reason: >-
+        The auth seed's three sources where authConfig names no ConfigMap: empty
+        directories, capped at 1Mi.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.volumes[clickhouse-ca].*.optional
+      old: <absent>
+      new: true
+      reason: >-
+        Mounted on every pod, optional, because a static volume cannot follow
+        clickhouse.tls. DFE_CLICKHOUSE_CA_CERT still follows it.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.volumes[clickhouse-ca].*
+      old: <absent>
+      scenarios: [clickhouse-plaintext]
+      reason: >-
+        The same optional volume on plaintext ClickHouse, where 2.2.0 mounted
+        none. Nothing reads it: dfe-engine-env leaves DFE_CLICKHOUSE_CA_CERT out.
+    - object: Deployment/dfe-engine
+      path: spec.template.spec.containers[main].volumeMounts[/etc/dfe/clickhouse-ca].*
+      old: <absent>
+      scenarios: [clickhouse-plaintext]
+      reason: The mount of that optional volume.
+    - object: Service/dfe-engine
+      path: spec.ports[9090/TCP].*
+      old: <absent>
+      reason: >-
+        scalo-service puts the metrics port on the Service, where 2.2.0 carried
+        the API port alone. Prometheus already scraped /metrics on the pod's 9090.
+    - object: ServiceAccount/dfe-engine
+      path: automountServiceAccountToken
+      old: <absent>
+      new: false
+      reason: >-
+        scalo-service's ServiceAccount carries no token by default. The engine runs
+        no Kubernetes client, and DFE_DEPLOYMENT_TARGET names the target it would
+        otherwise detect from the mount.
+    - *scalo-prometheus-endpoint

@@ -54,6 +54,8 @@ EXPOSURE: dict[str, dict[str, dict]] = {
     "dfe-transform-vrl": {"local": {}, "aws": {}},
     "dfe-transform-vector": {"local": {}, "aws": {}},
     "dfe-transform-elastic": {"local": {}, "aws": {}},
+    # Reachable by operators, not by the public (docs/THREAT-MODEL.md).
+    "dfe-engine": {"local": {}, "aws": {}},
 }
 INTERNET_FACING = {"dfe-receiver"}
 

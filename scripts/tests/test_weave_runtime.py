@@ -19,8 +19,9 @@ ServiceAccount, the strategy, container names, volumes, resources, scheduling,
 labels and annotations. Each difference must match an entry of
 fixtures/weave-accepted-diffs.yaml, and each entry must still match one. Beside
 that, every Secret and ConfigMap the new render names must resolve, every image
-may move its registry only, and every $(NAME) in an env value must name a variable
-declared before it.
+may move its registry only, every $(NAME) in an env value must name a variable
+declared before it, and every GRPCRoute backend must name a port its Service
+serves.
 
 Render (b) needs the scalo-service library (_weave.library).
 """
@@ -43,6 +44,7 @@ from _gate import (
     forward_references,
     image_problems,
     object_id,
+    route_problems,
     runtime_diffs,
     runtime_view,
     unaccepted,
@@ -90,6 +92,12 @@ def test_every_var_reference_names_an_earlier_variable(
 ) -> None:
     c = cell(service, profile, cloud, scenario)
     assert forward_references(c.new) == []
+
+
+@pytest.mark.parametrize(("service", "profile", "cloud"), MATRIX)
+def test_every_route_backend_port_is_served(service: str, profile: str, cloud: str) -> None:
+    """dfe-extras renders the mesh route, the thin chart the Service it sends to."""
+    assert route_problems(cell(service, profile, cloud).new) == []
 
 
 def test_mongo_password_is_declared_before_the_uri_that_expands_it() -> None:
@@ -331,3 +339,22 @@ def test_a_loader_config_file_with_a_keda_block_is_caught() -> None:
     configmap = next(d for d in c.new if object_id(d) == "ConfigMap/dfe-loader-config")
     configmap["data"]["loader.yaml"] += "keda:\n  max_replicas: 4\n"
     assert "keda" in config_file(c.new, "dfe-loader")
+
+
+def test_a_route_to_a_port_the_service_lost_is_caught() -> None:
+    """The shape of 2.2.0's elastic mesh route: the push port gated off, the route left on it."""
+    c = cell("dfe-transform-vrl", "mesh", "aws").mutable()
+    service = next(d for d in c.new if object_id(d) == "Service/dfe-transform-vrl")
+    service["spec"]["ports"] = [p for p in service["spec"]["ports"] if p["port"] != 6000]
+    assert route_problems(c.new) == [
+        "GRPCRoute/dfe-transform-vrl-mesh -> Service dfe-transform-vrl port 6000, "
+        "which it does not serve"
+    ]
+
+
+def test_a_route_to_a_service_the_render_lacks_is_caught() -> None:
+    c = cell("dfe-transform-vrl", "mesh", "aws")
+    new = [d for d in c.new if object_id(d) != "Service/dfe-transform-vrl"]
+    assert route_problems(new) == [
+        "GRPCRoute/dfe-transform-vrl-mesh -> Service dfe-transform-vrl, which the render lacks"
+    ]

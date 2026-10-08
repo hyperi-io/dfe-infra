@@ -226,20 +226,18 @@ def _leaves(node: object, path: str = "") -> set[str]:
     return {path} if path else set()
 
 
-def reads_values(chart: Path, library: Path = LIBRARY) -> set[str]:
-    """Every ``.Values`` path a chart reads: templates, helpers they include, values.yaml."""
-    defines: dict[str, str] = {}
+def _defines(library: Path) -> dict[str, str]:
+    """The library's define bodies by name."""
+    found: dict[str, str] = {}
     for tpl in sorted(library.glob("*.tpl")):
         for name, body in _blocks(tpl.read_text(encoding="utf-8")).items():
             if name:
-                defines[name] = body
-    bodies = []
-    for tpl in sorted((chart / "templates").glob("*")):
-        for name, body in _blocks(tpl.read_text(encoding="utf-8")).items():
-            if name:
-                defines[name] = body
-            else:
-                bodies.append(body)
+                found[name] = body
+    return found
+
+
+def _reached(bodies: list[str], defines: dict[str, str]) -> list[str]:
+    """The define bodies ``bodies`` include, directly or through one another."""
     queue = [n for body in bodies for n in INCLUDE.findall(body)]
     reached: set[str] = set()
     while queue:
@@ -248,8 +246,21 @@ def reads_values(chart: Path, library: Path = LIBRARY) -> set[str]:
             continue
         reached.add(name)
         queue += INCLUDE.findall(defines[name])
+    return [defines[n] for n in sorted(reached)]
+
+
+def reads_values(chart: Path, library: Path = LIBRARY) -> set[str]:
+    """Every ``.Values`` path a chart reads: templates, helpers they include, values.yaml."""
+    defines = _defines(library)
+    bodies = []
+    for tpl in sorted((chart / "templates").glob("*")):
+        for name, body in _blocks(tpl.read_text(encoding="utf-8")).items():
+            if name:
+                defines[name] = body
+            else:
+                bodies.append(body)
     found: set[str] = set()
-    for body in bodies + [defines[n] for n in sorted(reached)]:
+    for body in bodies + _reached(bodies, defines):
         found |= _body_paths(body)
     values = yaml.safe_load((chart / "values.yaml").read_text(encoding="utf-8")) or {}
     return found | _leaves(values)
@@ -321,7 +332,8 @@ def stale(read: set[str], keys: dict[str, dict]) -> list[str]:
 
 def known_targets(service: str) -> set[str]:
     """The top-level keys a ``to`` may name: what the library, the integration files,
-    the cascade, the appset's parameters and dfe-extras read for this component."""
+    the cascade, the appset's parameters and dfe-extras read for this component,
+    the dfe-common helpers dfe-extras includes among them."""
     found = set(SKELETON_KEYS)
     for path in [*sorted((APPS / service).glob("*.yaml")), APPS / "_common.yaml", COMMON]:
         if path.is_file():
@@ -334,8 +346,9 @@ def known_targets(service: str) -> set[str]:
     extras = yaml.safe_load(EXTRAS.read_text(encoding="utf-8"))
     chart_name = "dfe-hyperdx" if service == "hyperdx" else service
     found |= set(extras["extras"]["defaults"].get(chart_name) or {})
-    for tpl in sorted((EXTRAS.parent / "templates").glob("*")):
-        found |= {p.split(".")[0] for p in _body_paths(tpl.read_text(encoding="utf-8"))}
+    texts = [t.read_text(encoding="utf-8") for t in sorted((EXTRAS.parent / "templates").glob("*"))]
+    for body in texts + _reached(texts, _defines(LIBRARY)):
+        found |= {p.split(".")[0] for p in _body_paths(body)}
     return found
 
 
