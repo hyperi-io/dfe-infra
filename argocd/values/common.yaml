@@ -59,7 +59,11 @@ imagePullSecrets: []
 
 # Node scheduling -- empty by default (no constraints).
 # Override in cloud-specific values to target dedicated DFE node pools.
+# nodeSelector and tolerations are the same placement under the keys the
+# scalo-service thin charts read, so a file that sets one sets the other equal.
 nodeScheduling: {}
+nodeSelector: {}
+tolerations: []
 
 # Self-monitoring telemetry (OTel) for the WHOLE stack -- selectable destination
 # so monitoring need not depend on the data pipeline working. Every app resolves
@@ -95,7 +99,9 @@ telemetry:
 
 otel:
   # Explicit OVERRIDE of the resolved telemetry endpoint (empty -> use the
-  # telemetry.mode resolution above). Kept for per-deploy escape hatches.
+  # telemetry.mode resolution above). Kept for per-deploy escape hatches. It must
+  # carry a scheme (https://host:4317): the scalo-service thin charts export it as
+  # written, where the 2.2.0 charts add one from otel.tls to a bare host:port.
   endpoint: ""
   tls: false
   # OTLP ingest from OUTSIDE the cluster, on otel.{domain}. OFF: the stack's own
