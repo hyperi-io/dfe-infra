@@ -91,6 +91,16 @@ spec:
             # instance-memory is in MiB; the pool states GiB, so 1024x - 1.
             - {{ sub (mul (int .) 1024) 1 | quote }}
         {{- end }}
+        {{- if and $k.tags $k.runInstanceSizes }}
+        # Set only during a test run, whose account may deny every other size at
+        # RunInstances (values.yaml, runInstanceSizes).
+        - key: karpenter.k8s.aws/instance-size
+          operator: In
+          values:
+            {{- range $k.runInstanceSizes }}
+            - {{ . | quote }}
+            {{- end }}
+        {{- end }}
       {{- with $pool.taints }}
       taints:
         {{- toYaml . | nindent 8 }}

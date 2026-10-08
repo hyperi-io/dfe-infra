@@ -10,6 +10,6 @@ output "tags" {
   description = "The run's two tags, to merge into the provider's default_tags (aws), default_labels (google) or each resource's tags (azurerm). Empty when run is null, so a deployment that is not a test run carries no expiry a reaper could act on."
   value = var.run == null ? tomap({}) : tomap({
     (var.run.keys.run)    = var.run.id
-    (var.run.keys.expiry) = var.run.keys.format == "epoch" ? tostring(var.run.expires_at) : local.expiry_iso8601
+    (var.run.keys.expiry) = var.run.keys.format == "epoch-seconds" ? tostring(var.run.expires_at) : local.expiry_iso8601
   })
 }

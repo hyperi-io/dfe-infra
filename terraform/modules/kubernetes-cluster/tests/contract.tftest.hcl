@@ -68,6 +68,15 @@ mock_provider "aws" {
     }
   }
 
+  // A node group validates that its launch template id starts with lt-, so a
+  // generated random string fails the plan.
+  mock_resource "aws_launch_template" {
+    defaults = {
+      id             = "lt-0123456789abcdef0"
+      latest_version = 1
+    }
+  }
+
   // A computed nested block generates as an EMPTY list, and two contract
   // outputs read into one. Supplying them here is what makes those outputs
   // testable at all.
@@ -1303,5 +1312,80 @@ run "aws_controller_tags_reach_the_addons" {
   assert {
     condition     = jsondecode(aws_eks_addon.this["vpc-cni"].configuration_values).enableNetworkPolicy == "true"
     error_message = "adding controller_tags must not drop enableNetworkPolicy"
+  }
+}
+
+// Adding a launch template to a node group that has none replaces the group, so
+// every deployment that is not a test run must plan exactly the shape it had.
+run "aws_node_groups_carry_no_launch_template_outside_a_run" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = length(aws_launch_template.nodes) == 0
+    error_message = "no controller_tags must create no launch template"
+  }
+
+  assert {
+    condition     = length(aws_eks_node_group.this["system"].launch_template) == 0
+    error_message = "no controller_tags must leave the node group with no launch_template block"
+  }
+
+  assert {
+    condition     = aws_eks_node_group.this["system"].disk_size == 40
+    error_message = "with no launch template the node group must size its own disk from disk_gb"
+  }
+}
+
+// EKS copies no node group tag onto the instances and volumes it launches, so
+// during a test run a launch template is what carries the run's tags there.
+run "aws_run_tags_reach_node_group_instances_and_volumes" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    controller_tags = {
+      "dfe-e2e"    = "run-1"
+      "expires-at" = "2026-10-08T12:00:00Z"
+    }
+  }
+
+  assert {
+    condition     = length(aws_launch_template.nodes) == length(var.node_pools)
+    error_message = "every node pool must get its own launch template during a run"
+  }
+
+  assert {
+    condition = toset([
+      for t in aws_launch_template.nodes["system"].tag_specifications : t.resource_type
+      if t.tags["dfe-e2e"] == "run-1" && t.tags["expires-at"] == "2026-10-08T12:00:00Z"
+    ]) == toset(["instance", "volume"])
+    error_message = "the launch template must tag both the instance and its volumes with controller_tags"
+  }
+
+  assert {
+    condition     = aws_launch_template.nodes["system"].block_device_mappings[0].device_name == "/dev/xvda" && aws_launch_template.nodes["system"].block_device_mappings[0].ebs[0].volume_size == 40
+    error_message = "the launch template must size the AL2023 root device from disk_gb, since EKS refuses disk_size beside it"
+  }
+
+  assert {
+    condition     = aws_launch_template.nodes["system"].metadata_options[0].http_tokens == "required" && aws_launch_template.nodes["system"].metadata_options[0].http_put_response_hop_limit == 1
+    error_message = "run nodes must keep IMDSv2 at hop limit 1, not the launch template's EKS default of 2"
+  }
+
+  assert {
+    condition     = aws_eks_node_group.this["system"].launch_template[0].id == aws_launch_template.nodes["system"].id
+    error_message = "the node group must launch through its own pool's template"
+  }
+
+  assert {
+    condition     = aws_eks_node_group.this["system"].launch_template[0].version == tostring(aws_launch_template.nodes["system"].latest_version)
+    error_message = "the node group must follow the template's latest version"
   }
 }

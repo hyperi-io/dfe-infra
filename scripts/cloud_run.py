@@ -19,7 +19,7 @@ Both keys are configurable (`DFE_RUN_TAG_KEY`, `DFE_RUN_EXPIRY_KEY`). A run id
 follows the strictest of the three clouds -- a GCP label allows only lowercase
 letters, digits, `_` and `-`, at most 63 characters. The expiry is written as
 ISO-8601 UTC by default, the form an AWS account guardrail reads, or as epoch
-seconds (`DFE_RUN_EXPIRY_FORMAT=epoch`), which is the only form a GCP label can
+seconds (`DFE_RUN_EXPIRY_FORMAT=epoch-seconds`), which is the only form a GCP label can
 hold. Either form is READ wherever it is found.
 
 A resource is EXPIRED only when it carries a run tag, its expiry parses, and
@@ -52,8 +52,9 @@ DEFAULT_EXPIRY_KEY = "expires-at"
 RUN_KEY_ENV = "DFE_RUN_TAG_KEY"
 EXPIRY_KEY_ENV = "DFE_RUN_EXPIRY_KEY"
 
-# How an expiry is WRITTEN; both forms are always read.
-EXPIRY_FORMATS = ("iso8601", "epoch")
+# How an expiry is WRITTEN, by the names the account guardrails and their sweeper use.
+# Both forms are always read.
+EXPIRY_FORMATS = ("iso8601", "epoch-seconds")
 DEFAULT_EXPIRY_FORMAT = "iso8601"
 EXPIRY_FORMAT_ENV = "DFE_RUN_EXPIRY_FORMAT"
 _ISO_WRITE = "%Y-%m-%dT%H:%M:%SZ"
@@ -152,7 +153,7 @@ def new_run_id(now: float | None = None) -> str:
 
 def format_expiry(expires_at: int, expiry_format: str = DEFAULT_EXPIRY_FORMAT) -> str:
     """Write epoch seconds as an expiry tag value: ISO-8601 UTC, or plain digits."""
-    if expiry_format == "epoch":
+    if expiry_format == "epoch-seconds":
         return str(int(expires_at))
     if expiry_format == "iso8601":
         return datetime.fromtimestamp(int(expires_at), UTC).strftime(_ISO_WRITE)

@@ -3,11 +3,11 @@ component: karpenter
 env: local
 cloud: local
 
-# Karpenter's node shaping. EVERY field below is empty by default and filled by
-# the resolver's values overlay (sizing/<tier>.values.yaml) plus the cluster
-# facts the tofu emits, so nothing here names an instance type, a generation or
-# a size. A cloud with no Karpenter leaves `pools` empty and this chart renders
-# nothing.
+# Karpenter's node shaping. Every field below but runInstanceSizes is empty by
+# default and filled by the resolver's values overlay (sizing/<tier>.values.yaml)
+# plus the cluster facts the tofu emits, so nothing else here names an instance
+# type, a generation or a size. A cloud with no Karpenter leaves `pools` empty
+# and this chart renders nothing.
 karpenter:
 
   # The three handles the kubernetes-cluster module's `karpenter` output carries,
@@ -29,6 +29,18 @@ karpenter:
   # secret, because the provider's default_tags never reaches what Karpenter
   # launches and an account guardrail may refuse an untagged create.
   tags: {}
+
+  # The instance sizes every pool is held to while `tags` is set, which is only
+  # during a test run. A test account's permissions boundary can deny any other
+  # size at RunInstances, and families + generation never bound the size, so
+  # without this Karpenter can choose one the account refuses. Outside a run no
+  # size is bound. A deployment whose boundary allows other sizes overrides the
+  # list, and an empty list turns the bound off.
+  runInstanceSizes:
+    - medium
+    - large
+    - xlarge
+    - 2xlarge
 
   # What every EC2NodeClass inherits. A pool overrides only what its workload
   # forces -- ClickHouse and CI take the instance store, everything else does not.

@@ -1,0 +1,184 @@
+# Runs ONE guarded cloud cycle on demand: `dfe-ops cloud-cycle` against
+# terraform/environments/aws, which creates nothing unless its preflight passes
+# and tears the run down on every way out short of SIGKILL.
+# scripts/dfe_ops_cloud_guard.py documents the guard and every DFE_GUARD_*
+# variable. cloud-reaper.yml removes whatever a run that dies here leaves.
+#
+# Everything deployment-specific comes from the e2e-runner environment, never
+# from this file: the runner role, the region, the dial and the bootstrap env
+# file. A copy of this repository without that environment refuses at the first
+# step and creates nothing.
+name: Cloud cycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_length:
+        description: "How long the cycle may run before its 45m teardown margin: N, Ns, Nm, Nh or Nd, e.g. 150m. The credential lasts 4h, so run length plus margin must fit inside it."
+        required: true
+        default: "150m"
+      cycle_args:
+        description: "Arguments for dfe-ops cycle. The guard sets --from-terraform and --kubeconfig and refuses --keep, and this job adds --env-file."
+        required: true
+        default: "--mode single"
+
+permissions:
+  contents: read
+
+# Dial names collide, so one cycle at a time, and a running teardown is never cancelled by the next dispatch.
+concurrency:
+  group: cloud-cycle
+  cancel-in-progress: false
+
+# TOFU_VERSION held equal to tf-validate.yml's and HELM_VERSION to helm-lint.yml's,
+# so a run applies and installs with the tools CI checks.
+# RUNNER_SESSION_SECONDS is both the session asked for and the expiry handed to the guard.
+env:
+  TOFU_VERSION: "1.12.6"
+  HELM_VERSION: "4.2.4"
+  RUNNER_SESSION_SECONDS: "14400"
+
+jobs:
+  cycle:
+    name: one guarded cloud cycle
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
+    runs-on: ubuntu-24.04
+    # The runner role's OIDC trust names this environment, so no other job can assume it.
+    environment: e2e-runner
+    # Above the 4h credential, the longest window preflight admits, plus setup.
+    # A cancelled job gets seconds, not a teardown, so the reaper removes what it leaves.
+    timeout-minutes: 260
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Refuse unless the e2e-runner environment is configured
+        id: gate
+        env:
+          DFE_CYCLE_AWS_ROLE: ${{ vars.DFE_CYCLE_AWS_ROLE }}
+          DFE_CYCLE_AWS_REGION: ${{ vars.DFE_CYCLE_AWS_REGION }}
+          DFE_CYCLE_DIAL: ${{ vars.DFE_CYCLE_DIAL }}
+          DFE_GUARD_ROLE: ${{ vars.DFE_GUARD_ROLE }}
+          DFE_GUARD_SWEEPER: ${{ vars.DFE_GUARD_SWEEPER }}
+          DFE_GUARD_BUDGET_ACTION: ${{ vars.DFE_GUARD_BUDGET_ACTION }}
+          HAS_ENV_FILE: ${{ secrets.DFE_CYCLE_ENV_FILE != '' }}
+        run: |
+          missing=()
+          for name in DFE_CYCLE_AWS_ROLE DFE_CYCLE_AWS_REGION DFE_CYCLE_DIAL DFE_GUARD_ROLE DFE_GUARD_SWEEPER DFE_GUARD_BUDGET_ACTION; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("${name}")
+            fi
+          done
+          if [[ "${HAS_ENV_FILE:-false}" != "true" ]]; then
+            missing+=("DFE_CYCLE_ENV_FILE (secret)")
+          fi
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::cloud cycle not configured: the e2e-runner environment does not set ${missing[*]}. Nothing was created."
+            exit 1
+          fi
+          # The account is the role ARN's own, so allowed-account-ids needs no variable of its own.
+          if [[ ! "${DFE_CYCLE_AWS_ROLE}" =~ ^arn:aws[a-z-]*:iam::([0-9]{12}):role/.+$ ]]; then
+            echo "::error::DFE_CYCLE_AWS_ROLE is not an IAM role ARN. Nothing was created."
+            exit 1
+          fi
+          account="${BASH_REMATCH[1]}"
+          echo "::add-mask::${account}"
+          echo "account=${account}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The repo's Python, from .python-version, in a venv outside the checkout.
+      - name: Set up uv and the repo's Python
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/venv
+          enable-cache: false
+
+      - name: Install the pinned dependencies, hashes required
+        run: |
+          uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
+          python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # Neither file is committed: both name this deployment's account, state and secrets.
+      # The captured catalogue stands in for --live, whose Pricing API is served from outside the run's region.
+      - name: Render the dial, its sizing and the bootstrap env file
+        env:
+          DFE_CYCLE_DIAL: ${{ vars.DFE_CYCLE_DIAL }}
+          DFE_CYCLE_ENV_FILE: ${{ secrets.DFE_CYCLE_ENV_FILE }}
+          DFE_CYCLE_AWS_REGION: ${{ vars.DFE_CYCLE_AWS_REGION }}
+        run: |
+          umask 077
+          printf '%s\n' "${DFE_CYCLE_DIAL}" > "${RUNNER_TEMP}/deployment.yaml"
+          printf '%s\n' "${DFE_CYCLE_ENV_FILE}" > "${RUNNER_TEMP}/dfe-cycle.env"
+          python3 scripts/render_dial.py --dial "${RUNNER_TEMP}/deployment.yaml" --tofu
+          python3 scripts/resolve_sizing.py --dial "${RUNNER_TEMP}/deployment.yaml" \
+            --fixtures scripts/tests/fixtures/sizing --out terraform/environments/aws
+          dial_region="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["provision"]["region"])' terraform/environments/aws/dial.auto.tfvars.json)"
+          if [[ "${dial_region}" != "${DFE_CYCLE_AWS_REGION}" ]]; then
+            echo "::error::the dial's provision.region (${dial_region}) is not DFE_CYCLE_AWS_REGION (${DFE_CYCLE_AWS_REGION}): one run, one region. Nothing was created."
+            exit 1
+          fi
+
+      # Taken before the role is assumed, so this plus the session length is never
+      # later than the session's real expiry. The action publishes that expiry only
+      # beside the access key, secret and token, which this job never outputs.
+      - name: Fix the latest the runner credential can expire
+        id: session
+        run: |
+          if [[ ! "${RUNNER_SESSION_SECONDS}" =~ ^[0-9]+$ ]]; then
+            echo "::error::RUNNER_SESSION_SECONDS is not a whole number of seconds. Nothing was created."
+            exit 1
+          fi
+          started="$(date -u +%s)"
+          expires_at="$(date -u -d "@$((started + RUNNER_SESSION_SECONDS))" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "expires_at=${expires_at}" >> "$GITHUB_OUTPUT"
+
+      - name: Assume the runner role by OIDC
+        id: creds
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.DFE_CYCLE_AWS_ROLE }}
+          role-session-name: dfe-cloud-cycle-${{ github.run_id }}
+          # A first-hop web identity session may last the role's full maximum, where a chained one is held to 1h.
+          role-duration-seconds: ${{ env.RUNNER_SESSION_SECONDS }}
+          aws-region: ${{ vars.DFE_CYCLE_AWS_REGION }}
+          allowed-account-ids: ${{ steps.gate.outputs.account }}
+          mask-aws-account-id: true
+
+      - name: Run one guarded cycle
+        env:
+          RUN_LENGTH: ${{ inputs.run_length }}
+          CYCLE_ARGS: ${{ inputs.cycle_args }}
+          AWS_CREDENTIAL_EXPIRATION: ${{ steps.session.outputs.expires_at }}
+          DFE_GUARD_ROLE: ${{ vars.DFE_GUARD_ROLE }}
+          DFE_GUARD_SWEEPER: ${{ vars.DFE_GUARD_SWEEPER }}
+          DFE_GUARD_BUDGET_ACTION: ${{ vars.DFE_GUARD_BUDGET_ACTION }}
+          DFE_GUARD_PERMISSIONS_BOUNDARY: ${{ vars.DFE_GUARD_PERMISSIONS_BOUNDARY }}
+          DFE_GUARD_IAM_PATH: ${{ vars.DFE_GUARD_IAM_PATH }}
+          DFE_GUARD_S3_BUCKET_PREFIX: ${{ vars.DFE_GUARD_S3_BUCKET_PREFIX }}
+          DFE_GUARD_INSPECTOR_EXCLUSION: ${{ vars.DFE_GUARD_INSPECTOR_EXCLUSION }}
+          DFE_RUN_STATE_PREFIX: ${{ vars.DFE_RUN_STATE_PREFIX }}
+          DFE_RUN_TAG_KEY: ${{ vars.DFE_RUN_TAG_KEY }}
+          DFE_RUN_EXPIRY_KEY: ${{ vars.DFE_RUN_EXPIRY_KEY }}
+          DFE_RUN_EXPIRY_FORMAT: ${{ vars.DFE_RUN_EXPIRY_FORMAT }}
+          # The root configures the redpanda provider on every dial, and its client refuses to start without both.
+          REDPANDA_CLIENT_ID: ${{ secrets.REDPANDA_CLIENT_ID || 'unused' }}
+          REDPANDA_CLIENT_SECRET: ${{ secrets.REDPANDA_CLIENT_SECRET || 'unused' }}
+        run: |
+          read -r -a cycle_args <<< "${CYCLE_ARGS}"
+          python3 scripts/dfe-ops cloud-cycle --tf-dir terraform/environments/aws --run-length "${RUN_LENGTH}" \
+            -- "${cycle_args[@]}" --env-file "${RUNNER_TEMP}/dfe-cycle.env"
