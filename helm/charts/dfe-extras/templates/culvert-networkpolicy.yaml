@@ -86,7 +86,18 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
-    {{- with (include "dfe-common.otelEndpoint" .) }}
+    {{- $telemetry := .Values.telemetry | default dict }}
+    {{- with (include "dfe-extras.otelEndpoint" .) }}
+    {{- if and (eq (toString ($telemetry.mode | default "hyperdx")) "receiver") (not $telemetry.receiverEndpoint) }}
+    # receiver mode with no receiverEndpoint exports to the receiver's own OTLP port.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $.Values.ingest.podLabel }}
+      ports:
+        - port: {{ regexReplaceAll "^.*:([0-9]+)$" . "${1}" | int }}
+          protocol: TCP
+    {{- else }}
     - to:
         - namespaceSelector:
             matchLabels:
@@ -94,6 +105,7 @@ spec:
       ports:
         - port: {{ $.Values.networkPolicy.otelPort }}
           protocol: TCP
+    {{- end }}
     {{- end }}
     {{- with .Values.networkPolicy.extraEgress }}
     # External PKI or an OIDC issuer outside the cluster: named here because

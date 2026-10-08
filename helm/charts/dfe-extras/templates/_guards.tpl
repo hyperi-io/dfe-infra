@@ -60,6 +60,23 @@ reads as exposed.
 {{- end -}}
 
 {{/*
+dfe-extras.receiverTelemetryGuard -- the receiver's refusal of telemetry.mode
+receiver with its OTLP listener off.
+
+With no receiverEndpoint, every app in receiver mode exports to this receiver's
+OTLP port, which it binds only while config.otlp.enabled is true. The contract
+marks both OTLP ports public, so turning them on also serves them on the
+receiver's load balancer.
+*/}}
+{{- define "dfe-extras.receiverTelemetryGuard" -}}
+{{- $telemetry := .Values.telemetry | default dict -}}
+{{- $listening := eq (toString (dig "otlp" "enabled" false (.Values.config | default dict))) "true" -}}
+{{- if and (eq (toString ($telemetry.mode | default "hyperdx")) "receiver") (not $telemetry.receiverEndpoint) (not $listening) -}}
+{{- fail "dfe-receiver: telemetry.mode is \"receiver\" but config.otlp.enabled is not true, so every app exports to a port the receiver does not bind -- set config.otlp.enabled: true in the receiver's values (which also serves OTLP on the receiver's load balancer), name telemetry.receiverEndpoint, or choose another telemetry.mode" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 dfe-extras.culvertListenerGuard -- culvert's refusal of a listener list with no
 tunnel in it. local.yaml sets the receiver's list on the same key, so a culvert
 that does not restate its own would otherwise open the receiver's ports.

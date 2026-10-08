@@ -152,7 +152,7 @@ spec:
             {{- end }}
             # No DFE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
             # ensure_schema() reads the tree the engine image ships.
-            {{- with (include "dfe-common.otelEndpoint" .) }}
+            {{- with (include "dfe-extras.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
             {{- end }}

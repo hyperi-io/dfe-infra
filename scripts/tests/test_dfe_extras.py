@@ -870,6 +870,74 @@ def test_a_fullname_override_outside_the_project_fails() -> None:
         render_pair("dfe-loader", "mesh", "local", overlay={"fullnameOverride": "loader"}, old=False)
 
 
+# ------------------------------------------------------------ self-monitoring telemetry
+
+OTLP = "OTEL_EXPORTER_OTLP_ENDPOINT"
+
+
+def _extras_otlp(pair: Pair, workload: str) -> list[str]:
+    """The OTLP endpoints the one dfe-extras Deployment whose name holds ``workload`` exports to."""
+    (deployment,) = [
+        doc for (kind, name), doc in pair.extras.items() if kind == "Deployment" and workload in name
+    ]
+    env = deployment["spec"]["template"]["spec"]["containers"][0].get("env") or []
+    return [entry["value"] for entry in env if entry["name"] == OTLP]
+
+
+@pytest.mark.parametrize("workload", ["hunt-runner", "keda-shim"])
+@pytest.mark.parametrize(
+    ("infra", "want"),
+    [
+        ({"telemetry": {"mode": "receiver"}}, r"http://dfe-receiver\.[a-z0-9-]+\.svc\.cluster\.local:4317"),
+        (
+            {"telemetry": {"mode": "external", "externalEndpoint": "https://otlp.example.net:4318"}},
+            r"https://otlp\.example\.net:4318",
+        ),
+        ({"otel": {"endpoint": "collector.example.net:4317"}}, r"collector\.example\.net:4317"),
+        ({"telemetry": {"mode": "prometheus"}}, None),
+    ],
+    ids=["receiver", "external", "override-as-written", "prometheus"],
+)
+def test_the_engines_extra_workloads_export_where_the_thin_charts_do(
+    workload: str, infra: dict, want: str | None
+) -> None:
+    """apps/_common.yaml's template, which derives the receiver mode dfe-common leaves empty."""
+    got = _extras_otlp(render_pair("dfe-engine", "scale", "local", infra=infra, old=False), workload)
+    if want is None:
+        assert got == []
+    else:
+        assert len(got) == 1, got
+        assert re.fullmatch(want, got[0]), got
+
+
+def test_receiver_mode_with_the_receivers_otlp_listener_off_fails() -> None:
+    with pytest.raises(RenderError, match=re.escape("config.otlp.enabled is not true")):
+        render_pair("dfe-receiver", "scale", "aws", infra={"telemetry": {"mode": "receiver"}}, old=False)
+
+
+@pytest.mark.parametrize(
+    ("overlay", "telemetry"),
+    [
+        ({"config": {"otlp": {"enabled": True}}}, {"mode": "receiver"}),
+        (None, {"mode": "receiver", "receiverEndpoint": "otlp.example.net:4317"}),
+    ],
+    ids=["listener-on", "named-endpoint"],
+)
+def test_receiver_mode_renders_once_something_listens(overlay: dict | None, telemetry: dict) -> None:
+    pair = render_pair(
+        "dfe-receiver", "scale", "aws", overlay=overlay, infra={"telemetry": telemetry}, old=False
+    )
+    assert pair.extras
+
+
+def test_culvert_in_receiver_mode_reaches_the_receivers_otlp_port_not_the_collector() -> None:
+    pair = render_pair("culvert", "scale", "aws", infra={"telemetry": {"mode": "receiver"}}, old=False)
+    (policy,) = [doc for (kind, _), doc in pair.extras.items() if kind == "NetworkPolicy"]
+    otlp = [rule for rule in policy["spec"]["egress"] if {"port": 4317, "protocol": "TCP"} in rule.get("ports", [])]
+    receiver = {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-receiver"}}}
+    assert [rule["to"] for rule in otlp] == [[receiver]]
+
+
 # ------------------------------------------------------------ the chart itself
 
 
