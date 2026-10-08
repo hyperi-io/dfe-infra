@@ -1,0 +1,106 @@
+# dfe-hyperdx's integration values over its thin chart, layered after
+# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
+# scalo-service library reads. The keys below them are the 2.2.0 chart's own,
+# read here through tpl and by dfe-extras, which renders the generated keys and
+# the dfe-hyperdx-env ConfigMap.
+
+# The env the 2.2.0 chart wrote under conditionals, so a variable stays absent
+# where 2.2.0 left it out. Reloader restarts the pod when the ConfigMap changes.
+extraEnvFrom:
+  - configMapRef:
+      name: '{{ include "scalo-service.fullname" . }}-env'
+reload:
+  configmaps:
+    - dfe-hyperdx-env
+
+# The contract's secret groups, on the Secrets the 2.2.0 chart named.
+secrets:
+  session:
+    existingSecret: '{{ .Values.sessionSecret.name }}'
+  token-encryption:
+    existingSecret: '{{ .Values.tokenEncryption.name }}'
+  clickhouse:
+    existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
+
+extraEnv:
+  # The telemetry.mode endpoint (apps/_common.yaml), on the collector's OTLP/HTTP
+  # port, which the image exports to with no protocol set.
+  OTEL_EXPORTER_OTLP_ENDPOINT: '{{ regexReplaceAll ":4317$" (tpl .Values.telemetry.otlpEndpointTemplate .) ":4318" }}'
+  MONGO_PASSWORD:
+    valueFrom:
+      secretKeyRef:
+        name: '{{ .Values.mongodb.passwordSecretName }}'
+        key: '{{ .Values.mongodb.passwordSecretKey }}'
+  # The kubelet expands $(MONGO_PASSWORD) here because extraEnv renders in name order.
+  MONGO_URI: '{{ .Values.mongodb.uri }}'
+
+# dfe-engine owns the dashboard JSON: this init container copies it out of the
+# engine image into the directory HyperDX's provisioner reads.
+initContainers:
+  - name: dashboards
+    image: '{{ with .Values.dashboards.image.repository }}{{ . }}{{ else }}{{ $.Values.global.registry }}/dfe-engine{{ end }}:{{ .Values.dashboards.image.tag }}{{ with .Values.dashboards.image.digest }}@{{ . }}{{ end }}'
+    imagePullPolicy: '{{ .Values.dashboards.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop:
+          - ALL
+    command:
+      - python
+      - -m
+      - dfe_engine.hyperdx.dashboards
+      - --out
+      - '{{ .Values.dashboards.mountPath }}'
+    volumeMounts:
+      - name: dashboards
+        mountPath: '{{ .Values.dashboards.mountPath }}'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+extraVolumes:
+  - name: dashboards
+    emptyDir: {}
+  # Optional: a deployment on plaintext ClickHouse has no CA Secret, and
+  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one.
+  - name: clickhouse-ca
+    secret:
+      secretName: '{{ .Values.clickhouse.tls.ca.secretName | default "dfe-clickhouse-ca" }}'
+      optional: true
+      items:
+        - key: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
+          path: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
+
+extraVolumeMounts:
+  - name: dashboards
+    mountPath: '{{ .Values.dashboards.mountPath }}'
+    readOnly: true
+  - name: clickhouse-ca
+    mountPath: /etc/dfe/clickhouse-ca
+    readOnly: true
+
+# Mongo-protocol metadata store: the bundled FerretDB. An external endpoint sets
+# uri with its credentials inline and extraEnv.MONGO_PASSWORD to null.
+mongodb:
+  uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authSource=admin"
+  passwordSecretName: dfe-ferretdb-password
+  passwordSecretKey: password
+
+sessionSecret:
+  name: dfe-hyperdx-session
+tokenEncryption:
+  name: dfe-hyperdx-token-encryption
+
+dashboards:
+  mountPath: /etc/hyperdx/dashboards
+  image:
+    repository: ""     # empty -> {{ global.registry }}/dfe-engine
+    tag: "v1.22.14"     # == versions.yaml apps.dfe-engine (drift-checked)
+    # The init container runs the ENGINE image, so this is versions.yaml
+    # digests.dfe-engine (drift-checked).
+    digest: "sha256:36f4e647053f3ddb6f1997bbbb6e99aaf6dc467ae09c7282639e7d1bc4c50044"

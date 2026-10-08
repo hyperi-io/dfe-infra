@@ -15,10 +15,11 @@ Render (a), ``--which old``, is the hand-written chart under ``helm/charts`` as
 the layer 2 appset deploys it. Render (b), ``--which new``, is the thin chart the
 scalo-service library renders from the app's deployment contract, with the
 per-app integration values under ``argocd/values/apps`` layered where the appset
-layers them. Both take their value files, parameters, inline values, release
-name and namespace from the appset itself (``argocd/appsets/layer2-apps.yaml``),
-expanded by helm against the cluster facts given here, so an appset change moves
-both renders with it.
+layers them, beside ``helm/charts/dfe-extras`` as the Application's second source
+(chartName the thin chart's name). Both take their value files, parameters,
+inline values, release name and namespace from the appset itself
+(``argocd/appsets/layer2-apps.yaml``), expanded by helm against the cluster facts
+given here, so an appset change moves both renders with it.
 
 Subcommands:
   assemble     Build a thin chart from a contract and the library, by the
@@ -54,8 +55,11 @@ two layers (``infra/common.yaml`` and the instance file) are skipped as missing.
 ``--old-ref`` renders (a) from a git ref of this repo (the ``2.2.0`` tag once the
 new appset has landed), so the old appset, values and chart are read together.
 ``--apps-dir`` replaces ``argocd/values/apps`` with another directory of the
-same layout. Needs python3, PyYAML, git and helm (``--helm`` or
-``DFE_WEAVE_HELM``); jsonschema, when installed, validates the contract.
+same layout. Where the appset carries no dfe-extras source, render (b) builds one
+from the chart source: its value files, inline values and parameters, plus
+``chartName`` and ``profile``; ``--no-extras`` leaves it out. Needs python3,
+PyYAML, git and helm (``--helm`` or ``DFE_WEAVE_HELM``); jsonschema, when
+installed, validates the contract.
 """
 
 import argparse
@@ -84,6 +88,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 APPSET = Path("argocd/appsets/layer2-apps.yaml")
 VALUES_DIR = Path("argocd/values")
 APPS_DIR = VALUES_DIR / "apps"
+# The DFE-only objects beside every thin chart, the Application's second source.
+EXTRAS_PATH = "helm/charts/dfe-extras"
 # What --old-ref reads out of git: the appsets, the values and the charts.
 OLD_TREE_PATHS = ("argocd", "helm", "versions.yaml")
 
@@ -121,6 +127,11 @@ PROBE_DEFAULTS = {
     "failureThreshold": 3,
 }
 PROBES = ("startupProbe", "livenessProbe", "readinessProbe")
+# What Kubernetes gives a Deployment that names no strategy.
+DEFAULT_STRATEGY = {
+    "type": "RollingUpdate",
+    "rollingUpdate": {"maxUnavailable": "25%", "maxSurge": "25%"},
+}
 
 
 class WeaveError(Exception):
@@ -680,6 +691,8 @@ class Inputs:
         stack: The versions.yaml stack whose pins the thin chart takes.
         image_tag: The thin chart's appVersion, in place of the stack's pin.
         digest: The thin chart's image digest, in place of the stack's pin.
+        extras: Render dfe-extras beside the thin chart where the appset carries
+            no dfe-extras source.
         helm: The helm executable.
     """
 
@@ -694,6 +707,7 @@ class Inputs:
     stack: str | None = None
     image_tag: str | None = None
     digest: str | None = None
+    extras: bool = True
     helm: str = "helm"
 
 
@@ -920,12 +934,33 @@ def render_source(
         return documents(run(cmd, f"helm template {chart.name}"))
 
 
+def extras_source(sources: list[dict], chart_name: str, profile: str, infra_url: str) -> dict:
+    """The Application's dfe-extras source, or the one the reworked appset gives it.
+
+    That one is the chart source's value files, inline values and parameters, at
+    ``helm/charts/dfe-extras`` in the dfe-infra repo, plus ``chartName`` and
+    ``profile``. It names no release, so its objects carry the Application's
+    ``app.kubernetes.io/instance`` as the thin chart's do.
+    """
+    for source in sources:
+        if source.get("path") == EXTRAS_PATH:
+            return source
+    built = copy.deepcopy(next(s for s in sources if "helm" in s))
+    built.update(repoURL=infra_url, path=EXTRAS_PATH)
+    params = built["helm"].setdefault("parameters", [])
+    params.append({"name": "chartName", "value": chart_name})
+    if not any(p.get("name") == "profile" for p in params):
+        params.append({"name": "profile", "value": profile})
+    return built
+
+
 def render_app(target: Target, which: str, inputs: Inputs) -> Rendered:
     """Render (a), ``old``, or render (b), ``new``, of one app.
 
     Every helm source of the generated Application is rendered and the objects
     concatenated. For ``new`` the first helm source, the app's chart, is the thin
-    chart and the per-app integration layers are added to its value files.
+    chart, the per-app integration layers are added to every source's value
+    files, and dfe-extras is rendered beside it (``Inputs.extras``).
 
     Raises:
         WeaveError: A source cannot be rendered offline, or a render failed.
@@ -950,6 +985,16 @@ def render_app(target: Target, which: str, inputs: Inputs) -> Rendered:
         helm_sources = [s for s in sources if "helm" in s]
         if not helm_sources:
             raise WeaveError("the generated Application has no helm source")
+        thin = scope.enter_context(thin_chart(inputs)) if which == "new" else None
+        if thin is not None and inputs.extras:
+            extras = extras_source(sources, thin.name, target.profile, infra_url)
+            if extras not in helm_sources:
+                if not (tree / EXTRAS_PATH / "Chart.yaml").is_file():
+                    raise WeaveError(
+                        f"{tree} has no {EXTRAS_PATH} to render beside the thin chart "
+                        "-- pass --no-extras"
+                    )
+                helm_sources.append(extras)
         docs: list[dict] = []
         chains: list[list[dict]] = []
         release = ""
@@ -957,9 +1002,9 @@ def render_app(target: Target, which: str, inputs: Inputs) -> Rendered:
             url = source.get("repoURL", "")
             path = source.get("path", ".")
             local = layout.repos.get(url)
-            app_chart = index == 0 and which == "new"
+            app_chart = index == 0 and thin is not None
             if app_chart:
-                chart = scope.enter_context(thin_chart(inputs))
+                chart = thin
                 if url.startswith("oci://") and url.rstrip("/").rsplit("/", 1)[-1] != chart.name:
                     raise WeaveError(f"the appset pulls {url}, and the thin chart is {chart.name}")
             elif local is not None:
@@ -972,7 +1017,7 @@ def render_app(target: Target, which: str, inputs: Inputs) -> Rendered:
             root = local if local is not None else chart
             base = local / path if local is not None else chart
             raw_files = list(source["helm"].get("valueFiles") or [])
-            chain = value_chain(raw_files, layout, base, root, target, insert=app_chart)
+            chain = value_chain(raw_files, layout, base, root, target, insert=thin is not None)
             source_release = source["helm"].get("releaseName") or app["metadata"]["name"]
             release = release or source_release
             docs += render_source(
@@ -1264,6 +1309,13 @@ def _images(docs: list[dict]) -> dict:
     return {key: _main(w).get("image") for key, w in _workloads(docs).items()}
 
 
+def _strategies(docs: list[dict]) -> dict:
+    return {
+        f"Deployment/{name}": d.get("spec", {}).get("strategy") or DEFAULT_STRATEGY
+        for name, d in _named(docs, "Deployment").items()
+    }
+
+
 def diff_docs(old: list[dict], new: list[dict]) -> dict[str, dict]:
     """The gate facets of two renders of one app, by facet name.
 
@@ -1282,6 +1334,7 @@ def diff_docs(old: list[dict], new: list[dict]) -> dict[str, dict]:
         "env": _env_facet(old, new),
         "secretKeyRefs": _set_facet(_reference_lines(old), _reference_lines(new)),
         "serviceAccount": _facet(False, _service_accounts(old), _service_accounts(new)),
+        "strategy": _facet(False, _strategies(old), _strategies(new)),
         "containers": _facet(False, _containers(old), _containers(new)),
         "image": _facet(False, _images(old), _images(new)),
     }
@@ -1419,6 +1472,7 @@ def _inputs(args: argparse.Namespace) -> Inputs:
         stack=getattr(args, "stack", None),
         image_tag=getattr(args, "image_tag", None),
         digest=getattr(args, "digest", None),
+        extras=not getattr(args, "no_extras", False),
         helm=args.helm,
     )
 
@@ -1489,6 +1543,11 @@ def _add_new_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--stack", help="versions.yaml stack for the image pins (default: current)")
     parser.add_argument("--image-tag", help="thin chart appVersion (default: the stack's pin)")
     parser.add_argument("--digest", help="thin chart image digest (default: the stack's pin)")
+    parser.add_argument(
+        "--no-extras",
+        action="store_true",
+        help=f"render (b) without {EXTRAS_PATH} beside the thin chart",
+    )
 
 
 def _cmd_assemble(args: argparse.Namespace) -> int:

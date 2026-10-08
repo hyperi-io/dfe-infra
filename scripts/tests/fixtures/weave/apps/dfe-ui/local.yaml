@@ -1,8 +1,0 @@
-# argocd/values/local.yaml nodeScheduling, under the keys scalo-service reads.
-nodeSelector:
-  dfe.hyperi.io/workload: dfe
-tolerations:
-  - key: dfe.hyperi.io/workload
-    operator: Equal
-    value: dfe
-    effect: NoSchedule

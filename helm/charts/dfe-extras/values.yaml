@@ -147,7 +147,6 @@ extras:
       clickhouse:
         host: dfe-clickhouse.clickhouse.svc.cluster.local
         port: 8123
-        database: dfe
         user: ""
         passwordSecretName: ""
         passwordSecretKey: password

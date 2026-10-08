@@ -17,7 +17,7 @@ Three tiers. Assembly and the diff facets need nothing but python, against a
 library and renders built here. The value layering needs helm, and renders the
 real appset and the real 2.2.0 charts, with a stand-in thin chart that dumps the
 values it was handed. The dfe-ui and dfe-hyperdx renders need the scalo-service
-chart in DFE_WEAVE_LIBRARY and skip without it.
+library (_weave.library), with their integration values from argocd/values/apps.
 """
 
 import json
@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _weave import CONTRACTS, FIXTURES, REPO_ROOT, diff_app, helm, library, weave
+from _weave import CONTRACTS, REPO_ROOT, diff_app, helm, library, weave
 
 w = weave()
 DIGEST = "sha256:" + "ab" * 32
@@ -366,6 +366,35 @@ def test_a_missing_app_layer_is_skipped_as_the_appset_skips_it(tmp_path: Path) -
     ]
 
 
+def test_the_new_render_carries_dfe_extras_as_its_second_source(tmp_path: Path) -> None:
+    chart = _values_chart(tmp_path, "dfe-ui")
+    rendered = w.render_app(_target(), "new", _inputs(chart=chart))
+    assert len(rendered.chain) == 2
+    assert [c["file"] for c in rendered.chain[1]] == [c["file"] for c in rendered.chain[0]]
+    ids = {(d["kind"], d["metadata"]["name"]) for d in rendered.docs}
+    assert {("ExternalSecret", "dfe-ui-nextauth"), ("Password", "dfe-ui-nextauth-gen")} <= ids
+    alone = w.render_app(_target(), "new", _inputs(chart=chart, extras=False))
+    assert len(alone.chain) == 1
+    assert ("ExternalSecret", "dfe-ui-nextauth") not in {
+        (d["kind"], d["metadata"]["name"]) for d in alone.docs
+    }
+
+
+def test_the_dfe_extras_source_is_the_chart_source_with_chart_name_and_profile() -> None:
+    app = w.application(REPO_ROOT, w.APPSET, _target(service="hyperdx"), None, helm())
+    sources = app["spec"]["sources"]
+    built = w.extras_source(sources, "dfe-hyperdx", "scale", w.INFRA_REPO_URL)
+    params = {p["name"]: p["value"] for p in built["helm"]["parameters"]}
+    assert (built["repoURL"], built["path"]) == (w.INFRA_REPO_URL, "helm/charts/dfe-extras")
+    assert (params["chartName"], params["profile"]) == ("dfe-hyperdx", "scale")
+    assert built["helm"]["valueFiles"] == sources[0]["helm"]["valueFiles"]
+    # No release name: its objects carry the Application's app.kubernetes.io/instance.
+    assert "releaseName" not in built["helm"]
+    assert sources[0]["path"] == "helm/charts/hyperdx"
+    listed = [*sources, {"repoURL": w.INFRA_REPO_URL, "path": "helm/charts/dfe-extras", "helm": {}}]
+    assert w.extras_source(listed, "dfe-hyperdx", "scale", w.INFRA_REPO_URL) is listed[-1]
+
+
 def _reworked_tree(root: Path, ignore_missing: bool = True, extra_file: str | None = None) -> Path:
     """A tree whose appset already lists the app layers and pulls the chart over OCI."""
     tree = root / "tree"
@@ -425,6 +454,7 @@ def test_a_reworked_appset_is_followed_as_written(tmp_path: Path) -> None:
             repo=tree,
             appset=Path("argocd/appsets/reworked.yaml"),
             chart=_values_chart(tmp_path, "dfe-ui"),
+            extras=False,
         ),
     )
     assert [(c["file"], c["present"]) for c in rendered.chain[0]] == [
@@ -442,8 +472,20 @@ def test_an_oci_source_must_name_the_thin_chart(tmp_path: Path) -> None:
         repo=tree,
         appset=Path("argocd/appsets/reworked.yaml"),
         chart=_values_chart(tmp_path, "other"),
+        extras=False,
     )
     with pytest.raises(w.WeaveError, match="the thin chart is other"):
+        w.render_app(_target(), "new", inputs)
+
+
+def test_a_tree_without_dfe_extras_is_refused_unless_told(tmp_path: Path) -> None:
+    tree = _reworked_tree(tmp_path)
+    inputs = _inputs(
+        repo=tree,
+        appset=Path("argocd/appsets/reworked.yaml"),
+        chart=_values_chart(tmp_path, "dfe-ui"),
+    )
+    with pytest.raises(w.WeaveError, match="pass --no-extras"):
         w.render_app(_target(), "new", inputs)
 
 
@@ -461,6 +503,7 @@ def test_a_missing_value_file_fails_when_the_source_requires_it(tmp_path: Path) 
         repo=tree,
         appset=Path("argocd/appsets/reworked.yaml"),
         chart=_values_chart(tmp_path, "dfe-ui"),
+        extras=False,
     )
     with pytest.raises(w.WeaveError, match="missing and the source requires it"):
         w.render_app(_target(), "new", inputs)
@@ -473,6 +516,7 @@ def test_a_value_file_outside_its_repo_is_refused(tmp_path: Path, escape: str) -
         repo=tree,
         appset=Path("argocd/appsets/reworked.yaml"),
         chart=_values_chart(tmp_path, "dfe-ui"),
+        extras=False,
     )
     with pytest.raises(w.WeaveError, match="outside its repo"):
         w.render_app(_target(), "new", inputs)
@@ -723,7 +767,7 @@ def test_the_report_is_json_and_names_every_facet_in_the_table() -> None:
 @pytest.mark.parametrize("profile", ["slim", "single", "scale"])
 @pytest.mark.parametrize("service", ["dfe-ui", "hyperdx"])
 def test_the_thin_chart_keeps_every_object_selector_and_claim(service: str, profile: str) -> None:
-    report = diff_app(service, profile, "local", apps_dir=FIXTURES / "apps")
+    report = diff_app(service, profile, "local")
     facets = report["facets"]
     assert report["failed"] == [], {name: facets[name] for name in report["failed"]}
     assert facets["objects"]["only_old"] == []
@@ -743,7 +787,7 @@ def test_a_thin_chart_renamed_by_its_overlay_fails_the_gate(tmp_path: Path) -> N
             "fullnameOverride": "dfe-ui-renamed",
         },
     )
-    report = diff_app("dfe-ui", "slim", "local", apps_dir=FIXTURES / "apps", deploy_repo=deploy)
+    report = diff_app("dfe-ui", "slim", "local", deploy_repo=deploy)
     assert report["failed"] == ["objects", "selector"]
     assert report["facets"]["selector"]["new"]["Deployment/dfe-ui"] is None
 
@@ -765,17 +809,16 @@ def test_diff_exits_one_on_a_failed_gate(
         str(CONTRACTS / "dfe-ui.json"),
         "--library",
         str(library()),
-        "--apps-dir",
-        str(FIXTURES / "apps"),
         "--format",
         "json",
     ]
     assert w.main(base) == 0
     assert json.loads(capsys.readouterr().out)["failed"] == []
     deploy = tmp_path / "deploy"
+    # dfe-extras refuses a name outside the project, so the rename stays inside it.
     _write(
         deploy / "values" / "dfe-ui-default-values.yaml",
-        {"deploy": {"service": "dfe-ui", "instance": "default"}, "fullnameOverride": "other"},
+        {"deploy": {"service": "dfe-ui", "instance": "default"}, "fullnameOverride": "dfe-other"},
     )
     assert w.main([*base, "--deploy-repo", str(deploy)]) == 1
 

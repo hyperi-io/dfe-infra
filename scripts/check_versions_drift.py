@@ -742,6 +742,20 @@ CHECKS += [
         Path("helm/charts/hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
+    # The same init container on dfe-hyperdx's thin chart, whose integration values
+    # carry their own copy of the engine pin.
+    Check(
+        "hyperdx thin-chart dashboards init-container engine tag",
+        "apps.dfe-engine",
+        Path("argocd/values/apps/hyperdx/values.yaml"),
+        r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
+    ),
+    Check(
+        "hyperdx thin-chart dashboards init-container engine digest",
+        "digests.dfe-engine",
+        Path("argocd/values/apps/hyperdx/values.yaml"),
+        r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # The chart directory is `hyperdx` while the pin is `apps.dfe-hyperdx`, so it
     # does not fit _APP_CHARTS' name-derived path. Left unchecked it kept upstream
     # HyperDX's own appVersion, which is not a tag the fork ever publishes.

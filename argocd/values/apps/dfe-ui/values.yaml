@@ -1,0 +1,34 @@
+# dfe-ui's integration values over its thin chart, layered after apps/_common.yaml:
+# the wiring the 2.2.0 chart derived, under the keys the scalo-service library
+# reads. dfe-extras renders the NextAuth ExternalSecret from the config keys below.
+
+# @vercel/otel exports OTLP over HTTP only. A deployer's otel.endpoint must then
+# name the collector's HTTP port; scalo-service exports it with this protocol and
+# drops the two OTEL_* entries below.
+otel:
+  protocol: http/protobuf
+
+extraEnv:
+  # The telemetry.mode endpoint (apps/_common.yaml), on the collector's OTLP/HTTP port.
+  OTEL_EXPORTER_OTLP_ENDPOINT: '{{ regexReplaceAll ":4317$" (tpl .Values.telemetry.otlpEndpointTemplate .) ":4318" }}'
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  # Heap cap at 70% of the pod memory limit, read from the cgroup by Node 24 and later.
+  NODE_OPTIONS: "--max-old-space-size-percentage=70"
+  NEXT_PUBLIC_API_URL: ""
+  # NextAuth's authorize call runs in the pod, against the engine in this namespace.
+  INTERNAL_API_URL: 'http://dfe-engine.{{ .Release.Namespace }}.svc.cluster.local:8000'
+  # No domain, no URL: the app falls back to its own default when this is empty.
+  HYPERDX_URL: '{{ with .Values.domain }}https://{{ dig "hyperdx" "hyperdx" ($.Values.hostnames | default dict) }}.{{ . }}{{ end }}'
+  # Scopes the session cookie to the parent domain, so the HyperDX iframe receives it.
+  DFE_COOKIE_DOMAIN: '{{ .Values.domain }}'
+  NEXTAUTH_URL: '{{ with .Values.domain }}https://{{ dig "dfe" "dfe" ($.Values.hostnames | default dict) }}.{{ . }}{{ end }}'
+
+# The 2.2.0 chart's keys, read by dfe-extras: the Secret NextAuth signs with, and
+# the ClusterSecretStore it comes from (empty generates it in-cluster).
+config:
+  nextauthSecretName: dfe-ui-nextauth
+  secretStoreName: ""
+
+secrets:
+  nextauth:
+    existingSecret: '{{ .Values.config.nextauthSecretName }}'

@@ -36,8 +36,11 @@ issuerRef, or the edge module's internal CA), or an external server.
 
 {{/*
 hyperdx.env -- the hyperdx container's env list, as the 2.2.0 deployment wrote
-it. dfe-hyperdx-env carries its literal entries; the secret references and
-MONGO_URI, which the kubelet expands, stay in the thin chart's env.
+it less three entries: OTEL_EXPORTER_OTLP_ENDPOINT, which the thin chart's env
+sets from telemetry.mode, and CLICKHOUSE_PORT and CLICKHOUSE_DB, which HyperDX
+never reads (CLICKHOUSE_HOST carries the port). dfe-hyperdx-env carries its
+literal entries; the secret references and MONGO_URI, which the kubelet
+expands, stay in the thin chart's env.
 */}}
 {{- define "hyperdx.env" -}}
 {{- $clickhouseCa := include "hyperdx.clickhouseCa" . }}
@@ -55,10 +58,6 @@ MONGO_URI, which the kubelet expands, stay in the thin chart's env.
             # A URL: HyperDX refuses webhooks aimed at this host:port only when the value parses as one, and a bare host name registers no refusal at all.
             - name: CLICKHOUSE_HOST
               value: {{ printf "http://%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
-            - name: CLICKHOUSE_PORT
-              value: {{ .Values.clickhouse.port | quote }}
-            - name: CLICKHOUSE_DB
-              value: {{ .Values.clickhouse.database }}
             {{- if .Values.clickhouse.user }}
             - name: CLICKHOUSE_USER
               value: {{ .Values.clickhouse.user }}
@@ -103,8 +102,6 @@ MONGO_URI, which the kubelet expands, stay in the thin chart's env.
                 secretKeyRef:
                   name: {{ .Values.tokenEncryption.name }}
                   key: {{ .Values.tokenEncryption.key }}
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4318"
             {{- if .Values.dashboards.enabled }}
             # Setting the directory is what starts the provisioner: entry.prod.sh
             # launches the provision-dashboards task only when it is present.

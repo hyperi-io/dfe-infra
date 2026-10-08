@@ -24,18 +24,21 @@ chartName set. The gate:
 - dfe-extras renders the objects the 2.2.0 DFE_ONLY_TEMPLATES render, byte for
   byte once parsed, plus the <fullname>-env ConfigMap for a component whose env
   the thin chart reads through envFrom, holding the 2.2.0 container's literal env
+  less the names the component's own integration values set in extraEnv and the
+  drops fixtures/weave-accepted-diffs.yaml accepts
 - every other 2.2.0 object carries a name the thin chart renders (THIN_SUFFIXES),
   and no dfe-extras object does, so nothing is lost or rendered twice
 
 Which objects are DFE-only is a fact about the 2.2.0 template that rendered
 them, not their name, so each 2.2.0 object keeps its `# Source:` template here.
-The dfe-ui and dfe-hyperdx thin-chart cases need DFE_WEAVE_LIBRARY and skip
-without it.
+The dfe-ui and dfe-hyperdx thin-chart cases need the scalo-service library
+(_weave.library).
 """
 
 import copy
 import importlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -48,11 +51,13 @@ from types import ModuleType
 import pytest
 import yaml
 
+from _gate import ABSENT, accepts
 from _weave import REPO_ROOT, helm, render_app, weave
 
 EXTRAS_PATH = "helm/charts/dfe-extras"
 EXTRAS = REPO_ROOT / EXTRAS_PATH
 VALUES = REPO_ROOT / "argocd" / "values"
+APPS = VALUES / "apps"
 
 # Every component the layer 2 appsets deploy, by deploy.service.
 COMPONENTS = (
@@ -230,19 +235,6 @@ def _template(source: dict, chart: Path, release: str, namespace: str, chain: li
     return out.stdout
 
 
-def _extras_source(sources: list[dict], service: str) -> dict:
-    """The Application's dfe-extras source, or its chart source re-pointed there."""
-    for source in sources:
-        if source.get("path") == EXTRAS_PATH:
-            return source
-    extras = copy.deepcopy(next(s for s in sources if "helm" in s))
-    extras["path"] = EXTRAS_PATH
-    extras["helm"].setdefault("parameters", []).append(
-        {"name": "chartName", "value": chart_name(service)}
-    )
-    return extras
-
-
 @contextmanager
 def deploy_repo(service: str, overlay: dict | None, infra: dict | None) -> Iterator[Path | None]:
     """A deploy repo with the instance values and infra/common.yaml, or None for neither."""
@@ -312,7 +304,9 @@ def render_pair(
             apps_dir=None,
         )
         namespace = spec.get("destination", {}).get("namespace") or target.namespace
-        renders = [(_extras_source(sources, service), True)] if extras else []
+        infra_url = annotations[f"{w.ANNOTATION}repo_url"]
+        source = w.extras_source(sources, chart_name(service), profile, infra_url)
+        renders = [(source, True)] if extras else []
         if old:
             chart = next(s for s in sources if "helm" in s and s.get("path") != EXTRAS_PATH)
             renders.append((chart, False))
@@ -352,6 +346,22 @@ def literal_env(container: dict) -> dict[str, str]:
     return found
 
 
+def env_left_out(service: str) -> set[str]:
+    """2.2.0 env names a <fullname>-env ConfigMap leaves out.
+
+    The component's own integration values set them in extraEnv, or
+    fixtures/weave-accepted-diffs.yaml accepts their drop.
+    """
+    names: set[str] = set()
+    for path in sorted((APPS / service).glob("*.yaml")):
+        names |= set((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("extraEnv") or {})
+    for entry in accepts(service).diffs:
+        dropped = re.fullmatch(r".*\.env\[(\w+)\]", entry.path)
+        if dropped and entry.pins_new and entry.new == ABSENT:
+            names.add(dropped.group(1))
+    return names
+
+
 def first_difference(old: object, new: object, path: str = "") -> str:
     """The first path where two parsed objects differ, for a failure message."""
     if isinstance(old, dict) and isinstance(new, dict):
@@ -376,12 +386,13 @@ def gate(pair: Pair) -> list[str]:
     if name in ENV_CONFIGMAP:
         env = got.pop(("ConfigMap", f"{fullname}-env"), None)
         container = workload["spec"]["template"]["spec"]["containers"][0]
+        left_out = env_left_out(pair.service)
+        wanted = {k: v for k, v in literal_env(container).items() if k not in left_out}
         if env is None:
             problems.append(f"no ConfigMap {fullname}-env")
-        elif (env.get("data") or {}) != literal_env(container):
+        elif (env.get("data") or {}) != wanted:
             problems.append(
-                f"{fullname}-env "
-                + first_difference(literal_env(container), env.get("data") or {}, ".data")
+                f"{fullname}-env " + first_difference(wanted, env.get("data") or {}, ".data")
             )
     missing = sorted(set(want) - set(got))
     added = sorted(set(got) - set(want))
@@ -751,7 +762,7 @@ def test_the_app_catalogue_is_the_manifest_at_the_repo_root() -> None:
 @pytest.mark.parametrize("profile", PROFILES)
 def test_no_object_is_rendered_by_both_charts(service: str, profile: str) -> None:
     """The thin chart assembled from the committed contract, beside dfe-extras."""
-    thin = render_app(service, profile, "aws", "new")
+    thin = render_app(service, profile, "aws", "new", extras=False)
     extras = render_pair(service, profile, "aws", old=False).extras
     both = {(d.get("kind"), d["metadata"]["name"]) for d in thin} & set(extras)
     assert both == set()

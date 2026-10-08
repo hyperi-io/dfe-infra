@@ -1,0 +1,366 @@
+# Where each .Values key a 2.2.0 app chart reads goes once the app runs on its
+# thin chart: the key that carries a deploy repo's overlay value for the thin
+# chart, its integration values (argocd/values/apps) and dfe-extras, or why
+# nothing reads it any more. scripts/tests/test_weave_value_map.py fails on a key
+# the chart reads that this file does not hold, and the dfe-ops upgrade
+# migration stage rewrites stored overlays from it.
+#
+#   apps.<deploy.service>:
+#     chart: the 2.2.0 chart directory
+#     keys:
+#       <2.2.0 path>:
+#         to: <path>, or a list of paths   the key or keys that carry the value
+#                                          now; the same path where it is kept
+#         dropped: <reason>                nothing reads it after the switch
+#         note: <text>                     what a deployer has to know
+#
+# An entry covers the keys beneath it. The 2.2.0 charts read every moved key
+# through `default`, so an empty or null value there meant "derive it": the
+# migration moves a set value only.
+
+apps:
+  dfe-ui:
+    chart: helm/charts/dfe-ui
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names the NextAuth store key <project>/<env>/ui/nextauth from
+          it. The thin chart's own name is fullnameOverride, see component.
+          INTERNAL_API_URL names dfe-engine, the engine chart's name, so a
+          deployment that renamed the engine sets extraEnv.INTERNAL_API_URL.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>. The default renders dfe-ui,
+          the chart's name, so only a renamed instance sets it.
+      env:
+        to: env
+        note: The appset's env parameter; apps/_common.yaml labels from it and dfe-extras keys the NextAuth store by it.
+      cloud:
+        to: cloud
+        note: apps/_common.yaml labels from it, else from the cloud file's global.cloud.
+      domain:
+        to: domain
+      global.registry:
+        to: global.registry
+      hostnames.dfe:
+        to: hostnames.dfe
+      hostnames.hyperdx:
+        to: hostnames.hyperdx
+      config.hostname:
+        to: hostnames.dfe
+        note: The label NEXTAUTH_URL derives from. In dfe-ui's own overlay it reaches no other chart.
+      config.hyperdxHostname:
+        to: hostnames.hyperdx
+        note: The label HYPERDX_URL derives from. In dfe-ui's own overlay it reaches no other chart.
+      config.hyperdxUrl:
+        to: extraEnv.HYPERDX_URL
+      config.internalApiUrl:
+        to: extraEnv.INTERNAL_API_URL
+      config.nextPublicApiUrl:
+        to: extraEnv.NEXT_PUBLIC_API_URL
+      config.nextauthUrl:
+        to: extraEnv.NEXTAUTH_URL
+      config.cookieDomain:
+        to: extraEnv.DFE_COOKIE_DOMAIN
+      config.nodeOptions:
+        to: extraEnv.NODE_OPTIONS
+      config.nextauthSecretName:
+        to: config.nextauthSecretName
+        note: >-
+          dfe-extras names the NextAuth ExternalSecret from it, and
+          secrets.nextauth.existingSecret takes it through tpl. Empty no longer
+          drops NEXTAUTH_SECRET: next-auth refuses to start without one either way.
+      config.secretStoreName:
+        to: config.secretStoreName
+        note: dfe-extras reads it; empty generates the secret in-cluster.
+      otel.endpoint:
+        to: otel.endpoint
+        note: >-
+          Exported as written with otel.protocol http/protobuf, so it carries its
+          scheme and names the collector's OTLP/HTTP port. 2.2.0 added the scheme
+          and moved 4317 to 4318.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (3000) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      metricsPort:
+        dropped: The contract's metrics_port (3000) is the scrape port.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name. scalo-service names the image after the
+          contract's app_name, and image.repository replaces it whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      service.type:
+        to: service.type
+      service.port:
+        dropped: The contract's metrics_port (3000) sets the Service port.
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: Merged over the contract's security block, under the same field names.
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      keda.enabled:
+        to: keda.enabled
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure:
+        dropped: >-
+          dfe-common's ScalingPressure trigger, which dfe-ui never turned on: it
+          scales on CPU.
+
+  hyperdx:
+    chart: helm/charts/hyperdx
+    keys:
+      project:
+        to: project
+        note: >-
+          dfe-extras names dfe-hyperdx-env from it. The thin chart's own name is
+          fullnameOverride, see component.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>. The default renders
+          dfe-hyperdx, the chart's name, so only a renamed instance sets it.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      domain:
+        to: domain
+      global.registry:
+        to: global.registry
+        note: The image now follows it; 2.2.0 hard-coded ghcr.io for this image alone.
+      hostnames.dfe:
+        to: hostnames.dfe
+      hostnames.hyperdx:
+        to: hostnames.hyperdx
+      hyperdxHostname:
+        to: hyperdxHostname
+        note: dfe-extras derives FRONTEND_URL from it.
+      dfeHostname:
+        to: dfeHostname
+        note: dfe-extras derives NEXT_PUBLIC_DFE_UI_BASE_URL from it.
+      frontendUrl:
+        to: frontendUrl
+      dfeUiBaseUrl:
+        to: dfeUiBaseUrl
+      usageStats.enabled:
+        to: usageStats.enabled
+      localAuthPages.enabled:
+        to: localAuthPages.enabled
+      dfeAuth:
+        to: dfeAuth
+        note: Every key beneath it is read by dfe-extras for dfe-hyperdx-env.
+      clickhouse.host:
+        to: clickhouse.host
+      clickhouse.port:
+        to: clickhouse.port
+      clickhouse.user:
+        to: clickhouse.user
+      clickhouse.mode:
+        to: clickhouse.mode
+      clickhouse.database:
+        dropped: >-
+          It fed CLICKHOUSE_DB, which HyperDX never reads
+          (packages/api/src/config.ts reads CLICKHOUSE_HOST, _USER and _PASSWORD).
+      clickhouse.passwordSecretName:
+        to: clickhouse.passwordSecretName
+        note: >-
+          secrets.clickhouse.existingSecret takes it through tpl. The reference
+          is optional now, so empty leaves CLICKHOUSE_PASSWORD unresolved where
+          2.2.0 left it out.
+      clickhouse.passwordSecretKey:
+        to: secrets.clickhouse.keys.password
+      clickhouse.tls.enabled:
+        to: clickhouse.tls.enabled
+      clickhouse.tls.issuerRef.name:
+        to: clickhouse.tls.issuerRef.name
+      clickhouse.tls.internalCA.present:
+        to: clickhouse.tls.internalCA.present
+      clickhouse.tls.ca.secretName:
+        to: clickhouse.tls.ca.secretName
+      clickhouse.tls.ca.dataKey:
+        to: clickhouse.tls.ca.dataKey
+      clickhouse.tls.ca.configMapName:
+        to: clickhouse.tls.ca.configMapName
+        note: >-
+          dfe-extras still sets NODE_EXTRA_CA_CERTS from it, but the thin chart
+          mounts the Secret form of the CA only. A ConfigMap bundle needs the
+          overlay to restate extraVolumes with a configMap volume of that name.
+      mongodb.uri:
+        to: mongodb.uri
+      mongodb.passwordSecretName:
+        to: mongodb.passwordSecretName
+        note: >-
+          Empty no longer drops MONGO_PASSWORD: an external endpoint with inline
+          credentials sets extraEnv.MONGO_PASSWORD to null as well.
+      mongodb.passwordSecretKey:
+        to: mongodb.passwordSecretKey
+      sessionSecret.name:
+        to: sessionSecret.name
+        note: dfe-extras names the ExternalSecret from it, and secrets.session.existingSecret takes it through tpl.
+      sessionSecret.key:
+        to: [sessionSecret.key, secrets.session.keys.secret]
+        note: dfe-extras writes the key and the thin chart reads it, and the library's key names take no tpl.
+      sessionSecret.create:
+        to: sessionSecret.create
+      tokenEncryption.name:
+        to: tokenEncryption.name
+      tokenEncryption.key:
+        to: [tokenEncryption.key, secrets.token-encryption.keys.key]
+        note: dfe-extras writes the key and the thin chart reads it, and the library's key names take no tpl.
+      tokenEncryption.create:
+        to: tokenEncryption.create
+      defaultConnections:
+        dropped: >-
+          Nothing writes dfe-hyperdx-connections, and dfe-engine retired the
+          DEFAULT_CONNECTIONS blob for per-team connections
+          (src/dfe_engine/api/v1/hyperdx.py).
+      dashboards.enabled:
+        to: dashboards.enabled
+        note: >-
+          false drops the provisioner env. The init container and its volume sit
+          in apps/hyperdx/values.yaml, so an overlay sets initContainers to [] as well.
+      dashboards.mountPath:
+        to: dashboards.mountPath
+      dashboards.allTeams:
+        to: dashboards.allTeams
+      dashboards.requireRefs:
+        to: dashboards.requireRefs
+      dashboards.image.repository:
+        to: dashboards.image.repository
+      dashboards.image.tag:
+        to: dashboards.image.tag
+      dashboards.image.digest:
+        to: dashboards.image.digest
+      dashboards.image.pullPolicy:
+        to: dashboards.image.pullPolicy
+      dashboards.resources:
+        to: initContainers
+        note: The init container sits whole in apps/hyperdx/values.yaml; an overlay restates the list.
+      otlp:
+        dropped: OTLP ports 4317 and 4318 are dropped. The fork image runs no OTLP receiver.
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+        note: apps/hyperdx/values.yaml lists dfe-hyperdx-env, and an overlay's list replaces it.
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name. scalo-service names the image after the
+          contract's app_name, and image.repository replaces it whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      service.type:
+        to: service.type
+      service.port:
+        dropped: The contract's port http (8080) sets the Service port.
+      service.apiPort:
+        dropped: The contract's metrics_port (8000) sets the Service port.
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: >-
+          The app container only. The dashboards init container's securityContext
+          sits in apps/hyperdx/values.yaml.
