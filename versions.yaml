@@ -2449,7 +2449,7 @@ stacks:
       # renovate: datasource=github-releases depName=argoproj/argo-cd
       argocd-cli: "v3.5.3"               # 2026-09-14. Matches the Argo CD that bootstrap.argocd installs.
       # renovate: datasource=github-releases depName=opentofu/opentofu
-      tofu: "1.12.7"                     # 2026-10-01, fixes CVE-2026-78662 and CVE-2026-56855.
+      tofu: "1.13.1"                     # 2026-10-01, fixes CVE-2026-78662 and CVE-2026-56855.
       # renovate: datasource=github-releases depName=mikefarah/yq
       yq: "v4.54.1"                      # 2026-09-29. mikefarah/yq, not Debian's python3-yq.
       # renovate: datasource=github-tags depName=aws/aws-cli
