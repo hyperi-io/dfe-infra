@@ -26,12 +26,11 @@ a CA-only copy, through a ClusterSecretStore scoped to the namespaces it serves.
 Needs `helm` on PATH. Runs under pytest too, which is how CI reaches it.
 """
 
-from __future__ import annotations
-
 import functools
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 import yaml
@@ -360,6 +359,23 @@ def test_hyperdx_adds_the_ca_to_node_and_rolls_on_a_new_one() -> None:
         annotations = one(docs, "Deployment", "dfe-hyperdx")["metadata"].get("annotations") or {}
         expect(f"{tier} and Reloader restarts it when that Secret changes",
                annotations.get("reloader.stakater.com/auto") == "true", f"got {annotations}")
+
+
+def test_hyperdx_names_the_clickhouse_host_as_a_url() -> None:
+    """HyperDX refuses a webhook aimed at CLICKHOUSE_HOST's host:port only when the
+    value parses as a URL. A bare host name registers no refusal at all."""
+    port = COMMON["clickhouse"]["port"]
+    for tier in TIERS:
+        pod = pods(render("hyperdx", *cascade(tier))).get("dfe-hyperdx")
+        if pod is None:
+            expect(f"{tier} renders hyperdx", False, "")
+            continue
+        value = env_of(pod["containers"][0]).get("CLICKHOUSE_HOST", "")
+        url = urllib.parse.urlsplit(value)
+        host = dialled_host(tier)
+        expect(f"{tier} hyperdx CLICKHOUSE_HOST is http://{host}:{port}",
+               url.scheme == "http" and url.hostname == host and url.port == port,
+               f"got {value!r}")
 
 
 def test_app_egress_reaches_the_tls_ports() -> None:

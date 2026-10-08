@@ -75,8 +75,9 @@ spec:
             # Deployers who WANT to support upstream can set usageStats.enabled: true.
             - name: USAGE_STATS_ENABLED
               value: {{ .Values.usageStats.enabled | default false | quote }}
+            # A URL: HyperDX refuses webhooks aimed at this host:port only when the value parses as one, and a bare host name registers no refusal at all.
             - name: CLICKHOUSE_HOST
-              value: {{ .Values.clickhouse.host }}
+              value: {{ printf "http://%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
             - name: CLICKHOUSE_PORT
               value: {{ .Values.clickhouse.port | quote }}
             - name: CLICKHOUSE_DB
