@@ -334,7 +334,7 @@
     {
       "name": "geoip",
       "path": "/var/lib/dfe/geoip",
-      "size": "1Gi",
+      "size_limit": "1Gi",
       "when": {
         "kind": "equals",
         "path": "config.geoip.enabled",

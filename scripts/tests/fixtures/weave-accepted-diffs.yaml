@@ -509,6 +509,20 @@ dfe-transform-elastic:
         transport. apps.yaml declares this app bus-only, so no source sends it
         that config, where 2.2.0 published the port on every direct profile.
     - *scalo-push-service-metrics
+    - object: Deployment/dfe-transform-elastic*
+      path: spec.template.spec.volumes[writable-geoip].emptyDir.sizeLimit
+      old: <absent>
+      new: 512Mi
+      reason: &elastic-geoip >-
+        The GeoIP downloader writes /var/lib/dfe/geoip under a read-only root
+        filesystem. 2.2.0 mounted nothing there, so every download failed with
+        one warning and enrichment stayed empty. The app's own chart mounts the
+        same 512Mi emptyDir.
+    - object: Deployment/dfe-transform-elastic*
+      path: spec.template.spec.containers[main].volumeMounts[/var/lib/dfe/geoip].name
+      old: <absent>
+      new: writable-geoip
+      reason: *elastic-geoip
 
 dfe-receiver:
   added:

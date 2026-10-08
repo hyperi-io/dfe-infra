@@ -65,7 +65,13 @@
       "enabled": false
     }
   },
-  "writable_paths": [],
+  "writable_paths": [
+    {
+      "name": "geoip",
+      "path": "/var/lib/dfe/geoip",
+      "size_limit": "512Mi"
+    }
+  ],
   "termination_grace_seconds": 45,
   "resources": {
     "requests": {
