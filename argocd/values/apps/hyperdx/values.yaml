@@ -66,11 +66,13 @@ initContainers:
 extraVolumes:
   - name: dashboards
     emptyDir: {}
-  # Optional: a deployment on plaintext ClickHouse has no CA Secret, and
-  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one.
+  # Optional: a deployment on plaintext ClickHouse has no CA object, and
+  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one. The 2.2.0
+  # chart mounted the CA from a Secret, else a ConfigMap, and tpl picks the volume
+  # type the same way.
   - name: clickhouse-ca
-    secret:
-      secretName: '{{ .Values.clickhouse.tls.ca.secretName | default "dfe-clickhouse-ca" }}'
+    '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':
+      '{{ if .Values.clickhouse.tls.ca.secretName }}secretName{{ else }}name{{ end }}': '{{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName | default "dfe-clickhouse-ca" }}'
       optional: true
       items:
         - key: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'

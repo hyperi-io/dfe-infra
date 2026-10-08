@@ -235,12 +235,24 @@ hyperdx:
       new: <absent>
       reason: OTLP ports 4317 and 4318 are dropped. The fork image runs no OTLP receiver.
     - object: Deployment/dfe-hyperdx
-      path: spec.template.spec.volumes[clickhouse-ca].secret.optional
+      path: spec.template.spec.volumes[clickhouse-ca].*.optional
       old: <absent>
       new: true
       reason: >-
         Mounted on every pod, optional, because a static volume cannot follow
         clickhouse.tls. NODE_EXTRA_CA_CERTS still follows it.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.volumes[clickhouse-ca].*
+      old: <absent>
+      scenarios: [clickhouse-plaintext]
+      reason: >-
+        The same optional volume on plaintext ClickHouse, where 2.2.0 mounted
+        none. Nothing reads it: dfe-hyperdx-env leaves NODE_EXTRA_CA_CERTS out.
+    - object: Deployment/dfe-hyperdx
+      path: spec.template.spec.containers[main].volumeMounts[/etc/dfe/clickhouse-ca].*
+      old: <absent>
+      scenarios: [clickhouse-plaintext]
+      reason: The mount of that optional volume.
 
 dfe-archiver:
   diffs:
@@ -487,3 +499,278 @@ dfe-transform-elastic:
         transport. apps.yaml declares this app bus-only, so no source sends it
         that config, where 2.2.0 published the port on every direct profile.
     - *scalo-push-service-metrics
+
+dfe-receiver:
+  added:
+    ConfigMap/dfe-receiver-env: >-
+      dfe-extras carries the env 2.2.0 wrote under conditionals, read through
+      extraEnvFrom, so a variable stays absent where 2.2.0 left it out.
+  diffs:
+    - object: Deployment/dfe-receiver
+      path: metadata.annotations[configmap.reloader.stakater.com/reload]
+      old: <absent>
+      new: dfe-receiver-env
+      reason: A changed dfe-receiver-env restarts the pod, as a changed 2.2.0 env did by rolling it.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].envFrom
+      old: <absent>
+      reason: The pod reads dfe-receiver-env, whose content the env leaves are held to.
+    - object: Deployment/dfe-receiver
+      path: spec.template.metadata.annotations[checksum/config]
+      reason: >-
+        2.2.0 hashed its whole ConfigMap template, scalo-service hashes the config
+        file. Either rolls the pod on a config change; the file itself is compared
+        as ConfigMap/dfe-receiver-config.
+    - object: ConfigMap/dfe-receiver-config
+      path: data[config.yaml]
+      old: |
+        buffer:
+          memory_limit: 0
+        destinations:
+          default: loader
+        grpc:
+          bind_address: 0.0.0.0:6000
+          enabled: true
+        loader:
+          grpc_endpoint: http://dfe-loader.dfe.svc.cluster.local:6000
+          transport: grpc
+      new: |
+        buffer:
+          memory_limit: 0
+        destinations:
+          default: loader
+        grpc:
+          bind_address: 0.0.0.0:6000
+          enabled: true
+        loader:
+          grpc_endpoint: http://dfe-loader:6000
+          transport: grpc
+      reason: >-
+        The loader's short Service name, which resolves in whatever namespace the
+        pair is deployed to. The config value takes no tpl, so the namespace the
+        2.2.0 chart spelled out cannot be derived.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].env[DFE_RECEIVER_BIND_ADDRESS]
+      old: 0.0.0.0:8080
+      new: <absent>
+      reason: >-
+        The app's own default bind address. The contract fixes the http port at
+        8080, so a listener list can no longer move it.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].env[DFE_RECEIVER_BEARER_TOKENS].valueFrom.secretKeyRef.*
+      old: <absent>
+      reason: >-
+        The contract's auth group, optional: bearer tokens reach the app from
+        dfe-receiver-auth when a deployment creates it, and no Secret means no
+        tokens, as 2.2.0 had.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].env[OTEL_EXPORTER_OTLP_ENDPOINT]
+      old: <absent>
+      new: ""
+      scenarios: [prometheus]
+      reason: Prometheus mode renders the endpoint empty, which the stack reads as "export nothing".
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].*Probe.httpGet.port
+      old: 8080
+      new: 9090
+      reason: >-
+        The contract probes the metrics port, where the scalo runtime serves
+        /livez and /readyz with the pipeline's readiness check. The http listener
+        answers the same (dfe-receiver src/server/http/mod.rs).
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].*Probe.initialDelaySeconds
+      new: 0
+      reason: The startup probe holds liveness and readiness back until the app answers.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].startupProbe.*
+      old: <absent>
+      reason: >-
+        A startup probe on /livez over the contract's 60 s budget, which every
+        DFE pipeline chart lacked.
+    - object: "*/dfe-receiver"
+      path: "*ports[8443/TCP].*"
+      new: <absent>
+      reason: >-
+        Nothing in dfe-receiver binds 8443. Its OTLP/gRPC listener is 4317, which
+        the contract opens while config.otlp.enabled is true.
+    - object: "*/dfe-receiver"
+      path: "*ports[6000/TCP].name"
+      old: pushgrpc
+      new: grpc
+      reason: The contract's name for the PushEvents port. Producers dial it by number.
+    - object: Service/dfe-receiver
+      path: spec.ports[6000/TCP].appProtocol
+      old: <absent>
+      new: kubernetes.io/h2c
+      reason: >-
+        The contract declares the PushEvents port cleartext HTTP/2, which local.yaml's
+        listener list left off when it restated the list.
+    - object: NetworkPolicy/dfe-receiver-ingest
+      path: spec.ingress
+      old:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: dfe-culvert
+          ports:
+            - { port: 8080, protocol: TCP }
+            - { port: 8443, protocol: TCP }
+      new:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: dfe-culvert
+          ports:
+            - { port: 8080, protocol: TCP }
+      reason: The tunnel no longer reaches 8443, which nothing in the receiver binds.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.volumes[tmp].emptyDir
+      old: {}
+      new: <absent>
+      reason: The /tmp emptyDir is scalo-service's writable-tmp now.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].volumeMounts[/var/spool/dfe-receiver].name
+      old: spool
+      new: writable-spool
+      reason: >-
+        The spool is the contract's spool writable path, mounted while
+        config.buffer.spillover.enabled is true; scalo-service names its volume
+        writable-spool.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.volumes[spool].emptyDir.sizeLimit
+      old: 20Gi
+      new: <absent>
+      reason: The same node-local spool, under its new volume name.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.volumes[writable-spool].emptyDir.sizeLimit
+      old: <absent>
+      new: 20Gi
+      reason: The same node-local spool and cap, under its new volume name.
+
+dfe-loader:
+  added:
+    ConfigMap/dfe-loader-env: >-
+      dfe-extras carries the env 2.2.0 wrote under conditionals, read through
+      extraEnvFrom, so a variable stays absent where 2.2.0 left it out, and keeps
+      2.2.0's refusals of a ClickHouse TLS setup the loader cannot dial.
+  diffs:
+    - object: Deployment/dfe-loader
+      path: metadata.annotations[configmap.reloader.stakater.com/reload]
+      old: <absent>
+      new: dfe-loader-env
+      reason: A changed dfe-loader-env restarts the pod, as a changed 2.2.0 env did by rolling it.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].envFrom
+      old: <absent>
+      reason: The pod reads dfe-loader-env, whose content the env leaves are held to.
+    - object: Deployment/dfe-loader
+      path: spec.template.metadata.annotations[checksum/config]
+      reason: >-
+        2.2.0 hashed its whole ConfigMap template, scalo-service hashes the config
+        file. Either rolls the pod on a config change; the file itself is compared
+        as ConfigMap/dfe-loader-config.
+    - object: ConfigMap/dfe-loader-config
+      path: data[loader.yaml]
+      old: "clickhouse:\n  protocol: http\n"
+      new: "clickhouse:\n  protocol: http\ntransport: grpc\n"
+      reason: >-
+        The contract opens the push port while config.transport is grpc, so the
+        direct profiles write the transport DFE_LOADER_TRANSPORT already sets.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].env[DFE_LOADER_*_PASSWORD].*
+      new: <absent>
+      reason: >-
+        The ClickHouse and SASL passwords come from the contract's secret groups,
+        under the figment names below.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].env[DFE_LOADER_KAFKA_SASL_USERNAME].*
+      new: <absent>
+      reason: The SASL user comes from the contract's kafka group, under the figment name below.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].env[DFE_LOADER__*].valueFrom.secretKeyRef.*
+      old: <absent>
+      reason: >-
+        The contract's figment names, DFE_LOADER__KAFKA__SASL__USERNAME and
+        _PASSWORD and DFE_LOADER__CLICKHOUSE__PASSWORD, reach the same config
+        keys as the flat names 2.2.0 set (dfe-loader src/config/loader.rs), on the
+        same Secrets and keys.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].env[OTEL_EXPORTER_OTLP_ENDPOINT]
+      old: <absent>
+      new: ""
+      scenarios: [prometheus]
+      reason: Prometheus mode renders the endpoint empty, which the stack reads as "export nothing".
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].*Probe.initialDelaySeconds
+      new: 0
+      reason: The startup probe holds liveness and readiness back until the app answers.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].livenessProbe.periodSeconds
+      old: 30
+      new: 10
+      reason: >-
+        scalo-service checks liveness every 10 s once startup passes. 30 s came
+        from the exec probe 2.2.0 replaced.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].startupProbe.*
+      old: <absent>
+      reason: >-
+        A startup probe on /livez over the contract's 60 s budget, which every
+        DFE pipeline chart lacked.
+    - object: "*/dfe-loader"
+      path: "*ports[6000/TCP].name"
+      old: grpc
+      new: push
+      reason: The contract's name for the push port. The receiver and the mesh route dial it by number.
+    - object: "*/dfe-loader"
+      path: "*ports[6000/TCP].*"
+      new: <absent>
+      reason: >-
+        On the bus profiles the loader consumes the broker and binds nothing on
+        6000; the contract opens it only while config.transport is grpc.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.initContainers[clickhouse-ca-bundle].command
+      new:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          if [ -n "${SSL_CERT_FILE:-}" ]; then
+            cat /etc/ssl/certs/ca-certificates.crt /etc/dfe-clickhouse-ca/ca.crt > /etc/dfe-trust/ca-bundle.pem
+          fi
+      reason: >-
+        The bundle is written only where dfe-loader-env sets SSL_CERT_FILE, which
+        is where 2.2.0 rendered the init container at all.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.initContainers[clickhouse-ca-bundle].env[SSL_CERT_FILE].valueFrom.configMapKeyRef.*
+      old: <absent>
+      reason: The init container reads SSL_CERT_FILE from dfe-loader-env, optional, to know whether to write the bundle.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.volumes[clickhouse-ca].*.optional
+      old: <absent>
+      new: true
+      reason: >-
+        Mounted on every pod, optional, because a static volume cannot follow
+        clickhouse.tls. SSL_CERT_FILE still follows it.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.volumes[tmp].emptyDir
+      old: {}
+      new: <absent>
+      reason: The /tmp emptyDir is scalo-service's writable-tmp now.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.initContainers[clickhouse-ca-bundle].*
+      old: <absent>
+      scenarios: [clickhouse-plaintext]
+      reason: >-
+        On plaintext ClickHouse the bundle init container still runs, and writes
+        nothing, because dfe-loader-env sets no SSL_CERT_FILE there.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.volumes[*].*
+      old: <absent>
+      scenarios: [clickhouse-plaintext]
+      reason: The CA and bundle volumes that init container mounts, optional and empty respectively.
+    - object: Deployment/dfe-loader
+      path: spec.template.spec.containers[main].volumeMounts[/etc/dfe-trust].*
+      old: <absent>
+      scenarios: [clickhouse-plaintext]
+      reason: The empty bundle directory, which nothing reads without SSL_CERT_FILE.

@@ -1,0 +1,33 @@
+# mesh carries no broker: the receiver sends to the loader pool's mesh listener
+# over gRPC, and holds what the loader has not taken.
+
+# loader.transport has no flat-env key, and with no brokers the receiver refuses
+# to start on its kafka default, so dfe-infra sets it. The endpoint, the alias
+# Service in mesh.gateway.namespace (common.yaml), and the default destination
+# are defaults an overlay value beats.
+config:
+  loader:
+    grpc_endpoint: "http://dfe-loader-mesh.envoy-gateway-system.svc.cluster.local:6000"
+  destinations:
+    default: loader
+
+# The buffer profile-mesh.yaml sizes under `receiver.buffer` for the 2.2.0 chart:
+# 3 GiB of memory and a 20 GiB node-local spool, read only with acknowledgements
+# off. The spool path is the contract's spool writable path, which mounts while
+# config.buffer.spillover.enabled is true.
+configOverrides:
+  loader:
+    transport: grpc
+  buffer:
+    memory_limit: 3221225472
+    spillover:
+      enabled: true
+      path: /var/spool/dfe-receiver
+writablePaths:
+  spool:
+    sizeLimit: 20Gi
+
+# No broker, so no SASL credential to mount.
+secrets:
+  kafka:
+    enabled: false

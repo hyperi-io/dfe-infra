@@ -1,0 +1,101 @@
+# dfe-receiver's integration values over its thin chart, layered after
+# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
+# scalo-service library reads. The keys below them are the 2.2.0 chart's own,
+# read here through tpl and by dfe-extras, which renders the ingest
+# NetworkPolicy, the mesh listener and the dfe-receiver-env ConfigMap.
+
+# The env the 2.2.0 chart wrote under conditionals, so a variable stays absent
+# where 2.2.0 left it out. Reloader restarts the pod when the ConfigMap changes.
+extraEnvFrom:
+  - configMapRef:
+      name: '{{ include "scalo-service.fullname" . }}-env'
+reload:
+  configmaps:
+    - dfe-receiver-env
+
+# The contract's kafka group on the Secret the stack's broker user writes. Its
+# keys are named as that Secret names them; the library's key names take no tpl.
+secrets:
+  kafka:
+    existingSecret: '{{ .Values.kafka.saslSecretName }}'
+    keys:
+      username: username
+      password: password
+      mechanism: sasl.mechanism
+kafka:
+  saslSecretName: dfe-kafka-user
+
+# The receiver's front door is a load balancer unless the cloud says otherwise:
+# apps/dfe-receiver/<cloud>.yaml turns it off where <cloud>.yaml sets
+# exposure.mode internal or vpn, and dfe-extras refuses the two disagreeing.
+publicService:
+  enabled: true
+
+# Keys the 2.2.0 chart derived into the config file and let no overlay beat: the
+# PushEvents server dfe-fetcher sends to on the direct transport, and the buffer
+# figure the app reads only with acknowledgements off. The app's own default for
+# both is off and auto-detect.
+configOverrides:
+  buffer:
+    memory_limit: 0
+  grpc:
+    enabled: true
+    bind_address: "0.0.0.0:6000"
+
+keda:
+  cpu:
+    targetUtilization: 70
+  # profile-slim.yaml clears it.
+  extraTriggers:
+    # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+        url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+        valueLocation: value
+    # END fragment pressure-trigger
+
+initContainers:
+  # BEGIN fragment wait-for-engine -- rendered by `python3 scripts/composition.py --write-fragments`
+  - name: wait-for-engine
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        URL="http://{{ .Values.waitForEngine.service }}.{{ .Values.waitForEngine.namespace | default .Release.Namespace }}.svc.cluster.local:{{ .Values.waitForEngine.port }}/readyz"
+        DEADLINE=$(( $(date +%s) + {{ .Values.waitForEngine.timeoutSeconds }} ))
+        echo "waiting for ${URL}"
+        until curl -fsS -o /dev/null --max-time 5 "$URL"; do
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "dfe-engine did not report ready at ${URL} within {{ .Values.waitForEngine.timeoutSeconds }}s -- GET /api/v1/system/schema on the engine says why" >&2
+            exit 1
+          fi
+          sleep {{ .Values.waitForEngine.intervalSeconds }}
+        done
+        echo "dfe-engine is ready"
+  # END fragment wait-for-engine
+
+waitForEngine:
+  service: dfe-engine
+  # Empty is the release's own namespace.
+  namespace: ""
+  port: 8000
+  timeoutSeconds: 600
+  intervalSeconds: 5

@@ -1,0 +1,4 @@
+# local.yaml sets exposure.mode internal: ingest comes through the cluster
+# Gateway, so the receiver takes no load balancer.
+publicService:
+  enabled: false

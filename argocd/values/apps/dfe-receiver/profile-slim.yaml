@@ -1,0 +1,22 @@
+# slim carries no broker: the receiver sends to the loader over gRPC.
+
+# loader.transport has no flat-env key, and with no brokers the receiver refuses
+# to start on its kafka default, so dfe-infra sets it. The endpoint and the
+# default destination are defaults an overlay value beats.
+configOverrides:
+  loader:
+    transport: grpc
+config:
+  loader:
+    grpc_endpoint: "http://dfe-loader:6000"
+  destinations:
+    default: loader
+
+# No broker, so no SASL credential to mount.
+secrets:
+  kafka:
+    enabled: false
+
+# The tier profile-slim.yaml runs without pressure: CPU alone scales it.
+keda:
+  extraTriggers: []

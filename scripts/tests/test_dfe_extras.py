@@ -22,10 +22,10 @@ source re-pointed at helm/charts/dfe-extras with the per-app layers added and
 chartName set. The gate:
 
 - dfe-extras renders the objects the 2.2.0 DFE_ONLY_TEMPLATES render, byte for
-  byte once parsed, plus the <fullname>-env ConfigMap for a component whose env
-  the thin chart reads through envFrom, holding the 2.2.0 container's literal env
-  less the names the component's own integration values set in extraEnv and the
-  drops fixtures/weave-accepted-diffs.yaml accepts
+  byte once parsed or apart from the diffs fixtures/weave-accepted-diffs.yaml
+  accepts, plus the <fullname>-env ConfigMap for a component whose env the thin
+  chart reads through envFrom, holding the 2.2.0 container's literal env less the
+  names the thin chart's own env sets and the drops that fixture accepts
 - every other 2.2.0 object carries a name the thin chart renders (THIN_SUFFIXES),
   and no dfe-extras object does, so nothing is lost or rendered twice
 
@@ -51,7 +51,7 @@ from types import ModuleType
 import pytest
 import yaml
 
-from _gate import ABSENT, accepts
+from _gate import ABSENT, DEFAULT, accepts, runtime_diffs, unaccepted
 from _weave import REPO_ROOT, helm, render_app, weave
 
 EXTRAS_PATH = "helm/charts/dfe-extras"
@@ -101,7 +101,10 @@ DFE_ONLY_TEMPLATES: dict[str, tuple[str, ...]] = {
 }
 
 # The components whose env dfe-extras carries in a <fullname>-env ConfigMap.
-ENV_CONFIGMAP = ("dfe-engine", "dfe-hyperdx")
+ENV_CONFIGMAP = ("dfe-engine", "dfe-hyperdx", "dfe-receiver", "dfe-loader")
+
+# The env scalo-service sets on every thin chart's container itself.
+LIBRARY_ENV = ("OTEL_SERVICE_NAME", "POD_NAMESPACE")
 
 # What the scalo-service library names objects, per kind, after <fullname>: its
 # README's "What the library renders" table, with the fileSets and writable paths
@@ -346,15 +349,23 @@ def literal_env(container: dict) -> dict[str, str]:
     return found
 
 
+def _extra_env(path: Path) -> set[str]:
+    return set((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("extraEnv") or {})
+
+
 def env_left_out(service: str) -> set[str]:
     """2.2.0 env names a <fullname>-env ConfigMap leaves out.
 
-    The component's own integration values set them in extraEnv, or
+    The thin chart's own env sets them: the component's integration values and
+    apps/_common.yaml in extraEnv, and scalo-service itself. Or
     fixtures/weave-accepted-diffs.yaml accepts their drop.
     """
     names: set[str] = set()
-    for path in sorted((APPS / service).glob("*.yaml")):
-        names |= set((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("extraEnv") or {})
+    own = sorted((APPS / service).glob("*.yaml"))
+    for path in own:
+        names |= _extra_env(path)
+    if own:
+        names |= _extra_env(APPS / "_common.yaml") | set(LIBRARY_ENV)
     for entry in accepts(service).diffs:
         dropped = re.fullmatch(r".*\.env\[(\w+)\]", entry.path)
         if dropped and entry.pins_new and entry.new == ABSENT:
@@ -373,6 +384,16 @@ def first_difference(old: object, new: object, path: str = "") -> str:
             if a != b:
                 return first_difference(a, b, f"{path}[{index}]")
     return f"{path or '.'}: 2.2.0 {json.dumps(old)[:200]} / dfe-extras {json.dumps(new)[:200]}"
+
+
+def accepted_change(service: str, old: dict, new: dict) -> bool:
+    """Whether every way a DFE-only object departs from 2.2.0 is a diff the fixture accepts.
+
+    fixtures/weave-accepted-diffs.yaml holds the same object to the same reason in
+    the chart-switch gate, so a fix such as the receiver's dead 8443 is listed once.
+    """
+    diffs = runtime_diffs([old], [new])
+    return bool(diffs) and unaccepted(diffs, accepts(service).diffs, DEFAULT) == []
 
 
 def gate(pair: Pair) -> list[str]:
@@ -401,7 +422,7 @@ def gate(pair: Pair) -> list[str]:
     if added:
         problems.append(f"dfe-extras renders, 2.2.0 does not: {added}")
     for key in sorted(set(want) & set(got)):
-        if want[key] != got[key]:
+        if want[key] != got[key] and not accepted_change(pair.service, want[key], got[key]):
             problems.append(f"{key} {first_difference(want[key], got[key])}")
     thin = thin_ids(fullname)
     homeless = sorted(set(pair.thin()) - thin)
@@ -529,7 +550,6 @@ SCENARIOS = [
         {
             "dfeAuth": {"mode": "header-dev"},
             "localAuthPages": {"enabled": True},
-            "defaultConnections": {"enabled": True},
             "clickhouse": {
                 "user": "hyperdx",
                 "mode": "external",
@@ -543,15 +563,58 @@ SCENARIOS = [
                 "CLICKHOUSE_USER": "hyperdx",
                 "NODE_EXTRA_CA_CERTS": "/etc/dfe/clickhouse-ca/ca.crt",
             },
-            "unset": ["DFE_ENGINE_JWKS_URL", "DEFAULT_CONNECTIONS"],
+            "unset": ["DFE_ENGINE_JWKS_URL"],
         },
         id="hyperdx-header-dev-and-tls",
     ),
     pytest.param(
         "dfe-receiver", "single", "local",
-        {"exposure": {"mode": "public"}},
+        {"exposure": {"mode": "public"}, "publicService": {"enabled": True}},
         {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
         id="receiver-public",
+    ),
+    pytest.param(
+        "dfe-receiver", "scale", "aws",
+        {"kafka": {"securityProtocol": "SASL_SSL"}},
+        {
+            "env": {
+                "DFE_RECEIVER_KAFKA_SECURITY_PROTOCOL": "SASL_SSL",
+                "DFE_RECEIVER_DLQ_TOPIC": "dfe_receiver_dlq",
+            },
+            "unset": ["DFE_RECEIVER_DLQ_ENABLED", "DFE_RECEIVER_BIND_ADDRESS"],
+        },
+        id="receiver-tls-broker",
+    ),
+    pytest.param(
+        "dfe-receiver", "mesh", "local",
+        {},
+        {"env": {"DFE_RECEIVER_DLQ_ENABLED": "false"}, "unset": ["DFE_RECEIVER_KAFKA_BROKERS"]},
+        id="receiver-direct",
+    ),
+    pytest.param(
+        "dfe-loader", "single", "aws",
+        {"clickhouse": {"user": "loader", "tls": {"enabled": False}}},
+        {
+            "env": {
+                "DFE_LOADER_CLICKHOUSE_HOSTS": "dfe-clickhouse.clickhouse.svc.cluster.local:8123",
+                "DFE_LOADER_CLICKHOUSE_USERNAME": "loader",
+            },
+            "unset": ["SSL_CERT_FILE", "DFE_LOADER_TRANSPORT"],
+        },
+        id="loader-plaintext-clickhouse",
+    ),
+    pytest.param(
+        "dfe-loader", "slim", "local",
+        {"clickhouse": {"tls": {"ca": {"secretName": "", "configMapName": "example-ca-bundle"}}}},
+        {
+            "env": {
+                "DFE_LOADER_TRANSPORT": "grpc",
+                "DFE_LOADER_CLICKHOUSE_HOSTS": "dfe-clickhouse.clickhouse.svc.cluster.local:8443",
+                "SSL_CERT_FILE": "/etc/dfe-trust/ca-bundle.pem",
+            },
+            "unset": ["DFE_LOADER_KAFKA_BROKERS", "DFE_LOADER_DLQ_TOPIC"],
+        },
+        id="loader-ca-from-configmap",
     ),
     pytest.param(
         "dfe-receiver", "mesh", "aws",
@@ -706,6 +769,26 @@ def test_a_culvert_on_the_receivers_listeners_is_refused(old: bool, extras: bool
         render_pair("culvert", "slim", "local", old=old, extras=extras)
 
 
+@pytest.mark.parametrize(
+    ("clickhouse", "message"),
+    [
+        ({"tls": {"verify": False}}, "dfe-loader always verifies"),
+        ({"tls": {"ca": {"configMapName": "example-ca-bundle"}}}, "not both"),
+        ({"tls": {"port": 8123}}, "turns TLS on only for 8443, 9440"),
+    ],
+    ids=["no-verify", "two-ca-sources", "plaintext-port"],
+)
+@pytest.mark.parametrize(("old", "extras"), [(True, False), (False, True)], ids=["2.2.0", "dfe-extras"])
+def test_a_clickhouse_tls_setup_the_loader_cannot_dial_is_refused(
+    clickhouse: dict, message: str, old: bool, extras: bool
+) -> None:
+    """The loader's refusals move with dfe-loader-env, so both charts carry them."""
+    with pytest.raises(RenderError, match=message):
+        render_pair(
+            "dfe-loader", "scale", "aws", overlay={"clickhouse": clickhouse}, old=old, extras=extras
+        )
+
+
 def test_a_fullname_override_outside_the_project_fails() -> None:
     with pytest.raises(RenderError, match="does not start with"):
         render_pair("dfe-loader", "mesh", "local", overlay={"fullnameOverride": "loader"}, old=False)
@@ -758,7 +841,7 @@ def test_the_app_catalogue_is_the_manifest_at_the_repo_root() -> None:
 # --------------------------------------------------- against a real thin chart
 
 
-@pytest.mark.parametrize("service", ["dfe-ui", "hyperdx"])
+@pytest.mark.parametrize("service", ["dfe-ui", "hyperdx", "dfe-receiver", "dfe-loader"])
 @pytest.mark.parametrize("profile", PROFILES)
 def test_no_object_is_rendered_by_both_charts(service: str, profile: str) -> None:
     """The thin chart assembled from the committed contract, beside dfe-extras."""

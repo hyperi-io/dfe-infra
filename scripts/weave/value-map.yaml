@@ -252,9 +252,8 @@ apps:
       clickhouse.tls.ca.configMapName:
         to: clickhouse.tls.ca.configMapName
         note: >-
-          dfe-extras still sets NODE_EXTRA_CA_CERTS from it, but the thin chart
-          mounts the Secret form of the CA only. A ConfigMap bundle needs the
-          overlay to restate extraVolumes with a configMap volume of that name.
+          dfe-extras sets NODE_EXTRA_CA_CERTS from it, and apps/hyperdx/values.yaml
+          mounts the CA from this ConfigMap when secretName is empty, as 2.2.0 did.
       mongodb.uri:
         to: mongodb.uri
       mongodb.passwordSecretName:
@@ -1242,3 +1241,493 @@ apps:
         to: mesh.gateway
       mesh.routePolicy:
         to: mesh.routePolicy
+
+  dfe-receiver:
+    chart: helm/charts/dfe-receiver
+    keys:
+      project:
+        to: project
+        note: dfe-extras names the ingest NetworkPolicy and the mesh listener from it.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>. The default renders
+          dfe-receiver, the chart's name, so only a renamed instance sets it.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      config:
+        to: config
+        note: >-
+          The overlay's config file, merged under configOverrides, where dfe-infra
+          keeps the keys the 2.2.0 chart derived and let no overlay beat. The
+          contract opens each listener's port from config.<section>.enabled.
+      extraEnv:
+        to: extraEnv
+        note: >-
+          An overlay name now beats dfe-receiver-env, which the pod reads through
+          envFrom; 2.2.0's derived env beat the overlay's.
+      listeners:
+        to: [listeners, config]
+        note: >-
+          dfe-extras opens the ingest NetworkPolicy on the exposed entries and
+          refuses an exposed non-http entry in internal mode. The contract owns
+          the ports: a listener opens on the container and the Services from its
+          config.<section>.enabled, and its number is the contract's. Dropping
+          pushgrpc no longer closes the PushEvents port: set
+          configOverrides.grpc.enabled false.
+      receiver.listenAddress:
+        dropped: >-
+          It fed DFE_RECEIVER_BIND_ADDRESS; the app binds 0.0.0.0:8080 by default,
+          the contract's http port.
+      receiver.loaderPort:
+        to: config.loader.grpc_endpoint
+        note: The loader's port is part of the endpoint URL apps/dfe-receiver/profile-*.yaml sets.
+      receiver.buffer.memoryLimit:
+        to: configOverrides.buffer.memory_limit
+      receiver.buffer.spillover.enabled:
+        to: configOverrides.buffer.spillover.enabled
+        note: The contract's spool writable path mounts while it is true.
+      receiver.buffer.spillover.path:
+        to: configOverrides.buffer.spillover.path
+        note: >-
+          The contract mounts the spool at /var/spool/dfe-receiver, the app's own
+          default; another path needs the contract to name it.
+      receiver.buffer.spillover.sizeLimit:
+        to: writablePaths.spool.sizeLimit
+      exposure.mode:
+        to: [exposure.mode, publicService.enabled]
+        note: >-
+          dfe-extras reads the mode for the ingest NetworkPolicy; the thin chart's
+          load balancer is publicService.enabled, which dfe-extras refuses to see
+          disagree with a public mode.
+      exposure.public.serviceType:
+        to: publicService.type
+      exposure.public.loadBalancerIP:
+        to: publicService.loadBalancerIP
+        note: >-
+          The layer 2 appset passes the cluster's receiver_address under the
+          2.2.0 name until its parameter is renamed with the OCI sources.
+      exposure.public.loadBalancerClass:
+        to: publicService.loadBalancerClass
+      exposure.public.annotations:
+        to: publicService.annotations
+      exposure.public.loadBalancerSourceRanges:
+        to: publicService.loadBalancerSourceRanges
+      exposure.networkPolicy.enabled:
+        to: exposure.networkPolicy.enabled
+      exposure.vpn.podLabel:
+        to: exposure.vpn.podLabel
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras derives the transport from it for dfe-receiver-env and refuses
+          one the profile was not built for; the transport's config keys are the
+          profile's apps/dfe-receiver file.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+      kafka.securityProtocol:
+        to: kafka.securityProtocol
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL env: set secrets.kafka.enabled false instead.
+      dlq.topic:
+        to: dlq.topic
+      dlq.mode:
+        to: dlq.mode
+      mesh:
+        to: mesh
+        note: dfe-extras renders the pool listener from it.
+      service.type:
+        to: service.type
+      service.pushPort:
+        to: service.pushPort
+        note: >-
+          dfe-extras' mesh route dials it. The contract's PushEvents port is 6000,
+          so it stays 6000.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      otel.endpoint:
+        to: otel.endpoint
+        note: >-
+          Exported as written, with otel.protocol grpc, so it carries its scheme.
+          2.2.0 added the scheme from otel.tls.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      versionCheck:
+        to: versionCheck
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name. scalo-service names the image after the
+          contract's app_name, and image.repository replaces it whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      terminationGracePeriodSeconds:
+        to: terminationGracePeriodSeconds
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: >-
+          The app container only. The wait-for-engine init container's
+          securityContext sits in apps/dfe-receiver/values.yaml.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      serviceAccount.mountToken:
+        to: serviceAccount.mountToken
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+        note: apps/dfe-receiver/values.yaml lists dfe-receiver-env, and an overlay's list replaces it.
+      keda.enabled:
+        to: keda.enabled
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure.enabled:
+        to: keda.extraTriggers
+        note: >-
+          The ScalingPressure trigger is keda.extraTriggers in
+          apps/dfe-receiver/values.yaml; false no longer drops it, an overlay sets
+          keda.extraTriggers to [] instead.
+      keda.pressure.targetValue:
+        to: keda.pressure.targetValue
+      keda.pressure.service:
+        to: keda.pressure.service
+      keda.pressure.shimAddress:
+        to: keda.pressure.shimAddress
+      waitForEngine.service:
+        to: waitForEngine.service
+      waitForEngine.namespace:
+        to: waitForEngine.namespace
+      waitForEngine.port:
+        to: waitForEngine.port
+      waitForEngine.timeoutSeconds:
+        to: waitForEngine.timeoutSeconds
+      waitForEngine.intervalSeconds:
+        to: waitForEngine.intervalSeconds
+      waitForEngine.enabled:
+        to: initContainers
+        note: >-
+          The init container sits whole in apps/dfe-receiver/values.yaml; false no
+          longer drops it, an overlay restates initContainers without it.
+      waitForEngine.resources:
+        to: initContainers
+        note: The init container sits whole in apps/dfe-receiver/values.yaml; an overlay restates the list.
+
+  dfe-loader:
+    chart: helm/charts/dfe-loader
+    keys:
+      project:
+        to: project
+        note: dfe-extras names the mesh listener and dfe-loader-env from it.
+      component:
+        to: fullnameOverride
+        note: >-
+          fullnameOverride is <project>-<component>. The default renders
+          dfe-loader, the chart's name, so only a renamed instance sets it.
+      env:
+        to: env
+      cloud:
+        to: cloud
+      global.registry:
+        to: global.registry
+      config:
+        to: config
+        note: >-
+          The overlay's config file, merged under configOverrides, where the
+          direct profiles set transport: grpc so the contract opens the push port.
+      config.clickhouse.protocol:
+        to: config.clickhouse.protocol
+      extraEnv:
+        to: extraEnv
+        note: >-
+          An overlay name now beats dfe-loader-env, which the pod reads through
+          envFrom; 2.2.0's derived env beat the overlay's.
+      kafka.mode:
+        to: kafka.mode
+        note: >-
+          dfe-extras derives the transport from it for dfe-loader-env and refuses
+          one the profile was not built for; the transport's config keys are the
+          profile's apps/dfe-loader file.
+      kafka.bootstrapServers:
+        to: kafka.bootstrapServers
+      kafka.securityProtocol:
+        to: kafka.securityProtocol
+      kafka.saslSecretName:
+        to: kafka.saslSecretName
+        note: >-
+          secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
+          the SASL env: set secrets.kafka.enabled false instead.
+      clickhouse.host:
+        to: clickhouse.host
+      clickhouse.port:
+        to: clickhouse.port
+      clickhouse.database:
+        to: clickhouse.database
+      clickhouse.user:
+        to: clickhouse.user
+      clickhouse.mode:
+        to: clickhouse.mode
+      clickhouse.passwordSecretName:
+        to: clickhouse.passwordSecretName
+        note: >-
+          secrets.clickhouse.existingSecret takes it through tpl. Empty no longer
+          drops DFE_LOADER__CLICKHOUSE__PASSWORD: set secrets.clickhouse.enabled
+          false instead.
+      clickhouse.passwordSecretKey:
+        to: secrets.clickhouse.keys.password
+        note: The library's key names take no tpl.
+      clickhouse.tls.enabled:
+        to: clickhouse.tls.enabled
+      clickhouse.tls.port:
+        to: clickhouse.tls.port
+      clickhouse.tls.verify:
+        to: clickhouse.tls.verify
+      clickhouse.tls.issuerRef.name:
+        to: clickhouse.tls.issuerRef.name
+      clickhouse.tls.internalCA.present:
+        to: clickhouse.tls.internalCA.present
+      clickhouse.tls.ca.secretName:
+        to: clickhouse.tls.ca.secretName
+        note: apps/dfe-loader/values.yaml mounts the CA from it, else from configMapName.
+      clickhouse.tls.ca.configMapName:
+        to: clickhouse.tls.ca.configMapName
+      clickhouse.tls.ca.dataKey:
+        to: clickhouse.tls.ca.dataKey
+      clickhouse.tls.bundleResources:
+        to: initContainers
+        note: The clickhouse-ca-bundle init container sits whole in apps/dfe-loader/values.yaml; an overlay restates the list.
+      dlq.topic:
+        to: dlq.topic
+      dlq.mode:
+        to: dlq.mode
+      mesh:
+        to: mesh
+        note: dfe-extras renders the pool listener from it.
+      service.type:
+        to: service.type
+      service.grpcPort:
+        to: service.grpcPort
+        note: >-
+          dfe-loader-env's DFE_LOADER_GRPC__LISTEN follows it. The contract's push
+          port is 6000, so it stays 6000.
+      service.pushPort:
+        to: service.pushPort
+        note: dfe-extras' mesh route dials it. The contract's push port is 6000, so it stays 6000.
+      metricsPort:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      otel.endpoint:
+        to: otel.endpoint
+        note: >-
+          Exported as written, with otel.protocol grpc, so it carries its scheme.
+          2.2.0 added the scheme from otel.tls.
+      otel.tls:
+        to: otel.tls
+        note: apps/_common.yaml's endpoint template schemes a bare endpoint from it.
+      telemetry.mode:
+        to: telemetry.mode
+      telemetry.hyperdxEndpoint:
+        to: telemetry.hyperdxEndpoint
+      telemetry.collectorNamespace:
+        to: telemetry.collectorNamespace
+      telemetry.receiverEndpoint:
+        to: telemetry.receiverEndpoint
+      telemetry.externalEndpoint:
+        to: telemetry.externalEndpoint
+      telemetry.prometheus.scrape:
+        to: telemetry.prometheus.scrape
+      telemetry.prometheus.port:
+        dropped: The contract's metrics_port (9090) is the scrape port.
+      telemetry.prometheus.path:
+        dropped: The contract's health.metrics_path is the scrape path.
+      versionCheck:
+        to: versionCheck
+      image.repository:
+        to: image.repository
+      image.tag:
+        to: image.tag
+      image.digest:
+        to: image.digest
+      image.pullPolicy:
+        to: image.pullPolicy
+      image.public:
+        dropped: >-
+          dfe-common's opt-out of imagePullSecrets for a public image. scalo-service
+          renders imagePullSecrets as given, so an overlay sets it empty instead.
+      imageComponent:
+        dropped: >-
+          dfe-common's image name. scalo-service names the image after the
+          contract's app_name, and image.repository replaces it whole.
+      imagePullSecrets:
+        to: imagePullSecrets
+      replicaCount:
+        to: replicaCount
+      resources:
+        to: resources
+      terminationGracePeriodSeconds:
+        to: terminationGracePeriodSeconds
+      nodeScheduling.nodeSelector:
+        to: nodeSelector
+      nodeScheduling.tolerations:
+        to: tolerations
+      podSecurityContext.enabled:
+        to: podSecurityContext.enabled
+      podSecurityContext.runAsNonRoot:
+        to: podSecurityContext.runAsNonRoot
+      podSecurityContext.runAsUser:
+        to: podSecurityContext.runAsUser
+      podSecurityContext.runAsGroup:
+        to: podSecurityContext.runAsGroup
+      podSecurityContext.fsGroup:
+        to: podSecurityContext.fsGroup
+      podSecurityContext.seccompProfileType:
+        to: podSecurityContext.seccompProfile.type
+      containerSecurityContext:
+        to: containerSecurityContext
+        note: >-
+          The app container only. The init containers' securityContext sits in
+          apps/dfe-loader/values.yaml.
+      serviceAccount.create:
+        to: serviceAccount.create
+      serviceAccount.annotations:
+        to: serviceAccount.annotations
+      serviceAccount.mountToken:
+        to: serviceAccount.mountToken
+      pdb.enabled:
+        to: pdb.enabled
+      pdb.minAvailable:
+        to: pdb.minAvailable
+      pdb.maxUnavailable:
+        to: pdb.maxUnavailable
+      reload.enabled:
+        to: reload.enabled
+      reload.secrets:
+        to: reload.secrets
+      reload.configmaps:
+        to: reload.configmaps
+        note: apps/dfe-loader/values.yaml lists dfe-loader-env, and an overlay's list replaces it.
+      keda.enabled:
+        to: keda.enabled
+      keda.minReplicaCount:
+        to: keda.minReplicaCount
+      keda.maxReplicaCount:
+        to: keda.maxReplicaCount
+      keda.idleReplicaCount:
+        to: keda.idleReplicaCount
+      keda.cooldownPeriod:
+        to: keda.cooldownPeriod
+      keda.pollingInterval:
+        to: keda.pollingInterval
+      keda.cpu.targetUtilization:
+        to: keda.cpu.targetUtilization
+      keda.triggers:
+        to: keda.triggers
+      keda.triggerAuthentication.secretTargetRef:
+        to: keda.triggerAuthentication.secretTargetRef
+      keda.pressure.enabled:
+        to: keda.extraTriggers
+        note: >-
+          The ScalingPressure trigger is keda.extraTriggers in
+          apps/dfe-loader/values.yaml; false no longer drops it, an overlay sets
+          keda.extraTriggers to [] instead.
+      keda.pressure.targetValue:
+        to: keda.pressure.targetValue
+      keda.pressure.service:
+        to: keda.pressure.service
+      keda.pressure.shimAddress:
+        to: keda.pressure.shimAddress
+      waitForEngine.service:
+        to: waitForEngine.service
+      waitForEngine.namespace:
+        to: waitForEngine.namespace
+      waitForEngine.port:
+        to: waitForEngine.port
+      waitForEngine.timeoutSeconds:
+        to: waitForEngine.timeoutSeconds
+      waitForEngine.intervalSeconds:
+        to: waitForEngine.intervalSeconds
+      waitForEngine.enabled:
+        to: initContainers
+        note: >-
+          The init container sits whole in apps/dfe-loader/values.yaml; false no
+          longer drops it, an overlay restates initContainers without it.
+      waitForEngine.resources:
+        to: initContainers
+        note: The init container sits whole in apps/dfe-loader/values.yaml; an overlay restates the list.

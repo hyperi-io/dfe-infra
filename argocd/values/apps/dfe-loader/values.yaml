@@ -1,0 +1,153 @@
+# dfe-loader's integration values over its thin chart, layered after
+# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
+# scalo-service library reads. The keys below them are the 2.2.0 chart's own,
+# read here through tpl and by dfe-extras, which renders the mesh listener and
+# the dfe-loader-env ConfigMap.
+
+# The env the 2.2.0 chart wrote under conditionals, so a variable stays absent
+# where 2.2.0 left it out. Reloader restarts the pod when the ConfigMap changes.
+extraEnvFrom:
+  - configMapRef:
+      name: '{{ include "scalo-service.fullname" . }}-env'
+reload:
+  configmaps:
+    - dfe-loader-env
+
+# http, not native: the pinned ClickHouse client has no TCP row fetch, so schema
+# queries stall on 9000. The loader's key is `protocol`; `transport` is ignored.
+config:
+  clickhouse:
+    protocol: http
+
+# The contract's secret groups on the Secrets the stack writes, under their keys;
+# the library's key names take no tpl.
+secrets:
+  kafka:
+    existingSecret: '{{ .Values.kafka.saslSecretName }}'
+    keys:
+      username: username
+      password: password
+  clickhouse:
+    existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
+    keys:
+      password: password
+kafka:
+  saslSecretName: dfe-kafka-user
+
+keda:
+  cooldownPeriod: 120
+  cpu:
+    targetUtilization: 70
+  # profile-slim.yaml clears it.
+  extraTriggers:
+    # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
+    - type: metrics-api
+      metricType: Value
+      metadata:
+        targetValue: '{{ .Values.keda.pressure.targetValue | default 70 }}'
+        url: 'http://{{ .Values.keda.pressure.shimAddress | default (printf "dfe-keda-shim.%s.svc.cluster.local:8080" .Release.Namespace) }}/keda/pressure?service={{ .Values.keda.pressure.service | default (.Values.fullnameOverride | default .Chart.Name) }}'
+        valueLocation: value
+    # END fragment pressure-trigger
+
+waitForEngine:
+  service: dfe-engine
+  # Empty is the release's own namespace.
+  namespace: ""
+  port: 8000
+  timeoutSeconds: 600
+  intervalSeconds: 5
+
+# The second init container appends the ClickHouse CA to a copy of the image's
+# own roots, because SSL_CERT_FILE replaces the system store and the release
+# check still needs the public roots. It writes the bundle only where
+# dfe-loader-env sets SSL_CERT_FILE, which is where 2.2.0 mounted a CA.
+initContainers:
+  # BEGIN fragment wait-for-engine -- rendered by `python3 scripts/composition.py --write-fragments`
+  - name: wait-for-engine
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        URL="http://{{ .Values.waitForEngine.service }}.{{ .Values.waitForEngine.namespace | default .Release.Namespace }}.svc.cluster.local:{{ .Values.waitForEngine.port }}/readyz"
+        DEADLINE=$(( $(date +%s) + {{ .Values.waitForEngine.timeoutSeconds }} ))
+        echo "waiting for ${URL}"
+        until curl -fsS -o /dev/null --max-time 5 "$URL"; do
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "dfe-engine did not report ready at ${URL} within {{ .Values.waitForEngine.timeoutSeconds }}s -- GET /api/v1/system/schema on the engine says why" >&2
+            exit 1
+          fi
+          sleep {{ .Values.waitForEngine.intervalSeconds }}
+        done
+        echo "dfe-engine is ready"
+  # END fragment wait-for-engine
+  - name: clickhouse-ca-bundle
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    env:
+      - name: SSL_CERT_FILE
+        valueFrom:
+          configMapKeyRef:
+            name: '{{ include "scalo-service.fullname" . }}-env'
+            key: SSL_CERT_FILE
+            optional: true
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ -n "${SSL_CERT_FILE:-}" ]; then
+          cat /etc/ssl/certs/ca-certificates.crt /etc/dfe-clickhouse-ca/{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }} > /etc/dfe-trust/ca-bundle.pem
+        fi
+    volumeMounts:
+      - name: clickhouse-ca
+        mountPath: /etc/dfe-clickhouse-ca
+        readOnly: true
+      - name: ca-bundle
+        mountPath: /etc/dfe-trust
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 32Mi
+
+# Optional: a deployment on plaintext ClickHouse, or trusting the system roots
+# alone, has no CA object. The 2.2.0 chart mounted the CA from a Secret, else a
+# ConfigMap, and tpl picks the volume type the same way.
+extraVolumes:
+  - name: clickhouse-ca
+    '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':
+      '{{ if .Values.clickhouse.tls.ca.secretName }}secretName{{ else }}name{{ end }}': '{{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName | default "dfe-clickhouse-ca" }}'
+      optional: true
+      items:
+        - key: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
+          path: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
+  - name: ca-bundle
+    emptyDir: {}
+extraVolumeMounts:
+  - name: ca-bundle
+    mountPath: /etc/dfe-trust
+    readOnly: true

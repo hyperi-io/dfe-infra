@@ -1,0 +1,4 @@
+{{- define "dfe-extras.receiver.env" -}}
+{{- include "dfe-extras.envConfigMap" (dict "ctx" . "env" (include "dfe-receiver.env" .)) -}}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-receiver") "body" "dfe-extras.receiver.env") }}

@@ -25,7 +25,10 @@ declared before it.
 Render (b) needs the scalo-service library (_weave.library).
 """
 
+import json
+
 import pytest
+import yaml
 
 from _gate import (
     COMPONENTS,
@@ -39,14 +42,21 @@ from _gate import (
     cells,
     forward_references,
     image_problems,
+    object_id,
     runtime_diffs,
+    runtime_view,
     unaccepted,
     unresolved_refs,
 )
+from _weave import contract
 
 CELLS = [(*m, "default") for m in MATRIX] + [
     (s, "slim", "local", scenario) for s in COMPONENTS for scenario in SCENARIOS
 ]
+RECEIVER_CELLS = [c for c in CELLS if c[0] == "dfe-receiver"]
+LOADER_CELLS = [c for c in CELLS if c[0] == "dfe-loader"]
+BUS_PROFILES = ("single", "scale")
+MAIN = "spec.template.spec.containers[main]"
 
 
 @pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), CELLS)
@@ -85,6 +95,91 @@ def test_every_var_reference_names_an_earlier_variable(
 def test_mongo_password_is_declared_before_the_uri_that_expands_it() -> None:
     env = [e["name"] for e in _main(cell("hyperdx", "scale", "aws").new)["env"]]
     assert env.index("MONGO_PASSWORD") < env.index("MONGO_URI")
+
+
+# ------------------------------------------------- the receiver and loader defects
+
+
+def opened_ports(docs: list[dict]) -> list[str]:
+    """Every port a render opens: container ports, Service ports and NetworkPolicy ports."""
+    found = []
+    for doc in docs:
+        spec = doc.get("spec") or {}
+        if doc.get("kind") == "Deployment":
+            for container in spec["template"]["spec"].get("containers") or []:
+                ports = container.get("ports") or []
+                found += [f"{object_id(doc)} {p['containerPort']}" for p in ports]
+        elif doc.get("kind") == "Service":
+            found += [f"{object_id(doc)} {p['port']}" for p in spec.get("ports") or []]
+        elif doc.get("kind") == "NetworkPolicy":
+            for rule in spec.get("ingress") or []:
+                found += [f"{object_id(doc)} {p['port']}" for p in rule.get("ports") or []]
+    return found
+
+
+def config_file(docs: list[dict], service: str) -> dict:
+    """The app's rendered config file, parsed."""
+    configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{service}-config")
+    (text,) = configmap["data"].values()
+    return yaml.safe_load(text) or {}
+
+
+def delivery_paths(docs: list[dict]) -> list[str]:
+    """Where a receiver render sends records: the bus, the loader over gRPC, or both.
+
+    The receiver's compiled defaults route to the bus with no brokers and fail its
+    own validation, so a render naming neither path leaves it unable to start.
+    """
+    env = runtime_view(docs)["Deployment/dfe-receiver"]
+    config = config_file(docs, "dfe-receiver")
+    paths = []
+    if env.get(f"{MAIN}.env[DFE_RECEIVER_KAFKA_BROKERS]"):
+        paths.append("bus")
+    over_grpc = (config.get("loader") or {}).get("transport") == "grpc"
+    to_loader = (config.get("destinations") or {}).get("default") == "loader"
+    if over_grpc and to_loader:
+        paths.append("loader")
+    return paths
+
+
+@pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), RECEIVER_CELLS)
+def test_the_receiver_opens_nothing_on_8443(
+    service: str, profile: str, cloud: str, scenario: str
+) -> None:
+    """Nothing in dfe-receiver binds 8443; 2.2.0 opened it on the pod, its Services and policy."""
+    c = cell(service, profile, cloud, scenario)
+    assert [p for p in opened_ports(c.new) if p.endswith(" 8443")] == []
+
+
+@pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), RECEIVER_CELLS)
+def test_the_receiver_never_starts_on_its_compiled_defaults(
+    service: str, profile: str, cloud: str, scenario: str
+) -> None:
+    expected = ["bus"] if profile in BUS_PROFILES else ["loader"]
+    assert delivery_paths(cell(service, profile, cloud, scenario).new) == expected
+
+
+@pytest.mark.parametrize("profile", BUS_PROFILES)
+def test_the_receiver_reads_its_sasl_mechanism_beside_the_credential(profile: str) -> None:
+    """The contract's kafka group carries the mechanism, from the Secret that holds the password."""
+    env = runtime_view(cell("dfe-receiver", profile, "aws").new)["Deployment/dfe-receiver"]
+    ref = f"{MAIN}.env[DFE_RECEIVER_KAFKA_SASL_%s].valueFrom.secretKeyRef.%s"
+    assert env[ref % ("MECHANISM", "name")] == env[ref % ("PASSWORD", "name")] == "dfe-kafka-user"
+    assert env[ref % ("MECHANISM", "key")] == "sasl.mechanism"
+
+
+@pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), LOADER_CELLS)
+def test_the_loader_config_file_carries_no_keda_block(
+    service: str, profile: str, cloud: str, scenario: str
+) -> None:
+    """The loader process reads no keda key; the ScaledObject takes its bounds from values alone."""
+    assert "keda" not in config_file(cell(service, profile, cloud, scenario).new, service)
+
+
+def test_the_loader_contract_keeps_keda_out_of_its_config() -> None:
+    loader = json.loads(contract("dfe-loader").read_text(encoding="utf-8"))
+    assert "keda" not in loader["default_config"]
+    assert loader["keda"]["cooldown_period"] == 300
 
 
 def test_every_accepted_diff_still_matches_one() -> None:
@@ -212,3 +307,27 @@ def test_an_image_with_another_digest_fails() -> None:
     main = _main(c.new)
     main["image"] = main["image"].rsplit("@", 1)[0] + "@sha256:" + "0" * 64
     assert len(image_problems(c.old, c.new)) == 1
+
+
+def test_a_receiver_service_back_on_8443_is_caught() -> None:
+    c = cell("dfe-receiver", "scale", "aws").mutable()
+    service = next(d for d in c.new if object_id(d) == "Service/dfe-receiver")
+    service["spec"]["ports"].append({"name": "grpc", "port": 8443, "targetPort": "grpc"})
+    assert [p for p in opened_ports(c.new) if p.endswith(" 8443")] == ["Service/dfe-receiver 8443"]
+
+
+def test_a_receiver_render_with_no_delivery_path_is_caught() -> None:
+    """A direct profile whose config file lost the loader transport falls to the brokerless bus."""
+    c = cell("dfe-receiver", "slim", "local").mutable()
+    configmap = next(d for d in c.new if object_id(d) == "ConfigMap/dfe-receiver-config")
+    config = yaml.safe_load(configmap["data"]["config.yaml"])
+    del config["loader"]
+    configmap["data"]["config.yaml"] = yaml.safe_dump(config)
+    assert delivery_paths(c.new) == []
+
+
+def test_a_loader_config_file_with_a_keda_block_is_caught() -> None:
+    c = cell("dfe-loader", "scale", "aws").mutable()
+    configmap = next(d for d in c.new if object_id(d) == "ConfigMap/dfe-loader-config")
+    configmap["data"]["loader.yaml"] += "keda:\n  max_replicas: 4\n"
+    assert "keda" in config_file(c.new, "dfe-loader")

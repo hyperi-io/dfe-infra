@@ -34,9 +34,23 @@ silently receives nothing.
 vpn mode is not caught by this: the tunnel delivers a client onto the pod
 network and it dials the ClusterIP directly, so every exposed listener is
 reachable there without a gateway route.
+
+Public mode is the receiver's load balancer, which the thin chart renders from
+publicService.enabled while the ingest NetworkPolicy reads exposure.mode, so
+the two must agree: a load balancer with no policy admitting its ports drops
+every sender, and a policy opened for a load balancer that does not exist
+reads as exposed.
 */}}
 {{- define "dfe-extras.receiverExposureGuard" -}}
-{{- if eq (.Values.exposure.mode | default "public") "internal" }}
+{{- $mode := .Values.exposure.mode | default "public" }}
+{{- $balanced := eq (toString (dig "enabled" false (.Values.publicService | default dict))) "true" }}
+{{- if and (eq $mode "public") (not $balanced) }}
+{{- fail "dfe-receiver: exposure.mode is \"public\" but publicService.enabled is not true, so no load balancer renders -- set publicService.enabled: true beside it, or choose exposure.mode internal or vpn" }}
+{{- end }}
+{{- if and $balanced (ne $mode "public") }}
+{{- fail (printf "dfe-receiver: publicService.enabled is true but exposure.mode is %q, which reaches the receiver without a load balancer -- set exposure.mode: public, or publicService.enabled: false" $mode) }}
+{{- end }}
+{{- if eq $mode "internal" }}
 {{- range .Values.listeners }}
 {{- if and .exposed (ne .name "http") }}
 {{- fail (printf "dfe-receiver: listener %q (%v/%s) is exposed but exposure.mode is %q, and the cluster Gateway routes only the http listener. Either set exposure.mode: public so it gets a LoadBalancer, or add a dedicated Gateway listener plus a TCPRoute/UDPRoute for it and mark this listener exposed: false." .name .port (.protocol | default "TCP") $.Values.exposure.mode) }}
