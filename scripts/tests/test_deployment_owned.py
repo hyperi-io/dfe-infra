@@ -18,8 +18,11 @@ this fails when:
 
 - an integration file sets a configOverrides leaf, or an env var reaching the
   app's config, that `deployment_owned` does not list
-- `deployment_owned` names a supplier nothing sets
-- a `deployment_owned_when` gate names a values path no integration file holds
+- a contract port binds a listener address `deployment_owned` does not list
+- `deployment_owned` names a supplier nothing sets, a values path other than
+  the configOverrides leaf at the same path, or a contract port bound elsewhere
+- a `deployment_owned_when` gate names a value no values file holds
+- an app whose config the engine writes has no integration values or contract
 - a file set's values path or mount path is not the chart's fileSets entry
 
 An env var reaches the app's config unless NOT_APP_CONFIG says otherwise, so a
@@ -39,11 +42,15 @@ from test_dfe_extras import ENV_CONFIGMAP, PROFILES, chart_name, render_pair
 from _weave import CONTRACTS, REPO_ROOT
 
 MANIFEST = REPO_ROOT / "apps.yaml"
-APPS_VALUES = REPO_ROOT / "argocd" / "values" / "apps"
+SHARED_VALUES = REPO_ROOT / "argocd" / "values"
+APPS_VALUES = SHARED_VALUES / "apps"
 VALUE_MAP = REPO_ROOT / "scripts" / "weave" / "value-map.yaml"
 
 # The env-name shape dfe-engine tells a supplier env var from a values path by.
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+# The supplier naming the contract port a listener's address binds.
+CONTRACT_PORT = re.compile(r"contract port (?P<name>[a-z0-9-]+)")
 
 # Env vars an integration file sets that reach nothing in the app's own config
 # file, by app ("*" for every app), each with what reads it instead.
@@ -138,15 +145,25 @@ def _group_enabled(service: str, group: str) -> bool:
     return False
 
 
+@functools.cache
+def _contract(service: str) -> dict:
+    return json.loads((CONTRACTS / f"{service}.json").read_text(encoding="utf-8"))
+
+
+def _bound_ports(service: str) -> dict[str, str]:
+    """Each contract port with a listener address, by name, and the config path it binds."""
+    ports = _contract(service).get("extra_ports") or []
+    return {port["name"]: port["bound_from"] for port in ports if port.get("bound_from")}
+
+
 def _secret_env(service: str, *, required_only: bool) -> set[str]:
     """The env vars the contract's secret groups set where a profile leaves them on.
 
     A required group's Secret has to exist for the pod to start, so its variables
     are always set; an optional one's only when a deployer creates the Secret.
     """
-    contract = json.loads((CONTRACTS / f"{service}.json").read_text(encoding="utf-8"))
     found: set[str] = set()
-    for group in contract.get("secrets") or []:
+    for group in _contract(service).get("secrets") or []:
         if required_only and group.get("optional", False):
             continue
         if _group_enabled(service, group["group_name"]):
@@ -215,37 +232,66 @@ def test_a_variable_that_yields_to_the_overlay_leaves_its_path_writable(service:
 # ----------------------------------------------------------- direction two
 
 
+def _unset_supplier(service: str, path: str, supplier: str) -> str:
+    """Why ``supplier`` does not decide ``path`` for ``service``, or empty when it does."""
+    inner = path.removeprefix("config.")
+    if ENV_NAME.match(supplier):
+        env = (
+            _extra_env(service)
+            | _env_configmap(service)
+            | _secret_env(service, required_only=False)
+        )
+        return "" if supplier in env else "no integration file, env ConfigMap or contract sets it"
+    port = CONTRACT_PORT.fullmatch(supplier)
+    if port:
+        bound = _bound_ports(service).get(port["name"])
+        if bound != inner:
+            return f"the contract's {port['name']!r} port is bound from {bound!r}, not {inner!r}"
+        return ""
+    if supplier != f"configOverrides.{inner}":
+        return f"a values-path supplier is configOverrides.{inner}, the leaf merged over it"
+    documents = [_load(file) for file in _integration_files(service)]
+    if all(_dig(doc, supplier) is _MISSING for doc in documents):
+        return "no integration file sets it"
+    return ""
+
+
 @pytest.mark.parametrize("service", _config_apps())
 def test_every_supplier_is_one_the_deployment_sets(service: str) -> None:
     owned = _apps()[service].get("deployment_owned") or {}
-    env = (
-        _extra_env(service) | _env_configmap(service) | _secret_env(service, required_only=False)
-    )
-    documents = [_load(path) for path in _integration_files(service)]
-    unset = []
-    for path, supplier in sorted(owned.items()):
-        if ENV_NAME.match(supplier):
-            found = supplier in env
-        else:
-            found = any(_dig(doc, supplier) is not _MISSING for doc in documents)
-        if not found:
-            unset.append(f"{path}: {supplier}")
-    assert unset == [], (
-        f"{service}: apps.yaml deployment_owned names suppliers nothing in "
-        f"argocd/values/apps, the dfe-extras env ConfigMap or the contract sets: {unset}"
-    )
+    unset = [
+        f"{path}: {supplier} ({why})"
+        for path, supplier in sorted(owned.items())
+        if (why := _unset_supplier(service, path, supplier))
+    ]
+    assert unset == [], f"{service}: apps.yaml deployment_owned names suppliers that decide nothing: {unset}"
 
 
 @pytest.mark.parametrize("service", _config_apps())
-def test_every_gate_is_a_value_the_integration_files_hold(service: str) -> None:
+def test_every_gate_is_a_value_the_deployment_holds(service: str) -> None:
     gates = _apps()[service].get("deployment_owned_when") or {}
-    documents = [_load(path) for path in _integration_files(service)]
+    documents = [_load(path) for path in [*_integration_files(service), *SHARED_VALUES.glob("*.yaml")]]
     unknown = sorted(
         f"{path}: {gate}"
         for path, gate in gates.items()
         if all(_dig(doc, gate) is _MISSING for doc in documents)
     )
-    assert unknown == [], f"{service}: gates on values no integration file holds: {unknown}"
+    assert unknown == [], f"{service}: gates on values no values file holds: {unknown}"
+
+
+@pytest.mark.parametrize("service", _config_apps())
+def test_every_listener_address_the_contract_binds_is_listed(service: str) -> None:
+    """A moved address takes the listener off the port the Service and probes use."""
+    owned = set(_apps()[service].get("deployment_owned") or {})
+    bound = sorted(f"config.{path}" for path in _bound_ports(service).values())
+    assert [path for path in bound if path not in owned] == []
+
+
+@pytest.mark.parametrize("service", _config_apps())
+def test_every_app_whose_config_the_engine_writes_has_integration_values(service: str) -> None:
+    """A missing directory would make every check above pass on nothing."""
+    assert (APPS_VALUES / service / "values.yaml").is_file()
+    assert (CONTRACTS / f"{service}.json").is_file()
 
 
 def test_only_an_app_whose_config_the_engine_writes_owns_config_paths() -> None:

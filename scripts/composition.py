@@ -28,8 +28,8 @@ GENERATED block, because Helm cannot read apps.yaml:
     python3 scripts/composition.py --write-seed
 
 Helm reads only files inside the chart directory, so the manifest the engine
-mounts and reflects is a copy each chart that mounts it carries -- dfe-extras,
-and the dfe-engine chart until it is deleted:
+mounts and reflects is a copy each chart that mounts it carries, dfe-extras and
+the dfe-engine chart:
 
     python3 scripts/composition.py --write-catalogue
 

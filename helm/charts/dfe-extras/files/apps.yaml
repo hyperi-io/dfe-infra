@@ -156,14 +156,21 @@
 #                   restart needs a manual restart
 #
 # deployment_owned
-#   The app's config paths the deployment sets over the instance overlay, each
-#   with what sets it: the env var the app reads, or the values path the
-#   integration values set (configOverrides.<path>). The engine reports such a
-#   path as the deployment's and refuses a write to it, naming the supplier, since
-#   the write would change nothing. Keys are config. overlay paths. It describes
-#   argocd/values/apps and the dfe-extras env ConfigMaps, and
-#   scripts/tests/test_deployment_owned.py fails when the two disagree in either
-#   direction.
+#   The app's config paths the deployment decides rather than the instance
+#   overlay, each with what decides it, in one of three forms:
+#     <ENV_NAME>                   the env var the app reads, which outranks the
+#                                  config file
+#     configOverrides.<path>       the integration values' configOverrides leaf at
+#                                  the same path, merged over the overlay
+#     contract port <name>         the address a listener binds, whose port the
+#                                  app's contract opens on the Service and probes
+#   The engine reports such a path as the deployment's and refuses a write to it,
+#   naming the supplier. On a target with no chart (Compose) it refuses none: the
+#   deployment's base config sits under the overlay there. Keys are config.
+#   overlay paths. It describes argocd/values/apps, the dfe-extras env ConfigMaps
+#   and the contracts' ports, and scripts/tests/test_deployment_owned.py fails
+#   when they disagree in either direction. A mounted manifest that lacks the key
+#   for an app takes the engine's bundled copy, with a startup warning.
 #
 # deployment_owned_when
 #   The deployment_owned paths the deployment sets only while an instance overlay
@@ -335,6 +342,21 @@ apps:
       config.routing.dlq.enabled: DFE_RECEIVER_DLQ_ENABLED
       config.routing.dlq.topic: DFE_RECEIVER_DLQ_TOPIC
       config.routing.dlq.mode: DFE_RECEIVER_DLQ_MODE
+      # Each listener binds the port its contract opens on the Service and the
+      # probes, so moving it takes the listener off that port.
+      config.server.bind_address: contract port http
+      config.otlp.grpc_bind_address: contract port otlp-grpc
+      config.otlp.http_bind_address: contract port otlp-http
+      config.lumberjack.bind_address: contract port beats
+      config.splunk_hec.bind_address: contract port hec
+      config.prometheus_rw.bind_address: contract port prometheus-rw
+      config.webhook.bind_address: contract port webhook
+      config.syslog.tcp_bind_address: contract port syslog
+      config.syslog.udp_bind_address: contract port syslog-udp
+      config.syslog.tls_bind_address: contract port syslog-tls
+      config.fluent.bind_address: contract port fluent
+      config.gelf.bind_address: contract port gelf
+      config.flow.bind_address: contract port netflow
 
   dfe-loader:
     multiplicity: single
@@ -434,6 +456,12 @@ apps:
       # One env var sets both: naming a common topic also pins the routing to it.
       config.dlq.kafka.common_topic: DLQ_TOPIC
       config.dlq.kafka.routing: DLQ_TOPIC
+    # Each renders empty, which the app reads as unset, until the deployment
+    # names a local path or a store, so the engine's destination stands until then.
+    deployment_owned_when:
+      config.archive.destination: archive.localPath
+      config.archive.s3.endpoint: s3.endpoint
+      config.archive.s3.bucket: s3.bucket
 
   # A fetcher deployment is 1:1 with one source's fetcher config, so many run side
   # by side, each with its own dedicated settings. It polls its upstream rather
@@ -533,6 +561,9 @@ apps:
       # One env var sets both: naming a common topic also pins the routing to it.
       config.dlq.kafka.common_topic: DFE_FETCHER_DLQ_TOPIC
       config.dlq.kafka.routing: DFE_FETCHER_DLQ_TOPIC
+      # Each listener binds the port its contract opens.
+      config.ingest.bind_address: contract port ingest
+      config.extractors.vector.grpc_bind_address: contract port vector-grpc
 
   # Compiles every .vrl in its transforms directory into one program at startup
   # and holds it immutable for the process lifetime, so an edit needs a roll.
@@ -740,6 +771,8 @@ apps:
     # the bus profiles set reach scalo's KafkaConfig rather than the config file.
     deployment_owned:
       config.source.brokers: DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS
+      # The push listener binds the port its contract opens.
+      config.source.listen: contract port push
 
   # The edge-fleet VPN. It carries no records of its own -- it is the door an
   # appliance dials before it posts to the receiver -- so it has no transport,
