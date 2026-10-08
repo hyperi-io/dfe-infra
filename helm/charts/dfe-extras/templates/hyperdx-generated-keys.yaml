@@ -1,0 +1,100 @@
+{{- define "dfe-extras.hyperdx.generatedKeys" -}}
+{{- /*
+HyperDX's two generated keys: the Express session signing key, and the key that
+encrypts the third-party tokens it stores. Unset, the first falls back to a key
+published in upstream's source and the second leaves those tokens in plain text.
+
+ESO writes each once, by the same mechanism and for the same reason as
+dfe-engine's JWT key (engine-jwt-secret.yaml): Argo renders with `helm template`,
+so a template-minted value would change on every sync. A new session key ends
+every live session; a new token key makes every stored token unreadable.
+*/ -}}
+{{- if .Values.sessionSecret.create }}
+{{- $name := .Values.sessionSecret.name -}}
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ $name }}-gen
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  length: 48
+  digits: 6
+  symbols: 0          # alphanumeric -- avoids escaping in env contexts
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # The Secret carries ESO's ownerReference, so an uninstall that took this
+    # with it would drop the key and end every live session.
+    helm.sh/resource-policy: keep
+spec:
+  refreshPolicy: CreatedOnce
+  refreshInterval: "0"
+  target:
+    name: {{ $name }}
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        {{ .Values.sessionSecret.key }}: "{{ `{{ .password }}` }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ $name }}-gen
+{{- end }}
+{{- if .Values.tokenEncryption.create }}
+{{- $name := .Values.tokenEncryption.name }}
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ $name }}-gen
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  length: 48
+  digits: 6
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # The Secret carries ESO's ownerReference, so an uninstall that took this
+    # with it would drop the key and every stored token with it.
+    helm.sh/resource-policy: keep
+spec:
+  refreshPolicy: CreatedOnce
+  refreshInterval: "0"
+  target:
+    name: {{ $name }}
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        # The image takes 64 hex chars or base64 of exactly 32 bytes and refuses
+        # to start on anything else; sha256sum of the password is 64 hex chars.
+        {{ .Values.tokenEncryption.key }}: "{{ `{{ .password | sha256sum }}` }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ $name }}-gen
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-hyperdx") "body" "dfe-extras.hyperdx.generatedKeys") }}

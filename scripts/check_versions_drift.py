@@ -813,6 +813,49 @@ CHECKS += [
     ),
 ]
 
+# helm/charts/dfe-extras renders the DFE-only objects beside each component's
+# thin chart. Helm cannot read a sibling chart's values, so it carries its own
+# copy of each component's app version (its object labels, and the engine tag
+# the hunt runner and keda shim run), the engine digest, the git-sync image and
+# the engine's copy of the dfe-ui pin.
+_EXTRAS_VALUES = Path("helm/charts/dfe-extras/values.yaml")
+CHECKS += [
+    Check(
+        f"dfe-extras {app} app version",
+        f"{'content' if app == 'dfe-hyperdx' else 'apps'}.{app}",
+        _EXTRAS_VALUES,
+        r"(?m)^    " + re.escape(app) + r':\s*"([^"]+)"',
+    )
+    for app in [*_APP_CHARTS, "dfe-hyperdx"]
+]
+CHECKS += [
+    # The engine family's image; its tag is empty, so the app version above is the tag.
+    Check(
+        "dfe-extras engine image digest",
+        "digests.dfe-engine",
+        _EXTRAS_VALUES,
+        r'repository:\s*""\n\s*tag:\s*""\n\s*digest:\s*"([^"]+)"',
+    ),
+    Check(
+        "dfe-extras dfe-ui version (engine defaults)",
+        "apps.dfe-ui",
+        _EXTRAS_VALUES,
+        r'uiVersion:\s*"([^"]+)"',
+    ),
+    Check(
+        "dfe-extras hunt-runner git-sync image tag",
+        "services.git-sync",
+        _EXTRAS_VALUES,
+        r'git-sync/git-sync\n\s*tag:\s*"([^"@]+)"',
+    ),
+    Check(
+        "dfe-extras hunt-runner git-sync image digest",
+        "services-digests.git-sync",
+        _EXTRAS_VALUES,
+        r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
+]
+
 # dfe-toolbox image family (docker/dfe-toolbox/): a standalone ops shell, not
 # a deployed stack component, but every ARG default in its Dockerfiles must
 # still equal the versions.yaml pin it starts from -- the workflow overrides

@@ -1,0 +1,252 @@
+{{- define "dfe-engine.gitSyncEnv" -}}
+- name: GITSYNC_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.gitops.credentialsSecret }}
+      key: username
+- name: GITSYNC_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.gitops.credentialsSecret }}
+      key: password
+# git-sync writes its gitconfig under TMPDIR and git under HOME; the rootfs is
+# read-only, so both point at the sidecar's own volume.
+- name: HOME
+  value: {{ .Values.huntRunner.gitSync.homePath | quote }}
+- name: TMPDIR
+  value: {{ .Values.huntRunner.gitSync.homePath | quote }}
+{{- end }}
+{{- define "dfe-engine.gitSyncMounts" -}}
+- name: deploy-repo
+  mountPath: {{ .Values.huntRunner.gitSync.mountPath }}
+- name: git-sync-home
+  mountPath: {{ .Values.huntRunner.gitSync.homePath }}
+{{- end }}
+{{- define "dfe-extras.engine.huntRunner" -}}
+{{- /*
+dfe-hunt-runner -- the pull-based hunt executor, its OWN pod on the engine image
+(`dfe-hunt-runner run`). DISTINCT labels (app.kubernetes.io/name:
+dfe-hunt-runner) so the engine Service selector never routes to it. DEFAULT 1 pod;
+autoscaling is BETA + opt-in (huntRunner.autoscaling.enabled) on the due-hunt backlog
+via the fail-safe dfe-keda-shim.
+
+NO PROBES by design: the runner is a polling scheduler loop (dfe_engine.hunt_runner
+daemon), not a server -- it opens no HTTP listener, so there is no endpoint an
+httpGet probe could hit. A liveness signal would need an app-side surface first
+(scalo would have to serve /livez here); until then a probe would only kill
+healthy pods.
+
+Hunt and rule YAML arrives on a shared volume a git-sync init container seeds and
+a git-sync sidecar keeps current (huntRunner.gitSync) -- the runner reads both off
+disk on every reload tick, and the engine governs them in that repo.
+*/ -}}
+{{- if .Values.huntRunner.enabled }}
+{{- $gs := .Values.huntRunner.gitSync }}
+{{- /* No deploy repo means nothing to sync, so the sidecar needs both switches. */}}
+{{- $gitSync := and $gs.enabled .Values.gitops.enabled }}
+{{- $gsImage := printf "%s:%s" $gs.image.repository $gs.image.tag }}
+{{- with $gs.image.digest }}{{- $gsImage = printf "%s@%s" $gsImage . }}{{- end }}
+{{- /* Where both git-sync passes agree: same repo, same ref, same worktree.
+       --root is a subdirectory, never the volume root, which git-sync empties. */}}
+{{- $gsArgs := list (printf "--repo=%s" .Values.gitops.repoUrl)
+                    (printf "--ref=%s" .Values.gitops.branch)
+                    (printf "--root=%s/repo" $gs.mountPath)
+                    (printf "--link=%s" $gs.link) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dfe-hunt-runner
+  labels: &hrLabels
+    app.kubernetes.io/name: dfe-hunt-runner
+    app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/version: {{ .Chart.AppVersion | default "0.0.0" | quote }}
+    app.kubernetes.io/component: hunt-runner
+    dfe.hyperi.io/env: {{ .Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
+spec:
+  # DEFAULT 1 pod. When autoscaling is enabled the ScaledObject below owns the replica
+  # count instead (leases divvy work; KEDA picks N) -- so we omit replicas then.
+  {{- if not .Values.huntRunner.autoscaling.enabled }}
+  replicas: 1
+  {{- end }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dfe-hunt-runner
+  template:
+    metadata:
+      labels: *hrLabels
+    spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # The runner loads the engine's settings module, and svc/dfe-keda-shim makes the
+      # kubelet inject DFE_KEDA_SHIM_PORT="tcp://IP:8080", which settings.py:1292 reads
+      # as an int and exits on ("invalid literal for int() with base 10").
+      enableServiceLinks: false
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- /* The helper renders the initContainers key itself, so git-sync-init
+             joins its list, or opens one when the wait is switched off. */}}
+      {{- $waitForEngine := include "dfe-common.waitForEngine" . }}
+      {{- if $waitForEngine }}
+      {{- $waitForEngine | nindent 6 }}
+      {{- else if $gitSync }}
+      initContainers:
+      {{- end }}
+      {{- if $gitSync }}
+        # The FIRST sync, bounded. The sidecar retries forever, so on its own a bad
+        # credential leaves the link absent and the runner Running with zero hunts
+        # (dfe-infra#212); failing here surfaces it as a pod that never starts.
+        - name: git-sync-init
+          image: {{ $gsImage | quote }}
+          imagePullPolicy: {{ $gs.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          args:
+            {{- range $gsArgs }}
+            - {{ . | quote }}
+            {{- end }}
+            - "--one-time"
+            - {{ printf "--max-failures=%v" $gs.initialMaxFailures | quote }}
+          env:
+            {{- include "dfe-engine.gitSyncEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "dfe-engine.gitSyncMounts" . | nindent 12 }}
+          resources:
+            {{- toYaml $gs.resources | nindent 12 }}
+      {{- end }}
+      containers:
+        - name: hunt-runner
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          command: ["dfe-hunt-runner"]
+          args: ["run", "--poll", {{ .Values.huntRunner.poll | quote }}, "--cap", {{ .Values.huntRunner.cap | quote }}]
+          env:
+            # The engine mints its key into a per-pod emptyDir, which this pod
+            # cannot read; without the shared Secret it falls back to the dev
+            # placeholder and DFESettings rejects that under env=production.
+            - name: DFE_API_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.jwtSecretName }}
+                  key: {{ .Values.auth.jwtSecretKey }}
+            # The ClickHouse the engine uses, over the same transport. The runner
+            # coordinates leases/watermarks and runs hunt queries here, as its own
+            # user rather than the admin account (huntRunner.clickhouse).
+            {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
+            {{- include "dfe-engine.huntRunnerClickhouseAuthEnv" . | nindent 12 }}
+            {{- if $gitSync }}
+            # Through git-sync's link, which is swapped atomically, so a reload
+            # never reads a half-written worktree.
+            - name: DFE_HUNTS_DIR
+              value: {{ printf "%s/repo/%s/%s" $gs.mountPath $gs.link $gs.huntsPath | quote }}
+            - name: DFE_HUNTS_RULES_DIR
+              value: {{ printf "%s/repo/%s/%s" $gs.mountPath $gs.link $gs.rulesPath | quote }}
+            {{- else }}
+            # No sync: the directories sit on the pod's own scratch volume, which
+            # nothing fills, so the runner loads no specs.
+            - name: DFE_HUNTS_DIR
+              value: {{ .Values.config.mountPath }}/hunts
+            - name: DFE_HUNTS_RULES_DIR
+              value: {{ .Values.config.mountPath }}/rules
+            {{- end }}
+            # No DFE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
+            # ensure_schema() reads the tree the engine image ships.
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: dfe-hunt-runner
+          volumeMounts:
+            - name: config
+              mountPath: {{ .Values.config.mountPath }}
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
+            {{- if $gitSync }}
+            # Read-only: the sidecar is the only writer.
+            - name: deploy-repo
+              mountPath: {{ $gs.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- with (include "dfe-engine.clickhouseCaMount" .) }}
+            {{- . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.huntRunner.resources | nindent 12 }}
+        {{- if $gitSync }}
+        # Pulls the deploy repo the engine commits hunts and rules to. Repo,
+        # branch and credential are the engine's own gitops.* values, so the two
+        # cannot end up on different repos and no second credential is minted.
+        - name: git-sync
+          image: {{ $gsImage | quote }}
+          imagePullPolicy: {{ $gs.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          args:
+            {{- range $gsArgs }}
+            - {{ . | quote }}
+            {{- end }}
+            - {{ printf "--period=%s" $gs.period | quote }}
+            - {{ printf "--max-failures=%v" $gs.maxFailures | quote }}
+          env:
+            {{- include "dfe-engine.gitSyncEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "dfe-engine.gitSyncMounts" . | nindent 12 }}
+          resources:
+            {{- toYaml $gs.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        # Scratch. Whether the runner reads hunts and rules from here or from the
+        # deploy-repo volume is the gitSync branch in the env block above.
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if $gitSync }}
+        # Written by the git-sync sidecar, read by the runner.
+        - name: deploy-repo
+          emptyDir: {}
+        # git-sync's HOME, kept off the runner's scratch.
+        - name: git-sync-home
+          emptyDir: {}
+        {{- end }}
+        {{- with (include "dfe-engine.clickhouseCaVolume" .) }}
+        {{- . | nindent 8 }}
+        {{- end }}
+{{- if .Values.huntRunner.autoscaling.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: dfe-hunt-runner-scaler
+  labels:
+    app.kubernetes.io/name: dfe-hunt-runner
+    app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/component: hunt-runner
+    dfe.hyperi.io/env: {{ .Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
+spec:
+  scaleTargetRef:
+    name: dfe-hunt-runner
+  minReplicaCount: {{ .Values.huntRunner.autoscaling.minReplicaCount | default 1 }}
+  maxReplicaCount: {{ .Values.huntRunner.autoscaling.maxReplicaCount | default 5 }}
+  cooldownPeriod: {{ .Values.huntRunner.autoscaling.cooldownPeriod | default 300 }}
+  pollingInterval: {{ .Values.huntRunner.autoscaling.pollingInterval | default 30 }}
+  triggers:
+    {{- /* BETA: scale on the due-hunt backlog via the fail-safe dfe-keda-shim. Extensive
+           backlog -> AverageValue (ceil(due / targetBacklog)). A shim/CH outage holds
+           current (the shim returns last-good), never runs replicas up. */}}
+    - type: metrics-api
+      metricType: AverageValue
+      metadata:
+        targetValue: {{ .Values.huntRunner.autoscaling.targetBacklog | default 10 | quote }}
+        url: {{ printf "http://%s/keda/hunt-backlog" (.Values.huntRunner.autoscaling.shimAddress | default (include "dfe-common.kedaShimAddress" .)) | quote }}
+        valueLocation: "value"
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-engine") "body" "dfe-extras.engine.huntRunner") }}

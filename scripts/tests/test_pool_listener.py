@@ -25,12 +25,13 @@ things that decide whether a held request survives the proxy: a timeout no
 shorter than the sender's deadline, and retries that never re-send a request a
 pod already took.
 
+The listener objects are dfe-extras', rendered with each pool's chartName. The
+pool's own Service and the receiver's buffer are still read off its 2.2.0 chart.
+
     python3 scripts/tests/test_pool_listener.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
-
-from __future__ import annotations
 
 import subprocess
 import sys
@@ -43,6 +44,7 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
+EXTRAS = CHARTS / "dfe-extras"
 VALUES = REPO_ROOT / "argocd" / "values"
 
 # Every stage a record can be sent TO on the direct transport, and the Service
@@ -77,10 +79,10 @@ SAFE_RETRY_TRIGGERS = ["connect-failure", "resource-exhausted"]
 DURATION_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 
 
-def render(chart: str, profile: str, *extra: str) -> list[dict]:
+def render(chart: str, profile: str, *extra: str, path: Path | None = None) -> list[dict]:
     """One chart under one profile, with the same values cascade Argo layers."""
     cmd = [
-        "helm", "template", chart, str(chart_dir(chart)),
+        "helm", "template", chart, str(path or chart_dir(chart)),
         "--namespace", "dfe",
         "--set", "appNamespace=dfe",
         "-f", str(VALUES / "common.yaml"),
@@ -93,6 +95,11 @@ def render(chart: str, profile: str, *extra: str) -> list[dict]:
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {chart} on {profile}:\n{out.stderr}")
     return [d for d in yaml.safe_load_all(out.stdout) if d]
+
+
+def listener(chart: str, profile: str, *extra: str) -> list[dict]:
+    """The DFE-only objects dfe-extras renders beside one pool's chart."""
+    return render(chart, profile, "--set", f"chartName={chart}", *extra, path=EXTRAS)
 
 
 def of_kind(docs: list[dict], kind: str) -> list[dict]:
@@ -110,7 +117,7 @@ def seconds(duration: str) -> float:
 
 def test_every_pool_gets_a_listener_on_the_mesh_profile() -> None:
     for chart, port in sorted(POOLS.items()):
-        docs = render(chart, MESH_PROFILE)
+        docs = listener(chart, MESH_PROFILE)
         alias = f"{chart}-mesh"
 
         routes = of_kind(docs, "GRPCRoute")
@@ -169,7 +176,7 @@ def test_the_backend_is_declared_cleartext_http2() -> None:
 def test_every_route_carries_its_own_policy() -> None:
     for chart in sorted(POOLS):
         alias = f"{chart}-mesh"
-        policies = of_kind(render(chart, MESH_PROFILE), "BackendTrafficPolicy")
+        policies = of_kind(listener(chart, MESH_PROFILE), "BackendTrafficPolicy")
         expect(f"{chart} has one route policy", len(policies) == 1, f"got {len(policies)}")
         if not policies:
             continue
@@ -219,7 +226,7 @@ def test_the_duration_reader_reads_what_the_policy_writes() -> None:
 
 
 def test_another_gateway_can_leave_the_route_policy_out() -> None:
-    docs = render("dfe-loader", MESH_PROFILE, "--set", "mesh.routePolicy.enabled=false")
+    docs = listener("dfe-loader", MESH_PROFILE, "--set", "mesh.routePolicy.enabled=false")
     expect(
         "mesh.routePolicy.enabled=false renders no policy",
         of_kind(docs, "BackendTrafficPolicy") == [],
@@ -235,7 +242,7 @@ def test_another_gateway_can_leave_the_route_policy_out() -> None:
 def test_no_listener_on_a_profile_that_did_not_ask() -> None:
     for profile in QUIET_PROFILES:
         for chart in sorted(POOLS):
-            docs = render(chart, profile)
+            docs = listener(chart, profile)
             routes = of_kind(docs, "GRPCRoute")
             expect(f"{chart} has no route on {profile}", routes == [], f"got {len(routes)}")
             policies = of_kind(docs, "BackendTrafficPolicy")

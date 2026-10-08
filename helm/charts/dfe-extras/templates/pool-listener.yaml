@@ -1,0 +1,9 @@
+{{- /* Gated on the direct transport plus mesh.enabled -- see dfe-common.poolListener. */ -}}
+{{- include "dfe-extras.render" (dict "root" . "body" "dfe-common.poolListener" "charts" (list
+  "dfe-receiver"
+  "dfe-loader"
+  "dfe-archiver"
+  "dfe-transform-vrl"
+  "dfe-transform-vector"
+  "dfe-transform-elastic"
+)) }}

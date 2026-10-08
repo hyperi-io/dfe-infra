@@ -1,0 +1,56 @@
+{{- define "dfe-extras.receiver.networkPolicyIngest" -}}
+{{- $mode := .Values.exposure.mode | default "public" }}
+{{- if and (has $mode (list "public" "vpn")) .Values.exposure.networkPolicy.enabled }}
+{{- $exposed := list }}
+{{- range .Values.listeners }}
+  {{- if .exposed }}
+    {{- $exposed = append $exposed . }}
+  {{- end }}
+{{- end }}
+{{- if gt (len $exposed) 0 }}
+{{- /*
+  The namespace baseline (network-policies chart, dfe-ingress-policy) selects
+  every pod and admits only the gateway, KEDA, otel and the other DFE
+  namespaces, so external ingest is dropped on a policy-enforcing CNI even
+  after the LoadBalancer provisions. NetworkPolicies are additive, so this one
+  adds the exposed ingest ports without touching that baseline.
+
+  public: no source at all. Client-CIDR restriction is the LoadBalancer's
+  loadBalancerSourceRanges, not an ipBlock here: under the
+  default externalTrafficPolicy kube-proxy SNATs external traffic to a node
+  address, so an ipBlock would match the node rather than the client and drop
+  traffic the LB had already allowed.
+
+  vpn: the tunnel pods, by label. They SNAT a client onto the pod network, so
+  selecting them is exact and needs no addressing -- and it is what keeps the
+  receiver reachable ONLY through the tunnel in this mode.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-ingest
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+    dfe.hyperi.io/exposure: {{ $mode }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        {{- range $exposed }}
+        - protocol: {{ .protocol | default "TCP" }}
+          port: {{ .port }}
+        {{- end }}
+      {{- if eq $mode "vpn" }}
+      from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.exposure.vpn.podLabel }}
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-receiver") "body" "dfe-extras.receiver.networkPolicyIngest") }}

@@ -16,12 +16,13 @@ rolled the engine through Reloader, and killed every issued token (#224). The
 render is the thing that has to be stable, so the assertion is byte equality
 across two independent renders of the same inputs.
 
+The generated keys are dfe-extras objects (chartName dfe-engine, dfe-hyperdx).
+The pods that read them are still checked on the 2.2.0 charts.
+
     python3 scripts/tests/test_render_stable.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
-
-from __future__ import annotations
 
 import re
 import subprocess
@@ -37,6 +38,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 ENGINE = CHARTS / "dfe-engine"
 HYPERDX = CHARTS / "hyperdx"
+EXTRAS = CHARTS / "dfe-extras"
+ENGINE_EXTRAS = "chartName=dfe-engine"
 
 # A mint function guarded by a cluster read: the pairing that only works under
 # `helm install`, and silently re-mints under every `helm template`.
@@ -53,6 +56,11 @@ def render(chart: Path, *sets: str) -> str:
     return out.stdout
 
 
+def extras(component: str, *sets: str) -> str:
+    """dfe-extras rendering one component's objects."""
+    return render(EXTRAS, f"chartName={component}", *sets)
+
+
 def docs(text: str) -> list[dict]:
     return [d for d in yaml.safe_load_all(text) if d]
 
@@ -62,16 +70,16 @@ def named(text: str, kind: str, name: str) -> list[dict]:
 
 
 def test_engine_renders_identically_twice() -> None:
-    """The whole chart, not just the Secret -- any drift here rolls a pod."""
-    first = render(ENGINE)
-    second = render(ENGINE)
-    expect("dfe-engine renders byte-identically twice", first == second,
+    """Every engine extra, not just the Secrets -- any drift here rolls a pod."""
+    first = extras("dfe-engine")
+    second = extras("dfe-engine")
+    expect("dfe-extras renders the engine's objects byte-identically twice", first == second,
            "two renders of the same inputs differ")
 
 
 def test_jwt_key_is_not_minted_by_the_template() -> None:
     """A template-minted key is a new key per render; ESO writes one once."""
-    out = render(ENGINE)
+    out = extras("dfe-engine")
     gens = named(out, "Password", "dfe-engine-jwt-gen")
     es = named(out, "ExternalSecret", "dfe-engine-jwt")
     plain = named(out, "Secret", "dfe-engine-jwt")
@@ -87,7 +95,7 @@ def test_jwt_key_is_not_minted_by_the_template() -> None:
 
 
 def test_a_pinned_key_renders_that_key_and_nothing_else() -> None:
-    out = render(ENGINE, "auth.jwtSecret=pinned-key-value")
+    out = extras("dfe-engine", "auth.jwtSecret=pinned-key-value")
     plain = named(out, "Secret", "dfe-engine-jwt")
     gens = named(out, "Password", "dfe-engine-jwt-gen")
     expect("a pinned key renders one plain Secret", len(plain) == 1, f"got {len(plain)}")
@@ -100,7 +108,7 @@ def test_a_pinned_key_renders_that_key_and_nothing_else() -> None:
 
 def test_creation_can_be_handed_to_the_deployment() -> None:
     """A deployment supplying the Secret itself must get nothing from the chart."""
-    out = render(ENGINE, "auth.jwtSecretCreate=false")
+    out = extras("dfe-engine", "auth.jwtSecretCreate=false")
     expect("jwtSecretCreate=false renders no generator",
            named(out, "Password", "dfe-engine-jwt-gen") == [], "a generator rendered")
     expect("jwtSecretCreate=false renders no ExternalSecret",
@@ -124,7 +132,7 @@ def test_the_admin_password_is_minted_once_like_the_signing_key() -> None:
     A template-minted password is a new password on every Argo sync, which locks
     the operator out of the account they were handed.
     """
-    out = render(ENGINE)
+    out = extras("dfe-engine")
     for secret, key in (
         ("dfe-engine-admin", "admin-password"),
         ("dfe-engine-breakglass", "breakglass-password"),
@@ -145,7 +153,7 @@ def test_the_admin_password_is_minted_once_like_the_signing_key() -> None:
 
 def test_the_seed_accounts_secret_no_longer_claims_the_admin_password() -> None:
     """Two Secrets each claiming to be the admin password is what #233 collapsed."""
-    out = render(ENGINE, "seedAuth.seedAccounts[0].username=alice",
+    out = extras("dfe-engine", "seedAuth.seedAccounts[0].username=alice",
                  "seedAuth.seedAccounts[0].password=s3cret")
     seed = named(out, "Secret", "dfe-engine-seed-accounts")
     expect("the seed-accounts Secret still renders", len(seed) == 1, f"got {len(seed)}")
@@ -161,9 +169,10 @@ def test_the_engine_reads_the_minted_secret() -> None:
     ref = env["DFE_AUTH_LOCAL_ADMIN_PASSWORD"]["valueFrom"]["secretKeyRef"]
     expect("the admin password comes from the minted Secret",
            (ref["name"], ref["key"]) == ("dfe-engine-admin", "admin-password"), f"got {ref}")
+    literal = named(extras("dfe-engine"), "ConfigMap", "dfe-engine-env")[0]["data"]
     expect("the Secret is named for the login page's fetch command",
-           env["DFE_AUTH_LOCAL_ADMIN_SECRET_NAME"]["value"] == "dfe-engine-admin",
-           f"got {env.get('DFE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
+           literal.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") == "dfe-engine-admin",
+           f"got {literal.get('DFE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
     expect("the namespace comes off the pod, so the command is complete",
            env["DFE_DEPLOYMENT_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"]
            == "metadata.namespace", f"got {env.get('DFE_DEPLOYMENT_NAMESPACE')}")
@@ -177,25 +186,25 @@ def test_a_non_dev_posture_cannot_render_without_minting() -> None:
     """The production half of the model: refuse at render, not at first login."""
     expect(
         "a production posture minting nothing is refused",
-        "adminSecretName is empty" in render_fails(ENGINE, "env=production",
+        "adminSecretName is empty" in render_fails(EXTRAS, ENGINE_EXTRAS, "env=production",
                                                    "auth.adminSecretName="),
         "the render succeeded",
     )
     expect(
         "and the shipped default pinned outside dev is refused",
-        "shipped default" in render_fails(ENGINE, "env=production",
+        "shipped default" in render_fails(EXTRAS, ENGINE_EXTRAS, "env=production",
                                           "auth.adminPassword=changeme"),
         "the render succeeded",
     )
     expect(
         "and a padded default too, since the engine trims before comparing",
-        "shipped default" in render_fails(ENGINE, "env=production",
+        "shipped default" in render_fails(EXTRAS, ENGINE_EXTRAS, "env=production",
                                           "auth.adminPassword=  changeme  "),
         "the render succeeded",
     )
     expect(
         "a dev posture may still tyre-kick on a known password",
-        render_fails(ENGINE, "env=local", "auth.adminPassword=changeme") == "",
+        render_fails(EXTRAS, ENGINE_EXTRAS, "env=local", "auth.adminPassword=changeme") == "",
         "a dev render was refused",
     )
 
@@ -221,9 +230,10 @@ def hyperdx_env(out: str, name: str) -> dict:
 
 def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
     """Unset, sessions are signed with upstream's published key and tokens stored plain."""
-    first = render(HYPERDX)
-    expect("hyperdx renders byte-identically twice", first == render(HYPERDX),
-           "two renders of the same inputs differ")
+    first = extras("dfe-hyperdx")
+    expect("dfe-extras renders the hyperdx objects byte-identically twice",
+           first == extras("dfe-hyperdx"), "two renders of the same inputs differ")
+    pod = render(HYPERDX)
     for env, secret, key, value, _ in HYPERDX_KEYS:
         gens = named(first, "Password", f"{secret}-gen")
         es = named(first, "ExternalSecret", secret)
@@ -248,19 +258,20 @@ def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
             expect(f"an uninstall keeps {env}",
                    es[0]["metadata"].get("annotations", {}).get("helm.sh/resource-policy")
                    == "keep", f"got {es[0]['metadata'].get('annotations')}")
-        ref = hyperdx_env(first, env).get("valueFrom", {}).get("secretKeyRef", {})
+        ref = hyperdx_env(pod, env).get("valueFrom", {}).get("secretKeyRef", {})
         expect(f"hyperdx reads {env} from the minted Secret",
                (ref.get("name"), ref.get("key")) == (secret, key), f"got {ref}")
 
 
 def test_hyperdx_keys_can_come_from_the_deployment() -> None:
     for env, secret, _, _, block in HYPERDX_KEYS:
-        out = render(HYPERDX, f"{block}.create=false")
+        out = extras("dfe-hyperdx", f"{block}.create=false")
         expect(f"{block}.create=false renders no generator",
                named(out, "Password", f"{secret}-gen") == [], "a generator rendered")
         expect(f"{block}.create=false renders no ExternalSecret",
                named(out, "ExternalSecret", secret) == [], "an ExternalSecret rendered")
-        ref = hyperdx_env(out, env).get("valueFrom", {}).get("secretKeyRef", {})
+        pod = render(HYPERDX, f"{block}.create=false")
+        ref = hyperdx_env(pod, env).get("valueFrom", {}).get("secretKeyRef", {})
         expect(f"the pod still reads the deployment's {env} Secret",
                ref.get("name") == secret, f"got {ref}")
 

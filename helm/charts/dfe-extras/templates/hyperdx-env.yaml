@@ -1,0 +1,4 @@
+{{- define "dfe-extras.hyperdx.env" -}}
+{{- include "dfe-extras.envConfigMap" (dict "ctx" . "env" (include "hyperdx.env" .)) -}}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-hyperdx") "body" "dfe-extras.hyperdx.env") }}

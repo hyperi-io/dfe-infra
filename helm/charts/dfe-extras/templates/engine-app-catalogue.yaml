@@ -1,0 +1,16 @@
+{{- define "dfe-extras.engine.appCatalogue" -}}
+# The app manifest the engine's management API reflects. Helm reads only files
+# inside a chart, so files/apps.yaml is a copy of apps.yaml at the repo root, and
+# the manifest then travels with the stack revision rather than with an engine
+# release.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-app-catalogue
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  apps.yaml: |
+    {{- .Files.Get "files/apps.yaml" | nindent 4 }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-engine") "body" "dfe-extras.engine.appCatalogue") }}
