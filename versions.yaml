@@ -2603,6 +2603,23 @@ stacks:
       # Still v1.0.2's index: Toolbox Build publishes v1.0.3 from main, then this and helm/charts/dfe-toolbox/values.yaml image.digest move to it.
       dfe-toolbox-base: "sha256:250999940ec42da4bee512f1d122a613ad2962bf1a7ecdc5a21d5bb50716d0f2"
 
+    # Each component's thin chart, assembled from its deployment contract, by manifest digest and
+    # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
+    # and refuse to render a service whose entry is not a sha256 digest: "unpublished" marks a chart
+    # not published yet. The chart version is the app tag without its v, so it has no key here.
+    chart-digests:
+      culvert: "unpublished"
+      dfe-archiver: "unpublished"
+      dfe-engine: "unpublished"
+      dfe-fetcher: "unpublished"
+      dfe-loader: "unpublished"
+      dfe-receiver: "unpublished"
+      dfe-transform-elastic: "unpublished"
+      dfe-transform-vector: "unpublished"
+      dfe-transform-vrl: "unpublished"
+      dfe-ui: "unpublished"
+      hyperdx: "unpublished"
+
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
     # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.
     services-digests:

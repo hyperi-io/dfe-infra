@@ -175,7 +175,7 @@ def test_the_appsets_pass_the_addresses_to_the_charts() -> None:
         "layer2-platform.yaml": (
             "envoyGateway.service.loadBalancerIP", "dfe.hyperi.io/gateway_address"),
         "layer2-apps.yaml": (
-            "exposure.public.loadBalancerIP", "dfe.hyperi.io/receiver_address"),
+            "publicService.loadBalancerIP", "dfe.hyperi.io/receiver_address"),
     }
     for filename, (param, annotation) in wanted.items():
         appset = yaml.safe_load((APPSETS / filename).read_text(encoding="utf-8"))

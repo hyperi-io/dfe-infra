@@ -132,12 +132,7 @@ dfe-transform-vector#46 own that wiring).
 
 ## The overlay seam (how engine dials land here)
 
-One mechanism: layer2-apps generates one Argo Application per
-`values/<service>-<instance>-values.yaml` in the deploy repo, multi-source -
-source 1 the pinned base chart here, source 2 the overlay file layered last
-via `$values`. Adding/removing a values file adds/removes the app; the
-engine turns dials, this repo defines what dials exist (every dial must be
-a chart value).
+One mechanism: layer2-apps generates one Argo Application per `values/<service>-<instance>-values.yaml` in the deploy repo, from four sources: the component's thin chart over OCI, pinned by digest (`chart-digests` in `versions.yaml`); `helm/charts/dfe-extras`, its DFE-only objects; this repo as ref `infra`, for the value files; and the deploy repo as ref `values`, whose overlay file is layered last. Adding/removing a values file adds/removes the app; the engine turns dials, this repo defines what dials exist (every dial must be a chart value).
 
 The overlay entry is `$values/{{ .path.path }}/{{ .path.filename }}` (`argocd/appsets/layer2-apps.yaml`), the directory and name of the file the generator matched, so each Application layers its own file and no other.
 

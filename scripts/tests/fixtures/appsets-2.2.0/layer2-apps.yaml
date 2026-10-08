@@ -1,0 +1,219 @@
+# Waves 5 and 7: DFE application services -- deployed per service-instance from
+# the deploy repo via a git-files generator. ONE Application per overlay values file:
+# the engine (or the dfe-deploy template) writes values/<svc>-<inst>-values.yaml
+# with a `deploy: {service, instance}` block, and the generator fans out one
+# Application per file. This handles BOTH shapes uniformly -- singleton-scaled
+# apps (receiver/loader/engine/ui: one file each) and multi-instance apps
+# (fetcher: N files, each its own config). Adding/removing an instance is an
+# engine git write, not an appset edit (the engine declares instances; this
+# appset deploys them -- boundary-clean).
+#
+# Each Application is multi-source: source 1 = the pinned dfe-infra base chart
+# (helm/charts/<svc> @ target_revision); source 2 = the deploy-repo instance
+# (ref: values) whose overlay file is layered last via $values, so base defaults
+# <- engine overlay wins. ignoreMissingValueFiles lets a chart run on base
+# defaults until the engine publishes its overlay.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: dfe-layer2-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+          - git:
+              repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+              revision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+              files:
+                - path: "values/*-values.yaml"
+                # culvert is the edge module's and is generated below instead,
+                # for the clusters layer2-edge.yaml does not reach. Excluded from
+                # THIS generator so exactly one generates it: two would have the
+                # controllers fight over one Application.
+                - path: "values/culvert-*-values.yaml"
+                  exclude: true
+    # culvert, for THIS RELEASE ONLY -- it moves to appsets/layer2-edge.yaml at
+    # rc.15 (dfe-infra#342). Same reasoning as
+    # envoy-gateway-config in layer2-platform.yaml: a cluster secret written
+    # before the edge module carries no dfe.hyperi.io/edge key, so layer2-edge
+    # generates nothing for it and the tunnel would go away underneath a running
+    # deployment. DoesNotExist, not NotIn: a deployer who set the key to false
+    # turned the edge off on purpose and gets no tunnel from here either.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  dfe.hyperi.io/managed: "true"
+                matchExpressions:
+                  - key: dfe.hyperi.io/edge
+                    operator: DoesNotExist
+          - git:
+              repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+              revision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+              files:
+                - path: "values/culvert-*-values.yaml"
+  template:
+    metadata:
+      name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
+      namespace: argocd
+      annotations:
+        # dfe-engine at wave 5, everything else at 7. The engine applies every
+        # ClickHouse object and every bootstrap topic at its own startup and
+        # reports converged on /readyz, so its Application reaching Healthy IS
+        # the schema being there. Wave 6 (otel-collector) then has its otel
+        # tables, and wave 7 has the tables and topics it writes to. Stamped
+        # here rather than per generator element: this appset's elements come
+        # from the deploy repo's values files, so the wave has to be derived
+        # from the service each file names.
+        argocd.argoproj.io/sync-wave: '{{ if eq .deploy.service "dfe-engine" }}5{{ else }}7{{ end }}'
+    spec:
+      project: dfe-apps
+      sources:
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+          # culvert is the one service whose chart lives outside helm/charts --
+          # it moved under helm/edge with the gateway. Explicit rather than a
+          # general mechanism, because it goes away with the rc.15 migration.
+          path: 'helm/{{ if eq .deploy.service "culvert" }}edge/culvert{{ else }}charts/{{ .deploy.service }}{{ end }}'
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - "../../../argocd/values/common.yaml"
+              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # The deployer's own common.yaml, read by every appset so
+              # clickhouse.mode / kafka.mode are declared once rather than per
+              # app. Below the instance file, which stays the last word.
+              - '$values/infra/common.yaml'
+              - '$values/{{ .path.path }}/{{ .path.filename }}'
+            # SSoT for the deploy repo: the engine's WRITE target (gitops.repoUrl/
+            # branch) is injected from the SAME config_repo_url/revision annotation
+            # Argo reads above (source 2 + the git generator). No second place to
+            # set the deploy repo, so the engine's write target cannot drift from
+            # what Argo reads. Only the dfe-engine chart has a gitops block; other
+            # charts ignore these params.
+            parameters:
+              # The registry every dfe-* image is pulled from. `index` returns an
+              # empty string for a missing annotation, and an empty parameter
+              # beats every values file, so a cluster secret written before this
+              # fact existed would send each image to Docker Hub. The render
+              # fails instead, which leaves every Application on its current spec.
+              - name: global.registry
+                value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
+              - name: gitops.repoUrl
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+              - name: gitops.branch
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+              # The deployment's own domain (a cluster fact; tracked overlays
+              # carry placeholders). dfe-ui derives NEXTAUTH_URL from it.
+              - name: domain
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
+              # The deployment's posture, from the same annotation the cluster
+              # label carries, so DFE_ENV cannot drift from what the deploy
+              # declared. Left at the chart's `local` default, every deployment
+              # self-identifies as dev -- which is what the engine's gitcrud
+              # commit policy and the default-admin-password check gate on (#233).
+              - name: env
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
+              # The dfe-ui suite's e2e posture, which bootstrap writes on every
+              # cluster secret. Only dfe-engine reads it, and its chart refuses it
+              # outside a dev posture; a secret written before the key reads off.
+              - name: e2eServer
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/e2e_server" | default "false" }}'
+              # The ingest door's address, for the same reason the gateway has
+              # one. Only dfe-receiver reads it; the other charts ignore it.
+              - name: exposure.public.loadBalancerIP
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/receiver_address" }}'
+              # Deployment-wide retention, read by dfe-engine -- the only thing
+              # that applies a TTL. A cluster secret without it falls back to 90.
+              - name: retention.defaultTtlDays
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_default_ttl_days" | default "90" }}'
+              # The stack the base charts above are pinned at, so the engine can
+              # report it when the deploy repo's pins name no base. Only
+              # dfe-engine reads it; the other charts ignore it.
+              - name: stackVersion
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
+              # The tier, from the same annotation that picks the profile values
+              # file above -- so what the engine reports and what the charts were
+              # rendered with are one value. Only dfe-engine reads it.
+              - name: profile
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+              # Whether dfe-internal-ca exists, from the edge label that decides
+              # whether the gateway minting it is deployed. The same parameter
+              # layer2-data.yaml hands clickhouse-cluster, so dfe-engine,
+              # dfe-loader and hyperdx dial the scheme the server serves.
+              - name: clickhouse.tls.internalCA.present
+                value: '{{ ne (index .metadata.labels "dfe.hyperi.io/edge" | default "true") "false" }}'
+            # `values` (a YAML string) rather than a structured block, same
+            # reason layer2-data.yaml gives: a conditional cannot live in a
+            # field this file's own tests parse as plain YAML before any Go
+            # templating runs.
+            values: |
+              {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
+              {{- $kafkaSecurityProtocol := index .metadata.annotations "dfe.hyperi.io/kafka_security_protocol" }}
+              {{- $kafkaMessageMaxBytes := index .metadata.annotations "dfe.hyperi.io/kafka_message_max_bytes" }}
+              {{- if $kafkaMode }}
+              # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
+              # only case bootstrap.sh sets this annotation for, so an
+              # in-cluster deploy's kafka.mode stays whatever its profile
+              # overlay says. The profile's bootstrapServers names a Service
+              # that does not exist on a managed broker, so the endpoint the
+              # deploy was actually built with replaces it here.
+              kafka:
+                mode: {{ $kafkaMode | quote }}
+                {{- if and (eq $kafkaMode "external") $kafkaBootstrap }}
+                bootstrapServers: {{ $kafkaBootstrap | quote }}
+                {{- end }}
+                {{- if and (eq $kafkaMode "external") $kafkaSecurityProtocol }}
+                # A managed broker serves TLS only, so its protocol replaces
+                # common.yaml's in-cluster plain listener for every app.
+                securityProtocol: {{ $kafkaSecurityProtocol | quote }}
+                {{- end }}
+                {{- if $kafkaMessageMaxBytes }}
+                # The message size the managed broker was built with, so the
+                # topics dfe-engine creates are not left at the provider's
+                # default. Only dfe-engine reads it.
+                messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}
+                {{- end }}
+              {{- end }}
+              {{- $pullSecret := "ghcr-pull-secret" }}
+              {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+              {{- if $pullSecret }}
+              # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
+              imagePullSecrets:
+                - {{ $pullSecret | quote }}
+              {{- end }}
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
+          ref: values
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+      # Replica count belongs to KEDA's HPA, so selfHeal must not revert a scale as
+      # drift. RespectIgnoreDifferences applies the rule during sync, not only in
+      # the diff view. The charts omit `replicas:` under KEDA too
+      # (dfe-common.replicas) -- this covers charts this repo does not own.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true

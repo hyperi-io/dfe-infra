@@ -315,10 +315,11 @@ def test_a_cloud_flavour_keeps_its_pki_directory_across_a_restart() -> None:
     """culvert writes revocations and WireGuard peers into the pod's PKI
     directory in BOTH pki modes, so a restart without a volume loses both."""
     appset = (REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml").read_text(encoding="utf-8")
-    expect("the appset turns the volume on off the cloud fact",
+    expect("the appset turns the thin chart's pki volume on off the cloud fact",
            '{{- if not (or (eq $cloud "local") (eq $cloud "rancher")) }}' in appset
-           and "persistence:\n                enabled: true" in appset,
-           "no cloud-gated persistence block in layer2-edge.yaml")
+           and "writablePaths:\n                pki:\n                  persistence:\n"
+               "                    enabled: true" in appset,
+           "no cloud-gated writablePaths.pki block in layer2-edge.yaml")
     out = render("culvert",
                  "--set", "pki.mode=external",
                  "--set", "pki.existingSecret=dfe-culvert-pki",

@@ -33,8 +33,8 @@ namespace. The parity checks name an endpoint for that mode, and the derived def
 is held against fixtures/contracts/dfe-receiver.json.
 
 Telemetry settings and `cloud` reach each render through a deploy repo's infra/common.yaml,
-the layer after the app files. An appset parameter would beat that file, so the label test
-passes the same cloud to the Target.
+the layer after the app files. The appset's `cloud` parameter beats that file, so the label
+test passes the same cloud to the Target.
 """
 
 import json
@@ -46,7 +46,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _weave import CONTRACTS, REPO_ROOT, helm, library, weave
+from _weave import CONTRACTS, REPO_ROOT, appset, helm, library, weave
 
 w = weave()
 
@@ -174,22 +174,33 @@ def expected(tmp_path_factory: pytest.TempPathFactory) -> Callable[[dict], str]:
     return resolve
 
 
+def _chart_name(service: str) -> str:
+    """The thin chart the appset pulls for a deploy.service, which its contract names."""
+    return "dfe-hyperdx" if service == "hyperdx" else service
+
+
 @pytest.fixture(scope="module")
 def stand_in(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A chart that renders each extraEnv entry through tpl on the root context, as the library does."""
-    chart = tmp_path_factory.mktemp("stand-in") / "stand-in"
-    (chart / "templates").mkdir(parents=True)
-    (chart / "Chart.yaml").write_text(
-        "apiVersion: v2\nname: stand-in\nversion: 0.0.0\ntype: application\n", encoding="utf-8"
-    )
-    (chart / "templates" / "env.yaml").write_text(
-        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: env\ndata:\n"
-        "{{- range $name, $value := .Values.extraEnv }}\n"
-        "  {{ $name }}: {{ tpl (toString $value) $ | quote }}\n"
-        "{{- end }}\n",
-        encoding="utf-8",
-    )
-    return chart
+    """Charts that render each extraEnv entry through tpl on the root context, as the library does.
+
+    One per app, under the chart name the appset pulls, in the directory returned.
+    """
+    root = tmp_path_factory.mktemp("stand-in")
+    for service in SERVICES:
+        chart = root / _chart_name(service)
+        (chart / "templates").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text(
+            f"apiVersion: v2\nname: {chart.name}\nversion: 0.0.0\ntype: application\n",
+            encoding="utf-8",
+        )
+        (chart / "templates" / "env.yaml").write_text(
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: env\ndata:\n"
+            "{{- range $name, $value := .Values.extraEnv }}\n"
+            "  {{ $name }}: {{ tpl (toString $value) $ | quote }}\n"
+            "{{- end }}\n",
+            encoding="utf-8",
+        )
+    return root
 
 
 def _contract_for(service: str) -> bytes:
@@ -229,14 +240,14 @@ def _render(
     chart: Path, deploy: Path, service: str, cloud: str = "local", namespace: str = "dfe"
 ) -> list[dict]:
     target = w.Target(service, "slim", cloud, namespace=namespace)
-    inputs = w.Inputs(chart=chart, deploy_repo=deploy, extras=False, helm=helm())
+    inputs = w.Inputs(appset=appset(), chart=chart, deploy_repo=deploy, extras=False, helm=helm())
     return w.render_app(target, "new", inputs).docs
 
 
 def _stand_in_env(
-    chart: Path, deploy: Path, service: str, namespace: str = "dfe"
+    stand_ins: Path, deploy: Path, service: str, namespace: str = "dfe"
 ) -> dict[str, str]:
-    docs = _render(chart, deploy, service, namespace=namespace)
+    docs = _render(stand_ins / _chart_name(service), deploy, service, namespace=namespace)
     return next(d for d in docs if d["kind"] == "ConfigMap")["data"]
 
 
@@ -472,9 +483,10 @@ def test_every_app_is_labelled_part_of_dfe_with_its_env_and_cloud(
 
 
 @pytest.mark.parametrize("cloud", ["aws", "local"])
-def test_without_a_cloud_parameter_the_label_is_the_cloud_files_global_cloud(
+def test_the_cloud_label_is_the_cloud_the_deployment_declares(
     cloud: str, thin_charts: dict[str, Path], deploy_for: Callable[[dict], Path]
 ) -> None:
+    """The appset's cloud parameter and the cloud file's global.cloud both name it."""
     service = sorted(thin_charts)[0]
     docs = _render(thin_charts[service], deploy_for(_overlay("hyperdx", False)), service, cloud)
     assert _deployment(docs)["metadata"]["labels"]["dfe.hyperi.io/cloud"] == cloud

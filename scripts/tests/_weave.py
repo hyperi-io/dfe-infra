@@ -10,9 +10,10 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """render_app and diff_app -- scripts/dfe-weave, called from a test.
 
-Render (a) is the 2.2.0 chart under helm/charts, render (b) the thin chart
-assembled from the app's contract beside helm/charts/dfe-extras, both layered as
-argocd/appsets/layer2-apps.yaml layers them, with the per-app integration values
+Render (a) is the 2.2.0 chart under helm/charts, layered as the 2.2.0 appsets
+layer it (fixtures/appsets-2.2.0). Render (b) is the thin chart assembled from
+the app's contract beside helm/charts/dfe-extras, layered as
+argocd/appsets/layer2-apps.yaml layers it, with the per-app integration values
 from argocd/values/apps. A gate test is then a few lines:
 
     from _weave import diff_app
@@ -28,6 +29,11 @@ directory, and without it the pinned release is pulled anonymously from GHCR by
 its manifest digest, once per run. DFE_WEAVE_HELM picks the helm binary, default
 ``helm`` on PATH.
 
+An appset under argocd/appsets is routed by render: (a) reads its 2.2.0 copy,
+unless ``old_ref`` names a git ref, and (b) reads a copy whose chart pins not
+yet published carry RENDER_DIGEST, because the appset refuses to render them.
+appset() and old_appset() give those paths to a test calling dfe-weave itself.
+
 The leading underscore keeps pytest from collecting this module as a test file.
 """
 
@@ -35,7 +41,9 @@ import functools
 import importlib.machinery
 import importlib.util
 import os
+import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
@@ -47,6 +55,17 @@ TESTS = Path(__file__).resolve().parent
 REPO_ROOT = TESTS.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "dfe-weave"
 CONTRACTS = TESTS / "fixtures" / "contracts"
+APPSETS = Path("argocd/appsets")
+
+# The layer 2 appsets byte for byte as the 2.2.0 tag carries them. Render (a) reads
+# these: the reworked appsets pull each thin chart over OCI and name no 2.2.0 chart.
+OLD_APPSETS = TESTS / "fixtures" / "appsets-2.2.0"
+
+# The chart digest render (b) reads for a map entry not yet published. The thin
+# chart is assembled locally, so the digest only has to have the shape the appset
+# accepts.
+RENDER_DIGEST = "sha256:" + "ab" * 32
+DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 # The scalo-service release render (b) uses when DFE_WEAVE_LIBRARY is unset. The
 # pull names the manifest digest, so a re-pushed tag cannot change what renders.
@@ -118,15 +137,75 @@ def contract(service: str) -> Path:
     return CONTRACTS / f"{service}.json"
 
 
+@functools.cache
+def drift() -> ModuleType:
+    """scripts/check_versions_drift.py, which owns the format of an appset's chart pin map."""
+    scripts = str(REPO_ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    return importlib.import_module("check_versions_drift")
+
+
+def fill_chart_pins(text: str, digest: str = RENDER_DIGEST) -> str:
+    """An appset's text with every chart pin that is not a sha256 digest set to ``digest``."""
+    pin_map = drift().CHART_PIN_MAP.search(text)
+    if pin_map is None:
+        return text
+
+    def fill(entry: re.Match[str]) -> str:
+        if DIGEST_RE.fullmatch(entry["pin"]):
+            return entry.group(0)
+        return f'"{entry["service"]}" "{digest}"'
+
+    body = drift().CHART_PIN_ENTRY.sub(fill, pin_map["body"])
+    return text[: pin_map.start("body")] + body + text[pin_map.end("body") :]
+
+
+@functools.cache
+def _pinned_appsets() -> tuple[tempfile.TemporaryDirectory, Path]:
+    """argocd/appsets with fill_chart_pins applied, written once per run.
+
+    The directory object is returned with the path so it lives as long as the
+    cache does, as _pulled_library's does.
+    """
+    scratch = tempfile.TemporaryDirectory(prefix="dfe-weave-appsets-")
+    root = Path(scratch.name)
+    for path in sorted((REPO_ROOT / APPSETS).glob("*.yaml")):
+        text = fill_chart_pins(path.read_text(encoding="utf-8"))
+        (root / path.name).write_text(text, encoding="utf-8", newline="\n")
+    return scratch, root
+
+
+def appset(name: str | Path = "layer2-apps.yaml") -> Path:
+    """argocd/appsets/<name> as render (b) reads it, every unpublished chart pinned."""
+    return _pinned_appsets()[1] / Path(name).name
+
+
+def old_appset(name: str | Path = "layer2-apps.yaml") -> Path:
+    """argocd/appsets/<name> as the 2.2.0 tag carries it, which render (a) reads."""
+    return OLD_APPSETS / Path(name).name
+
+
+def _routed(given: Path | None, which: str, old_ref: str | None) -> Path:
+    """The appset a render reads: one under argocd/appsets goes to its copy for the render."""
+    path = Path(given) if given is not None else weave().APPSET
+    if path.is_absolute() or path.parent != APPSETS:
+        return path
+    if which == "old":
+        return path if old_ref else old_appset(path)
+    return appset(path)
+
+
 def _inputs(service: str, which: str, options: dict) -> object:
-    assembles = which in ("new", "both") and options.get("chart") is None
+    assembles = which == "new" and options.get("chart") is None
     chart_library = options.pop("library", None)
     if assembles and chart_library is None:
         chart_library = library()
+    old_ref = options.pop("old_ref", None)
     return weave().Inputs(
         repo=options.pop("repo", REPO_ROOT),
-        appset=options.pop("appset", weave().APPSET),
-        old_ref=options.pop("old_ref", None),
+        appset=_routed(options.pop("appset", None), which, old_ref),
+        old_ref=old_ref,
         deploy_repo=options.pop("deploy_repo", None),
         apps_dir=options.pop("apps_dir", None),
         contract=options.pop("contract", contract(service) if assembles else None),
@@ -150,7 +229,7 @@ def render_app(service: str, profile: str, cloud: str, which: str, **options: ob
     Options are the dfe-weave inputs (``appset``, ``apps_dir``, ``deploy_repo``,
     ``old_ref``, ``contract``, ``library``, ``chart``, ``extras``, ``helm``) and the cluster
     facts (``instance``, ``namespace``, ``registry``, ``domain``, ``env``, and
-    dicts ``annotations`` and ``labels``).
+    dicts ``annotations`` and ``labels``). ``appset`` is routed as the module says.
     """
     options = dict(options)
     inputs = _inputs(service, which, options)
@@ -161,9 +240,13 @@ def render_app(service: str, profile: str, cloud: str, which: str, **options: ob
 def diff_app(service: str, profile: str, cloud: str, **options: object) -> dict:
     """The dfe-weave diff report for one app: ``report["facets"][name]["status"]`` and ``failed``.
 
-    Takes the same options as render_app.
+    Takes the same options as render_app. Each render reads its own appset, so the
+    two are rendered here and reported by dfe-weave's make_report.
     """
+    w = weave()
+    old_inputs = _inputs(service, "old", dict(options))
     options = dict(options)
-    inputs = _inputs(service, "both", options)
+    new_inputs = _inputs(service, "new", options)
     target = _target(service, profile, cloud, options)
-    return weave().diff_app(target, inputs)
+    old = w.render_app(target, "old", old_inputs)
+    return w.make_report(target, old, w.render_app(target, "new", new_inputs))

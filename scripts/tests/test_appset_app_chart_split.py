@@ -22,15 +22,18 @@ dfe.hyperi.io/edge, and its culvert half was moved out of layer2-apps. Both
 halves of that are pinned too: two appsets generating one name is a fight
 between controllers, and zero generating it is a deletion.
 
+The deploy-repo-driven appsets moved every component from its 2.2.0 chart to a
+thin chart pulled over OCI. Their Application names are pinned to the ones the
+2.2.0 appsets generated (fixtures/appsets-2.2.0), so Argo adopts the live objects.
+
     python3 scripts/tests/test_appset_app_chart_split.py
 
 No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -41,6 +44,7 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
+OLD_APPSETS = REPO_ROOT / "scripts" / "tests" / "fixtures" / "appsets-2.2.0"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 
 sys.path.insert(0, str(SCRIPTS))
@@ -95,6 +99,12 @@ CHART_EXPR = '{{ index . "chart" | default (printf "charts/%s" .app) }}'
 # files to turn culvert on, and exactly one appset may fan it out.
 CULVERT_GLOB = "values/culvert-*-values.yaml"
 
+# The name every deploy-repo-driven appset generates: one Application per
+# instance file, named for its service and instance and the cluster.
+DEPLOY_REPO_NAME = "{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}"
+# Those appsets, which moved their components to thin charts.
+DEPLOY_REPO_APPSETS = ("layer2-apps.yaml", "layer2-edge.yaml")
+
 EDGE_KEY = "dfe.hyperi.io/edge"
 
 
@@ -102,8 +112,18 @@ def docs(path: Path) -> list[dict]:
     return [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
 
 
-def appsets(name: str) -> list[dict]:
-    return [d for d in docs(APPSETS / name) if d.get("kind") == "ApplicationSet"]
+def appsets(name: str, root: Path = APPSETS) -> list[dict]:
+    return [d for d in docs(root / name) if d.get("kind") == "ApplicationSet"]
+
+
+def deploy_repo_names(root: Path) -> dict[str, str]:
+    """ApplicationSet name -> the Application name it generates, for each git-files one."""
+    return {
+        appset["metadata"]["name"]: appset["spec"]["template"]["metadata"]["name"]
+        for name in DEPLOY_REPO_APPSETS
+        for appset in appsets(name, root)
+        if any(git_paths(appset))
+    }
 
 
 def elements(appset: dict) -> list[dict]:
@@ -280,16 +300,64 @@ def test_the_tunnel_keeps_the_name_and_the_wave_layer2_apps_gave_it() -> None:
     expect("and stays on wave 7",
            template["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "7",
            template["metadata"]["annotations"])
-    expect("and renders from the moved directory",
-           template["spec"]["sources"][0]["path"] == "helm/edge/culvert",
-           template["spec"]["sources"][0]["path"])
+    chart = template["spec"]["sources"][0]
+    expect("and renders its own thin chart over OCI",
+           chart["repoURL"].startswith("oci://")
+           and chart["repoURL"].endswith("/charts/{{ .deploy.service }}")
+           and chart["path"] == ".",
+           chart)
+
+
+def test_the_deploy_repo_appsets_keep_the_names_2_2_0_generated() -> None:
+    """The chart moved from helm/charts to OCI; the Application it renders into did not.
+
+    A name that changed would delete every object the Application owns, PVCs
+    included, and create them again empty.
+    """
+    now, then = deploy_repo_names(APPSETS), deploy_repo_names(OLD_APPSETS)
+    expect("the same deploy-repo ApplicationSets as 2.2.0", set(now) == set(then),
+           f"{sorted(now)} vs {sorted(then)}")
+    for appset, name in sorted(then.items()):
+        expect(f"{appset} generates the name 2.2.0 did", now.get(appset) == name,
+               f"{now.get(appset)!r} vs {name!r}")
+        expect(f"{appset} names it per service, instance and cluster", name == DEPLOY_REPO_NAME,
+               name)
+
+
+def test_a_renamed_application_is_caught() -> None:
+    """The comparison above fails on a name that drops its instance segment."""
+    with tempfile.TemporaryDirectory(prefix="appset-names-") as tmp:
+        for name in DEPLOY_REPO_APPSETS:
+            text = (APPSETS / name).read_text(encoding="utf-8")
+            renamed = text.replace(DEPLOY_REPO_NAME, "{{ .deploy.service }}-{{ .name }}")
+            (Path(tmp) / name).write_text(renamed, encoding="utf-8", newline="\n")
+        found = deploy_repo_names(Path(tmp))
+    expect("a renamed Application differs from 2.2.0's",
+           set(found.values()) == {"{{ .deploy.service }}-{{ .name }}"}
+           and found != deploy_repo_names(OLD_APPSETS),
+           found)
+
+
+def test_every_component_renders_from_its_thin_chart() -> None:
+    for name in DEPLOY_REPO_APPSETS:
+        for appset in appsets(name):
+            if not any(git_paths(appset)):
+                continue
+            chart = appset["spec"]["template"]["spec"]["sources"][0]
+            expect(f"{appset['metadata']['name']} pulls a thin chart over OCI",
+                   chart["repoURL"].startswith("oci://") and "/charts/" in chart["repoURL"]
+                   and chart["path"] == ".",
+                   chart["repoURL"])
+            expect(f"{appset['metadata']['name']} names no helm/charts directory",
+                   "helm/" not in chart["repoURL"] + chart["path"], chart)
 
 
 def test_exactly_one_applicationset_fans_out_the_tunnels_values_file() -> None:
     """Two would have the controllers fight over one Application; zero deletes it.
 
-    Two appsets carry the glob during the rc.15 bridge, so the count that matters
-    is per CLUSTER rather than per file -- proved by the label cases in
+    Two appsets carry the glob while the bridge for edge-less cluster secrets
+    stands (dfe-infra#342), so the count that matters is per CLUSTER rather than
+    per file -- proved by the label cases in
     test_neither_door_is_generated_twice_for_any_cluster.
     """
     including = []
@@ -307,7 +375,7 @@ def test_exactly_one_applicationset_fans_out_the_tunnels_values_file() -> None:
            git_paths(apps))
 
 
-def test_the_platform_appset_still_bridges_the_gateway_until_rc15() -> None:
+def test_the_platform_appset_still_bridges_the_gateway() -> None:
     """layer2-platform keeps generating it, for the clusters layer2-edge cannot see.
 
     Deleting the bridge before every cluster secret carries the module switch
@@ -416,7 +484,7 @@ def test_the_module_off_generates_no_door_at_all() -> None:
 
 
 def test_a_cluster_secret_without_the_key_still_gets_both_doors() -> None:
-    """The rc.15 bridge: an existing cluster keeps its Gateway and its tunnel.
+    """The bridge: an existing cluster keeps its Gateway and its tunnel.
 
     Its secret predates the module, so layer2-edge's Exists gate never matches it.
     layer2-platform and layer2-apps generate the same two Applications, under the
@@ -478,9 +546,12 @@ def main() -> int:
         test_every_first_party_chart_is_reachable_through_the_shared_resolver()
         test_the_gateway_keeps_the_wave_the_load_balancer_controller_needs()
         test_the_tunnel_keeps_the_name_and_the_wave_layer2_apps_gave_it()
+        test_the_deploy_repo_appsets_keep_the_names_2_2_0_generated()
+        test_a_renamed_application_is_caught()
+        test_every_component_renders_from_its_thin_chart()
         test_exactly_one_applicationset_fans_out_the_tunnels_values_file()
         test_neither_door_is_generated_twice_for_any_cluster()
-        test_the_platform_appset_still_bridges_the_gateway_until_rc15()
+        test_the_platform_appset_still_bridges_the_gateway()
         test_the_module_on_generates_both_doors()
         test_the_module_off_generates_no_door_at_all()
         test_a_cluster_secret_without_the_key_still_gets_both_doors()

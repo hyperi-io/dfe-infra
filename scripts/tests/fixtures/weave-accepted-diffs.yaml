@@ -1035,6 +1035,21 @@ culvert:
     - *scalo-checksum-config
     - *scalo-prometheus-endpoint
     - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].image
+      old: ghcr.io/hyperi-io/culvert:*
+      new: registry.example.com/dfe/culvert:*
+      reason: >-
+        2.2.0 hard-coded ghcr.io for culvert. It follows global.registry, which
+        layer2-edge.yaml hands it as it hands the chart's own registry; the tag and
+        digest are held equal.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.initContainers[enable-ip-forward].image
+      old: ghcr.io/hyperi-io/culvert:*
+      new: registry.example.com/dfe/culvert:*
+      reason: >-
+        The ip_forward init container runs culvert's own image, so it moves with
+        the main container's registry; the tag and digest are held equal.
+    - object: Deployment/dfe-culvert
       path: metadata.annotations[reloader.stakater.com/auto]
       old: <absent>
       new: "true"

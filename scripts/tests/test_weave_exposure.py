@@ -187,14 +187,16 @@ def test_the_local_dfe_load_balancer_departs_from_2_2_0_only_where_listed() -> N
 
     Its public Service and ingest policy are held here to the receiver's accepted
     diffs plus three that the matrix never meets: the cloud label 2.2.0 wrote as
-    local everywhere, the exposure label nothing selects on, and 8443 off the
-    public-mode policy.
+    local everywhere, on both objects, the exposure label nothing selects on, and
+    8443 off the public-mode policy.
     """
     old, new = _receiver("old", "local-dfe"), _receiver("new", "local-dfe")
     door = ("Service/dfe-receiver-public", "NetworkPolicy/dfe-receiver-ingest")
     diffs = [d for d in runtime_diffs(old, new) if d.object in door]
     left = unaccepted(diffs, accepts("dfe-receiver").diffs, DEFAULT)
     assert sorted(left) == [
+        "NetworkPolicy/dfe-receiver-ingest metadata.labels[dfe.hyperi.io/cloud]: "
+        '"local" -> "local-dfe"',
         "NetworkPolicy/dfe-receiver-ingest spec.ingress: "
         '[{"ports":[{"port":8080,"protocol":"TCP"},{"port":8443,"protocol":"TCP"}]}] -> '
         '[{"ports":[{"port":8080,"protocol":"TCP"}]}]',
@@ -223,9 +225,9 @@ def test_only_local_dfe_gives_the_receiver_a_load_balancer() -> None:
 def test_a_deployment_opting_into_a_load_balancer_keeps_its_shape(cloud: str) -> None:
     """The opt-in a cloud file's comment documents, with a pinned address.
 
-    The old render takes the address from the cluster secret, as the appset hands
-    it today; the new render takes it from publicService.loadBalancerIP, set here
-    in the instance file the way the reworked appset's parameter will set it.
+    Both renders take the address from the cluster secret: the 2.2.0 appset hands
+    it to exposure.public.loadBalancerIP, the reworked one to
+    publicService.loadBalancerIP, which the instance file sets here as well.
     """
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
     old = _receiver("old", cloud, OPT_IN, facts)
@@ -236,13 +238,8 @@ def test_a_deployment_opting_into_a_load_balancer_keeps_its_shape(cloud: str) ->
     assert ingest_ports(new) == ["8080/TCP"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="the layer 2 appset hands the address as exposure.public.loadBalancerIP, "
-    "which the thin chart does not read",
-)
 def test_the_cluster_secret_address_reaches_the_thin_load_balancer() -> None:
+    """The appset hands the cluster secret's receiver address to publicService.loadBalancerIP."""
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
     balancers = load_balancers(_receiver("new", "local-dfe", annotations=facts))
     assert balancers["Service/dfe-receiver-public"].get("loadBalancerIP") == ADDRESS

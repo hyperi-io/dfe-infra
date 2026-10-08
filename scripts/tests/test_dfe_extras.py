@@ -15,11 +15,10 @@
 
 Argo adopts a live object by (kind, name), so a renamed object is pruned and
 recreated: a generated Secret is minted again, a PVC comes back empty. Each
-component is rendered twice from the Application argocd/appsets/layer2-apps.yaml
-generates for it, through scripts/dfe-weave: its 2.2.0 chart, and dfe-extras as
-that Application's dfe-extras source, or, where the appset has none, its chart
-source re-pointed at helm/charts/dfe-extras with the per-app layers added and
-chartName set. The gate:
+component is rendered twice through scripts/dfe-weave: its 2.2.0 chart, from the
+Application the 2.2.0 layer2-apps.yaml generates for it, and dfe-extras, as the
+dfe-extras source of the Application argocd/appsets/layer2-apps.yaml generates.
+The gate:
 
 - dfe-extras renders the objects the 2.2.0 DFE_ONLY_TEMPLATES render, less those
   fixtures/weave-accepted-diffs.yaml lists removed, byte for byte once parsed or
@@ -53,7 +52,7 @@ import pytest
 import yaml
 
 from _gate import ABSENT, DEFAULT, accepts, runtime_diffs, unaccepted
-from _weave import REPO_ROOT, helm, render_app, weave
+from _weave import REPO_ROOT, appset, helm, old_appset, render_app, weave
 
 EXTRAS_PATH = "helm/charts/dfe-extras"
 EXTRAS = REPO_ROOT / EXTRAS_PATH
@@ -292,29 +291,35 @@ def render_pair(
     facts = tuple(sorted((annotations or {}).items()))
     target = w.Target(service, profile, cloud, annotations=facts)
     pair = Pair(service=service)
+    annotations = target.cluster_annotations()
+    infra_url = annotations[f"{w.ANNOTATION}repo_url"]
     with deploy_repo(service, overlay, infra) as repo:
-        app = w.application(REPO_ROOT, w.APPSET, target, repo, helm())
-        spec = app["spec"]
-        sources = spec.get("sources") or [spec["source"]]
-        annotations = target.cluster_annotations()
-        # The local copy of each repo the Application names, as dfe-weave's render_app maps them.
-        layout = w._Layout(
-            tree=REPO_ROOT,
-            repos={
-                annotations[f"{w.ANNOTATION}repo_url"]: REPO_ROOT,
-                annotations[f"{w.ANNOTATION}config_repo_url"]: repo,
-            },
-            refs={s["ref"]: s for s in sources if "ref" in s},
-            apps_dir=None,
-        )
-        namespace = spec.get("destination", {}).get("namespace") or target.namespace
-        infra_url = annotations[f"{w.ANNOTATION}repo_url"]
-        source = w.extras_source(sources, chart_name(service), profile, infra_url)
-        renders = [(source, True)] if extras else []
+        renders = []
+        if extras:
+            app = w.application(REPO_ROOT, appset(), target, repo, helm())
+            sources = app["spec"]["sources"]
+            source = w.extras_source(sources, chart_name(service), profile, infra_url)
+            renders.append((app, source, True))
         if old:
-            chart = next(s for s in sources if "helm" in s and s.get("path") != EXTRAS_PATH)
-            renders.append((chart, False))
-        for source, is_extras in renders:
+            app = w.application(REPO_ROOT, old_appset(), target, repo, helm())
+            chart = next(
+                s for s in app["spec"]["sources"] if "helm" in s and s.get("path") != EXTRAS_PATH
+            )
+            renders.append((app, chart, False))
+        for app, source, is_extras in renders:
+            spec = app["spec"]
+            sources = spec.get("sources") or [spec["source"]]
+            # The local copy of each repo the Application names, as render_app maps them.
+            layout = w._Layout(
+                tree=REPO_ROOT,
+                repos={
+                    infra_url: REPO_ROOT,
+                    annotations[f"{w.ANNOTATION}config_repo_url"]: repo,
+                },
+                refs={s["ref"]: s for s in sources if "ref" in s},
+                apps_dir=None,
+            )
+            namespace = spec.get("destination", {}).get("namespace") or target.namespace
             path = source["path"]
             release = source["helm"].get("releaseName") or app["metadata"]["name"]
             raw_files = list(source["helm"].get("valueFiles") or [])

@@ -40,12 +40,13 @@ APPSETS = REPO_ROOT / "argocd" / "appsets"
 ANNOTATION = "dfe.hyperi.io/registry"
 REGISTRY = "registry.example.com/dfe"
 
-# Every appset that deploys a chart building a dfe-* image from global.registry.
-# edge and deploy-repo are absent on purpose: their charts name their images
-# outright, so a missing registry fact changes nothing they render.
+# Every appset that deploys a chart building an image from global.registry; the
+# edge file's tunnel half does, for culvert. deploy-repo is absent on purpose: its
+# chart names its image outright, so a missing registry fact changes nothing it renders.
 GUARDED = (
     "layer2-apps.yaml",
     "layer2-data.yaml",
+    "layer2-edge.yaml",
     "layer2-platform.yaml",
     "layer-scale.yaml",
 )
