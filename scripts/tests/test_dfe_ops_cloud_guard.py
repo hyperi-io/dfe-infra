@@ -405,6 +405,21 @@ def test_the_run_record_is_written_before_the_apply(root: Path, monkeypatch: pyt
     assert guard.records == {}  # cleared by the successful destroy
 
 
+def test_a_record_that_cannot_be_written_stops_before_tofu_and_cleans_up(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no record the reaper could not finish the run, so nothing is applied."""
+    guard, runner = FakeGuard(), FakeRunner()
+
+    def refuse(*_args: object) -> None:
+        raise cloud_sweep.CloudSweepError("aws s3api put-object failed: AccessDenied")
+
+    guard.put_record = refuse  # type: ignore[method-assign]
+    assert _cycle(root, monkeypatch, guard, runner) == 1
+    assert runner.commands == []
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+
+
 def test_a_failed_apply_is_still_destroyed(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = FakeRunner(codes={"apply": 1})
     assert _cycle(root, monkeypatch, FakeGuard(), runner) == 1

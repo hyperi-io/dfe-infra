@@ -524,11 +524,20 @@ class Teardown:
     run_id: str
     kubeconfig: Path
     record_key: str
+    provisioning_started: bool = False
     cycle_finished: bool = False
     result: int | None = None
 
     def run(self) -> int:
         self.runner.stop_current()
+        overlay = self.config.tf_dir / OVERLAY_NAME
+        if not self.provisioning_started:
+            # Nothing reached tofu, so there is no state to destroy, only the overlay and record to remove.
+            overlay.unlink(missing_ok=True)
+            with contextlib.suppress(cloud_sweep.CloudSweepError):
+                self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
+            self.result = 0
+            return 0
         tofu = shutil.which("tofu") or "tofu"
         if not self.cycle_finished and self.kubeconfig.is_file():
             # Controllers own load balancers and volumes tofu cannot see, so the workloads go first.
@@ -538,7 +547,7 @@ class Teardown:
             [tofu, f"-chdir={self.config.tf_dir}", "destroy", "-auto-approve", "-input=false"], new_session=True
         )
         if destroyed == 0:
-            (self.config.tf_dir / OVERLAY_NAME).unlink(missing_ok=True)
+            overlay.unlink(missing_ok=True)
             try:
                 self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
             except cloud_sweep.CloudSweepError as exc:
@@ -661,6 +670,7 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
         with teardown_on_exit(teardown):
             private_file.write_private(config.tf_dir / OVERLAY_NAME, json.dumps(overlay, indent=2) + "\n")
             guard.put_record(config.state_bucket, config.state_region, record_key, json.dumps(record))
+            teardown.provisioning_started = True
             returncode = runner.run([tofu, f"-chdir={config.tf_dir}", "init", "-input=false", "-reconfigure"])
             if returncode == 0:
                 returncode = runner.run([tofu, f"-chdir={config.tf_dir}", "apply", "-auto-approve", "-input=false"])
