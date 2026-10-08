@@ -1,0 +1,130 @@
+{{- define "dfe-extras.engine.kedaShim" -}}
+{{- /*
+dfe-keda-shim -- the KEDA metrics-api -> ClickHouse query adapter, run as its OWN
+small pod on the engine image (`dfe-keda-shim run`). KEDA's pressure + hunt-backlog
+triggers poll its Service. It carries DISTINCT labels (app.kubernetes.io/name:
+dfe-keda-shim) so the engine's Service selector (name: dfe-engine) never routes to
+it and vice-versa -- the one reason it is not just another engine replica.
+*/ -}}
+{{- if .Values.kedaShim.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dfe-keda-shim
+  labels: &shimLabels
+    app.kubernetes.io/name: dfe-keda-shim
+    app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/version: {{ .Chart.AppVersion | default "0.0.0" | quote }}
+    app.kubernetes.io/component: keda-shim
+    dfe.hyperi.io/env: {{ .Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
+spec:
+  replicas: 1
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dfe-keda-shim
+  template:
+    metadata:
+      labels: *shimLabels
+    spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # svc/dfe-keda-shim makes the kubelet inject DFE_KEDA_SHIM_PORT="tcp://IP:8080",
+      # which this pod reads as its own int setting; the env below sets it too, and
+      # which of the two wins is not proven.
+      enableServiceLinks: false
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: keda-shim
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # NO args. dfe-keda-shim's Typer app registers ONE command
+          # (keda_shim/cli.py @app.command("run")), which Typer collapses into a
+          # no-subcommand CLI, so "run" is an unexpected positional and exits 2.
+          # dfe-hunt-runner registers two (materialise + run), so its "run" is right.
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          command: ["dfe-keda-shim"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.kedaShim.port }}
+          env:
+            # Same shared signing key as the engine and the hunt runner -- this
+            # pod cannot read the engine's per-pod emptyDir either.
+            - name: DFE_API_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.jwtSecretName }}
+                  key: {{ .Values.auth.jwtSecretKey }}
+            # The ClickHouse the engine reads, over the same transport. The shim
+            # polls it READ-ONLY for the pressure gauge + the hunt due-count.
+            {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
+            {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
+            - name: DFE_KEDA_SHIM_PORT
+              value: {{ .Values.kedaShim.port | quote }}
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; whole stack -> HyperDX
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: dfe-keda-shim
+          volumeMounts:
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
+            {{- with (include "dfe-engine.clickhouseCaMount" .) }}
+            {{- . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.kedaShim.resources | nindent 12 }}
+          # The engine image's Python boot outlasts the liveness window, so liveness is held off until this passes.
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- with (include "dfe-engine.clickhouseCaVolume" .) }}
+        {{- . | nindent 8 }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dfe-keda-shim
+  labels:
+    app.kubernetes.io/name: dfe-keda-shim
+    app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/component: keda-shim
+    dfe.hyperi.io/env: {{ .Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dfe-keda-shim
+  ports:
+    - name: http
+      port: {{ .Values.kedaShim.port }}
+      targetPort: http
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-engine") "body" "dfe-extras.engine.kedaShim") }}

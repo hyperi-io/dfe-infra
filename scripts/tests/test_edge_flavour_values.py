@@ -72,8 +72,20 @@ def leaf_paths(node: object, prefix: tuple[str, ...] = ()) -> list[tuple[str, ..
     return out
 
 
+# dfe-extras renders each component's DFE-only objects, and its culvert-* templates
+# render only for culvert, whose Application is an edge one.
+EXTRAS_EDGE_TEMPLATES = ("charts/dfe-extras", "culvert-", "edge/culvert")
+
+
 def templates(tree: Path) -> list[Path]:
     return sorted(p for p in tree.glob("*/templates/**/*") if p.is_file())
+
+
+def reader(tree: Path, template: Path) -> str:
+    """The chart a template reads values for, as `<tree>/<chart>`."""
+    found = f"{tree.name}/{template.relative_to(tree).parts[0]}"
+    chart, prefix, edge = EXTRAS_EDGE_TEMPLATES
+    return edge if found == chart and template.name.startswith(prefix) else found
 
 
 def names_exactly(text: str, path: tuple[str, ...]) -> bool:
@@ -94,7 +106,7 @@ def readers(path: tuple[str, ...]) -> set[str]:
         for template in templates(tree):
             text = template.read_text(encoding="utf-8", errors="replace")
             if any(names_exactly(text, prefix) for prefix in prefixes):
-                found.add(f"{tree.name}/{template.relative_to(tree).parts[0]}")
+                found.add(reader(tree, template))
     return found
 
 

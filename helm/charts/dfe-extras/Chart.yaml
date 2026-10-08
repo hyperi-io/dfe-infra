@@ -1,0 +1,9 @@
+apiVersion: v2
+name: dfe-extras
+description: The DFE-only objects beside each component's contract-assembled chart -- pool listeners, ingest and tunnel NetworkPolicies, generated keys, the engine's hunt runner and keda shim, and the env ConfigMaps
+type: application
+version: 0.1.0
+dependencies:
+  - name: dfe-common
+    version: "0.15.0"
+    repository: "file://../../library/dfe-common"

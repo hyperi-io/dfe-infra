@@ -1,0 +1,78 @@
+{{- define "dfe-extras.engine.huntRunnerClickhouse" -}}
+{{- /*
+The hunt runner's ClickHouse password, as a Secret both the engine and the
+runner read.
+
+The engine creates dfe_hunt_runner, but a password it mints lands in its own
+secrets store on its own volume, which the runner's pod cannot see. So the
+password comes from here: the engine adopts it (DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD)
+and re-asserts it on the user every reconcile, and the runner connects with it.
+
+GENERATED IN-CLUSTER by ESO's Password generator with refreshPolicy CreatedOnce,
+for the reasons engine-jwt-secret.yaml gives: Argo renders with `helm template`, so a
+template-minted value would change on every sync, and Reloader would roll both
+pods onto a password the other had not been handed yet.
+*/ -}}
+{{- if .Values.huntRunner.enabled }}
+{{- $hr := .Values.huntRunner.clickhouse -}}
+{{- if or (not $hr.user) (not $hr.passwordSecretName) }}
+{{- fail "huntRunner.clickhouse.user and huntRunner.clickhouse.passwordSecretName are required: the hunt runner connects to ClickHouse as its own user, never the admin account" }}
+{{- end }}
+{{- if $hr.password }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $hr.passwordSecretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # keep: a reinstall that minted a different password would leave the engine
+    # and the runner on two values until both rolled.
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  {{ $hr.passwordSecretKey }}: {{ $hr.password | quote }}
+{{- else if $hr.passwordSecretCreate }}
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ $hr.passwordSecretName }}-gen
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  length: 24
+  digits: 4
+  symbols: 0          # alphanumeric -- the value is a ClickHouse password passed through env
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $hr.passwordSecretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # The Secret carries ESO's ownerReference, so deleting this ExternalSecret by
+    # hand garbage-collects the password with it.
+    helm.sh/resource-policy: keep
+spec:
+  refreshPolicy: CreatedOnce
+  refreshInterval: "0"
+  target:
+    name: {{ $hr.passwordSecretName }}
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        {{ $hr.passwordSecretKey }}: "{{ `{{ .password }}` }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ $hr.passwordSecretName }}-gen
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-engine") "body" "dfe-extras.engine.huntRunnerClickhouse") }}
