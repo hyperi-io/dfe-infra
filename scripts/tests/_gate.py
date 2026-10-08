@@ -37,6 +37,8 @@ from _weave import TESTS, render_app, weave
 COMPONENTS = (
     "dfe-ui",
     "hyperdx",
+    "dfe-receiver",
+    "dfe-loader",
     "dfe-archiver",
     "dfe-transform-vrl",
     "dfe-transform-vector",
@@ -51,6 +53,14 @@ MATRIX = [(c, p, k) for c in COMPONENTS for p in PROFILES for k in CLOUDS]
 SCENARIOS: dict[str, dict] = {
     "no-domain": {"facts": {"domain": ""}, "infra": None},
     "prometheus": {"facts": {}, "infra": {"telemetry": {"mode": "prometheus"}}},
+    # A ClickHouse CA the deployment supplies as a ConfigMap rather than a Secret.
+    "clickhouse-ca-configmap": {
+        "facts": {},
+        "infra": {
+            "clickhouse": {"tls": {"ca": {"secretName": "", "configMapName": "example-ca-bundle"}}}
+        },
+    },
+    "clickhouse-plaintext": {"facts": {}, "infra": {"clickhouse": {"tls": {"enabled": False}}}},
 }
 DEFAULT = "default"
 

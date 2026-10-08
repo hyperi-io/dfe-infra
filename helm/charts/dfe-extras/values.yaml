@@ -42,10 +42,10 @@ extras:
       env: local
       cloud: local
       # The ingest NetworkPolicy opens the exposed ones; internal mode refuses an
-      # exposed listener other than http. A layer replaces the whole list.
+      # exposed listener other than http. A layer replaces the whole list. The
+      # receiver binds nothing on 8443, so no entry opens it.
       listeners:
         - { name: http, port: 8080, protocol: TCP, exposed: true }
-        - { name: grpc, port: 8443, protocol: TCP, exposed: true }
         - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false, appProtocol: kubernetes.io/h2c }
       exposure:
         mode: public                # public | internal | vpn
@@ -54,11 +54,47 @@ extras:
           podLabel: dfe-culvert
         networkPolicy:
           enabled: true
+      # The thin chart's load balancer switch, as argocd/values/apps/dfe-receiver
+      # sets it; dfe-extras.receiverExposureGuard holds it to exposure.mode.
+      publicService:
+        enabled: true
+      kafka:
+        mode: ""
+        bootstrapServers: ""
+        securityProtocol: ""
+      dlq:
+        topic: dfe_receiver_dlq
+        mode: kafka_only
     dfe-loader:
       project: dfe
       component: loader
       env: local
       cloud: local
+      kafka:
+        mode: ""
+        bootstrapServers: ""
+        securityProtocol: ""
+      clickhouse:
+        host: ""
+        port: 8123
+        database: dfe
+        tls:
+          enabled: false
+          port: 8443
+          verify: true
+          issuerRef:
+            name: ""
+          internalCA:
+            present: false
+          ca:
+            secretName: ""
+            configMapName: ""
+            dataKey: ca.crt
+      dlq:
+        topic: dfe_loader_dlq
+        mode: kafka_only
+      service:
+        grpcPort: 6000
     dfe-archiver:
       project: dfe
       component: archiver
@@ -184,9 +220,6 @@ extras:
         name: dfe-hyperdx-token-encryption
         key: token-encryption-key
         create: true
-      defaultConnections:
-        enabled: false
-        secretName: dfe-hyperdx-connections
       dashboards:
         enabled: true
         mountPath: /etc/hyperdx/dashboards

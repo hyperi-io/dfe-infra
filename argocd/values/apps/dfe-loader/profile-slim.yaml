@@ -1,0 +1,15 @@
+# slim carries no broker: records arrive from the receiver on the push port.
+
+# The contract opens the push port while config.transport is grpc, the value
+# dfe-loader-env already hands the app as DFE_LOADER_TRANSPORT.
+configOverrides:
+  transport: grpc
+
+# No broker, so no SASL credential to mount.
+secrets:
+  kafka:
+    enabled: false
+
+# The tier profile-slim.yaml runs without pressure: CPU alone scales it.
+keda:
+  extraTriggers: []

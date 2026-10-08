@@ -1,0 +1,5 @@
+# aws.yaml sets exposure.mode vpn: senders reach the receiver over culvert, so it
+# takes no load balancer. A deployment that opts into one sets exposure.mode
+# public and publicService.enabled true together in its own overlay.
+publicService:
+  enabled: false

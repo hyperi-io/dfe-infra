@@ -36,11 +36,13 @@ issuerRef, or the edge module's internal CA), or an external server.
 
 {{/*
 hyperdx.env -- the hyperdx container's env list, as the 2.2.0 deployment wrote
-it less three entries: OTEL_EXPORTER_OTLP_ENDPOINT, which the thin chart's env
-sets from telemetry.mode, and CLICKHOUSE_PORT and CLICKHOUSE_DB, which HyperDX
-never reads (CLICKHOUSE_HOST carries the port). dfe-hyperdx-env carries its
-literal entries; the secret references and MONGO_URI, which the kubelet
-expands, stay in the thin chart's env.
+it less five entries: OTEL_EXPORTER_OTLP_ENDPOINT, which the thin chart's env
+sets from telemetry.mode, CLICKHOUSE_PORT and CLICKHOUSE_DB, which HyperDX
+never reads (CLICKHOUSE_HOST carries the port), and DEFAULT_CONNECTIONS and
+DEFAULT_SOURCES, from a Secret nothing writes since dfe-engine serves each
+team its own connection. dfe-hyperdx-env carries its literal entries; the
+secret references and MONGO_URI, which the kubelet expands, stay in the thin
+chart's env.
 */}}
 {{- define "hyperdx.env" -}}
 {{- $clickhouseCa := include "hyperdx.clickhouseCa" . }}
@@ -154,18 +156,4 @@ expands, stay in the thin chart's env.
             # next-runtime-env reads it per request, so no image rebuild.
             - name: NEXT_PUBLIC_DFE_UI_BASE_URL
               value: {{ .Values.dfeUiBaseUrl | default (empty .Values.domain | ternary "" (printf "https://%s.%s" (coalesce .Values.dfeHostname (dig "dfe" "dfe" (.Values.hostnames | default dict))) .Values.domain)) | quote }}
-            {{- if .Values.defaultConnections.enabled }}
-            - name: DEFAULT_CONNECTIONS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.defaultConnections.secretName }}
-                  key: DEFAULT_CONNECTIONS
-            # Optional sibling: sources bootstrap through the same seeding path.
-            - name: DEFAULT_SOURCES
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.defaultConnections.secretName }}
-                  key: DEFAULT_SOURCES
-                  optional: true
-            {{- end }}
 {{- end -}}

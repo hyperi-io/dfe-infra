@@ -1,0 +1,4 @@
+{{- define "dfe-extras.loader.env" -}}
+{{- include "dfe-extras.envConfigMap" (dict "ctx" . "env" (include "dfe-loader.env" .)) -}}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-loader") "body" "dfe-extras.loader.env") }}
