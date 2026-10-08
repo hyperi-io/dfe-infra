@@ -1,0 +1,48 @@
+# DFE wiring every component's thin chart takes, layered after common.yaml, the
+# cloud file and the profile file and before the component's own apps/<service>/
+# files. A key one component sets differently goes in that component's directory,
+# never here. The keys are the ones the scalo-service library reads (its README,
+# "Values").
+partOf: dfe
+
+# A rotated Secret or ConfigMap reaches a running pod through Stakater Reloader.
+reload:
+  enabled: true
+
+# Values go through tpl in scalo-service. env comes from the layer 2 appset's env
+# parameter. cloud comes from a cloud parameter when the appset passes one, else
+# from global.cloud in the cloud values file.
+commonLabels:
+  dfe.hyperi.io/env: '{{ .Values.env }}'
+  dfe.hyperi.io/cloud: '{{ .Values.cloud | default .Values.global.cloud }}'
+
+telemetry:
+  # The endpoint dfe-common.otelEndpoint (helm/library/dfe-common/templates/
+  # _telemetry.tpl) resolves for the 2.2.0 charts, over global.project because a
+  # thin chart has no top-level project. scalo-service reads an empty otel.endpoint
+  # as "export nothing", so common.yaml's empty value is resolved here and carried
+  # by extraEnv. prometheus mode resolves to an empty string, which the stack rule
+  # reads as "export nothing" (_telemetry.tpl), where the 2.2.0 charts leave the
+  # variable out.
+  # scripts/tests/test_apps_common.py holds the two equal for every mode and app.
+  otlpEndpointTemplate: |-
+    {{- $t := .Values.telemetry | default dict -}}
+    {{- $mode := $t.mode | default "hyperdx" -}}
+    {{- $ep := "" -}}
+    {{- if eq $mode "hyperdx" -}}
+    {{- $ep = $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:4317" .Values.global.project ($t.collectorNamespace | default "otel")) -}}
+    {{- else if eq $mode "receiver" -}}
+    {{- $ep = $t.receiverEndpoint | default "" -}}
+    {{- else if eq $mode "external" -}}
+    {{- $ep = $t.externalEndpoint | default "" -}}
+    {{- end -}}
+    {{- if and $ep (not (contains "://" $ep)) -}}
+    {{- $ep = printf "%s://%s" (ternary "https" "http" ((.Values.otel | default dict).tls | default false)) $ep -}}
+    {{- end -}}
+    {{- $ep -}}
+
+# otel.endpoint stays the per-deployment override. Once set, scalo-service derives
+# the variable from it (with the protocol) and drops this entry, so the override
+# is exported as written.
+extraEnv:
+  OTEL_EXPORTER_OTLP_ENDPOINT: '{{ tpl .Values.telemetry.otlpEndpointTemplate . }}'

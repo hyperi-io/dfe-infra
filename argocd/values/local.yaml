@@ -23,6 +23,16 @@ nodeScheduling:
       value: dfe
       effect: NoSchedule
 
+# The same placement under the keys the scalo-service thin charts read. It stays
+# equal to nodeScheduling above, which scripts/tests/test_apps_common.py checks.
+nodeSelector:
+  dfe.hyperi.io/workload: dfe
+tolerations:
+  - key: dfe.hyperi.io/workload
+    operator: Equal
+    value: dfe
+    effect: NoSchedule
+
 # THE EDGE MODULE'S OWN ON-PREM KEYS LIVE IN argocd/values/edge-onprem.yaml,
 # layered after this file by argocd/appsets/layer2-edge.yaml: the gateway
 # Service, the wildcard-cert issuer, the receiver route and the tunnel's Service
