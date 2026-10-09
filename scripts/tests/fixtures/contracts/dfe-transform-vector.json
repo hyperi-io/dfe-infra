@@ -1,6 +1,7 @@
 {
   "schema_version": 4,
   "app_name": "dfe-transform-vector",
+  "binary_name": "dfe-transform-vector",
   "description": "Vector subprocess wrapper for Kafka-to-Kafka transform pipelines",
   "metrics_port": 9090,
   "health": {
@@ -58,6 +59,83 @@
       ]
     }
   ],
+  "default_config": {
+    "pipeline": {
+      "name": "default"
+    },
+    "source": {
+      "transport": "bus",
+      "listen": "0.0.0.0:6000",
+      "brokers": [
+        "kafka:9092"
+      ],
+      "topics": [
+        "raw_events"
+      ],
+      "group_id": "dfe-transform-vector-default",
+      "decoding": {
+        "codec": "json"
+      },
+      "sasl": {
+        "enabled": true,
+        "mechanism": "scram_sha_512"
+      },
+      "tls": {
+        "enabled": false
+      },
+      "acknowledgements": {
+        "enabled": true
+      }
+    },
+    "sink": {
+      "transport": "bus",
+      "endpoint": "http://dfe-loader:6000",
+      "brokers": [
+        "kafka:9092"
+      ],
+      "topic": "enriched_events",
+      "key_field": ".org_id",
+      "encoding": "json",
+      "compression": "zstd",
+      "sasl": {
+        "enabled": true,
+        "mechanism": "scram_sha_512"
+      },
+      "tls": {
+        "enabled": false
+      }
+    },
+    "bridge": {
+      "to_vector": "127.0.0.1:6100",
+      "from_vector": "127.0.0.1:6101",
+      "batch_size": 500
+    },
+    "transforms": {
+      "dir": "/etc/dfe-transform-vector/transforms"
+    },
+    "vector": {
+      "binary": "/usr/local/bin/vector",
+      "data_dir": "/var/lib/vector",
+      "api_enabled": false,
+      "api_address": "127.0.0.1:8686",
+      "log_level": "info",
+      "version": "0.58.0",
+      "version_check": "warn"
+    },
+    "metrics": {
+      "address": "0.0.0.0:9090",
+      "vector_metrics_address": "127.0.0.1:9598",
+      "vector_metrics_expiry_ticks": 4,
+      "sink_stall_secs": 60
+    },
+    "logging": {
+      "level": "info",
+      "format": "json"
+    }
+  },
+  "depends_on": [
+    "kafka"
+  ],
   "keda": {
     "enabled": true,
     "min_replicas": 1,
@@ -69,17 +147,831 @@
     "cpu_enabled": true,
     "cpu_threshold": 80,
     "kafka_trigger": {
-      "enabled": false
+      "enabled": false,
+      "brokers_path": "config.kafka.brokers",
+      "group_path": "config.kafka.group_id",
+      "topics_path": "config.kafka.topics"
     }
   },
+  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "native_deps": {
+    "apt_repos": [],
+    "apt_packages": []
+  },
+  "image_profile": "production",
+  "oci_labels": {
+    "title": "",
+    "description": "",
+    "vendor": "HYPERI PTY LIMITED",
+    "label_namespace": "io.hyperi",
+    "licenses": "BUSL-1.1",
+    "copyright": "(c) 2026 HYPERI PTY LIMITED"
+  },
+  "config_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Config",
+    "description": "Main configuration.\n\n## Hot-reload behaviour\n\n**Hot-reloaded (takes effect on next poll cycle / SIGHUP):**\n- Transform YAML file contents (modified/added/removed in watched directory)\n- `transforms.dir` -- watcher switches to new directory after successful reload\n- `transforms.files` -- watcher switches to new file list after successful reload\n\n**Requires pod restart:**\n- `source.*` — the consumer or the Push listener is established at startup\n- `sink.*` — the producer or the Push client is established at startup\n- `bridge.*` — the two supervisor-to-Vector legs bind at startup\n- `pipeline.name` — used in consumer group_id and metrics labels at startup\n- `vector.*` — binary path, data_dir, config_dir, API switch and address,\n  log level set at Vector spawn\n- `metrics.address` -- the HTTP server binds at startup\n- `logging.*` -- tracing subscriber configured at startup\n- `reload.poll_interval_secs` -- captured at reload loop start\n\n**Read by nothing in this process:**\n- `scaling.pressure_threshold` -- no reader. Scale-out is driven by the\n  chart's KEDA ScaledObject (CPU, plus any trigger a deployment adds),\n  gated by the subprocess circuit in [`crate::metrics::spawn_circuit_gate_task`].\n  scalo's runtime reads its own `scaling.enabled` and\n  `scaling.memory_gate_threshold` from the cascade, not this key.",
+    "type": "object",
+    "properties": {
+      "dfe_source": {
+        "description": "DFE source name (e.g. `\"syslog\"`, `\"netflow\"`).\n\nWhen set, derives defaults for fields not explicitly configured:\n- `source.topics` → `[\"{dfe_source}_land\"]`\n- `sink.topic` → `\"{dfe_source}_load\"`\n- `source.group_id` → `\"dfe-transform-vector-{dfe_source}\"`\n\nExplicit values always override the derived defaults.\nSee [`KafkaSource`] for the platform topic naming convention.",
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      },
+      "pipeline": {
+        "description": "Pipeline identity. **Requires restart.**",
+        "$ref": "#/$defs/PipelineConfig",
+        "default": {
+          "name": "default"
+        }
+      },
+      "source": {
+        "description": "Source (input), on either transport. **Requires restart.**",
+        "$ref": "#/$defs/SourceConfig",
+        "default": {
+          "transport": "bus",
+          "listen": "0.0.0.0:6000",
+          "brokers": [
+            "localhost:9092"
+          ],
+          "topics": [
+            "events"
+          ],
+          "group_id": "dfe-transform-vector",
+          "decoding": {
+            "codec": "json"
+          },
+          "sasl": {
+            "enabled": false,
+            "mechanism": "scram_sha_512",
+            "username": "",
+            "password": "",
+            "secret_dir": null
+          },
+          "tls": {
+            "enabled": false,
+            "ca_cert_file": null,
+            "cert_file": null,
+            "key_file": null,
+            "skip_verify": false
+          },
+          "auto_offset_reset": "largest",
+          "session_timeout_ms": 30000,
+          "commit_interval_ms": 5000,
+          "drain_timeout_ms": null,
+          "topic_lag_metric": true,
+          "librdkafka_options": {},
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "sink": {
+        "description": "Sink (output), on either transport. **Requires restart.**",
+        "$ref": "#/$defs/SinkConfig",
+        "default": {
+          "transport": "bus",
+          "endpoint": "http://dfe-loader:6000",
+          "brokers": [
+            "localhost:9092"
+          ],
+          "topic": "",
+          "key_field": "",
+          "encoding": "json",
+          "compression": "zstd",
+          "sasl": {
+            "enabled": false,
+            "mechanism": "scram_sha_512",
+            "username": "",
+            "password": "",
+            "secret_dir": null
+          },
+          "tls": {
+            "enabled": false,
+            "ca_cert_file": null,
+            "cert_file": null,
+            "key_file": null,
+            "skip_verify": false
+          },
+          "buffer": {
+            "type": "memory",
+            "max_events": null,
+            "max_size": null,
+            "when_full": "block"
+          },
+          "batch": {
+            "max_events": 10000,
+            "max_bytes": null,
+            "timeout_secs": 1
+          },
+          "message_timeout_ms": 0,
+          "socket_timeout_ms": 60000,
+          "librdkafka_options": {}
+        }
+      },
+      "bridge": {
+        "description": "The supervisor-to-Vector legs, direct transport only. **Requires restart.**",
+        "$ref": "#/$defs/BridgeConfig",
+        "default": {
+          "to_vector": "127.0.0.1:6100",
+          "from_vector": "127.0.0.1:6101",
+          "batch_size": 500
+        }
+      },
+      "transforms": {
+        "description": "User-supplied transform YAML files. **Hot-reloaded.**",
+        "$ref": "#/$defs/TransformConfig",
+        "default": {
+          "dir": null,
+          "files": null
+        }
+      },
+      "vector": {
+        "description": "Vector subprocess settings. **Requires restart.**",
+        "$ref": "#/$defs/VectorConfig",
+        "default": {
+          "binary": "/usr/local/bin/vector",
+          "data_dir": "/var/lib/vector",
+          "config_dir": "/var/run/vector/config",
+          "api_enabled": false,
+          "api_address": "127.0.0.1:8686",
+          "log_level": "info",
+          "version": "0.58.0",
+          "version_check": "strict",
+          "version_source": "preshipped"
+        }
+      },
+      "metrics": {
+        "description": "Metrics endpoint. **Requires restart** (server binds at startup).",
+        "$ref": "#/$defs/MetricsConfig",
+        "default": {
+          "address": "0.0.0.0:9090",
+          "vector_metrics_address": "127.0.0.1:9598",
+          "vector_metrics_expiry_ticks": 4,
+          "sink_stall_secs": 60
+        }
+      },
+      "logging": {
+        "description": "Logging. **Requires restart** (subscriber configured at startup).",
+        "$ref": "#/$defs/LoggingConfig",
+        "default": {
+          "level": "info",
+          "format": "auto"
+        }
+      },
+      "scaling": {
+        "description": "KEDA scaling pressure. **Requires restart.**",
+        "$ref": "#/$defs/ScalingConfig",
+        "default": {
+          "pressure_threshold": 0.8
+        }
+      },
+      "reload": {
+        "description": "Hot-reload configuration. **Requires restart** (poll interval captured at start).",
+        "$ref": "#/$defs/ReloadConfig",
+        "default": {
+          "enabled": true,
+          "poll_interval_secs": 30
+        }
+      }
+    },
+    "$defs": {
+      "PipelineConfig": {
+        "description": "Pipeline identity.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Pipeline name (used in metrics labels, Kafka group_id, logging).",
+            "type": "string",
+            "default": "default"
+          }
+        }
+      },
+      "SourceConfig": {
+        "description": "Source configuration: the bus topics to consume, or the Push listener to\naccept records on.",
+        "type": "object",
+        "properties": {
+          "transport": {
+            "description": "`bus` consumes `topics`; `direct` accepts pushes on `listen`.",
+            "$ref": "#/$defs/Transport",
+            "default": "bus"
+          },
+          "listen": {
+            "description": "Address the scalo Push listener binds on the direct transport.",
+            "type": "string",
+            "default": "0.0.0.0:6000"
+          },
+          "brokers": {
+            "description": "Kafka bootstrap servers.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "localhost:9092"
+            ]
+          },
+          "topics": {
+            "description": "Topics to consume from.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "events"
+            ]
+          },
+          "group_id": {
+            "description": "Consumer group ID.",
+            "type": "string",
+            "default": "dfe-transform-vector"
+          },
+          "decoding": {
+            "description": "Message decoding.",
+            "$ref": "#/$defs/DecodingConfig",
+            "default": {
+              "codec": "json"
+            }
+          },
+          "sasl": {
+            "description": "SASL authentication.",
+            "$ref": "#/$defs/SaslConfig",
+            "default": {
+              "enabled": false,
+              "mechanism": "scram_sha_512",
+              "username": "",
+              "password": "",
+              "secret_dir": null
+            }
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "ca_cert_file": null,
+              "cert_file": null,
+              "key_file": null,
+              "skip_verify": false
+            }
+          },
+          "auto_offset_reset": {
+            "description": "Auto offset reset: `largest` (default) or `smallest`.",
+            "type": "string",
+            "default": "largest"
+          },
+          "session_timeout_ms": {
+            "description": "Session timeout (ms). Default: 30000.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 30000
+          },
+          "commit_interval_ms": {
+            "description": "Offset commit interval (ms). Default: 5000.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 5000
+          },
+          "drain_timeout_ms": {
+            "description": "Drain timeout (ms) — max wait for pending acks during shutdown/rebalance.\nMust be less than session_timeout_ms. Default: half of session_timeout_ms.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "topic_lag_metric": {
+            "description": "Expose per-topic consumer lag metric. Default: true.",
+            "type": "boolean",
+            "default": true
+          },
+          "librdkafka_options": {
+            "description": "Extra librdkafka options (passed through to Vector).",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          },
+          "acknowledgements": {
+            "description": "Hold each record's source acknowledgement until the sink has it.\n\nOn (the default) a Kafka offset is committed, and a push is answered,\nonly once the record is delivered, so a crash redelivers rather than\nloses it. Off, both happen at receipt.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "Transport": {
+        "description": "Which transport a stage uses.\n\nOne deployment runs one of them: `bus` is a broker between the stages,\n`direct` is gRPC between them and needs no broker at all. The record and the\ntransform are identical either way -- only who hands the record over changes.",
+        "oneOf": [
+          {
+            "description": "Kafka topics.",
+            "type": "string",
+            "const": "bus"
+          },
+          {
+            "description": "A scalo Push listener (source) or client (sink), bridged to Vector.",
+            "type": "string",
+            "const": "direct"
+          }
+        ]
+      },
+      "DecodingConfig": {
+        "description": "Message decoding configuration.",
+        "type": "object",
+        "properties": {
+          "codec": {
+            "description": "Codec: json, raw_bytes, protobuf.",
+            "type": "string",
+            "default": "json"
+          }
+        }
+      },
+      "SaslConfig": {
+        "description": "SASL authentication for Kafka.\n\nThe credentials reach Vector through its `directory` secret backend, never\nas text in the Vector config: either a mounted directory holding `username`\nand `password` files (`secret_dir`), or `username`/`password` here, which\nthe assembler writes to owner-only files beside the Vector config.\n\n`password` is `String`, not `SensitiveString`, because the config goes\nthrough a figment serialize-merge-deserialize round trip in\n`apply_figment_env()`, and `SensitiveString` serialises as `***REDACTED***`.\n`Debug` redacts it instead.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable SASL authentication.",
+            "type": "boolean",
+            "default": false
+          },
+          "mechanism": {
+            "description": "SASL mechanism: plain, scram_sha_256, scram_sha_512.",
+            "type": "string",
+            "default": "scram_sha_512"
+          },
+          "username": {
+            "description": "SASL username. Leave empty when `secret_dir` supplies it.",
+            "type": "string",
+            "default": ""
+          },
+          "password": {
+            "description": "SASL password. Leave empty when `secret_dir` supplies it.\n\nTaken literally: Vector does not expand `${VAR}` placeholders, so a\nvalue holding one is refused.",
+            "type": "string",
+            "x-scalo-secret": true,
+            "writeOnly": true,
+            "default": ""
+          },
+          "secret_dir": {
+            "description": "Directory holding the credentials as files named `username` and\n`password`, such as a mounted Kubernetes Secret. Vector reads them\nitself; replaces `username` and `password`.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "TlsConfig": {
+        "description": "TLS configuration for Kafka.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable TLS.",
+            "type": "boolean",
+            "default": false
+          },
+          "ca_cert_file": {
+            "description": "Path to CA certificate PEM file.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "cert_file": {
+            "description": "Path to client certificate PEM file (for mTLS).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "key_file": {
+            "description": "Path to client key PEM file (for mTLS).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "skip_verify": {
+            "description": "Skip hostname verification (dev/test only).",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "AcknowledgementsConfig": {
+        "description": "The `acknowledgements` section of an ack-capable transport.\n\nWith `enabled: true` (the default) a source releases its acknowledgement --\na Kafka offset commit, a gRPC or HTTP response -- only once every piece of\nwork built from the record has been delivered, dead-lettered with the DLQ's\nconfirmation, or dropped by policy. A failed delivery withholds it, so the\nrecord is delivered again: duplicates are possible, loss is not.\n\nWith `enabled: false` the source acknowledges at receipt, before the record\nis processed: a crash or a failed delivery loses what was acknowledged.\n\n```yaml\nkafka:\n  acknowledgements:\n    enabled: true\n```",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Hold the source acknowledgement until every piece is delivered.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "SinkConfig": {
+        "description": "Sink configuration: the bus topic to produce to, or the Push listener to\nsend the transformed records on to.",
+        "type": "object",
+        "properties": {
+          "transport": {
+            "description": "`bus` produces to `topic`; `direct` pushes to `endpoint`.",
+            "$ref": "#/$defs/Transport",
+            "default": "bus"
+          },
+          "endpoint": {
+            "description": "Downstream Push listener on the direct transport, e.g. the loader.",
+            "type": "string",
+            "default": "http://dfe-loader:6000"
+          },
+          "brokers": {
+            "description": "Kafka bootstrap servers.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "localhost:9092"
+            ]
+          },
+          "topic": {
+            "description": "Output topic name. On the direct transport it is still the routing key\nthe downstream stage picks its table by, so a source keeps its name.",
+            "type": "string",
+            "default": ""
+          },
+          "key_field": {
+            "description": "Event field path for Kafka partition key (e.g., \".org_id\").",
+            "type": "string",
+            "default": ""
+          },
+          "encoding": {
+            "description": "Encoding codec: json, raw_bytes.",
+            "type": "string",
+            "default": "json"
+          },
+          "compression": {
+            "description": "Compression: none, gzip, lz4, snappy, zstd. Default: zstd.",
+            "type": "string",
+            "default": "zstd"
+          },
+          "sasl": {
+            "description": "SASL authentication.",
+            "$ref": "#/$defs/SaslConfig",
+            "default": {
+              "enabled": false,
+              "mechanism": "scram_sha_512",
+              "username": "",
+              "password": "",
+              "secret_dir": null
+            }
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "ca_cert_file": null,
+              "cert_file": null,
+              "key_file": null,
+              "skip_verify": false
+            }
+          },
+          "buffer": {
+            "description": "Sink buffer configuration.",
+            "$ref": "#/$defs/BufferConfig",
+            "default": {
+              "type": "memory",
+              "max_events": null,
+              "max_size": null,
+              "when_full": "block"
+            }
+          },
+          "batch": {
+            "description": "Sink batch configuration (Vector-level batching).",
+            "$ref": "#/$defs/BatchConfig",
+            "default": {
+              "max_events": 10000,
+              "max_bytes": null,
+              "timeout_secs": 1
+            }
+          },
+          "message_timeout_ms": {
+            "description": "Local message timeout (ms). Default: 0, no limit.\n\nlibrdkafka rejects a record still undelivered at this limit, and the\nrejection drops it. With no limit a broker outage holds the record and\nback-pressures the source instead.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 0
+          },
+          "socket_timeout_ms": {
+            "description": "Network request timeout (ms). Default: 60000 (60s).",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 60000
+          },
+          "librdkafka_options": {
+            "description": "Extra librdkafka options (passed through to Vector).",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          }
+        }
+      },
+      "BufferConfig": {
+        "description": "Buffer configuration for Vector sinks.\n\nSupports two modes:\n- `memory`: in-memory buffer (default), configured by `max_events`\n- `disk`: persistent disk buffer, configured by `max_size` (bytes, min ~256 MiB)",
+        "type": "object",
+        "properties": {
+          "type": {
+            "description": "Buffer type: `memory` or `disk`.",
+            "type": "string",
+            "default": "memory"
+          },
+          "max_events": {
+            "description": "Maximum events in memory buffer (only for type=memory). Default: 500.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "max_size": {
+            "description": "Maximum buffer size in bytes (only for type=disk). Min ~256 MiB (268435488).",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "when_full": {
+            "description": "Behaviour when buffer is full: `block` (default) or `drop_newest`.",
+            "type": "string",
+            "default": "block"
+          }
+        }
+      },
+      "BatchConfig": {
+        "description": "Vector-level batch configuration for sinks.",
+        "type": "object",
+        "properties": {
+          "max_events": {
+            "description": "Maximum events per batch before flush. Default: 10000.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 10000
+          },
+          "max_bytes": {
+            "description": "Maximum uncompressed batch size (bytes) before flush.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "timeout_secs": {
+            "description": "Max batch age (seconds) before flush. Default: 1.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 1
+          }
+        }
+      },
+      "BridgeConfig": {
+        "description": "The two in-pod legs between the supervisor and Vector, on the direct\ntransport only.\n\nVector does not speak scalo's `Transport/Push`, so on `direct` the\nsupervisor translates: it accepts records from the rest of DFE on\n`source.listen` and hands them to Vector over Vector's own protocol, then\ntakes them back and pushes them to `sink.endpoint`. Both legs stay on\nloopback -- they exist inside one pod and nothing outside it may reach them.\nOn the bus neither address is bound.",
+        "type": "object",
+        "properties": {
+          "to_vector": {
+            "description": "Where Vector accepts records from the supervisor -- Vector's own\n`vector` source binds here, and the supervisor dials it.",
+            "type": "string",
+            "default": "127.0.0.1:6100"
+          },
+          "from_vector": {
+            "description": "Where the supervisor accepts the transformed records back -- Vector's\n`vector` sink dials here, and the supervisor's listener binds it.",
+            "type": "string",
+            "default": "127.0.0.1:6101"
+          },
+          "batch_size": {
+            "description": "Records moved per bridge hop. Bounds the batch a retry replays.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 500
+          }
+        }
+      },
+      "TransformConfig": {
+        "description": "Transform file loading configuration.",
+        "type": "object",
+        "properties": {
+          "dir": {
+            "description": "Directory to load all YAML transform files from.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "files": {
+            "description": "Explicit list of transform YAML file paths (loaded in order).",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null
+          }
+        }
+      },
+      "VectorConfig": {
+        "description": "Vector subprocess configuration.",
+        "type": "object",
+        "properties": {
+          "binary": {
+            "description": "Path to Vector binary.",
+            "type": "string",
+            "default": "/usr/local/bin/vector"
+          },
+          "data_dir": {
+            "description": "Data directory for disk buffers and state.",
+            "type": "string",
+            "default": "/var/lib/vector"
+          },
+          "config_dir": {
+            "description": "Directory the assembled Vector config is written to.\n\nDefaults to the container path. A deployment that is not the image --\na bare install, or a test driving the binary directly -- has no write\naccess there and must point this somewhere it owns.",
+            "type": "string",
+            "default": "/var/run/vector/config"
+          },
+          "api_enabled": {
+            "description": "Run Vector's API (GraphQL, health, `vector top`). Default: off.\n\nNothing in this process is a client, and the API accepts unauthenticated\nrequests, so it stays off unless an operator wants it for debugging.",
+            "type": "boolean",
+            "default": false
+          },
+          "api_address": {
+            "description": "Vector API bind address (host:port), used only with `api_enabled`.\n\nMust be a loopback address: reach it with `kubectl port-forward` or\n`docker exec`, never from the network.",
+            "type": "string",
+            "default": "127.0.0.1:8686"
+          },
+          "log_level": {
+            "description": "Vector log level.",
+            "type": "string",
+            "default": "info"
+          },
+          "version": {
+            "description": "Expected Vector version (semver).\n\nDefaults to the version the image was built with\n([`crate::deployment::VECTOR_VERSION`]) rather than empty:\n[`check_vector_version`](crate::config::validate::check_vector_version)\nskips the comparison on an empty pin, which would make the default\n`version_check: strict` a check that cannot fire. With the default pin,\nstrict means the binary on PATH must be the one this image shipped.\n\nSet it explicitly (or set `version_check` to `warn`/`disabled`) when\ndeliberately running a different Vector to the pre-shipped one.",
+            "type": "string",
+            "default": "0.58.0"
+          },
+          "version_check": {
+            "description": "Version check mode: strict, warn, disabled.",
+            "type": "string",
+            "default": "strict"
+          },
+          "version_source": {
+            "description": "Where the Vector binary comes from. `preshipped` is the only value the\nruntime can honour.\n\nThis process never acquires a binary: it runs [`binary`](Self::binary)\nand nothing else. The selection rules in [`crate::vector::binary`]\n(`latest`, `stable`, a minor line, an exact version) have no caller on\nthe run path, so any other value here would resolve to the pre-shipped\nbinary anyway -- silently, and while reporting success. `validate()`\nrejects them rather than substituting.\n\nTo run a different Vector, point [`binary`](Self::binary) at it and set\n[`version`](Self::version) to match.",
+            "type": "string",
+            "default": "preshipped"
+          }
+        }
+      },
+      "MetricsConfig": {
+        "description": "Metrics endpoint configuration.",
+        "type": "object",
+        "properties": {
+          "address": {
+            "description": "Bind address for `/metrics`, `/livez` and `/readyz` (host:port).\n\nReaches the listener through [`Config::fill_common_args`]; `--metrics-addr`\nand `METRICS_ADDR` both outrank it.",
+            "type": "string",
+            "default": "0.0.0.0:9090"
+          },
+          "vector_metrics_address": {
+            "description": "Vector's `prometheus_exporter` bind address (host:port).\n\nThe wrapper writes it into the assembled Vector config AND scrapes it,\nmerging every `vector_*` sample into the scalo registry, so nothing\noutside the pod needs this port. Keep it on loopback.",
+            "type": "string",
+            "default": "127.0.0.1:9598"
+          },
+          "vector_metrics_expiry_ticks": {
+            "description": "Scrape ticks a merged `vector_*` gauge may go unseen before it is\nzeroed, so a component Vector drops stops reporting its last value.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 4
+          },
+          "sink_stall_secs": {
+            "description": "Seconds the sink may hold records, or have the broker refuse them,\nwithout delivering any before `/readyz` reports not ready. 0 never does.\nDefault: 60.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 60
+          }
+        }
+      },
+      "LoggingConfig": {
+        "description": "Logging configuration.",
+        "type": "object",
+        "properties": {
+          "level": {
+            "description": "Log level (trace, debug, info, warn, error).\n\nReaches the subscriber through [`Config::fill_common_args`];\n`--log-level`, `LOG_LEVEL`, `--verbose` and `--quiet` all outrank it.",
+            "type": "string",
+            "default": "info"
+          },
+          "format": {
+            "description": "Log format (json, text, auto).\n\n`auto` -- the default -- is text on a terminal and JSON everywhere else,\nso a pod ships structured logs and a developer reads them.",
+            "type": "string",
+            "default": "auto"
+          }
+        }
+      },
+      "ScalingConfig": {
+        "description": "KEDA scaling pressure configuration.\n\nPresent for parity with the `scaling:` block every DFE service accepts.\nNothing in this process reads it -- see the \"read by nothing\" note on\n[`Config`].",
+        "type": "object",
+        "properties": {
+          "pressure_threshold": {
+            "description": "Scaling pressure threshold (0.0–1.0). Range-checked, not consumed.",
+            "type": "number",
+            "format": "double",
+            "default": 0.8
+          }
+        }
+      },
+      "ReloadConfig": {
+        "description": "Hot-reload configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable hot-reload (poll-based file watcher + SIGHUP).",
+            "type": "boolean",
+            "default": true
+          },
+          "poll_interval_secs": {
+            "description": "Poll interval in seconds for detecting config/transform file changes.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 30
+          }
+        }
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "kind": "transform",
+      "name": "vector",
+      "description": "Vector (vector.dev) subprocess wrapper: Kafka source -> user transform YAML -> Kafka sink. Vector's own YAML config defines the transforms + routing; this wrapper manages the process lifecycle and Kafka wiring.",
+      "maturity": "stable",
+      "fields": [
+        {
+          "name": "dfe_source",
+          "type": "string",
+          "required": false,
+          "description": "DFE source name; derives topic/group defaults ({src}_land -> {src}_load)."
+        },
+        {
+          "name": "transforms.dir",
+          "type": "string",
+          "required": false,
+          "description": "Directory of Vector transform YAML files (hot-reloaded)."
+        },
+        {
+          "name": "transforms.files",
+          "type": "list",
+          "required": false,
+          "description": "Explicit ordered list of Vector transform YAML files."
+        }
+      ]
+    }
+  ],
   "writable_paths": [
     {
       "name": "data",
-      "path": "/var/lib/vector"
+      "path": "/var/lib/vector",
+      "size": "1Gi"
     },
     {
       "name": "run",
-      "path": "/var/run/vector"
+      "path": "/var/run/vector",
+      "size": "1Gi"
     }
   ],
   "termination_grace_seconds": 90,

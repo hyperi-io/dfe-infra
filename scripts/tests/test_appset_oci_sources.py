@@ -39,9 +39,9 @@ import yaml
 from _weave import (
     CONTRACTS,
     DIGEST_RE,
-    RENDER_DIGEST,
     REPO_ROOT,
     appset,
+    chart_name,
     drift,
     helm,
     old_appset,
@@ -89,11 +89,6 @@ MANAGED = {
     "dfe.hyperi.io/kafka_message_max_bytes": "8388608",
 }
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
-
-
-def chart_name(service: str) -> str:
-    """The thin chart's name, which its contract's app_name sets."""
-    return "dfe-hyperdx" if service == "hyperdx" else service
 
 
 def application(
@@ -322,7 +317,9 @@ def test_a_placeholder_digest_fails_the_render(
 def test_a_broken_entry_leaves_every_other_service_rendering(tmp_path: Path) -> None:
     path = _written(tmp_path, APPS, broken(APPS, "dfe-ui", None))
     chart, _ = helm_sources(application("dfe-loader", APPS, path=path))
-    assert chart["targetRevision"] == RENDER_DIGEST
+    pins = drift().chart_pin_map(appset(APPS).read_text(encoding="utf-8"))
+    assert chart["targetRevision"] == pins["dfe-loader"]
+    assert DIGEST_RE.fullmatch(chart["targetRevision"])
 
 
 @pytest.mark.parametrize("appset_name", [APPS, EDGE])

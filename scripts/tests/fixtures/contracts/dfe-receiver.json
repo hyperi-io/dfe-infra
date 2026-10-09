@@ -358,6 +358,2670 @@
       "topics_path": "config.kafka.topics"
     }
   },
+  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "native_deps": {
+    "apt_repos": [
+      {
+        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
+        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
+        "url": "https://packages.confluent.io/clients/deb",
+        "codename": "bookworm",
+        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
+        "packages": [
+          "librdkafka1"
+        ]
+      }
+    ],
+    "apt_packages": [
+      "libssl3t64",
+      "zlib1g",
+      "libzstd1"
+    ],
+    "distro": "trixie"
+  },
+  "image_profile": "production",
+  "oci_labels": {
+    "title": "dfe-receiver",
+    "description": "High-performance HTTP/gRPC receiver for PB/s scale data ingestion",
+    "vendor": "HYPERI PTY LIMITED",
+    "label_namespace": "io.hyperi",
+    "licenses": "BUSL-1.1",
+    "copyright": "(c) 2026 HYPERI PTY LIMITED"
+  },
+  "config_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Config",
+    "description": "Main configuration struct.",
+    "type": "object",
+    "properties": {
+      "server": {
+        "description": "HTTP server configuration.",
+        "$ref": "#/$defs/ServerConfig",
+        "default": {
+          "bind_address": "0.0.0.0:8080",
+          "max_body_size": 10485760,
+          "request_timeout_ms": 30000,
+          "max_concurrent_requests": 10000,
+          "rate_limit": {
+            "enabled": false,
+            "requests_per_second": 100,
+            "burst": 500
+          },
+          "trusted_proxies": [],
+          "ip_filter": {
+            "mode": "disabled",
+            "cidrs": []
+          },
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "auth": {
+            "mode": "none",
+            "accepted_headers": [],
+            "bearer": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            },
+            "include_common_header": true,
+            "header_name": "",
+            "header_values": []
+          },
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "grpc": {
+        "description": "gRPC server configuration.",
+        "$ref": "#/$defs/GrpcConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": "0.0.0.0:6000",
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "auth": {
+            "mode": "none",
+            "accepted_headers": [],
+            "bearer": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            },
+            "include_common_header": true,
+            "header_name": "",
+            "header_values": []
+          },
+          "max_message_size": 16777216,
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "otlp": {
+        "description": "OTLP receiver configuration.",
+        "$ref": "#/$defs/OtlpConfig",
+        "default": {
+          "enabled": false,
+          "grpc_bind_address": "0.0.0.0:4317",
+          "http_bind_address": "0.0.0.0:4318",
+          "mode": "hyperdx",
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "auth": {
+            "mode": "none",
+            "accepted_headers": [],
+            "bearer": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            },
+            "include_common_header": true,
+            "header_name": "",
+            "header_values": []
+          },
+          "raw_capture": {
+            "enabled": null,
+            "max_bytes": null,
+            "on_oversize": null
+          },
+          "max_message_size": 16777216,
+          "acknowledgements": {
+            "enabled": true
+          },
+          "http_max_hold_ms": 9000
+        }
+      },
+      "lumberjack": {
+        "description": "Lumberjack v2 (Beats) receiver configuration.",
+        "$ref": "#/$defs/LumberjackConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": "0.0.0.0:5044",
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "auth": {
+            "mode": "none",
+            "accepted_headers": [],
+            "bearer": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            },
+            "include_common_header": true,
+            "header_name": "",
+            "header_values": []
+          },
+          "accept_unauthenticated": false,
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "splunk_hec": {
+        "description": "Splunk HEC receiver configuration.",
+        "$ref": "#/$defs/SplunkHecConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": "0.0.0.0:8088",
+          "max_body_size": 10485760,
+          "request_timeout_ms": 30000,
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "auth": {
+            "mode": "none",
+            "accepted_headers": [],
+            "bearer": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            },
+            "include_common_header": true,
+            "header_name": "",
+            "header_values": []
+          },
+          "raw_capture": {
+            "enabled": null,
+            "max_bytes": null,
+            "on_oversize": null
+          },
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "syslog": {
+        "description": "Syslog receiver configuration.",
+        "$ref": "#/$defs/SyslogConfig",
+        "default": {
+          "enabled": false,
+          "udp_bind_address": "0.0.0.0:514",
+          "tcp_bind_address": "0.0.0.0:514",
+          "tls_bind_address": "0.0.0.0:6514",
+          "max_message_size": 65536,
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "auth": {
+            "mode": "none",
+            "accepted_headers": [],
+            "bearer": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            },
+            "include_common_header": true,
+            "header_name": "",
+            "header_values": []
+          },
+          "accept_unauthenticated": false,
+          "raw_capture": {
+            "enabled": null,
+            "max_bytes": null,
+            "on_oversize": null
+          }
+        }
+      },
+      "prometheus_rw": {
+        "description": "Prometheus Remote Write receiver configuration.",
+        "$ref": "#/$defs/PrometheusRwConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": "0.0.0.0:9091",
+          "mode": "native",
+          "max_body_size": 10485760,
+          "request_timeout_ms": 30000,
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "auth": {
+            "mode": "none",
+            "accepted_headers": [],
+            "bearer": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            },
+            "include_common_header": true,
+            "header_name": "",
+            "header_values": []
+          },
+          "raw_capture": {
+            "enabled": null,
+            "max_bytes": null,
+            "on_oversize": null
+          },
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "fluent": {
+        "description": "Fluent Forward protocol receiver configuration.",
+        "$ref": "#/$defs/FluentConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": "0.0.0.0:24224",
+          "max_message_size": 33554432,
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "accept_unauthenticated": false,
+          "raw_capture": {
+            "enabled": null,
+            "max_bytes": null,
+            "on_oversize": null
+          },
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "gelf": {
+        "description": "GELF receiver configuration.",
+        "$ref": "#/$defs/GelfConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": "0.0.0.0:12201",
+          "max_message_size": 1048576,
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "accept_unauthenticated": false,
+          "raw_capture": {
+            "enabled": null,
+            "max_bytes": null,
+            "on_oversize": null
+          }
+        }
+      },
+      "flow": {
+        "description": "Flow (NetFlow v5/v9 + IPFIX + sFlow v5) receiver configuration.",
+        "$ref": "#/$defs/FlowConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": "0.0.0.0",
+          "ports": [
+            2055,
+            4739,
+            6343
+          ],
+          "output": {
+            "mode": "canonical",
+            "max_records_per_packet": 200
+          },
+          "channel_capacity": 4096,
+          "recv_buffer_bytes": 8388608,
+          "ip_filter": null,
+          "rate_limit": {
+            "enabled": false,
+            "packets_per_second": 5000,
+            "burst": 10000,
+            "cache_size": 4096
+          },
+          "netflow": {
+            "enabled": true,
+            "template_cache": {
+              "max_per_exporter": 1000,
+              "max_exporters": 10000
+            },
+            "topic": "netflow_land"
+          },
+          "sflow": {
+            "enabled": true,
+            "topic": "sflow_land"
+          },
+          "split": null,
+          "experimental": true,
+          "raw_capture": {
+            "enabled": null,
+            "max_bytes": null,
+            "on_oversize": null
+          }
+        }
+      },
+      "webhook": {
+        "description": "Generic authenticated webhook intake (`POST /webhook/{caller}`).",
+        "$ref": "#/$defs/WebhookConfig",
+        "default": {
+          "enabled": false,
+          "bind_address": null,
+          "max_body_size": 1048576,
+          "request_timeout_ms": 30000,
+          "tls": {
+            "enabled": false,
+            "cert_file": null,
+            "key_file": null,
+            "ca_file": null,
+            "client_auth": "none",
+            "cert_secret": null,
+            "key_secret": null,
+            "ca_secret": null,
+            "refresh_interval_secs": 3600
+          },
+          "callers": [],
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "raw_capture": {
+        "description": "Common raw-payload capture default, inherited by every transport that\nsupports capture. Per-transport `raw_capture:` blocks override it\nfield by field. See [`raw_capture`].",
+        "$ref": "#/$defs/RawCaptureConfig",
+        "default": {
+          "enabled": null,
+          "max_bytes": null,
+          "on_oversize": null
+        }
+      },
+      "validation": {
+        "description": "Validation rules.",
+        "$ref": "#/$defs/ValidationConfig",
+        "default": {
+          "required_fields": [],
+          "dlq_on_invalid": true
+        }
+      },
+      "routing": {
+        "description": "Routing configuration.",
+        "$ref": "#/$defs/RoutingConfig",
+        "default": {
+          "source_rules": [],
+          "default_source": "main",
+          "topic_suffix": "_land",
+          "source_to_topic": {},
+          "legacy_compat": false,
+          "dlq": {
+            "enabled": true,
+            "mode": "cascade",
+            "topic": "dfe_receiver_dlq",
+            "topic_suffix": ".dlq",
+            "file_enabled": true,
+            "file_path": "/var/spool/dfe/dlq",
+            "kafka_enabled": true,
+            "kafka_send_timeout_ms": null
+          }
+        }
+      },
+      "destinations": {
+        "description": "Destination configuration.",
+        "$ref": "#/$defs/DestinationsConfig",
+        "default": {
+          "default": "kafka",
+          "rules": []
+        }
+      },
+      "kafka": {
+        "description": "Kafka producer configuration.",
+        "$ref": "#/$defs/KafkaConfig",
+        "default": {
+          "brokers": [],
+          "client_id": "dfe-receiver",
+          "sasl": null,
+          "tls": {
+            "enabled": false,
+            "ca_file": null,
+            "cert_file": null,
+            "key_file": null
+          },
+          "librdkafka_overrides": {
+            "statistics.interval.ms": "0"
+          }
+        }
+      },
+      "loader": {
+        "description": "dfe-loader connection configuration.",
+        "$ref": "#/$defs/LoaderConfig",
+        "default": {
+          "address": "dfe-loader:6000",
+          "transport": "kafka",
+          "timeout_ms": 20000,
+          "grpc_endpoint": null
+        }
+      },
+      "buffer": {
+        "description": "Buffer and memory configuration.",
+        "$ref": "#/$defs/BufferConfig",
+        "default": {
+          "memory_limit": 0,
+          "pressure_threshold": 0.8,
+          "spillover": {
+            "enabled": false,
+            "path": "/var/spool/dfe-receiver",
+            "max_usage_percent": 0.8,
+            "poll_interval_secs": 5
+          }
+        }
+      },
+      "metrics": {
+        "description": "Metrics configuration.",
+        "$ref": "#/$defs/MetricsConfig",
+        "default": {
+          "enabled": true,
+          "address": "0.0.0.0:9090"
+        }
+      },
+      "scaling": {
+        "description": "Scaling pressure configuration for KEDA autoscaling.",
+        "$ref": "#/$defs/ScalingConfig",
+        "default": {
+          "enabled": true,
+          "memory_gate_threshold": 0.8,
+          "weight_request_rate": 0.3,
+          "weight_queue_depth": 0.25,
+          "weight_memory": 0.25,
+          "weight_connections": 0.1,
+          "weight_spill": 0.1,
+          "saturation_request_rate": 100000.0,
+          "saturation_queue_depth": 10000.0,
+          "saturation_connections": 1000.0,
+          "saturation_spill": 1000.0
+        }
+      },
+      "config_reload_secs": {
+        "description": "Periodic config reload interval in seconds (0 = disabled, SIGHUP only).",
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0,
+        "default": 0
+      },
+      "file_sink": {
+        "description": "Debug file sink -- writes all processed messages to a file.",
+        "$ref": "#/$defs/FileSinkConfig",
+        "default": {
+          "enabled": false,
+          "path": "/tmp/dfe-receiver-debug.ndjson"
+        }
+      }
+    },
+    "$defs": {
+      "ServerConfig": {
+        "description": "HTTP server configuration.",
+        "type": "object",
+        "properties": {
+          "bind_address": {
+            "description": "Bind address (e.g., \"0.0.0.0:443\").",
+            "type": "string",
+            "default": "0.0.0.0:8080"
+          },
+          "max_body_size": {
+            "description": "Maximum request body size in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10485760
+          },
+          "request_timeout_ms": {
+            "description": "Request timeout in milliseconds.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 30000
+          },
+          "max_concurrent_requests": {
+            "description": "Maximum concurrent in-flight requests (0 = unlimited).\nProtects against connection exhaustion and memory pressure.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10000
+          },
+          "rate_limit": {
+            "description": "Per-IP rate limiting for every HTTP listener.",
+            "$ref": "#/$defs/RateLimitConfig",
+            "default": {
+              "enabled": false,
+              "requests_per_second": 100,
+              "burst": 500
+            }
+          },
+          "trusted_proxies": {
+            "description": "Proxies, as CIDRs, whose `X-Forwarded-For` or `X-Real-IP` names the\nclient on every HTTP listener. Empty (the default) believes neither\nheader from anyone: a request is the TCP peer's.\n\nThe rate limit keys on that client and auth-failure events report it.\nList only proxies that append `X-Forwarded-For` or overwrite\n`X-Real-IP`; a listed proxy that passes a client's own header through\nlets that client pick its rate-limit bucket.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "ip_filter": {
+            "description": "IP filter (allowlist/denylist) for every listener the receiver owns an\naccept loop for.",
+            "$ref": "#/$defs/IpFilterConfig",
+            "default": {
+              "mode": "disabled",
+              "cidrs": []
+            }
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "auth": {
+            "description": "Authentication configuration.",
+            "$ref": "#/$defs/AuthConfig",
+            "default": {
+              "mode": "none",
+              "accepted_headers": [],
+              "bearer": {
+                "tokens": [],
+                "secret_source": null,
+                "refresh_interval_secs": 300
+              },
+              "include_common_header": true,
+              "header_name": "",
+              "header_values": []
+            }
+          },
+          "acknowledgements": {
+            "description": "Answer `/ingest` only once every destination confirmed the records\n(default on). Off answers once they are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "RateLimitConfig": {
+        "description": "Per-IP rate limiting configuration using GCRA (token bucket variant).\n\nApplies to `/ingest`, the webhook intake, Splunk HEC, Prometheus remote\nwrite and OTLP HTTP. Each listener keeps its own budget, so the figures\nbelow are per source IP per listener, not a receiver-wide total.\n\nThe source IP is the TCP peer, or the client a `server.trusted_proxies`\npeer names. On Kubernetes a Service with `externalTrafficPolicy: Cluster`\n(the default) rewrites every external source to a node address, so each\nnode's clients share one budget; set `externalTrafficPolicy: Local`, or\nfront the receiver with a proxy listed in `server.trusted_proxies`.\n\nIt cannot apply to the raw TCP and UDP listeners (syslog, Lumberjack, Fluent\nForward, GELF) or to the gRPC ports: there is no HTTP request there to count\nand tonic owns its own accept loop. Flow has its own per-source packet limit\nunder `flow.rate_limit`.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable per-IP rate limiting.",
+            "type": "boolean",
+            "default": false
+          },
+          "requests_per_second": {
+            "description": "Maximum sustained requests per second per source IP.\n\nA rate, not an interval: the limiter replenishes one request of the\nquota every `1/requests_per_second` of a second. At 100 that is one\nevery 10ms. Must be at least 1 while `enabled` is true.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 100
+          },
+          "burst": {
+            "description": "Burst capacity above the sustained rate.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 500
+          }
+        }
+      },
+      "IpFilterConfig": {
+        "description": "IP filter (allowlist / denylist) configuration.\n\nEnforced in the accept loop, before the TLS handshake and before any\nprotocol work: `/ingest`, the webhook intake, Splunk HEC, Prometheus remote\nwrite, OTLP HTTP, syslog (UDP per datagram, TCP and TLS per connection),\nLumberjack, Fluent Forward and GELF.\n\nIt does not reach the gRPC ports (`grpc`, and OTLP on 4317): tonic owns\nthose accept loops, so authenticate them with `auth.mode: bearer`, or\n`mtls` with `tls.client_auth: required`. Flow has its own optional\n`flow.ip_filter` per listener.\n\nUPGRADE: this list used to be `/ingest` and the webhook intake alone. One\nfilter now governs every listener, so an allowlist written for the `/ingest`\nsenders also decides which sources syslog, Lumberjack, Fluent Forward, GELF,\nSplunk HEC, Prometheus remote write and OTLP HTTP are accepted from. Widen\n`cidrs` to cover every sender, or those events are dropped in the accept\nloop.\n\nEach refusal counts on `receiver_ip_filter_rejected_total`, labelled with\nthe listener's transport.\n\nStartup is refused for an unknown `mode`, an entry in `cidrs` that is not a\nCIDR, or an `allowlist` with no `cidrs`.",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "Filter mode: \"disabled\", \"allowlist\", \"denylist\".",
+            "type": "string",
+            "default": "disabled"
+          },
+          "cidrs": {
+            "description": "CIDR ranges (e.g., `[\"10.0.0.0/8\", \"192.168.0.0/16\"]`).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      },
+      "TlsConfig": {
+        "description": "TLS configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable TLS.",
+            "type": "boolean",
+            "default": false
+          },
+          "cert_file": {
+            "description": "Path to certificate file (local file path).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "key_file": {
+            "description": "Path to private key file (local file path).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "ca_file": {
+            "description": "Path to CA certificate for client verification (mTLS).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "client_auth": {
+            "description": "Client certificate requirement (none, optional, required).",
+            "type": "string",
+            "default": "none"
+          },
+          "cert_secret": {
+            "description": "Secret source for certificate (overrides cert_file).\nFormat: \"provider:path:key\" (e.g., \"vault:secret/tls:cert\")",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "key_secret": {
+            "description": "Secret source for private key (overrides key_file).\nFormat: \"provider:path:key\" (e.g., \"vault:secret/tls:key\")",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "ca_secret": {
+            "description": "Secret source for CA certificate (overrides ca_file).\nFormat: \"provider:path:key\" (e.g., \"vault:secret/tls:ca\")",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "refresh_interval_secs": {
+            "description": "Refresh interval for secrets in seconds.\nDefault: 3600 (1 hour)",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 3600
+          }
+        }
+      },
+      "AuthConfig": {
+        "description": "Authentication configuration.",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "Auth mode (none, header, bearer, mtls, both).",
+            "type": "string",
+            "default": "none"
+          },
+          "accepted_headers": {
+            "description": "List of accepted headers (any one must match).\nEach entry defines a header name and its allowed values.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/AcceptedHeader"
+            },
+            "default": []
+          },
+          "bearer": {
+            "description": "Bearer token configuration.",
+            "$ref": "#/$defs/BearerConfig",
+            "default": {
+              "tokens": [],
+              "secret_source": null,
+              "refresh_interval_secs": 300
+            }
+          },
+          "include_common_header": {
+            "description": "Enrichment switch, read from `server.auth` alone: stamps\n`_timestamp_receiver` and evaluates `routing.source_rules` on routed\nrecords. It adds no accepted header. Default: true",
+            "type": "boolean",
+            "default": true
+          },
+          "header_name": {
+            "description": "Legacy: Single header name for header-based auth.\nDeprecated: Use `accepted_headers` instead.",
+            "type": "string",
+            "default": ""
+          },
+          "header_values": {
+            "description": "Legacy: Allowed header values for single header.\nDeprecated: Use `accepted_headers` instead.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-scalo-secret": true,
+              "writeOnly": true
+            },
+            "default": []
+          }
+        }
+      },
+      "AcceptedHeader": {
+        "description": "Defines an accepted authentication header.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Header name (e.g., \"x-hyperi-agent\", \"Authorization\").",
+            "type": "string"
+          },
+          "values": {
+            "description": "Allowed values for this header.\nIf empty, any non-empty value is accepted.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-scalo-secret": true,
+              "writeOnly": true
+            },
+            "default": []
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "BearerConfig": {
+        "description": "Bearer token authentication configuration.",
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "description": "Static tokens (for dev/simple deployments).\nIn production, use `secret_source` instead.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-scalo-secret": true,
+              "writeOnly": true
+            },
+            "default": []
+          },
+          "secret_source": {
+            "description": "Secret source for dynamic token loading.\nFormat: `provider:path[:key]` (e.g. \"vault:secret/auth:bearer_tokens\").",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "refresh_interval_secs": {
+            "description": "Token refresh interval in seconds (for secret-sourced tokens).\nDefault: 300 (5 minutes)",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 300
+          }
+        }
+      },
+      "AcknowledgementsConfig": {
+        "description": "The `acknowledgements` section of an ack-capable transport.\n\nWith `enabled: true` (the default) a source releases its acknowledgement --\na Kafka offset commit, a gRPC or HTTP response -- only once every piece of\nwork built from the record has been delivered, dead-lettered with the DLQ's\nconfirmation, or dropped by policy. A failed delivery withholds it, so the\nrecord is delivered again: duplicates are possible, loss is not.\n\nWith `enabled: false` the source acknowledges at receipt, before the record\nis processed: a crash or a failed delivery loses what was acknowledged.\n\n```yaml\nkafka:\n  acknowledgements:\n    enabled: true\n```",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Hold the source acknowledgement until every piece is delivered.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "GrpcConfig": {
+        "description": "gRPC server configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable gRPC server.",
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "description": "Bind address for gRPC.",
+            "type": "string",
+            "default": "0.0.0.0:6000"
+          },
+          "tls": {
+            "description": "TLS configuration for gRPC server.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "auth": {
+            "description": "Authentication configuration for gRPC server.",
+            "$ref": "#/$defs/AuthConfig",
+            "default": {
+              "mode": "none",
+              "accepted_headers": [],
+              "bearer": {
+                "tokens": [],
+                "secret_source": null,
+                "refresh_interval_secs": 300
+              },
+              "include_common_header": true,
+              "header_name": "",
+              "header_values": []
+            }
+          },
+          "max_message_size": {
+            "description": "Largest decoded push the server takes, in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 16777216
+          },
+          "acknowledgements": {
+            "description": "Answer a push only once every destination confirmed its events\n(default on). Off answers once they are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "OtlpConfig": {
+        "description": "OTLP (OpenTelemetry Protocol) receiver configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable OTLP receiver.",
+            "type": "boolean",
+            "default": false
+          },
+          "grpc_bind_address": {
+            "description": "Bind address for OTLP gRPC (standard port 4317).",
+            "type": "string",
+            "default": "0.0.0.0:4317"
+          },
+          "http_bind_address": {
+            "description": "Bind address for OTLP HTTP (standard port 4318).",
+            "type": "string",
+            "default": "0.0.0.0:4318"
+          },
+          "mode": {
+            "description": "Conversion mode: \"hyperdx\" (default) or \"generic\".\n\n- `hyperdx`: JSON matching the OTel ClickHouse exporter schema\n  for direct HyperDX compatibility.\n- `generic`: Normalised JSON envelope with routing fields.",
+            "type": "string",
+            "default": "hyperdx"
+          },
+          "tls": {
+            "description": "TLS configuration for OTLP endpoints.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "auth": {
+            "description": "Authentication configuration for OTLP endpoints.",
+            "$ref": "#/$defs/AuthConfig",
+            "default": {
+              "mode": "none",
+              "accepted_headers": [],
+              "bearer": {
+                "tokens": [],
+                "secret_source": null,
+                "refresh_interval_secs": 300
+              },
+              "include_common_header": true,
+              "header_name": "",
+              "header_values": []
+            }
+          },
+          "raw_capture": {
+            "description": "Raw-payload capture override (inherits the common `raw_capture` block).\n\nOTLP arrives as protobuf, so `_raw` carries the `generic`-mode\nrendering of the record -- the least-shaped decode we produce. In\n`generic` mode it is therefore a copy of the event itself.",
+            "$ref": "#/$defs/RawCaptureConfig",
+            "default": {
+              "enabled": null,
+              "max_bytes": null,
+              "on_oversize": null
+            }
+          },
+          "max_message_size": {
+            "description": "Largest decoded export the gRPC endpoint takes, in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 16777216
+          },
+          "acknowledgements": {
+            "description": "Answer an export, on either endpoint, only once every destination\nconfirmed its records (default on). Off answers once they are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          },
+          "http_max_hold_ms": {
+            "description": "The longest an HTTP export is held for its destinations to confirm, in\nmilliseconds. OTel exporters give up after 10 s by default, so a longer\nhold keeps the bytes of a request nobody is waiting on. Raise it with\nthe exporters' `timeout`. A gRPC export is bounded by its own\n`grpc-timeout` instead.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 9000
+          }
+        }
+      },
+      "RawCaptureConfig": {
+        "description": "Raw-capture settings as written in config, at either cascade level.\n\nEvery field is `Option` so an unset field means \"inherit\", not \"off\".",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Capture the original payload into `_raw`.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          },
+          "max_bytes": {
+            "description": "Maximum captured bytes; 0 means unlimited.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0,
+            "default": null
+          },
+          "on_oversize": {
+            "description": "Behaviour when the payload exceeds `max_bytes`.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OversizePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "OversizePolicy": {
+        "description": "What to do with a payload larger than `max_bytes`.",
+        "oneOf": [
+          {
+            "description": "Keep the leading `max_bytes` and flag it with `_raw_truncated: true`.",
+            "type": "string",
+            "const": "truncate"
+          },
+          {
+            "description": "Emit no `_raw` at all for this event.",
+            "type": "string",
+            "const": "omit"
+          }
+        ]
+      },
+      "LumberjackConfig": {
+        "description": "Lumberjack v2 (Beats) protocol configuration.\n\nAccepts data from Elastic Beats agents (Filebeat, Winlogbeat, etc.)\nover the Lumberjack v2 wire protocol on TCP/TLS.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable Lumberjack/Beats receiver.",
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "description": "Bind address for Lumberjack TCP listener (standard port 5044).",
+            "type": "string",
+            "default": "0.0.0.0:5044"
+          },
+          "tls": {
+            "description": "TLS configuration (Beats clients typically require TLS).",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "auth": {
+            "description": "Authentication configuration.",
+            "$ref": "#/$defs/AuthConfig",
+            "default": {
+              "mode": "none",
+              "accepted_headers": [],
+              "bearer": {
+                "tokens": [],
+                "secret_source": null,
+                "refresh_interval_secs": 300
+              },
+              "include_common_header": true,
+              "header_name": "",
+              "header_values": []
+            }
+          },
+          "accept_unauthenticated": {
+            "description": "Start without client certificates, accepting every client that can\nreach the port. Without it, an enabled listener refuses to start unless\n`tls.client_auth` is `required`.",
+            "type": "boolean",
+            "default": false
+          },
+          "acknowledgements": {
+            "description": "Acknowledge a window only once every destination confirmed its events\n(default on). Off acknowledges once they are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "SplunkHecConfig": {
+        "description": "Splunk HEC (HTTP Event Collector) receiver configuration.\n\nAccepts data from Splunk forwarders and HTTP clients over the HEC protocol.\nSupports both `Authorization: Splunk <token>` and `Authorization: Bearer <token>`.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable Splunk HEC receiver.",
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "description": "Bind address for Splunk HEC HTTP listener (standard port 8088).",
+            "type": "string",
+            "default": "0.0.0.0:8088"
+          },
+          "max_body_size": {
+            "description": "Maximum request body size in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10485760
+          },
+          "request_timeout_ms": {
+            "description": "Request timeout in milliseconds.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 30000
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "auth": {
+            "description": "Authentication configuration.",
+            "$ref": "#/$defs/AuthConfig",
+            "default": {
+              "mode": "none",
+              "accepted_headers": [],
+              "bearer": {
+                "tokens": [],
+                "secret_source": null,
+                "refresh_interval_secs": 300
+              },
+              "include_common_header": true,
+              "header_name": "",
+              "header_values": []
+            }
+          },
+          "raw_capture": {
+            "description": "Raw-payload capture override (inherits the common `raw_capture` block).\n\nOn `/services/collector/event`, `_raw` carries the submitted `event`\nvalue before HEC metadata is merged in. On `/services/collector/raw`\nit carries the original line bytes.",
+            "$ref": "#/$defs/RawCaptureConfig",
+            "default": {
+              "enabled": null,
+              "max_bytes": null,
+              "on_oversize": null
+            }
+          },
+          "acknowledgements": {
+            "description": "Answer a request only once every destination confirmed its events\n(default on). Off answers once they are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "SyslogConfig": {
+        "description": "Syslog receiver configuration (RFC 5424 + RFC 3164).\n\nAccepts syslog messages over UDP, TCP, and TLS/TCP.\nAuto-detects message format (RFC 5424 vs RFC 3164) per message.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable syslog receiver.",
+            "type": "boolean",
+            "default": false
+          },
+          "udp_bind_address": {
+            "description": "Bind address for UDP listener (standard port 514).",
+            "type": "string",
+            "default": "0.0.0.0:514"
+          },
+          "tcp_bind_address": {
+            "description": "Bind address for TCP listener (standard port 514).",
+            "type": "string",
+            "default": "0.0.0.0:514"
+          },
+          "tls_bind_address": {
+            "description": "Bind address for TLS/TCP listener (standard port 6514, RFC 5425).",
+            "type": "string",
+            "default": "0.0.0.0:6514"
+          },
+          "max_message_size": {
+            "description": "Maximum syslog message size in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 65536
+          },
+          "tls": {
+            "description": "TLS configuration (for secure syslog on port 6514).",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "auth": {
+            "description": "Authentication configuration.",
+            "$ref": "#/$defs/AuthConfig",
+            "default": {
+              "mode": "none",
+              "accepted_headers": [],
+              "bearer": {
+                "tokens": [],
+                "secret_source": null,
+                "refresh_interval_secs": 300
+              },
+              "include_common_header": true,
+              "header_name": "",
+              "header_values": []
+            }
+          },
+          "accept_unauthenticated": {
+            "description": "Start the UDP and plain TCP listeners, which accept every sender that\ncan reach them. Required whenever syslog is enabled: neither has a\nhandshake to authenticate at.",
+            "type": "boolean",
+            "default": false
+          },
+          "raw_capture": {
+            "description": "Raw-payload capture override (inherits the common `raw_capture` block).\n\nThe strongest case for capture: `_raw` holds the wire line including\nthe PRI and header, none of which survives into the parsed envelope.",
+            "$ref": "#/$defs/RawCaptureConfig",
+            "default": {
+              "enabled": null,
+              "max_bytes": null,
+              "on_oversize": null
+            }
+          }
+        }
+      },
+      "PrometheusRwConfig": {
+        "description": "Prometheus Remote Write receiver configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable Prometheus Remote Write receiver.",
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "description": "Bind address for HTTP listener.",
+            "type": "string",
+            "default": "0.0.0.0:9091"
+          },
+          "mode": {
+            "description": "Output mode: \"native\" (default), \"otel\", or \"hyperdx\".\n- `native`: Flat JSON with labels as top-level fields.\n- `otel`: Generic OTel JSON envelope (snake_case, RFC 3339).\n- `hyperdx`: HyperDX ClickHouse-compatible JSON (PascalCase, DateTime64).",
+            "type": "string",
+            "default": "native"
+          },
+          "max_body_size": {
+            "description": "Maximum request body size in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10485760
+          },
+          "request_timeout_ms": {
+            "description": "Request timeout in milliseconds.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 30000
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "auth": {
+            "description": "Authentication configuration.",
+            "$ref": "#/$defs/AuthConfig",
+            "default": {
+              "mode": "none",
+              "accepted_headers": [],
+              "bearer": {
+                "tokens": [],
+                "secret_source": null,
+                "refresh_interval_secs": 300
+              },
+              "include_common_header": true,
+              "header_name": "",
+              "header_values": []
+            }
+          },
+          "raw_capture": {
+            "description": "Raw-payload capture override (inherits the common `raw_capture` block).\n\nRemote Write arrives as snappy-framed protobuf, so `_raw` carries the\n`native`-mode rendering of the sample -- the least-shaped decode we\nproduce. In `native` mode it is therefore a copy of the event itself.",
+            "$ref": "#/$defs/RawCaptureConfig",
+            "default": {
+              "enabled": null,
+              "max_bytes": null,
+              "on_oversize": null
+            }
+          },
+          "acknowledgements": {
+            "description": "Answer a write only once every destination confirmed its samples\n(default on). Off answers once they are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "FluentConfig": {
+        "description": "Fluent Forward protocol configuration.\n\nAccepts data from Fluentd and Fluent Bit agents over the Forward\nprotocol (msgpack over TCP) on the standard port 24224.\n\nThere is no `auth` block: the Forward frames this handler reads carry no\ncredential. Close the port at the handshake with `tls.client_auth:\nrequired`, or set `accept_unauthenticated` and restrict the senders with a\n`server.ip_filter` allowlist.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable Fluent Forward receiver.",
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "description": "Bind address for TCP listener (standard port 24224).",
+            "type": "string",
+            "default": "0.0.0.0:24224"
+          },
+          "max_message_size": {
+            "description": "Maximum message size in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 33554432
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "accept_unauthenticated": {
+            "description": "Start without client certificates, accepting every client that can\nreach the port. Without it, an enabled listener refuses to start unless\n`tls.client_auth` is `required`.",
+            "type": "boolean",
+            "default": false
+          },
+          "raw_capture": {
+            "description": "Raw-payload capture override (inherits the common `raw_capture` block).\n\nForward arrives as msgpack, so `_raw` carries the record's verbatim\nmsgpack-to-JSON decode, before the tag, timestamp and `_source` this\nhandler adds.",
+            "$ref": "#/$defs/RawCaptureConfig",
+            "default": {
+              "enabled": null,
+              "max_bytes": null,
+              "on_oversize": null
+            }
+          },
+          "acknowledgements": {
+            "description": "Acknowledge a chunk, or read past a message without one, only once\nevery destination confirmed its records (default on). Off does so once\nthey are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "GelfConfig": {
+        "description": "GELF (Graylog Extended Log Format) receiver configuration.\n\nAccepts GELF messages over TCP (null-byte delimited JSON)\non the standard port 12201.\n\nThere is no `auth` block: GELF has no in-protocol authentication. Close the\nport at the handshake with `tls.client_auth: required`, or set\n`accept_unauthenticated` and restrict the senders with a `server.ip_filter`\nallowlist.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable GELF receiver.",
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "description": "Bind address for TCP listener (standard port 12201).",
+            "type": "string",
+            "default": "0.0.0.0:12201"
+          },
+          "max_message_size": {
+            "description": "Maximum message size in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 1048576
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "accept_unauthenticated": {
+            "description": "Start without client certificates, accepting every client that can\nreach the port. Without it, an enabled listener refuses to start unless\n`tls.client_auth` is `required`.",
+            "type": "boolean",
+            "default": false
+          },
+          "raw_capture": {
+            "description": "Raw-payload capture override (inherits the common `raw_capture` block).\n\n`_raw` holds the GELF message exactly as it arrived, before the\n`message`, `severity` and `_source` fields this handler derives.",
+            "$ref": "#/$defs/RawCaptureConfig",
+            "default": {
+              "enabled": null,
+              "max_bytes": null,
+              "on_oversize": null
+            }
+          }
+        }
+      },
+      "FlowConfig": {
+        "description": "Unified-mode listener config -- one block applies to all decoders on\nconfigured ports.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "type": "string",
+            "format": "ip",
+            "default": "0.0.0.0"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "default": [
+              2055,
+              4739,
+              6343
+            ]
+          },
+          "output": {
+            "$ref": "#/$defs/FlowOutputConfig",
+            "default": {
+              "mode": "canonical",
+              "max_records_per_packet": 200
+            }
+          },
+          "channel_capacity": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 4096
+          },
+          "recv_buffer_bytes": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 8388608
+          },
+          "ip_filter": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IpFilterConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rate_limit": {
+            "$ref": "#/$defs/RateLimitConfig2",
+            "default": {
+              "enabled": false,
+              "packets_per_second": 5000,
+              "burst": 10000,
+              "cache_size": 4096
+            }
+          },
+          "netflow": {
+            "$ref": "#/$defs/NetflowSubConfig",
+            "default": {
+              "enabled": true,
+              "template_cache": {
+                "max_per_exporter": 1000,
+                "max_exporters": 10000
+              },
+              "topic": "netflow_land"
+            }
+          },
+          "sflow": {
+            "$ref": "#/$defs/SflowSubConfig",
+            "default": {
+              "enabled": true,
+              "topic": "sflow_land"
+            }
+          },
+          "split": {
+            "description": "If present, switches to split mode and `flow.enabled` MUST be false.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FlowSplitConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "experimental": {
+            "description": "EXPERIMENTAL marker. When true (default), the handler emits a startup\nWARN log and sets `dfe_handler_experimental{handler=\"flow\"} 1`.\nFlipped to false in a follow-up PR after stability period.",
+            "type": "boolean",
+            "default": true
+          },
+          "raw_capture": {
+            "description": "Raw-record capture override (inherits the common `raw_capture` block).\n\n`_raw` carries the decoder's verbatim record rendering: a JSON array\nof every record in `canonical` mode, the single record in `exploded`.",
+            "$ref": "#/$defs/RawCaptureConfig",
+            "default": {
+              "enabled": null,
+              "max_bytes": null,
+              "on_oversize": null
+            }
+          }
+        }
+      },
+      "FlowOutputConfig": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "$ref": "#/$defs/OutputMode",
+            "default": "canonical"
+          },
+          "max_records_per_packet": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 200
+          }
+        }
+      },
+      "OutputMode": {
+        "description": "Shape of the emitted event: one per packet, or one per flow record.\n\nRaw record retention is no longer a mode. It is\n`flow.raw_capture.enabled`, which composes with either shape and writes\nthe common-header `_raw` field like every other transport.",
+        "type": "string",
+        "enum": [
+          "canonical",
+          "exploded"
+        ]
+      },
+      "RateLimitConfig2": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "packets_per_second": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 5000
+          },
+          "burst": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 10000
+          },
+          "cache_size": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 4096
+          }
+        }
+      },
+      "NetflowSubConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "template_cache": {
+            "$ref": "#/$defs/TemplateCacheConfig",
+            "default": {
+              "max_per_exporter": 1000,
+              "max_exporters": 10000
+            }
+          },
+          "topic": {
+            "type": "string",
+            "default": "netflow_land"
+          }
+        }
+      },
+      "TemplateCacheConfig": {
+        "type": "object",
+        "properties": {
+          "max_per_exporter": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 1000
+          },
+          "max_exporters": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10000
+          }
+        }
+      },
+      "SflowSubConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "topic": {
+            "type": "string",
+            "default": "sflow_land"
+          }
+        }
+      },
+      "FlowSplitConfig": {
+        "type": "object",
+        "properties": {
+          "netflow": {
+            "$ref": "#/$defs/FlowListenerConfig"
+          },
+          "sflow": {
+            "$ref": "#/$defs/FlowListenerConfig"
+          }
+        },
+        "required": [
+          "netflow",
+          "sflow"
+        ]
+      },
+      "FlowListenerConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "bind_address": {
+            "type": "string",
+            "format": "ip",
+            "default": "0.0.0.0"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "output": {
+            "$ref": "#/$defs/FlowOutputConfig",
+            "default": {
+              "mode": "canonical",
+              "max_records_per_packet": 200
+            }
+          },
+          "channel_capacity": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 4096
+          },
+          "recv_buffer_bytes": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 8388608
+          },
+          "ip_filter": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IpFilterConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rate_limit": {
+            "$ref": "#/$defs/RateLimitConfig2",
+            "default": {
+              "enabled": false,
+              "packets_per_second": 5000,
+              "burst": 10000,
+              "cache_size": 4096
+            }
+          },
+          "template_cache": {
+            "$ref": "#/$defs/TemplateCacheConfig",
+            "default": {
+              "max_per_exporter": 1000,
+              "max_exporters": 10000
+            }
+          },
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ports",
+          "topic"
+        ]
+      },
+      "WebhookConfig": {
+        "description": "Generic authenticated webhook intake.\n\nOne `POST /webhook/{caller}` route per declared caller. Each caller is a\nproduct that pushes events (an alert rule, a SaaS notification hook) and\ncarries its own secret, its own topic and its own body shape, so callers\nnever share a credential and a wrong secret is only ever tried against the\ncaller the path names.\n\nWith `bind_address` unset the routes are served on the main ingest listener\nunder `server.tls`, `server.ip_filter` and `server.rate_limit`. Set it and\nthe intake gets its own listener under `webhook.tls`, so a deployment can\nexpose only this port to a product's egress and keep `/ingest` internal;\n`server.ip_filter`, `server.rate_limit` and `server.max_concurrent_requests`\nstill apply to it.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable the webhook intake.",
+            "type": "boolean",
+            "default": false
+          },
+          "bind_address": {
+            "description": "Own listener address. Unset shares the main ingest listener.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "max_body_size": {
+            "description": "Maximum request body size in bytes. Alerts are small; agents that post\nbulk data use `/ingest`, so this is deliberately far below\n`server.max_body_size`.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 1048576
+          },
+          "request_timeout_ms": {
+            "description": "Request timeout in milliseconds, on either listener. It bounds the\nheld answer, so the default keeps the hold past the Kafka message\ntimeout.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 30000
+          },
+          "tls": {
+            "description": "TLS for the own listener. Refused when `bind_address` is unset, since\nthe shared listener is under `server.tls`.",
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "cert_file": null,
+              "key_file": null,
+              "ca_file": null,
+              "client_auth": "none",
+              "cert_secret": null,
+              "key_secret": null,
+              "ca_secret": null,
+              "refresh_interval_secs": 3600
+            }
+          },
+          "callers": {
+            "description": "The callers, one entry per product.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/WebhookCallerConfig"
+            },
+            "default": []
+          },
+          "acknowledgements": {
+            "description": "Answer a request only once Kafka confirmed its records (default on).\nOff answers once they are queued.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "WebhookCallerConfig": {
+        "description": "One webhook caller: a product identity, its secret, its topic.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The path segment (`POST /webhook/{name}`) and the `_source` stamped on\nevery record. Lowercase letters, digits, `_` and `-` only.",
+            "type": "string",
+            "default": ""
+          },
+          "topic": {
+            "description": "Kafka topic the caller's records land on, verbatim -- no\n`routing.topic_suffix` is applied.",
+            "type": "string",
+            "default": ""
+          },
+          "auth": {
+            "description": "How the caller authenticates.",
+            "$ref": "#/$defs/WebhookAuthConfig",
+            "default": {
+              "mode": "hmac",
+              "secret_source": "",
+              "refresh_interval_secs": 300,
+              "header": "x-signature",
+              "timestamp_header": "x-timestamp",
+              "tolerance_secs": 300
+            }
+          },
+          "body": {
+            "description": "Whether a body is one record or a JSON array of records.",
+            "$ref": "#/$defs/WebhookBody",
+            "default": "single"
+          },
+          "filter": {
+            "description": "Optional CEL expression over the record; a false result drops it. An\nempty string keeps every record. Compiled once at load.",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "WebhookAuthConfig": {
+        "description": "Per-caller authentication.\n\n`hmac` is the strong mode: the product signs `\"{timestamp}.{body}\"` with\nHMAC-SHA256 and the timestamp must be within `tolerance_secs` of the\nreceiver's clock, so a captured request cannot be replayed later. `header`\nis for products that can only attach static headers to a webhook (runZero\nalert rules are one): the named header carries a shared secret compared as\na SHA-256 hash, exactly as bearer tokens are. It has no integrity or replay\nprotection, which is why it is opt-in per caller rather than the default.",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "`hmac` or `header`.",
+            "$ref": "#/$defs/WebhookAuthMode",
+            "default": "hmac"
+          },
+          "secret_source": {
+            "description": "Where the secret lives: `provider:path[:key]` as for bearer tokens\n(`file:`, `vault:` / `bao:` / `openbao:`, `env:`). Required. There is no\nstatic secret field on purpose: a secret in YAML surfaces in the\nconfig-schema dump and in every `config-check`.",
+            "type": "string",
+            "default": ""
+          },
+          "refresh_interval_secs": {
+            "description": "Refresh interval for the secret in seconds.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 300
+          },
+          "header": {
+            "description": "`hmac`: the header carrying the signature (`sha256=<hex>` or bare\nhex). `header`: the header carrying the shared secret.",
+            "type": "string",
+            "default": "x-signature"
+          },
+          "timestamp_header": {
+            "description": "`hmac` only: the header carrying the unix-seconds timestamp that was\nsigned with the body.",
+            "type": "string",
+            "default": "x-timestamp"
+          },
+          "tolerance_secs": {
+            "description": "`hmac` only: how far the signed timestamp may be from the receiver's\nclock, in seconds, in either direction.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 300
+          }
+        }
+      },
+      "WebhookAuthMode": {
+        "description": "The two ways a webhook caller can prove itself.",
+        "oneOf": [
+          {
+            "description": "HMAC-SHA256 over `\"{timestamp}.{body}\"`, with a replay window.",
+            "type": "string",
+            "const": "hmac"
+          },
+          {
+            "description": "A static header carrying a shared secret.",
+            "type": "string",
+            "const": "header"
+          }
+        ]
+      },
+      "WebhookBody": {
+        "description": "What one POST body holds.",
+        "oneOf": [
+          {
+            "description": "One JSON object, one record.",
+            "type": "string",
+            "const": "single"
+          },
+          {
+            "description": "A JSON array; every element is a record.",
+            "type": "string",
+            "const": "array"
+          }
+        ]
+      },
+      "ValidationConfig": {
+        "description": "Validation configuration.\n\nJSON is the only payload format: a body that is not JSON is refused with a\n400 and counted, never sent to the DLQ.",
+        "type": "object",
+        "properties": {
+          "required_fields": {
+            "description": "Required fields (reject if missing).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "dlq_on_invalid": {
+            "description": "Send a record missing a required field to the DLQ instead of refusing it.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "RoutingConfig": {
+        "description": "Routing configuration.",
+        "type": "object",
+        "properties": {
+          "source_rules": {
+            "description": "Rules for determining `_source` value (first match wins).\nOnly evaluated when `include_common_header` is true.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SourceRule"
+            },
+            "default": []
+          },
+          "default_source": {
+            "description": "Default source when no rule matches.",
+            "type": "string",
+            "default": "main"
+          },
+          "topic_suffix": {
+            "description": "Suffix appended to source to form topic name.",
+            "type": "string",
+            "default": "_land"
+          },
+          "source_to_topic": {
+            "description": "Source-to-topic remapping (optional).",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          },
+          "legacy_compat": {
+            "description": "Enable pre-2.2 compatibility.\nAppends `key_value_use` rules for `tags.event.category` and `event_category`.",
+            "type": "boolean",
+            "default": false
+          },
+          "dlq": {
+            "description": "DLQ configuration.",
+            "$ref": "#/$defs/DlqConfig",
+            "default": {
+              "enabled": true,
+              "mode": "cascade",
+              "topic": "dfe_receiver_dlq",
+              "topic_suffix": ".dlq",
+              "file_enabled": true,
+              "file_path": "/var/spool/dfe/dlq",
+              "kafka_enabled": true,
+              "kafka_send_timeout_ms": null
+            }
+          }
+        }
+      },
+      "SourceRule": {
+        "description": "Rule for determining `_source` value from JSON payload.",
+        "type": "object",
+        "properties": {
+          "field": {
+            "description": "JSON field path (dot notation for nested, e.g., \"tags.event.category\").",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Match mode: \"key_present\", \"key_value_set\", \"key_value_use\".\n\n- `key_present`: if field exists -> `_source = source`\n- `key_value_set`: if field value == `match_value` -> `_source = source`\n- `key_value_use`: if field exists -> `_source = <field value>`",
+            "type": "string"
+          },
+          "match_value": {
+            "description": "Value to match against (for `key_value_set` mode only).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "source": {
+            "description": "Source value to set (for `key_present` and `key_value_set` modes).\nIgnored for `key_value_use` (uses the field value directly).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "field",
+          "mode"
+        ]
+      },
+      "DlqConfig": {
+        "description": "DLQ (Dead Letter Queue) configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable DLQ.",
+            "type": "boolean",
+            "default": true
+          },
+          "mode": {
+            "description": "Backend mode: cascade (default), fan_out, file_only, kafka_only.",
+            "type": "string",
+            "default": "cascade"
+          },
+          "topic": {
+            "description": "DLQ topic name: when non-empty, every Kafka DLQ write routes here\n(routing=common). Empty selects per-destination `{dest}{topic_suffix}`\nrouting -- reachable via config file only (flat-env drops empty values).",
+            "type": "string",
+            "default": "dfe_receiver_dlq"
+          },
+          "topic_suffix": {
+            "description": "Topic suffix for per-table routing.",
+            "type": "string",
+            "default": ".dlq"
+          },
+          "file_enabled": {
+            "description": "File backend settings.",
+            "type": "boolean",
+            "default": true
+          },
+          "file_path": {
+            "type": "string",
+            "default": "/var/spool/dfe/dlq"
+          },
+          "kafka_enabled": {
+            "description": "Kafka backend settings.",
+            "type": "boolean",
+            "default": true
+          },
+          "kafka_send_timeout_ms": {
+            "description": "How long a DLQ flush or shutdown waits for Kafka to ack queued entries,\nin milliseconds: scalo's `KafkaDlqConfig::send_timeout_ms`. Unset keeps\nscalo's default.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          }
+        }
+      },
+      "DestinationsConfig": {
+        "description": "The named destination set: where a matched record goes.\n\n`kafka` and `loader` are always available without being declared -- the bus\n(the record's own topic) and the app named by the `loader` block. Any other\nname is declared here as a sibling key, so a match rule can send a record to\na transform's Push listener, or fan it out to several destinations at once:\n\n```yaml\ndestinations:\n  default: loader\n  rules:\n    - match_field: app\n      match_value: orders\n      destination: [transform-orders, archiver]\n  transform-orders:\n    grpc:\n      endpoint: \"http://dfe-transform-orders:6000\"\n  archiver:\n    grpc:\n      endpoint: \"http://dfe-archiver:6000\"\n```",
+        "type": "object",
+        "properties": {
+          "default": {
+            "description": "Destination for records no rule matches.",
+            "$ref": "#/$defs/DestinationRef",
+            "default": "kafka"
+          },
+          "rules": {
+            "description": "Routing rules for destination selection (first match wins).",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/DestinationRule"
+            },
+            "default": []
+          }
+        },
+        "additionalProperties": {
+          "$ref": "#/$defs/DestinationSpec"
+        }
+      },
+      "DestinationRef": {
+        "description": "One destination name, or a list of them to fan a matched record out to.\n\nA fan-out is delivered when every destination has accepted it.",
+        "anyOf": [
+          {
+            "description": "A single destination name.",
+            "type": "string"
+          },
+          {
+            "description": "Several destination names -- the record goes to all of them.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "DestinationRule": {
+        "description": "Destination routing rule.",
+        "type": "object",
+        "properties": {
+          "match_field": {
+            "description": "Field to match.",
+            "type": "string"
+          },
+          "match_value": {
+            "description": "Value to match.",
+            "type": "string"
+          },
+          "destination": {
+            "description": "Destination for matched messages: one name, or a list to fan out.",
+            "$ref": "#/$defs/DestinationRef"
+          }
+        },
+        "required": [
+          "match_field",
+          "match_value",
+          "destination"
+        ]
+      },
+      "DestinationSpec": {
+        "description": "A declared destination: exactly one transport block.",
+        "type": "object",
+        "properties": {
+          "grpc": {
+            "description": "Deliver over gRPC to a scalo Push listener (a transform, the loader, the\narchiver).",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GrpcDestination"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kafka": {
+            "description": "Deliver over the bus.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/KafkaDestination"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "GrpcDestination": {
+        "description": "A gRPC destination -- the address of a scalo Push listener.",
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "description": "Endpoint URI, e.g. `http://dfe-transform-orders:6000`.",
+            "type": "string"
+          },
+          "confirms_delivery": {
+            "description": "Whether the listener answers a push only once its records are durable.\nSet false for one that answers on receipt, as the archiver's direct\nlistener does: every listener whose records can reach it then reports\n`best_effort` in `pipeline_delivery_guarantee`. Delivery is unchanged.",
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "endpoint"
+        ]
+      },
+      "KafkaDestination": {
+        "description": "A bus destination.",
+        "type": "object",
+        "properties": {
+          "topic": {
+            "description": "Fixed topic for this destination. Unset means the topic the record's\nsource resolves to, which is what the built-in `kafka` destination does.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "KafkaConfig": {
+        "description": "Kafka producer configuration.",
+        "type": "object",
+        "properties": {
+          "brokers": {
+            "description": "Broker addresses.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "client_id": {
+            "description": "Client ID.",
+            "type": "string",
+            "default": "dfe-receiver"
+          },
+          "sasl": {
+            "description": "SASL configuration.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SaslConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tls": {
+            "description": "TLS configuration.",
+            "$ref": "#/$defs/KafkaTlsConfig",
+            "default": {
+              "enabled": false,
+              "ca_file": null,
+              "cert_file": null,
+              "key_file": null
+            }
+          },
+          "librdkafka_overrides": {
+            "description": "Raw librdkafka configuration overrides (highest priority), the one\nplace producer batching, linger, compression and acks are tuned.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {
+              "statistics.interval.ms": "0"
+            }
+          }
+        }
+      },
+      "SaslConfig": {
+        "description": "SASL authentication configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable SASL.",
+            "type": "boolean"
+          },
+          "mechanism": {
+            "description": "SASL mechanism (plain, scram_sha_256, scram_sha_512).",
+            "type": "string"
+          },
+          "username": {
+            "description": "Username.",
+            "type": "string"
+          },
+          "password": {
+            "description": "Password, redacted wherever it is printed or serialised.",
+            "type": "string",
+            "x-scalo-secret": true,
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "enabled",
+          "mechanism",
+          "username",
+          "password"
+        ]
+      },
+      "KafkaTlsConfig": {
+        "description": "Kafka TLS configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable TLS for Kafka.",
+            "type": "boolean",
+            "default": false
+          },
+          "ca_file": {
+            "description": "CA certificate file.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "cert_file": {
+            "description": "Client certificate file.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "key_file": {
+            "description": "Client key file.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "LoaderConfig": {
+        "description": "dfe-loader connection configuration.",
+        "type": "object",
+        "properties": {
+          "address": {
+            "description": "Loader address, the manifest's `endpoints.push` port (apps.yaml).\nOverride with grpc_endpoint to dial a different URI.",
+            "type": "string",
+            "default": "dfe-loader:6000"
+          },
+          "transport": {
+            "description": "Transport type (kafka, grpc; `memory` discards and is refused at startup).",
+            "type": "string",
+            "default": "kafka"
+          },
+          "timeout_ms": {
+            "description": "Per-RPC deadline for the gRPC loader client, in milliseconds (0 = none).\nThe default sits inside the hold a listener gives its sender.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 20000
+          },
+          "grpc_endpoint": {
+            "description": "gRPC endpoint URI for loader (only used when transport = \"grpc\").\nDefaults to http://{address} if not set.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "BufferConfig": {
+        "description": "The in-memory queue a destination holds records in while its sink is\nunavailable, and its optional disk spillover.\n\nThese settings bound that queue and nothing else. The 503 a listener\nanswers under process memory pressure comes from the memory guard, set by\n`DFE_RECEIVER_MEMORY_LIMIT_BYTES` and `DFE_RECEIVER_MEMORY_PRESSURE_THRESHOLD`,\nand from `self_regulation` when it is on.",
+        "type": "object",
+        "properties": {
+          "memory_limit": {
+            "description": "Bytes the in-memory queue is sized from. 0 bounds the queue at 1000\nrecords instead.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 0
+          },
+          "pressure_threshold": {
+            "description": "Share of `memory_limit` the in-memory queue may hold (0.0-1.0). A record\npast it is refused and its request answered as retryable (HTTP 503,\ngRPC UNAVAILABLE). Unused while `memory_limit` is 0.",
+            "type": "number",
+            "format": "double",
+            "default": 0.8
+          },
+          "spillover": {
+            "description": "Optional disk spillover configuration.\nWhen enabled, messages are spilled to disk via scalo's TieredSink\nwhen the primary sink is unavailable (instead of in-memory only).",
+            "$ref": "#/$defs/SpilloverConfig",
+            "default": {
+              "enabled": false,
+              "path": "/var/spool/dfe-receiver",
+              "max_usage_percent": 0.8,
+              "poll_interval_secs": 5
+            }
+          }
+        }
+      },
+      "SpilloverConfig": {
+        "description": "Disk spillover configuration (opt-in, default disabled).\n\nWhen enabled, failed sends are spilled to disk via scalo's TieredSink\ninstead of being held in an in-memory queue. This provides crash-resilient\nbuffering at the cost of disk I/O on the failure path.\n\nOnly records a listener answers at enqueue are spooled. With every enabled\nlistener holding its answer (`acknowledgements.enabled`, the default) no\nspool is opened: the sender keeps its copy until a destination confirms it.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable disk spillover (default: false).",
+            "type": "boolean",
+            "default": false
+          },
+          "path": {
+            "description": "Directory for spool files. The bus spools under `kafka/` and each gRPC\ndestination under `grpc/<name>/`, since two sinks cannot share a spool.",
+            "type": "string",
+            "default": "/var/spool/dfe-receiver"
+          },
+          "max_usage_percent": {
+            "description": "Maximum filesystem usage percentage (0.0-1.0) before pausing spool writes.",
+            "type": "number",
+            "format": "double",
+            "default": 0.8
+          },
+          "poll_interval_secs": {
+            "description": "How often to check disk usage, in seconds.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 5
+          }
+        }
+      },
+      "MetricsConfig": {
+        "description": "Metrics configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable metrics.",
+            "type": "boolean",
+            "default": true
+          },
+          "address": {
+            "description": "Metrics server address.",
+            "type": "string",
+            "default": "0.0.0.0:9090"
+          }
+        }
+      },
+      "ScalingConfig": {
+        "description": "Scaling pressure configuration for KEDA autoscaling.\n\nConfigures the weighted composite metric that KEDA uses to scale the receiver.\nEach component has a weight (relative importance) and saturation point (value\nat which it contributes its full weight to the composite).",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable scaling pressure calculation.",
+            "type": "boolean",
+            "default": true
+          },
+          "memory_gate_threshold": {
+            "description": "Memory usage ratio that triggers the memory gate (0.0-1.0).",
+            "type": "number",
+            "format": "double",
+            "default": 0.8
+          },
+          "weight_request_rate": {
+            "description": "Weight for request rate component (default 0.30).",
+            "type": "number",
+            "format": "double",
+            "default": 0.3
+          },
+          "weight_queue_depth": {
+            "description": "Weight for queue depth component (default 0.25).",
+            "type": "number",
+            "format": "double",
+            "default": 0.25
+          },
+          "weight_memory": {
+            "description": "Weight for memory component (default 0.25).",
+            "type": "number",
+            "format": "double",
+            "default": 0.25
+          },
+          "weight_connections": {
+            "description": "Weight for active connections component (default 0.10).",
+            "type": "number",
+            "format": "double",
+            "default": 0.1
+          },
+          "weight_spill": {
+            "description": "Weight for spilled messages component (default 0.10).",
+            "type": "number",
+            "format": "double",
+            "default": 0.1
+          },
+          "saturation_request_rate": {
+            "description": "Saturation point for request rate (req/s).",
+            "type": "number",
+            "format": "double",
+            "default": 100000.0
+          },
+          "saturation_queue_depth": {
+            "description": "Saturation point for queue depth (messages).",
+            "type": "number",
+            "format": "double",
+            "default": 10000.0
+          },
+          "saturation_connections": {
+            "description": "Saturation point for active connections.",
+            "type": "number",
+            "format": "double",
+            "default": 1000.0
+          },
+          "saturation_spill": {
+            "description": "Saturation point for spilled messages.",
+            "type": "number",
+            "format": "double",
+            "default": 1000.0
+          }
+        }
+      },
+      "FileSinkConfig": {
+        "description": "Debug file sink configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable writing all processed messages to a file.",
+            "type": "boolean",
+            "default": false
+          },
+          "path": {
+            "description": "Path to the output file (NDJSON format, appended).",
+            "type": "string",
+            "default": "/tmp/dfe-receiver-debug.ndjson"
+          }
+        }
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "kind": "source",
+      "name": "receiver",
+      "description": "Multi-protocol ingest receiver: accepts data over many wire protocols and routes to Kafka / the loader.",
+      "maturity": "stable",
+      "children": [
+        {
+          "kind": "ingest",
+          "name": "http",
+          "description": "HTTP/JSON + NDJSON ingest (the ServerConfig endpoint).",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "grpc",
+          "description": "gRPC ingest (scalo Vector-compatible push service).",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "otlp",
+          "description": "OpenTelemetry OTLP logs/metrics/traces (feature-gated).",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "lumberjack",
+          "description": "Elastic Beats / Lumberjack v2 frames.",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "splunk_hec",
+          "description": "Splunk HTTP Event Collector.",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "syslog",
+          "description": "Syslog RFC3164/RFC5424 over TCP/UDP/TLS.",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "prometheus_rw",
+          "description": "Prometheus Remote Write.",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "fluent",
+          "description": "Fluent Forward protocol.",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "gelf",
+          "description": "Graylog Extended Log Format.",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "flow",
+          "description": "NetFlow v5/v9 + IPFIX + sFlow v5.",
+          "maturity": "stable"
+        },
+        {
+          "kind": "ingest",
+          "name": "webhook",
+          "description": "Generic authenticated webhook intake: POST /webhook/{caller}, per-caller HMAC or static-header auth, per-caller topic.",
+          "maturity": "stable"
+        }
+      ]
+    },
+    {
+      "kind": "sink",
+      "name": "destinations",
+      "description": "The named destination set: a match rule sends accepted events to one destination or fans them out to several.",
+      "maturity": "stable",
+      "children": [
+        {
+          "kind": "service",
+          "name": "kafka",
+          "description": "The bus, under the topic the event's source resolves to."
+        },
+        {
+          "kind": "service",
+          "name": "loader",
+          "description": "dfe-loader, over gRPC or the bus per the loader block."
+        },
+        {
+          "kind": "service",
+          "name": "grpc",
+          "description": "Any declared scalo Push listener -- a transform, the archiver -- by name."
+        },
+        {
+          "kind": "service",
+          "name": "file_sink",
+          "description": "Debug file sink (writes processed messages to a file)."
+        }
+      ]
+    }
+  ],
   "writable_paths": [
     {
       "name": "spool",

@@ -1,6 +1,7 @@
 {
   "schema_version": 4,
   "app_name": "dfe-transform-vrl",
+  "binary_name": "dfe-transform-vrl",
   "description": "Embedded VRL transform engine -- Kafka-to-Kafka pipelines",
   "metrics_port": 9090,
   "health": {
@@ -61,6 +62,57 @@
       ]
     }
   ],
+  "default_config": {
+    "pipeline": {
+      "name": "default",
+      "batch_size": 1000,
+      "batch_timeout_ms": 100
+    },
+    "source": {
+      "transport": "bus",
+      "listen": "0.0.0.0:6000",
+      "brokers": [
+        "kafka:9092"
+      ],
+      "topics": [
+        "raw_events"
+      ],
+      "group_id": "dfe-transform-vrl-default",
+      "sasl": {
+        "enabled": true,
+        "mechanism": "scram_sha_512"
+      },
+      "tls": {
+        "enabled": false
+      },
+      "acknowledgements": {
+        "enabled": true
+      }
+    },
+    "sink": {
+      "transport": "bus",
+      "endpoint": "http://dfe-loader:6000",
+      "brokers": [
+        "kafka:9092"
+      ],
+      "topic": "enriched_events",
+      "key_field": ".org_id",
+      "compression": "zstd",
+      "sasl": {
+        "enabled": true,
+        "mechanism": "scram_sha_512"
+      },
+      "tls": {
+        "enabled": false
+      }
+    },
+    "transforms": {
+      "dir": "/etc/dfe-transform-vrl/transforms"
+    }
+  },
+  "depends_on": [
+    "kafka"
+  ],
   "keda": {
     "enabled": true,
     "min_replicas": 1,
@@ -72,10 +124,812 @@
     "cpu_enabled": true,
     "cpu_threshold": 80,
     "kafka_trigger": {
-      "enabled": false
+      "enabled": false,
+      "brokers_path": "config.kafka.brokers",
+      "group_path": "config.kafka.group_id",
+      "topics_path": "config.kafka.topics"
     }
   },
-  "writable_paths": [],
+  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "native_deps": {
+    "apt_repos": [
+      {
+        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
+        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
+        "url": "https://packages.confluent.io/clients/deb",
+        "codename": "bookworm",
+        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
+        "packages": [
+          "librdkafka1"
+        ]
+      }
+    ],
+    "apt_packages": [
+      "libssl3t64",
+      "zlib1g"
+    ],
+    "distro": "trixie"
+  },
+  "image_profile": "production",
+  "oci_labels": {
+    "title": "",
+    "description": "",
+    "vendor": "HYPERI PTY LIMITED",
+    "label_namespace": "io.hyperi",
+    "licenses": "BUSL-1.1",
+    "copyright": "(c) 2026 HYPERI PTY LIMITED"
+  },
+  "config_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Config",
+    "description": "Main configuration.\n\n## This struct is the wrapper's half of the `--config` file\n\nIt owns `pipeline`, `source`, `sink`, `transforms` and `enrichment_tables`.\nscalo's own sections -- `metrics`, `logger`, `scaling`, `worker_pool`,\n`batch_processing`, `self_regulation`, `version_check`, `otel_tracing` --\nmay sit beside them: scalo's cascade reads the same file as its settings\nlayer, and its env layer outranks the file. [`SCALO_CASCADE_SECTIONS`] lists\nthem, and [`warn_unreachable_scalo_settings`] warns for one in a\nworking-directory `config.yaml` read without `--config`, which scalo never\nsees.\n\n## Requires pod restart (bound at startup)\n\n- `pipeline.name` — baked into Kafka `group_id`, metrics labels, tracing spans\n- `source.*` — rdkafka consumer: connection, subscription, auth, TLS, buffers\n- `sink.brokers` — rdkafka producer connection established at startup\n- `sink.topic` — output topic (changing mid-stream risks data loss)\n- `sink.compression` — rdkafka `compression.type` set at producer creation\n- `sink.sasl.*` / `sink.tls.*` — security protocol set at producer creation\n- `sink.max_buffer_bytes` — rdkafka `queue.buffering.max.kbytes` at creation\n- `sink.librdkafka_options` — passed to `ClientConfig` at creation\n- `transforms.*` — VRL programs compiled at startup, immutable for process lifetime\n\n## Accepted but not applied\n\n[`Config::inert_settings`] is the list, and the wrapper warns at startup for\neach one a deployment has actually set.",
+    "type": "object",
+    "properties": {
+      "pipeline": {
+        "$ref": "#/$defs/PipelineConfig",
+        "default": {
+          "name": "default",
+          "batch_size": 1000,
+          "batch_timeout_ms": 100
+        }
+      },
+      "source": {
+        "$ref": "#/$defs/SourceConfig",
+        "default": {
+          "transport": "bus",
+          "listen": "0.0.0.0:6000",
+          "brokers": [
+            "localhost:9092"
+          ],
+          "topics": [
+            "events"
+          ],
+          "group_id": "dfe-transform-vrl",
+          "max_buffer_bytes": 67108864,
+          "sasl": {
+            "enabled": false,
+            "mechanism": "scram_sha_512",
+            "username": ""
+          },
+          "tls": {
+            "enabled": false,
+            "ca_cert_file": null,
+            "cert_file": null,
+            "key_file": null,
+            "skip_verify": false
+          },
+          "auto_offset_reset": "latest",
+          "session_timeout_ms": 30000,
+          "commit_interval_ms": 5000,
+          "statistics_interval_ms": 5000,
+          "librdkafka_options": {},
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "sink": {
+        "$ref": "#/$defs/SinkConfig",
+        "default": {
+          "transport": "bus",
+          "endpoint": "http://dfe-loader:6000",
+          "brokers": [
+            "localhost:9092"
+          ],
+          "topic": "",
+          "key_field": "",
+          "compression": "zstd",
+          "max_buffer_bytes": 67108864,
+          "sasl": {
+            "enabled": false,
+            "mechanism": "scram_sha_512",
+            "username": ""
+          },
+          "tls": {
+            "enabled": false,
+            "ca_cert_file": null,
+            "cert_file": null,
+            "key_file": null,
+            "skip_verify": false
+          },
+          "message_timeout_ms": 300000,
+          "librdkafka_options": {}
+        }
+      },
+      "transforms": {
+        "$ref": "#/$defs/TransformConfig",
+        "default": {
+          "dir": null,
+          "files": null
+        }
+      },
+      "enrichment_tables": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/EnrichmentTableConfig"
+        },
+        "default": []
+      }
+    },
+    "$defs": {
+      "PipelineConfig": {
+        "description": "Pipeline identity and processing settings.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Pipeline name (used in metrics labels, Kafka `group_id`, logging).",
+            "type": "string",
+            "default": "default"
+          },
+          "batch_size": {
+            "description": "Events per transform batch.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 1000
+          },
+          "batch_timeout_ms": {
+            "description": "Max wait (ms) for a full batch before processing a partial batch.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 100
+          }
+        }
+      },
+      "SourceConfig": {
+        "description": "Source configuration: the bus topics to consume, or the Push listener to\naccept records on.",
+        "type": "object",
+        "properties": {
+          "transport": {
+            "description": "`bus` consumes `topics`; `direct` accepts pushes on `listen`.",
+            "$ref": "#/$defs/Transport",
+            "default": "bus"
+          },
+          "listen": {
+            "description": "Address the Push listener binds on the direct transport.",
+            "type": "string",
+            "default": "0.0.0.0:6000"
+          },
+          "brokers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "localhost:9092"
+            ]
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "events"
+            ]
+          },
+          "group_id": {
+            "type": "string",
+            "default": "dfe-transform-vrl"
+          },
+          "max_buffer_bytes": {
+            "description": "Maximum consumer buffer size in bytes.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 67108864
+          },
+          "sasl": {
+            "$ref": "#/$defs/SaslConfig",
+            "default": {
+              "enabled": false,
+              "mechanism": "scram_sha_512",
+              "username": ""
+            }
+          },
+          "tls": {
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "ca_cert_file": null,
+              "cert_file": null,
+              "key_file": null,
+              "skip_verify": false
+            }
+          },
+          "auto_offset_reset": {
+            "type": "string",
+            "default": "latest"
+          },
+          "session_timeout_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 30000
+          },
+          "commit_interval_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 5000
+          },
+          "statistics_interval_ms": {
+            "description": "librdkafka statistics emission interval (ms). 0 = disabled.\nWhen enabled (and scalo supports `StatsContext` in `KafkaTransport`),\nrdkafka broker RTT, consumer lag, and queue depth metrics auto-emit\nto the Prometheus `/metrics` endpoint.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 5000
+          },
+          "librdkafka_options": {
+            "description": "Extra librdkafka options.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          },
+          "acknowledgements": {
+            "description": "On (the default), the source is acknowledged -- a Kafka offset commit, a\nPush answered OK -- only once the transformed records are delivered to\nthe sink, so a crash or a failed send re-delivers rather than loses them.\nOff, it is acknowledged at receipt.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "Transport": {
+        "description": "Which transport a stage uses.\n\nOne deployment runs one of them: `bus` is a broker between the stages, `direct` is gRPC between them and needs no broker at all. The record and the transform are identical either way -- only who hands the record over changes. `kafka` and `grpc` are read as the same two, the names dfe-engine renders, and a config always writes `bus` and `direct` back.",
+        "oneOf": [
+          {
+            "description": "Kafka topics.",
+            "type": "string",
+            "enum": [
+              "bus",
+              "kafka"
+            ]
+          },
+          {
+            "description": "A scalo Push listener (source) or client (sink).",
+            "type": "string",
+            "enum": [
+              "direct",
+              "grpc"
+            ]
+          }
+        ]
+      },
+      "SaslConfig": {
+        "description": "SASL authentication for Kafka.\n\n`password` is a [`SensitiveString`] so every serialise path redacts it by\ntype rather than by a reader's field-name heuristic, and the emitted config\nschema carries `x-scalo-secret` + `writeOnly` on the field by construction.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "mechanism": {
+            "description": "SASL mechanism: plain, `scram_sha_256`, `scram_sha_512`.",
+            "type": "string",
+            "default": "scram_sha_512"
+          },
+          "username": {
+            "type": "string",
+            "default": ""
+          },
+          "password": {
+            "type": "string",
+            "x-scalo-secret": true,
+            "writeOnly": true
+          }
+        }
+      },
+      "TlsConfig": {
+        "description": "TLS configuration for Kafka.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "ca_cert_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "cert_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "key_file": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "skip_verify": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "AcknowledgementsConfig": {
+        "description": "The `acknowledgements` section of an ack-capable transport.\n\nWith `enabled: true` (the default) a source releases its acknowledgement --\na Kafka offset commit, a gRPC or HTTP response -- only once every piece of\nwork built from the record has been delivered, dead-lettered with the DLQ's\nconfirmation, or dropped by policy. A failed delivery withholds it, so the\nrecord is delivered again: duplicates are possible, loss is not.\n\nWith `enabled: false` the source acknowledges at receipt, before the record\nis processed: a crash or a failed delivery loses what was acknowledged.\n\n```yaml\nkafka:\n  acknowledgements:\n    enabled: true\n```",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Hold the source acknowledgement until every piece is delivered.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "SinkConfig": {
+        "description": "Sink configuration: the bus topic to produce to, or the Push listener to\nsend the transformed records on to.",
+        "type": "object",
+        "properties": {
+          "transport": {
+            "description": "`bus` produces to `topic`; `direct` pushes to `endpoint`.",
+            "$ref": "#/$defs/Transport",
+            "default": "bus"
+          },
+          "endpoint": {
+            "description": "Downstream Push listener on the direct transport, e.g. the loader.",
+            "type": "string",
+            "default": "http://dfe-loader:6000"
+          },
+          "brokers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "localhost:9092"
+            ]
+          },
+          "topic": {
+            "type": "string",
+            "default": ""
+          },
+          "key_field": {
+            "description": "Event field path for Kafka partition key (e.g., \".`org_id`\").",
+            "type": "string",
+            "default": ""
+          },
+          "compression": {
+            "description": "Compression: none, gzip, lz4, snappy, zstd.",
+            "type": "string",
+            "default": "zstd"
+          },
+          "max_buffer_bytes": {
+            "description": "Maximum producer buffer size in bytes.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 67108864
+          },
+          "sasl": {
+            "$ref": "#/$defs/SaslConfig",
+            "default": {
+              "enabled": false,
+              "mechanism": "scram_sha_512",
+              "username": ""
+            }
+          },
+          "tls": {
+            "$ref": "#/$defs/TlsConfig",
+            "default": {
+              "enabled": false,
+              "ca_cert_file": null,
+              "cert_file": null,
+              "key_file": null,
+              "skip_verify": false
+            }
+          },
+          "message_timeout_ms": {
+            "description": "Producer delivery timeout (ms). Capped at 15 s while a direct source\nholds its acknowledgements, so a report arrives inside the hold;\n`librdkafka_options.message.timeout.ms` overrides the cap.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 300000
+          },
+          "librdkafka_options": {
+            "description": "Extra librdkafka options.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          }
+        }
+      },
+      "TransformConfig": {
+        "description": "VRL transform file configuration.",
+        "type": "object",
+        "properties": {
+          "dir": {
+            "description": "Directory to load all .vrl transform files from (sorted by filename).",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "files": {
+            "description": "Explicit list of .vrl file paths (loaded in order).",
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null
+          }
+        }
+      },
+      "EnrichmentTableConfig": {
+        "description": "Enrichment table configuration.\n\nSupports two config formats:\n- **New (tagged):** `source` field with type-tagged enum (`file`, `mmdb`, `stix`, `sqlite`)\n- **Legacy (flat):** `path` + `key_columns` only (treated as `File` with auto format detection)",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Table name used in VRL: `get_enrichment_table_record(\"name\", ...)`.",
+            "type": "string",
+            "default": ""
+          },
+          "path": {
+            "description": "Path to enrichment data file (legacy flat format — kept for backwards compat).",
+            "type": "string",
+            "default": ""
+          },
+          "key_columns": {
+            "description": "Lookup key column(s). Multiple columns are concatenated with `\\x00`.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "source": {
+            "description": "Source definition (new tagged format). Takes precedence over `path`.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EnrichmentSourceConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "schema": {
+            "description": "Per-column type coercion, matching Vector's file enrichment table\n`schema`. Without an entry a CSV cell stays a string, so\n`status_code: integer` is what makes `{\"status_code\": 1}` match, and a\n`timestamp` column is what makes a `{\"from\": ..., \"to\": ...}` date\nrange able to match at all. Accepted values: `asis`, `bytes`,\n`string`, `int`, `integer`, `float`, `bool`, `boolean`, `date`,\n`date|<format>`, `timestamp`, `timestamp|<format>`. `asis` and\n`bytes` leave the cell alone.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          },
+          "refresh": {
+            "description": "Optional periodic refresh.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RefreshConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "max_bytes": {
+            "description": "Maximum materialised table size in bytes. Fail-fast at load if exceeded.\nWhen set, the loaded table's memory is also registered with `MemoryGuard`\nso enrichment memory counts against the pod memory budget.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          }
+        }
+      },
+      "EnrichmentSourceConfig": {
+        "description": "Source definition for an enrichment table.",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "format": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FileFormat"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "type": {
+                "type": "string",
+                "const": "file"
+              }
+            },
+            "required": [
+              "type",
+              "path"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "mmdb"
+              }
+            },
+            "required": [
+              "type",
+              "path"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              },
+              "collection": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              },
+              "auth": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/StixAuthConfig"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "type": {
+                "type": "string",
+                "const": "stix"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "query": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "sqlite"
+              }
+            },
+            "required": [
+              "type",
+              "path",
+              "query"
+            ]
+          }
+        ]
+      },
+      "FileFormat": {
+        "description": "File format for enrichment table loading.",
+        "type": "string",
+        "enum": [
+          "csv",
+          "json",
+          "yaml",
+          "auto"
+        ]
+      },
+      "StixAuthConfig": {
+        "description": "Authentication for STIX/TAXII sources.",
+        "type": "object",
+        "properties": {
+          "type": {
+            "description": "Auth type: `bearer`, `basic`, or `api_key`.",
+            "type": "string"
+          },
+          "token_env": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "username_env": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "password_env": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "RefreshConfig": {
+        "description": "Periodic refresh configuration.",
+        "type": "object",
+        "properties": {
+          "interval_secs": {
+            "description": "Refresh interval in seconds. Minimum enforced: 60.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "interval_secs"
+        ]
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "kind": "transform",
+      "name": "vrl",
+      "description": "Vector Remap Language transform engine: applies ordered .vrl programs to each event.",
+      "maturity": "stable",
+      "fields": [
+        {
+          "name": "dir",
+          "type": "string",
+          "required": false,
+          "description": "Directory of .vrl files, applied sorted by filename."
+        },
+        {
+          "name": "files",
+          "type": "list",
+          "required": false,
+          "description": "Explicit ordered list of .vrl file paths."
+        }
+      ]
+    },
+    {
+      "kind": "source",
+      "name": "enrichment",
+      "description": "Enrichment tables queried from VRL via get_enrichment_table_record().",
+      "maturity": "stable",
+      "children": [
+        {
+          "kind": "service",
+          "name": "file",
+          "description": "CSV/JSON/YAML file (format auto-detected when unset).",
+          "fields": [
+            {
+              "name": "path",
+              "type": "string",
+              "required": true,
+              "description": "Path to the data file."
+            },
+            {
+              "name": "format",
+              "type": "enum",
+              "required": false,
+              "description": "Explicit file format (default auto).",
+              "enum_values": [
+                "csv",
+                "json",
+                "yaml",
+                "auto"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "service",
+          "name": "mmdb",
+          "description": "MaxMind DB (e.g. GeoIP) lookups.",
+          "fields": [
+            {
+              "name": "path",
+              "type": "string",
+              "required": true,
+              "description": "Path to the .mmdb file."
+            }
+          ]
+        },
+        {
+          "kind": "service",
+          "name": "stix",
+          "description": "STIX/TAXII threat-intel indicators (file or TAXII URL).",
+          "fields": [
+            {
+              "name": "path",
+              "type": "string",
+              "required": false,
+              "description": "Local STIX bundle path."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "required": false,
+              "description": "TAXII collection URL."
+            },
+            {
+              "name": "collection",
+              "type": "string",
+              "required": false,
+              "description": "TAXII collection id."
+            },
+            {
+              "name": "auth",
+              "type": "string",
+              "required": false,
+              "description": "Auth spec (type + env-var refs for bearer/basic/api_key)."
+            }
+          ]
+        },
+        {
+          "kind": "service",
+          "name": "sqlite",
+          "description": "SQLite query result materialised as a lookup table.",
+          "fields": [
+            {
+              "name": "path",
+              "type": "string",
+              "required": true,
+              "description": "Path to the SQLite database."
+            },
+            {
+              "name": "query",
+              "type": "string",
+              "required": true,
+              "description": "SELECT query; first column is the lookup key."
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "termination_grace_seconds": 45,
   "resources": {
     "requests": {

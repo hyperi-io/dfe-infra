@@ -122,10 +122,31 @@
       "optional": true
     }
   ],
+  "default_config": null,
   "depends_on": [
     "clickhouse"
   ],
   "keda": null,
+  "base_image": "python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2",
+  "builder_image": "",
+  "python_version": "3.14",
+  "native_deps": {
+    "apt_repos": [],
+    "apt_packages": [],
+    "distro_codename": "trixie"
+  },
+  "image_profile": "production",
+  "emit_healthcheck": true,
+  "oci_labels": {
+    "title": "dfe-engine",
+    "description": "DFE Engine -- REST API and config control plane",
+    "vendor": "HYPERI PTY LIMITED",
+    "label_namespace": "io.hyperi",
+    "licenses": "BUSL-1.1",
+    "copyright": "(c) 2026 HYPERI PTY LIMITED"
+  },
+  "config_schema": null,
+  "capabilities": [],
   "writable_paths": [
     {
       "name": "config",

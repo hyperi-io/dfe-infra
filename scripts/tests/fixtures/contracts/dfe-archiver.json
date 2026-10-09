@@ -1,6 +1,7 @@
 {
   "schema_version": 4,
   "app_name": "dfe-archiver",
+  "binary_name": "dfe-archiver",
   "description": "High-volume Kafka-to-storage archiver for PB/s scale data pipelines",
   "metrics_port": 9090,
   "health": {
@@ -69,6 +70,101 @@
       "optional": true
     }
   ],
+  "default_config": {
+    "transport": "kafka",
+    "kafka": {
+      "brokers": [
+        "localhost:9092"
+      ],
+      "group_id": "dfe-archiver",
+      "topics": [],
+      "topic_include": [],
+      "topic_exclude": [
+        "^__",
+        "_dlq$"
+      ],
+      "topic_refresh_secs": 60,
+      "sasl_mechanism": null,
+      "security_protocol": "PLAINTEXT",
+      "sasl_username": null,
+      "sasl_password": null,
+      "ssl_ca_location": null,
+      "allow_insecure_transport": false,
+      "batch_size": 10000,
+      "max_poll_interval_ms": 300000,
+      "session_timeout_ms": 30000,
+      "acknowledgements": {
+        "enabled": true
+      }
+    },
+    "grpc": {
+      "listen": null,
+      "recv_buffer_size": 10000,
+      "recv_timeout_ms": 100,
+      "max_message_size": 16777216,
+      "compression": false,
+      "default_topic": "default_land",
+      "acknowledgements": {
+        "enabled": true
+      }
+    },
+    "archive": {
+      "destination": "",
+      "path_template": "{year}/{month}/{day}/{hour}",
+      "file_extension": "jsonl",
+      "roll_size_bytes": 1073741824,
+      "roll_interval_secs": null,
+      "multipart_chunk_size": 8388608,
+      "max_writers": 1024,
+      "s3": null,
+      "gcs": null,
+      "azure": null,
+      "minio": null
+    },
+    "buffer": {
+      "flush_bytes": 1048576,
+      "flush_age_secs": 60,
+      "flush_records": 100000,
+      "writer_parallelism": 2,
+      "spool_dir": "/var/spool/dfe/archiver"
+    },
+    "routing": {
+      "mode": "expression",
+      "expression_fields": [
+        "org_id"
+      ],
+      "default_segment": "unknown"
+    },
+    "compression": {
+      "codec": "zstd",
+      "level": 3,
+      "enabled": true
+    },
+    "dlq": {
+      "enabled": true,
+      "mode": "cascade",
+      "queue_capacity": 10000,
+      "batch_size": 256,
+      "flush_interval_ms": 100,
+      "file": {
+        "enabled": true,
+        "path": "/var/spool/dfe/dlq",
+        "rotation": "hourly",
+        "max_age_days": 30,
+        "compress_rotated": true
+      },
+      "kafka": {
+        "enabled": true,
+        "routing": "common",
+        "topic_suffix": ".dlq",
+        "common_topic": "dfe_archiver_dlq",
+        "send_timeout_ms": 5000
+      }
+    }
+  },
+  "depends_on": [
+    "kafka"
+  ],
   "keda": {
     "enabled": true,
     "min_replicas": 1,
@@ -80,14 +176,949 @@
     "cpu_enabled": true,
     "cpu_threshold": 80,
     "kafka_trigger": {
-      "enabled": false
+      "enabled": false,
+      "brokers_path": "config.kafka.brokers",
+      "group_path": "config.kafka.group_id",
+      "topics_path": "config.kafka.topics"
     }
   },
+  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "native_deps": {
+    "apt_repos": [
+      {
+        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
+        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
+        "url": "https://packages.confluent.io/clients/deb",
+        "codename": "bookworm",
+        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
+        "packages": [
+          "librdkafka1"
+        ]
+      }
+    ],
+    "apt_packages": [
+      "libssl3t64",
+      "zlib1g",
+      "libzstd1"
+    ],
+    "distro": "trixie"
+  },
+  "image_profile": "production",
+  "oci_labels": {
+    "title": "",
+    "description": "High-volume Kafka-to-storage archiver for PB/s scale data pipelines",
+    "vendor": "HYPERI PTY LIMITED",
+    "label_namespace": "io.hyperi",
+    "licenses": "BUSL-1.1",
+    "copyright": "(c) 2026 HYPERI PTY LIMITED"
+  },
+  "config_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Config",
+    "description": "Root configuration for dfe-archiver.\n\nCovers the archiver's own sections only. The memory guard, the metrics\nlistener and the scaling-pressure engine are scalo's, built by\n`ServiceRuntime` before the archiver exists, and are configured through the\ncascade (`ARCHIVER_MEMORY_*` for the guard, `--metrics-addr` /\n`METRICS_ADDR` / `ARCHIVER_METRICS__ADDRESS` for the listener,\n`ARCHIVER_SCALING__*` for the engine). A parallel `memory:` / `metrics:` /\n`scaling:` block here parsed, validated and reached nothing.\n\n## Hot-reload behavior\n\n**Hot-reloaded**, because the pipeline re-reads it from the shared config:\n- `kafka.batch_size` -- once per receive\n\n**Requires pod restart** -- everything else. `Archiver` snapshots the config\nat construction into `startup_config`, so a reload of `transport`,\n`kafka.*`, `grpc.*`, `archive.*`, `buffer.*`, `routing.*`, `compression.*`\nor `dlq.*` is accepted and validated but does not reach the running\npipeline. `restart_required_changes` names those sections, and\nthe reloader warns instead of reporting a reload.",
+    "type": "object",
+    "properties": {
+      "transport": {
+        "description": "Which transport carries records IN: `kafka` (a broker holds them between\nstages) or `grpc` (the scalo Push listener, point to point). Same two\nspellings as dfe-loader's `transport`, because a deployment sets both\nfrom the one `kafka.mode` dial.",
+        "type": "string",
+        "default": "kafka"
+      },
+      "kafka": {
+        "description": "Kafka consumer configuration",
+        "$ref": "#/$defs/KafkaConfig",
+        "default": {
+          "brokers": [
+            "localhost:9092"
+          ],
+          "group_id": "dfe-archiver",
+          "topics": [],
+          "topic_include": [],
+          "topic_exclude": [
+            "^__",
+            "_dlq$"
+          ],
+          "topic_refresh_secs": 60,
+          "sasl_mechanism": null,
+          "security_protocol": "PLAINTEXT",
+          "sasl_username": null,
+          "sasl_password": null,
+          "ssl_ca_location": null,
+          "allow_insecure_transport": false,
+          "batch_size": 10000,
+          "max_poll_interval_ms": 300000,
+          "session_timeout_ms": 30000,
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "grpc": {
+        "description": "Push listener configuration, read when `transport` is `grpc`.",
+        "$ref": "#/$defs/GrpcConfig",
+        "default": {
+          "listen": null,
+          "recv_buffer_size": 10000,
+          "recv_timeout_ms": 100,
+          "max_message_size": 16777216,
+          "compression": false,
+          "default_topic": "default_land",
+          "acknowledgements": {
+            "enabled": true
+          }
+        }
+      },
+      "archive": {
+        "description": "Archive output configuration",
+        "$ref": "#/$defs/ArchiveConfig",
+        "default": {
+          "destination": "",
+          "path_template": "{year}/{month}/{day}/{hour}",
+          "file_extension": "jsonl",
+          "roll_size_bytes": 1073741824,
+          "roll_interval_secs": null,
+          "multipart_chunk_size": 8388608,
+          "max_writers": 1024,
+          "s3": null,
+          "gcs": null,
+          "azure": null,
+          "minio": null
+        }
+      },
+      "buffer": {
+        "description": "Buffer management configuration",
+        "$ref": "#/$defs/BufferConfig",
+        "default": {
+          "flush_bytes": 1048576,
+          "flush_age_secs": 60,
+          "flush_records": 100000,
+          "writer_parallelism": 2,
+          "spool_dir": "/var/spool/dfe/archiver"
+        }
+      },
+      "routing": {
+        "description": "Routing configuration",
+        "$ref": "#/$defs/RoutingConfig",
+        "default": {
+          "mode": "expression",
+          "expression_fields": [
+            "org_id"
+          ],
+          "default_segment": "unknown"
+        }
+      },
+      "compression": {
+        "description": "Compression configuration",
+        "$ref": "#/$defs/CompressionConfig",
+        "default": {
+          "codec": "zstd",
+          "level": 3,
+          "enabled": true
+        }
+      },
+      "dlq": {
+        "description": "Dead letter queue configuration",
+        "$ref": "#/$defs/DlqConfig",
+        "default": {
+          "enabled": true,
+          "mode": "cascade",
+          "queue_capacity": 10000,
+          "batch_size": 256,
+          "flush_interval_ms": 100,
+          "file": {
+            "enabled": true,
+            "path": "/var/spool/dfe/dlq",
+            "rotation": "hourly",
+            "max_age_days": 30,
+            "compress_rotated": true
+          },
+          "kafka": {
+            "enabled": true,
+            "routing": "common",
+            "topic_suffix": ".dlq",
+            "common_topic": "dfe_archiver_dlq",
+            "send_timeout_ms": 5000
+          }
+        }
+      }
+    },
+    "$defs": {
+      "KafkaConfig": {
+        "description": "Kafka consumer configuration",
+        "type": "object",
+        "properties": {
+          "brokers": {
+            "description": "Broker addresses",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "localhost:9092"
+            ]
+          },
+          "group_id": {
+            "description": "Consumer group ID",
+            "type": "string",
+            "default": "dfe-archiver"
+          },
+          "topics": {
+            "description": "Topics to consume. Empty turns on scalo's broker-side auto-discovery,\nfiltered by `topic_include`/`topic_exclude` and refreshed every\n`topic_refresh_secs`, so a source added after this pod started is\narchived without a restart.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "topic_include": {
+            "description": "Regex patterns a discovered topic must match (OR). Empty means every\ntopic the broker holds that `topic_exclude` does not drop.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "topic_exclude": {
+            "description": "Regex patterns that drop a discovered topic (OR). Exclude wins over\ninclude. Defaults to scalo's list, which already drops the DLQ and\nKafka's own internal topics.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "^__",
+              "_dlq$"
+            ]
+          },
+          "topic_refresh_secs": {
+            "description": "How often the discovered topic list is re-read from the broker.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 60
+          },
+          "sasl_mechanism": {
+            "description": "SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "security_protocol": {
+            "description": "Security protocol (PLAINTEXT, `SASL_PLAINTEXT`, SSL, `SASL_SSL`)",
+            "type": "string",
+            "default": "PLAINTEXT"
+          },
+          "sasl_username": {
+            "description": "SASL username",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "sasl_password": {
+            "description": "SASL password (never serialised in plaintext)",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-scalo-secret": true,
+            "writeOnly": true,
+            "default": null
+          },
+          "ssl_ca_location": {
+            "description": "Path to a CA certificate bundle for verifying the broker's TLS cert\n(private-CA trust). Maps to librdkafka `ssl.ca.location`.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "allow_insecure_transport": {
+            "description": "Deliberately opt into an unencrypted transport (PLAINTEXT /\n`SASL_PLAINTEXT`) in production. Defaults to false: scalo's\nKafka transport REJECTS plaintext in production unless this is set\n(e.g. mesh-encrypted in-cluster traffic). Outside production it has no\neffect.",
+            "type": "boolean",
+            "default": false
+          },
+          "batch_size": {
+            "description": "Batch size for `recv()`",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10000
+          },
+          "max_poll_interval_ms": {
+            "description": "Maximum poll interval (ms)",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 300000
+          },
+          "session_timeout_ms": {
+            "description": "Session timeout (ms)",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 30000
+          },
+          "acknowledgements": {
+            "description": "With `enabled: true` (the default) a record's offset is committed only\nonce the archive file holding it is complete in the store, so a kill\nre-reads what an open file held: duplicates are possible, loss is not.\nWith `enabled: false` offsets are committed as records are received,\nand a kill loses what the open files and buffers held.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "AcknowledgementsConfig": {
+        "description": "The `acknowledgements` section of an ack-capable transport.\n\nWith `enabled: true` (the default) a source releases its acknowledgement --\na Kafka offset commit, a gRPC or HTTP response -- only once every piece of\nwork built from the record has been delivered, dead-lettered with the DLQ's\nconfirmation, or dropped by policy. A failed delivery withholds it, so the\nrecord is delivered again: duplicates are possible, loss is not.\n\nWith `enabled: false` the source acknowledges at receipt, before the record\nis processed: a crash or a failed delivery loses what was acknowledged.\n\n```yaml\nkafka:\n  acknowledgements:\n    enabled: true\n```",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Hold the source acknowledgement until every piece is delivered.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "GrpcConfig": {
+        "description": "Push listener configuration for the direct transport.\n\nMirrors dfe-loader's `grpc` block key for key, because both stages receive\nthe same scalo Push RPC and an operator reading one config should not have\nto learn a second set of names.",
+        "type": "object",
+        "properties": {
+          "listen": {
+            "description": "Listen address, e.g. `0.0.0.0:6000`. Required when `transport` is `grpc`.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "recv_buffer_size": {
+            "description": "Records buffered from incoming RPCs before the sender is held.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10000
+          },
+          "recv_timeout_ms": {
+            "description": "Receive timeout in milliseconds (0 = non-blocking).",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 100
+          },
+          "max_message_size": {
+            "description": "Maximum message size in bytes.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 16777216
+          },
+          "compression": {
+            "description": "Enable gzip compression for gRPC messages.",
+            "type": "boolean",
+            "default": false
+          },
+          "default_topic": {
+            "description": "Archive destination key for a record whose sender set no routing key.",
+            "type": "string",
+            "default": "default_land"
+          },
+          "acknowledgements": {
+            "description": "The listener answers each push once its records are queued, with this\non or off: a record is released only when its archive file completes, at\nthe roll interval, long after any sender's deadline. So the archive copy\non this transport is at-most-once, and `enabled: false` only changes the\nreason `pipeline_delivery_guarantee` reports, from `sink_cannot_confirm`\nto `acks_disabled`.",
+            "$ref": "#/$defs/AcknowledgementsConfig",
+            "default": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "ArchiveConfig": {
+        "description": "Archive output configuration",
+        "type": "object",
+        "properties": {
+          "destination": {
+            "description": "Destination URL (file://, s3://, gs://, az://, minio://). Empty until an\noperator names one, which is an idle archiver rather than a default\npath: a container-local directory nobody asked for looks like it is\narchiving and loses every file when the pod is replaced.",
+            "type": "string",
+            "default": ""
+          },
+          "path_template": {
+            "description": "Path template under the routed destination. The supported placeholders\nare exactly {year}, {month}, {day}, {hour}, {minute}, {timestamp} and\n{seq}; any other is refused at config validation, because the writer\nwould pass it through into the object key as literal braces.",
+            "type": "string",
+            "default": "{year}/{month}/{day}/{hour}"
+          },
+          "file_extension": {
+            "description": "File extension (without compression suffix)",
+            "type": "string",
+            "default": "jsonl"
+          },
+          "roll_size_bytes": {
+            "description": "Rolling trigger: final compressed file size in bytes (not inbound data)",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 1073741824
+          },
+          "roll_interval_secs": {
+            "description": "Rolling trigger: interval in seconds. Unset, it is 300 while the Kafka\nconsumer holds offsets (`transport: kafka` with\n`kafka.acknowledgements.enabled`, the default) or on `transport: grpc`,\nand 3600 otherwise. Every record in an open file keeps about 32 bytes\nof held offset in memory until the file completes, and on `grpc` a kill\nloses what the open files hold. A configured value always wins, and\none above 900 with offsets held logs a warning at startup.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "multipart_chunk_size": {
+            "description": "Multipart upload chunk size in bytes (min 5MB for S3 compatibility)",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 8388608
+          },
+          "max_writers": {
+            "description": "Maximum number of concurrent archive writers (one per unique routing\ndestination). When the cap is reached, the least-recently-used writer\nis evicted and closed asynchronously. Caps file-handle use and bounds\nthe `dfe_archiver_unique_destinations` metric for expression-routed\npods on high-cardinality keys (e.g. per-org-id routing).",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 1024
+          },
+          "s3": {
+            "description": "S3-specific configuration",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/S3Config"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "gcs": {
+            "description": "GCS-specific configuration",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GcsConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "azure": {
+            "description": "Azure-specific configuration",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AzureConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "minio": {
+            "description": "MinIO-specific configuration",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MinioConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "S3Config": {
+        "description": "S3 configuration",
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "access_key_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_access_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-scalo-secret": true,
+            "writeOnly": true
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "allow_http": {
+            "description": "Allow plaintext HTTP (for local/dev endpoints only). Defaults to false (HTTPS required).",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "bucket"
+        ]
+      },
+      "GcsConfig": {
+        "description": "GCS configuration",
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service_account_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-scalo-secret": true,
+            "writeOnly": true
+          },
+          "credentials_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bucket": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bucket"
+        ]
+      },
+      "AzureConfig": {
+        "description": "Azure Blob configuration",
+        "type": "object",
+        "properties": {
+          "account_name": {
+            "type": "string"
+          },
+          "account_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-scalo-secret": true,
+            "writeOnly": true
+          },
+          "sas_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-scalo-secret": true,
+            "writeOnly": true
+          },
+          "container": {
+            "type": "string"
+          },
+          "use_emulator": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "account_name",
+          "container",
+          "use_emulator"
+        ]
+      },
+      "MinioConfig": {
+        "description": "`MinIO` configuration (S3-compatible)",
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "access_key": {
+            "type": "string"
+          },
+          "secret_key": {
+            "type": "string",
+            "x-scalo-secret": true,
+            "writeOnly": true
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "use_ssl": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "endpoint",
+          "access_key",
+          "secret_key",
+          "bucket",
+          "use_ssl"
+        ]
+      },
+      "BufferConfig": {
+        "description": "Buffer management configuration",
+        "type": "object",
+        "properties": {
+          "flush_bytes": {
+            "description": "Flush a destination's in-memory buffer into its archive file once it\nholds this many bytes, plus one record. A ceiling per destination: up\nto 64 destinations buffer at once, and all of them together hold no\nmore than a quarter of the memory limit, past which the largest\nbuffers flush first.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 1048576
+          },
+          "flush_age_secs": {
+            "description": "Flush when buffer exceeds this age (seconds)",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 60
+          },
+          "flush_records": {
+            "description": "Flush a destination's in-memory buffer into its archive file once it\nholds this many records, whatever its size.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 100000
+          },
+          "writer_parallelism": {
+            "description": "Object-store uploads of closed archive files running at once. Each\nholds four parts of `archive.multipart_chunk_size` in memory. A local\ndestination has no uploads, so this does not apply to it.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 2
+          },
+          "spool_dir": {
+            "description": "Directory holding `uploads/`, where object-store files are staged until\nthe store takes them, created at startup. Absolute because a relative\npath resolves under the container WORKDIR, which appuser cannot write.",
+            "type": "string",
+            "default": "/var/spool/dfe/archiver"
+          }
+        }
+      },
+      "RoutingConfig": {
+        "description": "Routing configuration",
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "Routing mode: \"expression\" (default) or \"topic\"",
+            "type": "string",
+            "default": "expression"
+          },
+          "expression_fields": {
+            "description": "Field paths for expression-based routing (dot notation)\ne.g., [`org_id`, `tags.event_type`]",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "org_id"
+            ]
+          },
+          "default_segment": {
+            "description": "Default path segment when field not found",
+            "type": "string",
+            "default": "unknown"
+          }
+        }
+      },
+      "CompressionConfig": {
+        "description": "Compression configuration",
+        "type": "object",
+        "properties": {
+          "codec": {
+            "description": "Compression codec: none, zstd (`.zst`), lz4 (LZ4 frame format, `.lz4`),\nsnappy (snappy framing format, `.sz`), gzip (`.gz`). Each flush appends\none frame or gzip member.",
+            "type": "string",
+            "default": "zstd"
+          },
+          "level": {
+            "description": "Compression level (codec-specific)",
+            "type": "integer",
+            "format": "int32",
+            "default": 3
+          },
+          "enabled": {
+            "description": "Enable compression",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "DlqConfig": {
+        "description": "Top-level DLQ configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Whether DLQ is enabled.",
+            "type": "boolean",
+            "default": true
+          },
+          "mode": {
+            "description": "Backend routing mode.",
+            "$ref": "#/$defs/DlqMode",
+            "default": "cascade"
+          },
+          "queue_capacity": {
+            "description": "Bounded mpsc capacity. When the queue is full, `try_send` returns\n`QueueFull` (overflow=Drop). Sized for failure-burst tolerance.\nDefault 10_000.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10000
+          },
+          "batch_size": {
+            "description": "Drain coalesces up to this many entries into one backend write.\nDefault 256.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 256
+          },
+          "flush_interval_ms": {
+            "description": "Flush a partial batch after this duration, even if not full.\nDefault 100 ms.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 100
+          },
+          "file": {
+            "description": "File backend configuration.",
+            "$ref": "#/$defs/FileDlqConfig",
+            "default": {
+              "enabled": true,
+              "path": "/var/spool/scalo/dlq",
+              "rotation": "hourly",
+              "max_age_days": 30,
+              "compress_rotated": true
+            }
+          },
+          "kafka": {
+            "description": "Kafka backend configuration.",
+            "$ref": "#/$defs/KafkaDlqConfig",
+            "default": {
+              "enabled": true,
+              "routing": "per_table",
+              "topic_suffix": ".dlq",
+              "common_topic": null,
+              "send_timeout_ms": 5000
+            }
+          }
+        }
+      },
+      "DlqMode": {
+        "description": "How backends are used when multiple are enabled.",
+        "oneOf": [
+          {
+            "description": "Try backends in order; stop on first success.\nDefault order: Kafka first, file fallback.",
+            "type": "string",
+            "const": "cascade"
+          },
+          {
+            "description": "Write every batch to all enabled backends. The write succeeds when at\nleast one backend takes the whole batch, and fails only when none does.",
+            "type": "string",
+            "const": "fan_out"
+          },
+          {
+            "description": "File backend only (no Kafka dependency).",
+            "type": "string",
+            "const": "file_only"
+          },
+          {
+            "description": "Kafka backend only (matches a typical consumer's current behaviour).",
+            "type": "string",
+            "const": "kafka_only"
+          }
+        ]
+      },
+      "FileDlqConfig": {
+        "description": "File-based DLQ configuration.\n\nWrites NDJSON files with automatic rotation and cleanup.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable the file backend.",
+            "type": "boolean",
+            "default": true
+          },
+          "path": {
+            "description": "Base directory for DLQ files.\nService name is appended as a subdirectory. Default `/var/spool/scalo/dlq`.",
+            "type": "string",
+            "default": "/var/spool/scalo/dlq"
+          },
+          "rotation": {
+            "description": "File rotation period.",
+            "$ref": "#/$defs/RotationPeriod",
+            "default": "hourly"
+          },
+          "max_age_days": {
+            "description": "Auto-cleanup files older than this many days.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 30
+          },
+          "compress_rotated": {
+            "description": "Compress rotated files with flate2/gzip.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "RotationPeriod": {
+        "description": "File rotation period.",
+        "oneOf": [
+          {
+            "description": "Rotate files every hour.",
+            "type": "string",
+            "const": "hourly"
+          },
+          {
+            "description": "Rotate files every day.",
+            "type": "string",
+            "const": "daily"
+          }
+        ]
+      },
+      "KafkaDlqConfig": {
+        "description": "Kafka-based DLQ configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable the Kafka backend.",
+            "type": "boolean",
+            "default": true
+          },
+          "routing": {
+            "description": "Topic routing strategy.",
+            "$ref": "#/$defs/DlqRouting",
+            "default": "per_table"
+          },
+          "topic_suffix": {
+            "description": "Suffix appended to destination for per-table routing.",
+            "type": "string",
+            "default": ".dlq"
+          },
+          "common_topic": {
+            "description": "Common topic when routing is `Common` or destination is unknown. Unset\nby default, which names it after the service the DLQ is spawned for:\n`<service>.dlq`, like the per-table `<destination>.dlq`, or `dlq` when\nthe service has no name. A value that is set is used as it is.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "send_timeout_ms": {
+            "description": "How long a `flush` or the shutdown waits for the broker to ack the\nentries queued to Kafka, in milliseconds. Entries still unacked then\nare purged and counted as dropped. The purge adds a wait of up to 5 s\nfor the purged entries' delivery reports, so `0` skips the ack wait\nbut not that one. Default 5000.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 5000
+          }
+        }
+      },
+      "DlqRouting": {
+        "description": "Kafka DLQ topic routing strategy.",
+        "oneOf": [
+          {
+            "description": "Route to topic matching destination with suffix.\ne.g. \"acme.auth\" -> \"acme.auth.dlq\"",
+            "type": "string",
+            "const": "per_table"
+          },
+          {
+            "description": "Route all failures to a single common topic.",
+            "type": "string",
+            "const": "common"
+          }
+        ]
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "kind": "sink",
+      "name": "archive",
+      "description": "Rolling object-store archiver: consumes Kafka, writes compressed rolled files to a storage backend selected by the destination URL scheme.",
+      "maturity": "stable",
+      "fields": [
+        {
+          "name": "destination",
+          "type": "string",
+          "required": true,
+          "description": "Destination URL; the scheme selects the backend (file:// | s3:// | gs:// | az:// | minio://)."
+        },
+        {
+          "name": "path_template",
+          "type": "string",
+          "required": false,
+          "description": "Path template under the routed destination; supported placeholders are {year}, {month}, {day}, {hour}, {minute}, {timestamp} and {seq}."
+        },
+        {
+          "name": "compression",
+          "type": "enum",
+          "required": false,
+          "description": "Rolled-file compression codec.",
+          "enum_values": [
+            "none",
+            "zstd",
+            "lz4",
+            "snappy",
+            "gzip"
+          ]
+        }
+      ],
+      "children": [
+        {
+          "kind": "service",
+          "name": "file",
+          "description": "Local filesystem (file://)."
+        },
+        {
+          "kind": "service",
+          "name": "s3",
+          "description": "Amazon S3 (s3://)."
+        },
+        {
+          "kind": "service",
+          "name": "gcs",
+          "description": "Google Cloud Storage (gs:// / gcs://)."
+        },
+        {
+          "kind": "service",
+          "name": "azure",
+          "description": "Azure Blob Storage (az:// / azure://)."
+        },
+        {
+          "kind": "service",
+          "name": "minio",
+          "description": "MinIO / S3-compatible (minio://)."
+        }
+      ]
+    }
+  ],
   "writable_paths": [
     {
       "name": "spool",
       "path": "/var/spool/dfe/archiver",
-      "size_limit": "10Gi"
+      "size_limit": "10Gi",
+      "size": "1Gi"
     }
   ],
   "termination_grace_seconds": 45,

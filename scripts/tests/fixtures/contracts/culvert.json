@@ -1,6 +1,7 @@
 {
   "schema_version": 4,
   "app_name": "culvert",
+  "binary_name": "",
   "description": "OpenVPN + WireGuard VPN server, optionally tunnelled over HTTPS, with OIDC SSO and external PKI",
   "metrics_port": 9090,
   "health": {
@@ -35,6 +36,7 @@
       "public": true
     }
   ],
+  "entrypoint_args": [],
   "secrets": [
     {
       "group_name": "oauth2",
@@ -53,7 +55,29 @@
       "optional": true
     }
   ],
+  "default_config": null,
+  "depends_on": [],
   "keda": null,
+  "base_image": "",
+  "builder_image": "",
+  "python_version": "3.14",
+  "native_deps": {
+    "apt_repos": [],
+    "apt_packages": [],
+    "distro_codename": "trixie"
+  },
+  "image_profile": "production",
+  "emit_healthcheck": true,
+  "oci_labels": {
+    "title": "culvert",
+    "description": "OpenVPN + WireGuard, optionally tunnelled over HTTPS, with OIDC SSO and external PKI",
+    "vendor": "",
+    "label_namespace": "io.scalo",
+    "licenses": "Apache-2.0",
+    "copyright": ""
+  },
+  "config_schema": null,
+  "capabilities": [],
   "writable_paths": [
     {
       "name": "pki",

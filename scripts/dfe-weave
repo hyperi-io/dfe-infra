@@ -460,6 +460,12 @@ def build_dependency(helm: str, chart: Path) -> None:
     run([find_helm(helm), "dependency", "build", str(chart)], f"helm dependency build {chart.name}")
 
 
+def has_library(chart: Path) -> bool:
+    """Whether ``chart/charts`` holds the library, packed or unpacked as a published chart has it."""
+    vendored = chart / "charts"
+    return any(vendored.glob(f"{LIBRARY}-*.tgz")) or (vendored / LIBRARY / "Chart.yaml").is_file()
+
+
 def pinned_image(tree: Path, app_name: str, stack: str | None = None) -> tuple[str, str]:
     """The app's image tag and digest in versions.yaml, for one stack (default ``current``).
 
@@ -792,11 +798,13 @@ def thin_chart(inputs: Inputs) -> Iterator[Path]:
     """The thin chart render (b) uses.
 
     ``--chart`` as given, with the library fetched into it when absent, or one
-    assembled here from ``--contract`` and ``--library``.
+    assembled here from ``--contract`` and ``--library``. A chart pulled from a
+    registry carries its library unpacked, and fetching another beside it would
+    hand helm the library twice.
     """
     helm = inputs.helm
     if inputs.chart is not None:
-        if not any((inputs.chart / "charts").glob(f"{LIBRARY}-*.tgz")):
+        if not has_library(inputs.chart):
             build_dependency(helm, inputs.chart)
         yield inputs.chart
         return

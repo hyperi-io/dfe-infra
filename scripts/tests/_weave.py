@@ -34,6 +34,10 @@ unless ``old_ref`` names a git ref, and (b) reads a copy whose chart pins not
 yet published carry RENDER_DIGEST, because the appset refuses to render them.
 appset() and old_appset() give those paths to a test calling dfe-weave itself.
 
+published_chart() pulls the thin chart the registry serves, by the digest
+versions.yaml chart-digests pins, for render (b) to take as ``chart``. It uses
+whatever credentials helm already holds, which a private chart needs.
+
 The leading underscore keeps pytest from collecting this module as a test file.
 """
 
@@ -70,8 +74,11 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 # The scalo-service release render (b) uses when DFE_WEAVE_LIBRARY is unset. The
 # pull names the manifest digest, so a re-pushed tag cannot change what renders.
 LIBRARY_CHART = "oci://ghcr.io/hyperi-io/charts/scalo-service"
-LIBRARY_VERSION = "2.14.3"
-LIBRARY_DIGEST = "sha256:efa38d0f4e01858a9f8a02c34d99ea1ac27707dda7bab006496b3255149d8258"
+LIBRARY_VERSION = "2.14.4"
+LIBRARY_DIGEST = "sha256:1c91da93eccd18303047cf232009d6d9071b968761c4fb471d2487f3fb5e22a9"
+
+# Where each component's thin chart is published, the registry its images come from.
+CHART_REGISTRY = "oci://ghcr.io/hyperi-io/charts"
 
 
 @functools.cache
@@ -135,6 +142,59 @@ def library() -> Path:
 def contract(service: str) -> Path:
     """The committed contract for an app, by its deploy.service."""
     return CONTRACTS / f"{service}.json"
+
+
+def chart_name(service: str) -> str:
+    """The thin chart's name, which its contract's app_name sets."""
+    return "dfe-hyperdx" if service == "hyperdx" else service
+
+
+def chart_digest(service: str) -> str:
+    """versions.yaml chart-digests.<service> in the current stack; empty where it has none."""
+    return drift().load_versions().get(f"chart-digests.{service}", "")
+
+
+@functools.cache
+def _pulled_chart(
+    service: str, digest: str
+) -> tuple[tempfile.TemporaryDirectory | None, Path | str]:
+    """One published thin chart pulled into a scratch directory, or why it could not be.
+
+    Cached with the directory object, as _pulled_library is, so every cell of a
+    component renders the one pull and a failed pull is reported once.
+    """
+    name = chart_name(service)
+    scratch = tempfile.TemporaryDirectory(prefix=f"dfe-weave-{name}-")
+    reference = f"{CHART_REGISTRY}/{name}@{digest}"
+    cmd = [helm(), "pull", reference, "--untar", "--destination", scratch.name]
+    try:
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        )
+    except OSError as exc:
+        return None, f"cannot run {cmd[0]}: {exc}"
+    if out.returncode != 0:
+        return None, out.stderr.strip()
+    chart = Path(scratch.name) / name
+    meta = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8")) or {}
+    if meta.get("name") != name:
+        return None, f"{reference} is chart {meta.get('name')!r}, not {name}"
+    return scratch, chart
+
+
+def published_chart(service: str) -> Path:
+    """The thin chart the registry serves for a component, pulled by its chart-digests pin.
+
+    Skips a component whose pin is not a digest yet, since there is nothing published
+    to pull.
+    """
+    digest = chart_digest(service)
+    if not DIGEST_RE.fullmatch(digest):
+        pytest.skip(f"chart-digests.{service} is {digest!r}, not a published digest")
+    _, found = _pulled_chart(service, digest)
+    if isinstance(found, str):
+        pytest.fail(f"cannot pull {CHART_REGISTRY}/{chart_name(service)}@{digest}: {found}")
+    return found
 
 
 @functools.cache
