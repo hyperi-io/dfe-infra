@@ -43,7 +43,7 @@ concurrency:
 # RUNNER_SESSION_SECONDS is both the session asked for and the expiry handed to the guard.
 env:
   TOFU_VERSION: "1.12.6"
-  HELM_VERSION: "4.2.4"
+  HELM_VERSION: "4.3.0"
   RUNNER_SESSION_SECONDS: "14400"
 
 jobs:
