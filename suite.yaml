@@ -640,36 +640,36 @@ edges:
     to: dfe-receiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-receiver/Cargo.toml:26"
-    note: "A second range for the test-support feature sits at Cargo.toml:196 and must move with it."
+    evidence: "dfe-receiver/Cargo.toml:27"
+    note: "A second range for the test-support feature sits at Cargo.toml:197 and must move with it."
   - from: scalo-rs
     to: dfe-fetcher
     kind: cargo-dep
     type: potential
-    evidence: "dfe-fetcher/Cargo.toml:42"
+    evidence: "dfe-fetcher/Cargo.toml:43"
   - from: scalo-rs
     to: dfe-archiver
     kind: cargo-dep
     type: potential
-    evidence: "dfe-archiver/Cargo.toml:50"
+    evidence: "dfe-archiver/Cargo.toml:49"
     note: "Workspace root; the three crates inherit it via workspace = true."
   - from: scalo-rs
     to: dfe-transform-vrl
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vrl/Cargo.toml:67"
-    note: "A second range for the dev dependency sits at Cargo.toml:180."
+    evidence: "dfe-transform-vrl/Cargo.toml:68"
+    note: "A second range for the dev dependency sits at Cargo.toml:181."
   - from: scalo-rs
     to: dfe-transform-vector
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-vector/Cargo.toml:65"
-    note: "A second range for the dev dependency sits at Cargo.toml:142."
+    evidence: "dfe-transform-vector/Cargo.toml:67"
+    note: "A second range for the dev dependency sits at Cargo.toml:144."
   - from: scalo-rs
     to: dfe-transform-elastic
     kind: cargo-dep
     type: potential
-    evidence: "dfe-transform-elastic/Cargo.toml:148"
+    evidence: "dfe-transform-elastic/Cargo.toml:149"
     note: "The range sits in the workspace dependencies, and the service package inherits it."
 
   # --- scalo-rs: the generated Dockerfile ----------------------------------
@@ -720,7 +720,7 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:43"
+    evidence: "dfe-engine/pyproject.toml:45"
     note: "The range stops below 3, so a scalo major needs a deliberate bump here."
   - from: scalo-py
     to: dfe-engine
@@ -733,7 +733,7 @@ edges:
     kind: python-dep
     type: potential
     evidence: "culvert/pyproject.toml:21"
-    note: "A second range for the deployment-contract generators sits at pyproject.toml:44 and is dev-only."
+    note: "A second range for the deployment-contract generators sits at pyproject.toml:46 and is dev-only."
   - from: scalo-py
     to: vector-vrl
     kind: python-dep
@@ -747,14 +747,14 @@ edges:
     to: dfe-engine
     kind: python-dep
     type: potential
-    evidence: "dfe-engine/pyproject.toml:51"
+    evidence: "dfe-engine/pyproject.toml:52"
     note: "Package data replaced the git submodule. The range stops below 1, so the first 1.x needs a deliberate bump here."
   - from: dfe-schemas
     to: dfe-infra
     kind: version-pin
     type: lockstep
-    evidence: "dfe-infra/versions.yaml:1601"
-    note: "Lockstep by policy: the content block is tagged with the stack release, stated at versions.yaml:1597."
+    evidence: "dfe-infra/versions.yaml:2628"
+    note: "Lockstep by policy: the content block is tagged with the stack release, stated at versions.yaml:2626."
 
   # --- logreducer ----------------------------------------------------------
 
@@ -762,8 +762,8 @@ edges:
     to: dfe-engine
     kind: python-dep-undeclared
     type: potential
-    evidence: "dfe-engine/src/dfe_engine/sampling/service.py:204"
-    note: "Also imported at service.py:240 and sampling/kafka_reader.py:134. pyproject.toml:121 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
+    evidence: "dfe-engine/src/dfe_engine/sampling/service.py:257"
+    note: "Also imported at service.py:298 and sampling/kafka_reader.py:134. pyproject.toml:130 records the non-declaration as deliberate and the sampler degrades with a message when it is absent."
 
   # --- dfe-engine ----------------------------------------------------------
 
@@ -806,13 +806,13 @@ edges:
     kind: version-pin
     type: potential
     evidence: "dfe-deploy/pins.yaml:12"
-    note: "One pin selects the whole certified stack. dfe-deploy also invokes a dfe-infra script by path at pins.yaml:35."
+    note: "One pin selects the whole certified stack. dfe-deploy also invokes a dfe-infra script by path at pins.yaml:41."
   - from: dfe-infra
     to: dfe-docker
     kind: derived-pins
     type: derived
     evidence: "dfe-docker/scripts/stack.py:17-28"
-    note: "Rendered from a local dfe-infra checkout when one is named, else pulled from the signed OCI stack manifest. Nothing is committed on the dfe-docker side. A second consumer of the same manifest sits at ops/daemon-update/self_update.py:51."
+    note: "Rendered from a local dfe-infra checkout when one is named, else pulled from the signed OCI stack manifest. Nothing is committed on the dfe-docker side. A second consumer of the same manifest sits at ops/daemon-update/self_update.py:249."
 
   # --- the components into dfe-infra ---------------------------------------
   # Each chart's appVersion must equal the versions.yaml pin, and the digest
@@ -864,13 +864,13 @@ edges:
     kind: image-pin
     type: lockstep
     evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:16"
-    note: "The only chart naming a registry literally rather than composing one from the global registry. Its release tag is also pinned in the content block at versions.yaml:1604."
+    note: "The only chart naming a registry literally rather than composing one from the global registry. Its release tag is also pinned in the content block at versions.yaml:2633."
   - from: dfe-deploy
     to: dfe-infra
     kind: version-pin
     type: lockstep
-    evidence: "dfe-infra/versions.yaml:1603"
-    note: "Lockstep by the same content-block policy at versions.yaml:1597."
+    evidence: "dfe-infra/versions.yaml:2630"
+    note: "Lockstep by the same content-block policy at versions.yaml:2626."
 
   # --- the components into dfe-engine --------------------------------------
   # dfe-engine authors these apps' configs, so it carries a hand-written copy

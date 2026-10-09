@@ -39,7 +39,7 @@ concurrency:
 # The same Helm helm-lint.yml pins, so the release gate resolves chart appVersions
 # exactly as the PR check did.
 env:
-  HELM_VERSION: "4.2.4"
+  HELM_VERSION: "4.3.0"
 
 jobs:
   release:

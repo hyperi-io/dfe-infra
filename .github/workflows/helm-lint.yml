@@ -65,7 +65,7 @@ permissions:
 
 # One Helm for every job here, so the bats renders are the charts the lint job lints.
 env:
-  HELM_VERSION: "4.2.4"
+  HELM_VERSION: "4.3.0"
 
 jobs:
   lint:

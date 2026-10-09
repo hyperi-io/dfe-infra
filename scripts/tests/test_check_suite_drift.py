@@ -161,6 +161,35 @@ liba = { version = ">=1.0, <2" }
 
 PAGE_HEAD = "# page\n\n"
 
+# The same lib-a -> app-b dependency declared a second way, as a Python
+# distribution. The cited line is the fourth, the quoted requirement.
+PYPROJECT = '''\
+[project]
+name = "app-b"
+dependencies = [
+    "liba>=1.0,<2",
+]
+'''
+
+PY_KIND = """\
+  python-dep:
+    means: "range"
+    check: "does it admit"
+    gates: [pytest]
+"""
+
+PY_EDGE = """\
+  - from: lib-a
+    to: app-b
+    kind: python-dep
+    type: potential
+    evidence: "app-b/pyproject.toml:4"
+"""
+
+PY_SUITE = SUITE.replace("  image-pin:\n", PY_KIND + "  image-pin:\n", 1).replace(
+    "lanes:\n", PY_EDGE + "lanes:\n", 1
+)
+
 
 def build(
     root: Path,
@@ -173,6 +202,7 @@ def build(
     stale_docs: bool = False,
     worktree_cargo: str | None = None,
     with_ref: bool = True,
+    clone_files: dict[str, str] | None = None,
 ) -> Path:
     """A whole tiny dfe-infra beside its member clones, ready to check.
 
@@ -180,7 +210,8 @@ def build(
     commit -- an uncommitted change standing in for a feature branch or a
     clone behind origin, to prove the check reads `ref` and not the checkout.
     `with_ref` false leaves refs/remotes/origin/main unset, standing in for a
-    clone that has never been fetched.
+    clone that has never been fetched. `clone_files` adds files to app-b's
+    commit, keyed by path in the clone.
     """
     infra = root / "infra"
     (infra / "scripts").mkdir(parents=True)
@@ -207,13 +238,22 @@ def build(
 
     if clones:
         _make_clone(
-            root / "repos" / "app-b", cargo, worktree_cargo=worktree_cargo, with_ref=with_ref
+            root / "repos" / "app-b",
+            cargo,
+            worktree_cargo=worktree_cargo,
+            with_ref=with_ref,
+            clone_files=clone_files or {},
         )
     return infra
 
 
 def _make_clone(
-    clone: Path, cargo: str, *, worktree_cargo: str | None, with_ref: bool
+    clone: Path,
+    cargo: str,
+    *,
+    worktree_cargo: str | None,
+    with_ref: bool,
+    clone_files: dict[str, str],
 ) -> None:
     """A real app-b repo: one commit, refs/remotes/origin/main standing in for a fetch."""
     clone.mkdir(parents=True)
@@ -222,6 +262,9 @@ def _make_clone(
     _run_git(clone, "config", "user.name", "Test")
     _write(clone / "Cargo.toml", cargo)
     _run_git(clone, "add", "Cargo.toml")
+    for name, text in clone_files.items():
+        _write(clone / name, text)
+        _run_git(clone, "add", name)
     _run_git(clone, "commit", "-q", "-m", "initial")
     if with_ref:
         _run_git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -367,6 +410,31 @@ def main() -> int:
             1,
             "does not declare liba",
             cargo=CARGO.replace("liba =", "# liba ="),
+        )
+        _one_case(
+            "a python-dep citation on its requirement line is OK",
+            0,
+            "OK -- suite.yaml",
+            suite=PY_SUITE,
+            clone_files={"pyproject.toml": PYPROJECT},
+        )
+        _one_case(
+            "a python-dep citation whose line moved FAILs",
+            1,
+            "app-b/pyproject.toml:4: the cited line does not declare liba",
+            suite=PY_SUITE,
+            clone_files={
+                "pyproject.toml": PYPROJECT.replace(
+                    "dependencies = [\n", 'dependencies = [\n    "tokio>=1",\n'
+                )
+            },
+        )
+        _one_case(
+            "a python-dep line naming a longer distribution is not the package",
+            1,
+            "does not declare liba",
+            suite=PY_SUITE,
+            clone_files={"pyproject.toml": PYPROJECT.replace("liba>=", "liba-extra>=")},
         )
         _one_case(
             "a producer with no package declared FAILs rather than guessing",
