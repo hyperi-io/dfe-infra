@@ -369,6 +369,12 @@
         "path": "config.buffer.spillover.enabled",
         "value": "true"
       }
+    },
+    {
+      "name": "dlq",
+      "path": "/var/spool/dfe/dlq",
+      "size_limit": "1Gi",
+      "size": "1Gi"
     }
   ],
   "termination_grace_seconds": 45,

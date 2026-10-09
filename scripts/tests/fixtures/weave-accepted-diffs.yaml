@@ -670,6 +670,21 @@ dfe-receiver:
       old: <absent>
       new: 20Gi
       reason: The same node-local spool and cap, under its new volume name.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.volumes[writable-dlq].emptyDir.sizeLimit
+      old: <absent>
+      new: 1Gi
+      reason: >-
+        The contract's dlq writable path, mounted in every DLQ mode, so the app's
+        default cascade can write its file backend under a read-only root. The
+        2.2.0 chart mounted nothing there. dfe-extras sets DFE_RECEIVER_DLQ_MODE
+        to kafka_only, or DFE_RECEIVER_DLQ_ENABLED to false on the direct
+        transport, so DFE never writes it.
+    - object: Deployment/dfe-receiver
+      path: spec.template.spec.containers[main].volumeMounts[/var/spool/dfe/dlq].name
+      old: <absent>
+      new: writable-dlq
+      reason: The mount of that dlq volume.
 
 dfe-loader:
   added:
