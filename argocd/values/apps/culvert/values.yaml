@@ -17,6 +17,7 @@ configMount:
 # The default listeners carry WireGuard, which dfe-extras turns on through
 # CULVERT_PROTOCOL in dfe-culvert-env. The contract opens its wireguard port only
 # where config.protocol starts WireGuard, and that env var never reaches it.
+# dfe-extras refuses that config.protocol, which would declare the port twice.
 extraPorts:
   - { name: wireguard, port: 51820, protocol: UDP, public: true }
 

@@ -90,6 +90,23 @@ that does not restate its own would otherwise open the receiver's ports.
 {{- end -}}
 
 {{/*
+dfe-extras.culvertProtocolGuard -- culvert's refusal of a protocol in its profile.
+
+dfe-extras drives culvert's protocol from `listeners`, through CULVERT_PROTOCOL in
+dfe-culvert-env, which beats any profile key. A config.protocol (or
+configOverrides.protocol) of wireguard or both changes nothing culvert runs, but
+it opens the contract's gated wireguard port beside the one apps/culvert/values.yaml
+declares in extraPorts, and the API server refuses a pod with two ports of one name.
+*/}}
+{{- define "dfe-extras.culvertProtocolGuard" -}}
+{{- $config := mergeOverwrite (deepCopy (.Values.config | default dict)) (deepCopy (.Values.configOverrides | default dict)) -}}
+{{- $protocol := toString ($config.protocol | default "") -}}
+{{- if has $protocol (list "wireguard" "both") -}}
+{{- fail (printf "culvert: config.protocol is %q, which opens the contract's wireguard port beside the one apps/culvert/values.yaml declares, so the pod carries two ports named wireguard and the API server refuses it. dfe-extras sets the protocol from listeners, through CULVERT_PROTOCOL, which beats the profile anyway -- add or drop the wireguard listener instead, and leave config.protocol unset." $protocol) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 dfe-extras.culvertPolicyGuard -- keep culvert's NetworkPolicy to one renderer.
 
 culvert's tunnel policy is named <fullname> and switched by networkPolicy.enabled,

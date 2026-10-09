@@ -2370,8 +2370,10 @@ apps:
           dfe-extras reads it for dfe-culvert-env, the tunnel NetworkPolicy and the
           refusals, and apps/culvert/values.yaml for the public Services, with
           defaultListeners where no layer sets it. The pod declares the contract's
-          wireguard and openvpn-udp ports, so a further listener also goes in
-          extraPorts to be declared on the pod and the in-cluster Service.
+          openvpn-udp port and the wireguard port apps/culvert/values.yaml adds in
+          extraPorts, since the contract gates its own on a config.protocol
+          dfe-extras refuses. A further listener also goes in extraPorts to be
+          declared on the pod and the in-cluster Service.
       vpn.clientCIDR:
         to: vpn.clientCIDR
       vpn.serverCN:

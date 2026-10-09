@@ -846,6 +846,27 @@ def test_culverts_refusals_move_with_it(overlay: dict, message: str, old: bool, 
 
 
 @pytest.mark.parametrize(
+    ("overlay", "protocol"),
+    [
+        ({"config": {"protocol": "wireguard"}}, "wireguard"),
+        ({"config": {"protocol": "both"}}, "both"),
+        ({"config": {"protocol": "openvpn"}, "configOverrides": {"protocol": "both"}}, "both"),
+    ],
+    ids=["wireguard", "both", "override"],
+)
+def test_a_culvert_protocol_in_its_profile_is_refused(overlay: dict, protocol: str) -> None:
+    """The contract would open a second wireguard port beside apps/culvert/values.yaml's."""
+    with pytest.raises(RenderError, match=re.escape(f'config.protocol is "{protocol}"')) as refused:
+        render_pair("culvert", "scale", "aws", overlay=overlay, old=False)
+    assert "through CULVERT_PROTOCOL" in str(refused.value)
+
+
+def test_an_openvpn_profile_protocol_renders() -> None:
+    """The control: a protocol that opens no gated port is left alone."""
+    assert render_pair("culvert", "scale", "aws", overlay={"config": {"protocol": "openvpn"}}, old=False).extras
+
+
+@pytest.mark.parametrize(
     ("clickhouse", "message"),
     [
         ({"tls": {"verify": False}}, "dfe-loader always verifies"),
