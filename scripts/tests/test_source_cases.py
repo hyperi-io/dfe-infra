@@ -24,9 +24,12 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import io
 import subprocess
 import sys
+import tarfile
 import types
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
@@ -607,7 +610,7 @@ class TestTheElasticCase:
             asked["routed"] = modules
             return f"routed into dfe.{name} after 1 probe pass(es)"
 
-        def posted(receiver_url, verify, engine_repo, corpus_file, name, run, per_module, modules=()):
+        def posted(receiver_url, verify, engine_repo, corpus_file, run, per_module, modules=()):
             asked["posted"] = modules
             return 7
 
@@ -623,10 +626,11 @@ class TestTheElasticCase:
         assert asked == {"routed": ("cisco_ios",), "posted": ("cisco_ios",)}
         assert driver.status("feed") == "done"
 
-    def test_the_filebeat_case_still_feeds_every_module(self, monkeypatch):
+    def test_the_filebeat_case_feeds_only_the_module_its_match_names(self, monkeypatch):
+        """One equals match routes one dataset, so meraki and umbrella lines would miss it."""
         _, asked = self._feed(monkeypatch, cases.build(parse()))
 
-        assert asked == {"routed": (), "posted": ()}
+        assert asked == {"routed": ("cisco_ios",), "posted": ("cisco_ios",)}
 
 
 class TestTheVectorCase:
@@ -659,12 +663,13 @@ class TestTheVectorCase:
         case = cases.build(parse("--case", "vector"))
 
         assert case.TRANSFORMED_COLUMN == cases.FilebeatCase.TRANSFORMED_COLUMN
-        assert case._transformed_where == " WHERE log_file_path IS NOT NULL"
+        assert case._transformed_where == " WHERE source_ip IS NOT NULL"
 
-    def test_every_corpus_module_is_fed_as_the_filebeat_case_does(self):
-        """The elastic case narrows to cisco_ios because it runs one Elastic data
-        stream; this runs the whole program, so it takes the whole corpus."""
-        assert cases.build(parse("--case", "vector")).MODULES == ()
+    def test_it_feeds_and_matches_the_one_dataset_the_filebeat_case_does(self):
+        case = cases.build(parse("--case", "vector"))
+
+        assert case.MODULES == ("cisco_ios",)
+        assert (case.MATCH_FIELD, case.MATCH_VALUE) == ("data_stream.dataset", "cisco_ios.log")
 
     def test_the_transform_body_names_the_engine_and_nothing_else(self):
         """No variant: the pipeline is the file this case writes, not a compiled-in
@@ -704,13 +709,13 @@ class TestTheCorpusFilter:
 
     def test_a_case_with_no_modules_asks_for_every_one_the_wrapper_names(self, corpus_module):
         steps.post_corpus("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
-                          "fb1", "run", 20)
+                          "run", 20)
 
         assert corpus_module.asked == [(FakeCorpus.MODULES, 20)]
 
     def test_a_named_module_is_the_only_one_read(self, corpus_module):
         steps.post_corpus("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
-                          "el1", "run", 20, ("cisco_ios",))
+                          "run", 20, ("cisco_ios",))
 
         assert corpus_module.asked == [(("cisco_ios",), 20)]
 
@@ -720,6 +725,194 @@ class TestTheCorpusFilter:
 
         assert corpus_module.asked == [(("cisco_ios",), 1)]
         assert detail.startswith("NOT routed")
+
+
+@dataclass(frozen=True)
+class FakeSample:
+    """The two fields of the engine wrapper's Sample the envelope reads."""
+
+    module: str
+    line: str
+
+
+class ShippingCorpus:
+    """dfe-engine's wrapper over three modules, honouring the module filter."""
+
+    MODULES = ("cisco_umbrella", "cisco_ios", "cisco_meraki")
+    LINES: ClassVar[dict[str, list[str]]] = {
+        "cisco_ios": ["<189>1: Jan  6 20:52:12: %SYS-5-CONFIG_I: one", "<189>2: Jan  6 20:52:13: %SYS-5-CONFIG_I: two"],
+        "cisco_meraki": ["<134>1 1599000000.1 mx events dhcp lease"],
+        "cisco_umbrella": ['"2026-01-01 00:00:00","a","b","c","d","e","f"'],
+    }
+
+    def samples(self, _path, *, modules, limit):
+        return [FakeSample(module, line) for module in modules for line in self.LINES[module][:limit]]
+
+    def wrap_all(self, items, source="filebeat", run=""):
+        return [
+            {"message": item.line, "tags": [f"corpus_module:{item.module}", f"e2e_run:{run}"], "_source": source}
+            for item in items
+        ]
+
+
+def _archive(path: Path, members: tuple[str, ...]) -> Path:
+    """A gzipped tar holding empty files at these paths, laid out as the corpus is."""
+    with tarfile.open(path, "w:gz") as tar:
+        for name in members:
+            info = tarfile.TarInfo(name)
+            info.size = 1
+            tar.addfile(info, io.BytesIO(b"\n"))
+    return path
+
+
+CORPUS_PATHS = (
+    "cisco_ios/log/test-asr920.log", "cisco_ios/log/test-asr920.log-expected.json",
+    "cisco_ios/manifest.yml", "cisco_meraki/log/test-events.log",
+    "cisco_umbrella/log/test-umbrella-dnslogs.log", "LICENSE.txt",
+)
+
+
+@pytest.fixture
+def shipping_corpus(monkeypatch):
+    fake = ShippingCorpus()
+    package = types.ModuleType("tests")
+    package.__path__ = []
+    e2e = types.ModuleType("tests.e2e")
+    e2e.__path__ = []
+    e2e.filebeat_corpus = fake
+    monkeypatch.setitem(sys.modules, "tests", package)
+    monkeypatch.setitem(sys.modules, "tests.e2e", e2e)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    return fake
+
+
+def _walk(body: dict, dotted: str):
+    """The receiver's read of a match field: split on `.` and walk the raw payload."""
+    node = body
+    for part in dotted.split("."):
+        node = node[part]
+    return node
+
+
+class TestTheShippersIdentifier:
+    """The pushed cases route on data_stream.dataset, the field an Elastic Agent sends."""
+
+    def test_each_module_takes_the_dataset_its_archive_path_names(self, tmp_path):
+        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
+
+        assert steps.corpus_datasets(archive) == {
+            "cisco_ios": "cisco_ios.log",
+            "cisco_meraki": "cisco_meraki.log",
+            "cisco_umbrella": "cisco_umbrella.log",
+        }
+
+    def test_expected_fail_a_module_under_two_data_streams_is_refused(self, tmp_path):
+        archive = _archive(tmp_path / "corpus.tar.gz", (*CORPUS_PATHS, "cisco_ios/metrics/test-x.log"))
+
+        with pytest.raises(ValueError, match="cisco_ios"):
+            steps.corpus_datasets(archive)
+
+    def test_every_record_is_the_agent_envelope_with_the_vendor_line_as_message(self, tmp_path, shipping_corpus):
+        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
+
+        bodies = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",))
+
+        assert [body["message"] for body in bodies] == ShippingCorpus.LINES["cisco_ios"]
+        for body in bodies:
+            assert set(body) == {"agent", "data_stream", "input", "message", "tags"}
+            assert body["agent"] == {"type": "filebeat", "name": steps.AGENT_NAME,
+                                     "version": steps.beats.ELASTIC_VERSION}
+            assert body["data_stream"] == {"dataset": "cisco_ios.log", "namespace": "default", "type": "logs"}
+            assert body["input"] == {"type": "tcp"}
+            # The stray search finds a record in the catch-all by this tag.
+            assert "e2e_run:src-run" in body["tags"]
+
+    def test_the_records_the_filebeat_case_posts_all_carry_the_dataset_it_matches(self, tmp_path, shipping_corpus):
+        case = cases.build(parse())
+        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
+
+        bodies = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20, case.MODULES)
+
+        assert bodies
+        assert all(_walk(body, case.MATCH_FIELD) == case.MATCH_VALUE for body in bodies)
+
+    def test_the_other_modules_would_miss_the_source_which_is_why_they_are_not_fed(self, tmp_path, shipping_corpus):
+        case = cases.build(parse())
+        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
+
+        everything = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20)
+        missing = {_walk(body, case.MATCH_FIELD) for body in everything} - {case.MATCH_VALUE}
+
+        assert missing == {"cisco_meraki.log", "cisco_umbrella.log"}
+
+    def test_the_match_is_the_shippers_identifier_not_one_this_suite_invents(self):
+        for name in ("filebeat", "elastic", "vector"):
+            case = cases.build(parse("--case", name))
+            assert (case.MATCH_FIELD, case.MATCH_VALUE) == ("data_stream.dataset", "cisco_ios.log"), name
+            assert case.MODULES == ("cisco_ios",), name
+
+    def test_the_console_is_told_the_field_and_the_dataset(self):
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse())
+
+        case.create(a_run(driver, FakeEngine(), parse(), case.name, Path("/")))
+
+        # Name, display name and description come first, then the match pair.
+        assert driver.page.typed[3:5] == ["data_stream.dataset", "cisco_ios.log"]
+
+    def test_the_logstash_agent_stamps_the_same_dataset(self, tmp_path):
+        pair = steps.beats.Pair(network="n", receiver_url="http://rx/ingest", workdir=tmp_path, run_id="src-run")
+
+        steps.beats.write_inputs(pair, ["a"], cases.FilebeatCase.MATCH_VALUE)
+
+        config = (tmp_path / "filebeat.yml").read_text(encoding="utf-8")
+        assert "target: data_stream" in config
+        assert "dataset: cisco_ios.log" in config
+
+
+class ScriptedStore(FakeStore):
+    """A datastore answering the two counts the dataset step asks for."""
+
+    def __init__(self, total: int, carrying: int) -> None:
+        self.total, self.carrying = total, carrying
+        self.asked: list[str] = []
+
+    def scalar(self, sql):
+        self.asked.append(sql)
+        return self.carrying if "JSONExtractString" in sql else self.total
+
+
+class TestTheDatasetRow:
+    def test_every_row_carrying_the_dataset_is_done(self):
+        assert steps.dataset_outcome(ScriptedStore(12, 12), "fb1", "cisco_ios.log") == (
+            "done", "12 of 12 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
+
+    def test_expected_fail_a_row_without_it_fails_the_step(self):
+        status, detail = steps.dataset_outcome(ScriptedStore(12, 11), "fb1", "cisco_ios.log")
+
+        assert status == "failed"
+        assert detail.startswith("11 of 12")
+
+    def test_expected_fail_an_empty_table_proves_nothing(self):
+        assert steps.dataset_outcome(ScriptedStore(0, 0), "fb1", "cisco_ios.log")[0] == "failed"
+
+    def test_the_rows_are_read_by_the_field_the_receiver_matched(self):
+        store = ScriptedStore(1, 1)
+
+        steps.dataset_outcome(store, "fb1", "cisco_ios.log")
+
+        assert any("JSONExtractString(_raw, 'data_stream', 'dataset') = 'cisco_ios.log'" in sql for sql in store.asked)
+
+    def test_the_pushed_case_records_it_beside_landed(self):
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse())
+        run = a_run(driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example")
+        run.store = ScriptedStore(5, 5)
+
+        case.prove(run)
+
+        assert driver.rows[:2] == ["landed", "dataset"]
+        assert driver.status("dataset") == "done"
 
 
 class TestTheRestartStep:

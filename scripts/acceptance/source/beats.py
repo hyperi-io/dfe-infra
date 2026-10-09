@@ -9,11 +9,10 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """source.beats -- the corpus through a Beats agent and Logstash, not a POST.
 
-The corpus wrapper posts ``{message, tags, _source}``, which proves the transform
-and is not how a deployment is fed. The common path is a Beats agent shipping
-lumberjack to Logstash and Logstash's http output posting its whole event at the
-receiver, and the Elastic ingest pipelines dfe-transform-elastic compiles in were
-written against that envelope.
+The POSTed cases send a reconstructed Elastic Agent envelope. The common path is
+a Beats agent shipping lumberjack to Logstash and Logstash's http output posting
+its whole event at the receiver, and the Elastic ingest pipelines
+dfe-transform-elastic compiles in were written against that envelope.
 
 This is a variation of the pushed cases rather than a case of its own: the same
 corpus lines, the same source, the same proof, reaching the receiver the other
@@ -85,7 +84,7 @@ def docker(*argv: str, timeout: float = 180.0) -> tuple[int, str]:
     return done.returncode, (done.stdout or done.stderr).strip()
 
 
-def write_inputs(pair: Pair, lines: list[str], source: str) -> Path:
+def write_inputs(pair: Pair, lines: list[str], dataset: str) -> Path:
     """The corpus on disk plus the two configs, under this run's own directory.
 
     Filebeat tails a file, so the corpus is written as a file rather than
@@ -98,6 +97,8 @@ def write_inputs(pair: Pair, lines: list[str], source: str) -> Path:
     # filestream needs an id of its own, and it identifies a file by a fingerprint
     # of the first 1024 bytes by default -- a corpus slice shorter than that is
     # never ingested at all, so the fingerprint is cut to the smallest it allows.
+    # The agent stamps the data stream the source matches, as an integration
+    # policy does, and the run tag the stray search looks for.
     (pair.workdir / "filebeat.yml").write_text(
         "filebeat.inputs:\n"
         "  - type: filestream\n"
@@ -105,21 +106,25 @@ def write_inputs(pair: Pair, lines: list[str], source: str) -> Path:
         "    paths:\n"
         f"      - {AGENT_PATH}\n"
         f"    prospector.scanner.fingerprint.length: {FINGERPRINT_LENGTH}\n"
+        "    processors:\n"
+        "      - add_fields:\n"
+        "          target: data_stream\n"
+        "          fields:\n"
+        f"            dataset: {dataset}\n"
+        "            namespace: default\n"
+        "            type: logs\n"
+        "      - add_tags:\n"
+        f'          tags: ["e2e_run:{pair.run_id}"]\n'
         "output.logstash:\n"
         f'  hosts: ["{pair.logstash}:{BEATS_PORT}"]\n'
         "logging.level: info\n",
         encoding="utf-8",
     )
 
-    # The source is matched on a field of the posted body, so Logstash adds the
-    # one this run's source was created against, and everything else in the event
-    # is the envelope filebeat and logstash built.
+    # Logstash adds nothing: the event it posts is the envelope filebeat built.
     (pair.workdir / "logstash.conf").write_text(
         "input {\n"
         f"  beats {{ port => {BEATS_PORT} }}\n"
-        "}\n"
-        "filter {\n"
-        f'  mutate {{ add_field => {{ "_source" => "{source}" }} }}\n'
         "}\n"
         "output {\n"
         "  http {\n"
@@ -239,8 +244,8 @@ def envelope_evidence(store, table: str) -> tuple[int, list[str], str]:
     Read back out of the datastore rather than asserted from the config here: the
     question dfe-infra #326 raises is which of the Logstash envelope the beats
     meta schema keeps, and the rows that landed are the answer to it. The agent's
-    own file path is the tell -- the corpus wrapper's ``{message, tags, _source}``
-    carries no such field -- and a transform rewrites each record into its own
+    own file path is the tell -- the POSTed envelope carries no such field -- and
+    a transform rewrites each record into its own
     shape, so it is counted rather than assumed of every row.
     """
     where = f"WHERE position(_raw, '{AGENT_PATH}') > 0"

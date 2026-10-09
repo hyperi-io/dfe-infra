@@ -81,9 +81,14 @@ class Engine:
                 f"'{self.user}' must change its issued password before the engine serves it. "
                 "Set DFE_E2E_ADMIN_NEW_PASSWORD to the password to change it to"
             )
-        changed = self._request("POST", "/auth/accounts/reset-password", {"new_password": self.new_password})
+        # The engine's own-password route takes the password as well as the session.
+        changed = self._request(
+            "POST", "/auth/accounts/reset-password",
+            {"current_password": self.password, "new_password": self.new_password},
+        )
         if changed.status != 200:
             raise RuntimeError(f"forced password change failed: {changed.status} {changed.body}")
+        # The change ends every session the account held, so call() signs in again on the next 401.
         self.password = self.new_password
 
     def call(self, method: str, path: str, body: object = None) -> Reply:

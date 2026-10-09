@@ -545,6 +545,50 @@ def test_the_node_ports_default_to_what_the_culvert_chart_pins() -> None:
     assert ports == {"wireguard": 31820, "openvpn": 31194}
 
 
+def test_a_dial_with_no_gateway_allow_list_fences_nothing() -> None:
+    """Empty is the chart's own open default; the root then renders no fence at all."""
+    assert render()["edge_allowed_cidrs"] == []
+
+
+def test_the_gateway_allow_list_reaches_the_root() -> None:
+    """edge.product.allowed_cidrs was a key nothing read on a cloud deploy."""
+    asked = (
+        "profile: scale",
+        "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.0/24, 203.0.113.0/24\n",
+    )
+    assert render(replace=asked)["edge_allowed_cidrs"] == ["198.51.100.0/24", "203.0.113.0/24"]
+
+
+def test_the_deprecated_ui_spelling_of_the_allow_list_still_reaches_the_root() -> None:
+    asked = ("profile: scale", "profile: scale\nui:\n  allowed_cidrs: 198.51.100.0/24\n")
+    assert render(replace=asked)["edge_allowed_cidrs"] == ["198.51.100.0/24"]
+
+
+def test_the_dials_trusted_proxies_reach_the_root() -> None:
+    """A CDN in front of the gateway forwards the client address, so its range is trusted."""
+    asked = (
+        "profile: scale",
+        "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.0/24\n"
+        "    trusted_proxy_cidrs: 192.0.2.0/24\n",
+    )
+    variables = render(replace=asked)
+    assert variables["edge_trusted_proxy_cidrs"] == ["192.0.2.0/24"]
+    assert render()["edge_trusted_proxy_cidrs"] == []
+
+
+def test_a_trusted_proxy_entry_with_no_prefix_is_refused_by_name() -> None:
+    bad = ("profile: scale", "profile: scale\nedge:\n  product:\n    trusted_proxy_cidrs: 192.0.2.1\n")
+    with pytest.raises(render_dial.DialError, match=r"edge\.product\.trusted_proxy_cidrs"):
+        render(replace=bad)
+
+
+def test_a_gateway_allow_list_entry_with_no_prefix_is_refused_by_name() -> None:
+    """A load balancer security group refuses a bare address, after the cluster is paid for."""
+    bad = ("profile: scale", "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.10\n")
+    with pytest.raises(render_dial.DialError, match=r"edge\.product\.allowed_cidrs"):
+        render(replace=bad)
+
+
 def test_a_nonsense_address_mode_is_refused_by_name() -> None:
     bad = (
         "profile: scale",

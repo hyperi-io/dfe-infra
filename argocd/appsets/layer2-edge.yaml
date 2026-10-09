@@ -155,6 +155,13 @@ spec:
               kafka:
                 mode: {{ $kafkaMode | quote }}
               {{- end }}
+              {{- if index .metadata.annotations "dfe.hyperi.io/edge_allowed_cidrs" }}
+              # The fence the dial or a guarded test run names; bootstrap.sh writes
+              # both annotations or neither, and they beat the deploy-repo overlay.
+              ui:
+                allowed_cidrs: {{ index .metadata.annotations "dfe.hyperi.io/edge_allowed_cidrs" | quote }}
+                trusted_proxy_cidrs: {{ index .metadata.annotations "dfe.hyperi.io/edge_trusted_proxy_cidrs" | quote }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values

@@ -6,6 +6,8 @@
 # preflight_only runs the read-only `dfe-ops cloud-preflight` as the runner and stops.
 # This hosted runner sits outside the VPC, so the run opens the Kubernetes API's
 # public endpoint to the runner's own address alone, and the teardown removes it with the cluster.
+# The same address, with the cluster's own NAT addresses, is the only one the public gateway admits.
+# repeat runs the whole cycle up to three times, one leg after another, each with its own credential.
 #
 # Everything deployment-specific comes from the e2e-runner environment, never
 # from this file: the runner role, the region, the dial and the bootstrap env
@@ -21,7 +23,7 @@ on:
         required: true
         default: "150m"
       cycle_args:
-        description: "Extra arguments for dfe-ops cycle. The guard sets --from-terraform and --kubeconfig, refuses --keep, and takes --mode from the dial's profile, refusing one that names another. This job adds --env-file."
+        description: "Extra arguments for dfe-ops cycle. The guard sets --from-terraform and --kubeconfig, refuses --keep, and takes --mode from the dial's profile, refusing one that names another. This job adds --acceptance-suite from the input below unless these name one, then --acceptance-shots-dir and --env-file after these, so the job's own shots directory and env file win."
         required: false
         default: ""
       preflight_only:
@@ -29,11 +31,24 @@ on:
         type: boolean
         required: false
         default: false
+      acceptance_suite:
+        description: "The dfe-ops acceptance suite each cycle runs after smoke; none runs no acceptance stage. A --acceptance-suite in cycle_args wins over this."
+        type: choice
+        required: false
+        options: ["source", "onboarding", "flows", "all", "none"]
+        default: "source"
+      repeat:
+        description: "How many cycles to run, one after another, each with its own credential and runner address."
+        type: choice
+        required: false
+        options: ["1", "2", "3"]
+        default: "1"
 
 permissions:
   contents: read
 
 # Dial names collide, so one cycle at a time, and a running teardown is never cancelled by the next dispatch.
+# Workflow-level, because the legs of one run are one run: a group holds one pending job, so a job-level group lets leg 3 cancel a waiting leg 2.
 concurrency:
   group: cloud-cycle
   cancel-in-progress: false
@@ -48,9 +63,15 @@ env:
 
 jobs:
   cycle:
-    name: one guarded cloud cycle
+    name: one guarded cloud cycle (leg ${{ matrix.leg }})
     # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
     runs-on: ubuntu-24.04
+    # One leg at a time, since the dial's names collide, and a failed leg does not cancel the next.
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.repeat == '3' && '[1, 2, 3]' || inputs.repeat == '2' && '[1, 2]' || '[1]') }}
     # The runner role's OIDC trust names this environment, so no other job can assume it.
     environment: e2e-runner
     # Above the 4h credential, the longest window preflight admits, plus setup.
@@ -168,6 +189,40 @@ jobs:
             exit 1
           fi
 
+      # Public repos, so no token. At the tags the current stack pins, read off dfe-stack's own
+      # manifest, and beside this checkout as well as named, which is where dfe-ops acceptance looks.
+      - name: Check out the engine and the transform the stack pins
+        if: ${{ !inputs.preflight_only }}
+        run: |
+          manifest="${RUNNER_TEMP}/stack-manifest.yaml"
+          python3 scripts/dfe-stack render --out "${manifest}"
+          parent="$(dirname "${GITHUB_WORKSPACE}")"
+          for repo in dfe-engine dfe-transform-vrl; do
+            tag="$(python3 -c 'import sys, yaml; ref = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["images"][sys.argv[2]]; print(ref.split("@")[0].rpartition(":")[2])' "${manifest}" "${repo}")"
+            if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::the current stack pins ${repo} at '${tag}', which is not a release tag. Nothing was created."
+              exit 1
+            fi
+            git -c advice.detachedHead=false clone --quiet --depth 1 --branch "${tag}" "https://github.com/hyperi-io/${repo}.git" "${parent}/${repo}"
+            echo "${repo} ${tag}"
+          done
+          {
+            echo "DFE_ENGINE_REPO=${parent}/dfe-engine"
+            echo "DFE_TRANSFORM_VRL_REPO=${parent}/dfe-transform-vrl"
+          } >> "$GITHUB_ENV"
+
+      # The suites drive the runner image's own Chrome through Playwright's chrome channel, which
+      # launches /opt/google/chrome/chrome. Playwright's own browser install would replace it with an unverified download.
+      # The source suite also imports the engine's corpus wrapper, which needs httpx.
+      - name: Install the acceptance suite's Python dependencies, hashes required
+        if: ${{ !inputs.preflight_only }}
+        run: |
+          uv pip install --require-hashes -r scripts/acceptance/requirements.txt
+          if ! /opt/google/chrome/chrome --version; then
+            echo "::error::the runner image has no Chrome at /opt/google/chrome/chrome, where the suites' chrome channel looks. Nothing was created."
+            exit 1
+          fi
+
       # Taken before the role is assumed, so this plus the session length is never
       # later than the session's real expiry. The action publishes that expiry only
       # beside the access key, secret and token, which this job never outputs.
@@ -187,7 +242,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.DFE_CYCLE_AWS_ROLE }}
-          role-session-name: dfe-cloud-cycle-${{ github.run_id }}
+          role-session-name: dfe-cloud-cycle-${{ github.run_id }}-${{ matrix.leg }}
           # A first-hop web identity session may last the role's full maximum, where a chained one is held to 1h.
           role-duration-seconds: ${{ env.RUNNER_SESSION_SECONDS }}
           aws-region: ${{ vars.DFE_CYCLE_AWS_REGION }}
@@ -219,6 +274,7 @@ jobs:
         env:
           RUN_LENGTH: ${{ inputs.run_length }}
           CYCLE_ARGS: ${{ inputs.cycle_args }}
+          ACCEPTANCE_SUITE: ${{ inputs.acceptance_suite }}
           AWS_CREDENTIAL_EXPIRATION: ${{ steps.session.outputs.expires_at }}
           DFE_GUARD_ROLE: ${{ vars.DFE_GUARD_ROLE }}
           DFE_GUARD_SWEEPER: ${{ vars.DFE_GUARD_SWEEPER }}
@@ -237,5 +293,27 @@ jobs:
           REDPANDA_CLIENT_SECRET: ${{ secrets.REDPANDA_CLIENT_SECRET || 'unused' }}
         run: |
           read -r -a cycle_args <<< "${CYCLE_ARGS}"
+          # --acceptance-su is the shortest prefix argparse reads as --acceptance-suite.
+          named=false
+          for arg in "${cycle_args[@]}"; do
+            if [[ "${arg}" == --acceptance-su* ]]; then
+              named=true
+            fi
+          done
+          if [[ "${named}" == false && "${ACCEPTANCE_SUITE:-source}" != "none" ]]; then
+            cycle_args+=(--acceptance-suite "${ACCEPTANCE_SUITE:-source}")
+          fi
           python3 scripts/dfe-ops cloud-cycle --tf-dir terraform/environments/aws --run-length "${RUN_LENGTH}" \
-            -- "${cycle_args[@]}" --env-file "${RUNNER_TEMP}/dfe-cycle.env"
+            -- "${cycle_args[@]}" --acceptance-shots-dir "${RUNNER_TEMP}/acceptance" \
+            --env-file "${RUNNER_TEMP}/dfe-cycle.env"
+
+      # On a failed leg only, since this repository's artifacts are public. The step table also prints to
+      # the job log on every run, with the run's passwords and token replaced (acceptance/source/run.py).
+      - name: Keep the acceptance screenshots and step table
+        if: ${{ failure() && !inputs.preflight_only }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: acceptance-leg-${{ matrix.leg }}
+          path: ${{ runner.temp }}/acceptance
+          if-no-files-found: ignore
+          retention-days: 7

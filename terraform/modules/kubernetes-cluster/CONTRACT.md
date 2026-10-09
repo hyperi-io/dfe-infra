@@ -60,7 +60,8 @@ map(object({
 | `cluster_version` | `string` | The version the cloud actually runs, which can lead the requested one. |
 | `oidc_issuer` | `string` | The cluster's OIDC issuer URL. |
 | `cluster_security_group_id` | `string` | The group that admits a caller to the Kubernetes API. Nodes and pods are trusted already; anything else in the VPC has to be admitted by name. |
-| `network` | `object({ vpc_id, cidr, azs, private_subnet_ids, public_subnet_ids })` | What the managed-kafka module attaches to. |
+| `network` | `object({ vpc_id, cidr, azs, private_subnet_ids, public_subnet_ids, public_subnet_cidrs })` | What the managed-kafka module attaches to. `public_subnet_cidrs` parallels `public_subnet_ids`: where an internet-facing load balancer sits, and so the only hops the edge gateway trusts to name a client address. |
+| `nat_public_ips` | `list(string)` | The public addresses the cluster's own egress leaves from, one per NAT gateway. A fence on a public load balancer that in-cluster callers also reach has to admit them. |
 | `private_zone_id` | `string` | |
 | `private_zone_arn` | `string` | The private zone as an IAM resource, so the edge module's external-dns role is granted the internal half without creating the zone. |
 | `kms_key_arn` | `string` | The deployment's own key. Encrypts cluster secrets today; Kafka and block storage take the same key. |

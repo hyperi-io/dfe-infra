@@ -22,12 +22,13 @@ variable "cluster_name" {
 }
 
 variable "network" {
-  description = "Where the tunnel forwarder lands (kubernetes-cluster/aws's network output). cidr scopes its egress to the cluster's own nodes; azs and public_subnet_ids are parallel lists, so the zone the forwarder pins to selects the subnet it launches in. The forwarder holds an Elastic IP, which is only delivered where the subnet's route table sends 0.0.0.0/0 at an internet gateway, so it takes the PUBLIC list. Read only by the forwarder -- the IAM half of this module needs no network at all."
+  description = "Where the tunnel forwarder lands and the gateway's load balancer sits (kubernetes-cluster/aws's network output). cidr scopes the forwarder's egress to the cluster's own nodes; azs and public_subnet_ids are parallel lists, so the zone the forwarder pins to selects the subnet it launches in. The forwarder holds an Elastic IP, which is only delivered where the subnet's route table sends 0.0.0.0/0 at an internet gateway, so it takes the PUBLIC list. public_subnet_cidrs are the hops gateway_trusted_proxy_cidrs is trusted beside. The IAM half of this module needs no network at all."
   type = object({
-    vpc_id            = string
-    cidr              = string
-    azs               = list(string)
-    public_subnet_ids = list(string)
+    vpc_id              = string
+    cidr                = string
+    azs                 = list(string)
+    public_subnet_ids   = list(string)
+    public_subnet_cidrs = list(string)
   })
 }
 
@@ -123,6 +124,34 @@ variable "tunnel" {
     ])
     error_message = "every tunnel.node_ports entry must sit in the Kubernetes node-port range 30000-32767 -- the API server refuses a Service asking for anything else."
   }
+}
+
+variable "gateway_allowed_cidrs" {
+  description = "Who may reach the public gateway: its load balancer's source ranges and every public route's CIDR filter (the gateway chart's ui.allowed_cidrs). Empty leaves the gateway open to any address, which is the chart's own default, and renders no fence at all."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for cidr in var.gateway_allowed_cidrs : can(cidrhost(cidr, 0))])
+    error_message = "every gateway_allowed_cidrs entry must be a CIDR range with its prefix length -- a load balancer security group refuses a bare address."
+  }
+}
+
+variable "gateway_trusted_proxy_cidrs" {
+  description = "Proxy ranges in front of the load balancer that may vouch for a client address, such as a CDN's: the dial's edge.product.trusted_proxy_cidrs. Always joined by network.public_subnet_cidrs, where the load balancer sits, and read only when gateway_allowed_cidrs is set."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for cidr in var.gateway_trusted_proxy_cidrs : can(cidrhost(cidr, 0))])
+    error_message = "every gateway_trusted_proxy_cidrs entry must be a CIDR range with its prefix length."
+  }
+}
+
+variable "egress_addresses" {
+  description = "The public addresses the cluster's own pods leave from (kubernetes-cluster/aws's nat_public_ips). A caller inside the cluster that uses the gateway's public hostname arrives from one of these, so a fence without them refuses the deployment's own traffic. Read only when gateway_allowed_cidrs is set."
+  type        = list(string)
+  default     = []
 }
 
 variable "tags" {

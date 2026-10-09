@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         test_dfe_ops_cloud_guard.py
 #  Purpose:      Guard `dfe-ops cloud-preflight` and `cloud-cycle`: each of the
-#                three refusals fires on its own cause and nothing is created
+#                four refusals fires on its own cause and nothing is created
 #                after one, the run gets its own state key and tags, and every
 #                way out of a run -- success, failure, exception, SIGTERM --
 #                tears it down, keeping the run record when the destroy fails.
@@ -88,8 +88,13 @@ class FakeGuard:
             raise guard_mod.GuardError(self.expiry_error)
         return self.expiry, "fake"
 
-    def expired_resources(self, keys: object, now: float, exclude_bucket: str) -> list:
+    def run_resources(self, keys: object, exclude_bucket: str) -> list:
         return self.leftovers
+
+    def run_records(self, bucket: str, region: str, prefix: str) -> list[str]:
+        if "records" in self.missing:
+            raise cloud_sweep.CloudSweepError("aws s3api list-objects-v2 failed: AccessDenied")
+        return [key for key in self.records if key.startswith(f"{prefix}/")]
 
     def put_record(self, bucket: str, region: str, key: str, body: str) -> None:
         self.records[key] = body
@@ -183,7 +188,7 @@ def test_a_fully_guarded_account_passes_every_check(root: Path) -> None:
     assert report.ok, report.checks
     assert [c.name for c in report.checks] == [
         "account", "(a) guardrail role", "(a) sweeper", "(a) budget action", "(b) credential",
-        "(c) expired run resources",
+        "(c) expired run resources", "(d) unfinished runs",
     ]
 
 
@@ -394,15 +399,114 @@ def test_an_unparseable_cli_answer_never_echoes_what_it_printed(monkeypatch: pyt
 # --- (c) leftovers -----------------------------------------------------------------------------
 
 
+def _run_resource(name: str, expires_at: int, run_id: str = "r-prev") -> cloud_sweep.Resource:
+    return cloud_sweep.Resource(
+        kind="ec2-instance", id=name, name=name, created=None, tagged=True,
+        tags=cloud_run.run_tags(run_id, expires_at),
+    )
+
+
+def _check(report: guard_mod.PreflightReport, name: str) -> guard_mod.Check:
+    return next(c for c in report.checks if c.name == name)
+
+
 def test_refusal_c_expired_run_resources_fail_and_name_the_sweep_that_removes_them(root: Path) -> None:
     guard = FakeGuard()
-    guard.leftovers = [cloud_sweep.Resource(kind="ec2-instance", id="i-1", name="i-1", created=None, tagged=True)]
+    guard.leftovers = [_run_resource("i-1", int(NOW) - 60)]
     report = _preflight(root, guard)
     assert _failed(report) == ["(c) expired run resources"]
-    detail = report.checks[-1].detail
+    detail = _check(report, "(c) expired run resources").detail
     assert "ec2-instance i-1" in detail
     assert "cloud_sweep.py" in detail
     assert "--expired --grace 0 --delete" in detail
+
+
+def test_refusal_d_a_live_run_resource_refuses_and_says_when_it_expires(root: Path) -> None:
+    """A leg whose destroy failed leaves resources that have not expired yet; (c) alone passes them."""
+    guard = FakeGuard()
+    guard.leftovers = [_run_resource("i-2", int(NOW) + 3600)]
+    report = _preflight(root, guard)
+    assert _failed(report) == ["(d) unfinished runs"]
+    detail = _check(report, "(d) unfinished runs").detail
+    assert "ec2-instance i-2 (until 2026-10-08T13:00:00Z)" in detail
+    assert "tofu destroy" in detail
+
+
+def test_refusal_d_a_run_tag_with_no_readable_expiry_refuses_since_no_sweep_removes_it(root: Path) -> None:
+    guard = FakeGuard()
+    guard.leftovers = [
+        cloud_sweep.Resource(kind="eip", id="eipalloc-1", name="192.0.2.7", created=None, tagged=True,
+                             tags={"dfe-e2e": "r-prev"}),
+        cloud_sweep.Resource(kind="vpc", id="vpc-1", name="vpc-1", created=None, tagged=True,
+                             tags={"dfe-e2e": "r-prev", "expires-at": "soon"}),
+    ]
+    detail = _check(_preflight(root, guard), "(d) unfinished runs").detail
+    assert "eip 192.0.2.7 (no-expiry)" in detail
+    assert "vpc vpc-1 (malformed-expiry)" in detail
+
+
+def test_refusal_d_a_run_record_refuses_even_with_no_resource_left(root: Path) -> None:
+    """A record goes only when its run's destroy succeeds, so one still there names an unfinished run."""
+    guard = FakeGuard()
+    guard.records = {"dfe-e2e-runs/r-prev/run.json": "{}"}
+    report = _preflight(root, guard)
+    assert _failed(report) == ["(d) unfinished runs"]
+    assert "run record dfe-e2e-runs/r-prev/run.json" in _check(report, "(d) unfinished runs").detail
+
+
+def test_an_untagged_resource_and_a_record_under_another_prefix_refuse_nothing(root: Path) -> None:
+    guard = FakeGuard()
+    guard.leftovers = [cloud_sweep.Resource(kind="vpc", id="vpc-9", name="vpc-9", created=None, tagged=False)]
+    guard.records = {"elsewhere/r-prev/run.json": "{}"}
+    assert _preflight(root, guard).ok
+
+
+def test_refusal_d_run_records_that_cannot_be_listed_fail_rather_than_pass(root: Path) -> None:
+    guard = FakeGuard()
+    guard.missing = {"records"}
+    report = _preflight(root, guard)
+    assert _failed(report) == ["(d) unfinished runs"]
+    assert "AccessDenied" in _check(report, "(d) unfinished runs").detail
+
+
+def test_refusal_d_resources_that_cannot_be_listed_fail_both_checks(root: Path) -> None:
+    guard = FakeGuard()
+
+    def refuse(*_args: object) -> list:
+        raise cloud_sweep.CloudSweepError("aws resourcegroupstaggingapi get-resources failed: Throttling")
+
+    guard.run_resources = refuse  # type: ignore[method-assign]
+    assert _failed(_preflight(root, guard)) == ["(c) expired run resources", "(d) unfinished runs"]
+
+
+def test_a_second_leg_after_a_failed_destroy_creates_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Leg 1's teardown failed, so its record and unexpired resources stay; leg 2 stops at preflight."""
+    guard, runner = FakeGuard(), FakeRunner(codes={"destroy": 1})
+    assert _cycle(root, monkeypatch, guard, runner) == 1
+    assert list(guard.records) == ["dfe-e2e-runs/run-1/run.json"]
+    guard.leftovers = [_run_resource("i-leg-1", int(NOW) + 3600, run_id="run-1")]
+    second = FakeRunner()
+    assert _cycle(root, monkeypatch, guard, second) == 2
+    assert second.commands == []
+    assert list(guard.records) == ["dfe-e2e-runs/run-1/run.json"]
+
+
+def test_the_run_records_are_listed_under_the_prefix_in_the_state_region(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+    listing = {"Contents": [{"Key": "dfe-e2e-runs/r-prev/run.json"}, {"Key": "dfe-e2e-runs/r-prev/terraform.tfstate"}]}
+
+    def record(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps(listing), stderr="")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", record)
+    keys = guard_mod.AwsGuard("eu-west-1").run_records("example-state", "us-west-2", "dfe-e2e-runs")
+    assert keys == ["dfe-e2e-runs/r-prev/run.json"]
+    (call,) = calls
+    assert call[call.index("--prefix") + 1] == "dfe-e2e-runs/"
+    assert call[call.index("--region") + 1] == "us-west-2"
 
 
 # --- the run's overlay ----------------------------------------------------------------------------
@@ -415,7 +519,7 @@ def test_the_overlay_gives_the_run_its_own_state_key_tags_and_no_cloudtrail(root
     assert overlay["run"] == cloud_run.run_tfvar("run-1", int(NOW))
     assert overlay["cloudtrail"] == {"enabled": False}
     assert not {"permissions_boundary", "iam_path", "s3_bucket_prefix", "inspector_ec2_exclusion",
-                "endpoint"} & set(overlay)
+                "endpoint", "edge_allowed_cidrs"} & set(overlay)
 
 
 def test_the_overlay_carries_every_configured_guardrail_input(root: Path) -> None:
@@ -441,6 +545,18 @@ def test_an_endpoint_cidr_opens_the_api_to_that_address_alone(root: Path) -> Non
     )
     overlay = guard_mod.build_overlay(_config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW))
     assert overlay["endpoint"] == {"public": True, "allowed_cidrs": [RUNNER_CIDR]}
+
+
+def test_an_endpoint_cidr_fences_the_public_gateway_to_that_address_in_place_of_the_dials(
+    root: Path,
+) -> None:
+    """The gateway's load balancer is public too, and a run's console test reaches it
+    from the runner; the root adds the cluster's own NAT addresses beside it."""
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, "edge_allowed_cidrs": ["52.0.0.0/8"]}), encoding="utf-8"
+    )
+    overlay = guard_mod.build_overlay(_config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW))
+    assert overlay["edge_allowed_cidrs"] == [RUNNER_CIDR]
 
 
 def test_the_endpoint_cidr_comes_from_the_environment_and_the_flag_wins(root: Path) -> None:
@@ -490,11 +606,12 @@ def test_the_run_applies_and_records_the_api_open_to_its_own_address(
         overlay = json.loads((root / guard_mod.OVERLAY_NAME).read_text(encoding="utf-8"))
         record = json.loads(next(iter(guard.records.values())))
         at_apply.append((overlay["endpoint"], record["tfvars"]["endpoint"]))
+        at_apply.append((overlay["edge_allowed_cidrs"], record["tfvars"]["edge_allowed_cidrs"]))
 
     runner.on_run = {"apply": capture}
     assert _cycle(root, monkeypatch, guard, runner, endpoint_cidr=RUNNER_CIDR) == 0
     expected = {"public": True, "allowed_cidrs": [RUNNER_CIDR]}
-    assert at_apply == [(expected, expected)]
+    assert at_apply == [(expected, expected), ([RUNNER_CIDR], [RUNNER_CIDR])]
     assert runner.words() == ["init", "apply", "cycle", "destroy"]
     assert not (root / guard_mod.OVERLAY_NAME).exists()
 
@@ -627,7 +744,7 @@ def test_the_preflight_s3_listing_is_sent_to_the_dials_region(root: Path, monkey
 
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", record)
     config = _config(root)
-    assert guard_mod.AwsGuard(config.region).expired_resources(config.keys, NOW, config.state_bucket) == []
+    assert guard_mod.AwsGuard(config.region).run_resources(config.keys, config.state_bucket) == []
     list_buckets = [c for c in calls if c[:2] == ["s3api", "list-buckets"]]
     assert len(list_buckets) == 1
     assert list_buckets[0][list_buckets[0].index("--region") + 1] == "us-west-2"
@@ -682,6 +799,19 @@ def test_the_cycle_runs_the_exact_arguments_its_parser_accepted(root: Path, monk
     assert argv[:2] == ["--from-terraform", str(root)]
     assert argv[2] == "--kubeconfig"
     assert argv[4:] == ["--e2e", "--env-file", "x.env", "--mode", "single"]
+
+
+def test_the_acceptance_stage_flag_passes_the_cycles_own_parser(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The workflow adds --acceptance-suite source to every run, so a parser that
+    refused it would refuse every cloud cycle before the apply."""
+    runner = FakeRunner()
+    given = ["--acceptance-suite", "source", "--env-file", "x.env"]
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    argv = runner.commands[2][runner.commands[2].index("cycle") + 1:]
+    assert argv[4:] == [*given, "--mode", "single"]
+    assert guard_mod._parse_cycle(argv).acceptance_suite == "source"
 
 
 # --- the cycle's mode is the dial's profile -------------------------------------------------------

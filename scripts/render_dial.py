@@ -306,14 +306,15 @@ def _ingest_mode(dial: dict[str, object]) -> str:
 # blocks named after the things behind them.
 #
 # NOTHING HERE IS APPLIED BY THIS RENDERER except edge.enabled, which reaches
-# DFE_EDGE_ENABLED and the cluster-secret label. The rest is validated, reported
-# and copied by hand into the deploy repo's own values overlay, the same
-# convention the block it replaces followed. A bad value is still refused here,
-# by name, before an operator carries it forward. deployment.example.yaml writes
-# this block's booleans unquoted, unlike the rest of the dial: a value copied
-# verbatim into a real Helm values file has to already be the type that file
-# expects, where an unquoted true is a bool and a quoted "false" is a non-empty
-# string that is always truthy.
+# DFE_EDGE_ENABLED and the cluster-secret label, and edge.product.allowed_cidrs
+# and trusted_proxy_cidrs, which the --tofu render hands a cloud root. The rest is
+# validated, reported and copied by hand into the deploy repo's own values
+# overlay, the same convention the block it replaces followed. A bad value is
+# still refused here, by name, before an operator carries it forward.
+# deployment.example.yaml writes this block's booleans unquoted, unlike the rest
+# of the dial: a value copied verbatim into a real Helm values file has to
+# already be the type that file expects, where an unquoted true is a bool and a
+# quoted "false" is a non-empty string that is always truthy.
 
 # New path -> the deprecated path that still feeds it. Read for ONE release: a
 # dial setting only the old one renders with a deprecation line, a dial setting
@@ -663,11 +664,11 @@ def _edge_cidrs(dial: dict[str, object], path: tuple[str, ...]) -> list[str]:
     The brackets come off the way `_edge_ports` takes them off, and each entry is
     parsed here: a range OpenTofu cannot read must not reach a security group,
     and `[]` left unstripped is one bogus entry where the operator meant none.
+    A path with a deprecated spelling is read through it as well.
     """
-    raw = _scalar(dial, path)
+    raw, label = _edge_scalar(dial, path)
     if raw is None:
         return []
-    label = ".".join(path)
     ranges: list[str] = []
     for item in split_list(raw.strip().lstrip("[").rstrip("]")):
         try:
@@ -1245,6 +1246,9 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "tags": _tags(dial, cloud),
         "toolbox": _toolbox(dial),
         "edge": _edge(dial),
+        # Variables of their own, because a guarded run's overlay replaces one whole.
+        "edge_allowed_cidrs": _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")),
+        "edge_trusted_proxy_cidrs": _edge_cidrs(dial, ("edge", "product", "trusted_proxy_cidrs")),
     }
 
 
@@ -1406,8 +1410,9 @@ def main() -> int:
         file=sys.stderr,
     )
     print(
-        "  this renderer applies none of it -- paste the block into the deploy"
-        " repo's values overlay",
+        "  this renderer applies none of it but edge.product.allowed_cidrs and"
+        " trusted_proxy_cidrs, which --tofu hands a cloud root -- paste the rest into the"
+        " deploy repo's values overlay",
         file=sys.stderr,
     )
 

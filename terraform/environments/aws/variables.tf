@@ -130,6 +130,18 @@ variable "edge" {
   default = {}
 }
 
+variable "edge_allowed_cidrs" {
+  description = "Who may reach the public gateway, from the dial's edge.product.allowed_cidrs. A variable of its own rather than a field of edge, because a guarded test run replaces it with its runner's /32 in an overlay, and an overlay replaces a whole variable. Empty fences nothing; set, the edge module adds the NAT gateways' addresses, and trusts the public subnets' ranges as proxies (terraform/modules/edge/aws)."
+  type        = list(string)
+  default     = []
+}
+
+variable "edge_trusted_proxy_cidrs" {
+  description = "Proxy ranges in front of the public gateway that may vouch for a client address, such as a CDN's, from the dial's edge.product.trusted_proxy_cidrs. The edge module always adds the public subnets' ranges, where the load balancer sits, and trusts none of them while edge_allowed_cidrs is empty."
+  type        = list(string)
+  default     = []
+}
+
 variable "telemetry" {
   description = <<-DESCRIPTION
     DFE's monitoring goes to its own OTel feed and HyperDX, never CloudWatch --

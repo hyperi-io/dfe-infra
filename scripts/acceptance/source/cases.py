@@ -115,28 +115,33 @@ class Case:
 
 
 class FilebeatCase(Case):
-    """Real filebeat lines pushed at the receiver, through the bundled VRL, archived.
+    """Real cisco_ios lines in the Elastic Agent envelope, through the bundled VRL, archived.
 
-    The shipped meta schema, the cheapest receiver match, the bundled filebeat
-    program with its timezone table, the archive on.
+    The shipped meta schema, a receiver match on the shipper's own
+    ``data_stream.dataset``, the bundled filebeat program with its timezone
+    table, the archive on.
     """
 
     META_SCHEMA = "meta/beats/filebeat"
     META_SCHEMA_VERSION = "1.0.0"
     HEADER = "common-header/timeseries"
     HEADER_VERSION = "1.0.1"
-    MATCH_FIELD = "_source"
+    # Elastic's own identifier for the source, which the Agent sends on every record.
+    MATCH_FIELD = "data_stream.dataset"
+    MATCH_VALUE = "cisco_ios.log"
     TRANSFORM_ENGINE = "vrl"
     PROGRAM = "pipelines/filebeat/filebeat.vrl"
     ENRICHMENT = "pipelines/filebeat/timezones.csv"
     CORPUS = "tests/fixtures/filebeat/filebeat-testdata.tar.gz"
-    # Corpus modules to feed; empty is every module the wrapper names.
-    MODULES: tuple[str, ...] = ()
+    # The one module MATCH_VALUE names: one equals match routes one dataset, so
+    # cisco_meraki and cisco_umbrella lines would miss the source by design.
+    MODULES: tuple[str, ...] = ("cisco_ios",)
     # Display name and description the console form is filled with.
     DISPLAY = "Filebeat source test"
-    DESCRIPTION = "Post-deploy source test: real filebeat lines through the bundled VRL, archived."
-    # A column only the transform sets on the umbrella branch; absent from the body.
-    TRANSFORMED_COLUMN = "log_file_path"
+    DESCRIPTION = "Post-deploy source test: real cisco_ios lines through the bundled VRL, archived."
+    # ECS source.ip, which meta/beats/filebeat declares and the cisco_ios branch
+    # reads out of the syslog body; the posted envelope carries no such field.
+    TRANSFORMED_COLUMN = "source_ip"
     # The file sets the transform app declares (dfe-infra apps.yaml).
     PROGRAM_SET = "transforms"
     ENRICHMENT_SET = "enrichment"
@@ -173,7 +178,7 @@ class FilebeatCase(Case):
         # The switches are Enabled (on) then Archive (off); the archive one is second.
         page.get_by_role("switch").nth(1).click(timeout=STEP_TIMEOUT_MS)
         page.get_by_placeholder("Enter field").fill(self.MATCH_FIELD)
-        page.get_by_placeholder("Enter value").fill(self.name)
+        page.get_by_placeholder("Enter value").fill(self.MATCH_VALUE)
         driver.record("add-source-configuration", "done",
                       f"filled the Configuration tab for {self.name}, archive on")
 
@@ -391,7 +396,7 @@ class FilebeatCase(Case):
             self._feed_through_logstash(run, corpus)
             return
         self._posted = steps.post_corpus(
-            run.receiver_url, run.verify, run.engine_repo, corpus, self.name,
+            run.receiver_url, run.verify, run.engine_repo, corpus,
             run.run_id, run.args.per_module, self.MODULES,
         )
         run.driver.record("feed", "done",
@@ -400,9 +405,8 @@ class FilebeatCase(Case):
     def _feed_through_logstash(self, run: Run, corpus: Path) -> None:
         """The same corpus lines, shipped by a real filebeat through a real logstash.
 
-        The wrapper's ``{message, tags, _source}`` proves the transform and is not
-        what a deployment sends. This pushes the envelope Logstash's http output
-        builds, which is what the Elastic pipelines were written against.
+        The POSTed envelope is reconstructed; this pushes the one Logstash's http
+        output builds, with filebeat adding the data stream the source matches.
         """
         driver = run.driver
         if not run.args.beats_network:
@@ -414,7 +418,7 @@ class FilebeatCase(Case):
             workdir=Path(run.args.shots_dir) / f"beats-{run.run_id}", run_id=run.run_id,
         )
         lines = steps.corpus_lines(run.engine_repo, corpus, run.args.per_module, self.MODULES)
-        beats.write_inputs(self._pair, lines, self.name)
+        beats.write_inputs(self._pair, lines, self.MATCH_VALUE)
         ready, detail = beats.start_logstash(self._pair)
         driver.record("logstash", "done" if ready else "failed", detail)
         if not ready:
@@ -439,13 +443,14 @@ class FilebeatCase(Case):
         # proof is the gain in the source's own table; the catch-all still holds
         # the record as posted, so a stray there is found by the tag.
         landed = steps.wait_gain(run.store, self.name, self._before, self._posted, self.LAND_DEADLINE)
-        # A record shipped by filebeat carries no run tag, so the stray search is
-        # the run's own table name instead of what the wrapper put in the body.
-        strayed = run.store.scalar(f"SELECT count() FROM main WHERE _raw LIKE '%{self._stray_mark(run)}%'")
+        # Both feeds tag every record e2e_run:<run id>: the wrapper on a POST, the
+        # agent's add_tags on --via logstash.
+        strayed = run.store.scalar(f"SELECT count() FROM main WHERE _raw LIKE '%{run.run_id}%'")
         run.driver.record(
             "landed", "done" if landed and not strayed else "failed",
             f"dfe.{self.name} gained {landed} of {self._posted} posted rows, {strayed} strayed into dfe.main",
         )
+        run.driver.record("dataset", *steps.dataset_outcome(run.store, self.name, self.MATCH_VALUE))
         transformed = steps.wait_gain(
             run.store, self.name, self._before_transformed, 1, self.TRANSFORM_DEADLINE,
             self._transformed_where,
@@ -477,14 +482,6 @@ class FilebeatCase(Case):
     def _transformed_where(self) -> str:
         return f" WHERE {self.TRANSFORMED_COLUMN} IS NOT NULL"
 
-    def _stray_mark(self, run: Run) -> str:
-        """What a stray record in the catch-all is recognised by on this run.
-
-        The wrapper tags each body with the run id. A filebeat-shipped record
-        carries no such tag, so the source name it was routed on is the mark.
-        """
-        return self.name if run.args.via == "logstash" else run.run_id
-
     def cleanup(self, run: Run) -> list[wizard.StepResult]:
         """Take down anything this run stood up beside the stack."""
         if self._pair is None:
@@ -510,14 +507,6 @@ class ElasticCase(FilebeatCase):
     # apps.yaml's catalogue.variant_pattern builds and the deploy writes to the
     # app's own config.source.name.
     VARIANT = "filebeat.cisco_ios.default"
-    # The one corpus module this variant transforms. cisco_umbrella is delivered
-    # from an S3 bucket and takes no receiver intake; cisco_meraki's pipeline is
-    # framed as a body rather than a syslog line.
-    MODULES = ("cisco_ios",)
-    # ECS source.ip, which meta/beats/filebeat declares and the cisco_ios
-    # transform reads out of the syslog body; the posted record carries no
-    # such field.
-    TRANSFORMED_COLUMN = "source_ip"
     DISPLAY = "Elastic transform source test"
     DESCRIPTION = (
         "Post-deploy source test: real cisco_ios lines through the compiled-in "
