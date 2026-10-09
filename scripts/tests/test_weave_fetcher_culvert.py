@@ -25,6 +25,8 @@
   from the gateway's by the instance file its git generator matches
 - culvert's image, and its init container's, follow global.registry like the
   dfe-* images, and fall back to the contract's registry where none is set
+- culvert's contract opens its WireGuard port only where config.protocol starts
+  WireGuard, and its profile mounts as one file beside the image's own
 
 Render (b) needs the scalo-service library (_weave.library).
 """
@@ -38,7 +40,7 @@ import pytest
 import yaml
 
 from _gate import APPSETS, INSTANCE, PROFILES, cell
-from _weave import CONTRACTS, REPO_ROOT, helm, render_app, weave
+from _weave import CONTRACTS, REPO_ROOT, helm, library, render_app, weave
 
 APPS = REPO_ROOT / "argocd" / "values" / "apps"
 EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
@@ -377,6 +379,54 @@ def test_culverts_nodeports_are_the_ones_the_forwarder_dials() -> None:
 def test_one_default_listener_list_for_culvert() -> None:
     """The thin chart's default, dfe-extras' and the culvert chart's own are the same list."""
     assert drifted(listener_lists()) == []
+
+
+@pytest.fixture(scope="module")
+def bare_culvert(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """culvert's thin chart from its contract alone, with no DFE values and no dfe-extras."""
+    w = weave()
+    chart = w.assemble(
+        (CONTRACTS / "culvert.json").read_bytes(),
+        library(),
+        tmp_path_factory.mktemp("bare-culvert"),
+        version="0.0.0",
+        tag="v0.0.0",
+        digest=f"sha256:{'0' * 64}",
+    )
+    w.build_dependency(helm(), chart)
+    return chart
+
+
+@pytest.mark.parametrize(
+    ("protocol", "opened"),
+    [(None, False), ("openvpn", False), ("wireguard", True), ("both", True)],
+    ids=["unset", "openvpn", "wireguard", "both"],
+)
+def test_the_contract_opens_wireguard_only_where_the_profile_starts_it(
+    bare_culvert: Path, protocol: str | None, opened: bool
+) -> None:
+    """A server on the default OpenVPN has no WireGuard port, so none reaches a balancer.
+
+    The bare chart, because DFE declares the port itself and dfe-extras refuses a
+    config.protocol (test_dfe_extras.py).
+    """
+    w = weave()
+    cmd = [helm(), "template", "culvert", str(bare_culvert), "--set", "publicService.enabled=true"]
+    if protocol is not None:
+        cmd += ["--set", f"config.protocol={protocol}"]
+    docs = w.documents(w.run(cmd, "helm template culvert"))
+    balancer = _named(docs, "Service")["culvert-public-udp"]
+    assert ("wireguard" in _ports(_deployment(docs))) is opened
+    assert ("wireguard" in _ports(balancer)) is opened
+    assert "openvpn-udp" in _ports(balancer)
+
+
+def test_the_profile_mounts_beside_the_shipped_ones() -> None:
+    """The ConfigMap mounts as culvert.yaml alone, so /etc/vpn/profiles keeps the image's profiles."""
+    container = _pod(cell("culvert", "single", "aws").new)["containers"][0]
+    mounts = {m["mountPath"]: m for m in container["volumeMounts"]}
+    assert "/etc/vpn/profiles" not in mounts
+    assert mounts["/etc/vpn/profiles/culvert.yaml"]["subPath"] == "culvert.yaml"
 
 
 def test_culvert_runs_as_the_contract_says() -> None:

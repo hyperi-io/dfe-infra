@@ -1100,3 +1100,15 @@ culvert:
       path: spec.template.spec.containers[main].volumeMounts[/etc/vpn/pki].name
       new: writable-pki
       reason: The PKI directory's mount, at the same path.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].volumeMounts[/etc/vpn/profiles].*
+      new: <absent>
+      reason: >-
+        The profile ConfigMap no longer mounts over the whole directory, which hid
+        the profiles the image ships in /etc/vpn/profiles.
+    - object: Deployment/dfe-culvert
+      path: spec.template.spec.containers[main].volumeMounts[/etc/vpn/profiles/culvert.yaml].*
+      old: <absent>
+      reason: >-
+        The same config volume mounted as the one file, configMount.subPath, at
+        the path CULVERT_PROFILE=culvert reads.

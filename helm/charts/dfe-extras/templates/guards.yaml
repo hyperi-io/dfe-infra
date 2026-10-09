@@ -4,3 +4,4 @@
 {{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-receiver") "body" "dfe-extras.receiverExposureGuard") -}}
 {{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-receiver") "body" "dfe-extras.receiverTelemetryGuard") -}}
 {{- include "dfe-extras.render" (dict "root" . "charts" (list "culvert") "body" "dfe-extras.culvertListenerGuard") -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "culvert") "body" "dfe-extras.culvertProtocolGuard") -}}
