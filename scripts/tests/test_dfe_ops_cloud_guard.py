@@ -43,6 +43,7 @@ TFVARS = {
     "state": {"bucket": "example-state", "key": "deployments/example.tfstate", "region": "us-west-2"},
     "tags": {"lifecycle": "ephemeral", "service-name": "dfe"},
     "name": "dfe-example",
+    "profile": "single",
 }
 
 
@@ -144,7 +145,8 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tf_dir / "dial.auto.tfvars.json").write_text(json.dumps(TFVARS), encoding="utf-8")
     for name in ("DFE_GUARD_ROLE", "DFE_GUARD_SWEEPER", "DFE_GUARD_BUDGET_ACTION", "DFE_GUARD_PERMISSIONS_BOUNDARY",
                  "DFE_GUARD_IAM_PATH", "DFE_GUARD_S3_BUCKET_PREFIX", "DFE_GUARD_INSPECTOR_EXCLUSION",
-                 "DFE_RUN_STATE_PREFIX", "DFE_RUN_TAG_KEY", "DFE_RUN_EXPIRY_KEY", "DFE_RUN_EXPIRY_FORMAT"):
+                 "DFE_RUN_STATE_PREFIX", "DFE_RUN_TAG_KEY", "DFE_RUN_EXPIRY_KEY", "DFE_RUN_EXPIRY_FORMAT",
+                 "DFE_RUN_ENDPOINT_CIDR"):
         monkeypatch.delenv(name, raising=False)
     return tf_dir
 
@@ -213,18 +215,35 @@ def test_expected_fail_a_dial_with_no_state_bucket_is_refused(root: Path) -> Non
 
 
 def test_tfvars_load_in_opentofus_order_and_skip_the_runs_own_overlay(root: Path) -> None:
-    (root / "zz-later.auto.tfvars.json").write_text(json.dumps({"name": "later"}), encoding="utf-8")
+    (root / "later.auto.tfvars.json").write_text(json.dumps({"name": "later"}), encoding="utf-8")
     (root / guard_mod.OVERLAY_NAME).write_text(json.dumps({"name": "stale-overlay"}), encoding="utf-8")
     assert guard_mod.load_tfvars(root)["name"] == "later"
+
+
+@pytest.mark.parametrize("name", ["zz-later.auto.tfvars.json", "zzz.auto.tfvars.json", "zz-dfe-run2.auto.tfvars.json"])
+def test_expected_fail_an_auto_tfvars_file_sorting_after_the_overlay_is_refused(
+    root: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """OpenTofu loads auto tfvars in name order, so a later file would quietly
+    replace the run's endpoint, state key or tags."""
+    (root / name).write_text(json.dumps({"endpoint": {"public": True, "allowed_cidrs": ["52.0.0.0/8"]}}),
+                             encoding="utf-8")
+    with pytest.raises(guard_mod.GuardError, match="sorts after"):
+        guard_mod.load_tfvars(root)
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner) == 2
+    assert runner.commands == []
+    assert guard.records == {}
 
 
 def test_an_empty_environment_variable_reads_as_unset(root: Path) -> None:
     """A workflow hands an unset repository variable over as an empty string. Read
     as a value, an empty state prefix would refuse every run."""
-    env = {cloud_run.STATE_PREFIX_ENV: "", "DFE_GUARD_IAM_PATH": "", "DFE_GUARD_PERMISSIONS_BOUNDARY": " "}
+    env = {cloud_run.STATE_PREFIX_ENV: "", "DFE_GUARD_IAM_PATH": "", "DFE_GUARD_PERMISSIONS_BOUNDARY": " ",
+           guard_mod.ENDPOINT_CIDR_ENV: ""}
     config = guard_mod.resolve_config(_args(root), env)
     assert config.state_prefix == cloud_run.DEFAULT_STATE_PREFIX
-    assert (config.iam_path, config.permissions_boundary) == ("", "")
+    assert (config.iam_path, config.permissions_boundary, config.endpoint_cidr) == ("", "", "")
 
 
 def test_flags_win_over_the_environment(root: Path) -> None:
@@ -395,7 +414,8 @@ def test_the_overlay_gives_the_run_its_own_state_key_tags_and_no_cloudtrail(root
                                 "key": "dfe-e2e-runs/run-1/terraform.tfstate"}
     assert overlay["run"] == cloud_run.run_tfvar("run-1", int(NOW))
     assert overlay["cloudtrail"] == {"enabled": False}
-    assert not {"permissions_boundary", "iam_path", "s3_bucket_prefix", "inspector_ec2_exclusion"} & set(overlay)
+    assert not {"permissions_boundary", "iam_path", "s3_bucket_prefix", "inspector_ec2_exclusion",
+                "endpoint"} & set(overlay)
 
 
 def test_the_overlay_carries_every_configured_guardrail_input(root: Path) -> None:
@@ -406,6 +426,96 @@ def test_the_overlay_carries_every_configured_guardrail_input(root: Path) -> Non
     assert overlay["iam_path"] == "/dfe-e2e/"
     assert overlay["s3_bucket_prefix"] == "dfe-e2e-"
     assert overlay["inspector_ec2_exclusion"] is True
+
+
+# --- the API endpoint a run opens to the machine running it ----------------------------------------
+
+RUNNER_CIDR = "20.1.2.3/32"
+
+
+def test_an_endpoint_cidr_opens_the_api_to_that_address_alone(root: Path) -> None:
+    """The run's address replaces the dial's list rather than joining it."""
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, "endpoint": {"public": False, "allowed_cidrs": ["52.0.0.0/8"]}}),
+        encoding="utf-8",
+    )
+    overlay = guard_mod.build_overlay(_config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW))
+    assert overlay["endpoint"] == {"public": True, "allowed_cidrs": [RUNNER_CIDR]}
+
+
+def test_the_endpoint_cidr_comes_from_the_environment_and_the_flag_wins(root: Path) -> None:
+    env = {guard_mod.ENDPOINT_CIDR_ENV: RUNNER_CIDR}
+    assert guard_mod.resolve_config(_args(root), env).endpoint_cidr == RUNNER_CIDR
+    flagged = guard_mod.resolve_config(_args(root, endpoint_cidr="20.9.9.9/32"), env)
+    assert flagged.endpoint_cidr == "20.9.9.9/32"
+
+
+def test_a_bare_address_reads_as_its_own_slash_32() -> None:
+    assert guard_mod.endpoint_cidr("20.1.2.3") == RUNNER_CIDR
+
+
+@pytest.mark.parametrize("raw", [
+    "0.0.0.0/0",          # the internet
+    "20.1.2.0/24",        # wider than one address
+    "20.1.2.3/24",        # host bits set under a wider prefix
+    "20.1.2.3/33",
+    "10.0.0.1/32",        # private
+    "100.64.0.1/32",      # carrier-grade NAT
+    "203.0.113.7/32",     # documentation range
+    "127.0.0.1",
+    "2600:1f14::1/128",   # IPv6
+    "not-an-address",
+])
+def test_expected_fail_anything_but_one_public_ipv4_address_is_refused(root: Path, raw: str) -> None:
+    with pytest.raises(guard_mod.GuardError, match="endpoint CIDR"):
+        _config(root, endpoint_cidr=raw)
+
+
+def test_a_refused_endpoint_cidr_creates_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner, endpoint_cidr="0.0.0.0/0") == 2
+    assert runner.commands == []
+    assert guard.records == {}
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+
+
+def test_the_run_applies_and_records_the_api_open_to_its_own_address(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reaper destroys from the record, so it carries the endpoint the apply used."""
+    guard, runner = FakeGuard(), FakeRunner()
+    at_apply: list[tuple[dict, dict]] = []
+
+    def capture() -> None:
+        overlay = json.loads((root / guard_mod.OVERLAY_NAME).read_text(encoding="utf-8"))
+        record = json.loads(next(iter(guard.records.values())))
+        at_apply.append((overlay["endpoint"], record["tfvars"]["endpoint"]))
+
+    runner.on_run = {"apply": capture}
+    assert _cycle(root, monkeypatch, guard, runner, endpoint_cidr=RUNNER_CIDR) == 0
+    expected = {"public": True, "allowed_cidrs": [RUNNER_CIDR]}
+    assert at_apply == [(expected, expected)]
+    assert runner.words() == ["init", "apply", "cycle", "destroy"]
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+
+
+@pytest.mark.parametrize(("endpoint", "cidr", "names"), [
+    (None, RUNNER_CIDR, f"public to {RUNNER_CIDR} alone"),
+    ({"public": True, "allowed_cidrs": ["52.0.0.0/8"]}, None, "public to 52.0.0.0/8 as the dial sets"),
+    ({"public": False, "allowed_cidrs": []}, None, "private only"),
+])
+def test_preflight_says_who_can_reach_the_api(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    endpoint: dict | None, cidr: str | None, names: str,
+) -> None:
+    if endpoint is not None:
+        (root / "dial.auto.tfvars.json").write_text(
+            json.dumps({**TFVARS, "endpoint": endpoint}), encoding="utf-8"
+        )
+    monkeypatch.setattr(guard_mod, "_make_guard", lambda config: FakeGuard())
+    monkeypatch.setattr(guard_mod.time, "time", lambda: NOW)
+    assert guard_mod.cmd_cloud_preflight(_args(root, endpoint_cidr=cidr)) == 0
+    assert names in capsys.readouterr().err
 
 
 # --- cloud-cycle: nothing created on a refusal, torn down on every exit ------------------------------
@@ -532,14 +642,107 @@ def test_a_failed_destroy_keeps_the_record_and_overlay_for_the_reaper(root: Path
     assert (root / guard_mod.OVERLAY_NAME).exists()
 
 
-@pytest.mark.parametrize("reserved", ["--keep", "--kubeconfig=x", "--from-terraform"])
+@pytest.mark.parametrize("reserved", ["--keep", "--kubeconfig=x", "--from-terraform", "--ke", "--kubec=x", "--from"])
 def test_expected_fail_cycle_args_that_skip_the_destroy_or_clash_are_refused(
     root: Path, monkeypatch: pytest.MonkeyPatch, reserved: str
 ) -> None:
+    """argparse expands an unambiguous prefix, so `--ke` reaches dfe-ops cycle as --keep."""
     runner = FakeRunner()
     code = _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--mode", "single", reserved])
     assert code == 2
     assert runner.commands == []
+
+
+@pytest.mark.parametrize("given", [
+    ["-keep"],                         # one dash: no such option
+    ["--require-label"],               # dangling, no value
+    ["--e2e", "--"],                   # a stray `--` turns the appended --mode into a positional
+    ["--", "--mode", "single"],        # everything after a stray `--` is a positional
+    ["--mode"],
+    ["--mode", "bogus"],
+    ["-h"],                            # the parser would print help and exit, running nothing
+])
+def test_expected_fail_what_the_cycles_own_parser_rejects_is_refused_before_the_apply(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, given: list[str]
+) -> None:
+    """Each of these would otherwise exit 2 from dfe-ops cycle after the cluster was paid for."""
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--", *given]) == 2
+    assert runner.commands == []
+    assert guard.records == {}
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+    assert "dfe-ops cycle would" in capsys.readouterr().err
+
+
+def test_the_cycle_runs_the_exact_arguments_its_parser_accepted(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--e2e", "--env-file", "x.env"]) == 0
+    argv = runner.commands[2][runner.commands[2].index("cycle") + 1:]
+    assert guard_mod._parse_cycle(argv).mode == "single"
+    assert argv[:2] == ["--from-terraform", str(root)]
+    assert argv[2] == "--kubeconfig"
+    assert argv[4:] == ["--e2e", "--env-file", "x.env", "--mode", "single"]
+
+
+# --- the cycle's mode is the dial's profile -------------------------------------------------------
+
+
+def test_with_no_mode_given_the_cycle_runs_in_the_dials_profile(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--env-file", "x.env"]) == 0
+    cycle = runner.commands[2]
+    assert cycle[-4:] == ["--env-file", "x.env", "--mode", "single"]
+    assert cycle.count("--mode") == 1
+
+
+@pytest.mark.parametrize("given", [["--mode", "single"], ["--mode=single"], ["--mod", "single"]])
+def test_a_mode_that_matches_the_dial_passes_through_once(
+    root: Path, monkeypatch: pytest.MonkeyPatch, given: list[str]
+) -> None:
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    assert runner.commands[2][-len(given):] == given
+    assert "--mode" not in runner.commands[2][:-len(given)]
+
+
+@pytest.mark.parametrize("given", [
+    ["--mode", "scale"],
+    ["--mode=scale"],
+    ["--mo", "scale"],
+    ["--mode", "single", "--mode", "scale"],
+])
+def test_expected_fail_a_mode_that_is_not_the_dials_profile_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, given: list[str]
+) -> None:
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--", *given]) == 2
+    assert runner.commands == []
+    assert guard.records == {}
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+    assert "one dial, one profile" in capsys.readouterr().err
+
+
+def test_expected_fail_a_dial_profile_the_cycle_has_no_mode_for_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Only the composed command carries the dial's profile, so only its parse sees this."""
+    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, "profile": "docker-single"}), encoding="utf-8")
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--"]) == 2
+    assert runner.commands == []
+    assert guard.records == {}
+    assert "invalid choice: 'docker-single'" in capsys.readouterr().err
+
+
+def test_expected_fail_a_dial_with_no_profile_has_no_mode_and_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tfvars = {k: v for k, v in TFVARS.items() if k != "profile"}
+    (root / "dial.auto.tfvars.json").write_text(json.dumps(tfvars), encoding="utf-8")
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--"]) == 2
+    assert runner.commands == []
+    assert guard.records == {}
 
 
 @pytest.mark.parametrize("provider", ["gcp", "azure"])

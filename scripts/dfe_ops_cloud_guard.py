@@ -14,7 +14,13 @@
 
     dfe-ops cloud-preflight --tf-dir terraform/environments/aws --run-length 3h
     dfe-ops cloud-cycle --tf-dir terraform/environments/aws --run-length 3h \\
-        -- --mode single --env-file bootstrap/.env
+        -- --env-file bootstrap/.env
+
+The cycle's mode is the dial's profile, read from the root's rendered tfvars
+(render_dial.py --tofu writes it), and cloud-cycle adds `--mode <profile>` to
+the cycle arguments. `dfe-ops cycle`'s own parser reads the arguments before
+anything is created, and cloud-cycle refuses any it rejects, --keep, and a
+`--mode` naming any other profile: one dial, one profile.
 
 cloud-preflight reads and never writes. It REFUSES (exit 2) when:
 
@@ -36,7 +42,10 @@ cloud-cycle runs the same preflight, then mints a run id and an expiry
 into the root. That overlay gives the run its own state key
 (`<prefix>/<run id>/terraform.tfstate`), the run's id and expiry as tags on
 everything it creates, the guardrail inputs (boundary, IAM path, bucket
-prefix) and CloudTrail off. A run record goes beside the state BEFORE the
+prefix) and CloudTrail off. Given an endpoint CIDR, it also opens the
+Kubernetes API's public endpoint to that one address, in place of whatever the
+dial sets, so a runner outside the VPC can reach the cluster it created. The
+private endpoint stays on either way. A run record goes beside the state BEFORE the
 apply, so the scheduled reaper can destroy the run if this process dies.
 From then on every way out -- success, failure, an exception, SIGINT, SIGTERM,
 SIGHUP -- tears the run down: the in-flight child is stopped, the cluster's
@@ -50,12 +59,17 @@ lands in the run's region rather than the shell's.
 Every value is a flag or an environment variable: DFE_GUARD_ROLE,
 DFE_GUARD_SWEEPER, DFE_GUARD_BUDGET_ACTION (`<budget-name>:<action-id>`),
 DFE_GUARD_PERMISSIONS_BOUNDARY, DFE_GUARD_IAM_PATH, DFE_GUARD_S3_BUCKET_PREFIX,
-DFE_GUARD_INSPECTOR_EXCLUSION, DFE_RUN_STATE_PREFIX. The account, region and
-state bucket come from the root's own JSON tfvars.
+DFE_GUARD_INSPECTOR_EXCLUSION, DFE_RUN_STATE_PREFIX, DFE_RUN_ENDPOINT_CIDR (one
+public IPv4 address, written `<address>/32`). The account, region and state
+bucket come from the root's own JSON tfvars.
 """
 
 import argparse
 import contextlib
+import functools
+import importlib.machinery
+import importlib.util
+import ipaddress
 import json
 import os
 import shutil
@@ -68,6 +82,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 from typing import NoReturn
 
 import aws_cli
@@ -79,15 +94,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DFE_OPS = REPO_ROOT / "scripts" / "dfe-ops"
 RUNS_DIR = REPO_ROOT / ".tmp" / "cloud-runs"
 
-# Lexically last among the root's auto tfvars, so every value in it wins.
+# Lexically last among the root's auto tfvars, which load_tfvars enforces, so every value in it wins.
 OVERLAY_NAME = "zz-dfe-run.auto.tfvars.json"
 DEFAULT_TEARDOWN_MARGIN = "45m"
 CHILD_STOP_TIMEOUT = 60  # seconds a stopped child gets to exit before it is killed
 TEARDOWN_SIGNALS = tuple(
     getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
 )
-# A cycle argument cloud-cycle sets itself, or one that would skip the destroy.
-RESERVED_CYCLE_ARGS = ("--keep", "--from-terraform", "--kubeconfig")
+ENDPOINT_CIDR_ENV = "DFE_RUN_ENDPOINT_CIDR"
 
 
 class GuardError(RuntimeError):
@@ -109,12 +123,17 @@ def load_tfvars(tf_dir: Path) -> dict[str, object]:
     overlay is never read back, so a stale one cannot feed the next run.
 
     Raises:
-        GuardError: An HCL tfvars file is present, or a JSON one does not parse.
+        GuardError: An HCL tfvars file is present, a JSON one does not parse, or
+            an auto tfvars file sorts after the run's overlay and would override it.
     """
-    candidates = [tf_dir / "terraform.tfvars", tf_dir / "terraform.tfvars.json"]
-    candidates += sorted(
-        (*tf_dir.glob("*.auto.tfvars"), *tf_dir.glob("*.auto.tfvars.json")), key=lambda p: p.name
-    )
+    auto = sorted((*tf_dir.glob("*.auto.tfvars"), *tf_dir.glob("*.auto.tfvars.json")), key=lambda p: p.name)
+    after_overlay = [p.name for p in auto if p.name > OVERLAY_NAME]
+    if after_overlay:
+        raise GuardError(
+            f"{', '.join(after_overlay)} sorts after {OVERLAY_NAME}, so OpenTofu would let it override "
+            "the run's own state key, tags and endpoint: rename it to sort first"
+        )
+    candidates = [tf_dir / "terraform.tfvars", tf_dir / "terraform.tfvars.json", *auto]
     merged: dict[str, object] = {}
     for path in candidates:
         if not path.is_file() or path.name == OVERLAY_NAME:
@@ -131,6 +150,29 @@ def load_tfvars(tf_dir: Path) -> dict[str, object]:
 def _setting(flag: str | None, env: Mapping[str, str], name: str, default: str = "") -> str:
     # A workflow passes an unset variable as an empty string, which means unset here too.
     return flag if flag is not None else (env.get(name, "").strip() or default)
+
+
+def endpoint_cidr(raw: str) -> str:
+    """The one address a run opens the Kubernetes API's public endpoint to, as `<address>/32`.
+
+    A bare address is read as its /32. Empty means the run leaves the dial's
+    endpoint as it is.
+
+    Raises:
+        GuardError: The value is not one public IPv4 address.
+    """
+    if not raw:
+        return ""
+    try:
+        network = ipaddress.ip_network(raw, strict=True)
+    except ValueError as exc:
+        raise GuardError(f"endpoint CIDR {raw!r} is not an address: {exc}") from exc
+    if network.version != 4 or network.prefixlen != 32 or not network.is_global:
+        raise GuardError(
+            f"endpoint CIDR {raw!r} is not one public IPv4 address: a run opens the Kubernetes "
+            "API to the machine running it and to nothing wider"
+        )
+    return str(network)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +198,7 @@ class GuardConfig:
     iam_path: str = ""
     s3_bucket_prefix: str = ""
     inspector_exclusion: bool = False
+    endpoint_cidr: str = ""
 
     @property
     def window(self) -> int:
@@ -217,6 +260,7 @@ def resolve_config(args: argparse.Namespace, env: Mapping[str, str]) -> GuardCon
         s3_bucket_prefix=_setting(args.s3_bucket_prefix, env, "DFE_GUARD_S3_BUCKET_PREFIX"),
         inspector_exclusion=bool(args.inspector_exclusion)
         or env.get("DFE_GUARD_INSPECTOR_EXCLUSION", "").lower() in ("1", "true", "yes"),
+        endpoint_cidr=endpoint_cidr(_setting(args.endpoint_cidr, env, ENDPOINT_CIDR_ENV)),
     )
     missing = [
         name
@@ -482,7 +526,10 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
 
 
 def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str, object]:
-    """The run's tfvars overlay: its own state key, its tags, the guardrail inputs, CloudTrail off."""
+    """The run's tfvars overlay: its own state key, its tags, the guardrail inputs, CloudTrail off.
+
+    Given an endpoint CIDR it also replaces the dial's endpoint, for this run alone.
+    """
     overlay: dict[str, object] = {
         "run": cloud_run.run_tfvar(run_id, expires_at, config.keys),
         "state": {
@@ -500,7 +547,20 @@ def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str
         overlay["s3_bucket_prefix"] = config.s3_bucket_prefix
     if config.inspector_exclusion:
         overlay["inspector_ec2_exclusion"] = True
+    if config.endpoint_cidr:
+        overlay["endpoint"] = {"public": True, "allowed_cidrs": [config.endpoint_cidr]}
     return overlay
+
+
+def endpoint_summary(config: GuardConfig) -> str:
+    """Who can reach the run's Kubernetes API, in one line for the run's log."""
+    if config.endpoint_cidr:
+        return f"Kubernetes API: private, and public to {config.endpoint_cidr} alone for this run"
+    endpoint = config.tfvars.get("endpoint")
+    if isinstance(endpoint, dict) and endpoint.get("public"):
+        allowed = ", ".join(str(c) for c in endpoint.get("allowed_cidrs") or [])
+        return f"Kubernetes API: private, and public to {allowed} as the dial sets"
+    return "Kubernetes API: private only, so only a machine inside the VPC can reach it"
 
 
 def run_env(config: GuardConfig, **extra: str) -> dict[str, str]:
@@ -630,12 +690,66 @@ def _tofu_output(tf_dir: Path, name: str) -> str:
     return result.stdout.strip()
 
 
-def _cycle_args(raw: list[str]) -> list[str]:
+@functools.cache
+def _dfe_ops() -> ModuleType:
+    """The dfe-ops CLI as a module, which has no .py name to import it by."""
+    loader = importlib.machinery.SourceFileLoader("dfe_ops_cli", str(DFE_OPS))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
+
+
+def _parse_cycle(argv: list[str], **defaults: object) -> argparse.Namespace:
+    """Parse with `dfe-ops cycle`'s own parser, so the guard refuses what the cycle would.
+
+    Raises:
+        GuardError: The cycle's parser rejects the arguments.
+    """
+    parser = _dfe_ops().build_parser()
+    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    cycle = subparsers.choices["cycle"]
+    cycle.exit_on_error = False
+    cycle.set_defaults(**defaults)
+    try:
+        return cycle.parse_args(argv)
+    except argparse.ArgumentError as exc:
+        raise GuardError(f"dfe-ops cycle would refuse the cycle arguments: {exc}") from exc
+    except SystemExit as exc:
+        raise GuardError("dfe-ops cycle would exit on the cycle arguments without running (-h?)") from exc
+
+
+def cycle_command(raw: list[str], profile: str, tf_dir: Path, kubeconfig: Path) -> list[str]:
+    """The arguments `dfe-ops cycle` runs with, checked by its own parser before anything is created.
+
+    The guard supplies --from-terraform, --kubeconfig and, when the caller names
+    none, --mode from the dial's profile.
+
+    Raises:
+        GuardError: The cycle's parser rejects them, they set --from-terraform,
+            --kubeconfig or --keep, the dial names no profile, or the mode is not
+            the dial's profile.
+    """
     args = raw[1:] if raw[:1] == ["--"] else raw
-    reserved = [a for a in args if a.split("=", 1)[0] in RESERVED_CYCLE_ARGS]
-    if reserved:
-        raise GuardError(f"cloud-cycle sets or forbids {', '.join(reserved)} itself; drop them from the cycle arguments")
-    return args
+    if not profile:
+        raise GuardError("the root's tfvars name no profile, so the cycle has no mode: render the dial with "
+                         "render_dial.py --tofu")
+    base = ["--from-terraform", str(tf_dir), "--kubeconfig", str(kubeconfig)]
+    # No defaults, so what comes back set is what the caller set.
+    given = _parse_cycle(args, mode=None, kubeconfig=None, from_terraform=None)
+    clashing = [flag for flag, value in (("--from-terraform", given.from_terraform),
+                                         ("--kubeconfig", given.kubeconfig)) if value is not None]
+    if clashing:
+        raise GuardError(f"cloud-cycle sets {' and '.join(clashing)} itself; drop them from the cycle arguments")
+    command = [*base, *args, *([] if given.mode is not None else ["--mode", profile])]
+    parsed = _parse_cycle(command)
+    if parsed.keep:
+        raise GuardError("--keep skips the cycle's destroy, which an unattended cloud run cannot do without")
+    if parsed.mode != profile:
+        raise GuardError(
+            f"--mode {parsed.mode!r} is not the dial's profile {profile!r}: one dial, one profile. Drop --mode "
+            "from the cycle arguments, or change the dial"
+        )
+    return command
 
 
 def _make_guard(config: GuardConfig):
@@ -651,6 +765,7 @@ def cmd_cloud_preflight(args: argparse.Namespace) -> int:
         print(f"cloud-preflight refused: {exc}", file=sys.stderr)
         return 2
     report.print()
+    print(endpoint_summary(config), file=sys.stderr)
     if not report.ok:
         print("cloud-preflight REFUSED: fix every FAIL above before an unattended run.", file=sys.stderr)
         return 2
@@ -662,23 +777,22 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
     """`dfe-ops cloud-cycle`: preflight, then apply -> cycle -> destroy, torn down on every exit."""
     try:
         config = resolve_config(args, os.environ)
-        cycle_args = _cycle_args(args.cycle_args)
-        guard = _make_guard(config)
         now = time.time()
+        run_id = cloud_run.validate_run_id(args.run_id) if args.run_id else cloud_run.new_run_id(now)
+        kubeconfig = RUNS_DIR / run_id / "kubeconfig"
+        profile = str(config.tfvars.get("profile") or "")
+        cycle_argv = cycle_command(args.cycle_args, profile, config.tf_dir, kubeconfig)
+        guard = _make_guard(config)
         report = run_preflight(config, guard, now=now, env=os.environ)
-    except (GuardError, NotImplementedError) as exc:
+    except (GuardError, NotImplementedError, cloud_run.RunTagError) as exc:
         print(f"cloud-cycle refused: {exc}", file=sys.stderr)
         return 2
     report.print()
+    print(endpoint_summary(config), file=sys.stderr)
     if not report.ok:
         print("cloud-cycle REFUSED: nothing was created.", file=sys.stderr)
         return 2
 
-    try:
-        run_id = cloud_run.validate_run_id(args.run_id) if args.run_id else cloud_run.new_run_id(now)
-    except cloud_run.RunTagError as exc:
-        print(f"cloud-cycle refused: {exc}", file=sys.stderr)
-        return 2
     expires_at = int(now) + config.window
     overlay = build_overlay(config, run_id, expires_at)
     record = cloud_run.build_record(
@@ -690,7 +804,6 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
         tfvars={**config.tfvars, **overlay},
     )
     record_key = cloud_run.record_key(config.state_prefix, run_id)
-    kubeconfig = RUNS_DIR / run_id / "kubeconfig"
     runner = Runner()
     teardown = Teardown(config, guard, runner, run_id, kubeconfig, record_key)
     tofu = shutil.which("tofu") or "tofu"
@@ -712,11 +825,7 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
                 )
             if returncode == 0:
                 guard.write_kubeconfig(_tofu_output(config.tf_dir, "cluster_name"), kubeconfig)
-                returncode = runner.run(
-                    [sys.executable, str(DFE_OPS), "cycle", "--from-terraform", str(config.tf_dir),
-                     "--kubeconfig", str(kubeconfig), *cycle_args],
-                    env=child_env,
-                )
+                returncode = runner.run([sys.executable, str(DFE_OPS), "cycle", *cycle_argv], env=child_env)
                 teardown.cycle_finished = True
     except _Interrupted as exc:
         print(f"run {run_id} interrupted by {exc}; torn down above", file=sys.stderr)
@@ -759,6 +868,10 @@ def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--state-prefix", default=None,
                         help=f"key prefix for per-run state (env {cloud_run.STATE_PREFIX_ENV}, "
                              f"default {cloud_run.DEFAULT_STATE_PREFIX})")
+    parser.add_argument("--endpoint-cidr", default=None,
+                        help="open the Kubernetes API's public endpoint to this one public IPv4 "
+                             "address, <address>/32, in place of the dial's. The private endpoint "
+                             f"stays on (env {ENDPOINT_CIDR_ENV})")
 
 
 def add_cloud_guard_subparsers(sub: argparse._SubParsersAction) -> None:
@@ -777,5 +890,6 @@ def add_cloud_guard_subparsers(sub: argparse._SubParsersAction) -> None:
     _common(cc)
     cc.add_argument("--run-id", default=None, help="use this run id instead of minting one")
     cc.add_argument("cycle_args", nargs=argparse.REMAINDER,
-                    help="after --: arguments for `dfe-ops cycle` (not --keep, --from-terraform or --kubeconfig)")
+                    help="after --: arguments for `dfe-ops cycle` (not --keep, --from-terraform or --kubeconfig). "
+                         "--mode is the dial's profile, added when absent and refused when it names another")
     cc.set_defaults(func=cmd_cloud_cycle)

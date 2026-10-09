@@ -4,6 +4,8 @@
 # scripts/dfe_ops_cloud_guard.py documents the guard and every DFE_GUARD_*
 # variable. cloud-reaper.yml removes whatever a run that dies here leaves.
 # preflight_only runs the read-only `dfe-ops cloud-preflight` as the runner and stops.
+# This hosted runner sits outside the VPC, so the run opens the Kubernetes API's
+# public endpoint to the runner's own address alone, and the teardown removes it with the cluster.
 #
 # Everything deployment-specific comes from the e2e-runner environment, never
 # from this file: the runner role, the region, the dial and the bootstrap env
@@ -19,9 +21,9 @@ on:
         required: true
         default: "150m"
       cycle_args:
-        description: "Arguments for dfe-ops cycle. The guard sets --from-terraform and --kubeconfig and refuses --keep, and this job adds --env-file."
-        required: true
-        default: "--mode single"
+        description: "Extra arguments for dfe-ops cycle. The guard sets --from-terraform and --kubeconfig, refuses --keep, and takes --mode from the dial's profile, refusing one that names another. This job adds --env-file."
+        required: false
+        default: ""
       preflight_only:
         description: "Run only dfe-ops cloud-preflight with the inputs above and stop. It reads and never writes, so nothing is created."
         type: boolean
@@ -90,6 +92,29 @@ jobs:
           account="${BASH_REMATCH[1]}"
           echo "::add-mask::${account}"
           echo "account=${account}" >> "$GITHUB_OUTPUT"
+
+      # Two services run by different operators must agree, so neither one alone
+      # decides who may reach the cluster's API.
+      - name: Resolve the runner's own public address
+        id: egress
+        run: |
+          addresses=()
+          for url in https://checkip.amazonaws.com https://ipv4.icanhazip.com; do
+            if ! answer="$(curl -fsS -4 --max-time 10 --retry 3 "${url}")"; then
+              echo "::error::${url} did not answer, so the runner's address is unknown. Nothing was created."
+              exit 1
+            fi
+            if [[ ! "${answer}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+              echo "::error::${url} did not answer with one IPv4 address. Nothing was created."
+              exit 1
+            fi
+            addresses+=("${answer}")
+          done
+          if [[ "${addresses[0]}" != "${addresses[1]}" ]]; then
+            echo "::error::the two address services disagree (${addresses[0]}, ${addresses[1]}). Nothing was created."
+            exit 1
+          fi
+          echo "cidr=${addresses[0]}/32" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -185,6 +210,7 @@ jobs:
           DFE_RUN_TAG_KEY: ${{ vars.DFE_RUN_TAG_KEY }}
           DFE_RUN_EXPIRY_KEY: ${{ vars.DFE_RUN_EXPIRY_KEY }}
           DFE_RUN_EXPIRY_FORMAT: ${{ vars.DFE_RUN_EXPIRY_FORMAT }}
+          DFE_RUN_ENDPOINT_CIDR: ${{ steps.egress.outputs.cidr }}
         run: |
           python3 scripts/dfe-ops cloud-preflight --tf-dir terraform/environments/aws --run-length "${RUN_LENGTH}"
 
@@ -205,6 +231,7 @@ jobs:
           DFE_RUN_TAG_KEY: ${{ vars.DFE_RUN_TAG_KEY }}
           DFE_RUN_EXPIRY_KEY: ${{ vars.DFE_RUN_EXPIRY_KEY }}
           DFE_RUN_EXPIRY_FORMAT: ${{ vars.DFE_RUN_EXPIRY_FORMAT }}
+          DFE_RUN_ENDPOINT_CIDR: ${{ steps.egress.outputs.cidr }}
           # The root configures the redpanda provider on every dial, and its client refuses to start without both.
           REDPANDA_CLIENT_ID: ${{ secrets.REDPANDA_CLIENT_ID || 'unused' }}
           REDPANDA_CLIENT_SECRET: ${{ secrets.REDPANDA_CLIENT_SECRET || 'unused' }}

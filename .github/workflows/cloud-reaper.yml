@@ -3,9 +3,9 @@
 # --expired --grace 0 --delete in every region. scripts/cloud_reaper.py holds
 # the logic and documents every variable.
 #
-# Configured by repository variables only, with no secret: the job assumes
-# vars.DFE_REAPER_AWS_ROLE by OIDC. With that variable unset the gate job
-# prints a notice and the run is green, so a fork or another organisation's
+# Configured by the e2e-reaper environment's variables only, with no secret: the
+# job assumes vars.DFE_REAPER_AWS_ROLE by OIDC. With that variable unset the gate
+# job prints a notice and the run is green, so a fork or another organisation's
 # copy of this repository does nothing.
 name: Cloud reaper
 
@@ -30,6 +30,8 @@ jobs:
   gate:
     name: is a reaper configured?
     runs-on: ubuntu-24.04
+    # The role variable is scoped to this environment, so a job outside it reads it as unset.
+    environment: e2e-reaper
     timeout-minutes: 5
     outputs:
       enabled: ${{ steps.gate.outputs.enabled }}
